@@ -147,7 +147,7 @@ object NodeServerBackend extends Backend.Server:
             { () =>
                 guardResponse(res) {
                     if rejected then
-                        writeBufferedResponse(res, HttpResponse(HttpResponse.Status.PayloadTooLarge))
+                        writeBufferedResponse(res, HttpResponse(HttpStatus.PayloadTooLarge))
                     else
                         val bodyBytes = concatChunks(chunks, bodySize)
                         val request   = HttpRequest.fromRawHeaders(method, uri, headers, bodyBytes)

@@ -221,7 +221,7 @@ class EasyRacerTest extends Test:
                                                 }
                                             }
                                         case Absent =>
-                                            HttpResponse(HttpResponse.Status.NotAcceptable): HttpResponse[?] < (Async & Any)
+                                            HttpResponse(HttpStatus.NotAcceptable): HttpResponse[?] < (Async & Any)
                     end match
                 }
                 startTestServer(handler).map { port =>

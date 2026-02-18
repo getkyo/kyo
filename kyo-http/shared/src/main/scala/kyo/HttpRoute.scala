@@ -2,356 +2,424 @@ package kyo
 
 import HttpRequest.Method
 import HttpRequest.Part
-import HttpResponse.Status
-import kyo.internal.Inputs
+import kyo.internal.Content
+import kyo.internal.Optionality
+import scala.NamedTuple.AnyNamedTuple
+import scala.annotation.implicitNotFound
+import scala.util.NotGiven
 
-/** Typed endpoint contract that serves as the single source of truth for both server-side handlers and client-side typed calls.
-  *
-  * Define a route once and use it on both sides: `.handle(f)` creates a server-side `HttpHandler`, and `HttpClient.call(route, in)` makes a
-  * typed client call. The route captures the full contract — HTTP method, URL path with typed captures, query/header parameters, request
-  * body schema, response body schema, and typed error responses with status codes — so server and client stay in sync by construction.
-  *
-  * The `In` type parameter accumulates as parameters are added — each `.query`, `.header`, and `.requestBody` call appends to the input
-  * type via the `Inputs` type class, which concatenates named tuple types. Named tuple fields are accessed by name (e.g., `in.id`,
-  * `in.limit`, `in.body`). The field name matches the parameter name string literal.
-  *
-  * For example, `HttpRoute.get("users" / HttpPath.int("id")).query[Int]("limit")` produces
-  * `HttpRoute[(id: Int, limit: Int), Unit, Nothing]`.
-  *
-  * Routes carry OpenAPI documentation metadata (tag, summary, description, operationId, deprecated, security) which feeds into automatic
-  * spec generation via `HttpOpenApi`.
-  *
-  *   - Typed path captures via `HttpPath` (int, long, string, uuid, boolean)
-  *   - Query parameters with optional defaults and `Schema`-based deserialization
-  *   - Header parameter extraction
-  *   - Request/response body schemas for automatic JSON serialization
-  *   - Typed error responses mapped to HTTP status codes
-  *   - OpenAPI metadata (tag, summary, description, operationId, deprecated, externalDocs, security)
-  *   - `.handle(f)` to convert into an `HttpHandler`
-  *   - Client-side typed invocation via `HttpClient.call`
-  *
-  * IMPORTANT: Parameter order in the `In` type follows declaration order. Path captures come first, then each `.query`, `.header`,
-  * `.authBearer`/`.authBasic`/`.authApiKey`, `.cookie`, and `.requestBody`/`.requestBodyMultipart` call appends fields in the order they
-  * are called. Both the handler and `HttpClient.call` respect this declaration order.
-  *
-  * IMPORTANT: Error types passed to `.error[E](status)` require `ConcreteTag[E]` — must be concrete types, not type parameters or unions.
-  *
-  * @tparam In
-  *   Accumulated input type from path captures, query, header, and body parameters (named tuple or EmptyTuple)
-  * @tparam Out
-  *   Response body type
-  * @tparam Err
-  *   Union of possible typed error types
-  *
-  * @see
-  *   [[kyo.HttpPath]]
-  * @see
-  *   [[kyo.HttpHandler]]
-  * @see
-  *   [[kyo.HttpClient.call]]
-  * @see
-  *   [[kyo.HttpOpenApi]]
-  * @see
-  *   [[kyo.Schema]]
-  */
-case class HttpRoute[In, Out, Err](
+case class HttpRoute[PathIn <: AnyNamedTuple, In <: AnyNamedTuple, Out <: AnyNamedTuple, Err](
     method: Method,
-    path: HttpPath[Any],
-    outputStatus: Status,
-    tag: Maybe[String],
-    summary: Maybe[String],
-    queryParams: Seq[HttpRoute.QueryParam[?]] = Seq.empty,
-    headerParams: Seq[HttpRoute.HeaderParam] = Seq.empty,
-    cookieParams: Seq[HttpRoute.CookieParam] = Seq.empty,
-    bodyEncoding: Maybe[HttpRoute.BodyEncoding] = Absent,
-    responseEncoding: Maybe[HttpRoute.ResponseEncoding] = Absent,
-    errorSchemas: Seq[(Status, Schema[?], ConcreteTag[Any])] = Seq.empty,
-    description: Maybe[String] = Absent,
-    operationId: Maybe[String] = Absent,
-    isDeprecated: Boolean = false,
-    externalDocsUrl: Maybe[String] = Absent,
-    externalDocsDesc: Maybe[String] = Absent,
-    securityScheme: Maybe[String] = Absent,
-    private[kyo] paramCounter: Int = 0,
-    private[kyo] bodyId: Int = -1
+    path: HttpPath[PathIn],
+    request: HttpRoute.RequestDef[In] = HttpRoute.RequestDef,
+    response: HttpRoute.ResponseDef[Out, Err] = HttpRoute.ResponseDef,
+    metadata: HttpRoute.Metadata = HttpRoute.Metadata()
 ):
     import HttpRoute.*
 
-    /** Private helper that centralizes validation + cast for all builder methods. */
-    private inline def withField[N <: String & Singleton, A](using
-        c: Inputs.Field[In, N, A]
-    )(
-        f: HttpRoute[In, Out, Err] => HttpRoute[In, Out, Err]
-    ): HttpRoute[c.Out, Out, Err] =
-        Inputs.addField[In, N, A]
-        f(this).asInstanceOf[HttpRoute[c.Out, Out, Err]]
-    end withField
+    def request[In2 <: AnyNamedTuple](f: RequestDef[In] => RequestDef[In2]): HttpRoute[PathIn, In2, Out, Err] =
+        copy(request = f(request))
 
-    // --- Query Parameters ---
+    def request[In2 <: AnyNamedTuple](req: RequestDef[In2]): HttpRoute[PathIn, In2, Out, Err] =
+        copy(request = req)
 
-    /** Appends a required query parameter. The field name in the named tuple matches the parameter name. */
-    inline def query[A: Schema](using
-        DummyImplicit
-    )[N <: String & Singleton](name: N)(using c: Inputs.Field[In, N, A]): HttpRoute[c.Out, Out, Err] =
-        withField[N, A]: r =>
-            r.copy(queryParams = r.queryParams :+ QueryParam(name, Schema[A], Absent, r.paramCounter), paramCounter = r.paramCounter + 1)
+    def response[Out2 <: AnyNamedTuple, Err2](f: ResponseDef[Out, Err] => ResponseDef[Out2, Err2]): HttpRoute[PathIn, In, Out2, Err2] =
+        copy(response = f(response))
 
-    /** Appends an optional query parameter with a default value. */
-    inline def query[A: Schema](using
-        DummyImplicit
-    )[N <: String & Singleton](name: N, default: A)(using c: Inputs.Field[In, N, A]): HttpRoute[c.Out, Out, Err] =
-        withField[N, A]: r =>
-            r.copy(
-                queryParams = r.queryParams :+ QueryParam(name, Schema[A], Present(default), r.paramCounter),
-                paramCounter = r.paramCounter + 1
-            )
+    def response[Out2 <: AnyNamedTuple, Err2](res: ResponseDef[Out2, Err2]): HttpRoute[PathIn, In, Out2, Err2] =
+        copy(response = res)
 
-    // --- Headers ---
+    def metadata(f: Metadata => Metadata): HttpRoute[PathIn, In, Out, Err] =
+        copy(metadata = f(metadata))
 
-    /** Appends a required header parameter (always `String`). */
-    inline def header[N <: String & Singleton](name: N)(using c: Inputs.Field[In, N, String]): HttpRoute[c.Out, Out, Err] =
-        withField[N, String]: r =>
-            r.copy(headerParams = r.headerParams :+ HeaderParam(name, Absent, id = r.paramCounter), paramCounter = r.paramCounter + 1)
+    def metadata(meta: Metadata): HttpRoute[PathIn, In, Out, Err] =
+        copy(metadata = meta)
 
-    /** Appends an optional header parameter with a default value. */
-    inline def header[N <: String & Singleton](name: N, default: String)(using c: Inputs.Field[In, N, String]): HttpRoute[c.Out, Out, Err] =
-        withField[N, String]: r =>
-            r.copy(
-                headerParams = r.headerParams :+ HeaderParam(name, Present(default), id = r.paramCounter),
-                paramCounter = r.paramCounter + 1
-            )
+    def path[PathIn2 <: AnyNamedTuple](f: HttpPath[PathIn] => HttpPath[PathIn2]): HttpRoute[PathIn2, In, Out, Err] =
+        copy(path = f(path))
 
-    // --- Cookies ---
+    def path[PathIn2 <: AnyNamedTuple](p: HttpPath[PathIn2]): HttpRoute[PathIn2, In, Out, Err] =
+        copy(path = p)
 
-    inline def cookie[N <: String & Singleton](name: N)(using c: Inputs.Field[In, N, String]): HttpRoute[c.Out, Out, Err] =
-        withField[N, String]: r =>
-            r.copy(cookieParams = r.cookieParams :+ CookieParam(name, Absent, r.paramCounter), paramCounter = r.paramCounter + 1)
+    // --- Handler creation ---
 
-    inline def cookie[N <: String & Singleton](name: N, default: String)(using c: Inputs.Field[In, N, String]): HttpRoute[c.Out, Out, Err] =
-        withField[N, String]: r =>
-            r.copy(cookieParams = r.cookieParams :+ CookieParam(name, Present(default), r.paramCounter), paramCounter = r.paramCounter + 1)
-
-    // --- Auth ---
-
-    inline def authBearer(using c: Inputs.Field[In, "bearer", String]): HttpRoute[c.Out, Out, Err] =
-        withField["bearer", String]: r =>
-            r.copy(
-                headerParams = r.headerParams :+ HeaderParam("Authorization", Absent, Present(AuthScheme.Bearer), r.paramCounter),
-                paramCounter = r.paramCounter + 1
-            )
-
-    inline def authBasic(using
-        c1: Inputs.Field[In, "username", String],
-        c2: Inputs.Field[c1.Out, "password", String]
-    ): HttpRoute[c2.Out, Out, Err] =
-        Inputs.addField[In, "username", String]
-        Inputs.addField[c1.Out, "password", String]
-        copy(
-            headerParams = headerParams :+ HeaderParam("Authorization", Absent, Present(AuthScheme.Basic), paramCounter),
-            paramCounter = paramCounter + 2
-        ).asInstanceOf[HttpRoute[c2.Out, Out, Err]]
-    end authBasic
-
-    inline def authApiKey[N <: String & Singleton](name: N)(using c: Inputs.Field[In, N, String]): HttpRoute[c.Out, Out, Err] =
-        withField[N, String]: r =>
-            r.copy(
-                headerParams = r.headerParams :+ HeaderParam(name, Absent, Present(AuthScheme.ApiKey), r.paramCounter),
-                paramCounter = r.paramCounter + 1
-            )
-
-    // --- Request Body ---
-
-    /** Sets the request body schema. The deserialized body becomes a named field `body` in the handler input. */
-    inline def requestBody[A: Schema](using c: Inputs.Field[In, "body", A]): HttpRoute[c.Out, Out, Err] =
-        withField["body", A]: r =>
-            r.copy(
-                bodyEncoding = Present(BodyEncoding.Json(Schema[A].asInstanceOf[Schema[Any]])),
-                bodyId = r.paramCounter,
-                paramCounter = r.paramCounter + 1
-            )
-
-    inline def requestBodyText(using c: Inputs.Field[In, "body", String]): HttpRoute[c.Out, Out, Err] =
-        withField["body", String]: r =>
-            r.copy(bodyEncoding = Present(BodyEncoding.Text), bodyId = r.paramCounter, paramCounter = r.paramCounter + 1)
-
-    inline def requestBodyForm[A: Schema](using c: Inputs.Field[In, "body", A]): HttpRoute[c.Out, Out, Err] =
-        withField["body", A]: r =>
-            r.copy(
-                bodyEncoding = Present(BodyEncoding.Form(Schema[A].asInstanceOf[Schema[Any]])),
-                bodyId = r.paramCounter,
-                paramCounter = r.paramCounter + 1
-            )
-
-    inline def requestBodyMultipart(using c: Inputs.Field[In, "parts", Seq[Part]]): HttpRoute[c.Out, Out, Err] =
-        withField["parts", Seq[Part]]: r =>
-            r.copy(bodyEncoding = Present(BodyEncoding.Multipart), bodyId = r.paramCounter, paramCounter = r.paramCounter + 1)
-
-    inline def requestBodyStream(using c: Inputs.Field[In, "body", Stream[Span[Byte], Async]]): HttpRoute[c.Out, Out, Err] =
-        withField["body", Stream[Span[Byte], Async]]: r =>
-            r.copy(bodyEncoding = Present(BodyEncoding.Streaming), bodyId = r.paramCounter, paramCounter = r.paramCounter + 1)
-
-    inline def requestBodyStreamMultipart(using c: Inputs.Field[In, "parts", Stream[Part, Async]]): HttpRoute[c.Out, Out, Err] =
-        withField["parts", Stream[Part, Async]]: r =>
-            r.copy(bodyEncoding = Present(BodyEncoding.StreamingMultipart), bodyId = r.paramCounter, paramCounter = r.paramCounter + 1)
-
-    // --- Response Body ---
-
-    /** Sets the response body schema for automatic JSON serialization. */
-    def responseBody[O: Schema]: HttpRoute[In, O, Err] =
-        copy(responseEncoding = Present(ResponseEncoding.Json(Schema[O].asInstanceOf[Schema[Any]])))
-            .asInstanceOf[HttpRoute[In, O, Err]]
-
-    def responseBodyText: HttpRoute[In, String, Err] =
-        responseBody[String]
-
-    /** Sets the response to SSE streaming. Handler returns `Stream[HttpEvent[V], Async]`. */
-    def responseBodySse[V](using
-        schema: Schema[V],
-        emitTag: Tag[Emit[Chunk[HttpEvent[V]]]]
-    ): HttpRoute[In, Stream[HttpEvent[V], Async], Err] =
-        copy(responseEncoding = Present(ResponseEncoding.Sse(schema.asInstanceOf[Schema[Any]], emitTag.erased)))
-            .asInstanceOf[HttpRoute[In, Stream[HttpEvent[V], Async], Err]]
-
-    /** Sets the response to NDJSON streaming. Handler returns `Stream[V, Async]`. */
-    def responseBodyNdjson[V](using schema: Schema[V], emitTag: Tag[Emit[Chunk[V]]]): HttpRoute[In, Stream[V, Async], Err] =
-        copy(responseEncoding = Present(ResponseEncoding.Ndjson(schema.asInstanceOf[Schema[Any]], emitTag.erased)))
-            .asInstanceOf[HttpRoute[In, Stream[V, Async], Err]]
-
-    // --- Errors ---
-
-    /** Registers a typed error response for the given status code. Requires `ConcreteTag[E]` — must be a concrete type. */
-    def error[E: Schema](status: Status)(using tag: ConcreteTag[E]): HttpRoute[In, Out, Err | E] =
-        copy(errorSchemas = errorSchemas :+ (status, Schema[E], tag.asInstanceOf[ConcreteTag[Any]]))
-            .asInstanceOf[HttpRoute[In, Out, Err | E]]
-
-    // --- Documentation ---
-
-    def tag(t: String): HttpRoute[In, Out, Err] =
-        copy(tag = Present(t))
-
-    def summary(s: String): HttpRoute[In, Out, Err] =
-        copy(summary = Present(s))
-
-    def description(d: String): HttpRoute[In, Out, Err] =
-        copy(description = Present(d))
-
-    def operationId(id: String): HttpRoute[In, Out, Err] =
-        copy(operationId = Present(id))
-
-    def deprecated: HttpRoute[In, Out, Err] =
-        copy(isDeprecated = true)
-
-    def externalDocs(url: String): HttpRoute[In, Out, Err] =
-        copy(externalDocsUrl = Present(url))
-
-    def externalDocs(url: String, desc: String): HttpRoute[In, Out, Err] =
-        copy(externalDocsUrl = Present(url), externalDocsDesc = Present(desc))
-
-    def security(scheme: String): HttpRoute[In, Out, Err] =
-        copy(securityScheme = Present(scheme))
-
-    // --- Server ---
-
-    /** Converts this route into an HttpHandler. `f` receives the accumulated `In` named tuple — path captures, then query, then header,
-      * then body params — and returns the output type. Errors matching route error schemas get the corresponding status code.
-      */
     def handle[S](using
-        c: Inputs[In, (request: HttpRequest[?])],
-        frame: Frame
+        Frame
     )(
-        f: c.Out => Out < (Abort[Err] & Async & S)
+        f: Row[FullInput[PathIn, In]] => OutputValue[Out] < (Abort[Err] & Async & S)
     ): HttpHandler[S] =
-        HttpHandler.init(this)(using c, frame)(f)
-
-    /** No-input route handler — the function receives no parameters. Only available when `In = EmptyTuple`. */
-    def handle[S](using
-        ev: In =:= EmptyTuple,
-        frame: Frame
-    )(
-        f: => Out < (Abort[Err] & Async & S)
-    ): HttpHandler[S] =
-        HttpHandler.init(this.asInstanceOf[HttpRoute[EmptyTuple, Out, Err]])((_: (request: HttpRequest[?])) => f)
+        HttpHandler.fromRoute(this)(f)
 
 end HttpRoute
 
 object HttpRoute:
 
-    // --- Internal param types ---
+    // ==================== Type aliases ====================
 
-    private[kyo] case class QueryParam[A](name: String, schema: Schema[A], default: Maybe[A], id: Int = 0)
+    type FullInput[PathIn <: AnyNamedTuple, In <: AnyNamedTuple] =
+        Row.Append[Row.Concat[PathIn, In], "request", HttpRequest[?]]
 
-    private[kyo] enum BodyEncoding derives CanEqual:
-        case Json(schema: Schema[Any])
-        case Text
-        case Form(schema: Schema[Any])
-        case Multipart
-        case Streaming
-        case StreamingMultipart
+    type InputValue[PathIn <: AnyNamedTuple, In <: AnyNamedTuple] = Row.Values[Row.Concat[PathIn, In]] match
+        case v *: EmptyTuple => v
+        case _               => Row.Values[Row.Concat[PathIn, In]]
 
-        def contentType: Maybe[String] = this match
-            case _: Json            => Present("application/json")
-            case Text               => Present("text/plain")
-            case _: Form            => Present("application/x-www-form-urlencoded")
-            case Multipart          => Present("multipart/form-data")
-            case Streaming          => Absent
-            case StreamingMultipart => Present("multipart/form-data")
+    type OutputValue[Out <: AnyNamedTuple] = Row.Values[Out] match
+        case EmptyTuple      => Unit
+        case v *: EmptyTuple => v
+        case _               => Row[Out]
 
-        def decode(text: String): Any = this match
-            case Json(s) => s.decode(text)
-            case Form(s) => s.decode(text)
-            case _       => text
+    // ==================== Codec (alias) ====================
 
-        def encode(value: Any): String = this match
-            case Json(s) => s.encode(value)
-            case Form(s) => s.encode(value)
-            case _       => value.toString
-    end BodyEncoding
+    type Codec[A] = HttpCodec[A]
+    val Codec = HttpCodec
 
-    private[kyo] enum ResponseEncoding:
-        case Json(schema: Schema[Any])
-        case Sse(schema: Schema[Any], emitTag: Tag[Any])
-        case Ndjson(schema: Schema[Any], emitTag: Tag[Any])
+    // ==================== Factory methods ====================
 
-        def contentType: String = this match
-            case _: Json   => "application/json"
-            case _: Sse    => "text/event-stream"
-            case _: Ndjson => "application/x-ndjson"
-    end ResponseEncoding
+    def get[A <: AnyNamedTuple](path: HttpPath[A]): HttpRoute[A, Row.Empty, Row.Empty, Nothing]     = HttpRoute(Method.GET, path)
+    def post[A <: AnyNamedTuple](path: HttpPath[A]): HttpRoute[A, Row.Empty, Row.Empty, Nothing]    = HttpRoute(Method.POST, path)
+    def put[A <: AnyNamedTuple](path: HttpPath[A]): HttpRoute[A, Row.Empty, Row.Empty, Nothing]     = HttpRoute(Method.PUT, path)
+    def patch[A <: AnyNamedTuple](path: HttpPath[A]): HttpRoute[A, Row.Empty, Row.Empty, Nothing]   = HttpRoute(Method.PATCH, path)
+    def delete[A <: AnyNamedTuple](path: HttpPath[A]): HttpRoute[A, Row.Empty, Row.Empty, Nothing]  = HttpRoute(Method.DELETE, path)
+    def head[A <: AnyNamedTuple](path: HttpPath[A]): HttpRoute[A, Row.Empty, Row.Empty, Nothing]    = HttpRoute(Method.HEAD, path)
+    def options[A <: AnyNamedTuple](path: HttpPath[A]): HttpRoute[A, Row.Empty, Row.Empty, Nothing] = HttpRoute(Method.OPTIONS, path)
 
-    private[kyo] object ResponseEncoding:
-        def extractSchema(enc: ResponseEncoding): Schema[Any] = enc match
-            case ResponseEncoding.Json(s)      => s
-            case ResponseEncoding.Sse(s, _)    => s
-            case ResponseEncoding.Ndjson(s, _) => s
-    end ResponseEncoding
+    // ==================== Metadata ====================
 
-    private[kyo] enum AuthScheme derives CanEqual:
+    case class Metadata(
+        tags: Seq[String] = Seq.empty,
+        summary: Maybe[String] = Absent,
+        description: Maybe[String] = Absent,
+        operationId: Maybe[String] = Absent,
+        deprecated: Boolean = false,
+        externalDocsUrl: Maybe[String] = Absent,
+        externalDocsDesc: Maybe[String] = Absent,
+        security: Maybe[String] = Absent
+    ):
+        def tag(t: String): Metadata                          = copy(tags = tags :+ t)
+        def tags(ts: String*): Metadata                       = copy(tags = tags ++ ts)
+        def summary(s: String): Metadata                      = copy(summary = Present(s))
+        def description(d: String): Metadata                  = copy(description = Present(d))
+        def operationId(id: String): Metadata                 = copy(operationId = Present(id))
+        def markDeprecated: Metadata                          = copy(deprecated = true)
+        def externalDocs(url: String): Metadata               = copy(externalDocsUrl = Present(url))
+        def externalDocs(url: String, desc: String): Metadata = copy(externalDocsUrl = Present(url), externalDocsDesc = Present(desc))
+        def security(scheme: String): Metadata                = copy(security = Present(scheme))
+    end Metadata
+
+    // ==================== RequestDef ====================
+
+    case class RequestDef[In <: AnyNamedTuple](inputFields: Seq[InputField]):
+
+        def query[A](
+            using
+            opt: Optionality[A],
+            codec: Codec[opt.Value]
+        )[N <: String & Singleton](
+            name: N,
+            default: Option[opt.Value] = None,
+            wireName: String = "",
+            description: String = ""
+        )(using UniqueRequestField[In, N]): RequestDef[Row.Append[In, N, A]] =
+            val wn = if wireName.isEmpty then name else wireName
+            addIn[N, A](InputField.Query(wn, codec, default.fold(Absent)(Present(_)), opt.isOptional, description))
+        end query
+
+        def header[A](
+            using
+            opt: Optionality[A],
+            codec: Codec[opt.Value]
+        )[N <: String & Singleton](
+            name: N,
+            default: Option[opt.Value] = None,
+            wireName: String = "",
+            description: String = ""
+        )(using UniqueRequestField[In, N]): RequestDef[Row.Append[In, N, A]] =
+            val wn = if wireName.isEmpty then name else wireName
+            addIn[N, A](InputField.Header(wn, codec, default.fold(Absent)(Present(_)), opt.isOptional, description))
+        end header
+
+        def cookie[A](
+            using
+            opt: Optionality[A],
+            codec: Codec[opt.Value]
+        )[N <: String & Singleton](
+            name: N,
+            default: Option[opt.Value] = None,
+            wireName: String = "",
+            description: String = ""
+        )(using UniqueRequestField[In, N]): RequestDef[Row.Append[In, N, A]] =
+            val wn = if wireName.isEmpty then name else wireName
+            addIn[N, A](InputField.Cookie(wn, codec, default.fold(Absent)(Present(_)), opt.isOptional, description))
+        end cookie
+
+        // --- Auth ---
+
+        def authBearer(using UniqueRequestField[In, "bearer"]): RequestDef[Row.Append[In, "bearer", String]] =
+            addIn["bearer", String](InputField.Auth(AuthScheme.Bearer))
+
+        def authBasic: RequestDef[Row.Append[Row.Append[In, "username", String], "password", String]] =
+            RequestDef(inputFields :+ InputField.Auth(AuthScheme.BasicUsername) :+ InputField.Auth(AuthScheme.BasicPassword))
+                .asInstanceOf[RequestDef[Row.Append[Row.Append[In, "username", String], "password", String]]]
+
+        def authApiKey[N <: String & Singleton](name: N)(using UniqueRequestField[In, N]): RequestDef[Row.Append[In, N, String]] =
+            addIn[N, String](InputField.Auth(AuthScheme.ApiKey(name, AuthLocation.Header)))
+
+        def authApiKey[N <: String & Singleton](name: N, location: AuthLocation)(using
+            UniqueRequestField[In, N]
+        ): RequestDef[Row.Append[In, N, String]] =
+            addIn[N, String](InputField.Auth(AuthScheme.ApiKey(name, location)))
+
+        // --- Request Body ---
+
+        def bodyJson[A: Schema](using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", A]] =
+            bodyJson[A]("")
+
+        def bodyJson[A: Schema](description: String)(using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", A]] =
+            addIn["body", A](InputField.Body(Content.Json(Schema[A].asInstanceOf[Schema[Any]]), description))
+
+        def bodyText(using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", String]] =
+            bodyText("")
+
+        def bodyText(description: String)(using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", String]] =
+            addIn["body", String](InputField.Body(Content.Text, description))
+
+        def bodyBinary(using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", Span[Byte]]] =
+            bodyBinary("")
+
+        def bodyBinary(description: String)(using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", Span[Byte]]] =
+            addIn["body", Span[Byte]](InputField.Body(Content.Binary, description))
+
+        def bodyStream(using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", Stream[Span[Byte], Async]]] =
+            bodyStream("")
+
+        def bodyStream(description: String)(using
+            UniqueRequestField[In, "body"]
+        ): RequestDef[Row.Append[In, "body", Stream[Span[Byte], Async]]] =
+            addIn["body", Stream[Span[Byte], Async]](InputField.Body(Content.ByteStream, description))
+
+        def bodyNdjson[V](using
+            schema: Schema[V],
+            emitTag: Tag[Emit[Chunk[V]]],
+            uf: UniqueRequestField[In, "body"]
+        ): RequestDef[Row.Append[In, "body", Stream[V, Async]]] =
+            bodyNdjson[V]("")
+
+        def bodyNdjson[V](using
+            schema: Schema[V],
+            emitTag: Tag[Emit[Chunk[V]]],
+            uf: UniqueRequestField[In, "body"]
+        )(description: String): RequestDef[Row.Append[In, "body", Stream[V, Async]]] =
+            addIn["body", Stream[V, Async]](InputField.Body(Content.Ndjson(schema.asInstanceOf[Schema[Any]], emitTag.erased), description))
+
+        def bodyForm[A: Schema](using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", A]] =
+            bodyForm[A]("")
+
+        def bodyForm[A: Schema](description: String)(using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", A]] =
+            addIn["body", A](InputField.Body(Content.Form(Schema[A].asInstanceOf[Schema[Any]]), description))
+
+        def bodyMultipart(using UniqueRequestField[In, "parts"]): RequestDef[Row.Append[In, "parts", Seq[Part]]] =
+            bodyMultipart("")
+
+        def bodyMultipart(description: String)(using UniqueRequestField[In, "parts"]): RequestDef[Row.Append[In, "parts", Seq[Part]]] =
+            addIn["parts", Seq[Part]](InputField.Body(Content.Multipart, description))
+
+        def bodyMultipartStream(using UniqueRequestField[In, "parts"]): RequestDef[Row.Append[In, "parts", Stream[Part, Async]]] =
+            bodyMultipartStream("")
+
+        def bodyMultipartStream(description: String)(using
+            UniqueRequestField[In, "parts"]
+        ): RequestDef[Row.Append[In, "parts", Stream[Part, Async]]] =
+            addIn["parts", Stream[Part, Async]](InputField.Body(Content.MultipartStream, description))
+
+        private def addIn[N <: String & Singleton, A](
+            field: InputField
+        )(using UniqueRequestField[In, N]): RequestDef[Row.Append[In, N, A]] =
+            copy(inputFields = inputFields :+ field)
+                .asInstanceOf[RequestDef[Row.Append[In, N, A]]]
+        end addIn
+
+    end RequestDef
+
+    object RequestDef extends RequestDef[Row.Empty](Seq.empty)
+
+    // ==================== ResponseDef ====================
+
+    case class ResponseDef[Out <: AnyNamedTuple, Err](
+        status: HttpStatus,
+        outputFields: Seq[OutputField],
+        errorMappings: Seq[ErrorMapping]
+    ):
+        // --- Response Body ---
+
+        def bodyJson[O: Schema](using UniqueResponseField[Out, "body"]): ResponseDef[Row.Append[Out, "body", O], Err] =
+            bodyJson[O]("")
+
+        def bodyJson[O: Schema](description: String)(using UniqueResponseField[Out, "body"]): ResponseDef[Row.Append[Out, "body", O], Err] =
+            addOut["body", O](OutputField.Body(Content.Json(Schema[O].asInstanceOf[Schema[Any]]), description))
+
+        def bodyText(using UniqueResponseField[Out, "body"]): ResponseDef[Row.Append[Out, "body", String], Err] =
+            bodyText("")
+
+        def bodyText(description: String)(using UniqueResponseField[Out, "body"]): ResponseDef[Row.Append[Out, "body", String], Err] =
+            addOut["body", String](OutputField.Body(Content.Text, description))
+
+        def bodyBinary(using UniqueResponseField[Out, "body"]): ResponseDef[Row.Append[Out, "body", Span[Byte]], Err] =
+            bodyBinary("")
+
+        def bodyBinary(description: String)(using UniqueResponseField[Out, "body"]): ResponseDef[Row.Append[Out, "body", Span[Byte]], Err] =
+            addOut["body", Span[Byte]](OutputField.Body(Content.Binary, description))
+
+        def bodyStream(using UniqueResponseField[Out, "body"]): ResponseDef[Row.Append[Out, "body", Stream[Span[Byte], Async]], Err] =
+            bodyStream("")
+
+        def bodyStream(description: String)(using
+            UniqueResponseField[Out, "body"]
+        ): ResponseDef[Row.Append[Out, "body", Stream[Span[Byte], Async]], Err] =
+            addOut["body", Stream[Span[Byte], Async]](OutputField.Body(Content.ByteStream, description))
+
+        def bodyNdjson[V](using
+            schema: Schema[V],
+            emitTag: Tag[Emit[Chunk[V]]],
+            uf: UniqueResponseField[Out, "body"]
+        ): ResponseDef[Row.Append[Out, "body", Stream[V, Async]], Err] =
+            bodyNdjson[V]("")
+
+        def bodyNdjson[V](using
+            schema: Schema[V],
+            emitTag: Tag[Emit[Chunk[V]]],
+            uf: UniqueResponseField[Out, "body"]
+        )(description: String): ResponseDef[Row.Append[Out, "body", Stream[V, Async]], Err] =
+            addOut["body", Stream[V, Async]](OutputField.Body(
+                Content.Ndjson(schema.asInstanceOf[Schema[Any]], emitTag.erased),
+                description
+            ))
+
+        def bodySse[V](using
+            schema: Schema[V],
+            emitTag: Tag[Emit[Chunk[HttpEvent[V]]]],
+            uf: UniqueResponseField[Out, "body"]
+        ): ResponseDef[Row.Append[Out, "body", Stream[HttpEvent[V], Async]], Err] =
+            bodySse[V]("")
+
+        def bodySse[V](using
+            schema: Schema[V],
+            emitTag: Tag[Emit[Chunk[HttpEvent[V]]]],
+            uf: UniqueResponseField[Out, "body"]
+        )(description: String): ResponseDef[Row.Append[Out, "body", Stream[HttpEvent[V], Async]], Err] =
+            addOut["body", Stream[HttpEvent[V], Async]](OutputField.Body(
+                Content.Sse(schema.asInstanceOf[Schema[Any]], emitTag.erased),
+                description
+            ))
+
+        // --- Response Headers ---
+
+        def header[A](
+            using
+            opt: Optionality[A],
+            codec: Codec[opt.Value]
+        )[N <: String & Singleton](
+            name: N,
+            wireName: String = "",
+            description: String = ""
+        )(using UniqueResponseField[Out, N]): ResponseDef[Row.Append[Out, N, A], Err] =
+            val wn = if wireName.isEmpty then name else wireName
+            addOut[N, A](OutputField.Header(wn, codec, opt.isOptional, description))
+        end header
+
+        // --- Response Cookies ---
+
+        def cookie[A](
+            using
+            opt: Optionality[A],
+            codec: Codec[opt.Value]
+        )[N <: String & Singleton](
+            name: N,
+            attributes: CookieAttributes = CookieAttributes.default,
+            wireName: String = "",
+            description: String = ""
+        )(using UniqueResponseField[Out, N]): ResponseDef[Row.Append[Out, N, A], Err] =
+            val wn = if wireName.isEmpty then name else wireName
+            addOut[N, A](OutputField.Cookie(wn, codec, opt.isOptional, attributes, description))
+        end cookie
+
+        // --- Errors ---
+
+        def error[E: Schema](status: HttpStatus)(using tag: ConcreteTag[E]): ResponseDef[Out, Err | E] =
+            copy(errorMappings = errorMappings :+ ErrorMapping(status, Schema[E], tag.asInstanceOf[ConcreteTag[Any]]))
+                .asInstanceOf[ResponseDef[Out, Err | E]]
+
+        // --- Status ---
+
+        def status(s: HttpStatus): ResponseDef[Out, Err] = copy(status = s)
+
+        private def addOut[N <: String & Singleton, A](
+            field: OutputField
+        )(using UniqueResponseField[Out, N]): ResponseDef[Row.Append[Out, N, A], Err] =
+            copy(outputFields = outputFields :+ field)
+                .asInstanceOf[ResponseDef[Row.Append[Out, N, A], Err]]
+        end addOut
+    end ResponseDef
+
+    object ResponseDef extends ResponseDef[Row.Empty, Nothing](HttpStatus.Success.OK, Seq.empty, Seq.empty)
+
+    // ==================== Auth ====================
+
+    enum AuthScheme derives CanEqual:
         case Bearer
-        case Basic
-        case ApiKey
+        case BasicUsername
+        case BasicPassword
+        case ApiKey(name: String, location: AuthLocation)
     end AuthScheme
 
-    private[kyo] case class HeaderParam(name: String, default: Maybe[String], authScheme: Maybe[AuthScheme] = Absent, id: Int = 0)
-        derives CanEqual
-    private[kyo] case class CookieParam(name: String, default: Maybe[String], id: Int = 0) derives CanEqual
+    enum AuthLocation derives CanEqual:
+        case Header, Query, Cookie
 
-    // --- Route factory methods ---
+    // ==================== Cookie ====================
 
-    private def init[A](method: Method, path: HttpPath[A]): HttpRoute[A, Unit, Nothing] =
-        HttpRoute(
-            method = method,
-            path = path.asInstanceOf[HttpPath[Any]],
-            outputStatus = Status.OK,
-            tag = Absent,
-            summary = Absent
-        )
+    enum SameSite derives CanEqual:
+        case Strict, Lax, None
+    end SameSite
 
-    def get[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing]     = init(Method.GET, path)
-    def post[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing]    = init(Method.POST, path)
-    def put[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing]     = init(Method.PUT, path)
-    def patch[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing]   = init(Method.PATCH, path)
-    def delete[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing]  = init(Method.DELETE, path)
-    def head[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing]    = init(Method.HEAD, path)
-    def options[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing] = init(Method.OPTIONS, path)
+    case class CookieAttributes(
+        httpOnly: Boolean = false,
+        secure: Boolean = false,
+        sameSite: Maybe[SameSite] = Absent,
+        maxAge: Maybe[Int] = Absent,
+        domain: Maybe[String] = Absent,
+        path: Maybe[String] = Absent
+    )
+
+    object CookieAttributes:
+        val default: CookieAttributes = CookieAttributes()
+
+    // ==================== Duplicate field detection ====================
+
+    @implicitNotFound("Duplicate request field '${N}' — this field was already added to the request definition")
+    opaque type UniqueRequestField[A <: AnyNamedTuple, N <: String] = Unit
+    given [A <: AnyNamedTuple, N <: String](using NotGiven[Row.HasName[Row.Names[A], N]]): UniqueRequestField[A, N] = ()
+
+    @implicitNotFound("Duplicate response field '${N}' — this field was already added to the response definition")
+    opaque type UniqueResponseField[A <: AnyNamedTuple, N <: String] = Unit
+    given [A <: AnyNamedTuple, N <: String](using NotGiven[Row.HasName[Row.Names[A], N]]): UniqueResponseField[A, N] = ()
+
+    // ==================== Field descriptors (private[kyo]) ====================
+
+    private[kyo] enum InputField:
+        case Query(name: String, codec: Codec[?], default: Maybe[Any], optional: Boolean, description: String)
+        case Header(name: String, codec: Codec[?], default: Maybe[Any], optional: Boolean, description: String)
+        case Cookie(name: String, codec: Codec[?], default: Maybe[Any], optional: Boolean, description: String)
+        case Body(content: Content.Input, description: String)
+        case Auth(scheme: AuthScheme)
+    end InputField
+
+    private[kyo] enum OutputField:
+        case Header(name: String, codec: Codec[?], optional: Boolean, description: String)
+        case Cookie(name: String, codec: Codec[?], optional: Boolean, attributes: CookieAttributes, description: String)
+        case Body(content: Content.Output, description: String)
+    end OutputField
+
+    // ==================== Error mappings (private[kyo]) ====================
+
+    private[kyo] case class ErrorMapping(status: HttpStatus, schema: Schema[?], tag: ConcreteTag[Any])
 
 end HttpRoute

@@ -1,8 +1,8 @@
 package kyo
 
-import HttpPath./
+import HttpPath.*
 import HttpRequest.*
-import HttpResponse.Status
+import kyo.HttpStatus
 
 /** End-to-end multipart upload tests: client sends multipart request, server receives and parses parts. JVM-only because
   * HttpRequest.multipart uses java.util.UUID.randomUUID().
@@ -26,7 +26,7 @@ class HttpMultipartUploadTest extends Test:
             val parts   = Seq(Part("file", Present("test.txt"), Present("text/plain"), "hello world".getBytes("UTF-8")))
             val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
-                assertStatus(response, Status.OK)
+                assertStatus(response, HttpStatus.OK)
                 assertBodyText(response, "name=file,filename=test.txt,size=11")
             }
         }
@@ -46,7 +46,7 @@ class HttpMultipartUploadTest extends Test:
             )
             val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
-                assertStatus(response, Status.OK)
+                assertStatus(response, HttpStatus.OK)
                 assertBodyText(response, "count=3,file1:3,file2:6,file3:1")
             }
         }
@@ -71,7 +71,7 @@ class HttpMultipartUploadTest extends Test:
             )
             val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
-                assertStatus(response, Status.OK)
+                assertStatus(response, HttpStatus.OK)
                 assertBodyText(response, "title:field=My Document;file:file=file content;tags:field=important")
             }
         }
@@ -88,7 +88,7 @@ class HttpMultipartUploadTest extends Test:
             val parts   = Seq(Part("photo", Present("sunset.jpg"), Present("image/jpeg"), Array[Byte](1, 2, 3)))
             val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
-                assertStatus(response, Status.OK)
+                assertStatus(response, HttpStatus.OK)
                 assertBodyText(response, "filename=sunset.jpg,ct=image/jpeg")
             }
         }
@@ -106,7 +106,7 @@ class HttpMultipartUploadTest extends Test:
             val parts      = Seq(Part("data", Present("binary.dat"), Present("application/octet-stream"), binaryData))
             val request    = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
-                assertStatus(response, Status.OK)
+                assertStatus(response, HttpStatus.OK)
                 assertBodyText(response, "0,1,127,128,255,13,10")
             }
         }
@@ -123,7 +123,7 @@ class HttpMultipartUploadTest extends Test:
             val parts   = Seq(Part("bigfile", Present("large.bin"), Present("application/octet-stream"), largeContent))
             val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
-                assertStatus(response, Status.OK)
+                assertStatus(response, HttpStatus.OK)
                 assertBodyText(response, "size=100000")
             }
         }
@@ -138,7 +138,7 @@ class HttpMultipartUploadTest extends Test:
             val parts   = Seq(Part("empty", Present("empty.txt"), Present("text/plain"), Array.empty[Byte]))
             val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
-                assertStatus(response, Status.OK)
+                assertStatus(response, HttpStatus.OK)
                 assertBodyText(response, "name=empty,size=0")
             }
         }
@@ -158,7 +158,7 @@ class HttpMultipartUploadTest extends Test:
                 HttpHeaders.empty.add("Authorization", "Bearer test-token")
             )
             HttpClient.send(request).map { response =>
-                assertStatus(response, Status.OK)
+                assertStatus(response, HttpStatus.OK)
                 assertBodyText(response, "auth=Bearer test-token,file=doc")
             }
         }
@@ -175,7 +175,7 @@ class HttpMultipartUploadTest extends Test:
             val parts   = Seq(Part("text", Present("lines.txt"), Present("text/plain"), content.getBytes("UTF-8")))
             val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
-                assertStatus(response, Status.OK)
+                assertStatus(response, HttpStatus.OK)
                 assertBodyText(response, "line1\r\nline2\r\nline3")
             }
         }
@@ -192,14 +192,14 @@ class HttpMultipartUploadTest extends Test:
             }
             val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
-                assertStatus(response, Status.OK)
+                assertStatus(response, HttpStatus.OK)
                 assertBodyText(response, "count=15")
             }
         }
     }
 
     "upload to path with params" in run {
-        val handler = HttpHandler.post("uploads" / HttpPath.string("category")) { in =>
+        val handler = HttpHandler.post("uploads" / Capture[String]("category")) { in =>
             val part = in.request.parts(0)
             HttpResponse.ok(s"category=${in.category},file=${part.name}")
         }
@@ -207,7 +207,7 @@ class HttpMultipartUploadTest extends Test:
             val parts   = Seq(Part("photo", Present("img.png"), Present("image/png"), "pixels".getBytes))
             val request = HttpRequest.multipart(s"http://localhost:$port/uploads/photos", parts)
             HttpClient.send(request).map { response =>
-                assertStatus(response, Status.OK)
+                assertStatus(response, HttpStatus.OK)
                 assertBodyText(response, "category=photos,file=photo")
             }
         }
@@ -221,7 +221,7 @@ class HttpMultipartUploadTest extends Test:
         startUploadServer(handler).map { port =>
             val request = HttpRequest.multipart(s"http://localhost:$port/upload", Seq.empty)
             HttpClient.send(request).map { response =>
-                assertStatus(response, Status.OK)
+                assertStatus(response, HttpStatus.OK)
                 assertBodyText(response, "count=0")
             }
         }

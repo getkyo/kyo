@@ -4,9 +4,7 @@ import kyo.*
 import kyo.HttpOpenApi.*
 import kyo.HttpPath
 import kyo.HttpRequest.Method
-import kyo.HttpResponse.Status
-import kyo.HttpRoute.BodyEncoding
-import scala.annotation.tailrec
+import kyo.HttpRoute.*
 import scala.collection.mutable
 
 /** Generates OpenAPI 3.0 specification from HttpHandler definitions. */
@@ -46,167 +44,166 @@ private[kyo] object OpenApiGenerator:
         )
     end buildPathItem
 
-    private def buildOperation(route: HttpRoute[?, ?, ?]): Operation =
+    private def buildOperation(route: HttpRoute[?, ?, ?, ?]): Operation =
+        val meta        = route.metadata
         val parameters  = buildParameters(route)
         val requestBody = buildRequestBody(route)
         val responses   = buildResponses(route)
 
         Operation(
-            tags = route.tag.toOption.map(t => List(t)),
-            summary = route.summary.toOption,
-            description = route.description.toOption,
-            operationId = route.operationId.toOption,
-            deprecated = if route.isDeprecated then Some(true) else None,
+            tags = if meta.tags.isEmpty then None else Some(meta.tags.toList),
+            summary = meta.summary.toOption,
+            description = meta.description.toOption,
+            operationId = meta.operationId.toOption,
+            deprecated = if meta.deprecated then Some(true) else None,
             parameters = if parameters.isEmpty then None else Some(parameters.toList),
             requestBody = requestBody.toOption,
             responses = responses,
-            security = route.securityScheme.toOption.map(scheme => List(Map(scheme -> List.empty[String])))
+            security = meta.security.toOption.map(scheme => List(Map(scheme -> List.empty[String])))
         )
     end buildOperation
 
-    private def buildParameters(route: HttpRoute[?, ?, ?]): Seq[Parameter] =
-        val pathParams = extractPathParamsWithType(route.path).map { case (name, schema) =>
-            Parameter(
-                name = name,
-                in = "path",
-                required = Some(true),
-                schema = schema,
-                description = None
-            )
+    private def buildParameters(route: HttpRoute[?, ?, ?, ?]): Seq[Parameter] =
+        val pathParams = extractPathParams(route.path)
+
+        val inputParams = route.request.inputFields.collect {
+            case InputField.Query(name, _, default, optional, desc) =>
+                Parameter(
+                    name = name,
+                    in = "query",
+                    required = if !optional && default.isEmpty then Some(true) else None,
+                    schema = SchemaObject.string,
+                    description = if desc.nonEmpty then Some(desc) else None
+                )
+            case InputField.Header(name, _, default, optional, desc) =>
+                Parameter(
+                    name = name,
+                    in = "header",
+                    required = if !optional && default.isEmpty then Some(true) else None,
+                    schema = SchemaObject.string,
+                    description = if desc.nonEmpty then Some(desc) else None
+                )
+            case InputField.Cookie(name, _, default, optional, desc) =>
+                Parameter(
+                    name = name,
+                    in = "cookie",
+                    required = if !optional && default.isEmpty then Some(true) else None,
+                    schema = SchemaObject.string,
+                    description = if desc.nonEmpty then Some(desc) else None
+                )
         }
 
-        val queryParams = route.queryParams.map { qp =>
-            Parameter(
-                name = qp.name,
-                in = "query",
-                required = if qp.default.isEmpty then Some(true) else None,
-                schema = schemaToOpenApi(qp.schema),
-                description = None
-            )
-        }
-
-        val headerParams = route.headerParams.filter(_.authScheme.isEmpty).map { hp =>
-            Parameter(
-                name = hp.name,
-                in = "header",
-                required = if hp.default.isEmpty then Some(true) else None,
-                schema = SchemaObject.string,
-                description = None
-            )
-        }
-
-        val cookieParams = route.cookieParams.map { cp =>
-            Parameter(
-                name = cp.name,
-                in = "cookie",
-                required = if cp.default.isEmpty then Some(true) else None,
-                schema = SchemaObject.string,
-                description = None
-            )
-        }
-
-        pathParams ++ queryParams ++ headerParams ++ cookieParams
+        pathParams ++ inputParams
     end buildParameters
 
-    private def extractPathParamsWithType(path: HttpPath[Any]): Seq[(String, SchemaObject)] =
+    private def extractPathParams(path: HttpPath[?]): Seq[Parameter] =
         path match
-            case s: String => Seq.empty
-            case segment: HttpPath.Segment[?] =>
-                extractPathParamsFromSegmentWithType(segment)
+            case HttpPath.Literal(_) => Seq.empty
+            case HttpPath.Capture(wireName, _, codec) =>
+                Seq(Parameter(
+                    name = wireName,
+                    in = "path",
+                    required = Some(true),
+                    schema = inferCodecSchema(codec),
+                    description = None
+                ))
+            case HttpPath.Concat(left, right) =>
+                extractPathParams(left) ++ extractPathParams(right)
+            case HttpPath.Rest(fieldName) =>
+                Seq(Parameter(
+                    name = fieldName,
+                    in = "path",
+                    required = Some(true),
+                    schema = SchemaObject.string,
+                    description = None
+                ))
+    end extractPathParams
 
-    private def extractPathParamsFromSegmentWithType(segment: HttpPath.Segment[?]): Seq[(String, SchemaObject)] =
-        segment match
-            case HttpPath.Segment.Literal(_) => Seq.empty
-            case HttpPath.Segment.Capture(name, parse) =>
-                val schema = inferPathParamSchema(parse)
-                Seq((name, schema))
-            case HttpPath.Segment.Concat(left, right) =>
-                extractPathParamsFromSegmentWithType(left.asInstanceOf[HttpPath.Segment[?]]) ++
-                    extractPathParamsFromSegmentWithType(right.asInstanceOf[HttpPath.Segment[?]])
-
-    private def inferPathParamSchema(parse: String => ?): SchemaObject =
-        // Try to infer type from the parse function by testing with sample values
-        // Try integer first
+    /** Infer OpenAPI schema type from HttpCodec by probing with sample values. */
+    private def inferCodecSchema(codec: HttpCodec[?]): SchemaObject =
+        val c = codec.asInstanceOf[HttpCodec[Any]]
         try
-            parse("1") match
+            c.parse("1") match
                 case _: Int     => return SchemaObject.integer
                 case _: Long    => return SchemaObject.long
                 case _: Boolean => return SchemaObject.boolean
-                case _          => // continue
-        catch
-            case _: Exception => // continue
+                case _          => ()
+        catch case _: Exception => ()
         end try
-        // Try boolean
         try
-            parse("true") match
+            c.parse("true") match
                 case _: Boolean => return SchemaObject.boolean
-                case _          => // continue
-        catch
-            case _: Exception => // continue
+                case _          => ()
+        catch case _: Exception => ()
         end try
-        // Try UUID
         try
-            parse("00000000-0000-0000-0000-000000000000") match
+            c.parse("00000000-0000-0000-0000-000000000000") match
                 case _: java.util.UUID =>
                     return SchemaObject(Some("string"), Some("uuid"), None, None, None, None, None, None, None)
-                case _ => // continue
-        catch
-            case _: Exception => // continue
+                case _ => ()
+        catch case _: Exception => ()
         end try
         SchemaObject.string
-    end inferPathParamSchema
+    end inferCodecSchema
 
-    private def buildRequestBody(route: HttpRoute[?, ?, ?]): Maybe[RequestBody] =
-        route.bodyEncoding match
-            case Present(enc: (BodyEncoding.Json | BodyEncoding.Form)) =>
-                val schema = enc match
-                    case BodyEncoding.Json(s) => s
-                    case BodyEncoding.Form(s) => s
-                val ct = enc.contentType.getOrElse("application/json")
+    private def buildRequestBody(route: HttpRoute[?, ?, ?, ?]): Maybe[RequestBody] =
+        route.request.inputFields.collectFirst {
+            case InputField.Body(content, desc) => (content, desc)
+        } match
+            case Some((content, desc)) =>
+                val (ct, schema) = contentToMediaType(content)
                 Present(RequestBody(
                     required = Some(true),
-                    content = Map(ct -> MediaType(schema = schemaToOpenApi(schema))),
-                    description = None
+                    content = Map(ct -> MediaType(schema = schema)),
+                    description = if desc.nonEmpty then Some(desc) else None
                 ))
-            case _ => Absent
+            case None => Absent
 
-    private def buildResponses(route: HttpRoute[?, ?, ?]): Map[String, Response] =
-        val successStatus = route.outputStatus.code.toString
-        val successResponse = route.responseEncoding match
-            case Present(enc) =>
+    private def buildResponses(route: HttpRoute[?, ?, ?, ?]): Map[String, Response] =
+        val successStatus = route.response.status.code.toString
+
+        val successResponse = route.response.outputFields.collectFirst {
+            case OutputField.Body(content, desc) => (content, desc)
+        } match
+            case Some((content, desc)) =>
+                val (ct, schema) = contentToMediaType(content)
                 Response(
-                    description = "Success",
-                    content =
-                        Some(Map(enc.contentType -> MediaType(schema = schemaToOpenApi(HttpRoute.ResponseEncoding.extractSchema(enc)))))
+                    description = if desc.nonEmpty then desc else "Success",
+                    content = Some(Map(ct -> MediaType(schema = schema)))
                 )
-            case Absent =>
+            case None =>
                 Response(description = "Success", content = None)
 
-        val errorResponses = route.errorSchemas.map { case (status, schema, _) =>
-            status.code.toString -> Response(
+        val errorResponses = route.response.errorMappings.map { mapping =>
+            mapping.status.code.toString -> Response(
                 description = "Error",
-                content = Some(Map("application/json" -> MediaType(schema = schemaToOpenApi(schema))))
+                content = Some(Map("application/json" -> MediaType(schema = schemaToOpenApi(mapping.schema))))
             )
         }
 
         Map(successStatus -> successResponse) ++ errorResponses
     end buildResponses
 
-    private def pathToOpenApi(path: HttpPath[Any]): String =
-        path match
-            case s: String => s
-            case segment: HttpPath.Segment[?] =>
-                segmentToOpenApi(segment)
+    private def contentToMediaType(content: Content): (String, SchemaObject) =
+        content match
+            case Content.Json(schema)      => ("application/json", schemaToOpenApi(schema))
+            case Content.Text              => ("text/plain", SchemaObject.string)
+            case Content.Binary            => ("application/octet-stream", SchemaObject.string)
+            case Content.ByteStream        => ("application/octet-stream", SchemaObject.string)
+            case Content.Form(schema)      => ("application/x-www-form-urlencoded", schemaToOpenApi(schema))
+            case Content.Multipart         => ("multipart/form-data", SchemaObject.obj)
+            case Content.MultipartStream   => ("multipart/form-data", SchemaObject.obj)
+            case Content.Ndjson(schema, _) => ("application/x-ndjson", schemaToOpenApi(schema))
+            case Content.Sse(schema, _)    => ("text/event-stream", schemaToOpenApi(schema))
 
-    private def segmentToOpenApi(segment: HttpPath.Segment[?]): String =
-        segment match
-            case HttpPath.Segment.Literal(value) =>
-                // Ensure literal starts with / if it doesn't already
+    private def pathToOpenApi(path: HttpPath[?]): String =
+        path match
+            case HttpPath.Literal(value) =>
                 if value.startsWith("/") then value else "/" + value
-            case HttpPath.Segment.Capture(name, _) => s"/{$name}"
-            case HttpPath.Segment.Concat(left, right) =>
-                segmentToOpenApi(left.asInstanceOf[HttpPath.Segment[?]]) +
-                    segmentToOpenApi(right.asInstanceOf[HttpPath.Segment[?]])
+            case HttpPath.Capture(wireName, _, _) => s"/{$wireName}"
+            case HttpPath.Concat(left, right) =>
+                pathToOpenApi(left) + pathToOpenApi(right)
+            case HttpPath.Rest(fieldName) => s"/{$fieldName}"
 
     private def schemaToOpenApi(schema: kyo.Schema[?]): SchemaObject =
         zioSchemaToOpenApi(schema.zpiSchema)
@@ -295,7 +292,6 @@ private[kyo] object OpenApiGenerator:
         val cases = e.cases.toSeq
         if cases.isEmpty then SchemaObject.string
         else
-            // Check if it's a simple string enum (all cases have no fields)
             val allSimple = cases.forall { c =>
                 c.schema match
                     case r: zio.schema.Schema.Record[?] => r.fields.isEmpty
@@ -309,28 +305,29 @@ private[kyo] object OpenApiGenerator:
         end if
     end buildEnumSchema
 
-    /** Maps route auth scheme metadata to OpenAPI security scheme definitions. */
+    /** Collects security schemes from auth input fields. */
     private def collectSecuritySchemes(handlers: Seq[HttpHandler[Any]]): Map[String, SecurityScheme] =
         handlers.flatMap { handler =>
-            handler.route.securityScheme.toOption.map { scheme =>
-                val authParam = handler.route.headerParams.find(_.authScheme.isDefined)
-                val schemeObj = authParam.flatMap(_.authScheme.toOption) match
-                    case Some(HttpRoute.AuthScheme.Basic) =>
-                        SecurityScheme(`type` = "http", scheme = Some("basic"), bearerFormat = None, name = None, in = None)
-                    case Some(HttpRoute.AuthScheme.Bearer) =>
-                        SecurityScheme(`type` = "http", scheme = Some("bearer"), bearerFormat = None, name = None, in = None)
-                    case Some(HttpRoute.AuthScheme.ApiKey) =>
-                        val headerName = authParam.map(_.name).getOrElse("X-API-Key")
-                        SecurityScheme(
-                            `type` = "apiKey",
-                            scheme = None,
-                            bearerFormat = None,
-                            name = Some(headerName),
-                            in = Some("header")
-                        )
-                    case None =>
-                        SecurityScheme(`type` = "http", scheme = Some("bearer"), bearerFormat = None, name = None, in = None)
-                scheme -> schemeObj
+            val meta = handler.route.metadata
+            meta.security.toOption.flatMap { schemeName =>
+                handler.route.request.inputFields.collectFirst {
+                    case InputField.Auth(scheme) =>
+                        val secScheme = scheme match
+                            case AuthScheme.Bearer =>
+                                SecurityScheme(`type` = "http", scheme = Some("bearer"), bearerFormat = None, name = None, in = None)
+                            case AuthScheme.BasicUsername =>
+                                SecurityScheme(`type` = "http", scheme = Some("basic"), bearerFormat = None, name = None, in = None)
+                            case AuthScheme.BasicPassword =>
+                                // Skip — BasicUsername already handled this
+                                SecurityScheme(`type` = "http", scheme = Some("basic"), bearerFormat = None, name = None, in = None)
+                            case AuthScheme.ApiKey(name, location) =>
+                                val loc = location match
+                                    case AuthLocation.Header => "header"
+                                    case AuthLocation.Query  => "query"
+                                    case AuthLocation.Cookie => "cookie"
+                                SecurityScheme(`type` = "apiKey", scheme = None, bearerFormat = None, name = Some(name), in = Some(loc))
+                        schemeName -> secScheme
+                }
             }
         }.toMap
     end collectSecuritySchemes

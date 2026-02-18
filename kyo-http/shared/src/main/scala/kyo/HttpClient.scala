@@ -1,16 +1,14 @@
 package kyo
 
-import HttpRoute.BodyEncoding
-import HttpRoute.ResponseEncoding
+import HttpRoute.*
 import java.net.URI
 import kyo.internal.ConnectionPool
+import kyo.internal.Content
 import kyo.internal.NdjsonDecoder
 import kyo.internal.SseDecoder
 import kyo.internal.UrlParser
-import scala.NamedTuple.NamedTuple
+import scala.NamedTuple.AnyNamedTuple
 import scala.annotation.implicitNotFound
-import scala.annotation.tailrec
-import scala.annotation.targetName
 import scala.util.NotGiven
 
 /** HTTP client for sending requests with connection pooling, automatic retries, and redirect following.
@@ -284,158 +282,200 @@ object HttpClient:
     // --- Route-based client ---
 
     /** Calls a route with no inputs (no path captures, query, header, or body params). */
-    def call[Out, Err](route: HttpRoute[EmptyTuple, Out, Err])(using
+    def call[Out <: AnyNamedTuple, Err](route: HttpRoute[Row.Empty, Row.Empty, Out, Err])(using
         Frame,
-        BufferedOutput[Out]
-    ): Out < (Async & Abort[HttpError] & Abort[Err]) =
-        call(route, EmptyTuple)
+        BufferedOutput[OutputValue[Out]]
+    ): OutputValue[Out] < (Async & Abort[HttpError] & Abort[Err]) =
+        callImpl(route, EmptyTuple)
 
-    /** Calls a route with a single input, accepting the bare value without tuple wrapping. */
-    @targetName("callBare")
-    def call[N <: String & Singleton, A, Out, Err](
-        route: HttpRoute[NamedTuple[(N *: EmptyTuple), (A *: EmptyTuple)], Out, Err],
-        in: A
-    )(using Frame, BufferedOutput[Out]): Out < (Async & Abort[HttpError] & Abort[Err]) =
-        call(route, Tuple1(in).asInstanceOf[NamedTuple[(N *: EmptyTuple), (A *: EmptyTuple)]])
-
-    /** Client-side counterpart to `HttpRoute.handle` for buffered responses. Takes the route's flat `In` tuple and maps each element to
-      * wire format: path captures → URL segments, query params → query string, header params → HTTP headers, body input → request body.
-      * Deserializes the response via the route's response encoding and typed errors via the route's error schemas.
+    /** Calls a route with typed inputs. The input tuple contains path captures followed by request params, in declaration order.
       */
-    def call[In, Out, Err](route: HttpRoute[In, Out, Err], in: In)(using
-        Frame,
-        BufferedOutput[Out]
-    ): Out < (Async & Abort[HttpError] & Abort[Err]) =
-        val request = buildRouteRequest(route, in)
-        val isStreamingInput = route.bodyEncoding match
-            case Present(BodyEncoding.Streaming | BodyEncoding.StreamingMultipart) => true
-            case _                                                                 => false
+    def call[PathIn <: AnyNamedTuple, In <: AnyNamedTuple, Out <: AnyNamedTuple, Err](
+        route: HttpRoute[PathIn, In, Out, Err],
+        in: InputValue[PathIn, In]
+    )(using Frame, BufferedOutput[OutputValue[Out]]): OutputValue[Out] < (Async & Abort[HttpError] & Abort[Err]) =
+        callImpl(route, in)
+
+    private def callImpl[Out <: AnyNamedTuple, Err](
+        route: HttpRoute[?, ?, Out, Err],
+        in: Any
+    )(using Frame, BufferedOutput[OutputValue[Out]]): OutputValue[Out] < (Async & Abort[HttpError] & Abort[Err]) =
+        val request          = buildRouteRequest(route, in)
+        val isStreamingInput = hasStreamingInput(route)
         if isStreamingInput then
-            // Streaming input: use stream() with internal Scope, fully read response
             Scope.run {
                 stream(request).map { response =>
                     response.ensureBytes.map { buffered =>
                         if buffered.status.isError then
                             handleErrorResponse(route, buffered.status, buffered.bodyText)
                         else
-                            route.responseEncoding match
-                                case Present(enc) => ResponseEncoding.extractSchema(enc).asInstanceOf[Schema[Out]].decode(buffered.bodyText)
-                                case Absent       => ().asInstanceOf[Out]
+                            decodeBufferedBody[Out](route, buffered)
                     }
                 }
             }
         else
-            // Buffered input: use send() for pooled connection + redirect/retry
             send(request.asInstanceOf[HttpRequest[HttpBody.Bytes]]).map { response =>
                 if response.status.isError then
                     handleErrorResponse(route, response.status, response.bodyText)
                 else
-                    route.responseEncoding match
-                        case Present(enc) => ResponseEncoding.extractSchema(enc).asInstanceOf[Schema[Out]].decode(response.bodyText)
-                        case Absent       => ().asInstanceOf[Out]
+                    decodeBufferedBody[Out](route, response)
             }
         end if
-    end call
+    end callImpl
 
     /** Calls a route with streaming output (SSE, NDJSON). Requires `Scope` for the streaming connection lifecycle. */
-    def callStream[Out, Err](route: HttpRoute[EmptyTuple, Out, Err])(using Frame): Out < (Async & Scope & Abort[HttpError] & Abort[Err]) =
-        callStream(route, EmptyTuple)
-
-    /** Calls a streaming route with a single input, accepting the bare value without tuple wrapping. */
-    @targetName("callStreamBare")
-    def callStream[N <: String & Singleton, A, Out, Err](
-        route: HttpRoute[NamedTuple[(N *: EmptyTuple), (A *: EmptyTuple)], Out, Err],
-        in: A
-    )(using Frame): Out < (Async & Scope & Abort[HttpError] & Abort[Err]) =
-        callStream(route, Tuple1(in).asInstanceOf[NamedTuple[(N *: EmptyTuple), (A *: EmptyTuple)]])
-
-    /** Client-side counterpart to `HttpRoute.handle` for streaming responses. Uses `stream` to get a streaming response and decodes
-      * SSE/NDJSON based on the route's response encoding.
-      */
-    def callStream[In, Out, Err](route: HttpRoute[In, Out, Err], in: In)(using
+    def callStream[Out <: AnyNamedTuple, Err](route: HttpRoute[Row.Empty, Row.Empty, Out, Err])(using
         Frame
-    ): Out < (Async & Scope & Abort[HttpError] & Abort[Err]) =
+    ): OutputValue[Out] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
+        callStreamImpl(route, EmptyTuple)
+
+    /** Calls a streaming route with typed inputs. */
+    def callStream[PathIn <: AnyNamedTuple, In <: AnyNamedTuple, Out <: AnyNamedTuple, Err](
+        route: HttpRoute[PathIn, In, Out, Err],
+        in: InputValue[PathIn, In]
+    )(using Frame): OutputValue[Out] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
+        callStreamImpl(route, in)
+
+    private def callStreamImpl[Out <: AnyNamedTuple, Err](
+        route: HttpRoute[?, ?, Out, Err],
+        in: Any
+    )(using Frame): OutputValue[Out] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
         val request = buildRouteRequest(route, in)
         stream(request).map { response =>
             if response.status.isError then
-                // Read full body for error response
                 response.ensureBytes.map { buffered =>
                     handleErrorResponse(route, buffered.status, buffered.bodyText)
                 }
             else
-                route.responseEncoding match
-                    case Present(ResponseEncoding.Sse(schema, emitTag)) =>
-                        val decoder                            = new SseDecoder[Any](schema)
-                        given Tag[Emit[Chunk[HttpEvent[Any]]]] = emitTag.asInstanceOf[Tag[Emit[Chunk[HttpEvent[Any]]]]]
-                        response.bodyStream.mapChunkPure[Span[Byte], HttpEvent[Any]] { chunk =>
-                            val result = Seq.newBuilder[HttpEvent[Any]]
-                            chunk.foreach(bytes => result ++= decoder.decode(bytes))
-                            result.result()
-                        }.asInstanceOf[Out]
-                    case Present(ResponseEncoding.Ndjson(schema, emitTag)) =>
-                        val decoder                 = new NdjsonDecoder[Any](schema)
-                        given Tag[Emit[Chunk[Any]]] = emitTag.asInstanceOf[Tag[Emit[Chunk[Any]]]]
-                        response.bodyStream.mapChunkPure[Span[Byte], Any] { chunk =>
-                            val result = Seq.newBuilder[Any]
-                            chunk.foreach(bytes => result ++= decoder.decode(bytes))
-                            result.result()
-                        }.asInstanceOf[Out]
-                    case Present(ResponseEncoding.Json(schema)) =>
-                        // Buffered response over streaming connection
-                        response.ensureBytes.map { buffered =>
-                            schema.asInstanceOf[Schema[Out]].decode(buffered.bodyText)
-                        }
-                    case Absent =>
-                        ().asInstanceOf[Out]
+                decodeStreamBody[Out](route, response)
         }
-    end callStream
+    end callStreamImpl
 
-    private def buildRouteRequest[In](route: HttpRoute[In, ?, ?], in: In): HttpRequest[?] =
-        val pathCount   = countPathCaptures(route.path)
-        val queryOffset = if route.queryParams.nonEmpty then pathCount + route.queryParams.head.id else -1
-        val hdrOffset   = if route.headerParams.nonEmpty then pathCount + route.headerParams.head.id else -1
-        val cookieOff   = if route.cookieParams.nonEmpty then pathCount + route.cookieParams.head.id else -1
-        val bodyOffset  = if route.bodyId >= 0 then pathCount + route.bodyId else -1
+    private def buildRouteRequest(route: HttpRoute[?, ?, ?, ?], in: Any): HttpRequest[?] =
+        val (pathStr, pathCount)              = buildRoutePath(route.path, in, 0)
+        var queryParts                        = List.empty[String]
+        var headers                           = HttpHeaders.empty
+        var cookieParts                       = List.empty[String]
+        var bodyValue: Any                    = null
+        var bodyContent: Content.Input | Null = null
 
-        val pathStr  = buildRoutePath(route.path, in)
-        val queryStr = buildRouteQueryString(route.queryParams, in, queryOffset)
+        var fieldIdx = pathCount
+        route.request.inputFields.foreach:
+            case InputField.Query(name, codec, _, optional, _) =>
+                val raw = extractAt(in, fieldIdx)
+                if optional then
+                    raw.asInstanceOf[Maybe[Any]] match
+                        case Present(v) =>
+                            queryParts :+= s"$name=${java.net.URLEncoder.encode(codec.asInstanceOf[HttpCodec[Any]].serialize(v), "UTF-8")}"
+                        case Absent => ()
+                else
+                    queryParts :+= s"$name=${java.net.URLEncoder.encode(codec.asInstanceOf[HttpCodec[Any]].serialize(raw), "UTF-8")}"
+                end if
+                fieldIdx += 1
+
+            case InputField.Header(name, codec, _, optional, _) =>
+                val raw = extractAt(in, fieldIdx)
+                if optional then
+                    raw.asInstanceOf[Maybe[Any]] match
+                        case Present(v) => headers = headers.add(name, codec.asInstanceOf[HttpCodec[Any]].serialize(v))
+                        case Absent     => ()
+                else
+                    headers = headers.add(name, codec.asInstanceOf[HttpCodec[Any]].serialize(raw))
+                end if
+                fieldIdx += 1
+
+            case InputField.Cookie(name, codec, _, optional, _) =>
+                val raw = extractAt(in, fieldIdx)
+                if optional then
+                    raw.asInstanceOf[Maybe[Any]] match
+                        case Present(v) => cookieParts :+= s"$name=${codec.asInstanceOf[HttpCodec[Any]].serialize(v)}"
+                        case Absent     => ()
+                else
+                    cookieParts :+= s"$name=${codec.asInstanceOf[HttpCodec[Any]].serialize(raw)}"
+                end if
+                fieldIdx += 1
+
+            case InputField.Body(content, _) =>
+                bodyValue = extractAt(in, fieldIdx)
+                bodyContent = content
+                fieldIdx += 1
+
+            case InputField.Auth(scheme) =>
+                scheme match
+                    case AuthScheme.Bearer =>
+                        val token = extractAt(in, fieldIdx)
+                        headers = headers.add("Authorization", s"Bearer $token")
+                    case AuthScheme.BasicUsername =>
+                        val username = extractAt(in, fieldIdx)
+                        val password = extractAt(in, fieldIdx + 1) // peek ahead — BasicPassword follows
+                        val encoded  = java.util.Base64.getEncoder.encodeToString(s"$username:$password".getBytes("UTF-8"))
+                        headers = headers.add("Authorization", s"Basic $encoded")
+                    case AuthScheme.BasicPassword =>
+                        () // already handled by BasicUsername
+                    case AuthScheme.ApiKey(name, location) =>
+                        val value = extractAt(in, fieldIdx)
+                        location match
+                            case AuthLocation.Header =>
+                                headers = headers.add(name, value.toString)
+                            case AuthLocation.Query =>
+                                queryParts :+= s"$name=${java.net.URLEncoder.encode(value.toString, "UTF-8")}"
+                            case AuthLocation.Cookie =>
+                                cookieParts :+= s"$name=$value"
+                        end match
+                end match
+                fieldIdx += 1
+
+        if cookieParts.nonEmpty then
+            headers = headers.add("Cookie", cookieParts.mkString("; "))
+
+        val queryStr = queryParts.mkString("&")
         val fullPath = if queryStr.isEmpty then pathStr else s"$pathStr?$queryStr"
-        val headers  = buildRouteHeaders(route.headerParams, route.cookieParams, in, hdrOffset, cookieOff)
 
-        route.bodyEncoding match
-            case Present(BodyEncoding.Multipart) =>
-                val bodyValue = extractInputAt(in, bodyOffset).asInstanceOf[Seq[HttpRequest.Part]]
-                HttpRequest.multipart(fullPath, bodyValue, headers)
-            case Present(BodyEncoding.Streaming) =>
-                val bodyStream = extractInputAt(in, bodyOffset).asInstanceOf[Stream[Span[Byte], Async]]
-                HttpRequest.stream(route.method, fullPath, bodyStream, headers)
-            case Present(BodyEncoding.StreamingMultipart) =>
+        bodyContent match
+            case Content.Multipart =>
+                HttpRequest.multipart(fullPath, bodyValue.asInstanceOf[Seq[HttpRequest.Part]], headers)
+            case Content.ByteStream =>
+                HttpRequest.stream(route.method, fullPath, bodyValue.asInstanceOf[Stream[Span[Byte], Async]], headers)
+            case Content.MultipartStream =>
                 throw new UnsupportedOperationException(
-                    "Streaming multipart client calls are not yet supported. Use requestBodyMultipart for buffered multipart."
+                    "Streaming multipart client calls are not yet supported. Use bodyMultipart for buffered multipart."
                 )
-            case Present(enc) =>
-                val bodyValue = extractInputAt(in, bodyOffset)
-                val encoded   = enc.encode(bodyValue)
-                val ct        = enc.contentType.getOrElse("application/octet-stream")
-                HttpRequest.initBytes(route.method, fullPath, encoded.getBytes("UTF-8"), headers, ct)
-            case Absent =>
+            case Content.Json(schema) =>
+                val encoded = schema.asInstanceOf[Schema[Any]].encode(bodyValue)
+                HttpRequest.initBytes(route.method, fullPath, encoded.getBytes("UTF-8"), headers, "application/json")
+            case Content.Text =>
+                HttpRequest.initBytes(route.method, fullPath, bodyValue.toString.getBytes("UTF-8"), headers, "text/plain")
+            case Content.Binary =>
+                val bytes = bodyValue.asInstanceOf[Span[Byte]]
+                HttpRequest.initBytes(route.method, fullPath, bytes.toArray, headers, "application/octet-stream")
+            case Content.Form(schema) =>
+                val encoded = schema.asInstanceOf[Schema[Any]].encode(bodyValue)
+                HttpRequest.initBytes(route.method, fullPath, encoded.getBytes("UTF-8"), headers, "application/x-www-form-urlencoded")
+            case Content.Ndjson(schema, _) =>
+                given Frame = Frame.internal
+                val ndjsonStream = bodyValue.asInstanceOf[Stream[Any, Async]].map { v =>
+                    Span.fromUnsafe((schema.asInstanceOf[Schema[Any]].encode(v) + "\n").getBytes("UTF-8"))
+                }
+                HttpRequest.stream(route.method, fullPath, ndjsonStream, headers)
+            case null =>
                 HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
         end match
     end buildRouteRequest
 
     private def handleErrorResponse[Err](
-        route: HttpRoute[?, ?, Err],
-        responseStatus: HttpResponse.Status,
+        route: HttpRoute[?, ?, ?, Err],
+        responseStatus: HttpStatus,
         body: String
     )(using Frame): Nothing < Abort[Err | HttpError] =
-        val errOpt = route.errorSchemas.collectFirst {
-            case (status, schema, _) if responseStatus == status =>
-                try Some(schema.asInstanceOf[Schema[Any]].decode(body))
+        val statusCode = responseStatus.code
+        val errOpt = route.response.errorMappings.collectFirst {
+            case mapping if mapping.status.code == statusCode =>
+                try Some(mapping.schema.asInstanceOf[Schema[Any]].decode(body))
                 catch case _: Exception => None
         }.flatten
         errOpt match
             case Some(err) => Abort.fail(err.asInstanceOf[Err])
-            case None      => Abort.fail(HttpError.InvalidResponse(s"HTTP error: ${responseStatus}"))
+            case None      => Abort.fail(HttpError.InvalidResponse(s"HTTP error: $responseStatus"))
     end handleErrorResponse
 
     // --- Context management ---
@@ -739,97 +779,89 @@ object HttpClient:
 
     // --- Route call helpers ---
 
-    private def buildRoutePath(path: HttpPath[Any], in: Any): String =
+    private def hasStreamingInput(route: HttpRoute[?, ?, ?, ?]): Boolean =
+        route.request.inputFields.exists:
+            case InputField.Body(Content.ByteStream | Content.MultipartStream | Content.Ndjson(_, _), _) => true
+            case _                                                                                       => false
+
+    private def buildRoutePath(path: HttpPath[?], in: Any, offset: Int): (String, Int) =
         path match
-            case s: String                    => s
-            case segment: HttpPath.Segment[?] => buildUrlFromSegment(segment, in, 0)._1
+            case HttpPath.Literal(s) => (s, offset)
+            case HttpPath.Capture(_, _, codec) =>
+                val value   = extractAt(in, offset)
+                val encoded = java.net.URLEncoder.encode(codec.asInstanceOf[HttpCodec[Any]].serialize(value), "UTF-8")
+                ("/" + encoded, offset + 1)
+            case HttpPath.Concat(left, right) =>
+                val (leftStr, nextOffset)  = buildRoutePath(left, in, offset)
+                val (rightStr, lastOffset) = buildRoutePath(right, in, nextOffset)
+                if rightStr.startsWith("/") then (leftStr + rightStr, lastOffset)
+                else (leftStr + "/" + rightStr, lastOffset)
+            case HttpPath.Rest(_) =>
+                val value = extractAt(in, offset)
+                ("/" + value, offset + 1)
 
-    private def buildUrlFromSegment(segment: HttpPath.Segment[?], in: Any, idx: Int): (String, Int) =
-        segment match
-            case HttpPath.Segment.Literal(value) =>
-                (value, idx)
-            case HttpPath.Segment.Capture(name, _) =>
-                val value = extractInputAt(in, idx)
-                (s"/$value", idx + 1)
-            case HttpPath.Segment.Concat(left, right) =>
-                val (leftStr, nextIdx)  = buildUrlFromSegment(left.asInstanceOf[HttpPath.Segment[?]], in, idx)
-                val (rightStr, lastIdx) = buildUrlFromSegment(right.asInstanceOf[HttpPath.Segment[?]], in, nextIdx)
-                if rightStr.startsWith("/") then (leftStr + rightStr, lastIdx)
-                else (leftStr + "/" + rightStr, lastIdx)
-
-    private def extractInputAt(in: Any, idx: Int): Any =
+    private def extractAt(in: Any, idx: Int): Any =
         in match
             case tuple: Tuple => tuple.productElement(idx)
-            case other => if idx == 0 then other else throw new IllegalStateException(s"Cannot extract input at index $idx from $other")
+            case other =>
+                if idx == 0 then other
+                else throw new IllegalStateException(s"Cannot extract input at index $idx from $other")
 
-    private def buildRouteHeaders(
-        headerParams: Seq[HttpRoute.HeaderParam],
-        cookieParams: Seq[HttpRoute.CookieParam],
-        in: Any,
-        headerOffset: Int,
-        cookieOffset: Int
-    ): HttpHeaders =
-        // Build header params with auth transforms
-        @tailrec def loopHeaders(i: Int, offset: Int, headers: HttpHeaders): HttpHeaders =
-            if i >= headerParams.size then headers
-            else
-                val param = headerParams(i)
-                param.authScheme match
-                    case Present(HttpRoute.AuthScheme.Bearer) =>
-                        val token = extractInputAt(in, offset)
-                        loopHeaders(i + 1, offset + 1, headers.add("Authorization", s"Bearer $token"))
-                    case Present(HttpRoute.AuthScheme.Basic) =>
-                        val username = extractInputAt(in, offset)
-                        val password = extractInputAt(in, offset + 1)
-                        val encoded  = java.util.Base64.getEncoder.encodeToString(s"$username:$password".getBytes("UTF-8"))
-                        loopHeaders(i + 1, offset + 2, headers.add("Authorization", s"Basic $encoded"))
-                    case Present(HttpRoute.AuthScheme.ApiKey) =>
-                        val value = extractInputAt(in, offset)
-                        loopHeaders(i + 1, offset + 1, headers.add(param.name, value.toString))
-                    case Absent =>
-                        val value = extractInputAt(in, offset)
-                        loopHeaders(i + 1, offset + 1, headers.add(param.name, value.toString))
-                end match
-        val headers = loopHeaders(0, headerOffset, HttpHeaders.empty)
+    private def decodeBufferedBody[Out <: AnyNamedTuple](
+        route: HttpRoute[?, ?, Out, ?],
+        response: HttpResponse[HttpBody.Bytes]
+    ): OutputValue[Out] =
+        findBodyContent(route.response.outputFields) match
+            case Present(Content.Json(schema)) =>
+                schema.decode(response.bodyText).asInstanceOf[OutputValue[Out]]
+            case Present(Content.Text) =>
+                response.bodyText.asInstanceOf[OutputValue[Out]]
+            case Present(Content.Binary) =>
+                response.bodyBytes.asInstanceOf[OutputValue[Out]]
+            case _ =>
+                ().asInstanceOf[OutputValue[Out]]
 
-        // Build Cookie header from cookie params
-        if cookieParams.isEmpty then headers
-        else
-            val cookieParts = new Array[String](cookieParams.size)
-            @tailrec def loopCookies(j: Int): Unit =
-                if j < cookieParams.size then
-                    val cp = cookieParams(j)
-                    cookieParts(j) = s"${cp.name}=${extractInputAt(in, cookieOffset + j)}"
-                    loopCookies(j + 1)
-            loopCookies(0)
-            headers.add("Cookie", cookieParts.mkString("; "))
-        end if
-    end buildRouteHeaders
+    private def decodeStreamBody[Out <: AnyNamedTuple](
+        route: HttpRoute[?, ?, Out, ?],
+        response: HttpResponse[HttpBody.Streamed]
+    )(using Frame): OutputValue[Out] < (Async & Scope) =
+        findBodyContent(route.response.outputFields) match
+            case Present(Content.Sse(schema, emitTag)) =>
+                val decoder                            = new SseDecoder[Any](schema)
+                given Tag[Emit[Chunk[HttpEvent[Any]]]] = emitTag.asInstanceOf[Tag[Emit[Chunk[HttpEvent[Any]]]]]
+                response.bodyStream.mapChunkPure[Span[Byte], HttpEvent[Any]] { chunk =>
+                    val result = Seq.newBuilder[HttpEvent[Any]]
+                    chunk.foreach(bytes => result ++= decoder.decode(bytes))
+                    result.result()
+                }.asInstanceOf[OutputValue[Out]]
+            case Present(Content.Ndjson(schema, emitTag)) =>
+                val decoder                 = new NdjsonDecoder[Any](schema)
+                given Tag[Emit[Chunk[Any]]] = emitTag.asInstanceOf[Tag[Emit[Chunk[Any]]]]
+                response.bodyStream.mapChunkPure[Span[Byte], Any] { chunk =>
+                    val result = Seq.newBuilder[Any]
+                    chunk.foreach(bytes => result ++= decoder.decode(bytes))
+                    result.result()
+                }.asInstanceOf[OutputValue[Out]]
+            case Present(Content.Json(schema)) =>
+                response.ensureBytes.map { buffered =>
+                    schema.decode(buffered.bodyText).asInstanceOf[OutputValue[Out]]
+                }
+            case _ =>
+                ().asInstanceOf[OutputValue[Out]]
 
-    private def buildRouteQueryString(queryParams: Seq[HttpRoute.QueryParam[?]], in: Any, queryOffset: Int): String =
-        if queryParams.isEmpty then ""
-        else
-            val pairs = queryParams.zipWithIndex.map { case (param, i) =>
-                val value = extractInputAt(in, queryOffset + i)
-                s"${param.name}=${java.net.URLEncoder.encode(value.toString, "UTF-8")}"
-            }
-            pairs.mkString("&")
-
-    private def countPathCaptures(path: HttpPath[Any]): Int =
-        path match
-            case _: String                    => 0
-            case segment: HttpPath.Segment[?] => countSegmentCaptures(segment)
-
-    private def countSegmentCaptures(segment: HttpPath.Segment[?]): Int =
-        segment match
-            case HttpPath.Segment.Literal(_)    => 0
-            case HttpPath.Segment.Capture(_, _) => 1
-            case HttpPath.Segment.Concat(left, right) =>
-                countSegmentCaptures(left.asInstanceOf[HttpPath.Segment[?]]) +
-                    countSegmentCaptures(right.asInstanceOf[HttpPath.Segment[?]])
+    private def findBodyContent(fields: Seq[OutputField]): Maybe[Content.Output] =
+        var i = 0
+        while i < fields.size do
+            fields(i) match
+                case OutputField.Body(content, _) => return Present(content)
+                case _                            => ()
+            i += 1
+        end while
+        Absent
+    end findBodyContent
 
     /** Evidence that `Out` is not a streaming type. Prevents `call()` from being used with `outputSse`/`outputNdjson` routes. */
-    @implicitNotFound("call() cannot be used with streaming output routes (responseBodySse/responseBodyNdjson). Use callStream() instead.")
+    @implicitNotFound("call() cannot be used with streaming output routes (bodySse/bodyNdjson). Use callStream() instead.")
     sealed trait BufferedOutput[A]
     object BufferedOutput:
         given [A](using NotGiven[A <:< Stream[?, ?]]): BufferedOutput[A] with {}

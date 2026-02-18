@@ -34,7 +34,7 @@ class ResponseStreamingHandlerTest extends Test:
 
             pollHeaders(headerPromise) match
                 case Present(Result.Success(headers)) =>
-                    assert(headers.status == kyo.HttpResponse.Status.OK)
+                    assert(headers.status == kyo.HttpStatus.OK)
                     assert(headers.headers.exists((k, v) => k == "Content-Type" && v == "text/plain"))
                 case other =>
                     fail(s"Expected completed Success but got $other")
@@ -84,7 +84,7 @@ class ResponseStreamingHandlerTest extends Test:
 
             pollHeaders(headerPromise) match
                 case Present(Result.Success(headers)) =>
-                    assert(headers.status == kyo.HttpResponse.Status.InternalServerError)
+                    assert(headers.status == kyo.HttpStatus.InternalServerError)
                 case other =>
                     fail(s"Expected completed Success with error status but got $other")
             end match
@@ -106,7 +106,7 @@ class ResponseStreamingHandlerTest extends Test:
             // The error body should be available through the byte channel
             pollHeaders(headerPromise) match
                 case Present(Result.Success(headers)) =>
-                    assert(headers.status == kyo.HttpResponse.Status.BadRequest)
+                    assert(headers.status == kyo.HttpStatus.BadRequest)
                     byteChannel.poll() match
                         case Result.Success(Present(s)) =>
                             assert(new String(s.toArray, "UTF-8") == "{\"error\":\"invalid\"}")

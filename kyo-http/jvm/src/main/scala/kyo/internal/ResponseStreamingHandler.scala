@@ -15,7 +15,7 @@ final private[kyo] class ResponseStreamingHandler(
         // Netty delivers HttpResponse (headers) then HttpContent chunks — both arrive here
         if msg.isInstanceOf[io.netty.handler.codec.http.HttpResponse] then
             val response = msg.asInstanceOf[io.netty.handler.codec.http.HttpResponse]
-            val status   = HttpResponse.Status(response.status().code())
+            val status   = HttpStatus(response.status().code())
             val headers  = NettyHeaderUtil.extract(response.headers())
             discard(headerPromise.complete(Result.succeed(StreamingHeaders(status, headers))))
         end if

@@ -120,7 +120,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     // Response assertion helpers
 
     /** Asserts that the response has the expected status. */
-    def assertStatus(response: HttpResponse[?], expected: HttpResponse.Status): Assertion =
+    def assertStatus(response: HttpResponse[?], expected: HttpStatus): Assertion =
         assert(response.status == expected, s"Expected status $expected but got ${response.status}")
 
     /** Asserts that the response body text matches the expected string. */

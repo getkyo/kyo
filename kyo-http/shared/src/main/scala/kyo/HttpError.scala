@@ -51,7 +51,7 @@ object HttpError:
         extends HttpError(s"Invalid response: $message")
 
     /** HTTP status error (4xx/5xx) from typed convenience methods. */
-    case class StatusError(status: HttpResponse.Status, body: String)(using Frame)
+    case class StatusError(status: HttpStatus, body: String)(using Frame)
         extends HttpError(s"HTTP ${status.code}", body)
 
     /** Failed to parse response body. */
@@ -59,7 +59,7 @@ object HttpError:
         extends HttpError(s"Failed to parse response: $message", cause)
 
     /** Retry schedule exhausted while still getting retriable responses. */
-    case class RetriesExhausted(attempts: Int, lastStatus: HttpResponse.Status, lastBody: String)(using Frame)
+    case class RetriesExhausted(attempts: Int, lastStatus: HttpStatus, lastBody: String)(using Frame)
         extends HttpError(s"Retries exhausted after $attempts attempts (last status: ${lastStatus.code})", lastBody)
 
     /** Convert a Throwable to an HttpError based on its type. */

@@ -1,6 +1,6 @@
 package kyo
 
-import HttpPath./
+import HttpPath.*
 import java.util.UUID
 
 class HttpPathTest extends Test:
@@ -9,71 +9,72 @@ class HttpPathTest extends Test:
 
     "construction" - {
         "apply creates literal path" in {
-            val p: HttpPath[EmptyTuple] = HttpPath("/api/users")
+            val p: HttpPath[Row.Empty] = Literal("/api/users")
             succeed
         }
 
         "implicit string conversion" in {
-            val p: HttpPath[EmptyTuple] = "/api/users"
+            val p: HttpPath[Row.Empty] = "/api/users"
             succeed
         }
     }
 
     "captures" - {
         "int capture" in {
-            val p: HttpPath[(id: Int)] = HttpPath.int("id")
+            val p: HttpPath[(id: Int)] = Capture[Int]("id")
             succeed
         }
 
         "long capture" in {
-            val p: HttpPath[(id: Long)] = HttpPath.long("id")
+            val p: HttpPath[(id: Long)] = Capture[Long]("id")
             succeed
         }
 
         "string capture" in {
-            val p: HttpPath[(name: String)] = HttpPath.string("name")
+            val p: HttpPath[(name: String)] = Capture[String]("name")
             succeed
         }
 
         "uuid capture" in {
-            val p: HttpPath[(id: UUID)] = HttpPath.uuid("id")
+            val p: HttpPath[(id: UUID)] = Capture[java.util.UUID]("id")
             succeed
         }
 
         "boolean capture" in {
-            val p: HttpPath[(flag: Boolean)] = HttpPath.boolean("flag")
+            val p: HttpPath[(flag: Boolean)] = Capture[Boolean]("flag")
             succeed
         }
 
-        "empty capture name rejected at compile time" in {
-            typeCheckFailure("""HttpPath.int("")""")("Parameter name cannot be empty")
+        "empty capture name compiles (no compile-time validation)" in {
+            val p = Capture[Int]("")
+            succeed
         }
     }
 
     "/ composition" - {
         "two literals" in {
-            val p: HttpPath[EmptyTuple] = HttpPath("/api") / HttpPath("/users")
+            val p = Literal("/api") / Literal("/users")
             succeed
         }
 
         "literal and capture" in {
-            val p: HttpPath[(id: Int)] = HttpPath("/users") / HttpPath.int("id")
+            val p: HttpPath[(id: Int)] = "/users" / Capture[Int]("id")
             succeed
         }
 
         "capture and literal" in {
-            val p: HttpPath[(id: Int)] = HttpPath.int("id") / HttpPath("/details")
+            val p: HttpPath[(id: Int)] = Capture[Int]("id") / "details"
             succeed
         }
 
         "two captures" in {
-            val p: HttpPath[(name: String, id: Int)] = HttpPath.string("name") / HttpPath.int("id")
+            val p: HttpPath[(name: String, id: Int)] = Capture[String]("name") / Capture[Int]("id")
             succeed
         }
 
         "three captures" in {
             val p: HttpPath[(a: String, b: Int, c: Boolean)] =
-                HttpPath.string("a") / HttpPath.int("b") / HttpPath.boolean("c")
+                Capture[String]("a") / Capture[Int]("b") / Capture[Boolean]("c")
             succeed
         }
     }
@@ -139,7 +140,7 @@ class HttpPathTest extends Test:
 
     "integration with handler" - {
         "int capture extracts value" in run {
-            val handler = HttpHandler.get("/users" / HttpPath.int("id")) { in =>
+            val handler = HttpHandler.get("/users" / Capture[Int]("id")) { in =>
                 HttpResponse.ok(s"user:${in.id}")
             }
             for
@@ -150,7 +151,7 @@ class HttpPathTest extends Test:
         }
 
         "string capture extracts value" in run {
-            val handler = HttpHandler.get("/greet" / HttpPath.string("name")) { in =>
+            val handler = HttpHandler.get("/greet" / Capture[String]("name")) { in =>
                 HttpResponse.ok(s"hello:${in.name}")
             }
             for
@@ -161,7 +162,7 @@ class HttpPathTest extends Test:
         }
 
         "multiple captures extract values" in run {
-            val handler = HttpHandler.get("/users" / HttpPath.string("name") / HttpPath.int("id")) { in =>
+            val handler = HttpHandler.get("/users" / Capture[String]("name") / Capture[Int]("id")) { in =>
                 HttpResponse.ok(s"${in.name}:${in.id}")
             }
             for
@@ -172,7 +173,7 @@ class HttpPathTest extends Test:
         }
 
         "url-encoded capture" in run {
-            val handler = HttpHandler.get("/search" / HttpPath.string("q")) { in =>
+            val handler = HttpHandler.get("/search" / Capture[String]("q")) { in =>
                 HttpResponse.ok(s"query:${in.q}")
             }
             for

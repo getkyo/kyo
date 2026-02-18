@@ -14,7 +14,7 @@ class EasyRacerJvmTest extends Test:
             val queryString = in.request.url
             val qIdx        = queryString.indexOf('?')
             if qIdx < 0 then
-                HttpResponse(HttpResponse.Status.BadRequest): HttpResponse[?] < (Async & Any)
+                HttpResponse(HttpStatus.BadRequest): HttpResponse[?] < (Async & Any)
             else
                 val paramStr = queryString.substring(qIdx + 1)
                 val eqIdx    = paramStr.indexOf('=')
@@ -35,21 +35,21 @@ class EasyRacerJvmTest extends Test:
                         val jnow = now.toJava
                         Option(sessions.get(id)) match
                             case None =>
-                                HttpResponse(HttpResponse.Status.Found): HttpResponse[?] < (Async & Any)
+                                HttpResponse(HttpStatus.Found): HttpResponse[?] < (Async & Any)
                             case Some((readings, duration, startTime)) =>
                                 val isInBlocking = jnow.isBefore(startTime.plusSeconds(duration.toSeconds))
                                 if isInBlocking then
                                     sessions.put(id, (readings :+ load, duration, startTime))
-                                    HttpResponse(HttpResponse.Status.Found): HttpResponse[?] < (Async & Any)
+                                    HttpResponse(HttpStatus.Found): HttpResponse[?] < (Async & Any)
                                 else if readings.size < duration.toSeconds - 1 then
-                                    HttpResponse(HttpResponse.Status.BadRequest, "Not enough readings"): HttpResponse[?] < (Async & Any)
+                                    HttpResponse(HttpStatus.BadRequest, "Not enough readings"): HttpResponse[?] < (Async & Any)
                                 else
                                     val meanLoad = readings.sum / readings.size
                                     if load > 0.3 then
-                                        HttpResponse(HttpResponse.Status.Found, s"Load still high: $load"): HttpResponse[?] < (Async & Any)
+                                        HttpResponse(HttpStatus.Found, s"Load still high: $load"): HttpResponse[?] < (Async & Any)
                                     else if meanLoad < 0.8 then
                                         HttpResponse(
-                                            HttpResponse.Status.BadRequest,
+                                            HttpStatus.BadRequest,
                                             s"CPU not loaded enough: $meanLoad"
                                         ): HttpResponse[?] < (Async & Any)
                                     else

@@ -1,6 +1,6 @@
 package kyo
 
-import HttpResponse.Status
+import kyo.HttpStatus
 
 class HttpClientTest extends Test:
 
@@ -25,10 +25,10 @@ class HttpClientTest extends Test:
 
         "default retryOn" in {
             val config = HttpClient.Config.default
-            assert(config.retryOn(HttpResponse(Status.InternalServerError)) == true)
-            assert(config.retryOn(HttpResponse(Status.BadGateway)) == true)
-            assert(config.retryOn(HttpResponse(Status.OK)) == false)
-            assert(config.retryOn(HttpResponse(Status.BadRequest)) == false)
+            assert(config.retryOn(HttpResponse(HttpStatus.InternalServerError)) == true)
+            assert(config.retryOn(HttpResponse(HttpStatus.BadGateway)) == true)
+            assert(config.retryOn(HttpResponse(HttpStatus.OK)) == false)
+            assert(config.retryOn(HttpResponse(HttpStatus.BadRequest)) == false)
         }
 
         "construction with base URL" in {
@@ -70,8 +70,8 @@ class HttpClientTest extends Test:
 
             "retryWhen with predicate" in {
                 val config = HttpClient.Config.default.retryWhen(_.status.isServerError)
-                assert(config.retryOn(HttpResponse(Status.InternalServerError)) == true)
-                assert(config.retryOn(HttpResponse(Status.OK)) == false)
+                assert(config.retryOn(HttpResponse(HttpStatus.InternalServerError)) == true)
+                assert(config.retryOn(HttpResponse(HttpStatus.OK)) == false)
             }
 
             "chaining" in {
@@ -115,7 +115,7 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.init(backend = PlatformTestBackend.client).map { client =>
                     client.send(HttpRequest.get(s"http://localhost:$port/ping")).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                     }
                 }
             }
@@ -126,7 +126,7 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.init(maxConnectionsPerHost = Present(10), backend = PlatformTestBackend.client).map { client =>
                     client.send(HttpRequest.get(s"http://localhost:$port/ping")).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                     }
                 }
             }
@@ -141,7 +141,7 @@ class HttpClientTest extends Test:
                 startTestServer(handler).map { port =>
                     HttpClient.init(backend = PlatformTestBackend.client).map { client =>
                         client.send(HttpRequest.get(s"http://localhost:$port/test")).map { response =>
-                            assertStatus(response, Status.OK)
+                            assertStatus(response, HttpStatus.OK)
                         }
                     }
                 }
@@ -154,7 +154,7 @@ class HttpClientTest extends Test:
                 startTestServer(handler).map { port =>
                     HttpClient.init(backend = PlatformTestBackend.client).map { client =>
                         client.send(HttpRequest.get(s"http://localhost:$port/data")).map { response =>
-                            assertStatus(response, Status.OK)
+                            assertStatus(response, HttpStatus.OK)
                             assertBodyText(response, "test-data")
                         }
                     }
@@ -221,7 +221,7 @@ class HttpClientTest extends Test:
             }
 
             "handles error status" in run {
-                val handler = HttpHandler.const(HttpRequest.Method.GET, "/users/999", Status.NotFound)
+                val handler = HttpHandler.const(HttpRequest.Method.GET, "/users/999", HttpStatus.NotFound)
                 startTestServer(handler).map { port =>
                     Abort.run(HttpClient.get[User](s"http://localhost:$port/users/999")).map { result =>
                         assert(result.isFailure)
@@ -285,7 +285,7 @@ class HttpClientTest extends Test:
                 }
                 startTestServer(handler).map { port =>
                     testDelete(port, "/users/1").map { response =>
-                        assertStatus(response, Status.NoContent)
+                        assertStatus(response, HttpStatus.NoContent)
                     }
                 }
             }
@@ -307,7 +307,7 @@ class HttpClientTest extends Test:
                 val handler = HttpHandler.health("/health")
                 startTestServer(handler).map { port =>
                     HttpClient.send(HttpRequest.get(s"http://localhost:$port/health")).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                     }
                 }
             }
@@ -319,7 +319,7 @@ class HttpClientTest extends Test:
                 startTestServer(handler).map { port =>
                     val request = HttpRequest.post(s"http://localhost:$port/users", CreateUser("Test", "test@example.com"))
                     HttpClient.send(request).map { response =>
-                        assertStatus(response, Status.Created)
+                        assertStatus(response, HttpStatus.Created)
                     }
                 }
             }
@@ -336,7 +336,7 @@ class HttpClientTest extends Test:
                         HttpHeaders.empty.add("Authorization", "Bearer token123")
                     )
                     HttpClient.send(request).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "Bearer token123")
                     }
                 }
@@ -353,7 +353,7 @@ class HttpClientTest extends Test:
                     // Use a very short timeout - if config is applied, slow requests would fail
                     HttpClient.withConfig(_.timeout(5.seconds)) {
                         HttpClient.send(HttpRequest.get(s"http://localhost:$port/test")).map { response =>
-                            assertStatus(response, Status.OK)
+                            assertStatus(response, HttpStatus.OK)
                         }
                     }
                 }
@@ -386,7 +386,7 @@ class HttpClientTest extends Test:
                         HttpClient.withConfig(_.timeout(10.seconds)) {
                             // Both configs should be applied - inner timeout, outer maxRedirects
                             HttpClient.send(HttpRequest.get(s"http://localhost:$port/test")).map { response =>
-                                assertStatus(response, Status.OK)
+                                assertStatus(response, HttpStatus.OK)
                             }
                         }
                     }
@@ -403,7 +403,7 @@ class HttpClientTest extends Test:
                         // Modify it further
                         HttpClient.withConfig(_.timeout(10.seconds)) {
                             HttpClient.send(HttpRequest.get(s"http://localhost:$port/test")).map { response =>
-                                assertStatus(response, Status.OK)
+                                assertStatus(response, HttpStatus.OK)
                             }
                         }
                     }
@@ -415,12 +415,12 @@ class HttpClientTest extends Test:
                 startTestServer(handler).map { port =>
                     HttpClient.withConfig(_.timeout(1.seconds)) {
                         HttpClient.send(HttpRequest.get(s"http://localhost:$port/test")).map { response =>
-                            assertStatus(response, Status.OK)
+                            assertStatus(response, HttpStatus.OK)
                         }
                     }.andThen {
                         // After scope, config should be restored - request should still work
                         HttpClient.send(HttpRequest.get(s"http://localhost:$port/test")).map { response =>
-                            assertStatus(response, Status.OK)
+                            assertStatus(response, HttpStatus.OK)
                         }
                     }
                 }
@@ -434,7 +434,7 @@ class HttpClientTest extends Test:
                     HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                         // Request with relative path should be prefixed with baseUrl
                         HttpClient.send(HttpRequest.get("/api/data")).map { response =>
-                            assertStatus(response, Status.OK)
+                            assertStatus(response, HttpStatus.OK)
                             assertBodyText(response, "prefixed")
                         }
                     }
@@ -449,7 +449,7 @@ class HttpClientTest extends Test:
                         // Inner baseUrl should replace outer baseUrl
                         HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                             HttpClient.send(HttpRequest.get("/inner")).map { response =>
-                                assertStatus(response, Status.OK)
+                                assertStatus(response, HttpStatus.OK)
                                 assertBodyText(response, "inner")
                             }
                         }
@@ -466,7 +466,7 @@ class HttpClientTest extends Test:
                     HttpClient.withConfig(_.baseUrl(s"http://localhost:$port/data")) {
                         // Absolute URL should bypass baseUrl entirely
                         HttpClient.send(HttpRequest.get(s"http://localhost:$port/other")).map { response =>
-                            assertStatus(response, Status.OK)
+                            assertStatus(response, HttpStatus.OK)
                             assertBodyText(response, "from-absolute")
                         }
                     }
@@ -488,7 +488,7 @@ class HttpClientTest extends Test:
                 HttpClient.withConfig(_.retry(Schedule.repeat(3))) {
                     HttpClient.send(HttpRequest.get(s"http://localhost:$port/client-error"))
                 }.map { response =>
-                    assertStatus(response, Status.BadRequest)
+                    assertStatus(response, HttpStatus.BadRequest)
                     assert(attempts == 1, s"Expected 1 attempt but got $attempts")
                 }
             }
@@ -506,7 +506,7 @@ class HttpClientTest extends Test:
                 HttpClient.withConfig(_.retry(Schedule.repeat(5))) {
                     HttpClient.send(HttpRequest.get(s"http://localhost:$port/server-error"))
                 }.map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "recovered")
                     assert(attempts == 3, s"Expected 3 attempts but got $attempts")
                 }
@@ -527,7 +527,7 @@ class HttpClientTest extends Test:
                     HttpClient.withConfig(_.retry(Schedule.exponential(50.millis, 2.0).take(5))) {
                         HttpClient.send(HttpRequest.get(s"http://localhost:$port/slow-recovery"))
                     }.map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assert(attempts == 3)
                         // Verify delays are increasing (roughly exponential)
                         if timestamps.size >= 3 then
@@ -557,7 +557,7 @@ class HttpClientTest extends Test:
                             // After 3 retries (4 total attempts), should fail with RetriesExhausted
                             assert(attempts == 4, s"Expected 4 attempts (1 + 3 retries) but got $attempts")
                             assert(attemptCount == 4, s"Expected attemptCount=4 but got $attemptCount")
-                            assert(status == Status.InternalServerError)
+                            assert(status == HttpStatus.InternalServerError)
                             assert(body.contains("always fails"))
                         case other =>
                             fail(s"Expected RetriesExhausted but got $other")
@@ -571,19 +571,19 @@ class HttpClientTest extends Test:
             var attempts = 0
             val handler = HttpHandler.get("/custom") { _ =>
                 attempts += 1
-                if attempts == 1 then HttpResponse(Status.ServiceUnavailable)
+                if attempts == 1 then HttpResponse(HttpStatus.ServiceUnavailable)
                 else if attempts == 2 then HttpResponse.serverError("500 error")
                 else HttpResponse.ok("done")
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(
                     _.retry(Schedule.repeat(5))
-                        .retryWhen(_.status == Status.ServiceUnavailable)
+                        .retryWhen(_.status == HttpStatus.ServiceUnavailable)
                 ) {
                     HttpClient.send(HttpRequest.get(s"http://localhost:$port/custom"))
                 }.map { response =>
                     // Should retry 503, then stop at 500 (not matching predicate)
-                    assertStatus(response, Status.InternalServerError)
+                    assertStatus(response, HttpStatus.InternalServerError)
                     assert(attempts == 2, s"Expected 2 attempts but got $attempts")
                 }
             }
@@ -599,7 +599,7 @@ class HttpClientTest extends Test:
                 HttpClient.withConfig(_.retry(Schedule.repeat(5))) {
                     HttpClient.send(HttpRequest.get(s"http://localhost:$port/success"))
                 }.map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assert(attempts == 1, s"Expected 1 attempt but got $attempts")
                 }
             }
@@ -646,7 +646,7 @@ class HttpClientTest extends Test:
                 HttpClient.withConfig(_.followRedirects(false)) {
                     HttpClient.send(HttpRequest.get(s"http://localhost:$port/redir"))
                 }.map { response =>
-                    assertStatus(response, Status.Found)
+                    assertStatus(response, HttpStatus.Found)
                     assertHeader(response, "Location", "/target")
                 }
             }
@@ -685,7 +685,7 @@ class HttpClientTest extends Test:
             val redirect = HttpHandler.get("/old") { _ => HttpResponse.movedPermanently("/new") }
             startTestServer(target, redirect).map { port =>
                 HttpClient.send(HttpRequest.get(s"http://localhost:$port/old")).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "moved")
                 }
             }
@@ -693,30 +693,30 @@ class HttpClientTest extends Test:
 
         "302 found" in run {
             val target   = HttpHandler.get("/new") { _ => HttpResponse.ok("found") }
-            val redirect = HttpHandler.get("/old") { _ => HttpResponse.redirect("/new", Status.Found) }
+            val redirect = HttpHandler.get("/old") { _ => HttpResponse.redirect("/new", HttpStatus.Found) }
             startTestServer(target, redirect).map { port =>
                 HttpClient.send(HttpRequest.get(s"http://localhost:$port/old")).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                 }
             }
         }
 
         "307 temporary redirect" in run {
             val target   = HttpHandler.get("/new") { _ => HttpResponse.ok("temp") }
-            val redirect = HttpHandler.get("/old") { _ => HttpResponse.redirect("/new", Status.TemporaryRedirect) }
+            val redirect = HttpHandler.get("/old") { _ => HttpResponse.redirect("/new", HttpStatus.TemporaryRedirect) }
             startTestServer(target, redirect).map { port =>
                 HttpClient.send(HttpRequest.get(s"http://localhost:$port/old")).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                 }
             }
         }
 
         "308 permanent redirect" in run {
             val target   = HttpHandler.get("/new") { _ => HttpResponse.ok("perm") }
-            val redirect = HttpHandler.get("/old") { _ => HttpResponse.redirect("/new", Status.PermanentRedirect) }
+            val redirect = HttpHandler.get("/old") { _ => HttpResponse.redirect("/new", HttpStatus.PermanentRedirect) }
             startTestServer(target, redirect).map { port =>
                 HttpClient.send(HttpRequest.get(s"http://localhost:$port/old")).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                 }
             }
         }
@@ -808,11 +808,11 @@ class HttpClientTest extends Test:
         }
 
         "InvalidResponse for HTTP error status" in run {
-            val handler = HttpHandler.const(HttpRequest.Method.GET, "/notfound", Status.NotFound)
+            val handler = HttpHandler.const(HttpRequest.Method.GET, "/notfound", HttpStatus.NotFound)
             startTestServer(handler).map { port =>
                 Abort.run(HttpClient.get[User](s"http://localhost:$port/notfound")).map {
                     case Result.Failure(HttpError.StatusError(status, _)) =>
-                        assert(status == Status.NotFound)
+                        assert(status == HttpStatus.NotFound)
                     case other =>
                         fail(s"Expected StatusError but got $other")
                 }
@@ -835,7 +835,7 @@ class HttpClientTest extends Test:
 
         "TooManyRedirects when exceeding limit" in run {
             val handler = HttpHandler.get("/redirect") { _ =>
-                HttpResponse(Status.Found).setHeader("Location", "/redirect")
+                HttpResponse(HttpStatus.Found).setHeader("Location", "/redirect")
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.maxRedirects(3)) {
@@ -875,7 +875,7 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 Kyo.foreach(1 to iterations) { _ =>
                     Async.fill(10, 10)(HttpClient.send(HttpRequest.get(s"http://localhost:$port/ping"))).map { responses =>
-                        assert(responses.forall(_.status == Status.OK))
+                        assert(responses.forall(_.status == HttpStatus.OK))
                         assert(responses.forall(r => getBodyText(r) == "pong"))
                     }
                 }.andThen(succeed)
@@ -889,7 +889,7 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 Kyo.foreach(1 to iterations) { _ =>
                     Async.fill(5, 5)(HttpClient.send(HttpRequest.get(s"http://localhost:$port/slow"))).map { responses =>
-                        assert(responses.forall(_.status == Status.OK))
+                        assert(responses.forall(_.status == HttpStatus.OK))
                     }
                 }.andThen(succeed)
             }
@@ -906,9 +906,9 @@ class HttpClientTest extends Test:
                         r2       <- HttpClient.send(HttpRequest.get(s"http://localhost:$port/data"))
                         parallel <- Async.fill(3, 3)(HttpClient.send(HttpRequest.get(s"http://localhost:$port/data")))
                     yield
-                        assert(r1.status == Status.OK)
-                        assert(r2.status == Status.OK)
-                        assert(parallel.forall(_.status == Status.OK))
+                        assert(r1.status == HttpStatus.OK)
+                        assert(r2.status == HttpStatus.OK)
+                        assert(parallel.forall(_.status == HttpStatus.OK))
                 }.andThen(succeed)
             }
         }
@@ -923,7 +923,7 @@ class HttpClientTest extends Test:
                     Async.fill(concurrency, concurrency)(HttpClient.send(HttpRequest.get(s"http://localhost:$port/ping"))).map {
                         responses =>
                             assert(responses.size == concurrency)
-                            assert(responses.forall(_.status == Status.OK))
+                            assert(responses.forall(_.status == HttpStatus.OK))
                     }
                 }.andThen(succeed)
             }
@@ -942,7 +942,7 @@ class HttpClientTest extends Test:
                         ))
                     }
                     Async.collectAll(requests).map { responses =>
-                        assert(responses.forall(_.status == Status.OK))
+                        assert(responses.forall(_.status == HttpStatus.OK))
                         val bodies = responses.map(_.bodyText).toSet
                         assert(bodies.size == 10)
                     }
@@ -961,7 +961,7 @@ class HttpClientTest extends Test:
                             client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                         }
                     }.map { responses =>
-                        assert(responses.forall(_.status == Status.OK))
+                        assert(responses.forall(_.status == HttpStatus.OK))
                     }
                 }.andThen(succeed)
             }
@@ -996,7 +996,7 @@ class HttpClientTest extends Test:
                 Kyo.foreach(1 to iterations) { iter =>
                     val startCount = counter.get()
                     Async.fill(20, 20)(HttpClient.send(HttpRequest.get(s"http://localhost:$port/count"))).map { responses =>
-                        assert(responses.forall(_.status == Status.OK))
+                        assert(responses.forall(_.status == HttpStatus.OK))
                         val counts = responses.map(r => getBodyText(r).toInt)
                         // All counts in this batch should be unique (no lost updates)
                         assert(counts.toSet.size == 20)
@@ -1014,7 +1014,7 @@ class HttpClientTest extends Test:
                     Kyo.foreach(1 to 50) { _ =>
                         HttpClient.send(HttpRequest.get(s"http://localhost:$port/ping"))
                     }.map { responses =>
-                        assert(responses.forall(_.status == Status.OK))
+                        assert(responses.forall(_.status == HttpStatus.OK))
                     }
                 }.andThen(succeed)
             }
@@ -1077,7 +1077,7 @@ class HttpClientTest extends Test:
     "Integration with HttpRoute" - {
 
         "call route (no-arg overload)" in run {
-            val route   = HttpRoute.get("users").responseBody[Seq[User]]
+            val route   = HttpRoute.get("users").response(_.bodyJson[Seq[User]])
             val handler = route.handle(_ => Seq(User(1, "Alice"), User(2, "Bob")))
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1089,8 +1089,8 @@ class HttpClientTest extends Test:
         }
 
         "route with path params (bare value overload)" in run {
-            import HttpPath./
-            val route   = HttpRoute.get("users" / HttpPath.int("id")).responseBody[User]
+            import HttpPath.*
+            val route   = HttpRoute.get("users" / Capture[Int]("id")).response(_.bodyJson[User])
             val handler = route.handle(in => User(in.id, s"User${in.id}"))
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1103,9 +1103,8 @@ class HttpClientTest extends Test:
 
         "route with query params" in run {
             val route = HttpRoute.get("users")
-                .query[Int]("limit", 20)
-                .query[Int]("offset", 0)
-                .responseBody[Seq[User]]
+                .request(_.query[Int]("limit", default = Some(20)).query[Int]("offset", default = Some(0)))
+                .response(_.bodyJson[Seq[User]])
             val handler = route.handle { in =>
                 (in.offset until (in.offset + in.limit)).map(i => User(i, s"User$i"))
             }
@@ -1121,8 +1120,8 @@ class HttpClientTest extends Test:
 
         "route with headers" in run {
             val route = HttpRoute.get("users")
-                .header("X-Request-Id")
-                .responseBody[Seq[User]]
+                .request(_.header[String]("X-Request-Id"))
+                .response(_.bodyJson[Seq[User]])
             val handler = route.handle { in =>
                 Seq(User(1, in.`X-Request-Id`))
             }
@@ -1137,8 +1136,8 @@ class HttpClientTest extends Test:
 
         "route with body" in run {
             val route = HttpRoute.post("users")
-                .requestBody[CreateUser]
-                .responseBody[User]
+                .request(_.bodyJson[CreateUser])
+                .response(_.bodyJson[User])
             val handler = route.handle { in =>
                 User(1, in.body.name)
             }
@@ -1152,10 +1151,10 @@ class HttpClientTest extends Test:
         }
 
         "route with path params and body" in run {
-            import HttpPath./
-            val route = HttpRoute.post("users" / HttpPath.int("id"))
-                .requestBody[CreateUser]
-                .responseBody[User]
+            import HttpPath.*
+            val route = HttpRoute.post("users" / Capture[Int]("id"))
+                .request(_.bodyJson[CreateUser])
+                .response(_.bodyJson[User])
             val handler = route.handle { in =>
                 User(in.id, in.body.name)
             }
@@ -1170,9 +1169,8 @@ class HttpClientTest extends Test:
 
         "route with query params and body" in run {
             val route = HttpRoute.post("users")
-                .query[String]("role")
-                .requestBody[CreateUser]
-                .responseBody[User]
+                .request(_.query[String]("role").bodyJson[CreateUser])
+                .response(_.bodyJson[User])
             val handler = route.handle { in =>
                 User(1, s"${in.body.name}:${in.role}")
             }
@@ -1187,9 +1185,8 @@ class HttpClientTest extends Test:
 
         "route with header and body" in run {
             val route = HttpRoute.post("users")
-                .header("X-Tenant")
-                .requestBody[CreateUser]
-                .responseBody[User]
+                .request(_.header[String]("X-Tenant").bodyJson[CreateUser])
+                .response(_.bodyJson[User])
             val handler = route.handle { in =>
                 User(1, s"${in.body.name}@${in.`X-Tenant`}")
             }
@@ -1203,10 +1200,10 @@ class HttpClientTest extends Test:
         }
 
         "route with path and query params" in run {
-            import HttpPath./
-            val route = HttpRoute.get("users" / HttpPath.int("id"))
-                .query[String]("fields")
-                .responseBody[User]
+            import HttpPath.*
+            val route = HttpRoute.get("users" / Capture[Int]("id"))
+                .request(_.query[String]("fields"))
+                .response(_.bodyJson[User])
             val handler = route.handle { in =>
                 User(in.id, in.fields)
             }
@@ -1220,11 +1217,10 @@ class HttpClientTest extends Test:
         }
 
         "route with path, query, and body" in run {
-            import HttpPath./
-            val route = HttpRoute.post("users" / HttpPath.int("id"))
-                .query[String]("action")
-                .requestBody[CreateUser]
-                .responseBody[User]
+            import HttpPath.*
+            val route = HttpRoute.post("users" / Capture[Int]("id"))
+                .request(_.query[String]("action").bodyJson[CreateUser])
+                .response(_.bodyJson[User])
             val handler = route.handle { in =>
                 User(in.id, s"${in.body.name}:${in.action}")
             }
@@ -1238,11 +1234,10 @@ class HttpClientTest extends Test:
         }
 
         "route with path, header, and body" in run {
-            import HttpPath./
-            val route = HttpRoute.post("users" / HttpPath.int("id"))
-                .header("X-Tenant")
-                .requestBody[CreateUser]
-                .responseBody[User]
+            import HttpPath.*
+            val route = HttpRoute.post("users" / Capture[Int]("id"))
+                .request(_.header[String]("X-Tenant").bodyJson[CreateUser])
+                .response(_.bodyJson[User])
             val handler = route.handle { in =>
                 User(in.id, s"${in.body.name}@${in.`X-Tenant`}")
             }
@@ -1256,12 +1251,10 @@ class HttpClientTest extends Test:
         }
 
         "route with path, query, header, and body" in run {
-            import HttpPath./
-            val route = HttpRoute.post("users" / HttpPath.int("id"))
-                .query[String]("action")
-                .header("X-Tenant")
-                .requestBody[CreateUser]
-                .responseBody[User]
+            import HttpPath.*
+            val route = HttpRoute.post("users" / Capture[Int]("id"))
+                .request(_.query[String]("action").header[String]("X-Tenant").bodyJson[CreateUser])
+                .response(_.bodyJson[User])
             val handler = route.handle { in =>
                 User(in.id, s"${in.body.name}:${in.action}@${in.`X-Tenant`}")
             }
@@ -1275,10 +1268,10 @@ class HttpClientTest extends Test:
         }
 
         "route with multiple path captures and body" in run {
-            import HttpPath./
-            val route = HttpRoute.post("orgs" / HttpPath.string("org") / "users" / HttpPath.int("id"))
-                .requestBody[CreateUser]
-                .responseBody[User]
+            import HttpPath.*
+            val route = HttpRoute.post("orgs" / Capture[String]("org") / "users" / Capture[Int]("id"))
+                .request(_.bodyJson[CreateUser])
+                .response(_.bodyJson[User])
             val handler = route.handle { in =>
                 User(in.id, s"${in.body.name}@${in.org}")
             }
@@ -1293,8 +1286,8 @@ class HttpClientTest extends Test:
 
         "route with multipart body" in run {
             val route = HttpRoute.post("upload")
-                .requestBodyMultipart
-                .responseBodyText
+                .request(_.bodyMultipart)
+                .response(_.bodyText)
             val handler = route.handle { in =>
                 val summary = in.parts.map(p => s"${p.name}:${p.content.length}").mkString(",")
                 s"count=${in.parts.size},$summary"
@@ -1312,10 +1305,10 @@ class HttpClientTest extends Test:
         }
 
         "route with path params and multipart body" in run {
-            import HttpPath./
-            val route = HttpRoute.post("uploads" / HttpPath.string("category"))
-                .requestBodyMultipart
-                .responseBodyText
+            import HttpPath.*
+            val route = HttpRoute.post("uploads" / Capture[String]("category"))
+                .request(_.bodyMultipart)
+                .response(_.bodyText)
             val handler = route.handle { in =>
                 s"category=${in.category},count=${in.parts.size}"
             }
@@ -1334,9 +1327,8 @@ class HttpClientTest extends Test:
 
         "route with query params and multipart body" in run {
             val route = HttpRoute.post("upload")
-                .query[String]("tag")
-                .requestBodyMultipart
-                .responseBodyText
+                .request(_.query[String]("tag").bodyMultipart)
+                .response(_.bodyText)
             val handler = route.handle { in =>
                 s"tag=${in.tag},count=${in.parts.size}"
             }
@@ -1354,8 +1346,8 @@ class HttpClientTest extends Test:
 
         "route with multipart preserves part details" in run {
             val route = HttpRoute.post("upload")
-                .requestBodyMultipart
-                .responseBodyText
+                .request(_.bodyMultipart)
+                .response(_.bodyText)
             val handler = route.handle { in =>
                 val p = in.parts.head
                 s"name=${p.name},filename=${p.filename.getOrElse("none")},ct=${p.contentType.getOrElse("none")},size=${p.content.length}"
@@ -1374,8 +1366,8 @@ class HttpClientTest extends Test:
 
         "route with multipart form fields and files" in run {
             val route = HttpRoute.post("upload")
-                .requestBodyMultipart
-                .responseBodyText
+                .request(_.bodyMultipart)
+                .response(_.bodyText)
             val handler = route.handle { in =>
                 in.parts.map { p =>
                     val isFile = p.filename.isDefined
@@ -1398,8 +1390,8 @@ class HttpClientTest extends Test:
 
         "route with cookie" in run {
             val route = HttpRoute.get("dashboard")
-                .cookie("session")
-                .responseBodyText
+                .request(_.cookie[String]("session"))
+                .response(_.bodyText)
             val handler = route.handle { in =>
                 s"session=${in.session}"
             }
@@ -1413,10 +1405,10 @@ class HttpClientTest extends Test:
         }
 
         "route with cookie and path params" in run {
-            import HttpPath./
-            val route = HttpRoute.get("users" / HttpPath.int("id"))
-                .cookie("token")
-                .responseBodyText
+            import HttpPath.*
+            val route = HttpRoute.get("users" / Capture[Int]("id"))
+                .request(_.cookie[String]("token"))
+                .response(_.bodyText)
             val handler = route.handle { in =>
                 s"id=${in.id},token=${in.token}"
             }
@@ -1431,8 +1423,8 @@ class HttpClientTest extends Test:
 
         "route with authBearer" in run {
             val route = HttpRoute.get("protected")
-                .authBearer
-                .responseBodyText
+                .request(_.authBearer)
+                .response(_.bodyText)
             val handler = route.handle { in =>
                 s"bearer=${in.bearer}"
             }
@@ -1446,10 +1438,10 @@ class HttpClientTest extends Test:
         }
 
         "route with authBearer and path params" in run {
-            import HttpPath./
-            val route = HttpRoute.get("users" / HttpPath.int("id"))
-                .authBearer
-                .responseBody[User]
+            import HttpPath.*
+            val route = HttpRoute.get("users" / Capture[Int]("id"))
+                .request(_.authBearer)
+                .response(_.bodyJson[User])
             val handler = route.handle { in =>
                 User(in.id, in.bearer)
             }
@@ -1464,8 +1456,8 @@ class HttpClientTest extends Test:
 
         "route with authBasic" in run {
             val route = HttpRoute.get("admin")
-                .authBasic
-                .responseBodyText
+                .request(_.authBasic)
+                .response(_.bodyText)
             val handler = route.handle { in =>
                 s"user=${in.username},pass=${in.password}"
             }
@@ -1480,8 +1472,8 @@ class HttpClientTest extends Test:
 
         "route with authApiKey" in run {
             val route = HttpRoute.get("api")
-                .authApiKey("X-Api-Key")
-                .responseBodyText
+                .request(_.authApiKey("X-Api-Key"))
+                .response(_.bodyText)
             val handler = route.handle { in =>
                 s"key=${in.`X-Api-Key`}"
             }
@@ -1496,9 +1488,8 @@ class HttpClientTest extends Test:
 
         "route with authApiKey and body" in run {
             val route = HttpRoute.post("items")
-                .authApiKey("X-Api-Key")
-                .requestBody[CreateUser]
-                .responseBody[User]
+                .request(_.authApiKey("X-Api-Key").bodyJson[CreateUser])
+                .response(_.bodyJson[User])
             val handler = route.handle { in =>
                 User(1, s"${in.body.name}:${in.`X-Api-Key`}")
             }
@@ -1517,9 +1508,8 @@ class HttpClientTest extends Test:
 
         "route with header before query (declaration order mismatch)" in run {
             val route = HttpRoute.get("test")
-                .header("X-Tenant")
-                .query[Int]("limit")
-                .responseBodyText
+                .request(_.header[String]("X-Tenant").query[Int]("limit"))
+                .response(_.bodyText)
             val handler = route.handle { in =>
                 s"tenant=${in.`X-Tenant`},limit=${in.limit}"
             }
@@ -1534,9 +1524,8 @@ class HttpClientTest extends Test:
 
         "route with cookie before query (declaration order mismatch)" in run {
             val route = HttpRoute.get("test")
-                .cookie("session")
-                .query[Int]("limit")
-                .responseBodyText
+                .request(_.cookie[String]("session").query[Int]("limit"))
+                .response(_.bodyText)
             val handler = route.handle { in =>
                 s"session=${in.session},limit=${in.limit}"
             }
@@ -1551,9 +1540,8 @@ class HttpClientTest extends Test:
 
         "route with authBearer before query (declaration order mismatch)" in run {
             val route = HttpRoute.get("test")
-                .authBearer
-                .query[Int]("limit")
-                .responseBodyText
+                .request(_.authBearer.query[Int]("limit"))
+                .response(_.bodyText)
             val handler = route.handle { in =>
                 s"bearer=${in.bearer},limit=${in.limit}"
             }
@@ -1567,11 +1555,10 @@ class HttpClientTest extends Test:
         }
 
         "route error handling" in run {
-            import HttpPath./
+            import HttpPath.*
             case class NotFoundError(message: String) derives Schema, CanEqual
-            val route = HttpRoute.get("users" / HttpPath.int("id"))
-                .responseBody[User]
-                .error[NotFoundError](Status.NotFound)
+            val route = HttpRoute.get("users" / Capture[Int]("id"))
+                .response(_.bodyJson[User].error[NotFoundError](HttpStatus.NotFound))
             val handler = route.handle { in =>
                 if in.id == 999 then Abort.fail(NotFoundError("User not found"))
                 else User(in.id, s"User${in.id}")
@@ -1584,7 +1571,7 @@ class HttpClientTest extends Test:
                     }.andThen {
                         // Test error case - should return 404 with error body
                         HttpClient.send(HttpRequest.get(s"http://localhost:$port/users/999")).map { response =>
-                            assertStatus(response, Status.NotFound)
+                            assertStatus(response, HttpStatus.NotFound)
                             assertBodyContains(response, "User not found")
                         }
                     }
@@ -1604,7 +1591,7 @@ class HttpClientTest extends Test:
                     Kyo.foreach(1 to 5) { _ =>
                         client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                     }.map { responses =>
-                        assert(responses.forall(_.status == HttpResponse.Status.OK))
+                        assert(responses.forall(_.status == HttpStatus.OK))
                     }
                 }
             }
@@ -1619,7 +1606,7 @@ class HttpClientTest extends Test:
                     Async.fill(10, 10) {
                         client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                     }.map { responses =>
-                        assert(responses.forall(_.status == HttpResponse.Status.OK))
+                        assert(responses.forall(_.status == HttpStatus.OK))
                     }
                 }
             }
@@ -1635,7 +1622,7 @@ class HttpClientTest extends Test:
                         client.send(HttpRequest.get(s"http://localhost:$port/slow"))
                     }.map { responses =>
                         assert(responses.size == 4)
-                        assert(responses.forall(_.status == HttpResponse.Status.OK))
+                        assert(responses.forall(_.status == HttpStatus.OK))
                     }
                 }
             }
@@ -1653,7 +1640,7 @@ class HttpClientTest extends Test:
                         client.send(HttpRequest.get(s"http://localhost:$port/h2"))
                     )
                     Async.collectAll(requests).map { responses =>
-                        assert(responses.forall(_.status == HttpResponse.Status.OK))
+                        assert(responses.forall(_.status == HttpStatus.OK))
                     }
                 }
             }
@@ -1666,10 +1653,10 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.init(maxConnectionsPerHost = Present(1), backend = PlatformTestBackend.client).map { client =>
                     client.send(HttpRequest.get(s"http://localhost:$port/test")).map { r1 =>
-                        assertStatus(r1, Status.OK)
+                        assertStatus(r1, HttpStatus.OK)
                     }.andThen {
                         client.send(HttpRequest.get(s"http://localhost:$port/test")).map { r2 =>
-                            assertStatus(r2, Status.OK)
+                            assertStatus(r2, HttpStatus.OK)
                         }
                     }
                 }
@@ -1686,7 +1673,7 @@ class HttpClientTest extends Test:
                         Async.fill(3, 3) {
                             client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                         }.map { responses =>
-                            assert(responses.forall(_.status == HttpResponse.Status.OK))
+                            assert(responses.forall(_.status == HttpStatus.OK))
                         }
                     }
                 }
@@ -1707,7 +1694,7 @@ class HttpClientTest extends Test:
                         1.second
                     ).andThen {
                         client.send(HttpRequest.get(s"http://localhost:$port/ping")).map { response =>
-                            assertStatus(response, Status.OK)
+                            assertStatus(response, HttpStatus.OK)
                         }
                     }
                 }
@@ -1730,7 +1717,7 @@ class HttpClientTest extends Test:
                         Kyo.foreach(1 to 5) { _ =>
                             client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                         }.map { responses =>
-                            assert(responses.forall(_.status == HttpResponse.Status.OK))
+                            assert(responses.forall(_.status == HttpStatus.OK))
                         }
                     }
                 }
@@ -1747,7 +1734,7 @@ class HttpClientTest extends Test:
                         client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                     }.map { responses =>
                         assert(responses.size == 20)
-                        assert(responses.forall(_.status == HttpResponse.Status.OK))
+                        assert(responses.forall(_.status == HttpStatus.OK))
                     }
                 }
             }
@@ -1764,7 +1751,7 @@ class HttpClientTest extends Test:
                     Kyo.foreach(1 to 10) { _ =>
                         client.send(HttpRequest.get(s"http://localhost:$port/test"))
                     }.map { responses =>
-                        assert(responses.forall(_.status == HttpResponse.Status.OK))
+                        assert(responses.forall(_.status == HttpStatus.OK))
                         assert(requestCount.get() == 10)
                     }
                 }
@@ -1779,7 +1766,7 @@ class HttpClientTest extends Test:
                 Kyo.foreach(1 to 5) { _ =>
                     HttpClient.send(HttpRequest.get(s"http://localhost:$port/shared"))
                 }.map { responses =>
-                    assert(responses.forall(_.status == HttpResponse.Status.OK))
+                    assert(responses.forall(_.status == HttpStatus.OK))
                     assert(responses.forall(r => getBodyText(r) == "shared-response"))
                 }
             }
@@ -1794,7 +1781,7 @@ class HttpClientTest extends Test:
             val redirect = HttpHandler.get("/start") { _ => HttpResponse.redirect("/target?q=hello") }
             startTestServer(target, redirect).map { port =>
                 HttpClient.send(HttpRequest.get(s"http://localhost:$port/start")).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "q=hello")
                 }
             }
@@ -1806,7 +1793,7 @@ class HttpClientTest extends Test:
             val a = HttpHandler.get("/a") { _ => HttpResponse.redirect("/b") }
             startTestServer(a, b, c).map { port =>
                 HttpClient.send(HttpRequest.get(s"http://localhost:$port/a")).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "final")
                 }
             }
@@ -1820,7 +1807,7 @@ class HttpClientTest extends Test:
                 }
                 startTestServer(redirect).map { port2 =>
                     HttpClient.send(HttpRequest.get(s"http://localhost:$port2/start")).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "arrived")
                     }
                 }
@@ -1834,7 +1821,7 @@ class HttpClientTest extends Test:
             val handler = HttpHandler.delete("/items/1") { _ => HttpResponse.noContent }
             startTestServer(handler).map { port =>
                 HttpClient.send(HttpRequest.delete(s"http://localhost:$port/items/1")).map { response =>
-                    assertStatus(response, Status.NoContent)
+                    assertStatus(response, HttpStatus.NoContent)
                     assert(response.bodyText.isEmpty)
                 }
             }
@@ -1851,7 +1838,7 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.timeout(5.seconds)) {
                     HttpClient.send(HttpRequest.head(s"http://localhost:$port/data")).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assert(response.header("X-Custom") == Maybe.Present("test-value"))
                         assert(response.bodyText.isEmpty)
                     }
@@ -1873,7 +1860,7 @@ class HttpClientTest extends Test:
             }
             startTestServer(target, login).map { port =>
                 HttpClient.send(HttpRequest.get(s"http://localhost:$port/login")).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     // Whether cookies are propagated during redirects depends on implementation
                     // At minimum, the redirect should complete successfully
                     assert(response.bodyText.contains("session="))
@@ -1892,7 +1879,7 @@ class HttpClientTest extends Test:
             HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 200 * 1024), PlatformTestBackend.server)(handler).map {
                 server =>
                     HttpClient.send(HttpRequest.get(s"http://localhost:${server.port}/large")).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assert(response.bodyText.length == 100 * 1024)
                     }
             }
@@ -1905,14 +1892,14 @@ class HttpClientTest extends Test:
             val binaryData = Array[Byte](0, 1, 2, 127, -128, -1, 0x7f, 0x80.toByte, 0xff.toByte, 0xfe.toByte)
             val handler = HttpHandler.get("/binary") { _ =>
                 HttpResponse.initBytes(
-                    Status.OK,
+                    HttpStatus.OK,
                     HttpHeaders.empty.add("Content-Type", "application/octet-stream"),
                     Span.fromUnsafe(binaryData)
                 )
             }
             startTestServer(handler).map { port =>
                 HttpClient.send(HttpRequest.get(s"http://localhost:$port/binary")).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     val received = response.body.data
                     assert(
                         received.toSeq == binaryData.toSeq,
@@ -1927,14 +1914,14 @@ class HttpClientTest extends Test:
             val allBytes = Array.tabulate[Byte](256)(_.toByte)
             val handler = HttpHandler.get("/allbytes") { _ =>
                 HttpResponse.initBytes(
-                    Status.OK,
+                    HttpStatus.OK,
                     HttpHeaders.empty.add("Content-Type", "application/octet-stream"),
                     Span.fromUnsafe(allBytes)
                 )
             }
             startTestServer(handler).map { port =>
                 HttpClient.send(HttpRequest.get(s"http://localhost:$port/allbytes")).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     val received = response.body.data
                     assert(received.length == 256, s"Expected 256 bytes but got ${received.length}")
                     assert(received.toSeq == allBytes.toSeq, "Binary body corrupted: byte values not preserved through roundtrip")
@@ -1967,7 +1954,7 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.init(maxResponseSizeBytes = 1000, backend = PlatformTestBackend.client).map { client =>
                     client.send(HttpRequest.get(s"http://localhost:$port/small")).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, smallBody)
                     }
                 }
@@ -1987,7 +1974,7 @@ class HttpClientTest extends Test:
                     }.andThen {
                         // Pool should still work with maxConnectionsPerHost=1
                         client.send(HttpRequest.get(s"http://localhost:$port/data")).map { response =>
-                            assertStatus(response, Status.OK)
+                            assertStatus(response, HttpStatus.OK)
                         }
                     }
                 }
@@ -2001,13 +1988,13 @@ class HttpClientTest extends Test:
                     // Start stream, read partially, then exit scope
                     Scope.run {
                         client.stream(HttpRequest.get(s"http://localhost:$port/data")).map { response =>
-                            assert(response.status == Status.OK)
+                            assert(response.status == HttpStatus.OK)
                             // Don't consume bodyStream — just check headers and exit
                         }
                     }.andThen {
                         // Subsequent buffered request should work
                         client.send(HttpRequest.get(s"http://localhost:$port/data")).map { response =>
-                            assertStatus(response, Status.OK)
+                            assertStatus(response, HttpStatus.OK)
                             assertBodyContains(response, "streamed-body-content")
                         }
                     }
@@ -2030,12 +2017,12 @@ class HttpClientTest extends Test:
                     // First 3 requests get 500
                     Kyo.foreach(1 to 3) { _ =>
                         client.send(HttpRequest.get(s"http://localhost:$port/maybe")).map { r =>
-                            assertStatus(r, Status.InternalServerError)
+                            assertStatus(r, HttpStatus.InternalServerError)
                         }
                     }.andThen {
                         // Pool should still work after error responses
                         client.send(HttpRequest.get(s"http://localhost:$port/maybe")).map { r =>
-                            assertStatus(r, Status.OK)
+                            assertStatus(r, HttpStatus.OK)
                             assertBodyText(r, "recovered")
                         }
                     }
@@ -2056,7 +2043,7 @@ class HttpClientTest extends Test:
                     }.andThen {
                         // Pool should still work after timeout
                         client.send(HttpRequest.get(s"http://localhost:$port/test")).map { r =>
-                            assertStatus(r, Status.OK)
+                            assertStatus(r, HttpStatus.OK)
                             assertBodyText(r, "ok")
                         }
                     }
@@ -2076,7 +2063,7 @@ class HttpClientTest extends Test:
                 }
                 startTestServer(handler).map { port =>
                     HttpClient.stream(s"http://localhost:$port/data").map { response =>
-                        assert(response.status == Status.OK)
+                        assert(response.status == HttpStatus.OK)
                         response.bodyStream.run.map { chunks =>
                             val body = chunks.foldLeft("")((acc, span) => acc + new String(span.toArrayUnsafe, "UTF-8"))
                             assert(body.contains("streamed-body"))
@@ -2086,10 +2073,10 @@ class HttpClientTest extends Test:
             }
 
             "error status" in run {
-                val handler = HttpHandler.const(HttpRequest.Method.GET, "/missing", Status.NotFound)
+                val handler = HttpHandler.const(HttpRequest.Method.GET, "/missing", HttpStatus.NotFound)
                 startTestServer(handler).map { port =>
                     HttpClient.stream(s"http://localhost:$port/missing").map { response =>
-                        assert(response.status == Status.NotFound)
+                        assert(response.status == HttpStatus.NotFound)
                     }
                 }
             }
@@ -2109,7 +2096,7 @@ class HttpClientTest extends Test:
                         bodyStream
                     )
                     HttpClient.stream(request).map { response =>
-                        assert(response.status == Status.OK)
+                        assert(response.status == HttpStatus.OK)
                         response.bodyStream.run.map { chunks =>
                             val body = chunks.foldLeft("")((acc, span) => acc + new String(span.toArrayUnsafe, "UTF-8"))
                             assert(body.contains("received 5 bytes"))
@@ -2127,7 +2114,7 @@ class HttpClientTest extends Test:
                 startTestServer(handler).map { port =>
                     val request = HttpRequest.get(s"http://localhost:$port/echo", HttpHeaders.empty.add("X-Custom", "test-value"))
                     HttpClient.stream(request).map { response =>
-                        assert(response.status == Status.OK)
+                        assert(response.status == HttpStatus.OK)
                         response.bodyStream.run.map { chunks =>
                             val body = chunks.foldLeft("")((acc, span) => acc + new String(span.toArrayUnsafe, "UTF-8"))
                             assert(body.contains("test-value"))
@@ -2243,7 +2230,7 @@ class HttpClientTest extends Test:
                 startTestServer(handler).map { port =>
                     HttpFilter.client.bearerAuth("my-token").enable {
                         HttpClient.stream(s"http://localhost:$port/auth").map { response =>
-                            assert(response.status == Status.OK)
+                            assert(response.status == HttpStatus.OK)
                             response.bodyStream.run.map { chunks =>
                                 val body = chunks.foldLeft("")((acc, span) => acc + new String(span.toArrayUnsafe, "UTF-8"))
                                 assert(body.contains("Bearer my-token"))
@@ -2262,11 +2249,11 @@ class HttpClientTest extends Test:
                 HttpResponse.ok("final destination")
             }
             val redirect = HttpHandler.get("/redirect") { _ =>
-                HttpResponse(Status.MovedPermanently).setHeader("Location", "/target")
+                HttpResponse(HttpStatus.MovedPermanently).setHeader("Location", "/target")
             }
             startTestServer(target, redirect).map { port =>
                 HttpClient.stream(s"http://localhost:$port/redirect").map { response =>
-                    assert(response.status == Status.OK)
+                    assert(response.status == HttpStatus.OK)
                     response.bodyStream.run.map { chunks =>
                         val body = chunks.foldLeft("")((acc, span) => acc + new String(span.toArrayUnsafe, "UTF-8"))
                         assert(body == "final destination")
@@ -2280,11 +2267,11 @@ class HttpClientTest extends Test:
                 HttpResponse.ok("found here")
             }
             val redirect = HttpHandler.get("/redirect") { _ =>
-                HttpResponse(Status.Found).setHeader("Location", "/target")
+                HttpResponse(HttpStatus.Found).setHeader("Location", "/target")
             }
             startTestServer(target, redirect).map { port =>
                 HttpClient.stream(s"http://localhost:$port/redirect").map { response =>
-                    assert(response.status == Status.OK)
+                    assert(response.status == HttpStatus.OK)
                     response.bodyStream.run.map { chunks =>
                         val body = chunks.foldLeft("")((acc, span) => acc + new String(span.toArrayUnsafe, "UTF-8"))
                         assert(body == "found here")
@@ -2295,11 +2282,11 @@ class HttpClientTest extends Test:
 
         "does not follow 307 redirect" in run {
             val redirect = HttpHandler.get("/redirect") { _ =>
-                HttpResponse(Status.TemporaryRedirect).setHeader("Location", "/target")
+                HttpResponse(HttpStatus.TemporaryRedirect).setHeader("Location", "/target")
             }
             startTestServer(redirect).map { port =>
                 HttpClient.stream(s"http://localhost:$port/redirect").map { response =>
-                    assert(response.status == Status.TemporaryRedirect)
+                    assert(response.status == HttpStatus.TemporaryRedirect)
                 }
             }
         }

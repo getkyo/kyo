@@ -1,6 +1,13 @@
 package kyo
 
-sealed abstract class HttpStatus(val code: Int) derives CanEqual
+sealed abstract class HttpStatus(val code: Int) derives CanEqual:
+    def isInformational: Boolean = code >= 100 && code < 200
+    def isSuccess: Boolean       = code >= 200 && code < 300
+    def isRedirect: Boolean      = code >= 300 && code < 400
+    def isClientError: Boolean   = code >= 400 && code < 500
+    def isServerError: Boolean   = code >= 500 && code < 600
+    def isError: Boolean         = code >= 400
+end HttpStatus
 
 object HttpStatus:
 
@@ -9,8 +16,16 @@ object HttpStatus:
             Redirect.values.iterator ++ ClientError.values.iterator ++
             ServerError.values.iterator).map(s => s.code -> s).toMap
 
+    /** Resolve an HTTP status code. Returns the known enum case if one exists, otherwise wraps in `Custom`. */
+    def apply(code: Int): HttpStatus =
+        require(code >= 100 && code <= 599, s"Invalid HTTP status code: $code")
+        byCode.getOrElse(code, Custom(code))
+
     def resolve(code: Int): Maybe[HttpStatus] =
         Maybe.fromOption(byCode.get(code))
+
+    /** Status code not covered by the standard enums. */
+    final case class Custom(override val code: Int) extends HttpStatus(code)
 
     export ClientError.*
     export Informational.*

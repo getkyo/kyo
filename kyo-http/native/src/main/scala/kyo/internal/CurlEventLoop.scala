@@ -277,7 +277,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
     private def completeTransfer(state: TransferState): Unit =
         state match
             case bs: BufferedTransferState =>
-                val status  = HttpResponse.Status(bs.statusCode)
+                val status  = HttpStatus(bs.statusCode)
                 val headers = parseHeaders(bs.responseHeaders.toString)
                 val body    = bs.responseBody.toByteArray
                 val resp    = HttpResponse.initBytes(status, headers, Span.fromUnsafe(body))
@@ -286,7 +286,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
             case ss: StreamingTransferState =>
                 // Complete header promise if not already done
                 if !ss.headersCompleted then
-                    val status  = HttpResponse.Status(ss.statusCode)
+                    val status  = HttpStatus(ss.statusCode)
                     val headers = parseHeaders(ss.responseHeaders.toString)
                     ss.headersCompleted = true
                     discard(ss.headerPromise.complete(Result.succeed(StreamingHeaders(status, headers))))
@@ -360,7 +360,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
                 // Headers are only available after the first body data arrives from curl
                 case ss: StreamingTransferState =>
                     if !ss.headersCompleted then
-                        val status  = HttpResponse.Status(ss.statusCode)
+                        val status  = HttpStatus(ss.statusCode)
                         val headers = parseHeaders(ss.responseHeaders.toString)
                         ss.headersCompleted = true
                         discard(ss.headerPromise.complete(Result.succeed(StreamingHeaders(status, headers))))

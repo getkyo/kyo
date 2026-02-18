@@ -1,6 +1,7 @@
 package kyo
 
 import HttpResponse.*
+import HttpStatus.*
 
 class HttpResponseTest extends Test:
 
@@ -21,204 +22,204 @@ class HttpResponseTest extends Test:
             case Result.Success(a) => a
             case other             => fail(s"Unexpected result: $other")
 
-    "Status" - {
+    "HttpStatus" - {
 
         "construction" - {
             "from Int" in {
-                val status = Status(200)
+                val status = HttpStatus(200)
                 assert(status.code == 200)
             }
 
             "custom status code" in {
-                val status = Status(599)
+                val status = HttpStatus(599)
                 assert(status.code == 599)
             }
         }
 
-        "as Int subtype" - {
-            "implicit conversion to Int" in {
-                val status: Status = Status.OK
-                val code: Int      = status
+        "code access" - {
+            "code field returns Int" in {
+                val status: HttpStatus = HttpStatus.OK
+                val code: Int          = status.code
                 assert(code == 200)
             }
 
-            "arithmetic operations" in {
-                val status: Status = Status.OK
-                assert(status + 1 == 201)
+            "arithmetic operations on code" in {
+                val status: HttpStatus = HttpStatus.OK
+                assert(status.code + 1 == 201)
             }
 
-            "comparison with Int" in {
-                val status: Status = Status.OK
-                assert(status == 200)
+            "comparison via code" in {
+                val status: HttpStatus = HttpStatus.OK
+                assert(status.code == 200)
             }
         }
 
         "category checks" - {
             "isInformational" in {
-                assert(Status.Continue.isInformational)
-                assert(Status(199).isInformational)
-                assert(!Status.OK.isInformational)
+                assert(HttpStatus.Continue.isInformational)
+                assert(HttpStatus(199).isInformational)
+                assert(!HttpStatus.OK.isInformational)
             }
 
             "isSuccess" in {
-                assert(Status.OK.isSuccess)
-                assert(Status.Created.isSuccess)
-                assert(Status(299).isSuccess)
-                assert(!Status.BadRequest.isSuccess)
+                assert(HttpStatus.OK.isSuccess)
+                assert(HttpStatus.Created.isSuccess)
+                assert(HttpStatus(299).isSuccess)
+                assert(!HttpStatus.BadRequest.isSuccess)
             }
 
             "isRedirect" in {
-                assert(Status.MovedPermanently.isRedirect)
-                assert(Status.Found.isRedirect)
-                assert(!Status.OK.isRedirect)
+                assert(HttpStatus.MovedPermanently.isRedirect)
+                assert(HttpStatus.Found.isRedirect)
+                assert(!HttpStatus.OK.isRedirect)
             }
 
             "isClientError" in {
-                assert(Status.BadRequest.isClientError)
-                assert(Status.NotFound.isClientError)
-                assert(!Status.InternalServerError.isClientError)
+                assert(HttpStatus.BadRequest.isClientError)
+                assert(HttpStatus.NotFound.isClientError)
+                assert(!HttpStatus.InternalServerError.isClientError)
             }
 
             "isServerError" in {
-                assert(Status.InternalServerError.isServerError)
-                assert(Status.BadGateway.isServerError)
-                assert(!Status.BadRequest.isServerError)
+                assert(HttpStatus.InternalServerError.isServerError)
+                assert(HttpStatus.BadGateway.isServerError)
+                assert(!HttpStatus.BadRequest.isServerError)
             }
 
             "isError" in {
-                assert(Status.BadRequest.isError)
-                assert(Status.InternalServerError.isError)
-                assert(!Status.OK.isError)
+                assert(HttpStatus.BadRequest.isError)
+                assert(HttpStatus.InternalServerError.isError)
+                assert(!HttpStatus.OK.isError)
             }
         }
 
         "boundary cases" - {
             "100 is informational" in {
-                assert(Status(100).isInformational)
+                assert(HttpStatus(100).isInformational)
             }
 
             "199 is informational" in {
-                assert(Status(199).isInformational)
-                assert(!Status(199).isSuccess)
+                assert(HttpStatus(199).isInformational)
+                assert(!HttpStatus(199).isSuccess)
             }
 
             "200 is success" in {
-                assert(Status(200).isSuccess)
-                assert(!Status(200).isInformational)
+                assert(HttpStatus(200).isSuccess)
+                assert(!HttpStatus(200).isInformational)
             }
 
             "299 is success" in {
-                assert(Status(299).isSuccess)
-                assert(!Status(299).isRedirect)
+                assert(HttpStatus(299).isSuccess)
+                assert(!HttpStatus(299).isRedirect)
             }
 
             "300 is redirect" in {
-                assert(Status(300).isRedirect)
-                assert(!Status(300).isSuccess)
+                assert(HttpStatus(300).isRedirect)
+                assert(!HttpStatus(300).isSuccess)
             }
 
             "399 is redirect" in {
-                assert(Status(399).isRedirect)
-                assert(!Status(399).isClientError)
+                assert(HttpStatus(399).isRedirect)
+                assert(!HttpStatus(399).isClientError)
             }
 
             "400 is client error" in {
-                assert(Status(400).isClientError)
-                assert(!Status(400).isRedirect)
+                assert(HttpStatus(400).isClientError)
+                assert(!HttpStatus(400).isRedirect)
             }
 
             "499 is client error" in {
-                assert(Status(499).isClientError)
-                assert(!Status(499).isServerError)
+                assert(HttpStatus(499).isClientError)
+                assert(!HttpStatus(499).isServerError)
             }
 
             "500 is server error" in {
-                assert(Status(500).isServerError)
-                assert(!Status(500).isClientError)
+                assert(HttpStatus(500).isServerError)
+                assert(!HttpStatus(500).isClientError)
             }
 
             "599 is server error" in {
-                assert(Status(599).isServerError)
+                assert(HttpStatus(599).isServerError)
             }
         }
 
         "edge cases" - {
             "status code 0 throws" in {
                 assertThrows[IllegalArgumentException] {
-                    Status(0)
+                    HttpStatus(0)
                 }
             }
 
             "status code 99 throws" in {
                 assertThrows[IllegalArgumentException] {
-                    Status(99)
+                    HttpStatus(99)
                 }
             }
 
             "negative status code throws" in {
                 assertThrows[IllegalArgumentException] {
-                    Status(-1)
+                    HttpStatus(-1)
                 }
             }
 
             "status code 600 throws" in {
                 assertThrows[IllegalArgumentException] {
-                    Status(600)
+                    HttpStatus(600)
                 }
             }
 
             "very large status code throws" in {
                 assertThrows[IllegalArgumentException] {
-                    Status(999)
+                    HttpStatus(999)
                 }
             }
 
             "boundary 100 is valid" in {
-                val status = Status(100)
+                val status = HttpStatus(100)
                 assert(status.code == 100)
             }
 
             "boundary 599 is valid" in {
-                val status = Status(599)
+                val status = HttpStatus(599)
                 assert(status.code == 599)
             }
         }
 
         "predefined constants" - {
             "1xx informational" in {
-                assert(Status.Continue == 100)
-                assert(Status.SwitchingProtocols == 101)
-                assert(Status.Processing == 102)
-                assert(Status.EarlyHints == 103)
+                assert(HttpStatus.Continue.code == 100)
+                assert(HttpStatus.SwitchingProtocols.code == 101)
+                assert(HttpStatus.Processing.code == 102)
+                assert(HttpStatus.EarlyHints.code == 103)
             }
 
             "2xx success" in {
-                assert(Status.OK == 200)
-                assert(Status.Created == 201)
-                assert(Status.Accepted == 202)
-                assert(Status.NoContent == 204)
+                assert(HttpStatus.OK.code == 200)
+                assert(HttpStatus.Created.code == 201)
+                assert(HttpStatus.Accepted.code == 202)
+                assert(HttpStatus.NoContent.code == 204)
             }
 
             "3xx redirection" in {
-                assert(Status.MovedPermanently == 301)
-                assert(Status.Found == 302)
-                assert(Status.NotModified == 304)
-                assert(Status.TemporaryRedirect == 307)
+                assert(HttpStatus.MovedPermanently.code == 301)
+                assert(HttpStatus.Found.code == 302)
+                assert(HttpStatus.NotModified.code == 304)
+                assert(HttpStatus.TemporaryRedirect.code == 307)
             }
 
             "4xx client error" in {
-                assert(Status.BadRequest == 400)
-                assert(Status.Unauthorized == 401)
-                assert(Status.Forbidden == 403)
-                assert(Status.NotFound == 404)
-                assert(Status.ImATeapot == 418)
+                assert(HttpStatus.BadRequest.code == 400)
+                assert(HttpStatus.Unauthorized.code == 401)
+                assert(HttpStatus.Forbidden.code == 403)
+                assert(HttpStatus.NotFound.code == 404)
+                assert(HttpStatus.ImATeapot.code == 418)
             }
 
             "5xx server error" in {
-                assert(Status.InternalServerError == 500)
-                assert(Status.NotImplemented == 501)
-                assert(Status.BadGateway == 502)
-                assert(Status.ServiceUnavailable == 503)
+                assert(HttpStatus.InternalServerError.code == 500)
+                assert(HttpStatus.NotImplemented.code == 501)
+                assert(HttpStatus.BadGateway.code == 502)
+                assert(HttpStatus.ServiceUnavailable.code == 503)
             }
         }
     }
@@ -371,20 +372,20 @@ class HttpResponseTest extends Test:
 
         "generic apply" - {
             "with status and empty body" in {
-                val response = HttpResponse(Status.OK)
-                assert(response.status == Status.OK)
+                val response = HttpResponse(HttpStatus.OK)
+                assert(response.status == HttpStatus.OK)
                 assert(getBodyText(response) == "")
             }
 
             "with status and string body" in {
-                val response = HttpResponse(Status.OK, "hello")
-                assert(response.status == Status.OK)
+                val response = HttpResponse(HttpStatus.OK, "hello")
+                assert(response.status == HttpStatus.OK)
                 assert(getBodyText(response) == "hello")
             }
 
             "with status and typed body" in {
-                val response = HttpResponse(Status.OK, User(1, "Alice"))
-                assert(response.status == Status.OK)
+                val response = HttpResponse(HttpStatus.OK, User(1, "Alice"))
+                assert(response.status == HttpStatus.OK)
                 assert(getBodyAs[User](response) == User(1, "Alice"))
             }
         }
@@ -392,46 +393,46 @@ class HttpResponseTest extends Test:
         "2xx success" - {
             "ok without body" in {
                 val response = HttpResponse.ok
-                assert(response.status == Status.OK)
+                assert(response.status == HttpStatus.OK)
             }
 
             "ok with string body" in {
                 val response = HttpResponse.ok("success")
-                assert(response.status == Status.OK)
+                assert(response.status == HttpStatus.OK)
                 assert(getBodyText(response) == "success")
             }
 
             "ok with typed body" in {
                 val response = HttpResponse.ok(User(1, "Alice"))
-                assert(response.status == Status.OK)
+                assert(response.status == HttpStatus.OK)
                 assert(getBodyAs[User](response) == User(1, "Alice"))
             }
 
             "created with body" in {
                 val response = HttpResponse.created(User(1, "Alice"))
-                assert(response.status == Status.Created)
+                assert(response.status == HttpStatus.Created)
                 assert(getBodyAs[User](response) == User(1, "Alice"))
             }
 
             "created with body and location" in {
                 val response = HttpResponse.created(User(1, "Alice"), "/users/1")
-                assert(response.status == Status.Created)
+                assert(response.status == HttpStatus.Created)
                 assert(response.header("Location") == Present("/users/1"))
             }
 
             "accepted without body" in {
                 val response = HttpResponse.accepted
-                assert(response.status == Status.Accepted)
+                assert(response.status == HttpStatus.Accepted)
             }
 
             "accepted with body" in {
                 val response = HttpResponse.accepted(User(1, "Alice"))
-                assert(response.status == Status.Accepted)
+                assert(response.status == HttpStatus.Accepted)
             }
 
             "noContent" in {
                 val response = HttpResponse.noContent
-                assert(response.status == Status.NoContent)
+                assert(response.status == HttpStatus.NoContent)
                 assert(getBodyText(response) == "")
             }
         }
@@ -439,25 +440,25 @@ class HttpResponseTest extends Test:
         "3xx redirection" - {
             "redirect with url" in {
                 val response = HttpResponse.redirect("/new-location")
-                assert(response.status == Status.Found)
+                assert(response.status == HttpStatus.Found)
                 assert(response.header("Location") == Present("/new-location"))
             }
 
             "redirect with url and status" in {
-                val response = HttpResponse.redirect("/new-location", Status.TemporaryRedirect)
-                assert(response.status == Status.TemporaryRedirect)
+                val response = HttpResponse.redirect("/new-location", HttpStatus.TemporaryRedirect)
+                assert(response.status == HttpStatus.TemporaryRedirect)
                 assert(response.header("Location") == Present("/new-location"))
             }
 
             "movedPermanently" in {
                 val response = HttpResponse.movedPermanently("/permanent")
-                assert(response.status == Status.MovedPermanently)
+                assert(response.status == HttpStatus.MovedPermanently)
                 assert(response.header("Location") == Present("/permanent"))
             }
 
             "notModified" in {
                 val response = HttpResponse.notModified
-                assert(response.status == Status.NotModified)
+                assert(response.status == HttpStatus.NotModified)
             }
 
             "redirect with empty url throws" in {
@@ -470,83 +471,83 @@ class HttpResponseTest extends Test:
         "4xx client error" - {
             "badRequest without body" in {
                 val response = HttpResponse.badRequest
-                assert(response.status == Status.BadRequest)
+                assert(response.status == HttpStatus.BadRequest)
             }
 
             "badRequest with string body" in {
                 val response = HttpResponse.badRequest("Invalid input")
-                assert(response.status == Status.BadRequest)
+                assert(response.status == HttpStatus.BadRequest)
                 assert(getBodyText(response) == "Invalid input")
             }
 
             "badRequest with typed body" in {
                 val response = HttpResponse.badRequest(ErrorBody("Invalid"))
-                assert(response.status == Status.BadRequest)
+                assert(response.status == HttpStatus.BadRequest)
                 assert(getBodyAs[ErrorBody](response) == ErrorBody("Invalid"))
             }
 
             "unauthorized without body" in {
                 val response = HttpResponse.unauthorized
-                assert(response.status == Status.Unauthorized)
+                assert(response.status == HttpStatus.Unauthorized)
             }
 
             "unauthorized with body" in {
                 val response = HttpResponse.unauthorized("Please login")
-                assert(response.status == Status.Unauthorized)
+                assert(response.status == HttpStatus.Unauthorized)
                 assert(getBodyText(response) == "Please login")
             }
 
             "forbidden without body" in {
                 val response = HttpResponse.forbidden
-                assert(response.status == Status.Forbidden)
+                assert(response.status == HttpStatus.Forbidden)
             }
 
             "forbidden with body" in {
                 val response = HttpResponse.forbidden("Access denied")
-                assert(response.status == Status.Forbidden)
+                assert(response.status == HttpStatus.Forbidden)
                 assert(getBodyText(response) == "Access denied")
             }
 
             "notFound without body" in {
                 val response = HttpResponse.notFound
-                assert(response.status == Status.NotFound)
+                assert(response.status == HttpStatus.NotFound)
             }
 
             "notFound with body" in {
                 val response = HttpResponse.notFound("Resource not found")
-                assert(response.status == Status.NotFound)
+                assert(response.status == HttpStatus.NotFound)
                 assert(getBodyText(response) == "Resource not found")
             }
 
             "conflict without body" in {
                 val response = HttpResponse.conflict
-                assert(response.status == Status.Conflict)
+                assert(response.status == HttpStatus.Conflict)
             }
 
             "conflict with body" in {
                 val response = HttpResponse.conflict("Already exists")
-                assert(response.status == Status.Conflict)
+                assert(response.status == HttpStatus.Conflict)
                 assert(getBodyText(response) == "Already exists")
             }
 
             "unprocessableEntity without body" in {
                 val response = HttpResponse.unprocessableEntity
-                assert(response.status == Status.UnprocessableEntity)
+                assert(response.status == HttpStatus.UnprocessableEntity)
             }
 
             "unprocessableEntity with body" in {
                 val response = HttpResponse.unprocessableEntity(ErrorBody("Validation failed"))
-                assert(response.status == Status.UnprocessableEntity)
+                assert(response.status == HttpStatus.UnprocessableEntity)
             }
 
             "tooManyRequests without retryAfter" in {
                 val response = HttpResponse.tooManyRequests
-                assert(response.status == Status.TooManyRequests)
+                assert(response.status == HttpStatus.TooManyRequests)
             }
 
             "tooManyRequests with retryAfter" in {
                 val response = HttpResponse.tooManyRequests(60.seconds)
-                assert(response.status == Status.TooManyRequests)
+                assert(response.status == HttpStatus.TooManyRequests)
                 assert(response.header("Retry-After") == Present("60"))
             }
         }
@@ -554,28 +555,28 @@ class HttpResponseTest extends Test:
         "5xx server error" - {
             "serverError without body" in {
                 val response = HttpResponse.serverError
-                assert(response.status == Status.InternalServerError)
+                assert(response.status == HttpStatus.InternalServerError)
             }
 
             "serverError with string body" in {
                 val response = HttpResponse.serverError("Something went wrong")
-                assert(response.status == Status.InternalServerError)
+                assert(response.status == HttpStatus.InternalServerError)
                 assert(getBodyText(response) == "Something went wrong")
             }
 
             "serverError with typed body" in {
                 val response = HttpResponse.serverError(ErrorBody("Internal error"))
-                assert(response.status == Status.InternalServerError)
+                assert(response.status == HttpStatus.InternalServerError)
             }
 
             "serviceUnavailable without retryAfter" in {
                 val response = HttpResponse.serviceUnavailable
-                assert(response.status == Status.ServiceUnavailable)
+                assert(response.status == HttpStatus.ServiceUnavailable)
             }
 
             "serviceUnavailable with retryAfter" in {
                 val response = HttpResponse.serviceUnavailable(30.seconds)
-                assert(response.status == Status.ServiceUnavailable)
+                assert(response.status == HttpStatus.ServiceUnavailable)
                 assert(response.header("Retry-After") == Present("30"))
             }
         }
@@ -585,7 +586,7 @@ class HttpResponseTest extends Test:
     "Response abstract members" - {
         "status" in {
             val response = HttpResponse.ok
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
         }
 
         "contentType" in {
@@ -671,7 +672,7 @@ class HttpResponseTest extends Test:
 
             "withHeaders empty" in {
                 val response = HttpResponse.ok.addHeaders(HttpHeaders.empty)
-                assert(response.status == Status.OK)
+                assert(response.status == HttpStatus.OK)
             }
         }
 
@@ -699,7 +700,7 @@ class HttpResponseTest extends Test:
 
             "withCookies empty" in {
                 val response = HttpResponse.ok.addCookies()
-                assert(response.status == Status.OK)
+                assert(response.status == HttpStatus.OK)
             }
         }
 
@@ -776,7 +777,7 @@ class HttpResponseTest extends Test:
                 .addCookie(HttpResponse.Cookie("session", "abc"))
                 .etag("etag123")
                 .cacheControl("max-age=3600")
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             assert(response.header("X-Custom") == Present("value"))
             assert(response.cookie("session").isDefined)
             assert(response.header("ETag").isDefined)
@@ -931,7 +932,7 @@ class HttpResponseTest extends Test:
 
         "null bytes in body" in {
             val bytes    = Array[Byte](0, 1, 2, 0, 3)
-            val response = HttpResponse(Status.OK, new String(bytes))
+            val response = HttpResponse(HttpStatus.OK, new String(bytes))
             assert(getBodyBytes(response).size == 5)
         }
 
@@ -950,7 +951,7 @@ class HttpResponseTest extends Test:
             // Use ASCII-compatible bytes (0-127) since HttpResponse uses UTF-8 encoding
             // Bytes outside ASCII range get multi-byte UTF-8 encoding
             val bytes    = Array[Byte](0, 1, 64, 127, 65)
-            val response = HttpResponse(Status.OK, new String(bytes, "ISO-8859-1"))
+            val response = HttpResponse(HttpStatus.OK, new String(bytes, "ISO-8859-1"))
             assert(getBodyBytes(response).size == 5)
         }
     }

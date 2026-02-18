@@ -1,6 +1,6 @@
 package kyo
 
-import HttpResponse.Status
+import kyo.HttpStatus
 
 // ============================================================================
 // Live integration tests against httpbin.org
@@ -22,7 +22,7 @@ class HttpBinLiveTest extends Test:
 
     "GET - basic request" in run {
         HttpClient.send(s"$base/get").map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             assert(response.header("Content-Type").exists(_.contains("application/json")))
             assert(response.bodyText.contains("httpbin.org"))
         }
@@ -43,7 +43,7 @@ class HttpBinLiveTest extends Test:
         val request =
             HttpRequest.postText(s"$base/post", """{"title":"hello"}""", HttpHeaders.empty.add("Content-Type", "application/json"))
         HttpClient.send(request).map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             assert(response.bodyText.contains("hello"))
         }
     }
@@ -51,14 +51,14 @@ class HttpBinLiveTest extends Test:
     "PUT - with JSON body" in run {
         val request = HttpRequest.putText(s"$base/put", """{"updated":true}""", HttpHeaders.empty.add("Content-Type", "application/json"))
         HttpClient.send(request).map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             assert(response.bodyText.contains("updated"))
         }
     }
 
     "DELETE - request" in run {
         HttpClient.send(HttpRequest.delete(s"$base/delete")).map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
         }
     }
 
@@ -72,7 +72,7 @@ class HttpBinLiveTest extends Test:
             HttpHeaders.empty.add("X-Custom-Header", "kyo-demo").add("Accept", "application/json")
         )
         HttpClient.send(request).map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             assert(response.bodyText.contains("kyo-demo"))
         }
     }
@@ -80,7 +80,7 @@ class HttpBinLiveTest extends Test:
     "GET - bearer auth filter" in run {
         HttpFilter.client.bearerAuth("demo-token-123").enable {
             HttpClient.send(HttpRequest.get(s"$base/bearer")).map { response =>
-                assert(response.status == Status.OK)
+                assert(response.status == HttpStatus.OK)
                 assert(response.bodyText.contains("demo-token-123"))
             }
         }
@@ -104,15 +104,15 @@ class HttpBinLiveTest extends Test:
                 get  <- HttpClient.send(HttpRequest.get("/get"))
                 head <- HttpClient.send(HttpRequest.get("/headers"))
             yield
-                assert(get.status == Status.OK)
-                assert(head.status == Status.OK)
+                assert(get.status == HttpStatus.OK)
+                assert(head.status == HttpStatus.OK)
         }
     }
 
     "GET - with timeout" in run {
         HttpClient.withConfig(_.timeout(10.seconds)) {
             HttpClient.send(s"$base/get").map { response =>
-                assert(response.status == Status.OK)
+                assert(response.status == HttpStatus.OK)
             }
         }
     }
@@ -126,7 +126,7 @@ class HttpBinLiveTest extends Test:
             HttpClient.get[String](s"$base/status/404")
         }.map {
             case Result.Failure(HttpError.StatusError(status, _)) =>
-                assert(status == Status.NotFound)
+                assert(status == HttpStatus.NotFound)
             case other =>
                 fail(s"Expected StatusError(404) but got $other")
         }
@@ -146,7 +146,7 @@ class HttpBinLiveTest extends Test:
 
     "stream - read response as byte stream" in run {
         HttpClient.stream(s"$base/stream/5").map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             response.bodyStream.run.map { chunks =>
                 val body = chunks.foldLeft("")((acc, span) => acc + new String(span.toArrayUnsafe, "UTF-8"))
                 assert(body.contains("\"id\": 0"))
@@ -157,7 +157,7 @@ class HttpBinLiveTest extends Test:
 
     "stream - large payload" in run {
         HttpClient.stream(s"$base/stream-bytes/10000?seed=42").map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             response.bodyStream.run.map { chunks =>
                 val totalBytes = chunks.foldLeft(0)(_ + _.size)
                 assert(totalBytes == 10000)
@@ -175,7 +175,7 @@ class HttpBinLiveTest extends Test:
         }
         Async.collectAll(requests).map { responses =>
             assert(responses.size == 5)
-            assert(responses.forall(_.status == Status.OK))
+            assert(responses.forall(_.status == HttpStatus.OK))
         }
     }
 
@@ -184,7 +184,7 @@ class HttpBinLiveTest extends Test:
             HttpClient.send(HttpRequest.get(s"$base/delay/3")),
             HttpClient.send(HttpRequest.get(s"$base/get"))
         ).map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             // /get should win over /delay/3
             assert(response.bodyText.contains("httpbin.org/get"))
         }
@@ -198,21 +198,21 @@ class HttpBinLiveTest extends Test:
         val request =
             HttpRequest.patchText(s"$base/patch", """{"patched":true}""", HttpHeaders.empty.add("Content-Type", "application/json"))
         HttpClient.send(request).map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             assert(response.bodyText.contains("patched"))
         }
     }
 
     "HEAD - returns status with no body" in run {
         HttpClient.send(HttpRequest.head(s"$base/get")).map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             assert(response.bodyText.isEmpty)
         }
     }
 
     "OPTIONS - returns Allow header" in run {
         HttpClient.send(HttpRequest.options(s"$base/get")).map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             assert(response.header("Allow").isDefined)
         }
     }
@@ -224,7 +224,7 @@ class HttpBinLiveTest extends Test:
     "POST - form-encoded body" in run {
         val request = HttpRequest.postForm(s"$base/post", Seq("field1" -> "value1", "field2" -> "value2"))
         HttpClient.send(request).map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             val body = response.bodyText
             assert(body.contains("value1"))
             assert(body.contains("value2"))
@@ -237,7 +237,7 @@ class HttpBinLiveTest extends Test:
         )
         val request = HttpRequest.multipart(s"$base/post", parts)
         HttpClient.send(request).map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             assert(response.bodyText.contains("hello world"))
         }
     }
@@ -248,7 +248,7 @@ class HttpBinLiveTest extends Test:
 
     "redirect - follow redirects" in run {
         HttpClient.send(s"$base/redirect/3").map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             assert(response.bodyText.contains("httpbin.org"))
         }
     }
@@ -267,7 +267,7 @@ class HttpBinLiveTest extends Test:
     "redirect - disabled returns 302" in run {
         HttpClient.withConfig(_.followRedirects(false)) {
             HttpClient.send(s"$base/redirect/1").map { response =>
-                assert(response.status == Status.Found)
+                assert(response.status == HttpStatus.Found)
                 assert(response.header("Location").isDefined)
             }
         }
@@ -296,7 +296,7 @@ class HttpBinLiveTest extends Test:
     "GET - basic auth filter" in run {
         HttpFilter.client.basicAuth("user", "pass").enable {
             HttpClient.send(HttpRequest.get(s"$base/basic-auth/user/pass")).map { response =>
-                assert(response.status == Status.OK)
+                assert(response.status == HttpStatus.OK)
                 assert(response.bodyText.contains("\"authenticated\""))
             }
         }
@@ -305,7 +305,7 @@ class HttpBinLiveTest extends Test:
     "GET - addHeader filter" in run {
         HttpFilter.client.addHeader("X-Test-Header", "kyo-test-value").enable {
             HttpClient.send(HttpRequest.get(s"$base/headers")).map { response =>
-                assert(response.status == Status.OK)
+                assert(response.status == HttpStatus.OK)
                 assert(response.bodyText.contains("kyo-test-value"))
             }
         }
@@ -317,20 +317,20 @@ class HttpBinLiveTest extends Test:
 
     "GET - content type from /html" in run {
         HttpClient.send(s"$base/html").map { response =>
-            assert(response.status == Status.OK)
+            assert(response.status == HttpStatus.OK)
             assert(response.contentType.exists(_.contains("text/html")))
         }
     }
 
     "GET - status 201" in run {
         HttpClient.send(HttpRequest.get(s"$base/status/201")).map { response =>
-            assert(response.status == Status.Created)
+            assert(response.status == HttpStatus.Created)
         }
     }
 
     "GET - status 204" in run {
         HttpClient.send(HttpRequest.get(s"$base/status/204")).map { response =>
-            assert(response.status == Status.NoContent)
+            assert(response.status == HttpStatus.NoContent)
         }
     }
 

@@ -61,7 +61,7 @@ final private[kyo] class FetchConnection(
                                 s"Response size ${bodyBytes.length} exceeds limit $maxResponseSizeBytes"
                             )
                         end if
-                        val status  = HttpResponse.Status(response.status)
+                        val status  = HttpStatus(response.status)
                         val headers = extractHeaders(response.headers)
                         HttpResponse.initBytes(status, headers, Span.fromUnsafe(bodyBytes))
                     }
@@ -98,7 +98,7 @@ final private[kyo] class FetchConnection(
                     e => Abort.fail(classifyError(e))
                 ) {
                     Async.fromFuture(future).map { response =>
-                        val status  = HttpResponse.Status(response.status)
+                        val status  = HttpStatus(response.status)
                         val headers = extractHeaders(response.headers)
                         val reader  = response.body.getReader()
 

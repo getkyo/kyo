@@ -163,7 +163,7 @@ final private[kyo] class HttpServerHandler(
                 if bodyBuf != null then
                     bodyBuf.release()
                     bodyBuf = null
-                discardResponse = kyo.HttpResponse(kyo.HttpResponse.Status.PayloadTooLarge)
+                discardResponse = kyo.HttpResponse(kyo.HttpStatus.PayloadTooLarge)
                 state = STATE_DISCARDING
                 if content.isInstanceOf[LastHttpContent] then
                     sendBufferedResponse(ctx, discardResponse, pendingKeepAlive)

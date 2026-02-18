@@ -1,62 +1,65 @@
 package kyo
 
-import kyo.internal.Inputs
+import scala.NamedTuple
+import scala.NamedTuple.AnyNamedTuple
 import scala.annotation.tailrec
 import scala.language.implicitConversions
 
-/** Type-safe URL path pattern with compile-time tracked named captures.
-  *
-  * HttpPath defines URL patterns that can contain literal segments and typed captures. String literals like `"/api/users"` produce
-  * `HttpPath[EmptyTuple]` (no captures). Captures like `HttpPath.int("id")` produce `HttpPath[(id: Int)]` — a named tuple type. Paths
-  * compose with `/`, which uses the `Inputs` type class to concatenate named tuple types.
-  *
-  * For example, `"/api" / HttpPath.string("name") / HttpPath.int("id")` is `HttpPath[(name: String, id: Int)]`.
-  *
-  * Capture names must be string literals. Non-literal strings are rejected at compile time.
-  *
-  *   - String literal paths via implicit conversion from `String` to `HttpPath[EmptyTuple]`
-  *   - Typed captures: `int`, `long`, `string`, `uuid`, `boolean` — all produce named tuple types
-  *   - `/` composition with named tuple concatenation via `Inputs`
-  *   - Zero-cost opaque type over `String | Segment[?]`
-  *
-  * @tparam A
-  *   The type of values captured from the path. `EmptyTuple` for literal-only paths, a named tuple for captures.
-  *
-  * @see
-  *   [[kyo.HttpRoute]]
-  * @see
-  *   [[kyo.HttpHandler]]
-  */
-opaque type HttpPath[+A] = String | HttpPath.Segment[?]
+enum HttpPath[+A <: AnyNamedTuple]:
+    case Concat[A <: AnyNamedTuple, B <: AnyNamedTuple](left: HttpPath[A], right: HttpPath[B]) extends HttpPath[Row.Concat[A, B]]
+    case Capture[N <: String, A](wireName: String, fieldName: N, codec: HttpCodec[A])          extends HttpPath[Row.Init[N, A]]
+    case Literal[A <: AnyNamedTuple](value: String)                                            extends HttpPath[A]
+    case Rest[N <: String](fieldName: N)                                                       extends HttpPath[Row.Init[N, String]]
+end HttpPath
 
-object HttpPath extends HttpPathFactory:
+object HttpPath:
 
-    def apply(s: String): HttpPath[EmptyTuple] = s
+    implicit def stringToPath(s: String): HttpPath[Row.Empty] = Literal(s)
 
-    implicit def stringToPath(s: String): HttpPath[EmptyTuple] = apply(s)
+    object Capture:
 
-    extension [A](self: HttpPath[A])
-        inline def /[B](next: HttpPath[B])(using c: Inputs[A, B]): HttpPath[c.Out] =
-            Inputs.combine[A, B]
-            Segment.Concat[c.Out](toSegment(self), toSegment(next))
+        def apply[A](using codec: HttpCodec[A])[N <: String & Singleton](fieldName: N): HttpPath[Row.Init[N, A]] =
+            HttpPath.Capture(fieldName, fieldName, codec)
+
+        def apply[A](using
+            codec: HttpCodec[A]
+        )[N <: String & Singleton](wireName: String, fieldName: N): HttpPath[Row.Init[N, A]] =
+            HttpPath.Capture(wireName, fieldName, codec)
+
+        def apply[N <: String & Singleton, A](
+            fieldName: N,
+            parse: String => A,
+            serialize: A => String
+        ): HttpPath[Row.Init[N, A]] =
+            HttpPath.Capture(fieldName, fieldName, HttpCodec(parse, serialize))
+
+        def apply[N <: String & Singleton, A](
+            wireName: String,
+            fieldName: N,
+            parse: String => A,
+            serialize: A => String
+        ): HttpPath[Row.Init[N, A]] =
+            HttpPath.Capture(wireName, fieldName, HttpCodec(parse, serialize))
+
+        def rest: HttpPath[Row.Init["rest", String]] =
+            rest("rest")
+
+        def rest[N <: String & Singleton](fieldName: N): HttpPath[Row.Init[N, String]] =
+            HttpPath.Rest(fieldName)
+
+    end Capture
+
+    extension [A <: AnyNamedTuple](self: HttpPath[A])
+        def /[B <: AnyNamedTuple](next: HttpPath[B]): HttpPath[NamedTuple.Concat[A, B]] =
+            Concat(self, next)
     end extension
 
-    // --- Private ---
+    extension (self: String)
+        def /[B <: AnyNamedTuple](next: HttpPath[B]): HttpPath[B] =
+            Concat(Literal[Row.Empty](self), next).asInstanceOf[HttpPath[B]]
+    end extension
 
-    private[kyo] def mkCapture[A](name: String, parse: String => A): HttpPath[Any] =
-        require(name.nonEmpty, "Capture name cannot be empty")
-        Segment.Capture(name, parse)
-
-    private[kyo] enum Segment[+A]:
-        case Literal(value: String)                         extends Segment[EmptyTuple]
-        case Capture[A](name: String, parse: String => A)   extends Segment[A]
-        case Concat[C](left: Segment[?], right: Segment[?]) extends Segment[C]
-    end Segment
-
-    private def toSegment[A](path: HttpPath[A]): Segment[A] =
-        path match
-            case s: String       => Segment.Literal(s).asInstanceOf[Segment[A]]
-            case seg: Segment[?] => seg.asInstanceOf[Segment[A]]
+    // --- Path parsing utilities (used by HttpRouter and HttpHandler) ---
 
     /** Parse path into non-empty segments. "/api/users/123" -> List("api", "users", "123") */
     private[kyo] def parseSegments(path: String): List[String] =

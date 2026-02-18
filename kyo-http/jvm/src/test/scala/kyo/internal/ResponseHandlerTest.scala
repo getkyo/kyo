@@ -36,7 +36,7 @@ class ResponseHandlerTest extends Test:
 
             pollResponse(promise) match
                 case Present(Result.Success(response)) =>
-                    assert(response.status == kyo.HttpResponse.Status.OK)
+                    assert(response.status == kyo.HttpStatus.OK)
                     assert(response.bodyText == "hello world")
                     assert(response.header("content-type") == Present("text/plain"))
                 case other =>
@@ -81,7 +81,7 @@ class ResponseHandlerTest extends Test:
 
             pollResponse(promise) match
                 case Present(Result.Success(response)) =>
-                    assert(response.status == kyo.HttpResponse.Status.NoContent)
+                    assert(response.status == kyo.HttpStatus.NoContent)
                     assert(response.bodyText == "")
                 case other =>
                     fail(s"Expected completed Success but got $other")

@@ -225,7 +225,7 @@ object HttpServer:
                 error match
                     case HttpRouter.FindError.MethodNotAllowed(allowed) =>
                         val allowHeader = allowed.map(_.name).mkString(", ")
-                        HttpResponse(HttpResponse.Status.MethodNotAllowed).setHeader("Allow", allowHeader)
+                        HttpResponse(HttpStatus.MethodNotAllowed).setHeader("Allow", allowHeader)
                     case HttpRouter.FindError.NotFound =>
                         HttpResponse.notFound
 

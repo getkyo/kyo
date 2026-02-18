@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-sealed private[kyo] trait Content
+sealed private[kyo] trait Content derives CanEqual
 private[kyo] object Content:
     sealed trait Input  extends Content
     sealed trait Output extends Content

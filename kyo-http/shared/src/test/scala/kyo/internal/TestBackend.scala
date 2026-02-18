@@ -62,7 +62,7 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
 
     def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         if request.body.span.size > maxContentLength then
-            HttpResponse(HttpResponse.Status.PayloadTooLarge)
+            HttpResponse(HttpStatus.PayloadTooLarge)
         else
             val path = extractPath(request.url)
             handler.reject(request.method, path) match

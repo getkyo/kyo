@@ -135,10 +135,10 @@ object HttpOpenApi:
     val defaultPath = "/openapi.json"
 
     /** Generates a spec from route definitions. */
-    def fromRoutes(routes: HttpRoute[?, ?, ?]*): HttpOpenApi =
+    def fromRoutes(routes: HttpRoute[?, ?, ?, ?]*): HttpOpenApi =
         fromRoutes(Config.default)(routes*)
 
-    def fromRoutes(config: Config)(routes: HttpRoute[?, ?, ?]*): HttpOpenApi =
+    def fromRoutes(config: Config)(routes: HttpRoute[?, ?, ?, ?]*): HttpOpenApi =
         val handlers = routes.map(routeToHandler)
         OpenApiGenerator.generate(handlers, config)
 
@@ -150,13 +150,13 @@ object HttpOpenApi:
         OpenApiGenerator.generate(handlers, config)
 
     /** Creates an HttpHandler that serves the generated spec as JSON at the given path. */
-    def handler(routes: HttpRoute[?, ?, ?]*)(using Frame): HttpHandler[Any] =
+    def handler(routes: HttpRoute[?, ?, ?, ?]*)(using Frame): HttpHandler[Any] =
         handler(defaultPath, Config.default)(routes*)
 
-    def handler(path: String)(routes: HttpRoute[?, ?, ?]*)(using Frame): HttpHandler[Any] =
+    def handler(path: String)(routes: HttpRoute[?, ?, ?, ?]*)(using Frame): HttpHandler[Any] =
         handler(path, Config.default)(routes*)
 
-    def handler(path: String, config: Config)(routes: HttpRoute[?, ?, ?]*)(using Frame): HttpHandler[Any] =
+    def handler(path: String, config: Config)(routes: HttpRoute[?, ?, ?, ?]*)(using Frame): HttpHandler[Any] =
         val spec = fromRoutes(config)(routes*)
         val json = spec.toJson
         HttpHandler.get(path) { _ =>
@@ -164,7 +164,7 @@ object HttpOpenApi:
         }
     end handler
 
-    private def routeToHandler(r: HttpRoute[?, ?, ?]): HttpHandler[Any] =
+    private def routeToHandler(r: HttpRoute[?, ?, ?, ?]): HttpHandler[Any] =
         HttpHandler.stub(r)
 
 end HttpOpenApi

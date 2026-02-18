@@ -1,7 +1,7 @@
 package kyo
 
 import HttpRequest.Method
-import HttpResponse.Status
+import kyo.HttpStatus
 
 class HttpFilterTest extends Test:
 
@@ -73,7 +73,7 @@ class HttpFilterTest extends Test:
                         HttpRequest.options(s"http://localhost:$port/test")
                     )
                 yield
-                    assertStatus(response, Status.NoContent)
+                    assertStatus(response, HttpStatus.NoContent)
                     assertHeader(response, "Access-Control-Allow-Origin", "*")
                     assertHasHeader(response, "Access-Control-Allow-Methods")
             }
@@ -163,7 +163,7 @@ class HttpFilterTest extends Test:
                     response <- HttpClient.send(
                         HttpRequest.get(s"http://localhost:$port/test", HttpHeaders.empty.add("Authorization", "Basic YWRtaW46c2VjcmV0"))
                     )
-                yield assertStatus(response, Status.OK)
+                yield assertStatus(response, HttpStatus.OK)
             }
         }
 
@@ -175,7 +175,7 @@ class HttpFilterTest extends Test:
                         HttpRequest.get(s"http://localhost:$port/test", HttpHeaders.empty.add("Authorization", "Basic d3Jvbmc6d3Jvbmc="))
                     )
                 yield
-                    assertStatus(response, Status.Unauthorized)
+                    assertStatus(response, HttpStatus.Unauthorized)
                     assertHasHeader(response, "WWW-Authenticate")
             }
         }
@@ -185,7 +185,7 @@ class HttpFilterTest extends Test:
                 for
                     port     <- startTestServer(simpleHandler)
                     response <- testGet(port, "/test")
-                yield assertStatus(response, Status.Unauthorized)
+                yield assertStatus(response, HttpStatus.Unauthorized)
             }
         }
 
@@ -196,7 +196,7 @@ class HttpFilterTest extends Test:
                     response <- HttpClient.send(
                         HttpRequest.get(s"http://localhost:$port/test", HttpHeaders.empty.add("Authorization", "Basic !!!notbase64!!!"))
                     )
-                yield assertStatus(response, Status.Unauthorized)
+                yield assertStatus(response, HttpStatus.Unauthorized)
             }
         }
 
@@ -207,7 +207,7 @@ class HttpFilterTest extends Test:
                     response <- HttpClient.send(
                         HttpRequest.get(s"http://localhost:$port/test", HttpHeaders.empty.add("Authorization", "Bearer some-token"))
                     )
-                yield assertStatus(response, Status.Unauthorized)
+                yield assertStatus(response, HttpStatus.Unauthorized)
             }
         }
     }
@@ -220,7 +220,7 @@ class HttpFilterTest extends Test:
                     response <- HttpClient.send(
                         HttpRequest.get(s"http://localhost:$port/test", HttpHeaders.empty.add("Authorization", "Bearer valid-token"))
                     )
-                yield assertStatus(response, Status.OK)
+                yield assertStatus(response, HttpStatus.OK)
             }
         }
 
@@ -231,7 +231,7 @@ class HttpFilterTest extends Test:
                     response <- HttpClient.send(
                         HttpRequest.get(s"http://localhost:$port/test", HttpHeaders.empty.add("Authorization", "Bearer invalid"))
                     )
-                yield assertStatus(response, Status.Unauthorized)
+                yield assertStatus(response, HttpStatus.Unauthorized)
             }
         }
 
@@ -240,7 +240,7 @@ class HttpFilterTest extends Test:
                 for
                     port     <- startTestServer(simpleHandler)
                     response <- testGet(port, "/test")
-                yield assertStatus(response, Status.Unauthorized)
+                yield assertStatus(response, HttpStatus.Unauthorized)
             }
         }
     }
@@ -297,7 +297,7 @@ class HttpFilterTest extends Test:
                     r2 <- HttpClient.send(
                         HttpRequest.get(s"http://localhost:$port/test", HttpHeaders.empty.add("If-None-Match", etag))
                     )
-                yield assertStatus(r2, Status.NotModified)
+                yield assertStatus(r2, HttpStatus.NotModified)
             }
         }
 
@@ -307,7 +307,7 @@ class HttpFilterTest extends Test:
                     port     <- startTestServer(simpleHandler)
                     response <- testGet(port, "/test")
                 yield
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertHasHeader(response, "ETag")
             }
         }
@@ -320,7 +320,7 @@ class HttpFilterTest extends Test:
                         HttpRequest.get(s"http://localhost:$port/test", HttpHeaders.empty.add("If-None-Match", "\"nonexistent\""))
                     )
                 yield
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertHasHeader(response, "ETag")
             }
         }
@@ -405,7 +405,7 @@ class HttpFilterTest extends Test:
                     port     <- startTestServer(handler)
                     response <- testGet(port, "/test")
                 yield
-                    assertStatus(response, Status.Unauthorized)
+                    assertStatus(response, HttpStatus.Unauthorized)
                     assert(!handlerCalled)
             }
         }
@@ -477,7 +477,7 @@ class HttpFilterTest extends Test:
                 for
                     port     <- startTestServer(simpleHandler)
                     response <- testGet(port, "/test")
-                yield assertStatus(response, Status.OK)
+                yield assertStatus(response, HttpStatus.OK)
             }
         }
 
@@ -537,7 +537,7 @@ class HttpFilterTest extends Test:
                     for
                         port     <- startTestServer(simpleHandler)
                         response <- testGet(port, "/test")
-                    yield assertStatus(response, Status.OK)
+                    yield assertStatus(response, HttpStatus.OK)
                 }
             }
         }
@@ -549,7 +549,7 @@ class HttpFilterTest extends Test:
                         port     <- startTestServer(simpleHandler)
                         response <- testGet(port, "/test")
                     yield
-                        assertStatus(response, Status.TooManyRequests)
+                        assertStatus(response, HttpStatus.TooManyRequests)
                         assertHasHeader(response, "Retry-After")
                 }
             }
@@ -562,7 +562,7 @@ class HttpFilterTest extends Test:
                         port     <- startTestServer(simpleHandler)
                         response <- testGet(port, "/test")
                     yield
-                        assertStatus(response, Status.TooManyRequests)
+                        assertStatus(response, HttpStatus.TooManyRequests)
                         assertHeader(response, "Retry-After", "30")
                 }
             }
@@ -595,7 +595,7 @@ class HttpFilterTest extends Test:
                 for
                     port     <- startTestServer(simpleHandler)
                     response <- testGet(port, "/test")
-                yield assertStatus(response, Status.OK)
+                yield assertStatus(response, HttpStatus.OK)
             }
         }
 
@@ -702,7 +702,7 @@ class HttpFilterTest extends Test:
                     port     <- startTestServer(simpleHandler)
                     response <- testGet(port, "/test")
                 yield
-                    assertStatus(response, Status.Unauthorized)
+                    assertStatus(response, HttpStatus.Unauthorized)
                     assert(!secondCalled)
             }
         }

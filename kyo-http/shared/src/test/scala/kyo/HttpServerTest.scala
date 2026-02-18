@@ -1,8 +1,8 @@
 package kyo
 
-import HttpPath./
+import HttpPath.*
 import HttpRequest.Method
-import HttpResponse.Status
+import kyo.HttpStatus
 
 class HttpServerTest extends Test:
 
@@ -119,7 +119,7 @@ class HttpServerTest extends Test:
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 assert(server.port > 0)
                 testGet(server.port, "/health").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "healthy")
                 }
             }
@@ -131,7 +131,7 @@ class HttpServerTest extends Test:
             HttpServer.init(config, PlatformTestBackend.server)(handler).map { server =>
                 assert(server.port > 0)
                 testGet(server.port, "/health").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                 }
             }
         }
@@ -144,7 +144,7 @@ class HttpServerTest extends Test:
             )(handler).map { server =>
                 assert(server.port > 0)
                 testGet(server.port, "/health").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                 }
             }
         }
@@ -153,7 +153,7 @@ class HttpServerTest extends Test:
             // Server with no handlers should return 404 for all requests
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)().map { server =>
                 testGet(server.port, "/anything").map { response =>
-                    assertStatus(response, Status.NotFound)
+                    assertStatus(response, HttpStatus.NotFound)
                 }
             }
         }
@@ -166,9 +166,9 @@ class HttpServerTest extends Test:
                     r1 <- testGet(server.port, "/health")
                     r2 <- testGet(server.port, "/status")
                 yield
-                    assertStatus(r1, Status.OK)
+                    assertStatus(r1, HttpStatus.OK)
                     assertBodyText(r1, "healthy")
-                    assertStatus(r2, Status.OK)
+                    assertStatus(r2, HttpStatus.OK)
                     assertBodyText(r2, "running")
                 end for
             }
@@ -198,7 +198,7 @@ class HttpServerTest extends Test:
                 val port = server.port
                 assert(port > 0)
                 testGet(port, "/health").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                 }.andThen {
                     server.closeNow.andThen {
                         Abort.run(testGet(port, "/health")).map { result =>
@@ -218,7 +218,7 @@ class HttpServerTest extends Test:
         }
 
         "openApi" in run {
-            val route   = HttpRoute.get("users").responseBody[Seq[User]].tag("Users")
+            val route   = HttpRoute.get("users").response(_.bodyJson[Seq[User]]).metadata(_.tag("Users"))
             val handler = route.handle(_ => Seq(User(1, "Alice")))
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 val spec = server.openApi("Test API", "1.0.0")
@@ -235,14 +235,14 @@ class HttpServerTest extends Test:
 
         "from typed route" - {
             "simple handler" in {
-                val route   = HttpRoute.get("users").responseBody[Seq[User]]
-                val handler = HttpHandler.init(route) { _ => Seq(User(1, "Alice")) }
+                val route   = HttpRoute.get("users").response(_.bodyJson[Seq[User]])
+                val handler = route.handle { _ => Seq(User(1, "Alice")) }
                 assert(handler.route eq route)
             }
 
             "handler with path capture" in run {
-                val route   = HttpRoute.get("users" / HttpPath.int("id")).responseBody[User]
-                val handler = HttpHandler.init(route) { in => User(in.id, "User") }
+                val route   = HttpRoute.get("users" / Capture[Int]("id")).response(_.bodyJson[User])
+                val handler = route.handle { in => User(in.id, "User") }
                 startTestServer(handler).map { port =>
                     testGetAs[User](port, "/users/42").map { user =>
                         assert(user == User(42, "User"))
@@ -252,10 +252,9 @@ class HttpServerTest extends Test:
 
             "handler with multiple inputs" in run {
                 val route = HttpRoute.get("users")
-                    .query[Int]("limit", 20)
-                    .query[Int]("offset", 0)
-                    .responseBody[Seq[User]]
-                val handler = HttpHandler.init(route) { in =>
+                    .request(_.query[Int]("limit", default = Some(20)).query[Int]("offset", default = Some(0)))
+                    .response(_.bodyJson[Seq[User]])
+                val handler = route.handle { in =>
                     Seq.fill(in.limit)(User(1, "User")).drop(in.offset)
                 }
                 startTestServer(handler).map { port =>
@@ -266,10 +265,10 @@ class HttpServerTest extends Test:
             }
 
             "handler with path + query params" in run {
-                val route = HttpRoute.get("users" / HttpPath.int("id"))
-                    .query[String]("fields")
-                    .responseBody[User]
-                val handler = HttpHandler.init(route) { in =>
+                val route = HttpRoute.get("users" / Capture[Int]("id"))
+                    .request(_.query[String]("fields"))
+                    .response(_.bodyJson[User])
+                val handler = route.handle { in =>
                     User(in.id, s"fields=${in.fields}")
                 }
                 startTestServer(handler).map { port =>
@@ -280,35 +279,34 @@ class HttpServerTest extends Test:
             }
 
             "handler with path + header" in run {
-                val route = HttpRoute.get("users" / HttpPath.int("id"))
-                    .header("X-Request-Id")
-                    .responseBody[User]
-                val handler = HttpHandler.init(route) { in =>
+                val route = HttpRoute.get("users" / Capture[Int]("id"))
+                    .request(_.header[String]("X-Request-Id"))
+                    .response(_.bodyJson[User])
+                val handler = route.handle { in =>
                     User(in.id, s"requestId=${in.`X-Request-Id`}")
                 }
                 startTestServer(handler).map { port =>
                     HttpClient.send(
                         HttpRequest.get(s"http://localhost:$port/users/42", HttpHeaders.empty.add("X-Request-Id", "req-123"))
                     ).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyContains(response, "requestId=req-123")
                     }
                 }
             }
 
             "handler with path + query + header" in run {
-                val route = HttpRoute.get("users" / HttpPath.int("id"))
-                    .query[Int]("limit")
-                    .header("Authorization")
-                    .responseBody[User]
-                val handler = HttpHandler.init(route) { in =>
+                val route = HttpRoute.get("users" / Capture[Int]("id"))
+                    .request(_.query[Int]("limit").header[String]("Authorization"))
+                    .response(_.bodyJson[User])
+                val handler = route.handle { in =>
                     User(in.id, s"limit=${in.limit},auth=${in.Authorization}")
                 }
                 startTestServer(handler).map { port =>
                     HttpClient.send(
                         HttpRequest.get(s"http://localhost:$port/users/42?limit=10", HttpHeaders.empty.add("Authorization", "Bearer token"))
                     ).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyContains(response, "limit=10")
                         assertBodyContains(response, "auth=Bearer token")
                     }
@@ -316,11 +314,10 @@ class HttpServerTest extends Test:
             }
 
             "handler with multiple path params + query + header" in run {
-                val route = HttpRoute.get("orgs" / HttpPath.string("org") / "users" / HttpPath.int("id"))
-                    .query[Boolean]("verbose", false)
-                    .header("Accept")
-                    .responseBody[User]
-                val handler = HttpHandler.init(route) { in =>
+                val route = HttpRoute.get("orgs" / Capture[String]("org") / "users" / Capture[Int]("id"))
+                    .request(_.query[Boolean]("verbose", default = Some(false)).header[String]("Accept"))
+                    .response(_.bodyJson[User])
+                val handler = route.handle { in =>
                     User(in.id, s"org=${in.org},verbose=${in.verbose},accept=${in.Accept}")
                 }
                 startTestServer(handler).map { port =>
@@ -330,7 +327,7 @@ class HttpServerTest extends Test:
                             HttpHeaders.empty.add("Accept", "application/json")
                         )
                     ).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyContains(response, "org=acme")
                         assertBodyContains(response, "verbose=true")
                         assertBodyContains(response, "accept=application/json")
@@ -339,8 +336,8 @@ class HttpServerTest extends Test:
             }
 
             "handler with async effect" in run {
-                val route   = HttpRoute.get("users").responseBody[Seq[User]]
-                val handler = HttpHandler.init(route) { _ => Async.delay(10.millis)(Seq(User(1, "Alice"))) }
+                val route   = HttpRoute.get("users").response(_.bodyJson[Seq[User]])
+                val handler = route.handle { _ => Async.delay(10.millis)(Seq(User(1, "Alice"))) }
                 startTestServer(handler).map { port =>
                     testGetAs[Seq[User]](port, "/users").map { users =>
                         assert(users == Seq(User(1, "Alice")))
@@ -349,8 +346,8 @@ class HttpServerTest extends Test:
             }
 
             "handler with custom effect" in {
-                val route   = HttpRoute.get("users").responseBody[Seq[User]]
-                val handler = HttpHandler.init(route) { _ => Env.get[String].map(prefix => Seq(User(1, prefix))) }
+                val route   = HttpRoute.get("users").response(_.bodyJson[Seq[User]])
+                val handler = route.handle { _ => Env.get[String].map(prefix => Seq(User(1, prefix))) }
                 assert(handler.route eq route)
             }
         }
@@ -360,7 +357,7 @@ class HttpServerTest extends Test:
                 val handler = HttpHandler.get("/health") { _ => HttpResponse.ok("healthy") }
                 startTestServer(handler).map { port =>
                     testGet(port, "/health").map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "healthy")
                     }
                 }
@@ -376,7 +373,7 @@ class HttpServerTest extends Test:
                     HttpClient.send(
                         HttpRequest.postText(s"http://localhost:$port/echo", "test-body")
                     ).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyContains(response, "Received: test-body")
                     }
                 }
@@ -388,90 +385,90 @@ class HttpServerTest extends Test:
                 }
                 startTestServer(handler).map { port =>
                     testGet(port, "/delayed").map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "done")
                     }
                 }
             }
 
             "with int path capture" in run {
-                val handler = HttpHandler.get("users" / HttpPath.int("id")) { in =>
+                val handler = HttpHandler.get("users" / Capture[Int]("id")) { in =>
                     HttpResponse.ok(s"user=${in.id}")
                 }
                 startTestServer(handler).map { port =>
                     testGet(port, "/users/42").map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "user=42")
                     }
                 }
             }
 
             "with string path capture" in run {
-                val handler = HttpHandler.get("items" / HttpPath.string("slug")) { in =>
+                val handler = HttpHandler.get("items" / Capture[String]("slug")) { in =>
                     HttpResponse.ok(s"slug=${in.slug}")
                 }
                 startTestServer(handler).map { port =>
                     testGet(port, "/items/hello-world").map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "slug=hello-world")
                     }
                 }
             }
 
             "with multiple path captures" in run {
-                val handler = HttpHandler.get("users" / HttpPath.int("userId") / "posts" / HttpPath.int("postId")) { in =>
+                val handler = HttpHandler.get("users" / Capture[Int]("userId") / "posts" / Capture[Int]("postId")) { in =>
                     HttpResponse.ok(s"user=${in.userId},post=${in.postId}")
                 }
                 startTestServer(handler).map { port =>
                     testGet(port, "/users/7/posts/99").map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "user=7,post=99")
                     }
                 }
             }
 
             "with mixed string and int captures" in run {
-                val handler = HttpHandler.get("orgs" / HttpPath.string("org") / "members" / HttpPath.int("id")) { in =>
+                val handler = HttpHandler.get("orgs" / Capture[String]("org") / "members" / Capture[Int]("id")) { in =>
                     HttpResponse.ok(s"org=${in.org},id=${in.id}")
                 }
                 startTestServer(handler).map { port =>
                     testGet(port, "/orgs/acme/members/5").map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "org=acme,id=5")
                     }
                 }
             }
 
             "path capture with post method" in run {
-                val handler = HttpHandler.post("items" / HttpPath.int("id")) { in =>
+                val handler = HttpHandler.post("items" / Capture[Int]("id")) { in =>
                     HttpResponse.ok(s"posted=${in.id}")
                 }
                 startTestServer(handler).map { port =>
                     HttpClient.send(
                         HttpRequest.postText(s"http://localhost:$port/items/123", "body")
                     ).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "posted=123")
                     }
                 }
             }
 
             "path capture with put method" in run {
-                val handler = HttpHandler.put("items" / HttpPath.int("id")) { in =>
+                val handler = HttpHandler.put("items" / Capture[Int]("id")) { in =>
                     HttpResponse.ok(s"updated=${in.id}")
                 }
                 startTestServer(handler).map { port =>
                     HttpClient.send(
                         HttpRequest.put(s"http://localhost:$port/items/456", "body")
                     ).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "updated=456")
                     }
                 }
             }
 
             "path capture with post body" in run {
-                val handler = HttpHandler.post("users" / HttpPath.int("id") / "rename") { in =>
+                val handler = HttpHandler.post("users" / Capture[Int]("id") / "rename") { in =>
                     val newName = in.request.bodyText
                     HttpResponse.ok(s"user=${in.id},name=$newName")
                 }
@@ -479,14 +476,14 @@ class HttpServerTest extends Test:
                     HttpClient.send(
                         HttpRequest.postText(s"http://localhost:$port/users/42/rename", "Alice")
                     ).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "user=42,name=Alice")
                     }
                 }
             }
 
             "path capture with put body" in run {
-                val handler = HttpHandler.put("items" / HttpPath.string("slug")) { in =>
+                val handler = HttpHandler.put("items" / Capture[String]("slug")) { in =>
                     val body = in.request.bodyText
                     HttpResponse.ok(s"slug=${in.slug},body=$body")
                 }
@@ -494,7 +491,7 @@ class HttpServerTest extends Test:
                     HttpClient.send(
                         HttpRequest.putText(s"http://localhost:$port/items/my-item", "updated content")
                     ).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "slug=my-item,body=updated content")
                     }
                 }
@@ -502,7 +499,7 @@ class HttpServerTest extends Test:
 
             "multiple path captures with post body" in run {
                 val handler =
-                    HttpHandler.post("orgs" / HttpPath.string("org") / "teams" / HttpPath.int("teamId")) { in =>
+                    HttpHandler.post("orgs" / Capture[String]("org") / "teams" / Capture[Int]("teamId")) { in =>
                         val body = in.request.bodyText
                         HttpResponse.ok(s"org=${in.org},team=${in.teamId},body=$body")
                     }
@@ -510,21 +507,21 @@ class HttpServerTest extends Test:
                     HttpClient.send(
                         HttpRequest.postText(s"http://localhost:$port/orgs/acme/teams/7", "payload")
                     ).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "org=acme,team=7,body=payload")
                     }
                 }
             }
 
             "path capture with delete method" in run {
-                val handler = HttpHandler.delete("items" / HttpPath.int("id")) { in =>
+                val handler = HttpHandler.delete("items" / Capture[Int]("id")) { in =>
                     HttpResponse.ok(s"deleted=${in.id}")
                 }
                 startTestServer(handler).map { port =>
                     HttpClient.send(
                         HttpRequest.delete(s"http://localhost:$port/items/789")
                     ).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "deleted=789")
                     }
                 }
@@ -535,7 +532,7 @@ class HttpServerTest extends Test:
             val handler = HttpHandler.get("/test") { _ => HttpResponse.ok("applied") }
             startTestServer(handler).map { port =>
                 testGet(port, "/test").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "applied")
                 }
             }
@@ -550,7 +547,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/health").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "healthy")
                 }
             }
@@ -558,14 +555,14 @@ class HttpServerTest extends Test:
 
         "server with multiple handlers" in run {
             val health = HttpHandler.get("/health") { _ => HttpResponse.ok("ok") }
-            val users  = HttpRoute.get("users").responseBody[Seq[User]].handle(_ => Seq.empty[User])
+            val users  = HttpRoute.get("users").response(_.bodyJson[Seq[User]]).handle(_ => Seq.empty[User])
             startTestServer(health, users).map { port =>
                 for
                     r1 <- testGet(port, "/health")
                     r2 <- testGet(port, "/users")
                 yield
-                    assertStatus(r1, Status.OK)
-                    assertStatus(r2, Status.OK)
+                    assertStatus(r1, HttpStatus.OK)
+                    assertStatus(r2, HttpStatus.OK)
                 end for
             }
         }
@@ -593,7 +590,7 @@ class HttpServerTest extends Test:
                     r2 <- testPost(port, "/users", User(0, "new"))
                 yield
                     assertBodyText(r1, "list")
-                    assertStatus(r2, Status.Created)
+                    assertStatus(r2, HttpStatus.Created)
                 end for
             }
         }
@@ -602,7 +599,7 @@ class HttpServerTest extends Test:
             val handler = HttpHandler.get("/health") { _ => HttpResponse.ok }
             startTestServer(handler).map { port =>
                 testGet(port, "/unknown").map { response =>
-                    assertStatus(response, Status.NotFound)
+                    assertStatus(response, HttpStatus.NotFound)
                 }
             }
         }
@@ -611,7 +608,7 @@ class HttpServerTest extends Test:
             val handler = HttpHandler.get("/users") { _ => HttpResponse.ok("list") }
             startTestServer(handler).map { port =>
                 HttpClient.send(HttpRequest.post(s"http://localhost:$port/users", "body")).map { response =>
-                    assertStatus(response, Status.MethodNotAllowed)
+                    assertStatus(response, HttpStatus.MethodNotAllowed)
                 }
             }
         }
@@ -622,11 +619,11 @@ class HttpServerTest extends Test:
             startTestServer(getUsers, postUsers).map { port =>
                 // DELETE on /users should be 405 (path exists but method doesn't match)
                 HttpClient.send(HttpRequest.delete(s"http://localhost:$port/users")).map { r1 =>
-                    assertStatus(r1, Status.MethodNotAllowed)
+                    assertStatus(r1, HttpStatus.MethodNotAllowed)
                 }.andThen {
                     // GET on /nonexistent should be 404 (path doesn't exist)
                     testGet(port, "/nonexistent").map { r2 =>
-                        assertStatus(r2, Status.NotFound)
+                        assertStatus(r2, HttpStatus.NotFound)
                     }
                 }
             }
@@ -635,22 +632,21 @@ class HttpServerTest extends Test:
         "error handling" in run {
             startTestServer(errorHandler("/error")).map { port =>
                 testGet(port, "/error").map { response =>
-                    assertStatus(response, Status.InternalServerError)
+                    assertStatus(response, HttpStatus.InternalServerError)
                 }
             }
         }
 
         "error schema returns correct status and JSON body" in run {
             case class NotFoundError(message: String) derives Schema
-            val route = HttpRoute.get("users" / HttpPath.int("id"))
-                .responseBody[User]
-                .error[NotFoundError](Status.NotFound)
+            val route = HttpRoute.get("users" / Capture[Int]("id"))
+                .response(_.bodyJson[User].error[NotFoundError](HttpStatus.NotFound))
             val handler = route.handle { in =>
                 Abort.fail(NotFoundError("User not found"))
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/users/1").map { response =>
-                    assertStatus(response, Status.NotFound)
+                    assertStatus(response, HttpStatus.NotFound)
                     assertBodyText(response, """{"message":"User not found"}""")
                     assert(response.header("Content-Type") == Present("application/json"))
                 }
@@ -660,21 +656,19 @@ class HttpServerTest extends Test:
         "multiple error schemas select correct status by error type" in run {
             case class NotFoundError(message: String) derives Schema
             case class ValidationError(field: String, reason: String) derives Schema
-            val route = HttpRoute.get("users" / HttpPath.int("id"))
-                .responseBody[User]
-                .error[NotFoundError](Status.NotFound)
-                .error[ValidationError](Status.BadRequest)
+            val route = HttpRoute.get("users" / Capture[Int]("id"))
+                .response(_.bodyJson[User].error[NotFoundError](HttpStatus.NotFound).error[ValidationError](HttpStatus.BadRequest))
             val handler = route.handle { in =>
                 if in.id == 999 then Abort.fail(NotFoundError("No such user"))
                 else Abort.fail(ValidationError("id", "must be positive"))
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/users/999").map { response =>
-                    assertStatus(response, Status.NotFound)
+                    assertStatus(response, HttpStatus.NotFound)
                     assertBodyText(response, """{"message":"No such user"}""")
                 }.andThen {
                     testGet(port, "/users/0").map { response =>
-                        assertStatus(response, Status.BadRequest)
+                        assertStatus(response, HttpStatus.BadRequest)
                         assertBodyText(response, """{"field":"id","reason":"must be positive"}""")
                     }
                 }
@@ -684,16 +678,14 @@ class HttpServerTest extends Test:
         "first error schema matches when error type is first" in run {
             case class NotFoundError(message: String) derives Schema
             case class ValidationError(field: String, reason: String) derives Schema
-            val route = HttpRoute.get("items" / HttpPath.int("id"))
-                .responseBody[User]
-                .error[NotFoundError](Status.NotFound)
-                .error[ValidationError](Status.BadRequest)
+            val route = HttpRoute.get("items" / Capture[Int]("id"))
+                .response(_.bodyJson[User].error[NotFoundError](HttpStatus.NotFound).error[ValidationError](HttpStatus.BadRequest))
             val handler = route.handle { in =>
                 Abort.fail(NotFoundError("Item missing"))
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/items/1").map { response =>
-                    assertStatus(response, Status.NotFound)
+                    assertStatus(response, HttpStatus.NotFound)
                     assertBodyText(response, """{"message":"Item missing"}""")
                 }
             }
@@ -701,15 +693,14 @@ class HttpServerTest extends Test:
 
         "successful response on route with error schemas" in run {
             case class NotFoundError(message: String) derives Schema
-            val route = HttpRoute.get("users" / HttpPath.int("id"))
-                .responseBody[User]
-                .error[NotFoundError](Status.NotFound)
+            val route = HttpRoute.get("users" / Capture[Int]("id"))
+                .response(_.bodyJson[User].error[NotFoundError](HttpStatus.NotFound))
             val handler = route.handle { in =>
                 User(in.id, s"User${in.id}")
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/users/42").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyContains(response, "User42")
                 }
             }
@@ -717,15 +708,14 @@ class HttpServerTest extends Test:
 
         "handler panic returns 500 even with error schemas registered" in run {
             case class NotFoundError(message: String) derives Schema
-            val route = HttpRoute.get("users" / HttpPath.int("id"))
-                .responseBody[User]
-                .error[NotFoundError](Status.NotFound)
+            val route = HttpRoute.get("users" / Capture[Int]("id"))
+                .response(_.bodyJson[User].error[NotFoundError](HttpStatus.NotFound))
             val handler = route.handle { in =>
                 throw new RuntimeException("unexpected panic")
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/users/1").map { response =>
-                    assertStatus(response, Status.InternalServerError)
+                    assertStatus(response, HttpStatus.InternalServerError)
                 }
             }
         }
@@ -868,7 +858,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/events").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     val body = response.bodyText
                     assert(body.contains("data: "), s"Expected SSE data fields in body: $body")
                     assert(body.contains("\"value\":1"), s"Expected value 1 in body: $body")
@@ -887,7 +877,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/events").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     val body = response.bodyText
                     assert(body.contains("event: greeting"), s"Expected event field: $body")
                     assert(body.contains("id: 1"), s"Expected id field: $body")
@@ -917,7 +907,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/data").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     val body  = response.bodyText
                     val lines = body.split("\n").filter(_.nonEmpty)
                     assert(lines.length == 3, s"Expected 3 NDJSON lines, got ${lines.length}: $body")
@@ -934,7 +924,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/empty").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assert(response.bodyText.isEmpty || response.bodyText.trim.isEmpty)
                 }
             }
@@ -946,19 +936,20 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/empty").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assert(response.bodyText.isEmpty || response.bodyText.trim.isEmpty)
                 }
             }
         }
 
         "SSE stream with path params" in run {
-            val handler = HttpHandler.streamSse[Event]("events" / HttpPath.int("count")) { in =>
-                Stream.init((1 to in.count).map(i => HttpEvent(Event(i))))
+            val handler = HttpHandler.get("events" / Capture[Int]("count")) { in =>
+                val events = Stream.init((1 to in.count).map(i => HttpEvent(Event(i))))
+                HttpResponse.streamSse(events)
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/events/5").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     val body = response.bodyText
                     assert(body.contains("\"value\":1"), s"Expected value 1: $body")
                     assert(body.contains("\"value\":5"), s"Expected value 5: $body")
@@ -967,12 +958,13 @@ class HttpServerTest extends Test:
         }
 
         "NDJSON stream with POST method" in run {
-            val handler = HttpHandler.streamNdjson[Event](Method.POST, "/data") { _ =>
-                Stream.init(Seq(Event(42)))
+            val handler = HttpHandler.post("/data") { _ =>
+                val values = Stream.init(Seq(Event(42)))
+                HttpResponse.streamNdjson(values)
             }
             startTestServer(handler).map { port =>
                 HttpClient.send(HttpRequest.post(s"http://localhost:$port/data", "")).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assert(response.bodyText.contains("\"value\":42"))
                 }
             }
@@ -999,11 +991,11 @@ class HttpServerTest extends Test:
             val bytes = data.getBytes("UTF-8")
             val handler = HttpHandler.get("/cl") { _ =>
                 val s = Stream.init(Seq(Span.fromUnsafe(bytes)))
-                HttpResponse.stream(s, bytes.length.toLong, Status.OK)
+                HttpResponse.stream(s, bytes.length.toLong, HttpStatus.OK)
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/cl").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, data)
                     assertHeader(response, "Content-Length", bytes.length.toString)
                 }
@@ -1015,11 +1007,11 @@ class HttpServerTest extends Test:
             val totalLen = chunks.map(_.getBytes("UTF-8").length).sum
             val handler = HttpHandler.get("/cl-multi") { _ =>
                 val s = Stream.init(chunks.map(c => Span.fromUnsafe(c.getBytes("UTF-8"))))
-                HttpResponse.stream(s, totalLen.toLong, Status.OK)
+                HttpResponse.stream(s, totalLen.toLong, HttpStatus.OK)
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/cl-multi").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "chunk1-chunk2-chunk3")
                     assertHeader(response, "Content-Length", totalLen.toString)
                 }
@@ -1033,7 +1025,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/chunked").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "chunked")
                 }
             }
@@ -1048,7 +1040,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/cl-manual").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, data)
                     assertHeader(response, "Content-Length", bytes.length.toString)
                 }
@@ -1058,11 +1050,11 @@ class HttpServerTest extends Test:
         "zero Content-Length empty stream" in run {
             val handler = HttpHandler.get("/cl-zero") { _ =>
                 val s = Stream.empty[Span[Byte]]
-                HttpResponse.stream(s, 0L, Status.OK)
+                HttpResponse.stream(s, 0L, HttpStatus.OK)
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/cl-zero").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assert(response.bodyText.isEmpty)
                     assertHeader(response, "Content-Length", "0")
                 }
@@ -1078,7 +1070,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/multi-cookie").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     // Collect all Set-Cookie header values from raw headers
                     val setCookies = Seq.newBuilder[String]
                     response.headers.foreach { (k, v) =>
@@ -1093,7 +1085,7 @@ class HttpServerTest extends Test:
 
         "negative contentLength rejected" in {
             assertThrows[IllegalArgumentException] {
-                HttpResponse.stream(Stream.empty[Span[Byte]], -1L, Status.OK)
+                HttpResponse.stream(Stream.empty[Span[Byte]], -1L, HttpStatus.OK)
             }
         }
     }
@@ -1205,7 +1197,7 @@ class HttpServerTest extends Test:
                     bodyStream
                 )
                 HttpClient.stream(request).map { response =>
-                    assert(response.status == Status.OK)
+                    assert(response.status == HttpStatus.OK)
                     response.bodyStream.run.map { chunks =>
                         val text = chunks.foldLeft("")((acc, span) =>
                             acc + new String(span.toArrayUnsafe, "UTF-8")
@@ -1234,7 +1226,7 @@ class HttpServerTest extends Test:
                     bodyStream
                 )
                 HttpClient.stream(request).map { response =>
-                    assert(response.status == Status.OK)
+                    assert(response.status == HttpStatus.OK)
                     response.bodyStream.run.map { responseChunks =>
                         val text = responseChunks.foldLeft("")((acc, span) =>
                             acc + new String(span.toArrayUnsafe, "UTF-8")
@@ -1259,7 +1251,7 @@ class HttpServerTest extends Test:
                     Stream.empty[Span[Byte]]
                 )
                 HttpClient.stream(request).map { response =>
-                    assert(response.status == Status.OK)
+                    assert(response.status == HttpStatus.OK)
                     response.bodyStream.run.map { chunks =>
                         val text = chunks.foldLeft("")((acc, span) =>
                             acc + new String(span.toArrayUnsafe, "UTF-8")
@@ -1291,7 +1283,7 @@ class HttpServerTest extends Test:
                         bodyStream
                     )
                     HttpClient.stream(request).map { response =>
-                        assert(response.status == Status.OK)
+                        assert(response.status == HttpStatus.OK)
                         response.bodyStream.run.map { chunks =>
                             val text = chunks.foldLeft("")((acc, span) =>
                                 acc + new String(span.toArrayUnsafe, "UTF-8")
@@ -1304,7 +1296,7 @@ class HttpServerTest extends Test:
         }
 
         "streaming request with path params" in run {
-            val handler = HttpHandler.streamingBody(Method.POST, "upload" / HttpPath.string("name")) { in =>
+            val handler = HttpHandler.streamingBody(Method.POST, "upload" / Capture[String]("name")) { in =>
                 in.request.bodyStream.run.map { chunks =>
                     val totalBytes = chunks.foldLeft(0)(_ + _.size)
                     HttpResponse.ok(s"${in.name}: $totalBytes bytes")
@@ -1318,7 +1310,7 @@ class HttpServerTest extends Test:
                     bodyStream
                 )
                 HttpClient.stream(request).map { response =>
-                    assert(response.status == Status.OK)
+                    assert(response.status == HttpStatus.OK)
                     response.bodyStream.run.map { chunks =>
                         val text = chunks.foldLeft("")((acc, span) =>
                             acc + new String(span.toArrayUnsafe, "UTF-8")
@@ -1341,7 +1333,7 @@ class HttpServerTest extends Test:
                     bodyStream
                 )
                 HttpClient.stream(request).map { response =>
-                    assert(response.status == Status.NotFound)
+                    assert(response.status == HttpStatus.NotFound)
                 }
             }
         }
@@ -1370,7 +1362,7 @@ class HttpServerTest extends Test:
                 Scope.run {
                     HttpClient.stream(request).map { response =>
                         response.bodyStream.run.map { body =>
-                            assertStatus(response, Status.OK)
+                            assertStatus(response, HttpStatus.OK)
                             val text = new String(body.foldLeft(Array.empty[Byte])(_ ++ _.toArrayUnsafe))
                             assert(text.contains(s"received $totalBytes bytes"), s"Expected all bytes received, got: $text")
                         }
@@ -1390,7 +1382,7 @@ class HttpServerTest extends Test:
             startTestServer(handler).map { port =>
                 Scope.run {
                     HttpClient.stream(s"http://localhost:$port/slow-stream").map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         AtomicInt.init(0).map { received =>
                             response.bodyStream.foreach { chunk =>
                                 received.addAndGet(chunk.size).andThen(Async.sleep(1.millis))
@@ -1416,7 +1408,7 @@ class HttpServerTest extends Test:
                 HttpClient.send(
                     HttpRequest.post(s"http://localhost:${server.port}/upload", largeBody)
                 ).map { response =>
-                    assertStatus(response, Status.PayloadTooLarge)
+                    assertStatus(response, HttpStatus.PayloadTooLarge)
                 }
             }
         }
@@ -1425,7 +1417,7 @@ class HttpServerTest extends Test:
     "Route auth" - {
 
         "authBasic handler receives decoded username and password" in run {
-            val route = HttpRoute.get("me").authBasic.responseBodyText
+            val route = HttpRoute.get("me").request(_.authBasic).response(_.bodyText)
             val handler = route.handle { in =>
                 s"user=${in.username},pass=${in.password}"
             }
@@ -1434,14 +1426,14 @@ class HttpServerTest extends Test:
                 HttpClient.send(
                     HttpRequest.get(s"http://localhost:$port/me", HttpHeaders.empty.add("Authorization", s"Basic $encoded"))
                 ).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyContains(response, "user=alice,pass=secret123")
                 }
             }
         }
 
         "authBearer handler receives token without Bearer prefix" in run {
-            val route = HttpRoute.get("me").authBearer.responseBodyText
+            val route = HttpRoute.get("me").request(_.authBearer).response(_.bodyText)
             val handler = route.handle { in =>
                 s"token=${in.bearer}"
             }
@@ -1449,7 +1441,7 @@ class HttpServerTest extends Test:
                 HttpClient.send(
                     HttpRequest.get(s"http://localhost:$port/me", HttpHeaders.empty.add("Authorization", "Bearer mytoken123"))
                 ).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyContains(response, "token=mytoken123")
                     // Should NOT contain the "Bearer " prefix
                     val body = response.bodyText
@@ -1459,7 +1451,7 @@ class HttpServerTest extends Test:
         }
 
         "authBasic with path param" in run {
-            val route = HttpRoute.get("users" / HttpPath.int("id")).authBasic.responseBodyText
+            val route = HttpRoute.get("users" / Capture[Int]("id")).request(_.authBasic).response(_.bodyText)
             val handler = route.handle { in =>
                 s"id=${in.id},user=${in.username},pass=${in.password}"
             }
@@ -1468,38 +1460,38 @@ class HttpServerTest extends Test:
                 HttpClient.send(
                     HttpRequest.get(s"http://localhost:$port/users/42", HttpHeaders.empty.add("Authorization", s"Basic $encoded"))
                 ).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyContains(response, "id=42,user=bob,pass=pass")
                 }
             }
         }
 
         "authBasic returns 401 when Authorization header missing" in run {
-            val route = HttpRoute.get("me").authBasic.responseBodyText
+            val route = HttpRoute.get("me").request(_.authBasic).response(_.bodyText)
             val handler = route.handle { in =>
                 s"user=${in.username}"
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/me").map { response =>
-                    assertStatus(response, Status.Unauthorized)
+                    assertStatus(response, HttpStatus.Unauthorized)
                 }
             }
         }
 
         "authBearer returns 401 when Authorization header missing" in run {
-            val route = HttpRoute.get("me").authBearer.responseBodyText
+            val route = HttpRoute.get("me").request(_.authBearer).response(_.bodyText)
             val handler = route.handle { in =>
                 s"token=${in.bearer}"
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/me").map { response =>
-                    assertStatus(response, Status.Unauthorized)
+                    assertStatus(response, HttpStatus.Unauthorized)
                 }
             }
         }
 
         "authApiKey handler receives key value" in run {
-            val route = HttpRoute.get("data").authApiKey("X-API-Key").responseBodyText
+            val route = HttpRoute.get("data").request(_.authApiKey("X-API-Key")).response(_.bodyText)
             val handler = route.handle { in =>
                 s"key=${in.`X-API-Key`}"
             }
@@ -1507,14 +1499,14 @@ class HttpServerTest extends Test:
                 HttpClient.send(
                     HttpRequest.get(s"http://localhost:$port/data", HttpHeaders.empty.add("X-API-Key", "abc123"))
                 ).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyContains(response, "key=abc123")
                 }
             }
         }
 
         "authApiKey with path param" in run {
-            val route = HttpRoute.get("data" / HttpPath.string("name")).authApiKey("X-API-Key").responseBodyText
+            val route = HttpRoute.get("data" / Capture[String]("name")).request(_.authApiKey("X-API-Key")).response(_.bodyText)
             val handler = route.handle { in =>
                 s"name=${in.name},key=${in.`X-API-Key`}"
             }
@@ -1522,20 +1514,20 @@ class HttpServerTest extends Test:
                 HttpClient.send(
                     HttpRequest.get(s"http://localhost:$port/data/test", HttpHeaders.empty.add("X-API-Key", "mykey"))
                 ).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyContains(response, "name=test,key=mykey")
                 }
             }
         }
 
         "authApiKey returns 401 when header missing" in run {
-            val route = HttpRoute.get("data").authApiKey("X-API-Key").responseBodyText
+            val route = HttpRoute.get("data").request(_.authApiKey("X-API-Key")).response(_.bodyText)
             val handler = route.handle { in =>
                 s"key=${in.`X-API-Key`}"
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/data").map { response =>
-                    assertStatus(response, Status.Unauthorized)
+                    assertStatus(response, HttpStatus.Unauthorized)
                 }
             }
         }
@@ -1544,7 +1536,7 @@ class HttpServerTest extends Test:
     "Route cookies" - {
 
         "cookie handler receives cookie value" in run {
-            val route = HttpRoute.get("me").cookie("session").responseBodyText
+            val route = HttpRoute.get("me").request(_.cookie[String]("session")).response(_.bodyText)
             val handler = route.handle { in =>
                 s"session=${in.session}"
             }
@@ -1552,27 +1544,27 @@ class HttpServerTest extends Test:
                 HttpClient.send(
                     HttpRequest.get(s"http://localhost:$port/me", HttpHeaders.empty.add("Cookie", "session=abc123"))
                 ).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyContains(response, "session=abc123")
                 }
             }
         }
 
         "cookie with default value when cookie missing" in run {
-            val route = HttpRoute.get("me").cookie("session", "default-session").responseBodyText
+            val route = HttpRoute.get("me").request(_.cookie[String]("session", default = Some("default-session"))).response(_.bodyText)
             val handler = route.handle { in =>
                 s"session=${in.session}"
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/me").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyContains(response, "session=default-session")
                 }
             }
         }
 
         "cookie with path param" in run {
-            val route = HttpRoute.get("users" / HttpPath.int("id")).cookie("token").responseBodyText
+            val route = HttpRoute.get("users" / Capture[Int]("id")).request(_.cookie[String]("token")).response(_.bodyText)
             val handler = route.handle { in =>
                 s"id=${in.id},token=${in.token}"
             }
@@ -1580,14 +1572,14 @@ class HttpServerTest extends Test:
                 HttpClient.send(
                     HttpRequest.get(s"http://localhost:$port/users/42", HttpHeaders.empty.add("Cookie", "token=xyz"))
                 ).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyContains(response, "id=42,token=xyz")
                 }
             }
         }
 
         "multiple cookies" in run {
-            val route = HttpRoute.get("me").cookie("session").cookie("lang").responseBodyText
+            val route = HttpRoute.get("me").request(_.cookie[String]("session").cookie[String]("lang")).response(_.bodyText)
             val handler = route.handle { in =>
                 s"session=${in.session},lang=${in.lang}"
             }
@@ -1595,20 +1587,20 @@ class HttpServerTest extends Test:
                 HttpClient.send(
                     HttpRequest.get(s"http://localhost:$port/me", HttpHeaders.empty.add("Cookie", "session=abc; lang=en"))
                 ).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyContains(response, "session=abc,lang=en")
                 }
             }
         }
 
         "missing required cookie returns 400" in run {
-            val route = HttpRoute.get("me").cookie("session").responseBodyText
+            val route = HttpRoute.get("me").request(_.cookie[String]("session")).response(_.bodyText)
             val handler = route.handle { in =>
                 s"session=${in.session}"
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/me").map { response =>
-                    assertStatus(response, Status.BadRequest)
+                    assertStatus(response, HttpStatus.BadRequest)
                 }
             }
         }
@@ -1622,7 +1614,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testDelete(port, "/items/1").map { response =>
-                    assertStatus(response, Status.NoContent)
+                    assertStatus(response, HttpStatus.NoContent)
                     assert(response.bodyText.isEmpty)
                 }
             }
@@ -1635,7 +1627,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.send(HttpRequest.postText(s"http://localhost:$port/trigger", "")).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyContains(response, "received 0 bytes")
                 }
             }
@@ -1645,12 +1637,12 @@ class HttpServerTest extends Test:
     "URL encoding through server" - {
 
         "percent-encoded path segments" in run {
-            val handler = HttpHandler.get("items" / HttpPath.string("name")) { in =>
+            val handler = HttpHandler.get("items" / Capture[String]("name")) { in =>
                 HttpResponse.ok(s"name=${in.name}")
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/items/hello%20world").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "name=hello world")
                 }
             }
@@ -1663,7 +1655,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/search?q=hello+world").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "q=hello world")
                 }
             }
@@ -1677,7 +1669,7 @@ class HttpServerTest extends Test:
             startTestServer(handler).map { port =>
                 // café = caf%C3%A9
                 testGet(port, "/search?q=caf%C3%A9").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "q=café")
                 }
             }
@@ -1691,7 +1683,7 @@ class HttpServerTest extends Test:
             startTestServer(handler).map { port =>
                 // a&b=c encoded: a%26b%3Dc
                 testGet(port, "/search?q=a%26b%3Dc").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "q=a&b=c")
                 }
             }
@@ -1709,7 +1701,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/cookies").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     val setCookies = Seq.newBuilder[String]
                     response.headers.foreach { (k, v) =>
                         if k.equalsIgnoreCase("Set-Cookie") then setCookies += v
@@ -1729,7 +1721,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/cookies").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     val setCookies = Seq.newBuilder[String]
                     response.headers.foreach { (k, v) =>
                         if k.equalsIgnoreCase("Set-Cookie") then setCookies += v
@@ -1750,7 +1742,7 @@ class HttpServerTest extends Test:
     "Concurrent response integrity" - {
 
         "concurrent requests get correct response bodies (no mixing)" in run {
-            val handler = HttpHandler.get("items" / HttpPath.int("id")) { in =>
+            val handler = HttpHandler.get("items" / Capture[Int]("id")) { in =>
                 // Simulate some work to increase chance of interleaving
                 Async.delay(1.millis)(HttpResponse.ok(s"item-${in.id}"))
             }
@@ -1758,7 +1750,7 @@ class HttpServerTest extends Test:
                 Async.fill(20, 20) {
                     val id = scala.util.Random.nextInt(1000)
                     testGet(port, s"/items/$id").map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, s"item-$id")
                     }
                 }.andThen(succeed)
@@ -1776,7 +1768,7 @@ class HttpServerTest extends Test:
                     HttpClient.send(
                         HttpRequest.get(s"http://localhost:$port/echo", HttpHeaders.empty.add("X-Req-Id", id))
                     ).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, id)
                         assertHeader(response, "X-Echo-Id", id)
                     }
@@ -1795,7 +1787,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.send(HttpRequest.head(s"http://localhost:$port/data")).map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertHeader(response, "X-Custom", "present")
                 }
             }
@@ -1805,24 +1797,24 @@ class HttpServerTest extends Test:
     "Path encoding edge cases" - {
 
         "encoded slash %2F in path capture" in run {
-            val handler = HttpHandler.get("files" / HttpPath.string("name")) { in =>
+            val handler = HttpHandler.get("files" / Capture[String]("name")) { in =>
                 HttpResponse.ok(s"name=${in.name}")
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/files/a%2Fb").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "name=a/b")
                 }
             }
         }
 
         "plus sign in path is literal (not space)" in run {
-            val handler = HttpHandler.get("items" / HttpPath.string("name")) { in =>
+            val handler = HttpHandler.get("items" / Capture[String]("name")) { in =>
                 HttpResponse.ok(s"name=${in.name}")
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/items/a+b").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     // In URL path, + is literal (only means space in query string form-encoded)
                     assertBodyText(response, "name=a+b")
                 }
@@ -1830,38 +1822,38 @@ class HttpServerTest extends Test:
         }
 
         "percent-encoded non-ASCII in path capture" in run {
-            val handler = HttpHandler.get("items" / HttpPath.string("name")) { in =>
+            val handler = HttpHandler.get("items" / Capture[String]("name")) { in =>
                 HttpResponse.ok(s"name=${in.name}")
             }
             startTestServer(handler).map { port =>
                 // café in UTF-8 percent-encoded
                 testGet(port, "/items/caf%C3%A9").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "name=café")
                 }
             }
         }
 
         "double-encoded percent in path" in run {
-            val handler = HttpHandler.get("items" / HttpPath.string("name")) { in =>
+            val handler = HttpHandler.get("items" / Capture[String]("name")) { in =>
                 HttpResponse.ok(s"name=${in.name}")
             }
             startTestServer(handler).map { port =>
                 // %2520 means literal %20 (the % is encoded as %25)
                 testGet(port, "/items/%2520").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "name=%20")
                 }
             }
         }
 
         "multiple path captures with encoding" in run {
-            val handler = HttpHandler.get("orgs" / HttpPath.string("org") / "items" / HttpPath.string("item")) { in =>
+            val handler = HttpHandler.get("orgs" / Capture[String]("org") / "items" / Capture[String]("item")) { in =>
                 HttpResponse.ok(s"org=${in.org},item=${in.item}")
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/orgs/my%20org/items/hello%20world").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                     assertBodyText(response, "org=my org,item=hello world")
                 }
             }
@@ -1878,7 +1870,7 @@ class HttpServerTest extends Test:
             HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 200 * 1024), PlatformTestBackend.server)(handler).map {
                 server =>
                     HttpClient.send(HttpRequest.get(s"http://localhost:${server.port}/large")).map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assert(response.bodyText.length == 100 * 1024)
                     }
             }
@@ -1894,11 +1886,11 @@ class HttpServerTest extends Test:
             val health = HttpHandler.get("/health") { _ => HttpResponse.ok("ok") }
             startTestServer(handler, health).map { port =>
                 testGet(port, "/crash").map { response =>
-                    assertStatus(response, Status.InternalServerError)
+                    assertStatus(response, HttpStatus.InternalServerError)
                 }.andThen {
                     // Server should still be alive
                     testGet(port, "/health").map { response =>
-                        assertStatus(response, Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyText(response, "ok")
                     }
                 }
@@ -1911,7 +1903,7 @@ class HttpServerTest extends Test:
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/null").map { response =>
-                    assertStatus(response, Status.OK)
+                    assertStatus(response, HttpStatus.OK)
                 }
             }
         }
@@ -1921,14 +1913,14 @@ class HttpServerTest extends Test:
 
         "GET and POST on same path" in run {
             val getHandler  = HttpHandler.get("/resource") { _ => HttpResponse.ok("get") }
-            val postHandler = HttpHandler.post("/resource") { _ => HttpResponse(Status.Created, "post") }
+            val postHandler = HttpHandler.post("/resource") { _ => HttpResponse(HttpStatus.Created, "post") }
             startTestServer(getHandler, postHandler).map { port =>
                 testGet(port, "/resource").map { r1 =>
-                    assertStatus(r1, Status.OK)
+                    assertStatus(r1, HttpStatus.OK)
                     assertBodyText(r1, "get")
                 }.andThen {
                     HttpClient.send(HttpRequest.postText(s"http://localhost:$port/resource", "body")).map { r2 =>
-                        assertStatus(r2, Status.Created)
+                        assertStatus(r2, HttpStatus.Created)
                         assertBodyText(r2, "post")
                     }
                 }
@@ -1948,7 +1940,7 @@ class HttpServerTest extends Test:
                     }
                 }.andThen {
                     testDelete(port, "/item").map { r3 =>
-                        assertStatus(r3, Status.NoContent)
+                        assertStatus(r3, HttpStatus.NoContent)
                     }
                 }
             }

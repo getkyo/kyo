@@ -10,7 +10,7 @@ class OpenApiTest extends Test:
         "fromRoutes" - {
 
             "generates spec from single route" in {
-                val route = HttpRoute.get("/users").responseBody[List[User]]
+                val route = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val spec  = HttpOpenApi.fromRoutes(route)
 
                 assert(spec.openapi == "3.0.0")
@@ -19,9 +19,9 @@ class OpenApiTest extends Test:
             }
 
             "generates spec from multiple routes" in {
-                val getRoute    = HttpRoute.get("/users").responseBody[List[User]]
-                val postRoute   = HttpRoute.post("/users").requestBody[CreateUser].responseBody[User]
-                val deleteRoute = HttpRoute.delete("/users").responseBody[Unit]
+                val getRoute    = HttpRoute.get("/users").response(_.bodyJson[List[User]])
+                val postRoute   = HttpRoute.post("/users").request(_.bodyJson[CreateUser]).response(_.bodyJson[User])
+                val deleteRoute = HttpRoute.delete("/users").response(_.bodyJson[Unit])
 
                 val spec = HttpOpenApi.fromRoutes(getRoute, postRoute, deleteRoute)
 
@@ -31,7 +31,7 @@ class OpenApiTest extends Test:
             }
 
             "uses custom config" in {
-                val route = HttpRoute.get("/users").responseBody[List[User]]
+                val route = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val config = HttpOpenApi.Config(
                     title = "My API",
                     version = "2.0.0",
@@ -46,9 +46,8 @@ class OpenApiTest extends Test:
 
             "includes route metadata" in {
                 val route = HttpRoute.get("/users")
-                    .tag("users")
-                    .summary("Get all users")
-                    .responseBody[List[User]]
+                    .metadata(_.tag("users").summary("Get all users"))
+                    .response(_.bodyJson[List[User]])
 
                 val spec = HttpOpenApi.fromRoutes(route)
                 val op   = spec.paths("/users").get.get
@@ -60,7 +59,7 @@ class OpenApiTest extends Test:
             "includes path parameters" in {
                 import HttpPath./
 
-                val route = HttpRoute.get("/users" / HttpPath.int("id")).responseBody[User]
+                val route = HttpRoute.get("/users" / HttpPath.Capture[Int]("id")).response(_.bodyJson[User])
                 val spec  = HttpOpenApi.fromRoutes(route)
                 val op    = spec.paths("/users/{id}").get.get
 
@@ -70,8 +69,8 @@ class OpenApiTest extends Test:
 
             "includes query parameters" in {
                 val route = HttpRoute.get("/users")
-                    .query[Int]("limit")
-                    .responseBody[List[User]]
+                    .request(_.query[Int]("limit"))
+                    .response(_.bodyJson[List[User]])
 
                 val spec = HttpOpenApi.fromRoutes(route)
                 val op   = spec.paths("/users").get.get
@@ -83,7 +82,7 @@ class OpenApiTest extends Test:
         "fromHandlers" - {
 
             "generates spec from handlers" in run {
-                val route   = HttpRoute.get("/users").responseBody[List[User]]
+                val route   = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val handler = route.handle(_ => List(User(1, "Alice")))
                 val spec    = HttpOpenApi.fromHandlers(handler)
 
@@ -92,7 +91,7 @@ class OpenApiTest extends Test:
             }
 
             "uses custom config" in run {
-                val route   = HttpRoute.get("/users").responseBody[List[User]]
+                val route   = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val handler = route.handle(_ => List(User(1, "Alice")))
                 val config  = HttpOpenApi.Config(title = "Handler API", version = "3.0.0")
                 val spec    = HttpOpenApi.fromHandlers(config)(handler)
@@ -105,7 +104,7 @@ class OpenApiTest extends Test:
         "toJson" - {
 
             "encodes spec to JSON" in {
-                val route = HttpRoute.get("/users").responseBody[List[User]]
+                val route = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val spec  = HttpOpenApi.fromRoutes(route)
                 val json  = spec.toJson
 
@@ -128,12 +127,12 @@ class OpenApiTest extends Test:
         "handler" - {
 
             "serves OpenAPI spec at default path" in run {
-                val route      = HttpRoute.get("/users").responseBody[List[User]]
+                val route      = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val apiHandler = HttpOpenApi.handler(route)
 
                 HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(apiHandler).map { server =>
                     testGet(server.port, "/openapi.json").map { response =>
-                        assertStatus(response, HttpResponse.Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertHeader(response, "Content-Type", "application/json")
                         assertBodyContains(response, "\"openapi\":\"3.0.0\"")
                         assertBodyContains(response, "\"/users\"")
@@ -142,19 +141,19 @@ class OpenApiTest extends Test:
             }
 
             "serves OpenAPI spec at custom path" in run {
-                val route      = HttpRoute.get("/users").responseBody[List[User]]
+                val route      = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val apiHandler = HttpOpenApi.handler("/api-docs")(route)
 
                 HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(apiHandler).map { server =>
                     testGet(server.port, "/api-docs").map { response =>
-                        assertStatus(response, HttpResponse.Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyContains(response, "\"openapi\":\"3.0.0\"")
                     }
                 }
             }
 
             "uses custom config" in run {
-                val route      = HttpRoute.get("/users").responseBody[List[User]]
+                val route      = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val config     = HttpOpenApi.Config(title = "Users API", version = "2.0.0")
                 val apiHandler = HttpOpenApi.handler("/openapi.json", config)(route)
 
@@ -167,7 +166,7 @@ class OpenApiTest extends Test:
             }
 
             "works alongside other handlers" in run {
-                val usersRoute   = HttpRoute.get("/users").responseBody[List[User]]
+                val usersRoute   = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val usersHandler = usersRoute.handle(_ => List(User(1, "Alice")))
                 val apiHandler   = HttpOpenApi.handler(usersRoute)
 
@@ -186,14 +185,14 @@ class OpenApiTest extends Test:
         "server config openApi" - {
 
             "automatically serves OpenAPI spec" in run {
-                val usersRoute   = HttpRoute.get("/users").responseBody[List[User]]
+                val usersRoute   = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val usersHandler = usersRoute.handle(_ => List(User(1, "Alice")))
 
                 val config = HttpServer.Config(port = 0).openApi()
 
                 HttpServer.init(config, PlatformTestBackend.server)(usersHandler).map { server =>
                     testGet(server.port, "/openapi.json").map { response =>
-                        assertStatus(response, HttpResponse.Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertHeader(response, "Content-Type", "application/json")
                         assertBodyContains(response, "\"openapi\":\"3.0.0\"")
                         assertBodyContains(response, "\"/users\"")
@@ -202,21 +201,21 @@ class OpenApiTest extends Test:
             }
 
             "uses custom path" in run {
-                val usersRoute   = HttpRoute.get("/users").responseBody[List[User]]
+                val usersRoute   = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val usersHandler = usersRoute.handle(_ => List(User(1, "Alice")))
 
                 val config = HttpServer.Config(port = 0).openApi(path = "/api-docs")
 
                 HttpServer.init(config, PlatformTestBackend.server)(usersHandler).map { server =>
                     testGet(server.port, "/api-docs").map { response =>
-                        assertStatus(response, HttpResponse.Status.OK)
+                        assertStatus(response, HttpStatus.OK)
                         assertBodyContains(response, "\"openapi\":\"3.0.0\"")
                     }
                 }
             }
 
             "uses custom title and version" in run {
-                val usersRoute   = HttpRoute.get("/users").responseBody[List[User]]
+                val usersRoute   = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val usersHandler = usersRoute.handle(_ => List(User(1, "Alice")))
 
                 val config = HttpServer.Config(port = 0).openApi(title = "Users API", version = "2.0.0")
@@ -230,10 +229,10 @@ class OpenApiTest extends Test:
             }
 
             "includes all handlers in spec" in run {
-                val usersRoute   = HttpRoute.get("/users").responseBody[List[User]]
+                val usersRoute   = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val usersHandler = usersRoute.handle(_ => List(User(1, "Alice")))
 
-                val createRoute   = HttpRoute.post("/users").requestBody[CreateUser].responseBody[User]
+                val createRoute   = HttpRoute.post("/users").request(_.bodyJson[CreateUser]).response(_.bodyJson[User])
                 val createHandler = createRoute.handle(in => User(2, in.body.name))
 
                 val config = HttpServer.Config(port = 0).openApi()
@@ -252,8 +251,9 @@ class OpenApiTest extends Test:
         "security schemes" - {
 
             "route with security scheme includes security in operation" in {
-                val route = HttpRoute.get("/users").authBearer.security("bearerAuth").responseBody[List[User]]
-                val spec  = HttpOpenApi.fromRoutes(route)
+                val route =
+                    HttpRoute.get("/users").request(_.authBearer).metadata(_.security("bearerAuth")).response(_.bodyJson[List[User]])
+                val spec = HttpOpenApi.fromRoutes(route)
 
                 val op = spec.paths("/users").get.get
                 assert(op.security.isDefined)
@@ -261,8 +261,9 @@ class OpenApiTest extends Test:
             }
 
             "route with bearer auth includes security scheme in components" in {
-                val route = HttpRoute.get("/users").authBearer.security("bearerAuth").responseBody[List[User]]
-                val spec  = HttpOpenApi.fromRoutes(route)
+                val route =
+                    HttpRoute.get("/users").request(_.authBearer).metadata(_.security("bearerAuth")).response(_.bodyJson[List[User]])
+                val spec = HttpOpenApi.fromRoutes(route)
 
                 assert(spec.components.isDefined)
                 val schemes = spec.components.get.securitySchemes.get
@@ -272,7 +273,7 @@ class OpenApiTest extends Test:
             }
 
             "route with basic auth includes security scheme in components" in {
-                val route = HttpRoute.get("/users").authBasic.security("basicAuth").responseBody[List[User]]
+                val route = HttpRoute.get("/users").request(_.authBasic).metadata(_.security("basicAuth")).response(_.bodyJson[List[User]])
                 val spec  = HttpOpenApi.fromRoutes(route)
 
                 assert(spec.components.isDefined)
@@ -283,7 +284,7 @@ class OpenApiTest extends Test:
             }
 
             "route without security scheme has no security on operation" in {
-                val route = HttpRoute.get("/users").responseBody[List[User]]
+                val route = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val spec  = HttpOpenApi.fromRoutes(route)
 
                 val op = spec.paths("/users").get.get
@@ -291,7 +292,7 @@ class OpenApiTest extends Test:
             }
 
             "no components when no security schemes" in {
-                val route = HttpRoute.get("/users").responseBody[List[User]]
+                val route = HttpRoute.get("/users").response(_.bodyJson[List[User]])
                 val spec  = HttpOpenApi.fromRoutes(route)
 
                 assert(spec.components.isEmpty)

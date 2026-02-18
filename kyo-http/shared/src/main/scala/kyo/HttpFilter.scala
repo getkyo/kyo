@@ -115,7 +115,7 @@ object HttpFilter:
 
         /** Rate limits requests using a Meter, returning 429 when limit exceeded */
         def rateLimit(meter: Meter, retryAfter: Int = 1): HttpFilter =
-            val tooManyRequests = HttpResponse(HttpResponse.Status.TooManyRequests)
+            val tooManyRequests = HttpResponse(HttpStatus.TooManyRequests)
                 .setHeader("Retry-After", retryAfter.toString)
             new HttpFilter:
                 def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
@@ -148,7 +148,7 @@ object HttpFilter:
             end addCorsHeaders
 
             def preflightResponse: HttpResponse[HttpBody.Bytes] =
-                val r0 = HttpResponse(HttpResponse.Status.NoContent)
+                val r0 = HttpResponse(HttpStatus.NoContent)
                     .setHeader("Access-Control-Allow-Origin", allowOrigin)
                     .setHeader("Access-Control-Allow-Methods", allowMethods.map(_.name).mkString(", "))
                 val r1 = if allowHeaders.nonEmpty then r0.setHeader("Access-Control-Allow-Headers", allowHeaders.mkString(", ")) else r0
@@ -172,7 +172,7 @@ object HttpFilter:
 
         /** Validates HTTP Basic Authentication credentials. */
         def basicAuth(validate: (String, String) => Boolean < Async)(using Frame): HttpFilter =
-            val unauthorized = HttpResponse(HttpResponse.Status.Unauthorized).setHeader("WWW-Authenticate", "Basic")
+            val unauthorized = HttpResponse(HttpStatus.Unauthorized).setHeader("WWW-Authenticate", "Basic")
             new HttpFilter:
                 def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
                     Frame
@@ -195,7 +195,7 @@ object HttpFilter:
 
         /** Validates HTTP Bearer token authentication. */
         def bearerAuth(validate: String => Boolean < Async)(using Frame): HttpFilter =
-            val unauthorized = HttpResponse(HttpResponse.Status.Unauthorized).setHeader("WWW-Authenticate", "Bearer")
+            val unauthorized = HttpResponse(HttpStatus.Unauthorized).setHeader("WWW-Authenticate", "Bearer")
             new HttpFilter:
                 def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
                     Frame
@@ -235,7 +235,7 @@ object HttpFilter:
                                 val etagValue = computeETag(b.data)
                                 req.header("If-None-Match") match
                                     case Present(clientEtag) if clientEtag == etagValue =>
-                                        HttpResponse(HttpResponse.Status.NotModified)
+                                        HttpResponse(HttpStatus.NotModified)
                                     case _ =>
                                         response.setHeader("ETag", etagValue)
                                 end match

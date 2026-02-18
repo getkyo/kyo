@@ -85,7 +85,7 @@ class HttpErrorTest extends Test:
         }
 
         "StatusError message includes status code" in {
-            val error = HttpError.StatusError(HttpResponse.Status(404), "not found")
+            val error = HttpError.StatusError(HttpStatus(404), "not found")
             assert(error.getMessage.contains("404"))
         }
 
@@ -96,7 +96,7 @@ class HttpErrorTest extends Test:
         }
 
         "RetriesExhausted message includes attempts and status" in {
-            val error = HttpError.RetriesExhausted(3, HttpResponse.Status(503), "unavailable")
+            val error = HttpError.RetriesExhausted(3, HttpStatus(503), "unavailable")
             assert(error.getMessage.contains("3"))
             assert(error.getMessage.contains("503"))
         }

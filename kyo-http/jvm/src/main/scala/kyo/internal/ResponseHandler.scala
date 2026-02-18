@@ -13,7 +13,7 @@ final private[kyo] class ResponseHandler(
 )(using Frame) extends SimpleChannelInboundHandler[FullHttpResponse]:
     override def channelRead0(ctx: ChannelHandlerContext, msg: FullHttpResponse): Unit =
         import AllowUnsafe.embrace.danger
-        val status = HttpResponse.Status(msg.status().code())
+        val status = HttpStatus(msg.status().code())
         val body   = new Array[Byte](msg.content().readableBytes())
         msg.content().readBytes(body)
 

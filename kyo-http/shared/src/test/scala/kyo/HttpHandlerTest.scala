@@ -1,8 +1,8 @@
 package kyo
 
-import HttpPath./
+import HttpPath.*
 import HttpRequest.Method
-import HttpResponse.Status
+import kyo.HttpStatus
 
 class HttpHandlerTest extends Test:
 
@@ -67,7 +67,7 @@ class HttpHandlerTest extends Test:
                 response <- HttpClient.send(
                     HttpRequest.head(s"http://localhost:$port/m")
                 )
-            yield assertStatus(response, Status.OK)
+            yield assertStatus(response, HttpStatus.OK)
             end for
         }
 
@@ -105,11 +105,11 @@ class HttpHandlerTest extends Test:
 
     "const" - {
         "with status" in run {
-            val handler = HttpHandler.const(Method.GET, "/gone", Status.Gone)
+            val handler = HttpHandler.const(Method.GET, "/gone", HttpStatus.Gone)
             for
                 port     <- startTestServer(handler)
                 response <- testGet(port, "/gone")
-            yield assertStatus(response, Status.Gone)
+            yield assertStatus(response, HttpStatus.Gone)
             end for
         }
 
@@ -126,7 +126,7 @@ class HttpHandlerTest extends Test:
 
     "path captures" - {
         "int capture" in run {
-            val handler = HttpHandler.get("/items" / HttpPath.int("id")) { in =>
+            val handler = HttpHandler.get("/items" / Capture[Int]("id")) { in =>
                 HttpResponse.ok(s"item:${in.id}")
             }
             for
@@ -137,7 +137,7 @@ class HttpHandlerTest extends Test:
         }
 
         "string capture" in run {
-            val handler = HttpHandler.get("/greet" / HttpPath.string("name")) { in =>
+            val handler = HttpHandler.get("/greet" / Capture[String]("name")) { in =>
                 HttpResponse.ok(s"hello:${in.name}")
             }
             for
@@ -148,7 +148,7 @@ class HttpHandlerTest extends Test:
         }
 
         "multiple captures" in run {
-            val handler = HttpHandler.get("/users" / HttpPath.string("name") / HttpPath.int("id")) { in =>
+            val handler = HttpHandler.get("/users" / Capture[String]("name") / Capture[Int]("id")) { in =>
                 HttpResponse.ok(s"${in.name}:${in.id}")
             }
             for
@@ -159,7 +159,7 @@ class HttpHandlerTest extends Test:
         }
 
         "long capture" in run {
-            val handler = HttpHandler.get("/big" / HttpPath.long("n")) { in =>
+            val handler = HttpHandler.get("/big" / Capture[Long]("n")) { in =>
                 HttpResponse.ok(s"n:${in.n}")
             }
             for
@@ -170,7 +170,7 @@ class HttpHandlerTest extends Test:
         }
 
         "boolean capture" in run {
-            val handler = HttpHandler.get("/flag" / HttpPath.boolean("b")) { in =>
+            val handler = HttpHandler.get("/flag" / Capture[Boolean]("b")) { in =>
                 HttpResponse.ok(s"flag:${in.b}")
             }
             for
@@ -183,8 +183,8 @@ class HttpHandlerTest extends Test:
 
     "route-based handler" - {
         "JSON input/output" in run {
-            val route = HttpRoute.post("/users").requestBody[CreateUser].responseBody[User]
-            val handler = HttpHandler.init(route) { in =>
+            val route = HttpRoute.post("/users").request(_.bodyJson[CreateUser]).response(_.bodyJson[User])
+            val handler = route.handle { in =>
                 User(1, in.body.name)
             }
             for
@@ -198,8 +198,8 @@ class HttpHandlerTest extends Test:
         }
 
         "output-only route" in run {
-            val route   = HttpRoute.get("/users").responseBody[List[User]]
-            val handler = HttpHandler.init(route)(_ => List(User(1, "a"), User(2, "b")))
+            val route   = HttpRoute.get("/users").response(_.bodyJson[List[User]])
+            val handler = route.handle(_ => List(User(1, "a"), User(2, "b")))
             for
                 port     <- startTestServer(handler)
                 response <- testGet(port, "/users")
@@ -211,11 +211,11 @@ class HttpHandlerTest extends Test:
 
         "no output schema returns 200 OK" in run {
             val route   = HttpRoute.post("/action")
-            val handler = HttpHandler.init(route)(_ => ())
+            val handler = route.handle(_ => ())
             for
                 port     <- startTestServer(handler)
                 response <- testPost(port, "/action", "")
-            yield assertStatus(response, Status.OK)
+            yield assertStatus(response, HttpStatus.OK)
             end for
         }
     }
@@ -228,44 +228,43 @@ class HttpHandlerTest extends Test:
             for
                 port     <- startTestServer(handler)
                 response <- testGet(port, "/boom")
-            yield assertStatus(response, Status.InternalServerError)
+            yield assertStatus(response, HttpStatus.InternalServerError)
             end for
         }
 
         "route handler Abort maps to error response" in run {
             val route = HttpRoute.post("/validate")
-                .requestBody[CreateUser]
-                .responseBody[User]
-                .error[ApiError](Status.BadRequest)
-            val handler = HttpHandler.init(route) { _ =>
+                .request(_.bodyJson[CreateUser])
+                .response(_.bodyJson[User].error[ApiError](HttpStatus.BadRequest))
+            val handler = route.handle { _ =>
                 Abort.fail(ApiError("invalid"))
             }
             for
                 port     <- startTestServer(handler)
                 response <- testPost(port, "/validate", CreateUser("x"))
             yield
-                assertStatus(response, Status.BadRequest)
+                assertStatus(response, HttpStatus.BadRequest)
                 assert(response.bodyText.contains("invalid"))
             end for
         }
 
         "unmatched Abort error returns 500" in run {
-            val route = HttpRoute.post("/fail").requestBody[CreateUser].responseBody[User]
-            val handler = HttpHandler.init(route) { _ =>
+            val route = HttpRoute.post("/fail").request(_.bodyJson[CreateUser]).response(_.bodyJson[User])
+            val handler = route.handle { _ =>
                 Abort.fail(ApiError("oops"))
             }
             for
                 port     <- startTestServer(handler)
                 response <- testPost(port, "/fail", CreateUser("x"))
-            yield assertStatus(response, Status.InternalServerError)
+            yield assertStatus(response, HttpStatus.InternalServerError)
             end for
         }
     }
 
     "query parameters" - {
         "required query param" in run {
-            val route   = HttpRoute.get("/search").query[String]("q").responseBody[String]
-            val handler = HttpHandler.init(route)(in => s"found:${in.q}")
+            val route   = HttpRoute.get("/search").request(_.query[String]("q")).response(_.bodyJson[String])
+            val handler = route.handle(in => s"found:${in.q}")
             for
                 port <- startTestServer(handler)
                 response <- HttpClient.send(
@@ -276,18 +275,18 @@ class HttpHandlerTest extends Test:
         }
 
         "missing required query param returns 400" in run {
-            val route   = HttpRoute.get("/search").query[String]("q").responseBody[String]
-            val handler = HttpHandler.init(route)(in => s"found:${in.q}")
+            val route   = HttpRoute.get("/search").request(_.query[String]("q")).response(_.bodyJson[String])
+            val handler = route.handle(in => s"found:${in.q}")
             for
                 port     <- startTestServer(handler)
                 response <- testGet(port, "/search")
-            yield assertStatus(response, Status.BadRequest)
+            yield assertStatus(response, HttpStatus.BadRequest)
             end for
         }
 
         "query param with default" in run {
-            val route   = HttpRoute.get("/page").query[Int]("n", 1).responseBody[String]
-            val handler = HttpHandler.init(route)(in => s"page:${in.n}")
+            val route   = HttpRoute.get("/page").request(_.query[Int]("n", default = Some(1))).response(_.bodyJson[String])
+            val handler = route.handle(in => s"page:${in.n}")
             for
                 port     <- startTestServer(handler)
                 response <- testGet(port, "/page")
@@ -327,7 +326,7 @@ class HttpHandlerTest extends Test:
             for
                 port     <- startTestServer(simpleHandler)
                 response <- testGet(port, "/nonexistent")
-            yield assertStatus(response, Status.NotFound)
+            yield assertStatus(response, HttpStatus.NotFound)
         }
     }
 
