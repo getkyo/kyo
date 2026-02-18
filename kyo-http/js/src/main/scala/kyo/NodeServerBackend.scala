@@ -73,7 +73,7 @@ object NodeServerBackend extends Backend.Server:
                                     // Force-close remaining connections after grace period
                                     discard(Backend.Unsafe.launchFiber {
                                         Async.sleep(gracePeriod).andThen {
-                                            Sync.Unsafe(nodeServer.closeAllConnections())
+                                            Sync.Unsafe.defer(nodeServer.closeAllConnections())
                                         }
                                     })
                                 end if
