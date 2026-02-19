@@ -16,7 +16,7 @@ import kyo.internal.HttpRouter
   *   - Buffered and streaming request body support
   *   - Built-in OpenAPI 3.0 spec generation from handler metadata
   *   - Filter chain applied to every request
-  *   - Configurable backlog, keep-alive, TCP fast open, idle timeout
+  *   - Configurable backlog, keep-alive, idle timeout
   *
   * IMPORTANT: The server runs in the background after `init`. Use `await` to keep the main fiber alive if there's nothing else to block on.
   *
@@ -84,14 +84,6 @@ object HttpServer:
     def init(config: Config, backend: Backend.Server)(handlers: HttpHandler[?]*)(using Frame): HttpServer < (Async & Scope) =
         Scope.acquireRelease(initUnscoped(config, backend)(handlers*))(_.closeNow)
 
-    def init(
-        port: Int = Config.default.port,
-        host: String = Config.default.host,
-        maxContentLength: Int = Config.default.maxContentLength,
-        idleTimeout: Duration = Config.default.idleTimeout
-    )(handlers: HttpHandler[?]*)(using Frame): HttpServer < (Async & Scope) =
-        init(Config(port, host, maxContentLength, idleTimeout))(handlers*)
-
     def initWith[B, S](handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using Frame): B < (S & Async & Scope) =
         init(handlers*).map(f)
 
@@ -136,22 +128,12 @@ object HttpServer:
                 config.maxContentLength,
                 config.backlog,
                 config.keepAlive,
-                config.tcpFastOpen,
-                config.flushConsolidationLimit,
                 serverHandler
             ).map { srv =>
                 new HttpServer(srv, allHandlers)
             }
         }
     end initUnscoped
-
-    def initUnscoped(
-        port: Int = Config.default.port,
-        host: String = Config.default.host,
-        maxContentLength: Int = Config.default.maxContentLength,
-        idleTimeout: Duration = Config.default.idleTimeout
-    )(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
-        initUnscoped(Config(port, host, maxContentLength, idleTimeout))(handlers*)
 
     def initUnscopedWith[B, S](handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using Frame): B < (S & Async) =
         initUnscoped(handlers*).map(f)
@@ -175,8 +157,6 @@ object HttpServer:
         strictCookieParsing: Boolean = false,
         backlog: Int = 128,
         keepAlive: Boolean = true,
-        tcpFastOpen: Boolean = false,
-        flushConsolidationLimit: Int = 256,
         openApi: Maybe[Config.OpenApiEndpoint] = Absent
     ) derives CanEqual:
         require(port >= 0 && port <= 65535, s"Port must be between 0 and 65535: $port")
@@ -184,7 +164,6 @@ object HttpServer:
         require(maxContentLength > 0, s"maxContentLength must be positive: $maxContentLength")
         require(idleTimeout > Duration.Zero, s"idleTimeout must be positive: $idleTimeout")
         require(backlog > 0, s"backlog must be positive: $backlog")
-        require(flushConsolidationLimit > 0, s"flushConsolidationLimit must be positive: $flushConsolidationLimit")
 
         def port(p: Int): Config                    = copy(port = p)
         def host(h: String): Config                 = copy(host = h)
@@ -193,8 +172,6 @@ object HttpServer:
         def strictCookieParsing(b: Boolean): Config = copy(strictCookieParsing = b)
         def backlog(n: Int): Config                 = copy(backlog = n)
         def keepAlive(b: Boolean): Config           = copy(keepAlive = b)
-        def tcpFastOpen(b: Boolean): Config         = copy(tcpFastOpen = b)
-        def flushConsolidationLimit(n: Int): Config = copy(flushConsolidationLimit = n)
         def openApi(path: String = "/openapi.json", title: String = "API", version: String = "1.0.0"): Config =
             copy(openApi = Present(Config.OpenApiEndpoint(path, title, version)))
     end Config

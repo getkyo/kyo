@@ -8,13 +8,13 @@ sealed private[kyo] trait Content derives CanEqual:
 end Content
 
 private[kyo] object Content:
-    sealed trait Input extends Content:
+    sealed trait BytesInput extends Content:
         /** Server-side: extract body value from request. */
         private[kyo] def decodeFrom(request: HttpRequest[HttpBody.Bytes])(using Frame): Result[HttpError, Any]
 
         /** Client-side: encode value to (bytes, contentType). Returns Maybe.Absent for streaming types. */
         private[kyo] def encodeTo(value: Any): Maybe[(Array[Byte], String)]
-    end Input
+    end BytesInput
 
     sealed trait StreamInput extends Content:
         override def isStreaming: Boolean = true
@@ -29,15 +29,15 @@ private[kyo] object Content:
         private[kyo] def encodeStreamTo(value: Any)(using Frame): Stream[Span[Byte], Async]
     end StreamInput
 
-    sealed trait Output extends Content:
+    sealed trait BytesOutput extends Content:
         /** Server-side: encode value to a response. */
         private[kyo] def encodeToResponse(value: Any, status: HttpStatus)(using Frame): HttpResponse[?]
 
         /** Client-side: decode buffered response body to value. */
         private[kyo] def decodeFrom(response: HttpResponse[HttpBody.Bytes])(using Frame): Result[HttpError, Any]
-    end Output
+    end BytesOutput
 
-    sealed trait StreamOutput extends Output:
+    sealed trait StreamOutput extends BytesOutput:
         override def isStreaming: Boolean = true
 
         /** Client-side: decode streaming response body to stream value. */
@@ -46,7 +46,7 @@ private[kyo] object Content:
         ): Any < (Sync & Abort[HttpError.ParseError])
     end StreamOutput
 
-    case class Json(schema: Schema[Any]) extends Input with Output:
+    case class Json(schema: Schema[Any]) extends BytesInput with BytesOutput:
         private[kyo] def decodeFrom(request: HttpRequest[HttpBody.Bytes])(using Frame): Result[HttpError, Any] =
             schema.decode(request.bodyText).mapFailure(HttpError.ParseError(_))
 
@@ -60,7 +60,7 @@ private[kyo] object Content:
             schema.decode(response.bodyText).mapFailure(HttpError.ParseError(_))
     end Json
 
-    case object Text extends Input with Output:
+    case object Text extends BytesInput with BytesOutput:
         private[kyo] def decodeFrom(request: HttpRequest[HttpBody.Bytes])(using Frame): Result[HttpError, Any] =
             Result.succeed(request.bodyText)
 
@@ -74,7 +74,7 @@ private[kyo] object Content:
             Result.succeed(response.bodyText)
     end Text
 
-    case object Binary extends Input with Output:
+    case object Binary extends BytesInput with BytesOutput:
         private[kyo] def decodeFrom(request: HttpRequest[HttpBody.Bytes])(using Frame): Result[HttpError, Any] =
             Result.succeed(request.bodyBytes)
 
@@ -163,7 +163,7 @@ private[kyo] object Content:
             }
     end Ndjson
 
-    case object Multipart extends Input:
+    case object Multipart extends BytesInput:
         private[kyo] def decodeFrom(request: HttpRequest[HttpBody.Bytes])(using Frame): Result[HttpError, Any] =
             Result.succeed(request.parts.toArrayUnsafe.toSeq)
 

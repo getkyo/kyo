@@ -74,7 +74,7 @@ class OpenApiGeneratorTest extends Test:
         }
 
         "generates path parameters" in run {
-            import HttpPath.*
+
             val route   = HttpRoute.get("/users" / HttpPath.Capture[Int]("id")).response(_.bodyJson[User])
             val handler = route.handle(in => User(in.id, s"User${in.id}"))
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
@@ -288,7 +288,7 @@ class OpenApiGeneratorTest extends Test:
         }
 
         "generates integer schema for Int path param" in run {
-            import HttpPath.*
+
             val route   = HttpRoute.get("/users" / HttpPath.Capture[Int]("id")).response(_.bodyJson[User])
             val handler = route.handle(in => User(in.id, s"User${in.id}"))
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
@@ -301,7 +301,7 @@ class OpenApiGeneratorTest extends Test:
         }
 
         "generates long schema for Long path param" in run {
-            import HttpPath.*
+
             val route   = HttpRoute.get("/items" / HttpPath.Capture[Long]("id")).response(_.bodyJson[User])
             val handler = route.handle(in => User(in.id.toInt, s"Item${in.id}"))
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
@@ -315,7 +315,7 @@ class OpenApiGeneratorTest extends Test:
         }
 
         "generates uuid schema for UUID path param" in run {
-            import HttpPath.*
+
             val route   = HttpRoute.get("/items" / HttpPath.Capture[java.util.UUID]("id")).response(_.bodyJson[User])
             val handler = route.handle(in => User(1, in.id.toString))
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
@@ -344,7 +344,7 @@ class OpenApiGeneratorTest extends Test:
         }
 
         "generates multiple path parameters" in run {
-            import HttpPath.*
+
             val route = HttpRoute.get(
                 "/orgs" / HttpPath.Capture[String]("org") / "repos" / HttpPath.Capture[String]("repo")
             ).response(_.bodyJson[User])

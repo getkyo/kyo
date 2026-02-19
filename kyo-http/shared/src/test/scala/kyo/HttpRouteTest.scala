@@ -1,6 +1,6 @@
 package kyo
 
-import HttpPath.*
+import HttpPath.Literal
 import HttpRequest.Method
 import HttpRequest.Part
 import kyo.HttpStatus
@@ -475,7 +475,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, LoginForm("alice", "secret"))
-                }.map { result =>
+                }.map { _.body }.map { result =>
                     assert(result == "user=alice pass=secret")
                 }
             }
@@ -610,7 +610,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route)
-                }.map { users =>
+                }.map { _.body }.map { users =>
                     assert(users.size == 2)
                     assert(users.head == User(1, "Alice"))
                 }
@@ -623,7 +623,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, 42)
-                }.map { user =>
+                }.map { _.body }.map { user =>
                     assert(user == User(42, "User42"))
                 }
             }
@@ -635,7 +635,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, 42)
-                }.map { user =>
+                }.map { _.body }.map { user =>
                     assert(user == User(42, "User42"))
                 }
             }
@@ -647,7 +647,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, 42)
-                }.map { user =>
+                }.map { _.body }.map { user =>
                     assert(user == User(42, "profile"))
                 }
             }
@@ -662,7 +662,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, ("acme", 42))
-                }.map { user =>
+                }.map { _.body }.map { user =>
                     assert(user == User(42, "acme"))
                 }
             }
@@ -677,7 +677,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, ("books", 99))
-                }.map { user =>
+                }.map { _.body }.map { user =>
                     assert(user == User(99, "books"))
                 }
             }
@@ -692,7 +692,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, ("v2", 7))
-                }.map { user =>
+                }.map { _.body }.map { user =>
                     assert(user == User(7, "v2"))
                 }
             }
@@ -707,7 +707,7 @@ class HttpRouteTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    Abort.run[NotFoundError](HttpClient.call(route, 999))
+                    Abort.run[NotFoundError](HttpClient.call(route, 999).map(_.body))
                 }.map { result =>
                     assert(result.isFailure)
                 }
@@ -724,7 +724,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, 42)
-                }.map { user =>
+                }.map { _.body }.map { user =>
                     assert(user == User(42, "User42"))
                 }
             }
@@ -736,7 +736,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, 42)
-                }.map { user =>
+                }.map { _.body }.map { user =>
                     assert(user == User(42, "User42"))
                 }
             }
@@ -751,7 +751,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, (org = "acme", id = 42))
-                }.map { user =>
+                }.map { _.body }.map { user =>
                     assert(user == User(42, "acme"))
                 }
             }
@@ -767,7 +767,7 @@ class HttpRouteTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.call(route).map { stream =>
+                    HttpClient.call(route).map { _.body }.map { stream =>
                         stream.run.map { chunk =>
                             assert(chunk.size == 2)
                             assert(chunk(0).data == User(1, "Alice"))
@@ -785,7 +785,7 @@ class HttpRouteTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.call(route).map { stream =>
+                    HttpClient.call(route).map { _.body }.map { stream =>
                         stream.run.map { chunk =>
                             assert(chunk.size == 2)
                             assert(chunk(0) == User(1, "Alice"))
@@ -808,7 +808,7 @@ class HttpRouteTest extends Test:
                 val bodyStream = Stream.init(Seq(Span.fromUnsafe("hello".getBytes("UTF-8"))))
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, bodyStream)
-                }.map { result =>
+                }.map { _.body }.map { result =>
                     assert(result.contains("received: hello"))
                 }
             }
@@ -827,7 +827,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 val bodyStream = Stream.init(Seq(Span.fromUnsafe("test".getBytes("UTF-8"))))
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.call(route, bodyStream).map { stream =>
+                    HttpClient.call(route, bodyStream).map { _.body }.map { stream =>
                         stream.run.map { chunk =>
                             assert(chunk.size == 1)
                             assert(chunk(0).data == User(4, "test"))
@@ -1210,7 +1210,7 @@ class HttpRouteTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.call(route, (id = 42, filter = "active")).map { stream =>
+                    HttpClient.call(route, (id = 42, filter = "active")).map { _.body }.map { stream =>
                         stream.run.map { chunk =>
                             assert(chunk.size == 1)
                             assert(chunk(0).data == User(42, "active"))
@@ -1229,7 +1229,7 @@ class HttpRouteTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.call(route, (category = "books", `X-Tenant` = "acme")).map { stream =>
+                    HttpClient.call(route, (category = "books", `X-Tenant` = "acme")).map { _.body }.map { stream =>
                         stream.run.map { chunk =>
                             assert(chunk.size == 1)
                             assert(chunk(0) == User(1, "books@acme"))
@@ -1253,7 +1253,7 @@ class HttpRouteTest extends Test:
                 val bodyStream = Stream.init(Seq(Span.fromUnsafe("hello".getBytes("UTF-8"))))
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, (id = 7, name = "test.txt", body = bodyStream))
-                }.map { result =>
+                }.map { _.body }.map { result =>
                     assert(result.contains("id=7"))
                     assert(result.contains("name=test.txt"))
                     assert(result.contains("body=hello"))
@@ -1275,7 +1275,7 @@ class HttpRouteTest extends Test:
                 val bodyStream = Stream.init(Seq(Span.fromUnsafe("data".getBytes("UTF-8"))))
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, (bearer = "tok123", body = bodyStream))
-                }.map { result =>
+                }.map { _.body }.map { result =>
                     assert(result.contains("bearer=tok123"))
                     assert(result.contains("body=data"))
                 }
@@ -1298,7 +1298,7 @@ class HttpRouteTest extends Test:
                     HttpClient.call(
                         route,
                         (mode = "fast", bearer = "secret", body = bodyStream)
-                    ).map { stream =>
+                    ).map { _.body }.map { stream =>
                         stream.run.map { chunk =>
                             assert(chunk.size == 1)
                             assert(chunk(0).data == User(4, "fast:secret"))
@@ -1417,7 +1417,7 @@ class HttpRouteTest extends Test:
                     startTestServer(handlers*).map { port =>
                         HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                             val creates = (1 to 10).map { i =>
-                                HttpClient.call(createTodo, CreateTodo(s"Concurrent $i"))
+                                HttpClient.call(createTodo, CreateTodo(s"Concurrent $i")).map(_.body)
                             }
                             Async.collectAll(creates).map { todos =>
                                 assert(todos.size == 10)

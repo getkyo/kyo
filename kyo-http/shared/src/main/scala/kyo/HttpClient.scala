@@ -207,33 +207,40 @@ object HttpClient:
         Frame,
         Tag[Emit[Chunk[HttpEvent[V]]]]
     ): Stream[HttpEvent[V], Async & Scope] < (Async & Scope & Abort[HttpError]) =
-        call(HttpRoute.get(url).response(_.bodySse[V]))
+        call(HttpRoute.get(url).response(_.bodySse[V])).map(_.body)
 
     def streamNdjson[V: Schema: Tag](url: String)(using
         Frame,
         Tag[Emit[Chunk[V]]]
     ): Stream[V, Async & Scope] < (Async & Scope & Abort[HttpError]) =
-        call(HttpRoute.get(url).response(_.bodyNdjson[V]))
+        call(HttpRoute.get(url).response(_.bodyNdjson[V])).map(_.body)
 
     // --- Route-based client: single `call` method ---
 
-    /** Calls a route with no inputs (no path captures, query, header, or body params). */
+    /** Calls a route with no inputs (no path captures, query, header, or body params).
+      *
+      * Returns a `Row` with named fields for each declared output plus `"response"` (the raw `HttpResponse`). For example, a route with
+      * `.response(_.bodyJson[User])` returns a row accessible as `result.body` and `result.response`.
+      */
     def call[Out <: AnyNamedTuple, Err](route: HttpRoute[Row.Empty, Row.Empty, Out, Err])(using
         Frame
-    ): OutputValue[Out] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
+    ): Row[FullOutput[Out]] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
         callImpl(route, EmptyTuple)
 
-    /** Calls a route with typed inputs. The input tuple contains path captures followed by request params, in declaration order. */
+    /** Calls a route with typed inputs. The input tuple contains path captures followed by request params, in declaration order.
+      *
+      * Returns a `Row` with named fields for each declared output plus `"response"` (the raw `HttpResponse`).
+      */
     def call[PathIn <: AnyNamedTuple, In <: AnyNamedTuple, Out <: AnyNamedTuple, Err](
         route: HttpRoute[PathIn, In, Out, Err],
         in: InputValue[PathIn, In]
-    )(using Frame): OutputValue[Out] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
+    )(using Frame): Row[FullOutput[Out]] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
         callImpl(route, in)
 
     private def callImpl[Out <: AnyNamedTuple, Err](
         route: HttpRoute[?, ?, Out, Err],
         in: Any
-    )(using Frame): OutputValue[Out] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
+    )(using Frame): Row[FullOutput[Out]] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
         val request         = buildRouteRequest(route, in)
         val hasStreamingOut = hasStreamingOutput(route)
         val hasStreamingIn  = hasStreamingInput(route)
@@ -246,10 +253,12 @@ object HttpClient:
                         handleErrorResponse(route, buffered.status, buffered.bodyText)
                     }
                 else if hasStreamingOut then
-                    decodeStreamBody[Out](route, response)
+                    decodeStreamBody[Out](route, response).map { body =>
+                        buildOutputRow[Out](route, body, response)
+                    }
                 else
                     response.ensureBytes.map { buffered =>
-                        decodeBufferedBody[Out](route, buffered)
+                        buildOutputRow[Out](route, decodeBufferedBodyRaw[Out](route, buffered), buffered)
                     }
             }
         else
@@ -259,7 +268,7 @@ object HttpClient:
                 if response.status.isError then
                     handleErrorResponse(route, response.status, response.bodyText)
                 else
-                    decodeBufferedBody[Out](route, response)
+                    buildOutputRow[Out](route, decodeBufferedBodyRaw[Out](route, response), response)
             }
         end if
     end callImpl
@@ -281,21 +290,21 @@ object HttpClient:
             if i >= fields.size then s
             else
                 fields(i) match
-                    case field @ InputField.Query(_, _, _, _, _) =>
+                    case field @ InputField.Query(_, _, _, _, _, _) =>
                         val raw = extractAt(in, fieldIdx)
                         val newQuery = field.serialize(raw) match
                             case Present(q) => q :: s.queryParts
                             case Absent     => s.queryParts
                         loop(i + 1, fieldIdx + 1, s.copy(queryParts = newQuery))
 
-                    case field @ InputField.Header(name, codec, _, optional, _) =>
+                    case field @ InputField.Header(_, _, _, _, _, _) =>
                         val raw = extractAt(in, fieldIdx)
                         val newHeaders = field.serializeHeader(raw) match
                             case Present((n, v)) => s.headers.add(n, v)
                             case Absent          => s.headers
                         loop(i + 1, fieldIdx + 1, s.copy(headers = newHeaders))
 
-                    case field @ InputField.Cookie(_, _, _, _, _) =>
+                    case field @ InputField.Cookie(_, _, _, _, _, _) =>
                         val raw = extractAt(in, fieldIdx)
                         val newCookies = field.serialize(raw) match
                             case Present(c) => c :: s.cookieParts
@@ -352,7 +361,7 @@ object HttpClient:
                     HttpRequest.multipart(fullPath, bodyValue.asInstanceOf[Seq[HttpRequest.Part]], headers)
                 case Present(streamContent: Content.StreamInput) =>
                     HttpRequest.stream(route.method, fullPath, streamContent.encodeStreamTo(bodyValue), headers)
-                case Present(content: Content.Input) =>
+                case Present(content: Content.BytesInput) =>
                     content.encodeTo(bodyValue) match
                         case Present((bytes, contentType)) =>
                             HttpRequest.initBytes(route.method, fullPath, bytes, headers, contentType)
@@ -712,26 +721,35 @@ object HttpClient:
                 if idx == 0 then other
                 else throw new IllegalStateException(s"Cannot extract input at index $idx from $other")
 
-    private def decodeBufferedBody[Out <: AnyNamedTuple](
+    private def decodeBufferedBodyRaw[Out <: AnyNamedTuple](
         route: HttpRoute[?, ?, Out, ?],
         response: HttpResponse[HttpBody.Bytes]
-    )(using Frame): OutputValue[Out] < Abort[HttpError] =
+    )(using Frame): Any < Abort[HttpError] =
         findBodyField(route.response.outputFields) match
-            case Present(bodyField) =>
-                bodyField.extract(response).map(_.asInstanceOf[OutputValue[Out]])
-            case Absent =>
-                ().asInstanceOf[OutputValue[Out]]
+            case Present(bodyField) => bodyField.extract(response)
+            case Absent             => ()
 
     private def decodeStreamBody[Out <: AnyNamedTuple](
         route: HttpRoute[?, ?, Out, ?],
         response: HttpResponse[HttpBody.Streamed]
-    )(using Frame): OutputValue[Out] < (Async & Abort[HttpError]) =
+    )(using Frame): Any < (Async & Abort[HttpError]) =
         findBodyField(route.response.outputFields) match
-            case Present(bodyField) =>
-                // OutputField.extractStream delegates to Content.decodeStreamFrom
-                bodyField.extractStream(response).map(_.asInstanceOf[OutputValue[Out]])
-            case Absent =>
-                ().asInstanceOf[OutputValue[Out]]
+            case Present(bodyField) => bodyField.extractStream(response)
+            case Absent             => ()
+
+    private def buildOutputRow[Out <: AnyNamedTuple](
+        route: HttpRoute[?, ?, Out, ?],
+        body: Any,
+        response: HttpResponse[?]
+    ): Row[FullOutput[Out]] =
+        val fields    = route.response.outputFields
+        val bodyCount = fields.count(_.isInstanceOf[OutputField.Body])
+        // Build tuple: output fields + response
+        val values = Array.ofDim[Any](fields.size + 1)
+        if bodyCount > 0 then values(0) = body
+        values(values.length - 1) = response
+        Tuple.fromArray(values).asInstanceOf[Row[FullOutput[Out]]]
+    end buildOutputRow
 
     private def findBodyField(fields: Seq[OutputField]): Maybe[OutputField] =
         @tailrec def loop(i: Int): Maybe[OutputField] =

@@ -33,8 +33,6 @@ object TestBackend extends Backend.Client with Backend.Server:
         maxContentLength: Int,
         backlog: Int,
         keepAlive: Boolean,
-        tcpFastOpen: Boolean,
-        flushConsolidationLimit: Int,
         handler: Backend.ServerHandler
     )(using Frame): Backend.Server.Binding < Async =
         Sync.Unsafe.defer {

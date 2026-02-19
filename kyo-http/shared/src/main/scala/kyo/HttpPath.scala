@@ -29,6 +29,10 @@ enum HttpPath[+A <: AnyNamedTuple]:
     case Rest[N <: String](fieldName: N)                                                       extends HttpPath[Row.Init[N, String]]
 end HttpPath
 
+// Export `/` extensions so `import kyo.*` brings path composition into scope
+export HttpPath.`/`
+export HttpPath.Capture
+
 object HttpPath:
 
     implicit def stringToPath(s: String): HttpPath[Row.Empty] = Literal(s)

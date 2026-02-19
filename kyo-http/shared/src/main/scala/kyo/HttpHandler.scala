@@ -198,6 +198,17 @@ object HttpHandler:
             f(in.request).map(stream => HttpResponse.streamSse(stream))
         }
 
+    /** Creates a handler that streams SSE events with path captures. */
+    def streamSse[A <: AnyNamedTuple, V: Schema: Tag](path: HttpPath[A])(using
+        Frame,
+        Tag[Emit[Chunk[HttpEvent[V]]]]
+    )(
+        f: Row[Row.Append[A, "request", HttpRequest[HttpBody.Bytes]]] => Stream[HttpEvent[V], Async] < Async
+    ): HttpHandler[Any] =
+        get(path) { in =>
+            f(in).map(stream => HttpResponse.streamSse(stream))
+        }
+
     /** Creates a handler that streams NDJSON values. */
     def streamNdjson[V: Schema: Tag](path: String)(using
         Frame,
@@ -207,6 +218,17 @@ object HttpHandler:
     ): HttpHandler[Any] =
         get(path) { in =>
             f(in.request).map(stream => HttpResponse.streamNdjson(stream))
+        }
+
+    /** Creates a handler that streams NDJSON values with path captures. */
+    def streamNdjson[A <: AnyNamedTuple, V: Schema: Tag](path: HttpPath[A])(using
+        Frame,
+        Tag[Emit[Chunk[V]]]
+    )(
+        f: Row[Row.Append[A, "request", HttpRequest[HttpBody.Bytes]]] => Stream[V, Async] < Async
+    ): HttpHandler[Any] =
+        get(path) { in =>
+            f(in).map(stream => HttpResponse.streamNdjson(stream))
         }
 
     /** Stub handler for OpenAPI spec generation — preserves route metadata but returns a fixed response. */
@@ -246,23 +268,21 @@ object HttpHandler:
     private def extractInputs(fields: Seq[InputField], request: HttpRequest[?])(using Frame): Array[Any] < (Sync & Abort[HttpError]) =
         Kyo.foldLeft(fields)(ArrayBuilder.make[Any]) { (result, field) =>
             field match
-                case InputField.Query(name, codec, default, optional, _) =>
-                    Abort.get(extractParam(request.query(name), codec, default, optional, "query", name)).map { v =>
+                case InputField.Query(name, codec, default, optional, useOption, _) =>
+                    Abort.get(extractParam(request.query(name), codec, default, optional, useOption, "query", name)).map { v =>
                         result += v; result
                     }
-                case InputField.Header(name, codec, default, optional, _) =>
-                    Abort.get(extractParam(request.header(name), codec, default, optional, "header", name)).map { v =>
+                case InputField.Header(name, codec, default, optional, useOption, _) =>
+                    Abort.get(extractParam(request.header(name), codec, default, optional, useOption, "header", name)).map { v =>
                         result += v; result
                     }
-                case InputField.Cookie(name, codec, default, optional, _) =>
+                case InputField.Cookie(name, codec, default, optional, useOption, _) =>
                     val raw = request.cookie(name).map(_.value)
-                    Abort.get(extractParam(raw, codec, default, optional, "cookie", name)).map { v =>
+                    Abort.get(extractParam(raw, codec, default, optional, useOption, "cookie", name)).map { v =>
                         result += v; result
                     }
                 case InputField.FormBody(codec, _) =>
-                    val body = request match
-                        case r: HttpRequest[HttpBody.Bytes] @unchecked => r.bodyText
-                        case _                                         => ""
+                    val body   = request.asInstanceOf[HttpRequest[HttpBody.Bytes]].bodyText
                     val parsed = codec.parse(body)
                     result += parsed; result
                 case InputField.Body(content, _) =>
@@ -287,24 +307,40 @@ object HttpHandler:
         codec: HttpParamCodec[?],
         default: Maybe[Any],
         optional: Boolean,
+        useOption: Boolean,
         kind: String,
         name: String
     )(using Frame): Result[HttpError.MissingParam, Any] =
         raw match
             case Present(v) =>
                 val parsed = codec.asInstanceOf[HttpParamCodec[Any]].parse(v)
-                Result.succeed(if optional then Present(parsed) else parsed)
+                Result.succeed(if optional then wrapOptional(parsed, useOption) else parsed)
             case Absent =>
                 default match
-                    case Present(d) => Result.succeed(if optional then Present(d) else d)
+                    case Present(d) => Result.succeed(if optional then wrapOptional(d, useOption) else d)
                     case Absent =>
-                        if optional then Result.succeed(Absent)
+                        if optional then Result.succeed(emptyOptional(useOption))
                         else Result.fail(HttpError.MissingParam(s"Missing required $kind: $name"))
+
+    private def wrapOptional(value: Any, useOption: Boolean): Any =
+        if useOption then Some(value) else Present(value)
+
+    private def emptyOptional(useOption: Boolean): Any =
+        if useOption then None else Absent
+
+    private def unwrapOptional(value: Any, useOption: Boolean): Maybe[Any] =
+        if useOption then
+            value.asInstanceOf[Option[Any]] match
+                case Some(v) => Present(v)
+                case None    => Absent
+        else
+            value.asInstanceOf[Maybe[Any]]
 
     private def extractBody(content: Content, request: HttpRequest[?])(using Frame): Any < (Sync & Abort[HttpError]) =
         content match
-            case c: Content.Input       => Abort.get(c.decodeFrom(request.asInstanceOf[HttpRequest[HttpBody.Bytes]]))
+            case c: Content.BytesInput  => Abort.get(c.decodeFrom(request.asInstanceOf[HttpRequest[HttpBody.Bytes]]))
             case c: Content.StreamInput => c.decodeFrom(request.asInstanceOf[HttpRequest[HttpBody.Streamed]])
+            case c                      => throw IllegalStateException(s"Unexpected output-only content type: $c")
     end extractBody
 
     private def extractBearer(request: HttpRequest[?])(using Frame): Result[HttpError, String] =
@@ -355,20 +391,20 @@ object HttpHandler:
                             val value = extractOutput(output, fieldIdx, isSingle)
                             loop(i + 1, fieldIdx + 1, Present(serializeBody(content, value, status)))
 
-                        case OutputField.Header(name, codec, optional, _) =>
+                        case OutputField.Header(name, codec, optional, useOption, _) =>
                             val value = extractOutput(output, fieldIdx, isSingle)
                             val base  = response.getOrElse(HttpResponse(status))
                             val next =
                                 if !optional then
                                     base.setHeader(name, codec.asInstanceOf[HttpParamCodec[Any]].serialize(value))
                                 else
-                                    value.asInstanceOf[Maybe[Any]] match
+                                    unwrapOptional(value, useOption) match
                                         case Present(v) =>
                                             base.setHeader(name, codec.asInstanceOf[HttpParamCodec[Any]].serialize(v))
                                         case Absent => base
                             loop(i + 1, fieldIdx + 1, Present(next))
 
-                        case OutputField.Cookie(name, codec, optional, attrs, _) =>
+                        case OutputField.Cookie(name, codec, optional, useOption, attrs, _) =>
                             val value = extractOutput(output, fieldIdx, isSingle)
                             val base  = response.getOrElse(HttpResponse(status))
                             val next =
@@ -376,7 +412,7 @@ object HttpHandler:
                                     val serialized = codec.asInstanceOf[HttpParamCodec[Any]].serialize(value)
                                     base.addCookie(buildCookie(name, serialized, attrs))
                                 else
-                                    value.asInstanceOf[Maybe[Any]] match
+                                    unwrapOptional(value, useOption) match
                                         case Present(v) =>
                                             val serialized = codec.asInstanceOf[HttpParamCodec[Any]].serialize(v)
                                             base.addCookie(buildCookie(name, serialized, attrs))
@@ -390,7 +426,7 @@ object HttpHandler:
         if isSingle then output
         else output.asInstanceOf[Tuple].productElement(fieldIdx)
 
-    private def serializeBody(content: Content.Output, value: Any, status: HttpStatus)(using Frame): HttpResponse[?] =
+    private def serializeBody(content: Content.BytesOutput, value: Any, status: HttpStatus)(using Frame): HttpResponse[?] =
         val respStatus = status
         content match
             case Content.Json(schema) =>

@@ -1,6 +1,5 @@
 package kyo
 
-import HttpPath.*
 import HttpRequest.*
 import kyo.HttpStatus
 

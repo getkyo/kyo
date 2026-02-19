@@ -13,7 +13,18 @@ private[kyo] object NettyUtil:
                     discard {
                         import AllowUnsafe.embrace.danger
                         if future.isSuccess then p.unsafe.complete(Result.succeed(f(future.channel())))
-                        else p.unsafe.complete(Result.panic(future.cause()))
+                        else
+                            val cause = future.cause()
+                            val msg   = if cause != null then cause.getMessage else "unknown error"
+                            if cause.isInstanceOf[java.net.BindException] ||
+                                (msg != null && msg.contains("bind"))
+                            then
+                                p.unsafe.complete(Result.panic(
+                                    new java.net.BindException(s"Server bind failed: $msg")
+                                ))
+                            else p.unsafe.complete(Result.panic(cause))
+                            end if
+                        end if
                     }
                 )
                 p.get

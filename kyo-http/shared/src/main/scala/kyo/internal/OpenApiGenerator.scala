@@ -67,7 +67,7 @@ private[kyo] object OpenApiGenerator:
         val pathParams = extractPathParams(route.path)
 
         val inputParams = route.request.inputFields.collect {
-            case InputField.Query(name, _, default, optional, desc) =>
+            case InputField.Query(name, _, default, optional, _, desc) =>
                 Parameter(
                     name = name,
                     in = "query",
@@ -75,7 +75,7 @@ private[kyo] object OpenApiGenerator:
                     schema = SchemaObject.string,
                     description = if desc.nonEmpty then Some(desc) else None
                 )
-            case InputField.Header(name, _, default, optional, desc) =>
+            case InputField.Header(name, _, default, optional, _, desc) =>
                 Parameter(
                     name = name,
                     in = "header",
@@ -83,7 +83,7 @@ private[kyo] object OpenApiGenerator:
                     schema = SchemaObject.string,
                     description = if desc.nonEmpty then Some(desc) else None
                 )
-            case InputField.Cookie(name, _, default, optional, desc) =>
+            case InputField.Cookie(name, _, default, optional, _, desc) =>
                 Parameter(
                     name = name,
                     in = "cookie",

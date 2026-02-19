@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 import kyo.HttpPath
-import kyo.HttpPath.*
+import kyo.HttpPath.Capture
 import kyo.HttpRequest.Method
 
 class HttpRouterTest extends Test:

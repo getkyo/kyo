@@ -88,6 +88,9 @@ object HttpRoute:
     type FullInput[PathIn <: AnyNamedTuple, In <: AnyNamedTuple] =
         Row.Append[Row.Concat[PathIn, In], "request", HttpRequest[?]]
 
+    type FullOutput[Out <: AnyNamedTuple] =
+        Row.Append[Out, "response", HttpResponse[?]]
+
     type InputValue[PathIn <: AnyNamedTuple, In <: AnyNamedTuple] = Row.Values[Row.Concat[PathIn, In]] match
         case v *: EmptyTuple => v
         case _               => Row.Values[Row.Concat[PathIn, In]]
@@ -150,6 +153,7 @@ object HttpRoute:
                 codec.asInstanceOf[HttpParamCodec[Any]],
                 default.fold(Absent)(Present(_)),
                 opt.isOptional,
+                opt.isOption,
                 description
             ))
         end query
@@ -170,6 +174,7 @@ object HttpRoute:
                 codec.asInstanceOf[HttpParamCodec[Any]],
                 default.fold(Absent)(Present(_)),
                 opt.isOptional,
+                opt.isOption,
                 description
             ))
         end header
@@ -190,6 +195,7 @@ object HttpRoute:
                 codec.asInstanceOf[HttpParamCodec[Any]],
                 default.fold(Absent)(Present(_)),
                 opt.isOptional,
+                opt.isOption,
                 description
             ))
         end cookie
@@ -367,7 +373,7 @@ object HttpRoute:
             description: String = ""
         )(using UniqueResponseField[Out, N]): ResponseDef[Row.Append[Out, N, A], Err] =
             val wn = if wireName.isEmpty then name else wireName
-            addOut[N, A](OutputField.Header(wn, codec.asInstanceOf[HttpParamCodec[Any]], opt.isOptional, description))
+            addOut[N, A](OutputField.Header(wn, codec.asInstanceOf[HttpParamCodec[Any]], opt.isOptional, opt.isOption, description))
         end header
 
         // --- Response Cookies ---
@@ -383,7 +389,14 @@ object HttpRoute:
             description: String = ""
         )(using UniqueResponseField[Out, N]): ResponseDef[Row.Append[Out, N, A], Err] =
             val wn = if wireName.isEmpty then name else wireName
-            addOut[N, A](OutputField.Cookie(wn, codec.asInstanceOf[HttpParamCodec[Any]], opt.isOptional, attributes, description))
+            addOut[N, A](OutputField.Cookie(
+                wn,
+                codec.asInstanceOf[HttpParamCodec[Any]],
+                opt.isOptional,
+                opt.isOption,
+                attributes,
+                description
+            ))
         end cookie
 
         // --- Errors ---
@@ -444,53 +457,75 @@ object HttpRoute:
     // ==================== Field descriptors (private[kyo]) ====================
 
     private[kyo] enum InputField:
-        case Query(name: String, codec: HttpParamCodec[Any], default: Maybe[Any], optional: Boolean, description: String)
-        case Header(name: String, codec: HttpParamCodec[Any], default: Maybe[Any], optional: Boolean, description: String)
-        case Cookie(name: String, codec: HttpParamCodec[Any], default: Maybe[Any], optional: Boolean, description: String)
+        case Query(
+            name: String,
+            codec: HttpParamCodec[Any],
+            default: Maybe[Any],
+            optional: Boolean,
+            useOption: Boolean,
+            description: String
+        )
+        case Header(
+            name: String,
+            codec: HttpParamCodec[Any],
+            default: Maybe[Any],
+            optional: Boolean,
+            useOption: Boolean,
+            description: String
+        )
+        case Cookie(
+            name: String,
+            codec: HttpParamCodec[Any],
+            default: Maybe[Any],
+            optional: Boolean,
+            useOption: Boolean,
+            description: String
+        )
         case FormBody(codec: HttpFormCodec[Any], description: String)
         case Body(content: Content, description: String)
         case Auth(scheme: AuthScheme)
 
         /** Server-side: extract this field's value from the request. */
-        private[kyo] def extract(request: HttpRequest[?])(using Frame): Any < (Sync & Abort[HttpError]) = this match
-            case Query(name, codec, default, optional, _) =>
-                Abort.get(extractParam(request.query(name), codec, default, optional, "query", name))
-            case Header(name, codec, default, optional, _) =>
-                Abort.get(extractParam(request.header(name), codec, default, optional, "header", name))
-            case Cookie(name, codec, default, optional, _) =>
-                Abort.get(extractParam(request.cookie(name).map(_.value), codec, default, optional, "cookie", name))
-            case FormBody(codec, _) =>
-                val body = request match
-                    case r: HttpRequest[HttpBody.Bytes] @unchecked => r.bodyText
-                    case _                                         => ""
-                codec.parse(body)
-            case Body(content: Content.Input, _) =>
-                Abort.get(content.decodeFrom(request.asInstanceOf[HttpRequest[HttpBody.Bytes]]))
-            case Body(content: Content.StreamInput, _) =>
-                content.decodeFrom(request.asInstanceOf[HttpRequest[HttpBody.Streamed]])
-            case Auth(scheme) => scheme match
-                    case AuthScheme.Bearer =>
-                        Abort.get(extractBearer(request))
-                    case AuthScheme.BasicUsername =>
-                        Abort.get(extractBasicAuth(request).map(_(0)))
-                    case AuthScheme.BasicPassword =>
-                        Abort.get(extractBasicAuth(request).map(_(1)))
-                    case AuthScheme.ApiKey(name, location) =>
-                        Abort.get(extractApiKey(request, name, location))
+        private[kyo] def extract(request: HttpRequest[?])(using Frame): Any < (Sync & Abort[HttpError]) =
+            this match
+                case Query(name, codec, default, optional, useOption, _) =>
+                    Abort.get(extractParam(request.query(name), codec, default, optional, useOption, "query", name))
+                case Header(name, codec, default, optional, useOption, _) =>
+                    Abort.get(extractParam(request.header(name), codec, default, optional, useOption, "header", name))
+                case Cookie(name, codec, default, optional, useOption, _) =>
+                    Abort.get(extractParam(request.cookie(name).map(_.value), codec, default, optional, useOption, "cookie", name))
+                case FormBody(codec, _) =>
+                    val body = request.asInstanceOf[HttpRequest[HttpBody.Bytes]].bodyText
+                    codec.parse(body)
+                case Body(content: Content.BytesInput, _) =>
+                    Abort.get(content.decodeFrom(request.asInstanceOf[HttpRequest[HttpBody.Bytes]]))
+                case Body(content: Content.StreamInput, _) =>
+                    content.decodeFrom(request.asInstanceOf[HttpRequest[HttpBody.Streamed]])
+                case Body(content, _) =>
+                    throw IllegalStateException(s"Unexpected output-only content type: $content")
+                case Auth(scheme) => scheme match
+                        case AuthScheme.Bearer =>
+                            Abort.get(extractBearer(request))
+                        case AuthScheme.BasicUsername =>
+                            Abort.get(extractBasicAuth(request).map(_(0)))
+                        case AuthScheme.BasicPassword =>
+                            Abort.get(extractBasicAuth(request).map(_(1)))
+                        case AuthScheme.ApiKey(name, location) =>
+                            Abort.get(extractApiKey(request, name, location))
 
         /** Client-side: serialize this field's value for a request. */
         private[kyo] def serialize(value: Any): Maybe[String] = this match
-            case Query(name, codec, _, optional, _) =>
+            case Query(name, codec, _, optional, useOption, _) =>
                 if optional then
-                    value.asInstanceOf[Maybe[Any]] match
+                    unwrapOptional(value, useOption) match
                         case Present(v) =>
                             Present(s"$name=${java.net.URLEncoder.encode(codec.serialize(v), "UTF-8")}")
                         case Absent => Absent
                 else
                     Present(s"$name=${java.net.URLEncoder.encode(codec.serialize(value), "UTF-8")}")
-            case Cookie(name, codec, _, optional, _) =>
+            case Cookie(name, codec, _, optional, useOption, _) =>
                 if optional then
-                    value.asInstanceOf[Maybe[Any]] match
+                    unwrapOptional(value, useOption) match
                         case Present(v) => Present(s"$name=${codec.serialize(v)}")
                         case Absent     => Absent
                 else
@@ -499,9 +534,9 @@ object HttpRoute:
 
         /** Client-side: serialize this field's value as a header. */
         private[kyo] def serializeHeader(value: Any): Maybe[(String, String)] = this match
-            case Header(name, codec, _, optional, _) =>
+            case Header(name, codec, _, optional, useOption, _) =>
                 if optional then
-                    value.asInstanceOf[Maybe[Any]] match
+                    unwrapOptional(value, useOption) match
                         case Present(v) => Present((name, codec.serialize(v)))
                         case Absent     => Absent
                 else
@@ -512,23 +547,41 @@ object HttpRoute:
             case Body(content, _) => content.isStreaming
             case _                => false
 
+        /** Unwrap an optional value (Maybe or Option) into a Maybe for uniform handling. */
+        private def unwrapOptional(value: Any, useOption: Boolean): Maybe[Any] =
+            if useOption then
+                value.asInstanceOf[Option[Any]] match
+                    case Some(v) => Present(v)
+                    case None    => Absent
+            else
+                value.asInstanceOf[Maybe[Any]]
+
+        /** Wrap a value in the appropriate optional type (Maybe or Option). */
+        private def wrapOptional(value: Any, useOption: Boolean): Any =
+            if useOption then Some(value) else Present(value)
+
+        /** The empty/absent value for the appropriate optional type (Maybe or Option). */
+        private def emptyOptional(useOption: Boolean): Any =
+            if useOption then None else Absent
+
         private def extractParam(
             raw: Maybe[String],
             codec: HttpParamCodec[Any],
             default: Maybe[Any],
             optional: Boolean,
+            useOption: Boolean,
             kind: String,
             name: String
         )(using Frame): Result[HttpError.MissingParam, Any] =
             raw match
                 case Present(v) =>
                     val parsed = codec.parse(v)
-                    Result.succeed(if optional then Present(parsed) else parsed)
+                    Result.succeed(if optional then wrapOptional(parsed, useOption) else parsed)
                 case Absent =>
                     default match
-                        case Present(d) => Result.succeed(if optional then Present(d) else d)
+                        case Present(d) => Result.succeed(if optional then wrapOptional(d, useOption) else d)
                         case Absent =>
-                            if optional then Result.succeed(Absent)
+                            if optional then Result.succeed(emptyOptional(useOption))
                             else Result.fail(HttpError.MissingParam(s"Missing required $kind: $name"))
 
         private def extractBearer(request: HttpRequest[?])(using Frame): Result[HttpError, String] =
@@ -564,30 +617,37 @@ object HttpRoute:
     end InputField
 
     private[kyo] enum OutputField:
-        case Header(name: String, codec: HttpParamCodec[Any], optional: Boolean, description: String)
-        case Cookie(name: String, codec: HttpParamCodec[Any], optional: Boolean, attributes: CookieAttributes, description: String)
-        case Body(content: Content.Output, description: String)
+        case Header(name: String, codec: HttpParamCodec[Any], optional: Boolean, useOption: Boolean, description: String)
+        case Cookie(
+            name: String,
+            codec: HttpParamCodec[Any],
+            optional: Boolean,
+            useOption: Boolean,
+            attributes: CookieAttributes,
+            description: String
+        )
+        case Body(content: Content.BytesOutput, description: String)
 
         /** Server-side: serialize this field's value onto a response. */
         private[kyo] def serialize(value: Any, status: HttpStatus, base: Maybe[HttpResponse[?]])(using Frame): HttpResponse[?] =
             this match
                 case Body(content, _) =>
                     content.encodeToResponse(value, status)
-                case Header(name, codec, optional, _) =>
+                case Header(name, codec, optional, useOption, _) =>
                     val resp = base.getOrElse(HttpResponse(status))
                     if !optional then
                         resp.setHeader(name, codec.serialize(value))
                     else
-                        value.asInstanceOf[Maybe[Any]] match
+                        unwrapOptional(value, useOption) match
                             case Present(v) => resp.setHeader(name, codec.serialize(v))
                             case Absent     => resp
                     end if
-                case Cookie(name, codec, optional, attrs, _) =>
+                case Cookie(name, codec, optional, useOption, attrs, _) =>
                     val resp = base.getOrElse(HttpResponse(status))
                     if !optional then
                         resp.addCookie(OutputField.buildCookie(name, codec.serialize(value), attrs))
                     else
-                        value.asInstanceOf[Maybe[Any]] match
+                        unwrapOptional(value, useOption) match
                             case Present(v) =>
                                 resp.addCookie(OutputField.buildCookie(name, codec.serialize(v), attrs))
                             case Absent => resp
@@ -602,12 +662,20 @@ object HttpRoute:
         private[kyo] def extractStream(response: HttpResponse[HttpBody.Streamed])(using Frame): Any < (Async & Sync & Abort[HttpError]) =
             this match
                 case Body(content: Content.StreamOutput, _) => content.decodeStreamFrom(response)
-                case Body(content: Content.Output, _)       => response.ensureBytes.map(r => Abort.get(content.decodeFrom(r)))
+                case Body(content: Content.BytesOutput, _)  => response.ensureBytes.map(r => Abort.get(content.decodeFrom(r)))
                 case _                                      => ()
 
         private[kyo] def isStreaming: Boolean = this match
             case Body(content, _) => content.isStreaming
             case _                => false
+
+        private def unwrapOptional(value: Any, useOption: Boolean): Maybe[Any] =
+            if useOption then
+                value.asInstanceOf[Option[Any]] match
+                    case Some(v) => Present(v)
+                    case None    => Absent
+            else
+                value.asInstanceOf[Maybe[Any]]
     end OutputField
 
     private[kyo] object OutputField:

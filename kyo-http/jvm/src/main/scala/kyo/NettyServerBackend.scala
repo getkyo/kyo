@@ -12,7 +12,10 @@ import kyo.internal.NettyTransport
 import kyo.internal.NettyUtil
 
 /** JVM server backend using Netty 4.2 for HTTP transport. */
-object NettyServerBackend extends Backend.Server:
+class NettyServerBackend(
+    tcpFastOpen: Boolean = false,
+    flushConsolidationLimit: Int = 256
+) extends Backend.Server:
 
     def server(
         port: Int,
@@ -20,8 +23,6 @@ object NettyServerBackend extends Backend.Server:
         maxContentLength: Int,
         backlog: Int,
         keepAlive: Boolean,
-        tcpFastOpen: Boolean,
-        flushConsolidationLimit: Int,
         handler: Backend.ServerHandler
     )(using Frame): Backend.Server.Binding < Async =
         Sync.defer {

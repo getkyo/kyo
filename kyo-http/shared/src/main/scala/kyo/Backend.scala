@@ -30,12 +30,7 @@ object Backend:
 
     end Client
 
-    /** Server transport provider. Implementations bind to a port and accept incoming requests.
-      *
-      * TODO: Review server() params — `tcpFastOpen` and `flushConsolidationLimit` are Netty-specific. The goal is that backends are
-      * swappable with the closest behavior possible; these params should eventually be transport-generic or moved to backend-specific
-      * configuration.
-      */
+    /** Server transport provider. Implementations bind to a port and accept incoming requests. */
     trait Server:
 
         /** Bind a server to a port and start accepting requests. */
@@ -45,8 +40,6 @@ object Backend:
             maxContentLength: Int,
             backlog: Int,
             keepAlive: Boolean,
-            tcpFastOpen: Boolean,
-            flushConsolidationLimit: Int,
             handler: ServerHandler
         )(using Frame): Server.Binding < Async
 

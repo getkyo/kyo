@@ -1084,21 +1084,21 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route)
-                }.map { users =>
-                    assert(users == Seq(User(1, "Alice"), User(2, "Bob")))
+                }.map { result =>
+                    assert(result.body == Seq(User(1, "Alice"), User(2, "Bob")))
                 }
             }
         }
 
         "route with path params (bare value overload)" in run {
-            import HttpPath.*
+
             val route   = HttpRoute.get("users" / Capture[Int]("id")).response(_.bodyJson[User])
             val handler = route.handle(in => User(in.id, s"User${in.id}"))
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, 42)
-                }.map { user =>
-                    assert(user == User(42, "User42"))
+                }.map { result =>
+                    assert(result.body == User(42, "User42"))
                 }
             }
         }
@@ -1113,9 +1113,9 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, (3, 10))
-                }.map { users =>
-                    assert(users.size == 3)
-                    assert(users.head.id == 10)
+                }.map { result =>
+                    assert(result.body.size == 3)
+                    assert(result.body.head.id == 10)
                 }
             }
         }
@@ -1130,8 +1130,8 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, "req-123")
-                }.map { users =>
-                    assert(users.head.name == "req-123")
+                }.map { result =>
+                    assert(result.body.head.name == "req-123")
                 }
             }
         }
@@ -1146,14 +1146,14 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, CreateUser("Alice", "alice@example.com"))
-                }.map { user =>
-                    assert(user == User(1, "Alice"))
+                }.map { result =>
+                    assert(result.body == User(1, "Alice"))
                 }
             }
         }
 
         "route with path params and body" in run {
-            import HttpPath.*
+
             val route = HttpRoute.post("users" / Capture[Int]("id"))
                 .request(_.bodyJson[CreateUser])
                 .response(_.bodyJson[User])
@@ -1163,8 +1163,8 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, (42, CreateUser("Alice", "alice@example.com")))
-                }.map { user =>
-                    assert(user == User(42, "Alice"))
+                }.map { result =>
+                    assert(result.body == User(42, "Alice"))
                 }
             }
         }
@@ -1179,8 +1179,8 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, ("admin", CreateUser("Alice", "alice@example.com")))
-                }.map { user =>
-                    assert(user == User(1, "Alice:admin"))
+                }.map { result =>
+                    assert(result.body == User(1, "Alice:admin"))
                 }
             }
         }
@@ -1195,14 +1195,14 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, ("acme", CreateUser("Alice", "alice@example.com")))
-                }.map { user =>
-                    assert(user == User(1, "Alice@acme"))
+                }.map { result =>
+                    assert(result.body == User(1, "Alice@acme"))
                 }
             }
         }
 
         "route with path and query params" in run {
-            import HttpPath.*
+
             val route = HttpRoute.get("users" / Capture[Int]("id"))
                 .request(_.query[String]("fields"))
                 .response(_.bodyJson[User])
@@ -1212,14 +1212,14 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, (42, "name,email"))
-                }.map { user =>
-                    assert(user == User(42, "name,email"))
+                }.map { result =>
+                    assert(result.body == User(42, "name,email"))
                 }
             }
         }
 
         "route with path, query, and body" in run {
-            import HttpPath.*
+
             val route = HttpRoute.post("users" / Capture[Int]("id"))
                 .request(_.query[String]("action").bodyJson[CreateUser])
                 .response(_.bodyJson[User])
@@ -1229,14 +1229,14 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, (42, "update", CreateUser("Alice", "alice@example.com")))
-                }.map { user =>
-                    assert(user == User(42, "Alice:update"))
+                }.map { result =>
+                    assert(result.body == User(42, "Alice:update"))
                 }
             }
         }
 
         "route with path, header, and body" in run {
-            import HttpPath.*
+
             val route = HttpRoute.post("users" / Capture[Int]("id"))
                 .request(_.header[String]("X-Tenant").bodyJson[CreateUser])
                 .response(_.bodyJson[User])
@@ -1246,14 +1246,14 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, (42, "acme", CreateUser("Alice", "alice@example.com")))
-                }.map { user =>
-                    assert(user == User(42, "Alice@acme"))
+                }.map { result =>
+                    assert(result.body == User(42, "Alice@acme"))
                 }
             }
         }
 
         "route with path, query, header, and body" in run {
-            import HttpPath.*
+
             val route = HttpRoute.post("users" / Capture[Int]("id"))
                 .request(_.query[String]("action").header[String]("X-Tenant").bodyJson[CreateUser])
                 .response(_.bodyJson[User])
@@ -1263,14 +1263,14 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, (42, "create", "acme", CreateUser("Alice", "alice@example.com")))
-                }.map { user =>
-                    assert(user == User(42, "Alice:create@acme"))
+                }.map { result =>
+                    assert(result.body == User(42, "Alice:create@acme"))
                 }
             }
         }
 
         "route with multiple path captures and body" in run {
-            import HttpPath.*
+
             val route = HttpRoute.post("orgs" / Capture[String]("org") / "users" / Capture[Int]("id"))
                 .request(_.bodyJson[CreateUser])
                 .response(_.bodyJson[User])
@@ -1280,8 +1280,8 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, ("acme", 42, CreateUser("Alice", "alice@example.com")))
-                }.map { user =>
-                    assert(user == User(42, "Alice@acme"))
+                }.map { result =>
+                    assert(result.body == User(42, "Alice@acme"))
                 }
             }
         }
@@ -1301,13 +1301,13 @@ class HttpClientTest extends Test:
                     )
                     HttpClient.call(route, parts)
                 }.map { result =>
-                    assert(result == "count=1,file:5")
+                    assert(result.body == "count=1,file:5")
                 }
             }
         }
 
         "route with path params and multipart body" in run {
-            import HttpPath.*
+
             val route = HttpRoute.post("uploads" / Capture[String]("category"))
                 .request(_.bodyMultipart)
                 .response(_.bodyText)
@@ -1322,7 +1322,7 @@ class HttpClientTest extends Test:
                     )
                     HttpClient.call(route, ("photos", parts))
                 }.map { result =>
-                    assert(result == "category=photos,count=2")
+                    assert(result.body == "category=photos,count=2")
                 }
             }
         }
@@ -1341,7 +1341,7 @@ class HttpClientTest extends Test:
                     )
                     HttpClient.call(route, ("important", parts))
                 }.map { result =>
-                    assert(result == "tag=important,count=1")
+                    assert(result.body == "tag=important,count=1")
                 }
             }
         }
@@ -1361,7 +1361,7 @@ class HttpClientTest extends Test:
                     )
                     HttpClient.call(route, parts)
                 }.map { result =>
-                    assert(result == "name=photo,filename=sunset.jpg,ct=image/jpeg,size=5")
+                    assert(result.body == "name=photo,filename=sunset.jpg,ct=image/jpeg,size=5")
                 }
             }
         }
@@ -1385,7 +1385,7 @@ class HttpClientTest extends Test:
                     )
                     HttpClient.call(route, parts)
                 }.map { result =>
-                    assert(result == "title:field=My Doc;file:file=content")
+                    assert(result.body == "title:field=My Doc;file:file=content")
                 }
             }
         }
@@ -1401,13 +1401,13 @@ class HttpClientTest extends Test:
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, "abc123")
                 }.map { result =>
-                    assert(result == "session=abc123")
+                    assert(result.body == "session=abc123")
                 }
             }
         }
 
         "route with cookie and path params" in run {
-            import HttpPath.*
+
             val route = HttpRoute.get("users" / Capture[Int]("id"))
                 .request(_.cookie[String]("token"))
                 .response(_.bodyText)
@@ -1418,7 +1418,7 @@ class HttpClientTest extends Test:
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, (42, "tok-xyz"))
                 }.map { result =>
-                    assert(result == "id=42,token=tok-xyz")
+                    assert(result.body == "id=42,token=tok-xyz")
                 }
             }
         }
@@ -1434,13 +1434,13 @@ class HttpClientTest extends Test:
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, "my-token")
                 }.map { result =>
-                    assert(result == "bearer=my-token")
+                    assert(result.body == "bearer=my-token")
                 }
             }
         }
 
         "route with authBearer and path params" in run {
-            import HttpPath.*
+
             val route = HttpRoute.get("users" / Capture[Int]("id"))
                 .request(_.authBearer)
                 .response(_.bodyJson[User])
@@ -1450,8 +1450,8 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, (42, "secret-token"))
-                }.map { user =>
-                    assert(user == User(42, "secret-token"))
+                }.map { result =>
+                    assert(result.body == User(42, "secret-token"))
                 }
             }
         }
@@ -1467,7 +1467,7 @@ class HttpClientTest extends Test:
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, ("alice", "secret"))
                 }.map { result =>
-                    assert(result == "user=alice,pass=secret")
+                    assert(result.body == "user=alice,pass=secret")
                 }
             }
         }
@@ -1483,7 +1483,7 @@ class HttpClientTest extends Test:
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, "api-key-123")
                 }.map { result =>
-                    assert(result == "key=api-key-123")
+                    assert(result.body == "key=api-key-123")
                 }
             }
         }
@@ -1498,8 +1498,8 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, ("key-abc", CreateUser("Alice", "alice@example.com")))
-                }.map { user =>
-                    assert(user == User(1, "Alice:key-abc"))
+                }.map { result =>
+                    assert(result.body == User(1, "Alice:key-abc"))
                 }
             }
         }
@@ -1519,7 +1519,7 @@ class HttpClientTest extends Test:
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, ("acme", 42))
                 }.map { result =>
-                    assert(result == "tenant=acme,limit=42")
+                    assert(result.body == "tenant=acme,limit=42")
                 }
             }
         }
@@ -1535,7 +1535,7 @@ class HttpClientTest extends Test:
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, ("abc", 42))
                 }.map { result =>
-                    assert(result == "session=abc,limit=42")
+                    assert(result.body == "session=abc,limit=42")
                 }
             }
         }
@@ -1551,13 +1551,13 @@ class HttpClientTest extends Test:
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     HttpClient.call(route, ("my-token", 42))
                 }.map { result =>
-                    assert(result == "bearer=my-token,limit=42")
+                    assert(result.body == "bearer=my-token,limit=42")
                 }
             }
         }
 
         "route error handling" in run {
-            import HttpPath.*
+
             case class NotFoundError(message: String) derives Schema, CanEqual
             val route = HttpRoute.get("users" / Capture[Int]("id"))
                 .response(_.bodyJson[User].error[NotFoundError](HttpStatus.NotFound))
@@ -1568,8 +1568,8 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     // Test successful case
-                    HttpClient.call(route, 1).map { user =>
-                        assert(user == User(1, "User1"))
+                    HttpClient.call(route, 1).map { result =>
+                        assert(result.body == User(1, "User1"))
                     }.andThen {
                         // Test error case - should return 404 with error body
                         HttpClient.send(HttpRequest.get(s"http://localhost:$port/users/999")).map { response =>

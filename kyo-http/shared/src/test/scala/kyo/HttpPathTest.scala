@@ -1,6 +1,6 @@
 package kyo
 
-import HttpPath.*
+import HttpPath.Literal
 import java.util.UUID
 
 class HttpPathTest extends Test:

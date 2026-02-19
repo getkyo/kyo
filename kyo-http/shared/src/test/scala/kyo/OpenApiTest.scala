@@ -57,8 +57,6 @@ class OpenApiTest extends Test:
             }
 
             "includes path parameters" in {
-                import HttpPath./
-
                 val route = HttpRoute.get("/users" / HttpPath.Capture[Int]("id")).response(_.bodyJson[User])
                 val spec  = HttpOpenApi.fromRoutes(route)
                 val op    = spec.paths("/users/{id}").get.get

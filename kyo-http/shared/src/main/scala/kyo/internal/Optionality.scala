@@ -6,6 +6,8 @@ import scala.util.NotGiven
 sealed trait Optionality[A]:
     type Value
     def isOptional: Boolean
+    def isOption: Boolean
+end Optionality
 
 object Optionality:
     type Aux[A, U] = Optionality[A] { type Value = U }
@@ -14,9 +16,17 @@ object Optionality:
         new Optionality[Maybe[A]]:
             type Value = A
             def isOptional = true
+            def isOption   = false
 
-    given forRequired[A](using NotGiven[A <:< Maybe[Any]]): Aux[A, A] =
+    given forOption[A]: Aux[Option[A], A] =
+        new Optionality[Option[A]]:
+            type Value = A
+            def isOptional = true
+            def isOption   = true
+
+    given forRequired[A](using NotGiven[A <:< Maybe[Any]], NotGiven[A <:< Option[Any]]): Aux[A, A] =
         new Optionality[A]:
             type Value = A
             def isOptional = false
+            def isOption   = false
 end Optionality
