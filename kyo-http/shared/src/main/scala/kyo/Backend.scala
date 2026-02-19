@@ -85,7 +85,7 @@ object Backend:
         def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError])
 
         /** Send a request and stream the response. */
-        def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError])
+        def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Abort[HttpError])
 
         /** Whether the underlying transport connection is still alive. */
         def isAlive(using AllowUnsafe): Boolean

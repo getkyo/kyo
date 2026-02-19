@@ -45,6 +45,10 @@ object Schema:
         new Schema[A]:
             val zpiSchema: zio.schema.Schema[A] = zs
 
+    // Make Seq visible to zio-schema's DeriveSchema macro for case class field derivation
+    private given [A](using zs: zio.schema.Schema[A]): zio.schema.Schema[Seq[A]] =
+        zio.schema.Schema.list(using zs).transform(_.toSeq, _.toList)
+
     // Derivation - delegates to zio-schema
     inline given derived[A](using m: Mirror.Of[A]): Schema[A] =
         wrap(zio.schema.DeriveSchema.gen[A])

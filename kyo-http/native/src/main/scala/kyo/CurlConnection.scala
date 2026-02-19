@@ -42,7 +42,7 @@ final private[kyo] class CurlConnection(
         }
     end send
 
-    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Abort[HttpError]) =
         Zone {
             val handle = curl_easy_init()
             if handle == null then
@@ -56,7 +56,7 @@ final private[kyo] class CurlConnection(
                 eventLoop.enqueue(transferId, state)
 
                 headerPromise.safe.get.map { sh =>
-                    val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+                    val bodyStream: Stream[Span[Byte], Async & Scope] = Stream[Span[Byte], Async & Scope] {
                         Abort.run[Closed](byteChannel.safe.stream().emit).unit
                     }
                     HttpResponse.initStreaming(sh.status, sh.headers, bodyStream)

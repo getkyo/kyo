@@ -85,7 +85,7 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
             end match
     end send
 
-    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Abort[HttpError]) =
         val path = extractPath(request.url)
         handler.reject(request.method, path) match
             case Present(response) =>
@@ -114,7 +114,7 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
                             _ =>
                                 handler.handle(request.asInstanceOf[HttpRequest[HttpBody.Bytes]]).map(ensureStreamed),
                             s =>
-                                s.stream.run.map { chunks =>
+                                Scope.run(s.stream.run).map { chunks =>
                                     val totalSize = chunks.foldLeft(0)((acc, span) => acc + span.size)
                                     val arr       = new Array[Byte](totalSize)
                                     var pos       = 0
@@ -167,7 +167,7 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
         response.body.use(
             b => materialize(response.withBody(b)),
             s =>
-                s.stream.run.map { chunks =>
+                Scope.run(s.stream.run).map { chunks =>
                     val totalSize = chunks.foldLeft(0)((acc, span) => acc + span.size)
                     val arr       = new Array[Byte](totalSize)
                     var pos       = 0

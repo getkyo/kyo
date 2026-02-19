@@ -205,10 +205,10 @@ final class HttpRequest[+B <: HttpBody] private (
     end parts
 
     /** Returns the body as a byte stream. Only available for streaming requests. */
-    def bodyStream(using ev: B <:< HttpBody.Streamed)(using Frame): Stream[Span[Byte], Async] = ev(body).stream
+    def bodyStream(using ev: B <:< HttpBody.Streamed)(using Frame): Stream[Span[Byte], Async & Scope] = ev(body).stream
 
     /** Returns the body as a byte stream. Works for both buffered and streaming requests. */
-    def bodyStreamUniversal(using Frame): Stream[Span[Byte], Async] =
+    def bodyStreamUniversal(using Frame): Stream[Span[Byte], Async & Scope] =
         body.use(b => Stream.init(Chunk(b.span)), _.stream)
 
     // --- Builder methods (return new immutable instance, preserve body type) ---
@@ -360,7 +360,7 @@ object HttpRequest:
     def stream(
         method: Method,
         url: String,
-        body: Stream[Span[Byte], Async],
+        body: Stream[Span[Byte], Async & Scope],
         headers: HttpHeaders = HttpHeaders.empty,
         contentType: Maybe[String] = Absent
     ): HttpRequest[HttpBody.Streamed] =
@@ -406,6 +406,17 @@ object HttpRequest:
         create(method, url, Array.empty, HttpHeaders.empty, Absent)
 
     /** Create a request with raw bytes body. */
+    def initBytes(
+        method: Method,
+        url: String,
+        body: Span[Byte],
+        headers: HttpHeaders,
+        contentType: String
+    ): HttpRequest[HttpBody.Bytes] =
+        create(method, url, body.toArrayUnsafe, headers, if contentType.isEmpty then Absent else Present(contentType))
+
+    /** Create a request with raw bytes body (Array overload). */
+    @scala.annotation.targetName("initBytesArray")
     def initBytes(
         method: Method,
         url: String,
@@ -468,7 +479,7 @@ object HttpRequest:
         method: Method,
         uri: String,
         headers: HttpHeaders,
-        bodyStream: Stream[Span[Byte], Async]
+        bodyStream: Stream[Span[Byte], Async & Scope]
     ): HttpRequest[HttpBody.Streamed] =
         UrlParser.splitPathQuery(uri) { (rawPath, rawQuery) =>
             val contentType = headers.get("content-type")

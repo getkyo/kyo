@@ -1351,7 +1351,7 @@ class HttpServerTest extends Test:
             startTestServer(handler).map { port =>
                 val chunks = Seq.fill(numChunks)(Span.fromUnsafe(new Array[Byte](chunkSize)))
                 // Slow producer: delay between each chunk
-                val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+                val bodyStream: Stream[Span[Byte], Async & Scope] = Stream[Span[Byte], Async & Scope] {
                     Loop(0) { i =>
                         if i >= numChunks then Loop.done(())
                         else Async.sleep(1.millis).andThen(Emit.valueWith(Chunk(chunks(i)))(Loop.continue(i + 1)))

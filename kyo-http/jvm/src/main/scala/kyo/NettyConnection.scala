@@ -56,7 +56,7 @@ final private[kyo] class NettyConnection(
         }
     end send
 
-    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Abort[HttpError]) =
         Sync.Unsafe.defer {
             // Buffered body → FullHttpRequest; streaming body → headers-only HttpRequest
             val nettyMethod = HttpMethod.valueOf(request.method.name)
@@ -103,10 +103,12 @@ final private[kyo] class NettyConnection(
             val writeBody: Unit < Async = request.body.use(
                 _ => (),
                 streamed =>
-                    streamed.stream.foreach { bytes =>
-                        NettyUtil.await(channel.writeAndFlush(
-                            new DefaultHttpContent(Unpooled.wrappedBuffer(bytes.toArrayUnsafe))
-                        ))
+                    Scope.run {
+                        streamed.stream.foreach { bytes =>
+                            NettyUtil.await(channel.writeAndFlush(
+                                new DefaultHttpContent(Unpooled.wrappedBuffer(bytes.toArrayUnsafe))
+                            ))
+                        }
                     }.andThen {
                         NettyUtil.await(channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT))
                     }
@@ -115,7 +117,7 @@ final private[kyo] class NettyConnection(
             writeBody.andThen {
                 // Response headers arrive independently of body — wait for them first
                 headerPromise.safe.get.map { sh =>
-                    val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+                    val bodyStream: Stream[Span[Byte], Async & Scope] = Stream[Span[Byte], Async & Scope] {
                         Abort.run[Closed](byteChannel.safe.stream().emit).unit
                     }
                     HttpResponse.initStreaming(sh.status, sh.headers, bodyStream)

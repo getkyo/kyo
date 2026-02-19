@@ -73,7 +73,7 @@ final private[kyo] class FetchConnection(
         }
     end send
 
-    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Abort[HttpError]) =
         val (url, init) = buildFetchRequest(request)
         val controller  = new dom.AbortController()
         init.signal = controller.signal
@@ -102,7 +102,7 @@ final private[kyo] class FetchConnection(
                         val headers = extractHeaders(response.headers)
                         val reader  = response.body.getReader()
 
-                        val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+                        val bodyStream: Stream[Span[Byte], Async & Scope] = Stream[Span[Byte], Async & Scope] {
                             Loop(()) { _ =>
                                 val readFuture = reader.read().toFuture
                                 Abort.recover[Throwable](

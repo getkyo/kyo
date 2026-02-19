@@ -436,9 +436,9 @@ object HttpHandler:
             case Content.Binary =>
                 HttpResponse(respStatus, value.asInstanceOf[Span[Byte]])
             case Content.ByteStream =>
-                HttpResponse.stream(value.asInstanceOf[Stream[Span[Byte], Async]], respStatus)
+                HttpResponse.stream(value.asInstanceOf[Stream[Span[Byte], Async & Scope]], respStatus)
             case Content.Ndjson(schema, _) =>
-                val stream = value.asInstanceOf[Stream[Any, Async]]
+                val stream = value.asInstanceOf[Stream[Any, Async & Scope]]
                 val byteStream = stream.map { v =>
                     Span.fromUnsafe((schema.asInstanceOf[Schema[Any]].encode(v) + "\n").getBytes(StandardCharsets.UTF_8))
                 }

@@ -87,7 +87,7 @@ final class HttpResponse[+B <: HttpBody] private (
     def bodyAs[A: Schema](using ev: B <:< HttpBody.Bytes)(using Frame): A < Abort[HttpError] = ev(body).as[A]
 
     /** Returns the body as a byte stream. Works for both buffered and streaming responses. */
-    def bodyStream(using Frame): Stream[Span[Byte], Async] =
+    def bodyStream(using Frame): Stream[Span[Byte], Async & Scope] =
         body.use(b => Stream.init(Chunk(b.span)), _.stream)
 
     // --- Builders (preserve body type) ---
@@ -161,7 +161,7 @@ final class HttpResponse[+B <: HttpBody] private (
         body.use(
             b => withBody(b),
             s =>
-                s.stream.run.map { chunks =>
+                Scope.run(s.stream.run).map { chunks =>
                     val totalSize = chunks.foldLeft(0)((acc, span) => acc + span.size)
                     val arr       = new Array[Byte](totalSize)
                     discard(chunks.foldLeft(0) { (pos, span) =>
@@ -271,13 +271,13 @@ object HttpResponse:
 
     // --- Streaming factory methods ---
 
-    def stream(s: Stream[Span[Byte], Async], status: HttpStatus = OK): HttpResponse[HttpBody.Streamed] =
+    def stream(s: Stream[Span[Byte], Async & Scope], status: HttpStatus = OK): HttpResponse[HttpBody.Streamed] =
         new HttpResponse(status, HttpHeaders.empty, Seq.empty, HttpBody.stream(s))
 
     /** Creates a streaming response with a known Content-Length. The stream must produce exactly `contentLength` bytes total. When
       * Content-Length is set, the response is sent without chunked transfer encoding.
       */
-    def stream(s: Stream[Span[Byte], Async], contentLength: Long, status: HttpStatus): HttpResponse[HttpBody.Streamed] =
+    def stream(s: Stream[Span[Byte], Async & Scope], contentLength: Long, status: HttpStatus): HttpResponse[HttpBody.Streamed] =
         require(contentLength >= 0, s"contentLength must be non-negative: $contentLength")
         new HttpResponse(
             status,
@@ -389,7 +389,7 @@ object HttpResponse:
     private[kyo] def initStreaming(
         status: HttpStatus,
         headers: HttpHeaders,
-        stream: Stream[Span[Byte], Async]
+        stream: Stream[Span[Byte], Async & Scope]
     ): HttpResponse[HttpBody.Streamed] =
         new HttpResponse(status, headers, Seq.empty, HttpBody.stream(stream))
 

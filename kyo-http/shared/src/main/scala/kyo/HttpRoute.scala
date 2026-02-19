@@ -236,13 +236,13 @@ object HttpRoute:
         def bodyBinary(description: String)(using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", Span[Byte]]] =
             addIn["body", Span[Byte]](InputField.Body(Content.Binary, description))
 
-        def bodyStream(using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", Stream[Span[Byte], Async]]] =
+        def bodyStream(using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", Stream[Span[Byte], Async & Scope]]] =
             bodyStream("")
 
         def bodyStream(description: String)(using
             UniqueRequestField[In, "body"]
-        ): RequestDef[Row.Append[In, "body", Stream[Span[Byte], Async]]] =
-            addIn["body", Stream[Span[Byte], Async]](InputField.Body(Content.ByteStream, description))
+        ): RequestDef[Row.Append[In, "body", Stream[Span[Byte], Async & Scope]]] =
+            addIn["body", Stream[Span[Byte], Async & Scope]](InputField.Body(Content.ByteStream, description))
 
         def bodyNdjson[V](using
             schema: Schema[V],

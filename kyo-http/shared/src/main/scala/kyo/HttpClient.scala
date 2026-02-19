@@ -65,24 +65,24 @@ final class HttpClient private (
             }
         }
 
-    /** Streams the response body. WARNING: bypasses redirect/retry/timeout — only filters, base URL, and connect timeout apply. Uses a
-      * non-pooled connection closed when the enclosing Scope exits.
+    /** Streams the response body. WARNING: bypasses redirect/retry/timeout — only filters, base URL, and connect timeout apply.
+      *
+      * The connection cleanup finalizer is deferred into the body stream. The caller must consume the stream within a `Scope.run` to ensure
+      * the connection is closed. Not consuming the stream will leak the connection.
       */
-    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Abort[HttpError]) =
         HttpFilter.use { filter =>
             HttpClient.configLocal.use { config =>
                 def doStream(req: HttpRequest[?]) =
                     def loop(
                         currentReq: HttpRequest[?],
                         redirectCount: Int
-                    ): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+                    ): HttpResponse[HttpBody.Streamed] < (Async & Abort[HttpError]) =
                         val effectiveUrl = HttpClient.buildEffectiveUrl(config, currentReq)
                         HttpClient.parseUrl(effectiveUrl) { (host, port, ssl, rawPath, rawQuery) =>
                             pool.connectDirect(host, port, ssl, config.connectTimeout).map { conn =>
                                 val reqWithPath = currentReq.withParsedUrl(rawPath, rawQuery)
-                                Scope.ensure(conn.close).andThen(conn.stream(reqWithPath)).map { response =>
-                                    // Follow 301/302 redirects (drop body, switch to GET).
-                                    // Skip 307/308 — streaming body can't be replayed.
+                                conn.stream(reqWithPath).map { response =>
                                     val code = response.status.code
                                     if config.followRedirects && (code == 301 || code == 302) &&
                                         redirectCount < config.maxRedirects
@@ -97,8 +97,10 @@ final class HttpClient private (
                                                 conn.close.andThen(
                                                     loop(HttpRequest.get(redirectUrl), redirectCount + 1)
                                                 )
-                                            case Absent => response
-                                    else response
+                                            case Absent =>
+                                                HttpClient.scopeStream(response, conn.close)
+                                    else
+                                        HttpClient.scopeStream(response, conn.close)
                                     end if
                                 }
                             }
@@ -110,8 +112,6 @@ final class HttpClient private (
                     doStream(request)
                 else
                     filter(request, doStream).map { response =>
-                        // A filter can short-circuit with a cached/mocked buffered response.
-                        // Wrap the bytes as a single-chunk stream so the streaming contract holds.
                         response.body.use(
                             b => response.withBody(HttpBody.stream(Stream.init(Chunk(b.span)))),
                             s => response.withBody(s)
@@ -124,7 +124,7 @@ final class HttpClient private (
     private[kyo] def send(url: String)(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         send(HttpRequest.get(url))
 
-    private[kyo] def stream(url: String)(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+    private[kyo] def stream(url: String)(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Abort[HttpError]) =
         stream(HttpRequest.get(url))
 
     /** Pre-establishes connections to reduce first-request latency.
@@ -182,6 +182,13 @@ object HttpClient:
     def delete[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpError]) =
         send(HttpRequest.delete(url)).map(decodeResponse[A])
 
+    def delete(url: String)(using Frame): Unit < (Async & Abort[HttpError]) =
+        send(HttpRequest.delete(url)).map { response =>
+            if response.status.isError then
+                Abort.fail[HttpError](HttpError.StatusError(response.status, response.bodyText))
+            else ()
+        }
+
     def patch[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
         send(HttpRequest.patch(url, body)).map(decodeResponse[A])
 
@@ -197,22 +204,22 @@ object HttpClient:
     def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         clientLocal.use(_.send(request))
 
-    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Abort[HttpError]) =
         clientLocal.use(_.stream(request))
 
-    private[kyo] def stream(url: String)(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+    private[kyo] def stream(url: String)(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Abort[HttpError]) =
         clientLocal.use(_.stream(HttpRequest.get(url)))
 
     def streamSse[V: Schema: Tag](url: String)(using
         Frame,
         Tag[Emit[Chunk[HttpEvent[V]]]]
-    ): Stream[HttpEvent[V], Async & Scope] < (Async & Scope & Abort[HttpError]) =
+    ): Stream[HttpEvent[V], Async & Scope] < (Async & Abort[HttpError]) =
         call(HttpRoute.get(url).response(_.bodySse[V])).map(_.body)
 
     def streamNdjson[V: Schema: Tag](url: String)(using
         Frame,
         Tag[Emit[Chunk[V]]]
-    ): Stream[V, Async & Scope] < (Async & Scope & Abort[HttpError]) =
+    ): Stream[V, Async & Scope] < (Async & Abort[HttpError]) =
         call(HttpRoute.get(url).response(_.bodyNdjson[V])).map(_.body)
 
     // --- Route-based client: single `call` method ---
@@ -221,32 +228,38 @@ object HttpClient:
       *
       * Returns a `Row` with named fields for each declared output plus `"response"` (the raw `HttpResponse`). For example, a route with
       * `.response(_.bodyJson[User])` returns a row accessible as `result.body` and `result.response`.
+      *
+      * For streaming routes, the returned `Stream` carries `Scope` in its effect type. The caller must consume the stream within a
+      * `Scope.run` to ensure the underlying connection is closed. Not consuming the stream will leak the connection.
       */
     def call[Out <: AnyNamedTuple, Err](route: HttpRoute[Row.Empty, Row.Empty, Out, Err])(using
         Frame
-    ): Row[FullOutput[Out]] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
+    ): Row[FullOutput[Out]] < (Async & Abort[HttpError] & Abort[Err]) =
         callImpl(route, EmptyTuple)
 
     /** Calls a route with typed inputs. The input tuple contains path captures followed by request params, in declaration order.
       *
       * Returns a `Row` with named fields for each declared output plus `"response"` (the raw `HttpResponse`).
+      *
+      * For streaming routes, the returned `Stream` carries `Scope` in its effect type. The caller must consume the stream within a
+      * `Scope.run` to ensure the underlying connection is closed. Not consuming the stream will leak the connection.
       */
     def call[PathIn <: AnyNamedTuple, In <: AnyNamedTuple, Out <: AnyNamedTuple, Err](
         route: HttpRoute[PathIn, In, Out, Err],
         in: InputValue[PathIn, In]
-    )(using Frame): Row[FullOutput[Out]] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
+    )(using Frame): Row[FullOutput[Out]] < (Async & Abort[HttpError] & Abort[Err]) =
         callImpl(route, in)
 
     private def callImpl[Out <: AnyNamedTuple, Err](
         route: HttpRoute[?, ?, Out, Err],
         in: Any
-    )(using Frame): Row[FullOutput[Out]] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
+    )(using Frame): Row[FullOutput[Out]] < (Async & Abort[HttpError] & Abort[Err]) =
         val request         = buildRouteRequest(route, in)
         val hasStreamingOut = hasStreamingOutput(route)
         val hasStreamingIn  = hasStreamingInput(route)
 
         if hasStreamingOut || hasStreamingIn then
-            // Streaming path: use non-pooled scoped connection, leave Scope pending
+            // Streaming path: connection cleanup is deferred into the body stream
             stream(request).map { response =>
                 if response.status.isError then
                     response.ensureBytes.map { buffered =>
@@ -353,7 +366,7 @@ object HttpClient:
         val bodyValue = state.bodyValue.getOrElse(null)
 
         if state.formParts.nonEmpty then
-            val formBody = state.formParts.reverse.mkString("&").getBytes("UTF-8")
+            val formBody = Span.fromUnsafe(state.formParts.reverse.mkString("&").getBytes("UTF-8"))
             HttpRequest.initBytes(route.method, fullPath, formBody, headers, "application/x-www-form-urlencoded")
         else
             state.bodyContent match
@@ -364,11 +377,11 @@ object HttpClient:
                 case Present(content: Content.BytesInput) =>
                     content.encodeTo(bodyValue) match
                         case Present((bytes, contentType)) =>
-                            HttpRequest.initBytes(route.method, fullPath, bytes, headers, contentType)
+                            HttpRequest.initBytes(route.method, fullPath, Span.fromUnsafe(bytes), headers, contentType)
                         case Absent =>
-                            HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
+                            HttpRequest.initBytes(route.method, fullPath, Span.empty[Byte], headers, "")
                 case _ =>
-                    HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
+                    HttpRequest.initBytes(route.method, fullPath, Span.empty[Byte], headers, "")
             end match
         end if
     end buildRouteRequest
@@ -688,6 +701,19 @@ object HttpClient:
             handleRedirect(pool, url, request, config, resp, redirectCount, currentSchedule, attemptCount)
         }
     end sendWithPolicies
+
+    /** Attaches a connection finalizer to the response's body stream so it runs when consumed within a Scope. */
+    private def scopeStream(
+        response: HttpResponse[HttpBody.Streamed],
+        finalizer: Unit < Async
+    )(using Frame): HttpResponse[HttpBody.Streamed] =
+        val original = response.body.stream
+        // Avoid inline Stream.apply to prevent Scope from leaking into the enclosing effect type.
+        val scoped = new Stream[Span[Byte], Async & Scope]:
+            def emit: Unit < (Emit[Chunk[Span[Byte]]] & Async & Scope) =
+                Scope.ensure(finalizer).andThen(original.emit)
+        response.withBody(HttpBody.stream(scoped))
+    end scopeStream
 
     // --- Route call helpers ---
 

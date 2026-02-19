@@ -168,7 +168,7 @@ object NodeServerBackend extends Backend.Server:
     )(using AllowUnsafe, Frame): Unit =
         val byteChannel = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
 
-        val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+        val bodyStream: Stream[Span[Byte], Async & Scope] = Stream[Span[Byte], Async & Scope] {
             Abort.run[Closed] {
                 Loop(()) { _ =>
                     Channel.take(byteChannel.safe).map {

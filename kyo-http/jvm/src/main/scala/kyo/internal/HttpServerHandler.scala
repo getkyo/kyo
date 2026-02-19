@@ -114,7 +114,7 @@ final private[kyo] class HttpServerHandler(
 
                     val byteChannel = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
                     streamingChannel = byteChannel
-                    val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+                    val bodyStream: Stream[Span[Byte], Async & Scope] = Stream[Span[Byte], Async & Scope] {
                         Abort.run[Closed] {
                             Loop(()) { _ =>
                                 Channel.take(byteChannel.safe).map {
@@ -284,12 +284,14 @@ final private[kyo] class HttpServerHandler(
                         discard(ctx.writeAndFlush(nettyResponse))
 
                         Abort.run[Throwable](Abort.catching[Throwable] {
-                            streamed.stream.foreach { bytes =>
-                                NettyUtil.await(
-                                    ctx.writeAndFlush(new DefaultHttpContent(
-                                        Unpooled.wrappedBuffer(bytes.toArrayUnsafe)
-                                    ))
-                                )
+                            Scope.run {
+                                streamed.stream.foreach { bytes =>
+                                    NettyUtil.await(
+                                        ctx.writeAndFlush(new DefaultHttpContent(
+                                            Unpooled.wrappedBuffer(bytes.toArrayUnsafe)
+                                        ))
+                                    )
+                                }
                             }.andThen {
                                 NettyUtil.await(
                                     ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT)

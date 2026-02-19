@@ -32,7 +32,7 @@ object HttpBody:
 
     def apply(text: String): Bytes = new Bytes(text.getBytes(StandardCharsets.UTF_8))
 
-    def stream(s: Stream[Span[Byte], Async]): Streamed = new Streamed(s)
+    def stream(s: Stream[Span[Byte], Async & Scope]): Streamed = new Streamed(s)
 
     /** Fully-buffered HTTP body backed by a byte array. */
     final class Bytes private[kyo] (private val _data: Array[Byte]) extends HttpBody:
@@ -47,9 +47,9 @@ object HttpBody:
         def isEmpty: Boolean = _data.isEmpty
     end Bytes
 
-    /** Streaming HTTP body backed by a `Stream[Span[Byte], Async]`. */
-    final class Streamed private[kyo] (private val _stream: Stream[Span[Byte], Async]) extends HttpBody:
-        def stream: Stream[Span[Byte], Async] = _stream
-        def isEmpty: Boolean                  = false
+    /** Streaming HTTP body backed by a `Stream[Span[Byte], Async & Scope]`. */
+    final class Streamed private[kyo] (private val _stream: Stream[Span[Byte], Async & Scope]) extends HttpBody:
+        def stream: Stream[Span[Byte], Async & Scope] = _stream
+        def isEmpty: Boolean                          = false
 
 end HttpBody

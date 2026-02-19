@@ -26,7 +26,7 @@ private[kyo] object Content:
         private[kyo] def encodeTo(value: Any): Maybe[(Array[Byte], String)] = Absent
 
         /** Client-side: encode value to a byte stream for streaming request body. */
-        private[kyo] def encodeStreamTo(value: Any)(using Frame): Stream[Span[Byte], Async]
+        private[kyo] def encodeStreamTo(value: Any)(using Frame): Stream[Span[Byte], Async & Scope]
     end StreamInput
 
     sealed trait BytesOutput extends Content:
@@ -92,11 +92,11 @@ private[kyo] object Content:
         private[kyo] def decodeFrom(request: HttpRequest[HttpBody.Streamed])(using Frame): Any < (Sync & Abort[HttpError.ParseError]) =
             request.bodyStream
 
-        private[kyo] def encodeStreamTo(value: Any)(using Frame): Stream[Span[Byte], Async] =
-            value.asInstanceOf[Stream[Span[Byte], Async]]
+        private[kyo] def encodeStreamTo(value: Any)(using Frame): Stream[Span[Byte], Async & Scope] =
+            value.asInstanceOf[Stream[Span[Byte], Async & Scope]]
 
         private[kyo] def encodeToResponse(value: Any, status: HttpStatus)(using Frame): HttpResponse[?] =
-            HttpResponse.stream(value.asInstanceOf[Stream[Span[Byte], Async]], status)
+            HttpResponse.stream(value.asInstanceOf[Stream[Span[Byte], Async & Scope]], status)
 
         private[kyo] def decodeFrom(response: HttpResponse[HttpBody.Bytes])(using Frame): Result[HttpError, Any] =
             Result.succeed(response.bodyBytes)
@@ -133,13 +133,13 @@ private[kyo] object Content:
                         decodeChunk(decoder, chunk, i + 1, result)
                     case fail => Abort.get(fail)
 
-        private[kyo] def encodeStreamTo(value: Any)(using Frame): Stream[Span[Byte], Async] =
-            value.asInstanceOf[Stream[Any, Async]].map { v =>
+        private[kyo] def encodeStreamTo(value: Any)(using Frame): Stream[Span[Byte], Async & Scope] =
+            value.asInstanceOf[Stream[Any, Async & Scope]].map { v =>
                 Span.fromUnsafe((schema.encode(v) + "\n").getBytes(StandardCharsets.UTF_8))
             }
 
         private[kyo] def encodeToResponse(value: Any, status: HttpStatus)(using Frame): HttpResponse[?] =
-            val byteStream = value.asInstanceOf[Stream[Any, Async]].map { v =>
+            val byteStream = value.asInstanceOf[Stream[Any, Async & Scope]].map { v =>
                 Span.fromUnsafe((schema.encode(v) + "\n").getBytes(StandardCharsets.UTF_8))
             }
             HttpResponse.stream(byteStream, status)
@@ -193,7 +193,7 @@ private[kyo] object Content:
             end match
         end decodeFrom
 
-        private[kyo] def encodeStreamTo(value: Any)(using Frame): Stream[Span[Byte], Async] =
+        private[kyo] def encodeStreamTo(value: Any)(using Frame): Stream[Span[Byte], Async & Scope] =
             throw new UnsupportedOperationException(
                 "Streaming multipart client calls are not yet supported. Use bodyMultipart for buffered multipart."
             )
