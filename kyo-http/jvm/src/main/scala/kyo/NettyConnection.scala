@@ -33,7 +33,7 @@ final private[kyo] class NettyConnection(
             request.headers.foreach((k, v) => discard(nettyReq.headers().add(k, v)))
             request.contentType.foreach(ct => discard(nettyReq.headers().set("Content-Type", ct)))
             if !nettyReq.headers().contains("Host") then
-                if port == HttpRequest.DefaultHttpPort || port == HttpRequest.DefaultHttpsPort then
+                if HttpUrl.isDefaultPort(port) then
                     discard(nettyReq.headers().set("Host", host))
                 else discard(nettyReq.headers().set("Host", s"$host:$port"))
             end if
@@ -71,7 +71,7 @@ final private[kyo] class NettyConnection(
             request.headers.foreach((k, v) => discard(nettyReq.headers().add(k, v)))
             request.contentType.foreach(ct => discard(nettyReq.headers().set("Content-Type", ct)))
             if !nettyReq.headers().contains("Host") then
-                if port == HttpRequest.DefaultHttpPort || port == HttpRequest.DefaultHttpsPort then
+                if HttpUrl.isDefaultPort(port) then
                     discard(nettyReq.headers().set("Host", host))
                 else discard(nettyReq.headers().set("Host", s"$host:$port"))
             end if

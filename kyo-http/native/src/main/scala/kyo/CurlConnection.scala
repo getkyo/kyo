@@ -73,7 +73,7 @@ final private[kyo] class CurlConnection(
 
     private def configureHandle(handle: CURL, request: HttpRequest[?], transferId: Long, state: TransferState)(using Zone): Unit =
         // URL
-        val url = HttpClient.buildUrl(host, port, ssl, request.url)
+        val url = request.fullUrl
         discard(curl_easy_setopt(handle, CURLOPT_URL, toCString(url)))
 
         // Method
@@ -104,7 +104,7 @@ final private[kyo] class CurlConnection(
         val hasHost = request.headers.contains("Host")
         if !hasHost then
             val hostHeader =
-                if port == HttpRequest.DefaultHttpPort || port == HttpRequest.DefaultHttpsPort then host
+                if HttpUrl.isDefaultPort(port) then host
                 else s"$host:$port"
             headerList = curl_slist_append(headerList, toCString(s"Host: $hostHeader"))
         end if

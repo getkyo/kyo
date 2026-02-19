@@ -16,7 +16,7 @@ class HttpClientTest extends Test:
         "default values" in {
             val config = HttpClient.Config.default
             assert(config.baseUrl == Absent)
-            assert(config.timeout == Absent)
+            assert(config.timeout == 5.seconds)
             assert(config.connectTimeout == Absent)
             assert(config.followRedirects == true)
             assert(config.maxRedirects == 10)
@@ -39,7 +39,7 @@ class HttpClientTest extends Test:
         "builder methods" - {
             "timeout" in {
                 val config = HttpClient.Config.default.timeout(30.seconds)
-                assert(config.timeout == Present(30.seconds))
+                assert(config.timeout == 30.seconds)
             }
 
             "connectTimeout" in {
@@ -80,7 +80,7 @@ class HttpClientTest extends Test:
                     .connectTimeout(5.seconds)
                     .followRedirects(false)
                     .maxRedirects(3)
-                assert(config.timeout == Present(30.seconds))
+                assert(config.timeout == 30.seconds)
                 assert(config.connectTimeout == Present(5.seconds))
                 assert(config.followRedirects == false)
                 assert(config.maxRedirects == 3)
@@ -642,6 +642,18 @@ class HttpClientTest extends Test:
             }
         }
 
+        "follows redirects with timeout configured" in run {
+            val target   = HttpHandler.get("/target") { _ => HttpResponse.ok("final") }
+            val redirect = HttpHandler.get("/start") { _ => HttpResponse.redirect("/target") }
+            startTestServer(target, redirect).map { port =>
+                HttpClient.withConfig(_.timeout(5.seconds)) {
+                    HttpClient.get[String](s"http://localhost:$port/start")
+                }.map { body =>
+                    assert(body == "final")
+                }
+            }
+        }
+
         "respects maxRedirects" in run {
             val redirect = HttpHandler.get("/loop") { _ => HttpResponse.redirect("/loop") }
             startTestServer(redirect).map { port =>
@@ -770,7 +782,7 @@ class HttpClientTest extends Test:
 
         "no timeout by default" in {
             val config = HttpClient.Config.default
-            assert(config.timeout == Absent)
+            assert(config.timeout == 5.seconds)
             assert(config.connectTimeout == Absent)
         }
     }

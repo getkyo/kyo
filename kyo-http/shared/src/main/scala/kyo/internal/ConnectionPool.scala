@@ -23,7 +23,7 @@ final private[kyo] class ConnectionPool(
         Frame
     ): Backend.Connection < (Async & Abort[HttpError]) =
         val hostPool = pools.computeIfAbsent(key, _ => HostPool.init(maxConnectionsPerHost))
-        hostPool.acquire(factory, key.host, key.port, key.ssl, connectTimeout, connectionAcquireTimeout)
+        hostPool.acquire(factory, key.host, key.port, HttpUrl.isSsl(key.port), connectTimeout, connectionAcquireTimeout)
     end acquire
 
     /** Release a connection back to the pool. Synchronous — suitable for ensure blocks. */
@@ -50,7 +50,7 @@ end ConnectionPool
 
 private[kyo] object ConnectionPool:
 
-    private[kyo] case class PoolKey(host: String, port: Int, ssl: Boolean) derives CanEqual
+    private[kyo] case class PoolKey(host: String, port: Int) derives CanEqual
 
     /** Per-host pool managing idle connections with bounded capacity. */
     final private class HostPool(

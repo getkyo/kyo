@@ -154,12 +154,13 @@ private[kyo] object OpenApiGenerator:
                 case InputField.Body(content, desc) => (content, desc)
             } match
                 case Some((content, desc)) =>
-                    val (ct, schema) = contentToMediaType(content)
-                    Present(RequestBody(
-                        required = Some(true),
-                        content = Map(ct -> MediaType(schema = schema)),
-                        description = if desc.nonEmpty then Some(desc) else None
-                    ))
+                    contentToMediaType(content) { (ct, schema) =>
+                        Present(RequestBody(
+                            required = Some(true),
+                            content = Map(ct -> MediaType(schema = schema)),
+                            description = if desc.nonEmpty then Some(desc) else None
+                        ))
+                    }
                 case None => Absent
         end if
     end buildRequestBody
@@ -171,11 +172,12 @@ private[kyo] object OpenApiGenerator:
             case OutputField.Body(content, desc) => (content, desc)
         } match
             case Some((content, desc)) =>
-                val (ct, schema) = contentToMediaType(content)
-                Response(
-                    description = if desc.nonEmpty then desc else "Success",
-                    content = Some(Map(ct -> MediaType(schema = schema)))
-                )
+                contentToMediaType(content) { (ct, schema) =>
+                    Response(
+                        description = if desc.nonEmpty then desc else "Success",
+                        content = Some(Map(ct -> MediaType(schema = schema)))
+                    )
+                }
             case None =>
                 Response(description = "Success", content = None)
 
@@ -189,17 +191,17 @@ private[kyo] object OpenApiGenerator:
         Map(successStatus -> successResponse) ++ errorResponses
     end buildResponses
 
-    private def contentToMediaType(content: Content): (String, SchemaObject) =
+    private inline def contentToMediaType[A](content: Content)(inline cont: (String, SchemaObject) => A): A =
         content match
-            case Content.Json(schema) => ("application/json", schemaToOpenApi(schema))
-            case Content.Text         => ("text/plain", SchemaObject.string)
-            case Content.Binary       => ("application/octet-stream", SchemaObject.string)
-            case Content.ByteStream   => ("application/octet-stream", SchemaObject.string)
+            case Content.Json(schema) => cont("application/json", schemaToOpenApi(schema))
+            case Content.Text         => cont("text/plain", SchemaObject.string)
+            case Content.Binary       => cont("application/octet-stream", SchemaObject.string)
+            case Content.ByteStream   => cont("application/octet-stream", SchemaObject.string)
 
-            case Content.Multipart         => ("multipart/form-data", SchemaObject.obj)
-            case Content.MultipartStream   => ("multipart/form-data", SchemaObject.obj)
-            case Content.Ndjson(schema, _) => ("application/x-ndjson", schemaToOpenApi(schema))
-            case Content.Sse(schema, _)    => ("text/event-stream", schemaToOpenApi(schema))
+            case Content.Multipart         => cont("multipart/form-data", SchemaObject.obj)
+            case Content.MultipartStream   => cont("multipart/form-data", SchemaObject.obj)
+            case Content.Ndjson(schema, _) => cont("application/x-ndjson", schemaToOpenApi(schema))
+            case Content.Sse(schema, _)    => cont("text/event-stream", schemaToOpenApi(schema))
 
     private def pathToOpenApi(path: HttpPath[?]): String =
         path match

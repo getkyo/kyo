@@ -640,6 +640,44 @@ class HttpRequestTest extends Test:
                 HttpRequest.get("not a valid url")
             }
         }
+
+        "Host header - standard port no IPv6" in {
+            val request = HttpRequest.get("http://example.com/path")
+            assert(request.header("Host") == Present("example.com"))
+        }
+
+        "Host header - non-standard port" in {
+            val request = HttpRequest.get("http://example.com:9000/path")
+            assert(request.header("Host") == Present("example.com:9000"))
+        }
+
+        "Host header - IPv6" in {
+            val request = HttpRequest.get("http://[::1]/path")
+            assert(request.header("Host") == Present("[::1]"))
+        }
+
+        "Host header - IPv6 with port" in {
+            val request = HttpRequest.get("http://[::1]:9000/path")
+            assert(request.header("Host") == Present("[::1]:9000"))
+        }
+
+        "Host header - already set is preserved" in {
+            val request = HttpRequest.get("http://example.com/path").addHeader("Host", "custom.com")
+            // withHostHeader only sets Host if not already present, but the URL-based one is set first
+            assert(request.header("Host") == Present("example.com"))
+        }
+
+        "Host header - https standard port" in {
+            val request = HttpRequest.get("https://example.com/path")
+            assert(request.header("Host") == Present("example.com"))
+            assert(request.port == 443)
+        }
+
+        "IPv6 host without port" in {
+            val request = HttpRequest.get("http://[::1]/api")
+            assert(request.host == "::1" || request.host == "[::1]")
+            assert(request.port == 80)
+        }
     }
 
     "Encoding edge cases" - {

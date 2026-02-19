@@ -151,7 +151,7 @@ final private[kyo] class FetchConnection(
     end classifyError
 
     private def buildFetchRequest(request: HttpRequest[?]): (String, RequestInit) =
-        val url = HttpClient.buildUrl(host, port, ssl, request.url)
+        val url = request.fullUrl
 
         val init = new RequestInit {}
         init.redirect = dom.RequestRedirect.manual

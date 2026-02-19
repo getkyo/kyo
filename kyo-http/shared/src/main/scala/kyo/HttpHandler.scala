@@ -245,25 +245,25 @@ object HttpHandler:
             case HttpPath.Literal(_) => Array.empty
             case _ =>
                 val segments = HttpPath.parseSegments(requestPath)
-                extractPathSegments(path, segments)._1
+                @tailrec def loop(remaining: List[HttpPath[?]], segments: List[String], acc: ArrayBuilder[Any]): Array[Any] =
+                    remaining match
+                        case Nil => acc.result()
+                        case head :: tail =>
+                            head match
+                                case HttpPath.Literal(v) =>
+                                    val skip = HttpPath.countSegments(v)
+                                    loop(tail, segments.drop(skip), acc)
+                                case HttpPath.Capture(_, _, codec) =>
+                                    val decoded = java.net.URLDecoder.decode(segments.head.replace("+", "%2B"), "UTF-8")
+                                    acc += codec.asInstanceOf[HttpParamCodec[Any]].parse(decoded)
+                                    loop(tail, segments.tail, acc)
+                                case HttpPath.Concat(left, right) =>
+                                    loop(left :: right :: tail, segments, acc)
+                                case HttpPath.Rest(_) =>
+                                    acc += segments.mkString("/")
+                                    loop(tail, Nil, acc)
+                loop(path :: Nil, segments, ArrayBuilder.make[Any])
     end extractPath
-
-    private def extractPathSegments(path: HttpPath[?], segments: List[String]): (Array[Any], List[String]) =
-        path match
-            case HttpPath.Literal(v) =>
-                val skip = HttpPath.countSegments(v)
-                (Array.empty, segments.drop(skip))
-            case HttpPath.Capture(_, _, codec) =>
-                val decoded = java.net.URLDecoder.decode(segments.head.replace("+", "%2B"), "UTF-8")
-                (Array(codec.asInstanceOf[HttpParamCodec[Any]].parse(decoded)), segments.tail)
-            case HttpPath.Concat(left, right) =>
-                val (leftVals, remaining)   = extractPathSegments(left, segments)
-                val (rightVals, remaining2) = extractPathSegments(right, remaining)
-                (leftVals ++ rightVals, remaining2)
-            case HttpPath.Rest(_) =>
-                val remaining = segments.mkString("/")
-                (Array(remaining), Nil)
-    end extractPathSegments
 
     private def extractInputs(fields: Seq[InputField], request: HttpRequest[?])(using Frame): Array[Any] < (Sync & Abort[HttpError]) =
         Kyo.foldLeft(fields)(ArrayBuilder.make[Any]) { (result, field) =>

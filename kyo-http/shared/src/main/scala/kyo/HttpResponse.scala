@@ -362,7 +362,7 @@ object HttpResponse:
 
     private def initText(status: HttpStatus, body: String, contentType: String): HttpResponse[HttpBody.Bytes] =
         val bytes   = body.getBytes(StandardCharsets.UTF_8)
-        val headers = HttpHeaders.empty.add("Content-Type", contentType).add("Content-Length", bytes.length.toString)
+        val headers = HttpHeaders.empty.add("Content-Type", contentType)
         new HttpResponse(status, headers, Seq.empty, HttpBody(bytes))
     end initText
 

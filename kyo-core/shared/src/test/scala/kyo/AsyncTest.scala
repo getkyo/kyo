@@ -564,6 +564,44 @@ class AsyncTest extends Test:
                 yield assert(result.isPanic)
             }.map(_ => succeed)
         }
+
+        "custom error" - {
+            case class CustomError(msg: String)
+
+            "completes before timeout" in run {
+                for
+                    result <- Async.timeoutWithError(1.second, Result.Failure(CustomError("timed out")))(42)
+                yield assert(result == 42)
+            }
+
+            "times out with custom error" in run {
+                val result =
+                    Async.timeoutWithError(5.millis, Result.Failure(CustomError("timed out")))(
+                        Async.sleep(1.second).andThen(42)
+                    )
+                Abort.run[CustomError](result).map {
+                    case Result.Failure(CustomError("timed out")) => succeed
+                    case other                                    => fail(s"Expected CustomError, got $other")
+                }
+            }
+
+            "infinite duration doesn't timeout" in run {
+                for
+                    result <- Async.timeoutWithError(Duration.Infinity, Result.Failure(CustomError("timed out")))(42)
+                yield assert(result == 42)
+            }
+
+            "custom panic" in run {
+                val result =
+                    Async.timeoutWithError(5.millis, Result.Panic(new RuntimeException("custom panic")))(
+                        Async.sleep(1.second).andThen(42)
+                    )
+                Abort.run[Any](result).map {
+                    case Result.Panic(e: RuntimeException) => assert(e.getMessage == "custom panic")
+                    case other                             => fail(s"Expected Panic, got $other")
+                }
+            }
+        }
     }
 
     "interrupt propagation" - {

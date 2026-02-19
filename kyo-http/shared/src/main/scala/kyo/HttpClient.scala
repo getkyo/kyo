@@ -1,10 +1,8 @@
 package kyo
 
 import HttpRoute.*
-import java.net.URI
 import kyo.internal.ConnectionPool
 import kyo.internal.Content
-import kyo.internal.UrlParser
 import scala.NamedTuple.AnyNamedTuple
 import scala.annotation.tailrec
 
@@ -47,21 +45,20 @@ final class HttpClient private (
         HttpFilter.use { filter =>
             HttpClient.configLocal.use { config =>
                 if filter eq HttpFilter.noop then
-                    // Fast path — no filter, avoid closure allocation
-                    val effectiveUrl = HttpClient.buildEffectiveUrl(config, request)
-                    HttpClient.sendWithPolicies(pool, effectiveUrl, request, config)
+                    val url = HttpUrl.effective(config.baseUrl, request)
+                    HttpClient.sendWithPolicies(pool, url, request, config)
                 else
                     filter(
                         request,
                         filteredRequest =>
-                            val effectiveUrl = HttpClient.buildEffectiveUrl(config, filteredRequest)
+                            val url = HttpUrl.effective(config.baseUrl, filteredRequest)
                             HttpClient.sendWithPolicies(
                                 pool,
-                                effectiveUrl,
+                                url,
                                 filteredRequest.asInstanceOf[HttpRequest[HttpBody.Bytes]],
                                 config
                             )
-                    ).map(_.ensureBytes) // Filter can short-circuit with any response type
+                    ).map(_.ensureBytes)
             }
         }
 
@@ -78,31 +75,24 @@ final class HttpClient private (
                         currentReq: HttpRequest[?],
                         redirectCount: Int
                     ): HttpResponse[HttpBody.Streamed] < (Async & Abort[HttpError]) =
-                        val effectiveUrl = HttpClient.buildEffectiveUrl(config, currentReq)
-                        HttpClient.parseUrl(effectiveUrl) { (host, port, ssl, rawPath, rawQuery) =>
-                            pool.connectDirect(host, port, ssl, config.connectTimeout).map { conn =>
-                                val reqWithPath = HttpClient.withDefaultHeaders(currentReq.withParsedUrl(rawPath, rawQuery))
-                                conn.stream(reqWithPath).map { response =>
-                                    val code = response.status.code
-                                    if config.followRedirects && (code == 301 || code == 302) &&
-                                        redirectCount < config.maxRedirects
-                                    then
-                                        response.header("Location") match
-                                            case Present(location) =>
-                                                val redirectUrl =
-                                                    if location.startsWith("http://") || location.startsWith("https://") then
-                                                        location
-                                                    else
-                                                        new URI(effectiveUrl).resolve(location).toString
-                                                conn.close.andThen(
-                                                    loop(HttpRequest.get(redirectUrl), redirectCount + 1)
-                                                )
-                                            case Absent =>
-                                                HttpClient.scopeStream(response, conn.close)
-                                    else
-                                        HttpClient.scopeStream(response, conn.close)
-                                    end if
-                                }
+                        val url = HttpUrl.effective(config.baseUrl, currentReq)
+                        pool.connectDirect(url.host, url.port, url.ssl, config.connectTimeout).map { conn =>
+                            val reqWithUrl = HttpClient.withDefaultHeaders(currentReq.withHttpUrl(url))
+                            conn.stream(reqWithUrl).map { response =>
+                                val code = response.status.code
+                                if config.followRedirects && (code == 301 || code == 302) &&
+                                    redirectCount < config.maxRedirects
+                                then
+                                    response.header("Location") match
+                                        case Present(location) =>
+                                            conn.close.andThen(
+                                                loop(HttpRequest.get(url.resolve(location).full), redirectCount + 1)
+                                            )
+                                        case Absent =>
+                                            HttpClient.scopeStream(response, conn.close)
+                                else
+                                    HttpClient.scopeStream(response, conn.close)
+                                end if
                             }
                         }
                     end loop
@@ -289,94 +279,95 @@ object HttpClient:
     )
 
     private def buildRouteRequest(route: HttpRoute[?, ?, ?, ?], in: Any)(using Frame): HttpRequest[?] =
-        val (pathStr, pathCount) = buildRoutePath(route.path, in, 0)
-        val fields               = route.request.inputFields
+        buildRoutePath(route.path, in, 0) { (pathStr, pathCount) =>
+            val fields = route.request.inputFields
 
-        @tailrec def loop(i: Int, fieldIdx: Int, s: RouteRequestState): RouteRequestState =
-            if i >= fields.size then s
+            @tailrec def loop(i: Int, fieldIdx: Int, s: RouteRequestState): RouteRequestState =
+                if i >= fields.size then s
+                else
+                    fields(i) match
+                        case field @ InputField.Query(_, _, _, _, _, _) =>
+                            val raw = extractAt(in, fieldIdx)
+                            val newQuery = field.serialize(raw) match
+                                case Present(q) => q :: s.queryParts
+                                case Absent     => s.queryParts
+                            loop(i + 1, fieldIdx + 1, s.copy(queryParts = newQuery))
+
+                        case field @ InputField.Header(_, _, _, _, _, _) =>
+                            val raw = extractAt(in, fieldIdx)
+                            val newHeaders = field.serializeHeader(raw) match
+                                case Present((n, v)) => s.headers.add(n, v)
+                                case Absent          => s.headers
+                            loop(i + 1, fieldIdx + 1, s.copy(headers = newHeaders))
+
+                        case field @ InputField.Cookie(_, _, _, _, _, _) =>
+                            val raw = extractAt(in, fieldIdx)
+                            val newCookies = field.serialize(raw) match
+                                case Present(c) => c :: s.cookieParts
+                                case Absent     => s.cookieParts
+                            loop(i + 1, fieldIdx + 1, s.copy(cookieParts = newCookies))
+
+                        case InputField.FormBody(codec, _) =>
+                            val raw      = extractAt(in, fieldIdx)
+                            val formBody = codec.serialize(raw)
+                            loop(i + 1, fieldIdx + 1, s.copy(formParts = formBody :: s.formParts))
+
+                        case InputField.Body(content, _) =>
+                            loop(i + 1, fieldIdx + 1, s.copy(bodyValue = Present(extractAt(in, fieldIdx)), bodyContent = Present(content)))
+
+                        case InputField.Auth(scheme) =>
+                            val next = scheme match
+                                case AuthScheme.Bearer =>
+                                    val token = extractAt(in, fieldIdx)
+                                    s.copy(headers = s.headers.add("Authorization", s"Bearer $token"))
+                                case AuthScheme.BasicUsername =>
+                                    val username = extractAt(in, fieldIdx)
+                                    val password = extractAt(in, fieldIdx + 1)
+                                    val encoded  = java.util.Base64.getEncoder.encodeToString(s"$username:$password".getBytes("UTF-8"))
+                                    s.copy(headers = s.headers.add("Authorization", s"Basic $encoded"))
+                                case AuthScheme.BasicPassword =>
+                                    s // already handled by BasicUsername
+                                case AuthScheme.ApiKey(name, location) =>
+                                    val value = extractAt(in, fieldIdx)
+                                    location match
+                                        case AuthLocation.Header =>
+                                            s.copy(headers = s.headers.add(name, value.toString))
+                                        case AuthLocation.Query =>
+                                            s.copy(queryParts =
+                                                s"$name=${java.net.URLEncoder.encode(value.toString, "UTF-8")}" :: s.queryParts
+                                            )
+                                        case AuthLocation.Cookie =>
+                                            s.copy(cookieParts = s"$name=$value" :: s.cookieParts)
+                                    end match
+                            loop(i + 1, fieldIdx + 1, next)
+
+            val state = loop(0, pathCount, RouteRequestState())
+            val headers =
+                if state.cookieParts.nonEmpty then state.headers.add("Cookie", state.cookieParts.reverse.mkString("; ")) else state.headers
+            val queryStr  = state.queryParts.reverse.mkString("&")
+            val fullPath  = if queryStr.isEmpty then pathStr else s"$pathStr?$queryStr"
+            val bodyValue = state.bodyValue.getOrElse(null)
+
+            if state.formParts.nonEmpty then
+                val formBody = Span.fromUnsafe(state.formParts.reverse.mkString("&").getBytes("UTF-8"))
+                HttpRequest.initBytes(route.method, fullPath, formBody, headers, "application/x-www-form-urlencoded")
             else
-                fields(i) match
-                    case field @ InputField.Query(_, _, _, _, _, _) =>
-                        val raw = extractAt(in, fieldIdx)
-                        val newQuery = field.serialize(raw) match
-                            case Present(q) => q :: s.queryParts
-                            case Absent     => s.queryParts
-                        loop(i + 1, fieldIdx + 1, s.copy(queryParts = newQuery))
-
-                    case field @ InputField.Header(_, _, _, _, _, _) =>
-                        val raw = extractAt(in, fieldIdx)
-                        val newHeaders = field.serializeHeader(raw) match
-                            case Present((n, v)) => s.headers.add(n, v)
-                            case Absent          => s.headers
-                        loop(i + 1, fieldIdx + 1, s.copy(headers = newHeaders))
-
-                    case field @ InputField.Cookie(_, _, _, _, _, _) =>
-                        val raw = extractAt(in, fieldIdx)
-                        val newCookies = field.serialize(raw) match
-                            case Present(c) => c :: s.cookieParts
-                            case Absent     => s.cookieParts
-                        loop(i + 1, fieldIdx + 1, s.copy(cookieParts = newCookies))
-
-                    case InputField.FormBody(codec, _) =>
-                        val raw      = extractAt(in, fieldIdx)
-                        val formBody = codec.serialize(raw)
-                        loop(i + 1, fieldIdx + 1, s.copy(formParts = formBody :: s.formParts))
-
-                    case InputField.Body(content, _) =>
-                        loop(i + 1, fieldIdx + 1, s.copy(bodyValue = Present(extractAt(in, fieldIdx)), bodyContent = Present(content)))
-
-                    case InputField.Auth(scheme) =>
-                        val next = scheme match
-                            case AuthScheme.Bearer =>
-                                val token = extractAt(in, fieldIdx)
-                                s.copy(headers = s.headers.add("Authorization", s"Bearer $token"))
-                            case AuthScheme.BasicUsername =>
-                                val username = extractAt(in, fieldIdx)
-                                val password = extractAt(in, fieldIdx + 1)
-                                val encoded  = java.util.Base64.getEncoder.encodeToString(s"$username:$password".getBytes("UTF-8"))
-                                s.copy(headers = s.headers.add("Authorization", s"Basic $encoded"))
-                            case AuthScheme.BasicPassword =>
-                                s // already handled by BasicUsername
-                            case AuthScheme.ApiKey(name, location) =>
-                                val value = extractAt(in, fieldIdx)
-                                location match
-                                    case AuthLocation.Header =>
-                                        s.copy(headers = s.headers.add(name, value.toString))
-                                    case AuthLocation.Query =>
-                                        s.copy(queryParts =
-                                            s"$name=${java.net.URLEncoder.encode(value.toString, "UTF-8")}" :: s.queryParts
-                                        )
-                                    case AuthLocation.Cookie =>
-                                        s.copy(cookieParts = s"$name=$value" :: s.cookieParts)
-                                end match
-                        loop(i + 1, fieldIdx + 1, next)
-
-        val state = loop(0, pathCount, RouteRequestState())
-        val headers =
-            if state.cookieParts.nonEmpty then state.headers.add("Cookie", state.cookieParts.reverse.mkString("; ")) else state.headers
-        val queryStr  = state.queryParts.reverse.mkString("&")
-        val fullPath  = if queryStr.isEmpty then pathStr else s"$pathStr?$queryStr"
-        val bodyValue = state.bodyValue.getOrElse(null)
-
-        if state.formParts.nonEmpty then
-            val formBody = Span.fromUnsafe(state.formParts.reverse.mkString("&").getBytes("UTF-8"))
-            HttpRequest.initBytes(route.method, fullPath, formBody, headers, "application/x-www-form-urlencoded")
-        else
-            state.bodyContent match
-                case Present(Content.Multipart) =>
-                    HttpRequest.multipart(fullPath, bodyValue.asInstanceOf[Seq[HttpRequest.Part]], headers)
-                case Present(streamContent: Content.StreamInput) =>
-                    HttpRequest.stream(route.method, fullPath, streamContent.encodeStreamTo(bodyValue), headers)
-                case Present(content: Content.BytesInput) =>
-                    content.encodeTo(bodyValue) match
-                        case Present((bytes, contentType)) =>
-                            HttpRequest.initBytes(route.method, fullPath, Span.fromUnsafe(bytes), headers, contentType)
-                        case Absent =>
-                            HttpRequest.initBytes(route.method, fullPath, Span.empty[Byte], headers, "")
-                case _ =>
-                    HttpRequest.initBytes(route.method, fullPath, Span.empty[Byte], headers, "")
-            end match
-        end if
+                state.bodyContent match
+                    case Present(Content.Multipart) =>
+                        HttpRequest.multipart(fullPath, bodyValue.asInstanceOf[Seq[HttpRequest.Part]], headers)
+                    case Present(streamContent: Content.StreamInput) =>
+                        HttpRequest.stream(route.method, fullPath, streamContent.encodeStreamTo(bodyValue), headers)
+                    case Present(content: Content.BytesInput) =>
+                        content.encodeTo(bodyValue) match
+                            case Present((bytes, contentType)) =>
+                                HttpRequest.initBytes(route.method, fullPath, Span.fromUnsafe(bytes), headers, contentType)
+                            case Absent =>
+                                HttpRequest.initBytes(route.method, fullPath, Span.empty[Byte], headers, "")
+                    case _ =>
+                        HttpRequest.initBytes(route.method, fullPath, Span.empty[Byte], headers, "")
+                end match
+            end if
+        }
     end buildRouteRequest
 
     private def handleErrorResponse[Err](
@@ -482,7 +473,7 @@ object HttpClient:
       */
     case class Config(
         baseUrl: Maybe[String] = Absent,
-        timeout: Maybe[Duration] = Absent,
+        timeout: Duration = 5.seconds,
         connectTimeout: Maybe[Duration] = Absent,
         followRedirects: Boolean = true,
         maxRedirects: Int = 10,
@@ -490,14 +481,14 @@ object HttpClient:
         retryOn: HttpResponse[?] => Boolean = _.status.isServerError
     ):
         require(maxRedirects >= 0, s"maxRedirects must be non-negative: $maxRedirects")
-        timeout.foreach(d => require(d > Duration.Zero, s"timeout must be positive: $d"))
+        require(timeout > Duration.Zero, s"timeout must be positive: $timeout")
         connectTimeout.foreach(d => require(d > Duration.Zero, s"connectTimeout must be positive: $d"))
 
         def baseUrl(url: String): Config =
             copy(baseUrl = Present(url))
         def timeout(d: Duration): Config =
             require(d > Duration.Zero, s"timeout must be positive: $d")
-            copy(timeout = Present(d))
+            copy(timeout = d)
         def connectTimeout(d: Duration): Config =
             require(d > Duration.Zero, s"connectTimeout must be positive: $d")
             copy(connectTimeout = Present(d))
@@ -528,16 +519,6 @@ object HttpClient:
 
     // --- Private implementation ---
 
-    private[kyo] inline def DefaultHttpPort  = HttpRequest.DefaultHttpPort
-    private[kyo] inline def DefaultHttpsPort = HttpRequest.DefaultHttpsPort
-
-    /** Build a URL from host/port/ssl/path components. */
-    private[kyo] def buildUrl(host: String, port: Int, ssl: Boolean, path: String): String =
-        val scheme      = if ssl then "https" else "http"
-        val defaultPort = if ssl then DefaultHttpsPort else DefaultHttpPort
-        val portStr     = if port == defaultPort then "" else s":$port"
-        s"$scheme://$host$portStr$path"
-    end buildUrl
     private[kyo] inline def DefaultMaxConnectionsPerHost     = Maybe(100)
     private[kyo] inline def DefaultConnectionAcquireTimeout  = 30.seconds
     private[kyo] inline def DefaultMaxResponseSizeBytes: Int = 1048576
@@ -557,80 +538,45 @@ object HttpClient:
         else
             response.bodyAs[A]
 
-    private[kyo] def buildEffectiveUrl(config: Config, request: HttpRequest[?]): String =
-        config.baseUrl match
-            case Present(base) =>
-                val url = request.url
-                if url.startsWith("http://") || url.startsWith("https://") then url
-                else
-                    val normalizedUrl = if url.startsWith("/") then url else "/" + url
-                    val baseUri       = new URI(base)
-                    baseUri.resolve(normalizedUrl).toString
-                end if
-            case Absent =>
-                val host = request.host
-                val port = request.port
-                val path = request.url
-                if host.isEmpty then path
-                else buildUrl(host, port, port == DefaultHttpsPort, path)
-
-    /** Parse a URL into (host, port, ssl, rawPath, rawQuery) components without allocating intermediate objects. */
-    private[kyo] inline def parseUrl[A](url: String)(
-        inline f: (String, Int, Boolean, String, Maybe[String]) => A
-    ): A =
-        UrlParser.parseUrlParts(url) { (scheme, host, port, rawPath, rawQuery) =>
-            val ssl           = scheme.contains("https")
-            val effectivePort = if port < 0 then (if ssl then DefaultHttpsPort else DefaultHttpPort) else port
-            // Strip IPv6 brackets for networking (InetAddress expects raw IP)
-            val rawHost = host.getOrElse("") match
-                case h if h.startsWith("[") && h.endsWith("]") => h.substring(1, h.length - 1)
-                case h                                         => h
-            f(rawHost, effectivePort, ssl, rawPath, rawQuery)
-        }
-
     /** Send request via connection pool, acquiring and releasing a connection. */
     private def sendViaPool(
         pool: ConnectionPool,
-        url: String,
+        url: HttpUrl,
         request: HttpRequest[HttpBody.Bytes],
         config: Config
     )(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
-        parseUrl(url) { (host, port, ssl, rawPath, rawQuery) =>
-            val key         = ConnectionPool.PoolKey(host, port, ssl)
-            val reqWithPath = request.withParsedUrl(rawPath, rawQuery)
-            pool.acquire(key, config.connectTimeout).map { conn =>
-                AtomicBoolean.init(false).map { completed =>
-                    Sync.ensure {
-                        import AllowUnsafe.embrace.danger
-                        if !completed.unsafe.get() then conn.closeAbruptly()
-                        pool.release(key, conn)
-                    } {
-                        conn.send(reqWithPath).map { resp =>
-                            completed.set(true).andThen(resp)
-                        }
+        val key        = ConnectionPool.PoolKey(url.host, url.port)
+        val reqWithUrl = request.withHttpUrl(url)
+        pool.acquire(key, config.connectTimeout).map { conn =>
+            AtomicBoolean.init(false).map { completed =>
+                Sync.ensure {
+                    import AllowUnsafe.embrace.danger
+                    if !completed.unsafe.get() then conn.closeAbruptly()
+                    pool.release(key, conn)
+                } {
+                    conn.send(reqWithUrl).map { resp =>
+                        completed.set(true).andThen(resp)
                     }
                 }
             }
         }
+    end sendViaPool
 
-    /** Apply request-level timeout if configured. */
-    private def applyTimeout(
+    /** Apply request-level timeout if configured, then pass the response to the inline continuation. */
+    private inline def applyTimeout[A](
         config: Config,
         doSend: HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError])
-    )(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
-        config.timeout match
-            case Present(d) =>
-                Abort.run[kyo.Timeout](Async.timeout(d)(doSend)).map {
-                    case Result.Success(resp) => resp
-                    case Result.Failure(_)    => Abort.fail(HttpError.Timeout(s"Request timed out after $d"))
-                    case Result.Panic(e)      => throw e
-                }
-            case Absent => doSend
+    )(inline cont: HttpResponse[HttpBody.Bytes] => A < (Async & Abort[HttpError]))(using Frame): A < (Async & Abort[HttpError]) =
+        Abort.run[kyo.Timeout](Async.timeout(config.timeout)(doSend)).map {
+            case Result.Success(resp) => cont(resp)
+            case Result.Failure(_)    => Abort.fail(HttpError.Timeout(s"Request timed out after ${config.timeout}"))
+            case Result.Panic(e)      => throw e
+        }
 
     /** Follow HTTP redirects if configured. */
     private def handleRedirect(
         pool: ConnectionPool,
-        url: String,
+        url: HttpUrl,
         request: HttpRequest[HttpBody.Bytes],
         config: Config,
         resp: HttpResponse[HttpBody.Bytes],
@@ -644,11 +590,7 @@ object HttpClient:
             else
                 resp.header("Location") match
                     case Present(location) =>
-                        val redirectUrl =
-                            if location.startsWith("http://") || location.startsWith("https://") then
-                                location
-                            else
-                                new URI(url).resolve(location).toString
+                        val redirectUrl = url.resolve(location)
                         sendWithPolicies(pool, redirectUrl, request, config, redirectCount + 1, retrySchedule, attemptCount)
                     case Absent =>
                         resp
@@ -658,7 +600,7 @@ object HttpClient:
     /** Retry on retriable responses using the configured schedule. */
     private def handleRetry(
         pool: ConnectionPool,
-        url: String,
+        url: HttpUrl,
         request: HttpRequest[HttpBody.Bytes],
         config: Config,
         resp: HttpResponse[HttpBody.Bytes],
@@ -688,7 +630,7 @@ object HttpClient:
 
     private def sendWithPolicies(
         pool: ConnectionPool,
-        url: String,
+        url: HttpUrl,
         request: HttpRequest[HttpBody.Bytes],
         config: Config,
         redirectCount: Int = 0,
@@ -696,7 +638,7 @@ object HttpClient:
         attemptCount: Int = 1
     )(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         val currentSchedule = retrySchedule.orElse(config.retrySchedule)
-        applyTimeout(config, sendViaPool(pool, url, withDefaultHeaders(request), config)).map { resp =>
+        applyTimeout(config, sendViaPool(pool, url, withDefaultHeaders(request), config)) { resp =>
             handleRedirect(pool, url, request, config, resp, redirectCount, currentSchedule, attemptCount)
         }
     end sendWithPolicies
@@ -721,22 +663,30 @@ object HttpClient:
     private def hasStreamingOutput(route: HttpRoute[?, ?, ?, ?]): Boolean =
         route.response.outputFields.exists(_.isStreaming)
 
-    private def buildRoutePath(path: HttpPath[?], in: Any, offset: Int): (String, Int) =
-        path match
-            case HttpPath.Literal(s) => (s, offset)
-            case capture: HttpPath.Capture[?, ?] =>
-                val value = extractAt(in, offset)
-                // Cast is at the boundary: value came from a typed InputValue tuple,
-                // but we lost the type when storing in Any. The capture's codec type matches.
-                ("/" + capture.serializeValue(value.asInstanceOf), offset + 1)
-            case HttpPath.Concat(left, right) =>
-                val (leftStr, nextOffset)  = buildRoutePath(left, in, offset)
-                val (rightStr, lastOffset) = buildRoutePath(right, in, nextOffset)
-                if rightStr.startsWith("/") then (leftStr + rightStr, lastOffset)
-                else (leftStr + "/" + rightStr, lastOffset)
-            case HttpPath.Rest(_) =>
-                val value = extractAt(in, offset)
-                ("/" + value, offset + 1)
+    private inline def buildRoutePath[A](path: HttpPath[?], in: Any, offset: Int)(inline cont: (String, Int) => A): A =
+        @tailrec def loop(remaining: List[HttpPath[?]], in: Any, offset: Int, acc: StringBuilder): Int =
+            remaining match
+                case Nil => offset
+                case head :: tail =>
+                    head match
+                        case HttpPath.Literal(s) =>
+                            if acc.nonEmpty && !s.startsWith("/") then discard(acc.append("/"))
+                            discard(acc.append(s))
+                            loop(tail, in, offset, acc)
+                        case capture: HttpPath.Capture[?, ?] =>
+                            val value = extractAt(in, offset)
+                            discard(acc.append("/").append(capture.serializeValue(value.asInstanceOf)))
+                            loop(tail, in, offset + 1, acc)
+                        case HttpPath.Concat(left, right) =>
+                            loop(left :: right :: tail, in, offset, acc)
+                        case HttpPath.Rest(_) =>
+                            val value = extractAt(in, offset)
+                            discard(acc.append("/").append(value))
+                            loop(tail, in, offset + 1, acc)
+        val acc        = new StringBuilder
+        val lastOffset = loop(path :: Nil, in, offset, acc)
+        cont(acc.toString, lastOffset)
+    end buildRoutePath
 
     private def extractAt(in: Any, idx: Int): Any =
         in match

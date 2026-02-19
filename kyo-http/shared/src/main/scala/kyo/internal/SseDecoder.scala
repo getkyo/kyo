@@ -31,36 +31,42 @@ final private[kyo] class SseDecoder[V] private (schema: Schema[V], lineDecoder: 
     private def parseEvent(block: String)(using Frame): Result[HttpError.ParseError, Maybe[HttpEvent[V]]] =
         val lines = block.split('\n')
 
-        @tailrec def loop(
-            i: Int,
-            dataLines: List[String],
-            event: Maybe[String],
-            id: Maybe[String],
-            retry: Maybe[Duration]
-        ): (List[String], Maybe[String], Maybe[String], Maybe[Duration]) =
-            if i >= lines.length then (dataLines.reverse, event, id, retry)
-            else
-                val line = lines(i)
-                if line.startsWith("data: ") then
-                    loop(i + 1, line.substring(6) :: dataLines, event, id, retry)
-                else if line.startsWith("event: ") then
-                    loop(i + 1, dataLines, Present(line.substring(7)), id, retry)
-                else if line.startsWith("id: ") then
-                    loop(i + 1, dataLines, event, Present(line.substring(4)), retry)
-                else if line.startsWith("retry: ") then
-                    val newRetry = Maybe.fromOption(line.substring(7).toLongOption) match
-                        case Present(ms) => Present(Duration.fromUnits(ms, Duration.Units.Millis))
-                        case Absent      => retry
-                    loop(i + 1, dataLines, event, id, newRetry)
+        inline def parseSseFields[A](inline cont: (List[String], Maybe[String], Maybe[String], Maybe[Duration]) => A): A =
+            @tailrec def loop(
+                i: Int,
+                dataLines: List[String],
+                event: Maybe[String],
+                id: Maybe[String],
+                retry: Maybe[Duration]
+            ): A =
+                if i >= lines.length then cont(dataLines.reverse, event, id, retry)
                 else
-                    // Per SSE spec, unknown fields and comment lines (starting with ':') are silently ignored
-                    loop(i + 1, dataLines, event, id, retry)
-                end if
+                    val line = lines(i)
+                    if line.startsWith("data: ") then
+                        loop(i + 1, line.substring(6) :: dataLines, event, id, retry)
+                    else if line.startsWith("event: ") then
+                        loop(i + 1, dataLines, Present(line.substring(7)), id, retry)
+                    else if line.startsWith("id: ") then
+                        loop(i + 1, dataLines, event, Present(line.substring(4)), retry)
+                    else if line.startsWith("retry: ") then
+                        val newRetry = Maybe.fromOption(line.substring(7).toLongOption) match
+                            case Present(ms) => Present(Duration.fromUnits(ms, Duration.Units.Millis))
+                            case Absent      => retry
+                        loop(i + 1, dataLines, event, id, newRetry)
+                    else
+                        // Per SSE spec, unknown fields and comment lines (starting with ':') are silently ignored
+                        loop(i + 1, dataLines, event, id, retry)
+                    end if
+            loop(0, Nil, Absent, Absent, Absent)
+        end parseSseFields
 
-        val (dataLines, event, id, retry) = loop(0, Nil, Absent, Absent, Absent)
-        if dataLines.isEmpty then Result.succeed(Absent)
-        else
-            schema.decode(dataLines.mkString("\n")).mapFailure(HttpError.ParseError(_)).map(v => Present(HttpEvent(v, event, id, retry)))
+        parseSseFields { (dataLines, event, id, retry) =>
+            if dataLines.isEmpty then Result.succeed(Absent)
+            else
+                schema.decode(dataLines.mkString("\n")).mapFailure(HttpError.ParseError(_)).map(v =>
+                    Present(HttpEvent(v, event, id, retry))
+                )
+        }
     end parseEvent
 
 end SseDecoder

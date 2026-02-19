@@ -249,6 +249,8 @@ final private[kyo] class HttpServerHandler(
         end if
     end handleExpectContinue
 
+    val disconnectedPanic = Result.Panic(new Exception("Client disconnected"))
+
     private[kyo] def invokeHandler(
         ctx: ChannelHandlerContext,
         request: kyo.HttpRequest[?],
@@ -313,7 +315,7 @@ final private[kyo] class HttpServerHandler(
         // Interrupt fiber if client disconnects
         discard {
             ctx.channel().closeFuture().addListener { (_: ChannelFuture) =>
-                discard(fiber.unsafe.interrupt(Result.Panic(new Exception("Client disconnected"))))
+                discard(fiber.unsafe.interrupt(disconnectedPanic))
             }
         }
 

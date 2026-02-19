@@ -2,7 +2,6 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 import kyo.internal.MultipartUtil
-import kyo.internal.UrlParser
 import scala.annotation.tailrec
 
 /** Immutable HTTP request used on both sides of the wire — client code builds and sends requests, server code receives and inspects them.
@@ -42,16 +41,14 @@ import scala.annotation.tailrec
   * @see
   *   [[kyo.Schema]]
   */
-final class HttpRequest[+B <: HttpBody] private (
-    val method: HttpRequest.Method,
-    private val _rawPath: String,
-    private val _rawQuery: Maybe[String],
-    private val _headers: HttpHeaders,
-    val body: B,
-    private val _contentType: Maybe[String],
-    private val _scheme: Maybe[String],
-    private val _pathParams: Map[String, String],
-    private val _strictCookieParsing: Boolean
+final case class HttpRequest[+B <: HttpBody] private (
+    method: HttpRequest.Method,
+    httpUrl: HttpUrl,
+    headers: HttpHeaders,
+    body: B,
+    contentType: Maybe[String],
+    pathParams: Map[String, String],
+    strictCookieParsing: Boolean
 ):
     import HttpRequest.*
 
@@ -59,69 +56,25 @@ final class HttpRequest[+B <: HttpBody] private (
 
     /** Returns the request URI (path and query string, without scheme/host). */
     def url: String =
-        _rawQuery match
-            case Present(q) => s"$_rawPath?$q"
-            case Absent     => _rawPath
+        httpUrl.rawQuery match
+            case Present(q) => s"${httpUrl.rawPath}?$q"
+            case Absent     => httpUrl.rawPath
     end url
 
     /** Returns just the path without query string. */
-    def path: String = _rawPath
+    def path: String = httpUrl.rawPath
 
     /** Returns the full URL including scheme and host. */
-    def fullUrl: String =
-        val pathAndQuery = url
-        _scheme match
-            case Present(s) =>
-                header("Host") match
-                    case Present(hostHeader) => s"$s://$hostHeader$pathAndQuery"
-                    case Absent              => pathAndQuery
-            case Absent =>
-                header("Host") match
-                    case Absent => pathAndQuery
-                    case Present(hostHeader) =>
-                        s"http://$hostHeader$pathAndQuery"
-        end match
-    end fullUrl
+    def fullUrl: String = httpUrl.full
 
-    def host: String =
-        header("Host").map { h =>
-            // Handle IPv6 addresses like [::1]:8080
-            if h.startsWith("[") then
-                val endBracket = h.indexOf(']')
-                if endBracket >= 0 then h.substring(1, endBracket) else h
-            else
-                val idx = h.indexOf(':')
-                if idx >= 0 then h.substring(0, idx) else h
-        }.getOrElse("")
+    def host: String = httpUrl.host
 
-    def port: Int =
-        header("Host").map { h =>
-            // Handle IPv6 addresses like [::1]:8080
-            val portIdx =
-                if h.startsWith("[") then
-                    val endBracket = h.indexOf(']')
-                    if endBracket >= 0 && endBracket + 1 < h.length && h.charAt(endBracket + 1) == ':' then
-                        endBracket + 1
-                    else -1
-                else
-                    h.indexOf(':')
-            if portIdx >= 0 then h.substring(portIdx + 1).toInt
-            else
-                // Use scheme to determine default port
-                if _scheme.contains("https") then HttpRequest.DefaultHttpsPort else HttpRequest.DefaultHttpPort
-            end if
-        }.getOrElse(HttpRequest.DefaultHttpPort)
+    def port: Int = httpUrl.port
 
     // --- Header accessors ---
 
-    def contentType: Maybe[String] =
-        // User-provided Content-Type header takes precedence over factory-set content type
-        header("Content-Type").orElse(_contentType)
-
     def header(name: String): Maybe[String] =
-        _headers.get(name)
-
-    def headers: HttpHeaders = _headers
+        headers.get(name)
 
     // --- Cookie accessors ---
 
@@ -133,7 +86,7 @@ final class HttpRequest[+B <: HttpBody] private (
 
     /** Parse cookies using server's default mode (LAX unless configured for STRICT). */
     def cookies: Span[Cookie] =
-        cookies(_strictCookieParsing)
+        cookies(strictCookieParsing)
 
     /** Parse cookies with explicit mode selection. */
     def cookies(strict: Boolean): Span[Cookie] =
@@ -145,13 +98,13 @@ final class HttpRequest[+B <: HttpBody] private (
     // --- Query parameter accessors ---
 
     def query(name: String): Maybe[String] =
-        _rawQuery match
+        httpUrl.rawQuery match
             case Absent     => Absent
             case Present(q) => parseQueryParam(q, name)
     end query
 
     def queryAll(name: String): Seq[String] =
-        _rawQuery match
+        httpUrl.rawQuery match
             case Absent     => Seq.empty
             case Present(q) => parseQueryParamAll(q, name)
     end queryAll
@@ -159,11 +112,9 @@ final class HttpRequest[+B <: HttpBody] private (
     // --- Path parameter accessors ---
 
     def pathParam(name: String): Maybe[String] =
-        _pathParams.get(name) match
+        pathParams.get(name) match
             case Some(v) => Present(v)
             case None    => Absent
-
-    def pathParams: Map[String, String] = _pathParams
 
     // --- Common header accessors ---
 
@@ -178,23 +129,18 @@ final class HttpRequest[+B <: HttpBody] private (
 
     // --- Body accessors (type-safe via =:= evidence) ---
 
-    /** Returns the request body as a String. Only available for buffered requests. */
     def bodyText(using ev: B <:< HttpBody.Bytes): String =
         val data = ev(body).data
         if data.isEmpty then "" else new String(data, StandardCharsets.UTF_8)
 
-    /** Returns the request body as a Span[Byte]. Only available for buffered requests. */
     def bodyBytes(using ev: B <:< HttpBody.Bytes): Span[Byte] = ev(body).span
 
-    /** Parses the request body as type A via Schema. Returns Abort[HttpError] on decode failure. Only available for buffered requests. */
     def bodyAs[A: Schema](using ev: B <:< HttpBody.Bytes)(using Frame): A < Abort[HttpError] =
         Abort.get(Schema[A].decode(bodyText).mapFailure(HttpError.ParseError(_)))
 
-    /** Returns multipart parts from the request body. Only available for buffered requests. */
     def parts(using ev: B <:< HttpBody.Bytes): Span[HttpRequest.Part] =
         contentType match
             case Present(ct) if ct.startsWith("multipart/form-data") =>
-                // Extract boundary from content type
                 MultipartUtil.extractBoundary(ct) match
                     case Present(boundary) =>
                         parseMultipart(ev(body).data, boundary)
@@ -204,103 +150,33 @@ final class HttpRequest[+B <: HttpBody] private (
                 Span.empty[HttpRequest.Part]
     end parts
 
-    /** Returns the body as a byte stream. Only available for streaming requests. */
     def bodyStream(using ev: B <:< HttpBody.Streamed)(using Frame): Stream[Span[Byte], Async & Scope] = ev(body).stream
 
-    /** Returns the body as a byte stream. Works for both buffered and streaming requests. */
     def bodyStreamUniversal(using Frame): Stream[Span[Byte], Async & Scope] =
         body.use(b => Stream.init(Chunk(b.span)), _.stream)
 
-    // --- Builder methods (return new immutable instance, preserve body type) ---
+    // --- Builder methods ---
 
-    /** Appends a header to the header list. Does NOT replace existing headers with the same name. */
     def addHeader(name: String, value: String): HttpRequest[B] =
-        new HttpRequest(
-            method,
-            _rawPath,
-            _rawQuery,
-            _headers.add(name, value),
-            body,
-            _contentType,
-            _scheme,
-            _pathParams,
-            _strictCookieParsing
-        )
+        copy(headers = headers.add(name, value))
 
-    /** Sets a header, replacing any existing values for the same name. */
     def setHeader(name: String, value: String): HttpRequest[B] =
-        new HttpRequest(
-            method,
-            _rawPath,
-            _rawQuery,
-            _headers.set(name, value),
-            body,
-            _contentType,
-            _scheme,
-            _pathParams,
-            _strictCookieParsing
-        )
+        copy(headers = headers.set(name, value))
 
-    /** Sets multiple headers, replacing any existing values for the same names. */
-    def setHeaders(headers: HttpHeaders): HttpRequest[B] =
-        var h = _headers
-        headers.foreach((name, value) => h = h.set(name, value))
-        new HttpRequest(
-            method,
-            _rawPath,
-            _rawQuery,
-            h,
-            body,
-            _contentType,
-            _scheme,
-            _pathParams,
-            _strictCookieParsing
-        )
+    def setHeaders(newHeaders: HttpHeaders): HttpRequest[B] =
+        var h = headers
+        newHeaders.foreach((name, value) => h = h.set(name, value))
+        copy(headers = h)
     end setHeaders
 
-    def addHeaders(headers: HttpHeaders): HttpRequest[B] =
-        new HttpRequest(
-            method,
-            _rawPath,
-            _rawQuery,
-            _headers.concat(headers),
-            body,
-            _contentType,
-            _scheme,
-            _pathParams,
-            _strictCookieParsing
-        )
+    def addHeaders(newHeaders: HttpHeaders): HttpRequest[B] =
+        copy(headers = headers.concat(newHeaders))
 
-    // --- Internal: for server to set path params after routing ---
+    def withHttpUrl(url: HttpUrl): HttpRequest[B] =
+        copy(httpUrl = url)
 
-    private[kyo] def withPathParam(name: String, value: String): HttpRequest[B] =
-        new HttpRequest(
-            method,
-            _rawPath,
-            _rawQuery,
-            _headers,
-            body,
-            _contentType,
-            _scheme,
-            _pathParams + (name -> value),
-            _strictCookieParsing
-        )
-
-    private[kyo] def withPathParams(params: Map[String, String]): HttpRequest[B] =
-        new HttpRequest(method, _rawPath, _rawQuery, _headers, body, _contentType, _scheme, _pathParams ++ params, _strictCookieParsing)
-
-    private[kyo] def withStrictCookieParsing(strict: Boolean): HttpRequest[B] =
-        new HttpRequest(method, _rawPath, _rawQuery, _headers, body, _contentType, _scheme, _pathParams, strict)
-
-    /** Update the URL (path+query) for redirect following. */
-    private[kyo] def withUrl(url: String): HttpRequest[B] =
-        UrlParser.splitPathQuery(url) { (p, q) =>
-            new HttpRequest(method, p, q, _headers, body, _contentType, _scheme, _pathParams, _strictCookieParsing)
-        }
-
-    /** Update the URL from pre-parsed path and query components. Avoids re-parsing. */
-    private[kyo] def withParsedUrl(rawPath: String, rawQuery: Maybe[String]): HttpRequest[B] =
-        new HttpRequest(method, rawPath, rawQuery, _headers, body, _contentType, _scheme, _pathParams, _strictCookieParsing)
+    def withStrictCookieParsing(v: Boolean): HttpRequest[B] =
+        copy(strictCookieParsing = v)
 
 end HttpRequest
 
@@ -365,19 +241,10 @@ object HttpRequest:
         contentType: Maybe[String] = Absent
     ): HttpRequest[HttpBody.Streamed] =
         require(url.nonEmpty, "URL cannot be empty")
-        UrlParser.parseUrlParts(url) { (scheme, host, port, rawPath, rawQuery) =>
-            new HttpRequest(
-                method = method,
-                _rawPath = rawPath,
-                _rawQuery = rawQuery,
-                _headers = withHostHeader(host, port, headers),
-                body = HttpBody.stream(body),
-                _contentType = contentType,
-                _scheme = scheme,
-                _pathParams = Map.empty,
-                _strictCookieParsing = false
-            )
-        }
+        val parsedUrl       = HttpUrl(url)
+        val resolvedHeaders = parsedUrl.ensureHostHeader(headers)
+        val resolvedCt      = resolvedHeaders.get("Content-Type").orElse(contentType)
+        HttpRequest(method, parsedUrl, resolvedHeaders, HttpBody.stream(body), resolvedCt, Map.empty, false)
     end stream
 
     // --- Generic factory methods ---
@@ -436,19 +303,8 @@ object HttpRequest:
         bodyData: Array[Byte],
         contentType: Maybe[String]
     ): HttpRequest[HttpBody.Bytes] =
-        UrlParser.splitPathQuery(uri) { (rawPath, rawQuery) =>
-            new HttpRequest(
-                method = method,
-                _rawPath = rawPath,
-                _rawQuery = rawQuery,
-                _headers = headers,
-                body = HttpBody(bodyData),
-                _contentType = contentType,
-                _scheme = Absent,
-                _pathParams = Map.empty,
-                _strictCookieParsing = false
-            )
-        }
+        val resolvedCt = headers.get("Content-Type").orElse(contentType)
+        HttpRequest(method, HttpUrl.fromUri(uri), headers, HttpBody(bodyData), resolvedCt, Map.empty, false)
     end fromRaw
 
     /** Create a buffered request from raw headers and body. Used by backend server implementations. */
@@ -458,20 +314,8 @@ object HttpRequest:
         headers: HttpHeaders,
         bodyData: Array[Byte]
     ): HttpRequest[HttpBody.Bytes] =
-        UrlParser.splitPathQuery(uri) { (rawPath, rawQuery) =>
-            val contentType = headers.get("content-type")
-            new HttpRequest(
-                method = method,
-                _rawPath = rawPath,
-                _rawQuery = rawQuery,
-                _headers = headers,
-                body = HttpBody(bodyData),
-                _contentType = contentType,
-                _scheme = Absent,
-                _pathParams = Map.empty,
-                _strictCookieParsing = false
-            )
-        }
+        val contentType = headers.get("content-type")
+        HttpRequest(method, HttpUrl.fromUri(uri), headers, HttpBody(bodyData), contentType, Map.empty, false)
     end fromRawHeaders
 
     /** Create a streaming request from raw headers with a body stream. Used by backend server implementations. */
@@ -481,20 +325,8 @@ object HttpRequest:
         headers: HttpHeaders,
         bodyStream: Stream[Span[Byte], Async & Scope]
     ): HttpRequest[HttpBody.Streamed] =
-        UrlParser.splitPathQuery(uri) { (rawPath, rawQuery) =>
-            val contentType = headers.get("content-type")
-            new HttpRequest(
-                method = method,
-                _rawPath = rawPath,
-                _rawQuery = rawQuery,
-                _headers = headers,
-                body = HttpBody.stream(bodyStream),
-                _contentType = contentType,
-                _scheme = Absent,
-                _pathParams = Map.empty,
-                _strictCookieParsing = false
-            )
-        }
+        val contentType = headers.get("content-type")
+        HttpRequest(method, HttpUrl.fromUri(uri), headers, HttpBody.stream(bodyStream), contentType, Map.empty, false)
     end fromRawStreaming
 
     // --- Private: core create method ---
@@ -508,36 +340,11 @@ object HttpRequest:
     ): HttpRequest[HttpBody.Bytes] =
         require(url.nonEmpty, "URL cannot be empty")
         require(!url.exists(c => c == ' ' || c == '\t' || c == '\n' || c == '\r'), s"URL contains whitespace: $url")
-        UrlParser.parseUrlParts(url) { (scheme, host, port, rawPath, rawQuery) =>
-            new HttpRequest(
-                method = method,
-                _rawPath = rawPath,
-                _rawQuery = rawQuery,
-                _headers = withHostHeader(host, port, headers),
-                body = HttpBody(bodyData),
-                _contentType = contentType,
-                _scheme = scheme,
-                _pathParams = Map.empty,
-                _strictCookieParsing = false
-            )
-        }
+        val parsedUrl       = HttpUrl(url)
+        val resolvedHeaders = parsedUrl.ensureHostHeader(headers)
+        val resolvedCt      = resolvedHeaders.get("Content-Type").orElse(contentType)
+        HttpRequest(method, parsedUrl, resolvedHeaders, HttpBody(bodyData), resolvedCt, Map.empty, false)
     end create
-
-    // --- Private helpers ---
-
-    private def withHostHeader(host: Maybe[String], port: Int, headers: HttpHeaders): HttpHeaders =
-        host match
-            case Present(h) if !headers.contains("Host") =>
-                // Wrap IPv6 addresses in brackets for Host header (if not already wrapped)
-                val hostPart = if h.startsWith("[") then h else if h.contains(':') then s"[$h]" else h
-                val hostValue =
-                    if port > 0 && port != HttpRequest.DefaultHttpPort && port != HttpRequest.DefaultHttpsPort then
-                        s"$hostPart:$port"
-                    else
-                        hostPart
-                headers.add("Host", hostValue)
-            case _ => headers
-    end withHostHeader
 
     // --- Cookie parsing (pure Scala, no Netty) ---
 
@@ -709,9 +516,6 @@ object HttpRequest:
         else Span.fromUnsafe(parts.toArray)
 
     // --- Constants ---
-
-    private[kyo] inline def DefaultHttpPort  = 80
-    private[kyo] inline def DefaultHttpsPort = 443
 
     // --- Method type ---
 
