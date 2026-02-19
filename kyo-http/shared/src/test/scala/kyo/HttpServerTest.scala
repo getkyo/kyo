@@ -2180,14 +2180,14 @@ class HttpServerTest extends Test:
             val handler = HttpHandler.post("upload") { in =>
                 val parts = in.request.parts
                 val info = parts.map { p =>
-                    s"${p.name}:${p.filename.getOrElse("none")}:${new String(p.content, "UTF-8")}"
+                    s"${p.name}:${p.filename.getOrElse("none")}:${new String(p.data.toArrayUnsafe, "UTF-8")}"
                 }.mkString(", ")
                 HttpResponse.ok(s"parts: $info")
             }
             startTestServer(handler).map { port =>
                 val parts = Seq(
-                    HttpRequest.Part("file", Present("data.csv"), Present("text/csv"), "a,b,c\n1,2,3".getBytes("UTF-8")),
-                    HttpRequest.Part("description", Absent, Present("text/plain"), "My data file".getBytes("UTF-8"))
+                    HttpRequest.Part("file", Present("data.csv"), Present("text/csv"), Span.fromUnsafe("a,b,c\n1,2,3".getBytes("UTF-8"))),
+                    HttpRequest.Part("description", Absent, Present("text/plain"), Span.fromUnsafe("My data file".getBytes("UTF-8")))
                 )
                 val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
                 HttpClient.send(request).map { r =>

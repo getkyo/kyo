@@ -202,6 +202,21 @@ class SchemaTest extends Test:
         }
     }
 
+    "case class with Seq field" - {
+        "encode/decode roundtrip" in {
+            val schema = Schema[SeqContainer]
+            val value  = SeqContainer(Seq("a", "b", "c"))
+            assert(schema.decode(schema.encode(value)) == Result.succeed(value))
+        }
+
+        "empty Seq" in {
+            val schema = Schema[SeqContainer]
+            val value  = SeqContainer(Seq.empty)
+            assert(schema.decode(schema.encode(value)) == Result.succeed(value))
+        }
+    }
+
     case class TestItem(id: Int, name: String, price: Double) derives Schema, CanEqual
+    case class SeqContainer(items: Seq[String]) derives Schema, CanEqual
 
 end SchemaTest

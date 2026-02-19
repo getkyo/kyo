@@ -663,7 +663,7 @@ object HttpRequest:
                                     Array.empty[Byte]
 
                             val nextAcc =
-                                if name.nonEmpty then Part(name, filename, partContentType, content) :: acc
+                                if name.nonEmpty then Part(name, filename, partContentType, Span.fromUnsafe(content)) :: acc
                                 else acc
                             loop(nextBoundary + boundaryBytes.length, nextAcc)
                         end if
@@ -753,7 +753,7 @@ object HttpRequest:
         name: String,
         filename: Maybe[String],
         contentType: Maybe[String],
-        content: Array[Byte]
+        data: Span[Byte]
     ) derives CanEqual:
         require(name.nonEmpty, "Part name cannot be empty")
     end Part
@@ -794,7 +794,7 @@ object HttpRequest:
                 case Absent => ()
             end match
             out.write(crlfBytes)
-            out.write(part.content)
+            out.write(part.data.toArrayUnsafe)
             out.write(crlfBytes)
         }
         out.write(boundaryPrefixBytes)

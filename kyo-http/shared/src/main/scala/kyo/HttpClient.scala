@@ -81,7 +81,7 @@ final class HttpClient private (
                         val effectiveUrl = HttpClient.buildEffectiveUrl(config, currentReq)
                         HttpClient.parseUrl(effectiveUrl) { (host, port, ssl, rawPath, rawQuery) =>
                             pool.connectDirect(host, port, ssl, config.connectTimeout).map { conn =>
-                                val reqWithPath = currentReq.withParsedUrl(rawPath, rawQuery)
+                                val reqWithPath = HttpClient.withDefaultHeaders(currentReq.withParsedUrl(rawPath, rawQuery))
                                 conn.stream(reqWithPath).map { response =>
                                     val code = response.status.code
                                     if config.followRedirects && (code == 301 || code == 302) &&
@@ -181,13 +181,6 @@ object HttpClient:
 
     def delete[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpError]) =
         send(HttpRequest.delete(url)).map(decodeResponse[A])
-
-    def delete(url: String)(using Frame): Unit < (Async & Abort[HttpError]) =
-        send(HttpRequest.delete(url)).map { response =>
-            if response.status.isError then
-                Abort.fail[HttpError](HttpError.StatusError(response.status, response.bodyText))
-            else ()
-        }
 
     def patch[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
         send(HttpRequest.patch(url, body)).map(decodeResponse[A])
@@ -687,6 +680,12 @@ object HttpClient:
                 resp
 
     // Pipeline: send via pool → apply timeout → follow redirects → retry
+    private val defaultUserAgent = "kyo-http/1.0"
+
+    private def withDefaultHeaders[B <: HttpBody](request: HttpRequest[B]): HttpRequest[B] =
+        if request.header("User-Agent").isEmpty then request.addHeader("User-Agent", defaultUserAgent)
+        else request
+
     private def sendWithPolicies(
         pool: ConnectionPool,
         url: String,
@@ -697,7 +696,7 @@ object HttpClient:
         attemptCount: Int = 1
     )(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         val currentSchedule = retrySchedule.orElse(config.retrySchedule)
-        applyTimeout(config, sendViaPool(pool, url, request, config)).map { resp =>
+        applyTimeout(config, sendViaPool(pool, url, withDefaultHeaders(request), config)).map { resp =>
             handleRedirect(pool, url, request, config, resp, redirectCount, currentSchedule, attemptCount)
         }
     end sendWithPolicies
@@ -708,7 +707,6 @@ object HttpClient:
         finalizer: Unit < Async
     )(using Frame): HttpResponse[HttpBody.Streamed] =
         val original = response.body.stream
-        // Avoid inline Stream.apply to prevent Scope from leaking into the enclosing effect type.
         val scoped = new Stream[Span[Byte], Async & Scope]:
             def emit: Unit < (Emit[Chunk[Span[Byte]]] & Async & Scope) =
                 Scope.ensure(finalizer).andThen(original.emit)

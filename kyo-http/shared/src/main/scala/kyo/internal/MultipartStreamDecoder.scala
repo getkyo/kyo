@@ -87,7 +87,7 @@ final private[kyo] class MultipartStreamDecoder private (boundary: String):
                         buffer = sliceFrom(buffer, nextBoundary + crlfBytes.length)
 
                         if name.nonEmpty then
-                            Present(HttpRequest.Part(name, filename, partContentType, content))
+                            Present(HttpRequest.Part(name, filename, partContentType, Span.fromUnsafe(content)))
                         else
                             tryParsePart()
                         end if

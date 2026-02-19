@@ -17,11 +17,11 @@ class HttpStreamingMultipartTest extends Test:
                 if chunk.isEmpty then "no parts"
                 else
                     val part = chunk(0)
-                    s"name=${part.name},filename=${part.filename.getOrElse("none")},size=${part.content.length}"
+                    s"name=${part.name},filename=${part.filename.getOrElse("none")},size=${part.data.size}"
             }
         }
         startUploadServer(handler).map { port =>
-            val parts   = Seq(Part("file", Present("test.txt"), Present("text/plain"), "hello world".getBytes("UTF-8")))
+            val parts   = Seq(Part("file", Present("test.txt"), Present("text/plain"), Span.fromUnsafe("hello world".getBytes("UTF-8"))))
             val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
                 assertStatus(response, HttpStatus.OK)
@@ -36,15 +36,15 @@ class HttpStreamingMultipartTest extends Test:
             .response(_.bodyText)
         val handler = route.handle { in =>
             in.parts.run.map { chunk =>
-                val summary = (0 until chunk.size).map(i => s"${chunk(i).name}:${chunk(i).content.length}").mkString(",")
+                val summary = (0 until chunk.size).map(i => s"${chunk(i).name}:${chunk(i).data.size}").mkString(",")
                 s"count=${chunk.size},$summary"
             }
         }
         startUploadServer(handler).map { port =>
             val parts = Seq(
-                Part("file1", Present("a.txt"), Present("text/plain"), "aaa".getBytes("UTF-8")),
-                Part("file2", Present("b.txt"), Present("text/plain"), "bbbbbb".getBytes("UTF-8")),
-                Part("file3", Present("c.txt"), Present("text/plain"), "c".getBytes("UTF-8"))
+                Part("file1", Present("a.txt"), Present("text/plain"), Span.fromUnsafe("aaa".getBytes("UTF-8"))),
+                Part("file2", Present("b.txt"), Present("text/plain"), Span.fromUnsafe("bbbbbb".getBytes("UTF-8"))),
+                Part("file3", Present("c.txt"), Present("text/plain"), Span.fromUnsafe("c".getBytes("UTF-8")))
             )
             val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
@@ -63,7 +63,7 @@ class HttpStreamingMultipartTest extends Test:
                 val fields = (0 until chunk.size).map { i =>
                     val p       = chunk(i)
                     val isFile  = p.filename.isDefined
-                    val content = new String(p.content, "UTF-8")
+                    val content = new String(p.data.toArrayUnsafe, "UTF-8")
                     s"${p.name}:${if isFile then "file" else "field"}=${content}"
                 }.mkString(";")
                 fields
@@ -71,9 +71,9 @@ class HttpStreamingMultipartTest extends Test:
         }
         startUploadServer(handler).map { port =>
             val parts = Seq(
-                Part("title", Absent, Absent, "My Document".getBytes("UTF-8")),
-                Part("file", Present("doc.txt"), Present("text/plain"), "file content".getBytes("UTF-8")),
-                Part("tags", Absent, Absent, "important".getBytes("UTF-8"))
+                Part("title", Absent, Absent, Span.fromUnsafe("My Document".getBytes("UTF-8"))),
+                Part("file", Present("doc.txt"), Present("text/plain"), Span.fromUnsafe("file content".getBytes("UTF-8"))),
+                Part("tags", Absent, Absent, Span.fromUnsafe("important".getBytes("UTF-8")))
             )
             val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
@@ -90,13 +90,13 @@ class HttpStreamingMultipartTest extends Test:
         val handler = route.handle { in =>
             in.parts.run.map { chunk =>
                 if chunk.isEmpty then "no parts"
-                else s"size=${chunk(0).content.length}"
+                else s"size=${chunk(0).data.size}"
             }
         }
         startUploadServer(handler).map { port =>
             val largeContent = new Array[Byte](100000)
             java.util.Arrays.fill(largeContent, 'A'.toByte)
-            val parts   = Seq(Part("bigfile", Present("large.bin"), Present("application/octet-stream"), largeContent))
+            val parts   = Seq(Part("bigfile", Present("large.bin"), Present("application/octet-stream"), Span.fromUnsafe(largeContent)))
             val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
                 assertStatus(response, HttpStatus.OK)
@@ -116,7 +116,7 @@ class HttpStreamingMultipartTest extends Test:
             }
         }
         startUploadServer(handler).map { port =>
-            val parts   = Seq(Part("photo", Present("img.png"), Present("image/png"), "pixels".getBytes))
+            val parts   = Seq(Part("photo", Present("img.png"), Present("image/png"), Span.fromUnsafe("pixels".getBytes)))
             val request = HttpRequest.multipart(s"http://localhost:$port/uploads/photos", parts)
             HttpClient.send(request).map { response =>
                 assertStatus(response, HttpStatus.OK)
@@ -151,13 +151,13 @@ class HttpStreamingMultipartTest extends Test:
             in.parts.run.map { chunk =>
                 if chunk.isEmpty then "no parts"
                 else
-                    val bytes = chunk(0).content
-                    bytes.map(_ & 0xff).mkString(",")
+                    val bytes = chunk(0).data
+                    bytes.toArrayUnsafe.toSeq.map(_ & 0xff).mkString(",")
             }
         }
         startUploadServer(handler).map { port =>
             val binaryData = Array[Byte](0x00, 0x01, 0x7f, 0x80.toByte, 0xff.toByte, 0x0d, 0x0a)
-            val parts      = Seq(Part("data", Present("binary.dat"), Present("application/octet-stream"), binaryData))
+            val parts      = Seq(Part("data", Present("binary.dat"), Present("application/octet-stream"), Span.fromUnsafe(binaryData)))
             val request    = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
             HttpClient.send(request).map { response =>
                 assertStatus(response, HttpStatus.OK)

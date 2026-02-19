@@ -31,7 +31,7 @@ class MultipartStreamDecoderTest extends Test:
         val parts    = decoder.decode(Span.fromUnsafe(body))
         assert(parts.size == 1)
         assert(parts(0).name == "field1")
-        assert(new String(parts(0).content, "UTF-8") == "hello")
+        assert(new String(parts(0).data.toArrayUnsafe, "UTF-8") == "hello")
         assert(parts(0).filename == Absent)
         assert(parts(0).contentType == Absent)
         succeed
@@ -48,7 +48,7 @@ class MultipartStreamDecoderTest extends Test:
         val parts = allParts.result()
         assert(parts.size == 1)
         assert(parts(0).name == "field1")
-        assert(new String(parts(0).content, "UTF-8") == "hello")
+        assert(new String(parts(0).data.toArrayUnsafe, "UTF-8") == "hello")
         succeed
     }
 
@@ -66,11 +66,11 @@ class MultipartStreamDecoderTest extends Test:
         val parts   = decoder.decode(Span.fromUnsafe(body))
         assert(parts.size == 3)
         assert(parts(0).name == "name")
-        assert(new String(parts(0).content, "UTF-8") == "Alice")
+        assert(new String(parts(0).data.toArrayUnsafe, "UTF-8") == "Alice")
         assert(parts(1).name == "age")
-        assert(new String(parts(1).content, "UTF-8") == "30")
+        assert(new String(parts(1).data.toArrayUnsafe, "UTF-8") == "30")
         assert(parts(2).name == "city")
-        assert(new String(parts(2).content, "UTF-8") == "NYC")
+        assert(new String(parts(2).data.toArrayUnsafe, "UTF-8") == "NYC")
         succeed
     }
 
@@ -92,9 +92,9 @@ class MultipartStreamDecoderTest extends Test:
         val all     = parts1 ++ parts2
         assert(all.size == 2)
         assert(all(0).name == "a")
-        assert(new String(all(0).content, "UTF-8") == "AAA")
+        assert(new String(all(0).data.toArrayUnsafe, "UTF-8") == "AAA")
         assert(all(1).name == "b")
-        assert(new String(all(1).content, "UTF-8") == "BBB")
+        assert(new String(all(1).data.toArrayUnsafe, "UTF-8") == "BBB")
         succeed
     }
 
@@ -113,7 +113,7 @@ class MultipartStreamDecoderTest extends Test:
         val all         = parts1 ++ parts2
         assert(all.size == 1)
         assert(all(0).name == "x")
-        assert(new String(all(0).content, "UTF-8") == "data")
+        assert(new String(all(0).data.toArrayUnsafe, "UTF-8") == "data")
         succeed
     }
 
@@ -134,7 +134,7 @@ class MultipartStreamDecoderTest extends Test:
         assert(all(0).name == "field")
         assert(all(0).filename == Present("file.txt"))
         assert(all(0).contentType == Present("text/plain"))
-        assert(new String(all(0).content, "UTF-8") == "content")
+        assert(new String(all(0).data.toArrayUnsafe, "UTF-8") == "content")
         succeed
     }
 
@@ -145,7 +145,7 @@ class MultipartStreamDecoderTest extends Test:
         val parts    = decoder.decode(Span.fromUnsafe(body))
         assert(parts.size == 1)
         assert(parts(0).name == "empty")
-        assert(parts(0).content.isEmpty)
+        assert(parts(0).data.isEmpty)
         succeed
     }
 
@@ -158,7 +158,7 @@ class MultipartStreamDecoderTest extends Test:
         assert(parts(0).name == "photo")
         assert(parts(0).filename == Present("sunset.jpg"))
         assert(parts(0).contentType == Present("image/jpeg"))
-        assert(parts(0).content.toSeq == Seq[Byte](1, 2, 3))
+        assert(parts(0).data.toArrayUnsafe.toSeq == Seq[Byte](1, 2, 3))
         succeed
     }
 
@@ -181,7 +181,7 @@ class MultipartStreamDecoderTest extends Test:
         val decoder    = MultipartStreamDecoder.init(boundary)
         val parts      = decoder.decode(Span.fromUnsafe(body))
         assert(parts.size == 1)
-        assert(parts(0).content.toSeq == binaryData.toSeq)
+        assert(parts(0).data.toArrayUnsafe.toSeq == binaryData.toSeq)
         succeed
     }
 
@@ -207,7 +207,7 @@ class MultipartStreamDecoderTest extends Test:
         val parts   = decoder.decode(Span.fromUnsafe(combined))
         assert(parts.size == 1)
         assert(parts(0).name == "field")
-        assert(new String(parts(0).content, "UTF-8") == "value")
+        assert(new String(parts(0).data.toArrayUnsafe, "UTF-8") == "value")
         succeed
     }
 
@@ -221,8 +221,8 @@ class MultipartStreamDecoderTest extends Test:
         assert(parts.size == 1)
         assert(parts(0).name == "file")
         assert(parts(0).filename == Present("large.bin"))
-        assert(parts(0).content.length == largeData.length)
-        assert(parts(0).content.toSeq == largeData.toSeq)
+        assert(parts(0).data.size == largeData.length)
+        assert(parts(0).data.toArrayUnsafe.toSeq == largeData.toSeq)
         succeed
     }
 
@@ -243,8 +243,8 @@ class MultipartStreamDecoderTest extends Test:
         end while
         val parts = allParts.result()
         assert(parts.size == 1)
-        assert(parts(0).content.length == largeData.length)
-        assert(parts(0).content.toSeq == largeData.toSeq)
+        assert(parts(0).data.size == largeData.length)
+        assert(parts(0).data.toArrayUnsafe.toSeq == largeData.toSeq)
         succeed
     }
 
@@ -266,7 +266,7 @@ class MultipartStreamDecoderTest extends Test:
         val parts        = decoder.decode(Span.fromUnsafe(body))
         assert(parts.size == 1)
         assert(parts(0).name == "real")
-        assert(parts(0).content.toSeq == trickContent.toSeq)
+        assert(parts(0).data.toArrayUnsafe.toSeq == trickContent.toSeq)
         succeed
     }
 
@@ -279,7 +279,7 @@ class MultipartStreamDecoderTest extends Test:
         assert(parts.size == 50)
         (1 to 50).foreach { i =>
             assert(parts(i - 1).name == s"field$i")
-            assert(new String(parts(i - 1).content, "UTF-8") == s"value$i")
+            assert(new String(parts(i - 1).data.toArrayUnsafe, "UTF-8") == s"value$i")
         }
         succeed
     }
@@ -300,11 +300,11 @@ class MultipartStreamDecoderTest extends Test:
         assert(parts.size == 3)
         assert(parts(0).name == "title")
         assert(parts(0).filename == Absent)
-        assert(new String(parts(0).content, "UTF-8") == "My Photo")
+        assert(new String(parts(0).data.toArrayUnsafe, "UTF-8") == "My Photo")
         assert(parts(2).name == "image")
         assert(parts(2).filename == Present("sunset.png"))
         assert(parts(2).contentType == Present("image/png"))
-        assert(parts(2).content.toSeq == binaryData.toSeq)
+        assert(parts(2).data.toArrayUnsafe.toSeq == binaryData.toSeq)
         succeed
     }
 

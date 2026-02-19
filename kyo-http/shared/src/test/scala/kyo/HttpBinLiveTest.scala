@@ -233,7 +233,7 @@ class HttpBinLiveTest extends Test:
 
     "POST - multipart body" in run {
         val parts = Seq(
-            HttpRequest.Part("file", Present("test.txt"), Present("text/plain"), "hello world".getBytes("UTF-8"))
+            HttpRequest.Part("file", Present("test.txt"), Present("text/plain"), Span.fromUnsafe("hello world".getBytes("UTF-8")))
         )
         val request = HttpRequest.multipart(s"$base/post", parts)
         HttpClient.send(request).map { response =>

@@ -302,6 +302,28 @@ class HttpClientTest extends Test:
                     }
                 }
             }
+
+            "delete[Unit] for 204 No Content" in run {
+                val handler = HttpHandler.delete("/users/1") { _ =>
+                    HttpResponse.noContent
+                }
+                startTestServer(handler).map { port =>
+                    HttpClient.delete[Unit](s"http://localhost:$port/users/1").map { _ =>
+                        succeed
+                    }
+                }
+            }
+
+            "delete[Unit] fails on error status" in run {
+                val handler = HttpHandler.delete("/users/1") { _ =>
+                    HttpResponse.notFound("not found")
+                }
+                startTestServer(handler).map { port =>
+                    Abort.run[HttpError](HttpClient.delete[Unit](s"http://localhost:$port/users/1")).map { result =>
+                        assert(result.isFailure)
+                    }
+                }
+            }
         }
 
         "send with HttpRequest" - {
@@ -1291,13 +1313,13 @@ class HttpClientTest extends Test:
                 .request(_.bodyMultipart)
                 .response(_.bodyText)
             val handler = route.handle { in =>
-                val summary = in.parts.map(p => s"${p.name}:${p.content.length}").mkString(",")
+                val summary = in.parts.map(p => s"${p.name}:${p.data.size}").mkString(",")
                 s"count=${in.parts.size},$summary"
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     val parts = Seq(
-                        HttpRequest.Part("file", Present("test.txt"), Present("text/plain"), "hello".getBytes("UTF-8"))
+                        HttpRequest.Part("file", Present("test.txt"), Present("text/plain"), Span.fromUnsafe("hello".getBytes("UTF-8")))
                     )
                     HttpClient.call(route, parts)
                 }.map { result =>
@@ -1317,8 +1339,8 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     val parts = Seq(
-                        HttpRequest.Part("file", Present("a.txt"), Present("text/plain"), "aaa".getBytes("UTF-8")),
-                        HttpRequest.Part("file2", Present("b.txt"), Present("text/plain"), "bbb".getBytes("UTF-8"))
+                        HttpRequest.Part("file", Present("a.txt"), Present("text/plain"), Span.fromUnsafe("aaa".getBytes("UTF-8"))),
+                        HttpRequest.Part("file2", Present("b.txt"), Present("text/plain"), Span.fromUnsafe("bbb".getBytes("UTF-8")))
                     )
                     HttpClient.call(route, ("photos", parts))
                 }.map { result =>
@@ -1337,7 +1359,12 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     val parts = Seq(
-                        HttpRequest.Part("doc", Present("doc.pdf"), Present("application/pdf"), "pdf-data".getBytes("UTF-8"))
+                        HttpRequest.Part(
+                            "doc",
+                            Present("doc.pdf"),
+                            Present("application/pdf"),
+                            Span.fromUnsafe("pdf-data".getBytes("UTF-8"))
+                        )
                     )
                     HttpClient.call(route, ("important", parts))
                 }.map { result =>
@@ -1352,12 +1379,12 @@ class HttpClientTest extends Test:
                 .response(_.bodyText)
             val handler = route.handle { in =>
                 val p = in.parts.head
-                s"name=${p.name},filename=${p.filename.getOrElse("none")},ct=${p.contentType.getOrElse("none")},size=${p.content.length}"
+                s"name=${p.name},filename=${p.filename.getOrElse("none")},ct=${p.contentType.getOrElse("none")},size=${p.data.size}"
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     val parts = Seq(
-                        HttpRequest.Part("photo", Present("sunset.jpg"), Present("image/jpeg"), Array[Byte](1, 2, 3, 4, 5))
+                        HttpRequest.Part("photo", Present("sunset.jpg"), Present("image/jpeg"), Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5)))
                     )
                     HttpClient.call(route, parts)
                 }.map { result =>
@@ -1373,15 +1400,15 @@ class HttpClientTest extends Test:
             val handler = route.handle { in =>
                 in.parts.map { p =>
                     val isFile = p.filename.isDefined
-                    val value  = new String(p.content, "UTF-8")
+                    val value  = new String(p.data.toArrayUnsafe, "UTF-8")
                     s"${p.name}:${if isFile then "file" else "field"}=$value"
                 }.mkString(";")
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     val parts = Seq(
-                        HttpRequest.Part("title", Absent, Absent, "My Doc".getBytes("UTF-8")),
-                        HttpRequest.Part("file", Present("doc.txt"), Present("text/plain"), "content".getBytes("UTF-8"))
+                        HttpRequest.Part("title", Absent, Absent, Span.fromUnsafe("My Doc".getBytes("UTF-8"))),
+                        HttpRequest.Part("file", Present("doc.txt"), Present("text/plain"), Span.fromUnsafe("content".getBytes("UTF-8")))
                     )
                     HttpClient.call(route, parts)
                 }.map { result =>

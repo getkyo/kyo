@@ -33,50 +33,50 @@ class HttpRequestTest extends Test:
     "Part" - {
 
         "construction with all fields" in {
-            val part = Part("file", Present("doc.pdf"), Present("application/pdf"), Array(1, 2, 3))
+            val part = Part("file", Present("doc.pdf"), Present("application/pdf"), Span.fromUnsafe(Array(1, 2, 3)))
             assert(part.name == "file")
             assert(part.filename == Present("doc.pdf"))
             assert(part.contentType == Present("application/pdf"))
-            assert(part.content.length == 3)
+            assert(part.data.size == 3)
         }
 
         "construction with minimal fields" in {
-            val part = Part("data", Absent, Absent, Array.empty)
+            val part = Part("data", Absent, Absent, Span.fromUnsafe(Array.empty))
             assert(part.name == "data")
             assert(part.filename == Absent)
             assert(part.contentType == Absent)
         }
 
         "empty content" in {
-            val part = Part("empty", Absent, Absent, Array.empty)
-            assert(part.content.isEmpty)
+            val part = Part("empty", Absent, Absent, Span.fromUnsafe(Array.empty))
+            assert(part.data.isEmpty)
         }
 
         "binary content preserved" in {
             val bytes = Array[Byte](0, 1, 127, -128, -1)
-            val part  = Part("binary", Absent, Absent, bytes)
-            assert(part.content.sameElements(bytes))
+            val part  = Part("binary", Absent, Absent, Span.fromUnsafe(bytes))
+            assert(part.data.toArrayUnsafe.toSeq == bytes.toSeq)
         }
 
         "large content" in {
             val bytes = new Array[Byte](1024 * 1024) // 1MB
-            val part  = Part("large", Absent, Absent, bytes)
-            assert(part.content.length == 1024 * 1024)
+            val part  = Part("large", Absent, Absent, Span.fromUnsafe(bytes))
+            assert(part.data.size == 1024 * 1024)
         }
 
         "special characters in name" in {
-            val part = Part("file-name_123.txt", Absent, Absent, Array.empty)
+            val part = Part("file-name_123.txt", Absent, Absent, Span.fromUnsafe(Array.empty))
             assert(part.name == "file-name_123.txt")
         }
 
         "unicode in filename" in {
-            val part = Part("file", Present("文档.pdf"), Absent, Array.empty)
+            val part = Part("file", Present("文档.pdf"), Absent, Span.fromUnsafe(Array.empty))
             assert(part.filename == Present("文档.pdf"))
         }
 
         "empty name throws" in {
             assertThrows[IllegalArgumentException] {
-                Part("", Absent, Absent, Array.empty)
+                Part("", Absent, Absent, Span.fromUnsafe(Array.empty))
             }
         }
     }
@@ -487,6 +487,25 @@ class HttpRequestTest extends Test:
             "returns Absent for missing param" in {
                 val request = HttpRequest.get("http://example.com/users")
                 assert(request.pathParam("id") == Absent)
+            }
+        }
+
+        "initBytes" - {
+            "accepts Array[Byte]" in {
+                val request = HttpRequest.initBytes(Method.POST, "http://example.com", "hello".getBytes, HttpHeaders.empty, "text/plain")
+                assert(request.bodyText == "hello")
+            }
+
+            "accepts Span[Byte]" in {
+                val request =
+                    HttpRequest.initBytes(
+                        Method.POST,
+                        "http://example.com",
+                        Span.fromUnsafe("hello".getBytes),
+                        HttpHeaders.empty,
+                        "text/plain"
+                    )
+                assert(request.bodyText == "hello")
             }
         }
 

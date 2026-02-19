@@ -45,13 +45,13 @@ object Schema:
         new Schema[A]:
             val zpiSchema: zio.schema.Schema[A] = zs
 
-    // Make Seq visible to zio-schema's DeriveSchema macro for case class field derivation
-    private given [A](using zs: zio.schema.Schema[A]): zio.schema.Schema[Seq[A]] =
-        zio.schema.Schema.list(using zs).transform(_.toSeq, _.toList)
-
     // Derivation - delegates to zio-schema
+    // The local given is inlined at the call site, making Seq visible to DeriveSchema.gen's implicit search
     inline given derived[A](using m: Mirror.Of[A]): Schema[A] =
+        given [B](using zs: zio.schema.Schema[B]): zio.schema.Schema[Seq[B]] =
+            zio.schema.Schema.list(using zs).transform(_.toSeq, _.toList)
         wrap(zio.schema.DeriveSchema.gen[A])
+    end derived
 
     // Primitive instances
     given Schema[Int]     = wrap(zio.schema.Schema[Int])
