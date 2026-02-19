@@ -137,7 +137,7 @@ object HttpRoute:
         def query[A](
             using
             opt: Optionality[A],
-            codec: Codec[opt.Value]
+            codec: HttpParamCodec[opt.Value]
         )[N <: String & Singleton](
             name: N,
             default: Option[opt.Value] = None,
@@ -145,13 +145,19 @@ object HttpRoute:
             description: String = ""
         )(using UniqueRequestField[In, N]): RequestDef[Row.Append[In, N, A]] =
             val wn = if wireName.isEmpty then name else wireName
-            addIn[N, A](InputField.Query(wn, codec.asInstanceOf[Codec[Any]], default.fold(Absent)(Present(_)), opt.isOptional, description))
+            addIn[N, A](InputField.Query(
+                wn,
+                codec.asInstanceOf[HttpParamCodec[Any]],
+                default.fold(Absent)(Present(_)),
+                opt.isOptional,
+                description
+            ))
         end query
 
         def header[A](
             using
             opt: Optionality[A],
-            codec: Codec[opt.Value]
+            codec: HttpParamCodec[opt.Value]
         )[N <: String & Singleton](
             name: N,
             default: Option[opt.Value] = None,
@@ -161,7 +167,7 @@ object HttpRoute:
             val wn = if wireName.isEmpty then name else wireName
             addIn[N, A](InputField.Header(
                 wn,
-                codec.asInstanceOf[Codec[Any]],
+                codec.asInstanceOf[HttpParamCodec[Any]],
                 default.fold(Absent)(Present(_)),
                 opt.isOptional,
                 description
@@ -171,7 +177,7 @@ object HttpRoute:
         def cookie[A](
             using
             opt: Optionality[A],
-            codec: Codec[opt.Value]
+            codec: HttpParamCodec[opt.Value]
         )[N <: String & Singleton](
             name: N,
             default: Option[opt.Value] = None,
@@ -181,7 +187,7 @@ object HttpRoute:
             val wn = if wireName.isEmpty then name else wireName
             addIn[N, A](InputField.Cookie(
                 wn,
-                codec.asInstanceOf[Codec[Any]],
+                codec.asInstanceOf[HttpParamCodec[Any]],
                 default.fold(Absent)(Present(_)),
                 opt.isOptional,
                 description
@@ -354,14 +360,14 @@ object HttpRoute:
         def header[A](
             using
             opt: Optionality[A],
-            codec: Codec[opt.Value]
+            codec: HttpParamCodec[opt.Value]
         )[N <: String & Singleton](
             name: N,
             wireName: String = "",
             description: String = ""
         )(using UniqueResponseField[Out, N]): ResponseDef[Row.Append[Out, N, A], Err] =
             val wn = if wireName.isEmpty then name else wireName
-            addOut[N, A](OutputField.Header(wn, codec.asInstanceOf[Codec[Any]], opt.isOptional, description))
+            addOut[N, A](OutputField.Header(wn, codec.asInstanceOf[HttpParamCodec[Any]], opt.isOptional, description))
         end header
 
         // --- Response Cookies ---
@@ -369,7 +375,7 @@ object HttpRoute:
         def cookie[A](
             using
             opt: Optionality[A],
-            codec: Codec[opt.Value]
+            codec: HttpParamCodec[opt.Value]
         )[N <: String & Singleton](
             name: N,
             attributes: CookieAttributes = CookieAttributes.default,
@@ -377,7 +383,7 @@ object HttpRoute:
             description: String = ""
         )(using UniqueResponseField[Out, N]): ResponseDef[Row.Append[Out, N, A], Err] =
             val wn = if wireName.isEmpty then name else wireName
-            addOut[N, A](OutputField.Cookie(wn, codec.asInstanceOf[Codec[Any]], opt.isOptional, attributes, description))
+            addOut[N, A](OutputField.Cookie(wn, codec.asInstanceOf[HttpParamCodec[Any]], opt.isOptional, attributes, description))
         end cookie
 
         // --- Errors ---
@@ -438,9 +444,9 @@ object HttpRoute:
     // ==================== Field descriptors (private[kyo]) ====================
 
     private[kyo] enum InputField:
-        case Query(name: String, codec: Codec[Any], default: Maybe[Any], optional: Boolean, description: String)
-        case Header(name: String, codec: Codec[Any], default: Maybe[Any], optional: Boolean, description: String)
-        case Cookie(name: String, codec: Codec[Any], default: Maybe[Any], optional: Boolean, description: String)
+        case Query(name: String, codec: HttpParamCodec[Any], default: Maybe[Any], optional: Boolean, description: String)
+        case Header(name: String, codec: HttpParamCodec[Any], default: Maybe[Any], optional: Boolean, description: String)
+        case Cookie(name: String, codec: HttpParamCodec[Any], default: Maybe[Any], optional: Boolean, description: String)
         case FormBody(codec: HttpFormCodec[Any], description: String)
         case Body(content: Content, description: String)
         case Auth(scheme: AuthScheme)
@@ -558,8 +564,8 @@ object HttpRoute:
     end InputField
 
     private[kyo] enum OutputField:
-        case Header(name: String, codec: Codec[Any], optional: Boolean, description: String)
-        case Cookie(name: String, codec: Codec[Any], optional: Boolean, attributes: CookieAttributes, description: String)
+        case Header(name: String, codec: HttpParamCodec[Any], optional: Boolean, description: String)
+        case Cookie(name: String, codec: HttpParamCodec[Any], optional: Boolean, attributes: CookieAttributes, description: String)
         case Body(content: Content.Output, description: String)
 
         /** Server-side: serialize this field's value onto a response. */
