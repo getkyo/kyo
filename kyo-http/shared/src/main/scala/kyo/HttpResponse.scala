@@ -66,9 +66,11 @@ final class HttpResponse[+B <: HttpBody] private (
     def cookie(name: String): Maybe[Cookie] =
         _cookies.find(_.name == name) match
             case Some(c) => Present(c)
-            case None    => Absent
+            case None    => HttpResponse.parseCookieFromHeaders(_headers, name)
 
-    def cookies: Seq[Cookie] = _cookies
+    def cookies: Seq[Cookie] =
+        if _cookies.nonEmpty then _cookies
+        else HttpResponse.parseCookiesFromHeaders(_headers)
 
     // --- Body accessors (type-safe via =:= evidence) ---
 
@@ -409,5 +411,41 @@ object HttpResponse:
         }
         sb.toString
     end encodeCookie
+
+    /** Parse a single cookie by name from Set-Cookie headers. */
+    private def parseCookieFromHeaders(headers: HttpHeaders, name: String): Maybe[Cookie] =
+        var result: Maybe[Cookie] = Absent
+        headers.foreach { (k, v) =>
+            if result == Absent && k.equalsIgnoreCase("Set-Cookie") then
+                parseSetCookieHeader(v) match
+                    case Present(c) if c.name == name => result = Present(c)
+                    case _                            =>
+        }
+        result
+    end parseCookieFromHeaders
+
+    /** Parse all cookies from Set-Cookie headers. */
+    private def parseCookiesFromHeaders(headers: HttpHeaders): Seq[Cookie] =
+        val builder = Seq.newBuilder[Cookie]
+        headers.foreach { (k, v) =>
+            if k.equalsIgnoreCase("Set-Cookie") then
+                parseSetCookieHeader(v).foreach(c => builder += c)
+        }
+        builder.result()
+    end parseCookiesFromHeaders
+
+    /** Parse a Set-Cookie header value into a Cookie. Extracts name=value. */
+    private def parseSetCookieHeader(header: String): Maybe[Cookie] =
+        val semiIdx = header.indexOf(';')
+        val nvPart  = if semiIdx >= 0 then header.substring(0, semiIdx).trim else header.trim
+        val eqIdx   = nvPart.indexOf('=')
+        if eqIdx <= 0 then Absent
+        else
+            val name  = nvPart.substring(0, eqIdx).trim
+            val value = nvPart.substring(eqIdx + 1).trim
+            if name.isEmpty then Absent
+            else Present(Cookie(name, value))
+        end if
+    end parseSetCookieHeader
 
 end HttpResponse

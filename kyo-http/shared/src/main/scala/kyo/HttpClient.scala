@@ -268,11 +268,12 @@ object HttpClient:
         queryParts: List[String] = Nil,
         headers: HttpHeaders = HttpHeaders.empty,
         cookieParts: List[String] = Nil,
+        formParts: List[String] = Nil,
         bodyValue: Maybe[Any] = Absent,
         bodyContent: Maybe[Content] = Absent
     )
 
-    private def buildRouteRequest(route: HttpRoute[?, ?, ?, ?], in: Any): HttpRequest[?] =
+    private def buildRouteRequest(route: HttpRoute[?, ?, ?, ?], in: Any)(using Frame): HttpRequest[?] =
         val (pathStr, pathCount) = buildRoutePath(route.path, in, 0)
         val fields               = route.request.inputFields
 
@@ -300,6 +301,11 @@ object HttpClient:
                             case Present(c) => c :: s.cookieParts
                             case Absent     => s.cookieParts
                         loop(i + 1, fieldIdx + 1, s.copy(cookieParts = newCookies))
+
+                    case InputField.FormBody(codec, _) =>
+                        val raw      = extractAt(in, fieldIdx)
+                        val formBody = codec.serialize(raw)
+                        loop(i + 1, fieldIdx + 1, s.copy(formParts = formBody :: s.formParts))
 
                     case InputField.Body(content, _) =>
                         loop(i + 1, fieldIdx + 1, s.copy(bodyValue = Present(extractAt(in, fieldIdx)), bodyContent = Present(content)))
@@ -337,21 +343,25 @@ object HttpClient:
         val fullPath  = if queryStr.isEmpty then pathStr else s"$pathStr?$queryStr"
         val bodyValue = state.bodyValue.getOrElse(null)
 
-        state.bodyContent match
-            case Present(Content.Multipart) =>
-                HttpRequest.multipart(fullPath, bodyValue.asInstanceOf[Seq[HttpRequest.Part]], headers)
-            case Present(streamContent: Content.StreamInput) =>
-                given Frame = Frame.internal
-                HttpRequest.stream(route.method, fullPath, streamContent.encodeStreamTo(bodyValue), headers)
-            case Present(content: Content.Input) =>
-                content.encodeTo(bodyValue) match
-                    case Present((bytes, contentType)) =>
-                        HttpRequest.initBytes(route.method, fullPath, bytes, headers, contentType)
-                    case Absent =>
-                        HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
-            case _ =>
-                HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
-        end match
+        if state.formParts.nonEmpty then
+            val formBody = state.formParts.reverse.mkString("&").getBytes("UTF-8")
+            HttpRequest.initBytes(route.method, fullPath, formBody, headers, "application/x-www-form-urlencoded")
+        else
+            state.bodyContent match
+                case Present(Content.Multipart) =>
+                    HttpRequest.multipart(fullPath, bodyValue.asInstanceOf[Seq[HttpRequest.Part]], headers)
+                case Present(streamContent: Content.StreamInput) =>
+                    HttpRequest.stream(route.method, fullPath, streamContent.encodeStreamTo(bodyValue), headers)
+                case Present(content: Content.Input) =>
+                    content.encodeTo(bodyValue) match
+                        case Present((bytes, contentType)) =>
+                            HttpRequest.initBytes(route.method, fullPath, bytes, headers, contentType)
+                        case Absent =>
+                            HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
+                case _ =>
+                    HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
+            end match
+        end if
     end buildRouteRequest
 
     private def handleErrorResponse[Err](

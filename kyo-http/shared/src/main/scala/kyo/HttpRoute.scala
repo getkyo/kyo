@@ -97,11 +97,6 @@ object HttpRoute:
         case v *: EmptyTuple => v
         case _               => Row[Out]
 
-    // ==================== Codec (alias) ====================
-
-    type Codec[A] = HttpCodec[A]
-    val Codec = HttpCodec
-
     // ==================== Factory methods ====================
 
     def get[A <: AnyNamedTuple](path: HttpPath[A]): HttpRoute[A, Row.Empty, Row.Empty, Nothing]     = HttpRoute(Method.GET, path)
@@ -254,11 +249,11 @@ object HttpRoute:
                 description
             ))
 
-        def bodyForm[A: Schema](using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", A]] =
+        def bodyForm[A: HttpFormCodec](using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", A]] =
             bodyForm[A]("")
 
-        def bodyForm[A: Schema](description: String)(using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", A]] =
-            addIn["body", A](InputField.Body(Content.Form(Schema[A].asInstanceOf[Schema[Any]]), description))
+        def bodyForm[A: HttpFormCodec](description: String)(using UniqueRequestField[In, "body"]): RequestDef[Row.Append[In, "body", A]] =
+            addIn["body", A](InputField.FormBody(summon[HttpFormCodec[A]].asInstanceOf[HttpFormCodec[Any]], description))
 
         def bodyMultipart(using UniqueRequestField[In, "parts"]): RequestDef[Row.Append[In, "parts", Seq[Part]]] =
             bodyMultipart("")
@@ -446,6 +441,7 @@ object HttpRoute:
         case Query(name: String, codec: Codec[Any], default: Maybe[Any], optional: Boolean, description: String)
         case Header(name: String, codec: Codec[Any], default: Maybe[Any], optional: Boolean, description: String)
         case Cookie(name: String, codec: Codec[Any], default: Maybe[Any], optional: Boolean, description: String)
+        case FormBody(codec: HttpFormCodec[Any], description: String)
         case Body(content: Content, description: String)
         case Auth(scheme: AuthScheme)
 
@@ -457,6 +453,11 @@ object HttpRoute:
                 Abort.get(extractParam(request.header(name), codec, default, optional, "header", name))
             case Cookie(name, codec, default, optional, _) =>
                 Abort.get(extractParam(request.cookie(name).map(_.value), codec, default, optional, "cookie", name))
+            case FormBody(codec, _) =>
+                val body = request match
+                    case r: HttpRequest[HttpBody.Bytes] @unchecked => r.bodyText
+                    case _                                         => ""
+                codec.parse(body)
             case Body(content: Content.Input, _) =>
                 Abort.get(content.decodeFrom(request.asInstanceOf[HttpRequest[HttpBody.Bytes]]))
             case Body(content: Content.StreamInput, _) =>
@@ -507,7 +508,7 @@ object HttpRoute:
 
         private def extractParam(
             raw: Maybe[String],
-            codec: HttpCodec[Any],
+            codec: HttpParamCodec[Any],
             default: Maybe[Any],
             optional: Boolean,
             kind: String,
@@ -553,6 +554,7 @@ object HttpRoute:
                 case Present(v) => Result.succeed(v)
                 case Absent     => Result.fail(HttpError.MissingAuth(name))
         end extractApiKey
+
     end InputField
 
     private[kyo] enum OutputField:

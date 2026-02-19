@@ -20,11 +20,11 @@ import scala.language.implicitConversions
   * @see
   *   [[kyo.HttpHandler]]
   * @see
-  *   [[kyo.HttpCodec]]
+  *   [[kyo.HttpParamCodec]]
   */
 enum HttpPath[+A <: AnyNamedTuple]:
     case Concat[A <: AnyNamedTuple, B <: AnyNamedTuple](left: HttpPath[A], right: HttpPath[B]) extends HttpPath[Row.Concat[A, B]]
-    case Capture[N <: String, A](wireName: String, fieldName: N, codec: HttpCodec[A])          extends HttpPath[Row.Init[N, A]]
+    case Capture[N <: String, A](wireName: String, fieldName: N, codec: HttpParamCodec[A])     extends HttpPath[Row.Init[N, A]]
     case Literal[A <: AnyNamedTuple](value: String)                                            extends HttpPath[A]
     case Rest[N <: String](fieldName: N)                                                       extends HttpPath[Row.Init[N, String]]
 end HttpPath
@@ -35,11 +35,11 @@ object HttpPath:
 
     object Capture:
 
-        def apply[A](using codec: HttpCodec[A])[N <: String & Singleton](fieldName: N): HttpPath[Row.Init[N, A]] =
+        def apply[A](using codec: HttpParamCodec[A])[N <: String & Singleton](fieldName: N): HttpPath[Row.Init[N, A]] =
             HttpPath.Capture(fieldName, fieldName, codec)
 
         def apply[A](using
-            codec: HttpCodec[A]
+            codec: HttpParamCodec[A]
         )[N <: String & Singleton](wireName: String, fieldName: N): HttpPath[Row.Init[N, A]] =
             HttpPath.Capture(wireName, fieldName, codec)
 
@@ -48,7 +48,7 @@ object HttpPath:
             parse: String => A,
             serialize: A => String
         ): HttpPath[Row.Init[N, A]] =
-            HttpPath.Capture(fieldName, fieldName, HttpCodec(parse, serialize))
+            HttpPath.Capture(fieldName, fieldName, HttpParamCodec(parse, serialize))
 
         def apply[N <: String & Singleton, A](
             wireName: String,
@@ -56,7 +56,7 @@ object HttpPath:
             parse: String => A,
             serialize: A => String
         ): HttpPath[Row.Init[N, A]] =
-            HttpPath.Capture(wireName, fieldName, HttpCodec(parse, serialize))
+            HttpPath.Capture(wireName, fieldName, HttpParamCodec(parse, serialize))
 
         def rest: HttpPath[Row.Init["rest", String]] =
             rest("rest")

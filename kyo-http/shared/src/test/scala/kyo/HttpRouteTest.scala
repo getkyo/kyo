@@ -431,15 +431,54 @@ class HttpRouteTest extends Test:
             assert(r.request.inputFields.exists(_.isInstanceOf[HttpRoute.InputField.Body]))
         }
 
-        "form input" in {
-            val r = HttpRoute.post("login").request(_.bodyForm[CreateUser])
-            assert(r.request.inputFields.exists(_.isInstanceOf[HttpRoute.InputField.Body]))
+        "form body input" in {
+            case class LoginForm(username: String, password: String) derives HttpFormCodec
+            val r = HttpRoute.post("login").request(_.bodyForm[LoginForm])
+            assert(r.request.inputFields.exists(_.isInstanceOf[HttpRoute.InputField.FormBody]))
         }
 
-        "inputForm produces distinct route metadata from input" in {
+        "bodyForm produces distinct route metadata from bodyJson" in {
+            case class FormInput(name: String, email: String) derives HttpFormCodec
             val routeJson = HttpRoute.post("test").request(_.bodyJson[CreateUser])
-            val routeForm = HttpRoute.post("test").request(_.bodyForm[CreateUser])
+            val routeForm = HttpRoute.post("test").request(_.bodyForm[FormInput])
             assert(!routeJson.equals(routeForm))
+        }
+
+        "bodyForm round-trip via typed route" in run {
+            case class LoginForm(username: String, password: String) derives HttpFormCodec
+            val route = HttpRoute.post("login")
+                .request(_.bodyForm[LoginForm])
+                .response(_.bodyText)
+            val handler = route.handle { in =>
+                s"Hello ${in.body.username}"
+            }
+            startTestServer(handler).map { port =>
+                val request = HttpRequest.postForm(
+                    s"http://localhost:$port/login",
+                    Seq("username" -> "bob", "password" -> "pass")
+                )
+                HttpClient.send(request).map { r =>
+                    assertStatus(r, HttpStatus.OK)
+                    assertBodyContains(r, "Hello bob")
+                }
+            }
+        }
+
+        "bodyForm client-side serialization via HttpClient.call" in run {
+            case class LoginForm(username: String, password: String) derives HttpFormCodec
+            val route = HttpRoute.post("login")
+                .request(_.bodyForm[LoginForm])
+                .response(_.bodyText)
+            val handler = route.handle { in =>
+                s"user=${in.body.username} pass=${in.body.password}"
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    HttpClient.call(route, LoginForm("alice", "secret"))
+                }.map { result =>
+                    assert(result == "user=alice pass=secret")
+                }
+            }
         }
 
         "multipart input" in {
@@ -1296,6 +1335,95 @@ class HttpRouteTest extends Test:
                         assert(text.contains("reqId=req-42"))
                         assert(text.contains("session=sess-abc"))
                         assert(text.contains("body=payload"))
+                    }
+                }
+            }
+        }
+    }
+
+    // ========================================================================
+    // CRUD microservice patterns
+    // ========================================================================
+
+    "microservice patterns" - {
+
+        case class Todo(id: Int, title: String, completed: Boolean) derives Schema, CanEqual
+        case class CreateTodo(title: String) derives Schema
+        case class TodoList(items: List[Todo], total: Int) derives Schema, CanEqual
+
+        val listTodos = HttpRoute.get("api/todos")
+            .request(_.query[Int]("limit", default = Some(10)).query[Int]("offset", default = Some(0)))
+            .response(_.bodyJson[TodoList])
+
+        val createTodo = HttpRoute.post("api/todos")
+            .request(_.bodyJson[CreateTodo])
+            .response(_.bodyJson[Todo])
+
+        def buildTodoHandlers(
+            store: AtomicRef[Map[Int, Todo]],
+            nextId: AtomicInt
+        ): Seq[HttpHandler[Any]] =
+            val listHandler = listTodos.handle { in =>
+                store.get.map { items =>
+                    val all   = items.values.toSeq.sortBy(_.id)
+                    val paged = all.slice(in.offset, in.offset + in.limit).toList
+                    TodoList(paged, all.size)
+                }
+            }
+            val createHandler = createTodo.handle { in =>
+                nextId.incrementAndGet.map { id =>
+                    val todo = Todo(id, in.body.title, completed = false)
+                    store.updateAndGet(_.updated(id, todo)).andThen(todo)
+                }
+            }
+            Seq(listHandler, createHandler)
+        end buildTodoHandlers
+
+        "pagination with query param defaults" in run {
+            AtomicRef.init(Map.empty[Int, Todo]).map { store =>
+                AtomicInt.init.map { nextId =>
+                    val handlers = buildTodoHandlers(store, nextId)
+                    startTestServer(handlers*).map { port =>
+                        HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                            for
+                                _ <- HttpClient.call(createTodo, CreateTodo("Todo 1"))
+                                _ <- HttpClient.call(createTodo, CreateTodo("Todo 2"))
+                                _ <- HttpClient.call(createTodo, CreateTodo("Todo 3"))
+                                _ <- HttpClient.call(createTodo, CreateTodo("Todo 4"))
+                                _ <- HttpClient.call(createTodo, CreateTodo("Todo 5"))
+
+                                page1 <- testGetAs[TodoList](port, "/api/todos?limit=2&offset=0")
+                                _ = assert(page1.items.size == 2)
+                                _ = assert(page1.total == 5)
+                                _ = assert(page1.items.head.title == "Todo 1")
+
+                                page2 <- testGetAs[TodoList](port, "/api/todos?limit=2&offset=2")
+                                _ = assert(page2.items.size == 2)
+                                _ = assert(page2.items.head.title == "Todo 3")
+
+                                page3 <- testGetAs[TodoList](port, "/api/todos?limit=2&offset=4")
+                                _ = assert(page3.items.size == 1)
+                            yield assertionSuccess
+                        }
+                    }
+                }
+            }
+        }
+
+        "concurrent creates with unique IDs" in run {
+            AtomicRef.init(Map.empty[Int, Todo]).map { store =>
+                AtomicInt.init.map { nextId =>
+                    val handlers = buildTodoHandlers(store, nextId)
+                    startTestServer(handlers*).map { port =>
+                        HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                            val creates = (1 to 10).map { i =>
+                                HttpClient.call(createTodo, CreateTodo(s"Concurrent $i"))
+                            }
+                            Async.collectAll(creates).map { todos =>
+                                assert(todos.size == 10)
+                                assert(todos.map(_.id).toSet.size == 10)
+                            }
+                        }
                     }
                 }
             }

@@ -119,8 +119,8 @@ private[kyo] object OpenApiGenerator:
                 ))
     end extractPathParams
 
-    /** Infer OpenAPI schema type from HttpCodec by probing with sample values. */
-    private def inferCodecSchema(codec: HttpCodec[?]): SchemaObject =
+    /** Infer OpenAPI schema type from HttpParamCodec by probing with sample values. */
+    private def inferCodecSchema(codec: HttpParamCodec[?]): SchemaObject =
         val c = codec
 
         def tryProbe(input: String)(pf: PartialFunction[Any, SchemaObject]): Maybe[SchemaObject] =
@@ -142,17 +142,27 @@ private[kyo] object OpenApiGenerator:
     end inferCodecSchema
 
     private def buildRequestBody(route: HttpRoute[?, ?, ?, ?]): Maybe[RequestBody] =
-        route.request.inputFields.collectFirst {
-            case InputField.Body(content, desc) => (content, desc)
-        } match
-            case Some((content, desc)) =>
-                val (ct, schema) = contentToMediaType(content)
-                Present(RequestBody(
-                    required = Some(true),
-                    content = Map(ct -> MediaType(schema = schema)),
-                    description = if desc.nonEmpty then Some(desc) else None
-                ))
-            case None => Absent
+        val hasFormBody = route.request.inputFields.exists(_.isInstanceOf[InputField.FormBody])
+        if hasFormBody then
+            Present(RequestBody(
+                required = Some(true),
+                content = Map("application/x-www-form-urlencoded" -> MediaType(schema = SchemaObject.obj)),
+                description = None
+            ))
+        else
+            route.request.inputFields.collectFirst {
+                case InputField.Body(content, desc) => (content, desc)
+            } match
+                case Some((content, desc)) =>
+                    val (ct, schema) = contentToMediaType(content)
+                    Present(RequestBody(
+                        required = Some(true),
+                        content = Map(ct -> MediaType(schema = schema)),
+                        description = if desc.nonEmpty then Some(desc) else None
+                    ))
+                case None => Absent
+        end if
+    end buildRequestBody
 
     private def buildResponses(route: HttpRoute[?, ?, ?, ?]): Map[String, Response] =
         val successStatus = route.response.status.code.toString
@@ -181,11 +191,11 @@ private[kyo] object OpenApiGenerator:
 
     private def contentToMediaType(content: Content): (String, SchemaObject) =
         content match
-            case Content.Json(schema)      => ("application/json", schemaToOpenApi(schema))
-            case Content.Text              => ("text/plain", SchemaObject.string)
-            case Content.Binary            => ("application/octet-stream", SchemaObject.string)
-            case Content.ByteStream        => ("application/octet-stream", SchemaObject.string)
-            case Content.Form(schema)      => ("application/x-www-form-urlencoded", schemaToOpenApi(schema))
+            case Content.Json(schema) => ("application/json", schemaToOpenApi(schema))
+            case Content.Text         => ("text/plain", SchemaObject.string)
+            case Content.Binary       => ("application/octet-stream", SchemaObject.string)
+            case Content.ByteStream   => ("application/octet-stream", SchemaObject.string)
+
             case Content.Multipart         => ("multipart/form-data", SchemaObject.obj)
             case Content.MultipartStream   => ("multipart/form-data", SchemaObject.obj)
             case Content.Ndjson(schema, _) => ("application/x-ndjson", schemaToOpenApi(schema))

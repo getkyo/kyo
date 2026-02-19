@@ -163,14 +163,6 @@ private[kyo] object Content:
             }
     end Ndjson
 
-    case class Form(schema: Schema[Any]) extends Input:
-        private[kyo] def decodeFrom(request: HttpRequest[HttpBody.Bytes])(using Frame): Result[HttpError, Any] =
-            schema.decode(request.bodyText).mapFailure(HttpError.ParseError(_))
-
-        private[kyo] def encodeTo(value: Any): Maybe[(Array[Byte], String)] =
-            Present((schema.encode(value).getBytes("UTF-8"), "application/x-www-form-urlencoded"))
-    end Form
-
     case object Multipart extends Input:
         private[kyo] def decodeFrom(request: HttpRequest[HttpBody.Bytes])(using Frame): Result[HttpError, Any] =
             Result.succeed(request.parts.toArrayUnsafe.toSeq)

@@ -233,7 +233,7 @@ object HttpHandler:
                 (Array.empty, segments.drop(skip))
             case HttpPath.Capture(_, _, codec) =>
                 val decoded = java.net.URLDecoder.decode(segments.head.replace("+", "%2B"), "UTF-8")
-                (Array(codec.asInstanceOf[HttpCodec[Any]].parse(decoded)), segments.tail)
+                (Array(codec.asInstanceOf[HttpParamCodec[Any]].parse(decoded)), segments.tail)
             case HttpPath.Concat(left, right) =>
                 val (leftVals, remaining)   = extractPathSegments(left, segments)
                 val (rightVals, remaining2) = extractPathSegments(right, remaining)
@@ -259,6 +259,12 @@ object HttpHandler:
                     Abort.get(extractParam(raw, codec, default, optional, "cookie", name)).map { v =>
                         result += v; result
                     }
+                case InputField.FormBody(codec, _) =>
+                    val body = request match
+                        case r: HttpRequest[HttpBody.Bytes] @unchecked => r.bodyText
+                        case _                                         => ""
+                    val parsed = codec.parse(body)
+                    result += parsed; result
                 case InputField.Body(content, _) =>
                     extractBody(content, request).map { body =>
                         result += body
@@ -278,7 +284,7 @@ object HttpHandler:
 
     private def extractParam(
         raw: Maybe[String],
-        codec: HttpCodec[?],
+        codec: HttpParamCodec[?],
         default: Maybe[Any],
         optional: Boolean,
         kind: String,
@@ -286,7 +292,7 @@ object HttpHandler:
     )(using Frame): Result[HttpError.MissingParam, Any] =
         raw match
             case Present(v) =>
-                val parsed = codec.asInstanceOf[HttpCodec[Any]].parse(v)
+                val parsed = codec.asInstanceOf[HttpParamCodec[Any]].parse(v)
                 Result.succeed(if optional then Present(parsed) else parsed)
             case Absent =>
                 default match
@@ -333,7 +339,7 @@ object HttpHandler:
 
     // ==================== Private: Output Serialization ====================
 
-    private def buildResponse(responseDef: ResponseDef[?, ?], output: Any): HttpResponse[?] =
+    private def buildResponse(responseDef: ResponseDef[?, ?], output: Any)(using Frame): HttpResponse[?] =
         val fields = responseDef.outputFields
         val status = responseDef.status
 
@@ -354,11 +360,11 @@ object HttpHandler:
                             val base  = response.getOrElse(HttpResponse(status))
                             val next =
                                 if !optional then
-                                    base.setHeader(name, codec.asInstanceOf[HttpCodec[Any]].serialize(value))
+                                    base.setHeader(name, codec.asInstanceOf[HttpParamCodec[Any]].serialize(value))
                                 else
                                     value.asInstanceOf[Maybe[Any]] match
                                         case Present(v) =>
-                                            base.setHeader(name, codec.asInstanceOf[HttpCodec[Any]].serialize(v))
+                                            base.setHeader(name, codec.asInstanceOf[HttpParamCodec[Any]].serialize(v))
                                         case Absent => base
                             loop(i + 1, fieldIdx + 1, Present(next))
 
@@ -367,12 +373,12 @@ object HttpHandler:
                             val base  = response.getOrElse(HttpResponse(status))
                             val next =
                                 if !optional then
-                                    val serialized = codec.asInstanceOf[HttpCodec[Any]].serialize(value)
+                                    val serialized = codec.asInstanceOf[HttpParamCodec[Any]].serialize(value)
                                     base.addCookie(buildCookie(name, serialized, attrs))
                                 else
                                     value.asInstanceOf[Maybe[Any]] match
                                         case Present(v) =>
-                                            val serialized = codec.asInstanceOf[HttpCodec[Any]].serialize(v)
+                                            val serialized = codec.asInstanceOf[HttpParamCodec[Any]].serialize(v)
                                             base.addCookie(buildCookie(name, serialized, attrs))
                                         case Absent => base
                             loop(i + 1, fieldIdx + 1, Present(next))
@@ -384,8 +390,7 @@ object HttpHandler:
         if isSingle then output
         else output.asInstanceOf[Tuple].productElement(fieldIdx)
 
-    private def serializeBody(content: Content.Output, value: Any, status: HttpStatus): HttpResponse[?] =
-        given Frame    = Frame.internal
+    private def serializeBody(content: Content.Output, value: Any, status: HttpStatus)(using Frame): HttpResponse[?] =
         val respStatus = status
         content match
             case Content.Json(schema) =>

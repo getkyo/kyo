@@ -2007,4 +2007,335 @@ class HttpServerTest extends Test:
         }
     }
 
+    // ========================================================================
+    // Response builders through HTTP round-trips
+    // ========================================================================
+
+    "response builders" - {
+
+        "contentDisposition — attachment" in run {
+            val handler = HttpHandler.get("/download") { _ =>
+                HttpResponse.ok("file-contents").contentDisposition("report.csv")
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/download").map { r =>
+                    assertStatus(r, HttpStatus.OK)
+                    val cd = r.header("Content-Disposition")
+                    assert(cd.exists(_.contains("report.csv")))
+                    assert(cd.exists(_.contains("attachment")))
+                }
+            }
+        }
+
+        "contentDisposition — inline" in run {
+            val handler = HttpHandler.get("/preview") { _ =>
+                HttpResponse.ok("pdf-bytes").contentDisposition("doc.pdf", isInline = true)
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/preview").map { r =>
+                    val cd = r.header("Content-Disposition")
+                    assert(cd.exists(_.contains("inline")))
+                }
+            }
+        }
+
+        "cacheControl" in run {
+            val handler = HttpHandler.get("/public") { _ =>
+                HttpResponse.ok("cacheable").cacheControl("public, max-age=3600")
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/public").map { r =>
+                    assertHeader(r, "Cache-Control", "public, max-age=3600")
+                }
+            }
+        }
+
+        "noCache" in run {
+            val handler = HttpHandler.get("/dynamic") { _ =>
+                HttpResponse.ok("fresh").noCache
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/dynamic").map { r =>
+                    assertHeader(r, "Cache-Control", "no-cache")
+                }
+            }
+        }
+
+        "noStore" in run {
+            val handler = HttpHandler.get("/sensitive") { _ =>
+                HttpResponse.ok("secret-data").noStore
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/sensitive").map { r =>
+                    assertHeader(r, "Cache-Control", "no-store")
+                }
+            }
+        }
+
+        "lastModified" in run {
+            val timestamp = Instant.fromJava(java.time.Instant.parse("2024-01-15T10:30:00Z")): Instant
+            val handler = HttpHandler.get("/doc") { _ =>
+                HttpResponse.ok("document").lastModified(timestamp)
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/doc").map { r =>
+                    assertHasHeader(r, "Last-Modified")
+                }
+            }
+        }
+
+        "tooManyRequests with Retry-After" in run {
+            val handler = HttpHandler.get("/limited") { _ =>
+                HttpResponse.tooManyRequests(60.seconds)
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/limited").map { r =>
+                    assertStatus(r, HttpStatus.TooManyRequests)
+                    assertHeader(r, "Retry-After", "60")
+                }
+            }
+        }
+
+        "serviceUnavailable with Retry-After" in run {
+            val handler = HttpHandler.get("/maintenance") { _ =>
+                HttpResponse.serviceUnavailable(30.seconds)
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/maintenance").map { r =>
+                    assertStatus(r, HttpStatus.ServiceUnavailable)
+                    assertHeader(r, "Retry-After", "30")
+                }
+            }
+        }
+
+        "movedPermanently" in run {
+            val handler = HttpHandler.get("/v1/api") { _ =>
+                HttpResponse.movedPermanently("/v2/api")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.followRedirects(false)) {
+                    testGet(port, "/v1/api").map { r =>
+                        assertStatus(r, HttpStatus.MovedPermanently)
+                        assertHeader(r, "Location", "/v2/api")
+                    }
+                }
+            }
+        }
+
+        "notModified" in run {
+            val handler = HttpHandler.get("/cached") { _ => HttpResponse.notModified }
+            startTestServer(handler).map { port =>
+                testGet(port, "/cached").map { r =>
+                    assertStatus(r, HttpStatus.NotModified)
+                }
+            }
+        }
+
+        "response cookies with full attributes" in run {
+            val handler = HttpHandler.get("/set-cookie") { _ =>
+                val cookie = HttpResponse.Cookie("session", "abc123")
+                    .maxAge(1.hour)
+                    .path("/")
+                    .httpOnly(true)
+                    .secure(true)
+                    .sameSite(HttpResponse.Cookie.SameSite.Strict)
+                HttpResponse.ok("cookie set").addCookie(cookie)
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/set-cookie").map { r =>
+                    assertStatus(r, HttpStatus.OK)
+                    val setCookie = r.header("Set-Cookie")
+                    assert(setCookie.isDefined, "Expected Set-Cookie header")
+                    assert(setCookie.exists(_.contains("session=abc123")))
+                    assert(setCookie.exists(_.contains("HttpOnly")))
+                }
+            }
+        }
+    }
+
+    // ========================================================================
+    // Request body patterns
+    // ========================================================================
+
+    "request body patterns" - {
+
+        "form-encoded POST via HttpRequest.postForm" in run {
+            val handler = HttpHandler.post("login") { in =>
+                val body = in.request.bodyText
+                HttpResponse.ok(s"form: $body")
+            }
+            startTestServer(handler).map { port =>
+                val request = HttpRequest.postForm(
+                    s"http://localhost:$port/login",
+                    Seq("username" -> "alice", "password" -> "secret123")
+                )
+                HttpClient.send(request).map { r =>
+                    assertStatus(r, HttpStatus.OK)
+                    assertBodyContains(r, "username=alice")
+                    assertBodyContains(r, "password=secret123")
+                }
+            }
+        }
+
+        "multipart POST — file upload" in run {
+            val handler = HttpHandler.post("upload") { in =>
+                val parts = in.request.parts
+                val info = parts.map { p =>
+                    s"${p.name}:${p.filename.getOrElse("none")}:${new String(p.content, "UTF-8")}"
+                }.mkString(", ")
+                HttpResponse.ok(s"parts: $info")
+            }
+            startTestServer(handler).map { port =>
+                val parts = Seq(
+                    HttpRequest.Part("file", Present("data.csv"), Present("text/csv"), "a,b,c\n1,2,3".getBytes("UTF-8")),
+                    HttpRequest.Part("description", Absent, Present("text/plain"), "My data file".getBytes("UTF-8"))
+                )
+                val request = HttpRequest.multipart(s"http://localhost:$port/upload", parts)
+                HttpClient.send(request).map { r =>
+                    assertStatus(r, HttpStatus.OK)
+                    assertBodyContains(r, "data.csv")
+                    assertBodyContains(r, "My data file")
+                }
+            }
+        }
+
+        "binary POST via HttpRequest.initBytes" in run {
+            val handler = HttpHandler.post("binary") { in =>
+                val bytes = in.request.bodyBytes
+                HttpResponse.ok(s"received ${bytes.size} bytes")
+            }
+            startTestServer(handler).map { port =>
+                val data = Array.fill(256)((scala.util.Random.nextInt(256) - 128).toByte)
+                val request = HttpRequest.initBytes(
+                    HttpRequest.Method.POST,
+                    s"http://localhost:$port/binary",
+                    data,
+                    HttpHeaders.empty,
+                    "application/octet-stream"
+                )
+                HttpClient.send(request).map { r =>
+                    assertStatus(r, HttpStatus.OK)
+                    assertBodyContains(r, "received 256 bytes")
+                }
+            }
+        }
+    }
+
+    // ========================================================================
+    // Kyo effect integration
+    // ========================================================================
+
+    "kyo effect integration" - {
+
+        "Channel — publish/consume message queue" in run {
+            Channel.init[String](capacity = 10).map { channel =>
+                val publishHandler = HttpHandler.post("publish") { in =>
+                    val msg = in.request.bodyText
+                    channel.put(msg).andThen(HttpResponse.accepted)
+                }
+                val consumeHandler = HttpHandler.get("consume") { _ =>
+                    channel.take.map { msg =>
+                        HttpResponse.ok(s"consumed: $msg")
+                    }
+                }
+                startTestServer(publishHandler, consumeHandler).map { port =>
+                    for
+                        _  <- HttpClient.send(HttpRequest.postText(s"http://localhost:$port/publish", "event-1"))
+                        _  <- HttpClient.send(HttpRequest.postText(s"http://localhost:$port/publish", "event-2"))
+                        r1 <- testGet(port, "/consume")
+                        r2 <- testGet(port, "/consume")
+                    yield
+                        assertBodyContains(r1, "consumed: event-1")
+                        assertBodyContains(r2, "consumed: event-2")
+                }
+            }
+        }
+
+        "Queue — enqueue and poll pattern" in run {
+            Queue.init[String](capacity = 100).map { queue =>
+                AtomicRef.init(Seq.empty[String]).map { processed =>
+                    val enqueueHandler = HttpHandler.post("enqueue") { in =>
+                        val job = in.request.bodyText
+                        queue.offer(job).andThen(HttpResponse.accepted)
+                    }
+                    val processHandler = HttpHandler.post("process") { _ =>
+                        queue.poll.map {
+                            case Present(job) =>
+                                processed.updateAndGet(_ :+ job).andThen {
+                                    HttpResponse.ok(s"processed: $job")
+                                }
+                            case Absent =>
+                                HttpResponse.ok("queue empty")
+                        }
+                    }
+                    val statusHandler = HttpHandler.get("status") { _ =>
+                        processed.get.map { items =>
+                            HttpResponse.ok(s"done: ${items.size}")
+                        }
+                    }
+                    startTestServer(enqueueHandler, processHandler, statusHandler).map { port =>
+                        for
+                            r1 <- testPost(port, "/enqueue", "job-a")
+                            r2 <- testPost(port, "/enqueue", "job-b")
+                            _  <- testPost(port, "/process", "")
+                            _  <- testPost(port, "/process", "")
+                            r3 <- testGet(port, "/status")
+                        yield
+                            assertStatus(r1, HttpStatus.Accepted)
+                            assertStatus(r2, HttpStatus.Accepted)
+                            assertBodyContains(r3, "done: 2")
+                    }
+                }
+            }
+        }
+
+        "AtomicRef — CRUD store with GET/PUT handlers" in run {
+            AtomicRef.init(Map.empty[Int, String]).map { store =>
+                val getHandler = HttpHandler.get("items" / Capture[Int]("id")) { in =>
+                    store.get.map { items =>
+                        items.get(in.id) match
+                            case Some(name) => HttpResponse.ok(s"found: $name")
+                            case None       => HttpResponse.notFound("not found")
+                    }
+                }
+                val putHandler = HttpHandler.put("items" / Capture[Int]("id")) { in =>
+                    val body = in.request.bodyText
+                    store.updateAndGet(_.updated(in.id, body)).andThen {
+                        HttpResponse.ok(s"stored: $body")
+                    }
+                }
+                startTestServer(getHandler, putHandler).map { port =>
+                    for
+                        r1 <- testGet(port, "/items/1")
+                        _  <- testPut(port, "/items/1", "Widget")
+                        r2 <- testGet(port, "/items/1")
+                    yield
+                        assertStatus(r1, HttpStatus.NotFound)
+                        assertStatus(r2, HttpStatus.OK)
+                        assertBodyContains(r2, "found:")
+                }
+            }
+        }
+
+        "AtomicInt — request counter across calls" in run {
+            AtomicInt.init.map { counter =>
+                val handler = HttpHandler.get("count") { _ =>
+                    counter.incrementAndGet.map { n =>
+                        HttpResponse.ok(s"count: $n")
+                    }
+                }
+                startTestServer(handler).map { port =>
+                    for
+                        r1 <- testGet(port, "/count")
+                        r2 <- testGet(port, "/count")
+                        r3 <- testGet(port, "/count")
+                    yield
+                        assertBodyContains(r1, "count: 1")
+                        assertBodyContains(r2, "count: 2")
+                        assertBodyContains(r3, "count: 3")
+                }
+            }
+        }
+    }
+
 end HttpServerTest

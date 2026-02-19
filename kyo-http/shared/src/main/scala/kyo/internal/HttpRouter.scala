@@ -55,6 +55,7 @@ final private[kyo] class HttpRouter private (
                 val literalIdx = binarySearchSegment(node.literalSegments, node.literalIndices, path, start, segEnd)
                 if literalIdx >= 0 then loop(node.literalIndices(literalIdx), segEnd)
                 else if node.captureChild >= 0 then loop(node.captureChild, segEnd)
+                else if node.restChild >= 0 then node.restChild
                 else -1
                 end if
             end if
@@ -134,13 +135,14 @@ private[kyo] object HttpRouter:
         val literalSegments: Array[String],
         val literalIndices: Array[Int],
         val captureChild: Int,
+        val restChild: Int,
         val handlerIndices: Array[Int],
         val allowedMethods: Set[Method]
     )
 
     def apply(handlers: Seq[HttpHandler[?]]): HttpRouter =
         if handlers.isEmpty then
-            val emptyNode = new Node(Array.empty, Array.empty, -1, Array.fill(MethodCount)(-1), Set.empty)
+            val emptyNode = new Node(Array.empty, Array.empty, -1, -1, Array.fill(MethodCount)(-1), Set.empty)
             new HttpRouter(Array(emptyNode), Array.empty)
         else
             val root = new MutableNode()
@@ -164,7 +166,8 @@ private[kyo] object HttpRouter:
     final private class MutableNode(
         var handlers: Map[Method, HttpHandler[?]] = Map.empty,
         var literalChildren: Map[String, MutableNode] = Map.empty,
-        var captureChild: MutableNode | Null = null
+        var captureChild: MutableNode | Null = null,
+        var restChild: MutableNode | Null = null
     )
 
     private def insert(node: MutableNode, segments: List[Segment], method: Method, handler: HttpHandler[?]): Unit =
@@ -189,6 +192,15 @@ private[kyo] object HttpRouter:
                                 newNode
                             case existing => existing
                         insert(childNode, rest, method, handler)
+                    case _: Segment.Rest.type =>
+                        // Rest is a terminal segment — register handler on a rest child node
+                        val childNode = node.restChild match
+                            case null =>
+                                val newNode = new MutableNode()
+                                node.restChild = newNode
+                                newNode
+                            case existing => existing
+                        childNode.handlers = childNode.handlers + (method -> handler)
         end match
     end insert
 
@@ -201,7 +213,13 @@ private[kyo] object HttpRouter:
             val captureCounts = node.captureChild match
                 case null     => (0, 0)
                 case existing => visit(existing)
-            (1 + childCounts._1 + captureCounts._1, node.handlers.size + childCounts._2 + captureCounts._2)
+            val restCounts = node.restChild match
+                case null     => (0, 0)
+                case existing => visit(existing)
+            (
+                1 + childCounts._1 + captureCounts._1 + restCounts._1,
+                node.handlers.size + childCounts._2 + captureCounts._2 + restCounts._2
+            )
         end visit
         visit(root)
     end countNodes
@@ -237,6 +255,10 @@ private[kyo] object HttpRouter:
             case null     => -1
             case existing => serialize(existing, state)
 
+        val restChildIdx = node.restChild match
+            case null     => -1
+            case existing => serialize(existing, state)
+
         val handlerIndices = Array.fill(MethodCount)(-1)
         val allowedMethods = node.handlers.foldLeft(Set.empty[Method]) { case (methods, (method, handler)) =>
             val handlerIdx = state.allocHandlerIdx()
@@ -245,7 +267,7 @@ private[kyo] object HttpRouter:
             methods + method
         }
 
-        state.nodes(nodeIdx) = new Node(literalSegments, literalIndices, captureChildIdx, handlerIndices, allowedMethods)
+        state.nodes(nodeIdx) = new Node(literalSegments, literalIndices, captureChildIdx, restChildIdx, handlerIndices, allowedMethods)
         nodeIdx
     end serialize
 
@@ -255,6 +277,8 @@ private[kyo] object HttpRouter:
     private object Segment:
         case class Literal(value: String) extends Segment
         case object Capture               extends Segment
+        case object Rest                  extends Segment
+    end Segment
 
     private def pathToSegments(path: HttpPath[?]): List[Segment] =
         path match
@@ -265,6 +289,6 @@ private[kyo] object HttpRouter:
             case HttpPath.Concat(left, right) =>
                 pathToSegments(left) ++ pathToSegments(right)
             case HttpPath.Rest(_) =>
-                List(Segment.Capture) // Rest matches any remaining segment
+                List(Segment.Rest)
 
 end HttpRouter
