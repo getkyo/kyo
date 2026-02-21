@@ -89,7 +89,7 @@ object HttpFilter:
                                 decoded.split(":", 2) match
                                     case Array(username, password) =>
                                         validate(username, password).map { valid =>
-                                            if valid then next(request & ("user" ~ username))
+                                            if valid then next(request.addField("user", username))
                                             else Abort.fail(unauthorized)
                                         }
                                     case _ => Abort.fail(unauthorized)
@@ -242,7 +242,7 @@ object HttpFilter:
                     request: HttpRequest[In],
                     next: HttpRequest[In] => HttpResponse[Out] < S2
                 ): HttpResponse[Out] < (Sync & S2) =
-                    val getId = request.header(headerName) match
+                    val getId = request.headers.get(headerName) match
                         case Present(id) => id: String < Any
                         case Absent      => Random.nextStringAlphanumeric(32)
                     getId.map { id =>

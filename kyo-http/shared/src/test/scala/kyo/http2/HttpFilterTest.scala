@@ -8,7 +8,7 @@ import kyo.Test
 
 class HttpFilterTest extends Test:
 
-    def req: HttpRequest[Any] = HttpRequest(HttpMethod.GET, "/test")
+    def req: HttpRequest[Any] = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/test"))
 
     "request filter" - {
 
