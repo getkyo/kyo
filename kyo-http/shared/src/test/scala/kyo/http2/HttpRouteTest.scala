@@ -225,30 +225,20 @@ class HttpRouteTest extends Test:
             }
         }
 
-        "with path capture tracks PathIn" in {
+        "with path capture tracks In" in {
             val r = HttpRoute.get("users" / HttpPath.Capture[Int]("id"))
             assert(r.method == HttpMethod.GET)
-            typeCheck("""val _: HttpRoute["id" ~ Int, Any, Any, Any] = r""")
-        }
-
-        "change path via path method" in {
-            val r = HttpRoute.get("users").path("items" / HttpPath.Capture[String]("slug"))
-            typeCheck("""val _: HttpRoute["slug" ~ String, Any, Any, Any] = r""")
-        }
-
-        "change path via lambda" in {
-            val r = HttpRoute.get("users" / HttpPath.Capture[Int]("id")).path(_ / "details")
-            typeCheck("""val _: HttpRoute["id" ~ Int, Any, Any, Any] = r""")
+            typeCheck("""val _: HttpRoute["id" ~ Int, Any, Any] = r""")
         }
     }
 
     "Query parameters" - {
 
-        "required stores correct kind, fieldName, optional=false" in {
+        "required stores correct location, fieldName, optional=false" in {
             val r = HttpRoute.get("users").request(_.query[Int]("limit"))
             assert(r.request.fields.size == 1)
             r.request.fields(0) match
-                case Field.Param(Field.Param.Kind.Query, fn, wn, _, _, opt, _) =>
+                case Field.Param(Field.Param.Location.Query, fn, wn, _, _, opt, _) =>
                     assert(fn == "limit")
                     assert(wn == "")
                     assert(!opt)
@@ -284,7 +274,7 @@ class HttpRouteTest extends Test:
         "optional stores optional=true" in {
             val r = HttpRoute.get("users").request(_.queryOpt[String]("search"))
             r.request.fields(0) match
-                case Field.Param(Field.Param.Kind.Query, fn, _, _, _, opt, _) =>
+                case Field.Param(Field.Param.Location.Query, fn, _, _, _, opt, _) =>
                     assert(fn == "search")
                     assert(opt)
                 case _ => fail("Expected Query Param")
@@ -300,17 +290,17 @@ class HttpRouteTest extends Test:
 
         "type tracks required fields" in {
             val r = HttpRoute.get("users").request(_.query[Int]("limit").query[Int]("offset"))
-            typeCheck("""val _: HttpRoute[Any, "limit" ~ Int & "offset" ~ Int, Any, Any] = r""")
+            typeCheck("""val _: HttpRoute["limit" ~ Int & "offset" ~ Int, Any, Any] = r""")
         }
 
         "type tracks optional fields as Maybe" in {
             val r = HttpRoute.get("users").request(_.queryOpt[String]("search"))
-            typeCheck("""val _: HttpRoute[Any, "search" ~ kyo.Maybe[String], Any, Any] = r""")
+            typeCheck("""val _: HttpRoute["search" ~ kyo.Maybe[String], Any, Any] = r""")
         }
 
-        "PathIn and In tracked independently" in {
+        "path and query tracked together in In" in {
             val r = HttpRoute.get("users" / HttpPath.Capture[Int]("id")).request(_.query[String]("fields"))
-            typeCheck("""val _: HttpRoute["id" ~ Int, "fields" ~ String, Any, Any] = r""")
+            typeCheck("""val _: HttpRoute["id" ~ Int & "fields" ~ String, Any, Any] = r""")
         }
     }
 
@@ -319,7 +309,7 @@ class HttpRouteTest extends Test:
         "required" in {
             val r = HttpRoute.get("users").request(_.header[String]("X-Request-Id"))
             r.request.fields(0) match
-                case Field.Param(Field.Param.Kind.Header, fn, _, _, _, opt, _) =>
+                case Field.Param(Field.Param.Location.Header, fn, _, _, _, opt, _) =>
                     assert(fn == "X-Request-Id")
                     assert(!opt)
                 case _ => fail("Expected Header Param")
@@ -329,16 +319,16 @@ class HttpRouteTest extends Test:
         "optional" in {
             val r = HttpRoute.get("users").request(_.headerOpt[String]("X-Trace-Id"))
             r.request.fields(0) match
-                case Field.Param(Field.Param.Kind.Header, _, _, _, _, opt, _) =>
+                case Field.Param(Field.Param.Location.Header, _, _, _, _, opt, _) =>
                     assert(opt)
                 case _ => fail("Expected Header Param")
             end match
         }
 
         "type tracks required and optional" in {
-            val r = HttpRoute.get("users")
-                .request(_.header[String]("X-Request-Id").headerOpt[String]("X-Trace-Id"))
-            typeCheck("""val _: HttpRoute[Any, "X-Request-Id" ~ String & "X-Trace-Id" ~ kyo.Maybe[String], Any, Any] = r""")
+            val r =
+                HttpRoute.get("users").request(_.header[String]("X-Request-Id").headerOpt[String]("X-Trace-Id"))
+            typeCheck("""val _: HttpRoute["X-Request-Id" ~ String & "X-Trace-Id" ~ kyo.Maybe[String], Any, Any] = r""")
         }
     }
 
@@ -347,7 +337,7 @@ class HttpRouteTest extends Test:
         "request cookie" in {
             val r = HttpRoute.get("dashboard").request(_.cookie[String]("session"))
             r.request.fields(0) match
-                case Field.Param(Field.Param.Kind.Cookie, fn, _, _, _, opt, _) =>
+                case Field.Param(Field.Param.Location.Cookie, fn, _, _, _, opt, _) =>
                     assert(fn == "session")
                     assert(!opt)
                 case _ => fail("Expected Cookie Param")
@@ -357,7 +347,7 @@ class HttpRouteTest extends Test:
         "request cookie optional" in {
             val r = HttpRoute.get("dashboard").request(_.cookieOpt[String]("theme"))
             r.request.fields(0) match
-                case Field.Param(Field.Param.Kind.Cookie, _, _, _, _, opt, _) =>
+                case Field.Param(Field.Param.Location.Cookie, _, _, _, _, opt, _) =>
                     assert(opt)
                 case _ => fail("Expected Cookie Param")
             end match
@@ -366,14 +356,14 @@ class HttpRouteTest extends Test:
         "request cookie type tracks HttpCookie.Request" in {
             val r = HttpRoute.get("dashboard").request(_.cookie[String]("session").cookieOpt[String]("theme"))
             typeCheck(
-                """val _: HttpRoute[Any, "session" ~ HttpCookie.Request[String] & "theme" ~ kyo.Maybe[HttpCookie.Request[String]], Any, Any] = r"""
+                """val _: HttpRoute["session" ~ HttpCookie.Request[String] & "theme" ~ kyo.Maybe[HttpCookie.Request[String]], Any, Any] = r"""
             )
         }
 
         "response cookie" in {
             val r = HttpRoute.get("login").response(_.cookie[String]("session"))
             r.response.fields(0) match
-                case Field.Param(Field.Param.Kind.Cookie, fn, _, _, _, opt, _) =>
+                case Field.Param(Field.Param.Location.Cookie, fn, _, _, _, opt, _) =>
                     assert(fn == "session")
                     assert(!opt)
                 case _ => fail("Expected Cookie Param")
@@ -383,7 +373,7 @@ class HttpRouteTest extends Test:
         "response cookie optional" in {
             val r = HttpRoute.get("login").response(_.cookieOpt[String]("prefs"))
             r.response.fields(0) match
-                case Field.Param(Field.Param.Kind.Cookie, _, _, _, _, opt, _) =>
+                case Field.Param(Field.Param.Location.Cookie, _, _, _, _, opt, _) =>
                     assert(opt)
                 case _ => fail("Expected Cookie Param")
             end match
@@ -392,7 +382,7 @@ class HttpRouteTest extends Test:
         "response cookie type tracks HttpCookie.Response" in {
             val r = HttpRoute.get("login").response(_.cookie[String]("session"))
             typeCheck(
-                """val _: HttpRoute[Any, Any, "session" ~ HttpCookie.Response[String], Any] = r"""
+                """val _: HttpRoute[Any, "session" ~ HttpCookie.Response[String], Any] = r"""
             )
         }
     }
@@ -410,7 +400,7 @@ class HttpRouteTest extends Test:
         }
 
         "JSON with custom field name" in {
-            val r = HttpRoute.post("users").request(_.bodyJson[CreateUser]("payload"))
+            val r = HttpRoute.post("users").request(_.bodyJson[CreateUser]("payload", ""))
             r.request.fields(0) match
                 case Field.Body(fn, _, _) => assert(fn == "payload")
                 case _                    => fail("Expected Body")
@@ -418,7 +408,7 @@ class HttpRouteTest extends Test:
         }
 
         "JSON with description" in {
-            val r = HttpRoute.post("users").request(_.bodyJson[CreateUser]("payload", description = "User data"))
+            val r = HttpRoute.post("users").request(_.bodyJson[CreateUser]("payload", "User data"))
             r.request.fields(0) match
                 case Field.Body(_, _, desc) => assert(desc == "User data")
                 case _                      => fail("Expected Body")
@@ -467,19 +457,19 @@ class HttpRouteTest extends Test:
 
         "type tracks body field" in {
             val r = HttpRoute.post("users").request(_.bodyJson[CreateUser])
-            typeCheck("""val _: HttpRoute[Any, "body" ~ CreateUser, Any, Any] = r""")
+            typeCheck("""val _: HttpRoute["body" ~ CreateUser, Any, Any] = r""")
         }
 
         "type tracks custom-named body field" in {
-            val r = HttpRoute.post("users").request(_.bodyJson[CreateUser]("payload"))
-            typeCheck("""val _: HttpRoute[Any, "payload" ~ CreateUser, Any, Any] = r""")
+            val r = HttpRoute.post("users").request(_.bodyJson[CreateUser]("payload", ""))
+            typeCheck("""val _: HttpRoute["payload" ~ CreateUser, Any, Any] = r""")
         }
 
         "combined with path and query" in {
             val r = HttpRoute.put("users" / HttpPath.Capture[Int]("id"))
                 .request(_.query[String]("reason").bodyJson[CreateUser])
             assert(r.request.fields.size == 2)
-            typeCheck("""val _: HttpRoute["id" ~ Int, "reason" ~ String & "body" ~ CreateUser, Any, Any] = r""")
+            typeCheck("""val _: HttpRoute["id" ~ Int & "reason" ~ String & "body" ~ CreateUser, Any, Any] = r""")
         }
     }
 
@@ -489,7 +479,7 @@ class HttpRouteTest extends Test:
             val r = HttpRoute.get("users").response(_.header[String]("X-Request-Id"))
             assert(r.response.fields.size == 1)
             r.response.fields(0) match
-                case Field.Param(Field.Param.Kind.Header, fn, _, _, _, opt, _) =>
+                case Field.Param(Field.Param.Location.Header, fn, _, _, _, opt, _) =>
                     assert(fn == "X-Request-Id")
                     assert(!opt)
                 case _ => fail("Expected Header Param")
@@ -499,7 +489,7 @@ class HttpRouteTest extends Test:
         "headerOpt" in {
             val r = HttpRoute.get("users").response(_.headerOpt[String]("X-Trace-Id"))
             r.response.fields(0) match
-                case Field.Param(Field.Param.Kind.Header, _, _, _, _, opt, _) =>
+                case Field.Param(Field.Param.Location.Header, _, _, _, _, opt, _) =>
                     assert(opt)
                 case _ => fail("Expected Header Param")
             end match
@@ -544,7 +534,7 @@ class HttpRouteTest extends Test:
 
         "type tracks response fields" in {
             val r = HttpRoute.get("users").response(_.header[String]("X-Request-Id").bodyJson[Seq[User]])
-            typeCheck("""val _: HttpRoute[Any, Any, "X-Request-Id" ~ String & "body" ~ Seq[User], Any] = r""")
+            typeCheck("""val _: HttpRoute[Any, "X-Request-Id" ~ String & "body" ~ Seq[User], Any] = r""")
         }
     }
 
@@ -642,27 +632,29 @@ class HttpRouteTest extends Test:
             val r = HttpRoute.post("users" / HttpPath.Capture[Int]("id"))
                 .request(_.query[Int]("limit").header[String]("X-Tenant").bodyJson[CreateUser])
             assert(r.request.fields.size == 3)
-            assert(r.request.fields(0).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Kind.Query)
+            assert(r.request.fields(0).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Query)
             assert(r.request.fields(0).asInstanceOf[Field.Param[?, ?, ?]].fieldName == "limit")
-            assert(r.request.fields(1).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Kind.Header)
+            assert(r.request.fields(1).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Header)
             assert(r.request.fields(1).asInstanceOf[Field.Param[?, ?, ?]].fieldName == "X-Tenant")
             r.request.fields(2) match
                 case Field.Body(fn, ContentType.Json(_), _) => assert(fn == "body")
                 case _                                      => fail("Expected Json body")
             end match
-            typeCheck("""val _: HttpRoute["id" ~ Int, "limit" ~ Int & "X-Tenant" ~ String & "body" ~ CreateUser, Any, Any] = r""")
+            typeCheck(
+                """val _: HttpRoute["id" ~ Int & "limit" ~ Int & "X-Tenant" ~ String & "body" ~ CreateUser, Any, Any] = r"""
+            )
         }
 
         "path + query + cookie + optional header" in {
             val r = HttpRoute.get("data" / HttpPath.Capture[Int]("id"))
                 .request(_.query[String]("format").cookie[String]("session").headerOpt[String]("X-Trace"))
             assert(r.request.fields.size == 3)
-            assert(r.request.fields(0).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Kind.Query)
-            assert(r.request.fields(1).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Kind.Cookie)
-            assert(r.request.fields(2).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Kind.Header)
+            assert(r.request.fields(0).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Query)
+            assert(r.request.fields(1).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Cookie)
+            assert(r.request.fields(2).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Header)
             assert(r.request.fields(2).asInstanceOf[Field.Param[?, ?, ?]].optional)
             typeCheck(
-                """val _: HttpRoute["id" ~ Int, "format" ~ String & "session" ~ HttpCookie.Request[String] & "X-Trace" ~ kyo.Maybe[String], Any, Any] = r"""
+                """val _: HttpRoute["id" ~ Int & "format" ~ String & "session" ~ HttpCookie.Request[String] & "X-Trace" ~ kyo.Maybe[String], Any, Any] = r"""
             )
         }
 
@@ -674,7 +666,7 @@ class HttpRouteTest extends Test:
             assert(r.response.fields.size == 2)
             assert(r.response.errors.size == 1)
             typeCheck(
-                """val _: HttpRoute["id" ~ Int, "X-Tenant" ~ String & "body" ~ CreateUser, "X-Request-Id" ~ String & "body" ~ User, Any] = r"""
+                """val _: HttpRoute["id" ~ Int & "X-Tenant" ~ String & "body" ~ CreateUser, "X-Request-Id" ~ String & "body" ~ User, Any] = r"""
             )
         }
 
@@ -685,9 +677,9 @@ class HttpRouteTest extends Test:
             assert(!r.request.fields(0).asInstanceOf[Field.Param[?, ?, ?]].optional)
             assert(!r.request.fields(1).asInstanceOf[Field.Param[?, ?, ?]].optional)
             assert(r.request.fields(2).asInstanceOf[Field.Param[?, ?, ?]].optional)
-            assert(r.request.fields(3).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Kind.Cookie)
+            assert(r.request.fields(3).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Cookie)
             typeCheck(
-                """val _: HttpRoute[Any, "q" ~ String & "page" ~ Int & "pageSize" ~ kyo.Maybe[Int] & "session" ~ HttpCookie.Request[String], Any, Any] = r"""
+                """val _: HttpRoute["q" ~ String & "page" ~ Int & "pageSize" ~ kyo.Maybe[Int] & "session" ~ HttpCookie.Request[String], Any, Any] = r"""
             )
         }
 
@@ -701,15 +693,15 @@ class HttpRouteTest extends Test:
                         .error[ValidationError](HttpStatus.BadRequest)
                 )
             assert(r.response.fields.size == 3)
-            assert(r.response.fields(0).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Kind.Header)
-            assert(r.response.fields(1).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Kind.Cookie)
+            assert(r.response.fields(0).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Header)
+            assert(r.response.fields(1).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Cookie)
             r.response.fields(2) match
                 case Field.Body(fn, ContentType.Json(_), _) => assert(fn == "body")
                 case _                                      => fail("Expected Json body")
             end match
             assert(r.response.errors.size == 2)
             typeCheck(
-                """val _: HttpRoute["id" ~ Int, Any, "X-Request-Id" ~ String & "session" ~ HttpCookie.Response[String] & "body" ~ User, Any] = r"""
+                """val _: HttpRoute["id" ~ Int, "X-Request-Id" ~ String & "session" ~ HttpCookie.Response[String] & "body" ~ User, Any] = r"""
             )
         }
 
@@ -737,8 +729,7 @@ class HttpRouteTest extends Test:
             // Types
             typeCheck(
                 """val _: HttpRoute[
-                    "org" ~ String & "id" ~ Int,
-                    "reason" ~ String & "X-Tenant" ~ String & "auth" ~ HttpCookie.Request[String] & "body" ~ CreateUser,
+                    "org" ~ String & "id" ~ Int & "reason" ~ String & "X-Tenant" ~ String & "auth" ~ HttpCookie.Request[String] & "body" ~ CreateUser,
                     "X-Request-Id" ~ String & "session" ~ HttpCookie.Response[String] & "body" ~ User,
                     Any
                 ] = r"""
@@ -867,10 +858,10 @@ class HttpRouteTest extends Test:
             assert(update.method == HttpMethod.PUT)
             assert(update.response.errors.size == 2)
 
-            typeCheck("""val _: HttpRoute[Any, "limit" ~ Int & "offset" ~ Int, "body" ~ Seq[User], Any] = list""")
-            typeCheck("""val _: HttpRoute["id" ~ Int, Any, "body" ~ User, Any] = get""")
-            typeCheck("""val _: HttpRoute[Any, "body" ~ CreateUser, "body" ~ User, Any] = create""")
-            typeCheck("""val _: HttpRoute["id" ~ Int, "body" ~ CreateUser, "body" ~ User, Any] = update""")
+            typeCheck("""val _: HttpRoute["limit" ~ Int & "offset" ~ Int, "body" ~ Seq[User], Any] = list""")
+            typeCheck("""val _: HttpRoute["id" ~ Int, "body" ~ User, Any] = get""")
+            typeCheck("""val _: HttpRoute["body" ~ CreateUser, "body" ~ User, Any] = create""")
+            typeCheck("""val _: HttpRoute["id" ~ Int & "body" ~ CreateUser, "body" ~ User, Any] = update""")
         }
 
         "streaming SSE endpoint" in {
