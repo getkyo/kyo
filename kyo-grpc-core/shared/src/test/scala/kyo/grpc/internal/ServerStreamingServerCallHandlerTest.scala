@@ -10,14 +10,15 @@ import org.scalamock.scalatest.AsyncMockFactory
 import org.scalamock.stubs.Stubs
 import org.scalatest.concurrent.Eventually
 import org.scalatest.matchers.must.Matchers.*
-import org.scalatest.time.{Seconds, Span}
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 
 class ServerStreamingServerCallHandlerTest extends Test with Stubs with Eventually:
 
     case class TestRequest(message: String)
     case class TestResponse(result: String)
 
-    override implicit def patienceConfig: PatienceConfig = super.patienceConfig.copy(timeout = scaled(Span(5, Seconds)))
+    implicit override def patienceConfig: PatienceConfig = super.patienceConfig.copy(timeout = scaled(Span(5, Seconds)))
 
     "ServerStreamingServerCallHandler" - {
 
@@ -59,7 +60,7 @@ class ServerStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val init: GrpcHandlerInit[TestRequest, Stream[TestResponse, Grpc]] =
                     for
                         actualRequestHeaders <- Env.get[SafeMetadata]
-                        _ <- Emit.value(responseOptions)
+                        _                    <- Emit.value(responseOptions)
                     yield
                         assert(actualRequestHeaders === SafeMetadata.fromJava(requestHeaders))
                         handler
@@ -154,7 +155,7 @@ class ServerStreamingServerCallHandlerTest extends Test with Stubs with Eventual
             }
 
             "processes responses incrementally" in run {
-                val request = TestRequest("test")
+                val request      = TestRequest("test")
                 val sentMessages = new AtomicInteger(0)
 
                 val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
@@ -188,7 +189,7 @@ class ServerStreamingServerCallHandlerTest extends Test with Stubs with Eventual
             }
 
             "closes with trailers from handler" in run {
-                val request = TestRequest("test")
+                val request          = TestRequest("test")
                 val responseTrailers = Metadata()
                 responseTrailers.put(Metadata.Key.of("custom-header", Metadata.ASCII_STRING_MARSHALLER), "custom-value")
 
@@ -198,8 +199,8 @@ class ServerStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                             _ <- Emit.value(SafeMetadata.fromJava(responseTrailers))
                         yield Stream.init(List(TestResponse("response")))
 
-                val callHandler = ServerStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ServerStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -223,13 +224,13 @@ class ServerStreamingServerCallHandlerTest extends Test with Stubs with Eventual
         "errors" - {
             "handles abort failure correctly" in run {
                 val request = TestRequest("test")
-                val status = Status.INVALID_ARGUMENT.withDescription("Bad request")
+                val status  = Status.INVALID_ARGUMENT.withDescription("Bad request")
 
                 val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
                     req => Abort.fail(status.asException())
 
-                val callHandler = ServerStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ServerStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -250,13 +251,13 @@ class ServerStreamingServerCallHandlerTest extends Test with Stubs with Eventual
 
             "handles panic correctly" in run {
                 val request = TestRequest("test")
-                val cause = Exception("Something went wrong")
+                val cause   = Exception("Something went wrong")
 
                 val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
                     req => Abort.panic(cause)
 
-                val callHandler = ServerStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ServerStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -291,8 +292,8 @@ class ServerStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                                 resp
                         )
 
-                val callHandler = ServerStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ServerStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -317,8 +318,8 @@ class ServerStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
                     req => Stream.empty[TestResponse]
 
-                val callHandler = ServerStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ServerStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -341,14 +342,14 @@ class ServerStreamingServerCallHandlerTest extends Test with Stubs with Eventual
 
         "cancellation" - {
             "interrupts while sending messages" in run {
-                val request = TestRequest("test")
+                val request   = TestRequest("test")
                 val responses = List.fill(10)(TestResponse("response"))
 
                 val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
                     req => Stream.init(responses)
 
-                val callHandler = ServerStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ServerStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -357,13 +358,12 @@ class ServerStreamingServerCallHandlerTest extends Test with Stubs with Eventual
 
                 val interrupted = new JAtomicBoolean(false)
                 call.sendMessage.returnsWith {
-                    try {
+                    try
                         Thread.sleep(patienceConfig.timeout.toMillis + 5000)
-                    } catch {
+                    catch
                         case e: InterruptedException =>
                             interrupted.set(true)
                             throw e
-                    }
                 }
 
                 val listener = callHandler.startCall(call, requestHeaders)
@@ -391,8 +391,8 @@ class ServerStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
                     req => Stream.empty[TestResponse]
 
-                val callHandler = ServerStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ServerStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())

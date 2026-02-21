@@ -89,7 +89,7 @@ object ClientCall:
                 _       <- Sync.defer(call.sendMessage(request))
                 _       <- Sync.defer(call.halfClose())
                 result  <- listener.responsePromise.getResult
-                // TODO: Where is the emit of the effect that waits for completion?
+            // TODO: Where is the emit of the effect that waits for completion?
             yield result
         end sendAndReceive
 
@@ -263,7 +263,8 @@ object ClientCall:
                 headersPromise <- Promise.init[SafeMetadata, Any]
                 // TODO: What about the Scope?
                 // Assumption is that SPSC is fine which I think it is according to gRPC docs.
-                responseStream    <- Channel.initUnscoped[Response](options.responseCapacityOrDefault, access = Access.SingleProducerSingleConsumer)
+                responseStream <-
+                    Channel.initUnscoped[Response](options.responseCapacityOrDefault, access = Access.SingleProducerSingleConsumer)
                 completionPromise <- Promise.init[CallClosed, Any]
                 readySignal       <- Signal.initRef[Boolean](false)
                 listener = ServerStreamingClientCallListener(headersPromise, responseStream, completionPromise, readySignal)
@@ -290,6 +291,7 @@ object ClientCall:
                 _       <- Sync.defer(call.halfClose())
                 stream  <- listener.responseChannel.streamUntilClosed().tapChunk(onChunk)
             yield stream
+            end for
         end sendAndReceive
 
         def processCompletion(listener: ServerStreamingClientCallListener[Response])(
@@ -350,7 +352,8 @@ object ClientCall:
                 headersPromise <- Promise.init[SafeMetadata, Any]
                 // TODO: What about the Scope?
                 // Assumption is that SPSC is fine which I think it is according to gRPC docs.
-                responseStream    <- Channel.initUnscoped[Response](options.responseCapacityOrDefault, access = Access.SingleProducerSingleConsumer)
+                responseStream <-
+                    Channel.initUnscoped[Response](options.responseCapacityOrDefault, access = Access.SingleProducerSingleConsumer)
                 completionPromise <- Promise.init[CallClosed, Any]
                 readySignal       <- Signal.initRef[Boolean](false)
                 listener = ServerStreamingClientCallListener(headersPromise, responseStream, completionPromise, readySignal)
@@ -409,6 +412,7 @@ object ClientCall:
                 _      <- Fiber.initUnscoped(sendAndClose(call, listener, requests))
                 stream <- listener.responseChannel.streamUntilClosed().tapChunk(onResponseChunk)
             yield stream
+            end for
         end sendAndReceive
 
         def processCompletion(listener: ServerStreamingClientCallListener[Response])(
@@ -436,18 +440,22 @@ object ClientCall:
             Sync.defer(channel.newCall(method, options)).map(run)
     end bidiStreaming
 
-    private def cancelOnError[E <: Throwable : ConcreteTag, Response, S](call: ClientCall[?, ?])(v: => Response < (Abort[E] & S))(using Frame): Response < (Abort[E] & Sync & S) =
+    private def cancelOnError[E <: Throwable: ConcreteTag, Response, S](call: ClientCall[?, ?])(v: => Response < (Abort[E] & S))(using
+        Frame
+    ): Response < (Abort[E] & Sync & S) =
         Abort.recoverError[E](error =>
             Sync.defer(call.cancel("Call was cancelled due to an error.", error.failureOrPanic))
                 .andThen(Abort.error(error))
         )(v)
 
-    private def cancelOnInterrupt[E, Response](call: ClientCall[?, ?])(v: => Response < (Abort[E] & Async))(using Frame): Response < (Abort[E] & Async) =
+    private def cancelOnInterrupt[E, Response](call: ClientCall[?, ?])(v: => Response < (Abort[E] & Async))(using
+        Frame
+    ): Response < (Abort[E] & Async) =
         Async.tapFiber(v)(fiber =>
             fiber.onInterrupt(error =>
                 val ex = error match
                     case Result.Panic(e) => e
-                    case _ => null
+                    case _               => null
                 Sync.defer(call.cancel("Kyo Fiber was interrupted.", ex))
             )
         )

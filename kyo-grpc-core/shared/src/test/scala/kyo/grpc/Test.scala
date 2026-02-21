@@ -2,9 +2,9 @@ package kyo.grpc
 
 import kyo.internal.BaseKyoCoreTest
 import kyo.internal.Platform
+import org.scalactic.TripleEquals
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AsyncFreeSpec
-import org.scalactic.TripleEquals
 import scala.concurrent.ExecutionContext
 import scala.language.implicitConversions
 

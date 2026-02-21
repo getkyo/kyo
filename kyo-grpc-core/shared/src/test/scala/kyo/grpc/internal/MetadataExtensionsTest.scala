@@ -58,7 +58,7 @@ class MetadataExtensionsTest extends Test:
     "SafeMetadata" - {
 
         "fromJava and toJava round-trip" in {
-            val sm = SafeMetadata.empty.add("test-key", "test-value")
+            val sm   = SafeMetadata.empty.add("test-key", "test-value")
             val java = sm.toJava
             val back = SafeMetadata.fromJava(java)
             assert(back.getStrings("test-key") === Seq("test-value"))
@@ -66,8 +66,8 @@ class MetadataExtensionsTest extends Test:
         }
 
         "merge combines entries" in {
-            val m1 = SafeMetadata.empty.add("key1", "value1")
-            val m2 = SafeMetadata.empty.add("key2", "value2")
+            val m1     = SafeMetadata.empty.add("key1", "value1")
+            val m2     = SafeMetadata.empty.add("key2", "value2")
             val merged = m1.merge(m2)
             assert(merged.getStrings("key1") === Seq("value1"))
             assert(merged.getStrings("key2") === Seq("value2"))
@@ -75,8 +75,8 @@ class MetadataExtensionsTest extends Test:
         }
 
         "merge appends duplicate keys" in {
-            val m1 = SafeMetadata.empty.add("key1", "value1")
-            val m2 = SafeMetadata.empty.add("key1", "value2")
+            val m1     = SafeMetadata.empty.add("key1", "value1")
+            val m2     = SafeMetadata.empty.add("key1", "value2")
             val merged = m1.merge(m2)
             assert(merged.getStrings("key1") === Seq("value1", "value2"))
             succeed

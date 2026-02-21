@@ -1,7 +1,6 @@
 package kyo.grpc.internal
 
 import io.grpc.*
-
 import java.util.concurrent.atomic.AtomicBoolean as JAtomicBoolean
 import kyo.*
 import kyo.grpc.*
@@ -10,14 +9,15 @@ import org.scalamock.scalatest.AsyncMockFactory
 import org.scalamock.stubs.Stubs
 import org.scalatest.concurrent.Eventually
 import org.scalatest.matchers.must.Matchers.*
-import org.scalatest.time.{Seconds, Span}
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 
 class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
 
     case class TestRequest(message: String)
     case class TestResponse(result: String)
 
-    override implicit def patienceConfig: PatienceConfig = super.patienceConfig.copy(timeout = scaled(Span(5, Seconds)))
+    implicit override def patienceConfig: PatienceConfig = super.patienceConfig.copy(timeout = scaled(Span(5, Seconds)))
 
     "UnaryServerCallHandler" - {
 
@@ -59,7 +59,7 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 val init: GrpcHandlerInit[TestRequest, TestResponse] =
                     for
                         actualRequestHeaders <- Env.get[SafeMetadata]
-                        _ <- Emit.value(responseOptions)
+                        _                    <- Emit.value(responseOptions)
                     yield
                         assert(actualRequestHeaders === SafeMetadata.fromJava(requestHeaders))
                         handler
@@ -86,7 +86,7 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
             "sends message and closes" in run {
                 import org.scalactic.TraversableEqualityConstraints.*
 
-                val request = TestRequest("test")
+                val request          = TestRequest("test")
                 val expectedResponse = TestResponse("response")
 
                 val handler: GrpcHandler[TestRequest, TestResponse] = _ => expectedResponse
@@ -116,7 +116,7 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
             }
 
             "closes with trailers from handler" in run {
-                val request = TestRequest("test")
+                val request          = TestRequest("test")
                 val expectedResponse = TestResponse("response")
                 val responseTrailers = Metadata()
                 responseTrailers.put(Metadata.Key.of("custom-header", Metadata.ASCII_STRING_MARSHALLER), "custom-value")
@@ -124,8 +124,8 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 val handler: GrpcHandler[TestRequest, TestResponse] =
                     req => Emit.value(SafeMetadata.fromJava(responseTrailers)).map(_ => expectedResponse)
 
-                val callHandler = UnaryServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = UnaryServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -149,13 +149,13 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
         "errors" - {
             "handles abort failure correctly" in run {
                 val request = TestRequest("test")
-                val status = Status.INVALID_ARGUMENT.withDescription("Bad request")
+                val status  = Status.INVALID_ARGUMENT.withDescription("Bad request")
 
                 val handler: GrpcHandler[TestRequest, TestResponse] =
                     req => Abort.fail(status.asException())
 
-                val callHandler = UnaryServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = UnaryServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -175,13 +175,13 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
 
             "handles panic correctly" in run {
                 val request = TestRequest("test")
-                val cause = Exception("Something went wrong")
+                val cause   = Exception("Something went wrong")
 
                 val handler: GrpcHandler[TestRequest, TestResponse] =
                     req => Abort.panic(cause)
 
-                val callHandler = UnaryServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = UnaryServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -204,8 +204,8 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 val handler: GrpcHandler[TestRequest, TestResponse] =
                     req => TestResponse("response")
 
-                val callHandler = UnaryServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = UnaryServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -233,8 +233,8 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 val handler: GrpcHandler[TestRequest, TestResponse] =
                     req => TestResponse("response")
 
-                val callHandler = UnaryServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = UnaryServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -243,13 +243,12 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
 
                 val interrupted = new JAtomicBoolean(false)
                 call.sendMessage.returnsWith {
-                    try {
+                    try
                         Thread.sleep(patienceConfig.timeout.toMillis + 5000)
-                    } catch {
+                    catch
                         case e: InterruptedException =>
                             interrupted.set(true)
                             throw e
-                    }
                 }
 
                 val listener = callHandler.startCall(call, requestHeaders)
@@ -259,7 +258,7 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
 
                 eventually {
                     // This fails because of https://github.com/getkyo/kyo/issues/1431.
-                    //assert(interrupted.get === true)
+                    // assert(interrupted.get === true)
                     assert(call.close.times === 1)
                 }
 
@@ -273,8 +272,8 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 val handler: GrpcHandler[TestRequest, TestResponse] =
                     req => TestResponse("response")
 
-                val callHandler = UnaryServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = UnaryServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -292,8 +291,8 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 val handler: GrpcHandler[TestRequest, TestResponse] =
                     req => TestResponse("response")
 
-                val callHandler = UnaryServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = UnaryServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())

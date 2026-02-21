@@ -10,14 +10,15 @@ import org.scalamock.scalatest.AsyncMockFactory
 import org.scalamock.stubs.Stubs
 import org.scalatest.concurrent.Eventually
 import org.scalatest.matchers.must.Matchers.*
-import org.scalatest.time.{Seconds, Span}
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 
 class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventually:
 
     case class TestRequest(message: String)
     case class TestResponse(result: String)
 
-    override implicit def patienceConfig: PatienceConfig = super.patienceConfig.copy(timeout = scaled(Span(5, Seconds)))
+    implicit override def patienceConfig: PatienceConfig = super.patienceConfig.copy(timeout = scaled(Span(5, Seconds)))
 
     "ClientStreamingServerCallHandler" - {
 
@@ -60,7 +61,7 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val init: GrpcHandlerInit[Stream[TestRequest, Grpc], TestResponse] =
                     for
                         actualRequestHeaders <- Env.get[SafeMetadata]
-                        _ <- Emit.value(responseOptions)
+                        _                    <- Emit.value(responseOptions)
                     yield
                         assert(actualRequestHeaders === SafeMetadata.fromJava(requestHeaders))
                         handler
@@ -221,19 +222,19 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
             }
 
             "closes with trailers from handler" in run {
-                val requests = List(TestRequest("test"))
+                val requests         = List(TestRequest("test"))
                 val responseTrailers = Metadata()
                 responseTrailers.put(Metadata.Key.of("custom-header", Metadata.ASCII_STRING_MARSHALLER), "custom-value")
 
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], TestResponse] =
                     stream =>
                         for
-                            _ <- Emit.value(SafeMetadata.fromJava(responseTrailers))
+                            _     <- Emit.value(SafeMetadata.fromJava(responseTrailers))
                             chunk <- stream.run
                         yield TestResponse("response")
 
-                val callHandler = ClientStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ClientStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -261,8 +262,8 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], TestResponse] =
                     stream => Abort.fail(status.asException())
 
-                val callHandler = ClientStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ClientStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -287,8 +288,8 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], TestResponse] =
                     stream => Abort.panic(cause)
 
-                val callHandler = ClientStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ClientStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -321,8 +322,8 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                             .run
                             .map(_ => TestResponse("response"))
 
-                val callHandler = ClientStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ClientStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -349,8 +350,8 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], TestResponse] =
                     stream => stream.run.map(_ => TestResponse("response"))
 
-                val callHandler = ClientStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ClientStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -359,13 +360,12 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
 
                 val interrupted = new JAtomicBoolean(false)
                 call.sendMessage.returnsWith {
-                    try {
+                    try
                         Thread.sleep(patienceConfig.timeout.toMillis + 5000)
-                    } catch {
+                    catch
                         case e: InterruptedException =>
                             interrupted.set(true)
                             throw e
-                    }
                 }
 
                 val listener = callHandler.startCall(call, requestHeaders)
@@ -388,8 +388,8 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], TestResponse] =
                     stream => stream.run.map(_ => TestResponse("response"))
 
-                val callHandler = ClientStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ClientStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -407,8 +407,8 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], TestResponse] =
                     stream => stream.run.map(_ => TestResponse("response"))
 
-                val callHandler = ClientStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ClientStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -427,8 +427,8 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], TestResponse] =
                     stream => stream.run.map(_ => TestResponse("no messages"))
 
-                val callHandler = ClientStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = ClientStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())

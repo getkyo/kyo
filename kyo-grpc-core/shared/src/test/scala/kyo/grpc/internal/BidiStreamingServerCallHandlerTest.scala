@@ -10,14 +10,15 @@ import org.scalamock.scalatest.AsyncMockFactory
 import org.scalamock.stubs.Stubs
 import org.scalatest.concurrent.Eventually
 import org.scalatest.matchers.must.Matchers.*
-import org.scalatest.time.{Seconds, Span}
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 
 class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually:
 
     case class TestRequest(message: String)
     case class TestResponse(result: String)
 
-    override implicit def patienceConfig: PatienceConfig = super.patienceConfig.copy(timeout = scaled(Span(5, Seconds)))
+    implicit override def patienceConfig: PatienceConfig = super.patienceConfig.copy(timeout = scaled(Span(5, Seconds)))
 
     "BidiStreamingServerCallHandler" - {
 
@@ -60,7 +61,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val init: GrpcHandlerInit[Stream[TestRequest, Grpc], Stream[TestResponse, Grpc]] =
                     for
                         actualRequestHeaders <- Env.get[SafeMetadata]
-                        _ <- Emit.value(responseOptions)
+                        _                    <- Emit.value(responseOptions)
                     yield
                         assert(actualRequestHeaders === SafeMetadata.fromJava(requestHeaders))
                         handler
@@ -305,7 +306,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
             }
 
             "closes with trailers from handler" in run {
-                val requests = List(TestRequest("test"))
+                val requests         = List(TestRequest("test"))
                 val responseTrailers = Metadata()
                 responseTrailers.put(Metadata.Key.of("custom-header", Metadata.ASCII_STRING_MARSHALLER), "custom-value")
 
@@ -315,8 +316,8 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                             _ <- Emit.value(SafeMetadata.fromJava(responseTrailers))
                         yield stream.map(req => TestResponse(s"echo: ${req.message}"))
 
-                val callHandler = BidiStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = BidiStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -340,8 +341,8 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], Stream[TestResponse, Grpc]] =
                     stream => stream.map(req => TestResponse(s"echo: ${req.message}"))
 
-                val callHandler = BidiStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = BidiStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -368,8 +369,8 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], Stream[TestResponse, Grpc]] =
                     stream => stream.filter(_ => false).map(req => TestResponse("never"))
 
-                val callHandler = BidiStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = BidiStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -398,8 +399,8 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], Stream[TestResponse, Grpc]] =
                     stream => Abort.fail(status.asException())
 
-                val callHandler = BidiStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = BidiStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -424,8 +425,8 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], Stream[TestResponse, Grpc]] =
                     stream => Abort.panic(cause)
 
-                val callHandler = BidiStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = BidiStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -455,8 +456,8 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                                 TestResponse(s"echo: ${req.message}")
                         )
 
-                val callHandler = BidiStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = BidiStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -484,8 +485,8 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], Stream[TestResponse, Grpc]] =
                     stream => stream.map(req => TestResponse(s"echo: ${req.message}"))
 
-                val callHandler = BidiStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = BidiStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
@@ -494,13 +495,12 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
 
                 val interrupted = new JAtomicBoolean(false)
                 call.sendMessage.returnsWith {
-                    try {
+                    try
                         Thread.sleep(patienceConfig.timeout.toMillis + 5000)
-                    } catch {
+                    catch
                         case e: InterruptedException =>
                             interrupted.set(true)
                             throw e
-                    }
                 }
 
                 val listener = callHandler.startCall(call, requestHeaders)
@@ -528,8 +528,8 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], Stream[TestResponse, Grpc]] =
                     stream => stream.map(req => TestResponse(s"echo: ${req.message}"))
 
-                val callHandler = BidiStreamingServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val callHandler    = BidiStreamingServerCallHandler(handler)
+                val call           = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())

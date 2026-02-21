@@ -100,7 +100,7 @@ class RequestOptionsTest extends Test:
 
     "run" - {
         "extracts single emitted option" in run {
-            val options = RequestOptions(messageCompression = Maybe.Present(true))
+            val options     = RequestOptions(messageCompression = Maybe.Present(true))
             val computation = Emit.value(options)
 
             RequestOptions.run(computation).map: (result, _) =>

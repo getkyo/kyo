@@ -37,11 +37,11 @@ abstract private[grpc] class BaseUnaryServerCallHandler[Request, Response, Handl
                 fiber <- Fiber.initUnscoped(sendAndClose(handler, promise, ready))
                 _ <- fiber.onInterrupt: _ =>
                     val status = Status.CANCELLED.withDescription("Call was cancelled.")
-                    try {
+                    try
                         call.close(status, SafeMetadata.empty.toJava)
-                    } catch {
+                    catch
                         case _: IllegalStateException => // Ignore
-                    }
+                    end try
             yield fiber
 
         val init =

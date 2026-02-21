@@ -6,47 +6,47 @@ import kyo.grpc.*
 import kyo.grpc.Equalities.given
 import org.scalatest.concurrent.Eventually
 import org.scalatest.matchers.must.Matchers.*
-import org.scalatest.time.{Seconds, Span}
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 
 class UnaryClientCallListenerTest extends Test with Eventually:
 
     case class TestResponse(result: String)
 
-    override implicit def patienceConfig: PatienceConfig = super.patienceConfig.copy(timeout = scaled(Span(5, Seconds)))
+    implicit override def patienceConfig: PatienceConfig = super.patienceConfig.copy(timeout = scaled(Span(5, Seconds)))
 
     "UnaryClientCallListener" - {
 
         "onHeaders" - {
             "completes headers promise" in run {
                 for
-                    headersPromise <- Promise.init[SafeMetadata, Any]
-                    responsePromise <- Promise.init[TestResponse, Abort[StatusException]]
+                    headersPromise    <- Promise.init[SafeMetadata, Any]
+                    responsePromise   <- Promise.init[TestResponse, Abort[StatusException]]
                     completionPromise <- Promise.init[CallClosed, Any]
-                    readySignal <- Signal.initRef[Boolean](false)
+                    readySignal       <- Signal.initRef[Boolean](false)
                     listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
 
                     headers = Metadata()
-                    key = Metadata.Key.of("test-header", Metadata.ASCII_STRING_MARSHALLER)
-                    _ = headers.put(key, "test-value")
-                    _ = listener.onHeaders(headers)
+                    key     = Metadata.Key.of("test-header", Metadata.ASCII_STRING_MARSHALLER)
+                    _       = headers.put(key, "test-value")
+                    _       = listener.onHeaders(headers)
 
                     result <- headersPromise.get
-                yield
-                    assert(result.getStrings("test-header") === Seq("test-value"))
+                yield assert(result.getStrings("test-header") === Seq("test-value"))
             }
         }
 
         "onMessage" - {
             "completes response promise with first message" in run {
                 for
-                    headersPromise <- Promise.init[SafeMetadata, Any]
-                    responsePromise <- Promise.init[TestResponse, Abort[StatusException]]
+                    headersPromise    <- Promise.init[SafeMetadata, Any]
+                    responsePromise   <- Promise.init[TestResponse, Abort[StatusException]]
                     completionPromise <- Promise.init[CallClosed, Any]
-                    readySignal <- Signal.initRef[Boolean](false)
+                    readySignal       <- Signal.initRef[Boolean](false)
                     listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
 
                     response = TestResponse("success")
-                    _ = listener.onMessage(response)
+                    _        = listener.onMessage(response)
 
                     result <- Abort.run[StatusException](responsePromise.get)
                 yield
@@ -56,50 +56,49 @@ class UnaryClientCallListenerTest extends Test with Eventually:
 
             "throws exception when server sends more than one response" in run {
                 for
-                    headersPromise <- Promise.init[SafeMetadata, Any]
-                    responsePromise <- Promise.init[TestResponse, Abort[StatusException]]
+                    headersPromise    <- Promise.init[SafeMetadata, Any]
+                    responsePromise   <- Promise.init[TestResponse, Abort[StatusException]]
                     completionPromise <- Promise.init[CallClosed, Any]
-                    readySignal <- Signal.initRef[Boolean](false)
+                    readySignal       <- Signal.initRef[Boolean](false)
                     listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
 
                     response1 = TestResponse("first")
                     response2 = TestResponse("second")
-                    _ = listener.onMessage(response1)
+                    _         = listener.onMessage(response1)
 
                     exception <- Abort.run[Throwable]:
                         Abort.catching[StatusException]:
                             Sync.defer(listener.onMessage(response2))
-                yield
-                    exception.fold(
-                        _ => fail("Expected exception but got success"),
-                        ex =>
-                            ex match
-                                case se: StatusException =>
-                                    assert(se.getStatus.getCode === Status.Code.INVALID_ARGUMENT)
-                                    assert(se.getStatus.getDescription === "Server sent more than one response.")
-                                case _ =>
-                                    fail(s"Expected StatusException but got ${ex.getClass}")
-                        ,
-                        _ => fail("Expected exception but got panic")
-                    )
+                yield exception.fold(
+                    _ => fail("Expected exception but got success"),
+                    ex =>
+                        ex match
+                            case se: StatusException =>
+                                assert(se.getStatus.getCode === Status.Code.INVALID_ARGUMENT)
+                                assert(se.getStatus.getDescription === "Server sent more than one response.")
+                            case _ =>
+                                fail(s"Expected StatusException but got ${ex.getClass}")
+                    ,
+                    _ => fail("Expected exception but got panic")
+                )
             }
         }
 
         "onClose" - {
             "completes response promise with error when no message received" in run {
                 for
-                    headersPromise <- Promise.init[SafeMetadata, Any]
-                    responsePromise <- Promise.init[TestResponse, Abort[StatusException]]
+                    headersPromise    <- Promise.init[SafeMetadata, Any]
+                    responsePromise   <- Promise.init[TestResponse, Abort[StatusException]]
                     completionPromise <- Promise.init[CallClosed, Any]
-                    readySignal <- Signal.initRef[Boolean](false)
+                    readySignal       <- Signal.initRef[Boolean](false)
                     listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
 
-                    status = Status.CANCELLED.withDescription("Client cancelled")
+                    status   = Status.CANCELLED.withDescription("Client cancelled")
                     trailers = Metadata()
-                    _ = listener.onClose(status, trailers)
+                    _        = listener.onClose(status, trailers)
 
                     completionResult <- completionPromise.get
-                    responseResult <- Abort.run[StatusException](responsePromise.get)
+                    responseResult   <- Abort.run[StatusException](responsePromise.get)
                 yield
                     assert(completionResult.status === status)
                     assert(completionResult.trailers === SafeMetadata.fromJava(trailers))
@@ -110,20 +109,20 @@ class UnaryClientCallListenerTest extends Test with Eventually:
 
             "completes completion promise after message received" in run {
                 for
-                    headersPromise <- Promise.init[SafeMetadata, Any]
-                    responsePromise <- Promise.init[TestResponse, Abort[StatusException]]
+                    headersPromise    <- Promise.init[SafeMetadata, Any]
+                    responsePromise   <- Promise.init[TestResponse, Abort[StatusException]]
                     completionPromise <- Promise.init[CallClosed, Any]
-                    readySignal <- Signal.initRef[Boolean](false)
+                    readySignal       <- Signal.initRef[Boolean](false)
                     listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
 
                     response = TestResponse("success")
-                    _ = listener.onMessage(response)
+                    _        = listener.onMessage(response)
 
-                    status = Status.OK
+                    status   = Status.OK
                     trailers = Metadata()
-                    key = Metadata.Key.of("trailer-key", Metadata.ASCII_STRING_MARSHALLER)
-                    _ = trailers.put(key, "trailer-value")
-                    _ = listener.onClose(status, trailers)
+                    key      = Metadata.Key.of("trailer-key", Metadata.ASCII_STRING_MARSHALLER)
+                    _        = trailers.put(key, "trailer-value")
+                    _        = listener.onClose(status, trailers)
 
                     completionResult <- completionPromise.get
                 yield
@@ -135,25 +134,24 @@ class UnaryClientCallListenerTest extends Test with Eventually:
         "onReady" - {
             "sets ready signal to true" in run {
                 for
-                    headersPromise <- Promise.init[SafeMetadata, Any]
-                    responsePromise <- Promise.init[TestResponse, Abort[StatusException]]
+                    headersPromise    <- Promise.init[SafeMetadata, Any]
+                    responsePromise   <- Promise.init[TestResponse, Abort[StatusException]]
                     completionPromise <- Promise.init[CallClosed, Any]
-                    readySignal <- Signal.initRef[Boolean](false)
+                    readySignal       <- Signal.initRef[Boolean](false)
                     listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
 
                     _ = listener.onReady()
 
                     ready <- readySignal.get
-                yield
-                    assert(ready === true)
+                yield assert(ready === true)
             }
 
             "can be called multiple times" in run {
                 for
-                    headersPromise <- Promise.init[SafeMetadata, Any]
-                    responsePromise <- Promise.init[TestResponse, Abort[StatusException]]
+                    headersPromise    <- Promise.init[SafeMetadata, Any]
+                    responsePromise   <- Promise.init[TestResponse, Abort[StatusException]]
                     completionPromise <- Promise.init[CallClosed, Any]
-                    readySignal <- Signal.initRef[Boolean](false)
+                    readySignal       <- Signal.initRef[Boolean](false)
                     listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
 
                     _ = listener.onReady()
@@ -169,29 +167,29 @@ class UnaryClientCallListenerTest extends Test with Eventually:
         "full lifecycle" - {
             "processes successful unary call" in run {
                 for
-                    headersPromise <- Promise.init[SafeMetadata, Any]
-                    responsePromise <- Promise.init[TestResponse, Abort[StatusException]]
+                    headersPromise    <- Promise.init[SafeMetadata, Any]
+                    responsePromise   <- Promise.init[TestResponse, Abort[StatusException]]
                     completionPromise <- Promise.init[CallClosed, Any]
-                    readySignal <- Signal.initRef[Boolean](false)
+                    readySignal       <- Signal.initRef[Boolean](false)
                     listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
 
                     // Simulate call lifecycle
                     headers = Metadata()
-                    _ = headers.put(Metadata.Key.of("content-type", Metadata.ASCII_STRING_MARSHALLER), "application/grpc")
-                    _ = listener.onHeaders(headers)
+                    _       = headers.put(Metadata.Key.of("content-type", Metadata.ASCII_STRING_MARSHALLER), "application/grpc")
+                    _       = listener.onHeaders(headers)
 
                     _ = listener.onReady()
 
                     response = TestResponse("final result")
-                    _ = listener.onMessage(response)
+                    _        = listener.onMessage(response)
 
                     trailers = Metadata()
-                    _ = listener.onClose(Status.OK, trailers)
+                    _        = listener.onClose(Status.OK, trailers)
 
-                    headersResult <- headersPromise.get
-                    responseResult <- Abort.run[StatusException](responsePromise.get)
+                    headersResult    <- headersPromise.get
+                    responseResult   <- Abort.run[StatusException](responsePromise.get)
                     completionResult <- completionPromise.get
-                    readyResult <- readySignal.get
+                    readyResult      <- readySignal.get
                 yield
                     assert(headersResult === SafeMetadata.fromJava(headers))
                     assert(responseResult === Result.succeed(response))
@@ -201,22 +199,22 @@ class UnaryClientCallListenerTest extends Test with Eventually:
 
             "processes failed unary call" in run {
                 for
-                    headersPromise <- Promise.init[SafeMetadata, Any]
-                    responsePromise <- Promise.init[TestResponse, Abort[StatusException]]
+                    headersPromise    <- Promise.init[SafeMetadata, Any]
+                    responsePromise   <- Promise.init[TestResponse, Abort[StatusException]]
                     completionPromise <- Promise.init[CallClosed, Any]
-                    readySignal <- Signal.initRef[Boolean](false)
+                    readySignal       <- Signal.initRef[Boolean](false)
                     listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
 
                     // Simulate call lifecycle with error
                     headers = Metadata()
-                    _ = listener.onHeaders(headers)
+                    _       = listener.onHeaders(headers)
 
                     errorStatus = Status.UNAVAILABLE.withDescription("Service unavailable")
-                    trailers = Metadata()
-                    _ = listener.onClose(errorStatus, trailers)
+                    trailers    = Metadata()
+                    _           = listener.onClose(errorStatus, trailers)
 
-                    headersResult <- headersPromise.get
-                    responseResult <- Abort.run[StatusException](responsePromise.get)
+                    headersResult    <- headersPromise.get
+                    responseResult   <- Abort.run[StatusException](responsePromise.get)
                     completionResult <- completionPromise.get
                 yield
                     assert(headersResult === SafeMetadata.fromJava(headers))

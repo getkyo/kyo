@@ -62,9 +62,9 @@ class CallClosedTest extends Test:
         }
 
         "not equals CallClosed with different trailers" in {
-            val status   = Status.OK
-            val result1  = CallClosed(status, SafeMetadata.empty.add("key", "v1"))
-            val result2  = CallClosed(status, SafeMetadata.empty.add("key", "v2"))
+            val status  = Status.OK
+            val result1 = CallClosed(status, SafeMetadata.empty.add("key", "v1"))
+            val result2 = CallClosed(status, SafeMetadata.empty.add("key", "v2"))
 
             assert(result1 !== result2)
         }

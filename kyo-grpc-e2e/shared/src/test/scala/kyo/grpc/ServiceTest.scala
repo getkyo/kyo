@@ -2,7 +2,6 @@ package kyo.grpc
 
 import io.grpc.{Server as _, *}
 import io.grpc.internal.GrpcUtil
-
 import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
 import kgrpc.*
@@ -14,7 +13,6 @@ import kyo.grpc.Equalities.given
 import org.scalactic.Equality
 import org.scalactic.TripleEquals.*
 import org.scalatest.Inspectors.*
-
 import scala.concurrent.Future
 import scala.util.chaining.scalaUtilChainingOps
 
@@ -34,7 +32,7 @@ class ServiceTest extends Test:
             val message = "Hello"
             val request = Success(message)
             for
-                client   <- createClientAndServer
+                client <- createClientAndServer
                 // TODO: Can we avoid the lift here?
                 response <- client.oneToOne(Kyo.lift(request))
             yield assert(response === Echo(message))
@@ -82,14 +80,12 @@ class ServiceTest extends Test:
             val message = "Hello"
             val request = Success(message, count = 5)
             for
-                client    <- createClientAndServer
+                client <- createClientAndServer
                 // TODO: Can we avoid the lift here?
-                responses <- {
+                responses <-
                     println(client)
                     client.oneToMany(Kyo.lift(request))
                         .run
-                }
-
             yield assert(responses == Chunk.from((1 to 5).map(n => Echo(s"$message $n"))))
             end for
         }
@@ -104,7 +100,7 @@ class ServiceTest extends Test:
                     val request  = Fail(message, status.getCode.value, outside = true)
                     val expected = status.asException(emptyTrailers)
                     for
-                        client   <- createClientAndServer
+                        client <- createClientAndServer
                         // TODO: Can we avoid the lift here?
                         response <- Abort.run[StatusException](client.oneToMany(Kyo.lift(request)).take(1).run)
                     yield assertStatusException(response, expected)
@@ -133,13 +129,13 @@ class ServiceTest extends Test:
             "after some elements" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
-                        val message = "Yeah nah bro"
-                        val status  = code.toStatus.withDescription(message)
-                        val after   = 5
-                        val request = Fail(message, status.getCode.value, after)
+                        val message  = "Yeah nah bro"
+                        val status   = code.toStatus.withDescription(message)
+                        val after    = 5
+                        val request  = Fail(message, status.getCode.value, after)
                         val expected = status.asException(emptyTrailers)
                         for
-                            client            <- createClientAndServer
+                            client <- createClientAndServer
                             // TODO: Can we avoid the lift here?
                             (responses, tail) <- client.oneToMany(Kyo.lift(request)).splitAt(5)
                             failedResponse    <- Abort.run[StatusException](tail.run)
@@ -190,12 +186,12 @@ class ServiceTest extends Test:
             }
 
             "after some elements" in run {
-                val message = "Oh no!"
-                val after   = 5
-                val request = Panic(message, after)
+                val message  = "Oh no!"
+                val after    = 5
+                val request  = Panic(message, after)
                 val expected = Status.UNKNOWN.asException(emptyTrailers)
                 for
-                    client            <- createClientAndServer
+                    client <- createClientAndServer
                     // TODO: Can we avoid the lift here?
                     (responses, tail) <- client.oneToMany(Kyo.lift(request)).splitAt(5)
                     failedResponse    <- Abort.run[StatusException](tail.run)
@@ -217,7 +213,7 @@ class ServiceTest extends Test:
             val successes = Chunk.empty[Request]
             val requests  = Stream(Emit.value(successes))
             for
-                client   <- createClientAndServer
+                client <- createClientAndServer
                 // TODO: Can we avoid the lift here?
                 response <- client.manyToOne(Kyo.lift(requests))
             yield assert(response === Echo())
@@ -228,7 +224,7 @@ class ServiceTest extends Test:
             val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
             val requests  = Stream(Emit.value(successes))
             for
-                client   <- createClientAndServer
+                client <- createClientAndServer
                 // TODO: Can we avoid the lift here?
                 response <- client.manyToOne(Kyo.lift(requests))
             yield assert(response === Echo((1 to 5).mkString(" ")))
@@ -325,7 +321,7 @@ class ServiceTest extends Test:
             val successes = Chunk.empty[Request]
             val requests  = Stream(Emit.value(successes))
             for
-                client    <- createClientAndServer
+                client <- createClientAndServer
                 // TODO: Can we avoid the lift here?
                 responses <- client.manyToMany(Kyo.lift(requests)).run
             yield assert(responses == Chunk.empty)
@@ -337,7 +333,7 @@ class ServiceTest extends Test:
             val expected  = Chunk.from((3 to 5).flatMap(n => Chunk.from((1 to (n - 2)).map(m => Echo(s"$n $m")))))
             val requests  = Stream(Emit.value(successes))
             for
-                client    <- createClientAndServer
+                client <- createClientAndServer
                 // TODO: Can we avoid the lift here?
                 responses <- client.manyToMany(Kyo.lift(requests)).run
             yield assert(responses == expected)
@@ -355,7 +351,7 @@ class ServiceTest extends Test:
                         val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
                         val expected  = status.asException(emptyTrailers)
                         for
-                            client   <- createClientAndServer
+                            client <- createClientAndServer
                             // TODO: Can we avoid the lift here?
                             response <- Abort.run[StatusException](client.manyToMany(Kyo.lift(requests)).take(1).run)
                         yield assertStatusException(response, expected)
@@ -373,9 +369,9 @@ class ServiceTest extends Test:
                         val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
                         val fail      = Fail(message, status.getCode.value, outside = true)
                         val requests  = Stream(Emit.value(successes.append(fail)))
-                        val expected = status.asException(emptyTrailers)
+                        val expected  = status.asException(emptyTrailers)
                         for
-                            client            <- createClientAndServer
+                            client <- createClientAndServer
                             // TODO: Can we avoid the lift here?
                             (responses, tail) <- client.manyToMany(Kyo.lift(requests)).splitAt(5)
                             failedResponse    <- Abort.run[StatusException](tail.run)
@@ -415,9 +411,9 @@ class ServiceTest extends Test:
                         val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
                         val fail      = Fail(message, status.getCode.value)
                         val requests  = Stream(Emit.value(successes.append(fail)))
-                        val expected = status.asException(emptyTrailers)
+                        val expected  = status.asException(emptyTrailers)
                         for
-                            client            <- createClientAndServer
+                            client <- createClientAndServer
                             // TODO: Can we avoid the lift here?
                             (responses, tail) <- client.manyToMany(Kyo.lift(requests)).splitAt(5)
                             failedResponse    <- Abort.run[StatusException](tail.run)
@@ -439,7 +435,7 @@ class ServiceTest extends Test:
                     val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
                     val expected  = Status.UNKNOWN.asException(emptyTrailers)
                     for
-                        client   <- createClientAndServer
+                        client <- createClientAndServer
                         // TODO: Can we avoid the lift here?
                         response <- Abort.run[StatusException](client.manyToMany(Kyo.lift(requests)).take(1).run)
                     yield
@@ -460,9 +456,9 @@ class ServiceTest extends Test:
                     val message   = "Oh no!"
                     val panic     = Panic(message)
                     val requests  = Stream(Emit.value(successes.append(panic)))
-                    val expected = Status.UNKNOWN.asException(emptyTrailers)
+                    val expected  = Status.UNKNOWN.asException(emptyTrailers)
                     for
-                        client            <- createClientAndServer
+                        client <- createClientAndServer
                         // TODO: Can we avoid the lift here?
                         (responses, tail) <- client.manyToMany(Kyo.lift(requests)).splitAt(after)
                         failedResponse    <- Abort.run[StatusException](tail.run)
@@ -507,9 +503,9 @@ class ServiceTest extends Test:
                     val message   = "Oh no!"
                     val panic     = Panic(message)
                     val requests  = Stream(Emit.value(successes.append(panic)))
-                    val expected = Status.UNKNOWN.asException(emptyTrailers)
+                    val expected  = Status.UNKNOWN.asException(emptyTrailers)
                     for
-                        client            <- createClientAndServer
+                        client <- createClientAndServer
                         // TODO: Can we avoid the lift here?
                         (responses, tail) <- client.manyToMany(Kyo.lift(requests)).splitAt(5)
                         failedResponse    <- Abort.run[StatusException](tail.run)

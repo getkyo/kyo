@@ -25,8 +25,7 @@ class ServerStreamingClientCallListenerTest extends Test:
                 _       = listener.onHeaders(headers)
 
                 result <- headersPromise.get
-            yield
-                assert(result.getStrings("test-header") === Seq("test-value"))
+            yield assert(result.getStrings("test-header") === Seq("test-value"))
         }
 
         "onMessage offers messages to channel" in run {
@@ -79,8 +78,7 @@ class ServerStreamingClientCallListenerTest extends Test:
                 _ = listener.onReady()
 
                 ready <- readySignal.get
-            yield
-                assert(ready === true)
+            yield assert(ready === true)
         }
     }
 

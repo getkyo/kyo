@@ -1,21 +1,26 @@
 package kyo.grpc
 
 import io.grpc.Metadata
-import kyo.*
 import java.util.Base64
+import kyo.*
 
 final case class SafeMetadata(
     entries: Map[String, Seq[String]] = Map.empty
 ):
     def add(key: String, value: String): SafeMetadata =
         if key.endsWith(Metadata.BINARY_HEADER_SUFFIX) then
-            throw new IllegalArgumentException(s"Binary header key $key must end with ${Metadata.BINARY_HEADER_SUFFIX} and value must be Chunk[Byte]")
+            throw new IllegalArgumentException(
+                s"Binary header key $key must end with ${Metadata.BINARY_HEADER_SUFFIX} and value must be Chunk[Byte]"
+            )
+        end if
         update(key, value)
+    end add
 
     def add(key: String, value: Chunk[Byte]): SafeMetadata =
         if !key.endsWith(Metadata.BINARY_HEADER_SUFFIX) then
             throw new IllegalArgumentException(s"Binary header key $key must end with ${Metadata.BINARY_HEADER_SUFFIX}")
         update(key, Base64.getEncoder.encodeToString(value.toArray))
+    end add
 
     private def update(key: String, value: String): SafeMetadata =
         val newValues = entries.getOrElse(key, Seq.empty) :+ value
@@ -26,6 +31,7 @@ final case class SafeMetadata(
             acc.updated(k, acc.getOrElse(k, Seq.empty) ++ v)
         }
         copy(entries = merged)
+    end merge
 
     def toJava: Metadata =
         val md = new Metadata()
@@ -39,6 +45,7 @@ final case class SafeMetadata(
             }
         }
         md
+    end toJava
 
 end SafeMetadata
 
@@ -47,7 +54,7 @@ object SafeMetadata:
 
     def fromJava(md: Metadata): SafeMetadata =
         var result = empty
-        val keys = md.keys()
+        val keys   = md.keys()
         if keys != null then
             val iterator = keys.iterator()
             while iterator.hasNext do
@@ -59,6 +66,7 @@ object SafeMetadata:
                         val it = values.iterator()
                         while it.hasNext do
                             result = result.update(key, Base64.getEncoder.encodeToString(it.next()))
+                    end if
                 else
                     val keyObj = Metadata.Key.of(key, Metadata.ASCII_STRING_MARSHALLER)
                     val values = md.getAll(keyObj)
@@ -66,6 +74,10 @@ object SafeMetadata:
                         val it = values.iterator()
                         while it.hasNext do
                             result = result.update(key, it.next())
+                    end if
+                end if
+            end while
+        end if
         result
     end fromJava
 end SafeMetadata
