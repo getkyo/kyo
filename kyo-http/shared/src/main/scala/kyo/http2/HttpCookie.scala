@@ -12,7 +12,10 @@ sealed abstract class HttpCookie[A]:
 
 object HttpCookie:
 
-    case class Request[A](value: A, codec: HttpCodec[A]) extends HttpCookie[A]
+    given [A, B](using CanEqual[A, B]): CanEqual[HttpCookie[A], HttpCookie[B]] = CanEqual.derived
+
+    case class Request[A](value: A, codec: HttpCodec[A]) extends HttpCookie[A]:
+        def toResponse: Response[A] = Response(value, codec)
 
     object Request:
         @targetName("init")
@@ -44,7 +47,6 @@ object HttpCookie:
 
         enum SameSite derives CanEqual:
             case Strict, Lax, None
-        end SameSite
     end Response
 
 end HttpCookie

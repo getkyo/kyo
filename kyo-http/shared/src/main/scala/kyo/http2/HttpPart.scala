@@ -8,6 +8,4 @@ case class HttpPart(
     filename: Maybe[String],
     contentType: Maybe[String],
     data: Span[Byte]
-) derives CanEqual:
-    require(name.nonEmpty, "Part name cannot be empty")
-end HttpPart
+) derives CanEqual
