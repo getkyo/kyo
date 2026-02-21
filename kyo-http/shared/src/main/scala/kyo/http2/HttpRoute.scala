@@ -30,14 +30,14 @@ case class HttpRoute[In, Out, -S](
     def pathPrepend[In2](prefix: HttpPath[In2]): HttpRoute[In & In2, Out, S] =
         copy(request = request.pathPrepend(prefix))
 
-    def request[R](f: RequestDef[In] => R): HttpRoute[Strict[RequestDef, R], Out, S] =
-        HttpRoute(method, f(request).asInstanceOf[RequestDef[Strict[RequestDef, R]]], response, metadata)
+    def request[R](f: RequestDef[In] => R)(using s: Strict[RequestDef, R]): HttpRoute[s.Out, Out, S] =
+        HttpRoute(method, s(f(request)), response, metadata)
 
     def request[In2](req: RequestDef[In2]): HttpRoute[In2, Out, S] =
         HttpRoute(method, req, response, metadata)
 
-    def response[R](f: ResponseDef[Out] => R): HttpRoute[In, Out & Strict[ResponseDef, R], S] =
-        HttpRoute(method, request, f(response).asInstanceOf[ResponseDef[Strict[ResponseDef, R]]], metadata)
+    def response[R](f: ResponseDef[Out] => R)(using s: Strict[ResponseDef, R]): HttpRoute[In, s.Out, S] =
+        HttpRoute(method, request, s(f(response)), metadata)
 
     def response[Out2](res: ResponseDef[Out2]): HttpRoute[In, Out2, S] =
         HttpRoute(method, request, res, metadata)
@@ -386,6 +386,10 @@ object HttpRoute:
 
     end ResponseDef
 
+    // ==================== Error mappings ====================
+
+    case class ErrorMapping(status: HttpStatus, schema: Schema[?], tag: ConcreteTag[Any]) derives CanEqual
+
     // ==================== Metadata ====================
 
     case class Metadata(
@@ -409,12 +413,25 @@ object HttpRoute:
         def security(scheme: String): Metadata                = copy(security = Present(scheme))
     end Metadata
 
-    // ==================== Strict type extraction (workaround for Scala 3 intersection normalization) ====================
+    // ==================== Type-level utilities ====================
 
-    type Strict[F[_], R] = R match
-        case F[a] => a
+    /** Prevents Scala 3 from widening ("softening") intersection types inferred for record fields.
+      *
+      * When a builder lambda like `_.query[Int]("page").bodyJson[User]` returns `RequestDef[A]`, the compiler may normalize the
+      * intersection components of `A`, collapsing distinct record fields. This is analogous to the problem solved by the experimental
+      * `Precise` typeclass (SIP-64), which tells the compiler not to widen a type variable. `Strict` achieves the same effect without
+      * experimental features: the given instance matches `F[A]` exactly, extracting `A` as a dependent type and providing a safe identity
+      * conversion, forcing the compiler to preserve the precise intersection type.
+      */
+    sealed trait Strict[F[_], R]:
+        type Out
+        def apply(r: R): F[Out]
 
-    // ==================== Duplicate field detection ====================
+    object Strict:
+        given [F[_], A]: Strict[F, F[A]] with
+            type Out = A
+            def apply(r: F[A]): F[A] = r
+    end Strict
 
     sealed trait HasFieldName[Fields, N <: String]
     object HasFieldName:
@@ -434,9 +451,5 @@ object HttpRoute:
     inline given [A, N <: String]: UniqueResponseField[A, N] =
         val _ = scala.compiletime.summonInline[scala.util.NotGiven[HasFieldName[A, N]]]
         ()
-
-    // ==================== Error mappings ====================
-
-    case class ErrorMapping(status: HttpStatus, schema: Schema[?], tag: ConcreteTag[Any]) derives CanEqual
 
 end HttpRoute
