@@ -96,4 +96,12 @@ object HttpFilter:
             ): Record[Out & ResIn & ResOut] < (S & S2) =
                 f(request, next)
 
+    val noop: HttpFilter[Any, Any, Any, Any, Any] =
+        new HttpFilter[Any, Any, Any, Any, Any]:
+            def apply[In, Out, S2](
+                request: Record[In],
+                next: Record[In] => Record[Out] < S2
+            ): Record[Out] < S2 =
+                next(request)
+
 end HttpFilter

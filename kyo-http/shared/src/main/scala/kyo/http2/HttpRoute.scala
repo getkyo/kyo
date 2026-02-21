@@ -15,53 +15,54 @@ import kyo.Tag
 import scala.annotation.implicitNotFound
 import scala.util.NotGiven
 
-case class HttpRoute[PathIn, In, Out, Err](
-    method: HttpMethod,
-    path: HttpPath[PathIn],
-    request: HttpRoute.RequestDef[In] = HttpRoute.RequestDef(),
-    response: HttpRoute.ResponseDef[Out, Err] = HttpRoute.ResponseDef(),
-    metadata: HttpRoute.Metadata = HttpRoute.Metadata()
+class HttpRoute[PathIn, In, Out, -S](
+    val method: HttpMethod,
+    val path: HttpPath[PathIn],
+    val request: HttpRoute.RequestDef[In] = HttpRoute.RequestDef(),
+    val response: HttpRoute.ResponseDef[Out] = HttpRoute.ResponseDef(),
+    val filter: HttpFilter[?, ?, ?, ?, S] = HttpFilter.noop,
+    val metadata: HttpRoute.Metadata = HttpRoute.Metadata()
 ):
     import HttpRoute.*
 
-    def path[PathIn2](p: HttpPath[PathIn2]): HttpRoute[PathIn2, In, Out, Err] =
-        HttpRoute[PathIn2, In, Out, Err](method, p, request, response, metadata)
+    def path[PathIn2](p: HttpPath[PathIn2]): HttpRoute[PathIn2, In, Out, S] =
+        HttpRoute(method, p, request, response, filter, metadata)
 
-    def path[PathIn2](f: HttpPath[PathIn] => HttpPath[PathIn2]): HttpRoute[PathIn2, In, Out, Err] =
-        HttpRoute[PathIn2, In, Out, Err](method, f(path), request, response, metadata)
+    def path[PathIn2](f: HttpPath[PathIn] => HttpPath[PathIn2]): HttpRoute[PathIn2, In, Out, S] =
+        HttpRoute(method, f(path), request, response, filter, metadata)
 
-    def request[In2](f: RequestDef[In] => RequestDef[In2]): HttpRoute[PathIn, In2, Out, Err] =
-        HttpRoute[PathIn, In2, Out, Err](method, path, f(request), response, metadata)
+    def request[In2](f: RequestDef[In] => RequestDef[In2]): HttpRoute[PathIn, In2, Out, S] =
+        HttpRoute(method, path, f(request), response, filter, metadata)
 
-    def request[In2](req: RequestDef[In2]): HttpRoute[PathIn, In2, Out, Err] =
-        HttpRoute[PathIn, In2, Out, Err](method, path, req, response, metadata)
+    def request[In2](req: RequestDef[In2]): HttpRoute[PathIn, In2, Out, S] =
+        HttpRoute(method, path, req, response, filter, metadata)
 
-    def response[Out2, Err2](f: ResponseDef[Out, Err] => ResponseDef[Out2, Err2]): HttpRoute[PathIn, In, Out2, Err2] =
-        HttpRoute[PathIn, In, Out2, Err2](method, path, request, f(response), metadata)
+    def response[Out2](f: ResponseDef[Out] => ResponseDef[Out2]): HttpRoute[PathIn, In, Out2, S] =
+        HttpRoute(method, path, request, f(response), filter, metadata)
 
-    def response[Out2, Err2](res: ResponseDef[Out2, Err2]): HttpRoute[PathIn, In, Out2, Err2] =
-        HttpRoute[PathIn, In, Out2, Err2](method, path, request, res, metadata)
+    def response[Out2](res: ResponseDef[Out2]): HttpRoute[PathIn, In, Out2, S] =
+        HttpRoute(method, path, request, res, filter, metadata)
 
-    def metadata(f: Metadata => Metadata): HttpRoute[PathIn, In, Out, Err] =
-        HttpRoute[PathIn, In, Out, Err](method, path, request, response, f(metadata))
+    def metadata(f: Metadata => Metadata): HttpRoute[PathIn, In, Out, S] =
+        HttpRoute(method, path, request, response, filter, f(metadata))
 
-    def metadata(meta: Metadata): HttpRoute[PathIn, In, Out, Err] =
-        HttpRoute[PathIn, In, Out, Err](method, path, request, response, meta)
+    def metadata(meta: Metadata): HttpRoute[PathIn, In, Out, S] =
+        HttpRoute(method, path, request, response, filter, meta)
 
 end HttpRoute
 
 object HttpRoute:
 
-    private def make[A](method: HttpMethod, path: HttpPath[A]): HttpRoute[A, Any, Any, Nothing] =
-        HttpRoute[A, Any, Any, Nothing](method, path, RequestDef[Any](), ResponseDef[Any, Nothing](), Metadata())
+    private def make[A](method: HttpMethod, path: HttpPath[A]): HttpRoute[A, Any, Any, Any] =
+        HttpRoute[A, Any, Any, Any](method, path, RequestDef[Any](), ResponseDef[Any](), HttpFilter.noop, Metadata())
 
-    def get[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Nothing]     = make(HttpMethod.GET, path)
-    def post[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Nothing]    = make(HttpMethod.POST, path)
-    def put[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Nothing]     = make(HttpMethod.PUT, path)
-    def patch[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Nothing]   = make(HttpMethod.PATCH, path)
-    def delete[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Nothing]  = make(HttpMethod.DELETE, path)
-    def head[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Nothing]    = make(HttpMethod.HEAD, path)
-    def options[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Nothing] = make(HttpMethod.OPTIONS, path)
+    def get[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Any]     = make(HttpMethod.GET, path)
+    def post[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Any]    = make(HttpMethod.POST, path)
+    def put[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Any]     = make(HttpMethod.PUT, path)
+    def patch[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Any]   = make(HttpMethod.PATCH, path)
+    def delete[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Any]  = make(HttpMethod.DELETE, path)
+    def head[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Any]    = make(HttpMethod.HEAD, path)
+    def options[A](path: HttpPath[A]): HttpRoute[A, Any, Any, Any] = make(HttpMethod.OPTIONS, path)
 
     // ==================== ContentType ====================
 
@@ -245,10 +246,10 @@ object HttpRoute:
 
     // ==================== ResponseDef ====================
 
-    case class ResponseDef[+Out, +Err](
+    case class ResponseDef[+Out](
         status: HttpStatus = HttpStatus.Success.OK,
         fields: Chunk[Field[? <: Out]] = Chunk.empty,
-        errors: Chunk[ErrorMapping[Err]] = Chunk.empty
+        errors: Chunk[ErrorMapping] = Chunk.empty
     ):
 
         def header[A](using
@@ -257,11 +258,10 @@ object HttpRoute:
             fieldName: N,
             wireName: String = "",
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ A, Err] =
+        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ A] =
             ResponseDef(
                 status,
-                fields.append(Field.Param(Field.Param.Kind.Header, fieldName, wireName, codec, Absent, false, description)),
-                errors
+                fields.append(Field.Param(Field.Param.Kind.Header, fieldName, wireName, codec, Absent, false, description))
             )
 
         def headerOpt[A](using
@@ -270,11 +270,10 @@ object HttpRoute:
             fieldName: N,
             wireName: String = "",
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Maybe[A], Err] =
+        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Maybe[A]] =
             ResponseDef(
                 status,
-                fields.append(Field.Param(Field.Param.Kind.Header, fieldName, wireName, codec, Absent, true, description)),
-                errors
+                fields.append(Field.Param(Field.Param.Kind.Header, fieldName, wireName, codec, Absent, true, description))
             )
 
         def cookie[A](using
@@ -283,11 +282,10 @@ object HttpRoute:
             fieldName: N,
             wireName: String = "",
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ HttpCookie.Response[A], Err] =
+        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ HttpCookie.Response[A]] =
             ResponseDef(
                 status,
-                fields.append(Field.Param(Field.Param.Kind.Cookie, fieldName, wireName, codec, Absent, false, description)),
-                errors
+                fields.append(Field.Param(Field.Param.Kind.Cookie, fieldName, wireName, codec, Absent, false, description))
             )
 
         def cookieOpt[A](using
@@ -296,69 +294,68 @@ object HttpRoute:
             fieldName: N,
             wireName: String = "",
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Maybe[HttpCookie.Response[A]], Err] =
+        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Maybe[HttpCookie.Response[A]]] =
             ResponseDef(
                 status,
-                fields.append(Field.Param(Field.Param.Kind.Cookie, fieldName, wireName, codec, Absent, true, description)),
-                errors
+                fields.append(Field.Param(Field.Param.Kind.Cookie, fieldName, wireName, codec, Absent, true, description))
             )
 
-        def bodyJson[A](using schema: Schema[A], u: UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ A, Err] =
-            ResponseDef(status, fields.append(Field.Body("body", ContentType.Json(schema), "")), errors)
+        def bodyJson[A](using schema: Schema[A], u: UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ A] =
+            ResponseDef(status, fields.append(Field.Body("body", ContentType.Json(schema), "")))
 
         def bodyJson[A](using
             schema: Schema[A]
         )[N <: String & Singleton](fieldName: N, description: String = "")(using
             UniqueResponseField[Out, N]
-        ): ResponseDef[Out & N ~ A, Err] =
-            ResponseDef(status, fields.append(Field.Body(fieldName, ContentType.Json(schema), description)), errors)
+        ): ResponseDef[Out & N ~ A] =
+            ResponseDef(status, fields.append(Field.Body(fieldName, ContentType.Json(schema), description)))
 
-        def bodyText(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ String, Err] =
-            ResponseDef(status, fields.append(Field.Body("body", ContentType.Text(), "")), errors)
+        def bodyText(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ String] =
+            ResponseDef(status, fields.append(Field.Body("body", ContentType.Text(), "")))
 
         def bodyText[N <: String & Singleton](fieldName: N, description: String = "")(using
             UniqueResponseField[Out, N]
-        ): ResponseDef[Out & N ~ String, Err] =
-            ResponseDef(status, fields.append(Field.Body(fieldName, ContentType.Text(), description)), errors)
+        ): ResponseDef[Out & N ~ String] =
+            ResponseDef(status, fields.append(Field.Body(fieldName, ContentType.Text(), description)))
 
-        def bodyBinary(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ Span[Byte], Err] =
-            ResponseDef(status, fields.append(Field.Body("body", ContentType.Binary(), "")), errors)
+        def bodyBinary(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ Span[Byte]] =
+            ResponseDef(status, fields.append(Field.Body("body", ContentType.Binary(), "")))
 
         def bodyBinary[N <: String & Singleton](fieldName: N, description: String = "")(using
             UniqueResponseField[Out, N]
-        ): ResponseDef[Out & N ~ Span[Byte], Err] =
-            ResponseDef(status, fields.append(Field.Body(fieldName, ContentType.Binary(), description)), errors)
+        ): ResponseDef[Out & N ~ Span[Byte]] =
+            ResponseDef(status, fields.append(Field.Body(fieldName, ContentType.Binary(), description)))
 
-        def bodyStream(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ Stream[Span[Byte], Async & Scope], Err] =
-            ResponseDef(status, fields.append(Field.Body("body", ContentType.ByteStream(), "")), errors)
+        def bodyStream(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ Stream[Span[Byte], Async & Scope]] =
+            ResponseDef(status, fields.append(Field.Body("body", ContentType.ByteStream(), "")))
 
         def bodyStream[N <: String & Singleton](
             fieldName: N,
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Stream[Span[Byte], Async & Scope], Err] =
-            ResponseDef(status, fields.append(Field.Body(fieldName, ContentType.ByteStream(), description)), errors)
+        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Stream[Span[Byte], Async & Scope]] =
+            ResponseDef(status, fields.append(Field.Body(fieldName, ContentType.ByteStream(), description)))
 
         def bodyNdjson[V](using
             schema: Schema[V],
             emitTag: Tag[Emit[Chunk[V]]],
             u: UniqueResponseField[Out, "body"]
-        ): ResponseDef[Out & "body" ~ Stream[V, Async], Err] =
-            ResponseDef(status, fields.append(Field.Body("body", ContentType.Ndjson(schema, emitTag), "")), errors)
+        ): ResponseDef[Out & "body" ~ Stream[V, Async]] =
+            ResponseDef(status, fields.append(Field.Body("body", ContentType.Ndjson(schema, emitTag), "")))
 
         def bodyNdjson[V](using
             schema: Schema[V],
             emitTag: Tag[Emit[Chunk[V]]]
         )[N <: String & Singleton](fieldName: N, description: String = "")(using
             UniqueResponseField[Out, N]
-        ): ResponseDef[Out & N ~ Stream[V, Async], Err] =
-            ResponseDef(status, fields.append(Field.Body(fieldName, ContentType.Ndjson(schema, emitTag), description)), errors)
+        ): ResponseDef[Out & N ~ Stream[V, Async]] =
+            ResponseDef(status, fields.append(Field.Body(fieldName, ContentType.Ndjson(schema, emitTag), description)))
 
         def bodySse[V](using
             schema: Schema[V],
             emitTag: Tag[Emit[Chunk[HttpEvent[V]]]],
             u: UniqueResponseField[Out, "body"]
-        ): ResponseDef[Out & "body" ~ Stream[HttpEvent[V], Async & Scope], Err] =
-            ResponseDef(status, fields.append(Field.Body("body", ContentType.Sse(schema, emitTag), "")), errors)
+        ): ResponseDef[Out & "body" ~ Stream[HttpEvent[V], Async & Scope]] =
+            ResponseDef(status, fields.append(Field.Body("body", ContentType.Sse(schema, emitTag), "")))
 
         def bodySse[V](using
             schema: Schema[V],
@@ -366,13 +363,13 @@ object HttpRoute:
         )[N <: String & Singleton](
             fieldName: N,
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Stream[HttpEvent[V], Async & Scope], Err] =
-            ResponseDef(status, fields.append(Field.Body(fieldName, ContentType.Sse(schema, emitTag), description)), errors)
+        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Stream[HttpEvent[V], Async & Scope]] =
+            ResponseDef(status, fields.append(Field.Body(fieldName, ContentType.Sse(schema, emitTag), description)))
 
-        def error[E](using schema: Schema[E], tag: ConcreteTag[E])(s: HttpStatus): ResponseDef[Out, Err | E] =
-            ResponseDef(status, fields, errors.append(ErrorMapping(s, schema, tag.asInstanceOf[ConcreteTag[Any]])))
+        def error[E](using schema: Schema[E], tag: ConcreteTag[E])(s: HttpStatus): ResponseDef[Out] =
+            copy(errors = errors.append(ErrorMapping(s, schema, tag.asInstanceOf[ConcreteTag[Any]])))
 
-        def status(s: HttpStatus): ResponseDef[Out, Err] =
+        def status(s: HttpStatus): ResponseDef[Out] =
             copy(status = s)
 
     end ResponseDef
@@ -419,6 +416,6 @@ object HttpRoute:
 
     // ==================== Error mappings ====================
 
-    case class ErrorMapping[+E](status: HttpStatus, schema: Schema[?], tag: ConcreteTag[Any])
+    case class ErrorMapping(status: HttpStatus, schema: Schema[?], tag: ConcreteTag[Any])
 
 end HttpRoute
