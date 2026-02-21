@@ -56,7 +56,7 @@ object HttpFormCodec:
                 if i > 0 then kyo.discard(sb.append('&'))
                 sb.append(java.net.URLEncoder.encode(fieldNames(i), "UTF-8"))
                 sb.append('=')
-                sb.append(java.net.URLEncoder.encode(fieldCodecs(i).encode(a.productElement(i).asInstanceOf[Any]), "UTF-8"))
+                sb.append(java.net.URLEncoder.encode(fieldCodecs(i).encode(a.productElement(i)), "UTF-8"))
                 i += 1
             end while
             sb.toString

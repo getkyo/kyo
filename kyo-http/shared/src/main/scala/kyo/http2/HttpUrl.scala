@@ -1,6 +1,7 @@
 package kyo.http2
 
 import kyo.Absent
+import kyo.Frame
 import kyo.Maybe
 import kyo.Present
 import kyo.Result
@@ -18,7 +19,7 @@ final case class HttpUrl(
     port: Int,
     path: String,
     rawQuery: Maybe[String]
-):
+) derives CanEqual:
     /** Full URL string (e.g. "https://example.com:8080/path?q=1"). */
     def full: String =
         scheme match
@@ -60,13 +61,13 @@ object HttpUrl:
     private val DefaultHttpPort  = 80
     private val DefaultHttpsPort = 443
 
-    /** Parse a full URL string into an HttpUrl. Returns failure message on malformed input. */
-    def parse(url: String): Result[String, HttpUrl] =
-        if url.isEmpty then Result.fail("URL cannot be empty")
+    /** Parse a full URL string into an HttpUrl. */
+    def parse(url: String)(using Frame): Result[HttpError, HttpUrl] =
+        if url.isEmpty then Result.fail(HttpError.ParseError("URL cannot be empty"))
         else
             Result.catching[Exception] {
                 doParse(url)
-            }.mapFailure(e => s"Invalid URL '$url': ${e.getMessage}")
+            }.mapFailure(e => HttpError.ParseError(s"Invalid URL '$url': ${e.getMessage}"))
 
     /** Parse a server-side request URI (path + optional query) with no host. */
     def fromUri(uri: String): HttpUrl =

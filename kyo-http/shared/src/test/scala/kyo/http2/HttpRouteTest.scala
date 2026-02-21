@@ -391,10 +391,10 @@ class HttpRouteTest extends Test:
             end match
         }
 
-        "request cookie type tracks HttpCookie.Request" in {
+        "request cookie type tracks value type" in {
             val r = HttpRoute.get("dashboard").request(_.cookie[String]("session").cookieOpt[String]("theme"))
             typeCheck(
-                """val _: HttpRoute["session" ~ HttpCookie.Request[String] & "theme" ~ kyo.Maybe[HttpCookie.Request[String]], Any, Any] = r"""
+                """val _: HttpRoute["session" ~ String & "theme" ~ kyo.Maybe[String], Any, Any] = r"""
             )
         }
 
@@ -417,10 +417,10 @@ class HttpRouteTest extends Test:
             end match
         }
 
-        "response cookie type tracks HttpCookie.Response" in {
+        "response cookie type tracks HttpCookie" in {
             val r = HttpRoute.get("login").response(_.cookie[String]("session"))
             typeCheck(
-                """val _: HttpRoute[Any, "session" ~ HttpCookie.Response[String], Any] = r"""
+                """val _: HttpRoute[Any, "session" ~ HttpCookie[String], Any] = r"""
             )
         }
     }
@@ -716,7 +716,7 @@ class HttpRouteTest extends Test:
             assert(r.request.fields(2).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Header)
             assert(r.request.fields(2).asInstanceOf[Field.Param[?, ?, ?]].optional)
             typeCheck(
-                """val _: HttpRoute["id" ~ Int & "format" ~ String & "session" ~ HttpCookie.Request[String] & "X-Trace" ~ kyo.Maybe[String], Any, Any] = r"""
+                """val _: HttpRoute["id" ~ Int & "format" ~ String & "session" ~ String & "X-Trace" ~ kyo.Maybe[String], Any, Any] = r"""
             )
         }
 
@@ -741,7 +741,7 @@ class HttpRouteTest extends Test:
             assert(r.request.fields(2).asInstanceOf[Field.Param[?, ?, ?]].optional)
             assert(r.request.fields(3).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Cookie)
             typeCheck(
-                """val _: HttpRoute["q" ~ String & "page" ~ Int & "pageSize" ~ kyo.Maybe[Int] & "session" ~ HttpCookie.Request[String], Any, Any] = r"""
+                """val _: HttpRoute["q" ~ String & "page" ~ Int & "pageSize" ~ kyo.Maybe[Int] & "session" ~ String, Any, Any] = r"""
             )
         }
 
@@ -763,7 +763,7 @@ class HttpRouteTest extends Test:
             end match
             assert(r.response.errors.size == 2)
             typeCheck(
-                """val _: HttpRoute["id" ~ Int, "X-Request-Id" ~ String & "session" ~ HttpCookie.Response[String] & "body" ~ User, Any] = r"""
+                """val _: HttpRoute["id" ~ Int, "X-Request-Id" ~ String & "session" ~ HttpCookie[String] & "body" ~ User, Any] = r"""
             )
         }
 
@@ -791,8 +791,8 @@ class HttpRouteTest extends Test:
             // Types
             typeCheck(
                 """val _: HttpRoute[
-                    "org" ~ String & "id" ~ Int & "reason" ~ String & "X-Tenant" ~ String & "auth" ~ HttpCookie.Request[String] & "body" ~ CreateUser,
-                    "X-Request-Id" ~ String & "session" ~ HttpCookie.Response[String] & "body" ~ User,
+                    "org" ~ String & "id" ~ Int & "reason" ~ String & "X-Tenant" ~ String & "auth" ~ String & "body" ~ CreateUser,
+                    "X-Request-Id" ~ String & "session" ~ HttpCookie[String] & "body" ~ User,
                     Any
                 ] = r"""
             )

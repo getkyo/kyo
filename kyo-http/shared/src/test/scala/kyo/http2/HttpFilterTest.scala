@@ -30,7 +30,7 @@ class HttpFilterTest extends Test:
                     request: HttpRequest[In & "name" ~ String],
                     next: HttpRequest[In & "name" ~ String & "greeting" ~ String] => HttpResponse[Out] < S2
                 ): HttpResponse[Out] < S2 =
-                    next(request & ("greeting" ~ s"hello ${request.fields.name}"))
+                    next(request.addField("greeting", s"hello ${request.fields.name}"))
             typeCheck("""val _: HttpFilter["name" ~ String, "greeting" ~ String, Any, Any, Any] = filter""")
         }
     }
@@ -57,7 +57,7 @@ class HttpFilterTest extends Test:
                     next: HttpRequest[In] => HttpResponse[Out & "status" ~ Int] < S2
                 ): HttpResponse[Out & "status" ~ Int & "cached" ~ Boolean] < S2 =
                     next(request).map { res =>
-                        res & ("cached" ~ (res.fields.status == 200))
+                        res.addField("cached", res.fields.status == 200)
                     }
             typeCheck(
                 """val _: HttpFilter[Any, Any, "status" ~ Int, "cached" ~ Boolean, Any] = filter"""
@@ -140,13 +140,13 @@ class HttpFilterTest extends Test:
                     request: HttpRequest[In],
                     next: HttpRequest[In & "a" ~ Int] => HttpResponse[Out] < S2
                 ): HttpResponse[Out] < S2 =
-                    next(request & ("a" ~ 1))
+                    next(request.addField("a", 1))
             val f2 = new HttpFilter.Request[Any, "b" ~ Int, Any]:
                 def apply[In, Out, S2](
                     request: HttpRequest[In],
                     next: HttpRequest[In & "b" ~ Int] => HttpResponse[Out] < S2
                 ): HttpResponse[Out] < S2 =
-                    next(request & ("b" ~ 2))
+                    next(request.addField("b", 2))
             val composed = f1.andThen(f2)
             typeCheck("""val _: HttpFilter[Any, "a" ~ Int & "b" ~ Int, Any, Any, Any] = composed""")
         }

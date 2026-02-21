@@ -176,7 +176,7 @@ object HttpRoute:
             wireName: String = "",
             default: Maybe[A] = Absent,
             description: String = ""
-        )(using UniqueRequestField[In, N]): RequestDef[In & N ~ HttpCookie.Request[A]] =
+        )(using UniqueRequestField[In, N]): RequestDef[In & N ~ A] =
             add(Field.Param(Field.Param.Location.Cookie, fieldName, wireName, codec, default, false, description))
 
         def cookieOpt[A](using
@@ -186,7 +186,7 @@ object HttpRoute:
             wireName: String = "",
             default: Maybe[A] = Absent,
             description: String = ""
-        )(using UniqueRequestField[In, N]): RequestDef[In & N ~ Maybe[HttpCookie.Request[A]]] =
+        )(using UniqueRequestField[In, N]): RequestDef[In & N ~ Maybe[A]] =
             add(Field.Param(Field.Param.Location.Cookie, fieldName, wireName, codec, default, true, description))
 
         def bodyJson[A](using schema: Schema[A])(using UniqueRequestField[In, "body"]): RequestDef[In & "body" ~ A] =
@@ -301,7 +301,7 @@ object HttpRoute:
             fieldName: N,
             wireName: String = "",
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ HttpCookie.Response[A]] =
+        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ HttpCookie[A]] =
             addField(Field.Param(Field.Param.Location.Cookie, fieldName, wireName, codec, Absent, false, description))
 
         def cookieOpt[A](using
@@ -310,7 +310,7 @@ object HttpRoute:
             fieldName: N,
             wireName: String = "",
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Maybe[HttpCookie.Response[A]]] =
+        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Maybe[HttpCookie[A]]] =
             addField(Field.Param(Field.Param.Location.Cookie, fieldName, wireName, codec, Absent, true, description))
 
         def bodyJson[A](using schema: Schema[A])(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ A] =
