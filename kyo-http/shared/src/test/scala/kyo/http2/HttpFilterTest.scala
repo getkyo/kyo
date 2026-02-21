@@ -1,5 +1,6 @@
 package kyo.http2
 
+import kyo.<
 import kyo.Record
 import kyo.Record.~
 import kyo.Tag
@@ -7,160 +8,145 @@ import kyo.Test
 
 class HttpFilterTest extends Test:
 
-    "request" - {
+    def req: HttpRequest[Any] = HttpRequest(HttpMethod.GET, "/test")
 
-        "read-only passthrough" in {
-            val filter = HttpFilter.request["name" ~ String, Any] {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        val _ = req.name
-                        next(req)
-            }
+    "request filter" - {
+
+        "reads request field" in {
+            val filter = new HttpFilter.Request["name" ~ String, Any, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In & "name" ~ String],
+                    next: HttpRequest[In & "name" ~ String] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    val _ = request.fields.name
+                    next(request)
+                end apply
             typeCheck("""val _: HttpFilter["name" ~ String, Any, Any, Any, Any] = filter""")
         }
 
         "adds field to request" in {
-            val filter = HttpFilter.request["name" ~ String, "greeting" ~ String] {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        next(req & ("greeting" ~ s"hello ${req.name}"))
-            }
+            val filter = new HttpFilter.Request["name" ~ String, "greeting" ~ String, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In & "name" ~ String],
+                    next: HttpRequest[In & "name" ~ String & "greeting" ~ String] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request & ("greeting" ~ s"hello ${request.fields.name}"))
             typeCheck("""val _: HttpFilter["name" ~ String, "greeting" ~ String, Any, Any, Any] = filter""")
         }
-
-        "adds both request and response fields" in {
-            val filter = HttpFilter.request["name" ~ String, "user" ~ String] {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        next(req & ("user" ~ req.name)).map(_ & ("server" ~ "kyo"))
-            }
-            typeCheck(
-                """val _: HttpFilter["name" ~ String, "user" ~ String, Any, "server" ~ String, Any] = filter"""
-            )
-        }
     }
 
-    "response" - {
+    "response filter" - {
 
-        "reads and returns response unchanged" in {
-            val filter = HttpFilter.response["status" ~ Int] {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        next(req).map { res =>
-                            val _ = res.status
-                            res
+        "reads response field" in {
+            val filter = new HttpFilter.Response["status" ~ Int, Any, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out & "status" ~ Int] < S2
+                ): HttpResponse[Out & "status" ~ Int] < S2 =
+                    next(request).map { res =>
+                        val _ = res.fields.status
+                        res
                     }
-            }
-            typeCheck("""val _: HttpFilter[Any, Any, "status" ~ Int, "status" ~ Int, Any] = filter""")
-        }
-
-        "reads and adds response field" in {
-            val filter = HttpFilter.response["status" ~ Int] {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        next(req).map { res =>
-                            res & ("cached" ~ (res.status == 200))
-                    }
-            }
-            typeCheck(
-                """val _: HttpFilter[Any, Any, "status" ~ Int, "status" ~ Int & "cached" ~ Boolean, Any] = filter"""
-            )
-        }
-    }
-
-    "transparent" - {
-
-        "pure passthrough" in {
-            val filter = HttpFilter.transparent {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        next(req)
-            }
-            typeCheck("""val _: HttpFilter[Any, Any, Any, Any, Any] = filter""")
+            typeCheck("""val _: HttpFilter[Any, Any, "status" ~ Int, Any, Any] = filter""")
         }
 
         "adds response field" in {
-            val filter = HttpFilter.transparent {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        next(req).map(_ & ("server" ~ "kyo"))
-            }
-            typeCheck("""val _: HttpFilter[Any, Any, Any, "server" ~ String, Any] = filter""")
+            val filter = new HttpFilter.Response["status" ~ Int, "cached" ~ Boolean, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out & "status" ~ Int] < S2
+                ): HttpResponse[Out & "status" ~ Int & "cached" ~ Boolean] < S2 =
+                    next(request).map { res =>
+                        res & ("cached" ~ (res.fields.status == 200))
+                    }
+            typeCheck(
+                """val _: HttpFilter[Any, Any, "status" ~ Int, "cached" ~ Boolean, Any] = filter"""
+            )
         }
     }
 
-    "apply" - {
+    "passthrough" - {
 
-        "reads request and response, adds response field" in {
-            val filter = HttpFilter["origin" ~ String, Any, "status" ~ Int] {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        val origin = req.origin
-                        next(req).map { res =>
-                            res & ("allowOrigin" ~ origin)
-                    }
-            }
-            typeCheck(
-                """val _: HttpFilter["origin" ~ String, Any, "status" ~ Int, "status" ~ Int & "allowOrigin" ~ String, Any] = filter"""
-            )
+        "pure passthrough" in {
+            val filter = new HttpFilter.Passthrough[Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request)
+            typeCheck("""val _: HttpFilter[Any, Any, Any, Any, Any] = filter""")
         }
 
-        "adds request and response fields" in {
-            val filter = HttpFilter["auth" ~ String, "user" ~ String, Any] {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        next(req & ("user" ~ req.auth)).map(_ & ("server" ~ "kyo"))
-            }
-            typeCheck(
-                """val _: HttpFilter["auth" ~ String, "user" ~ String, Any, "server" ~ String, Any] = filter"""
-            )
+        "adds header" in {
+            val filter = new HttpFilter.Passthrough[Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request).map(_.setHeader("X-Server", "kyo"))
+            typeCheck("""val _: HttpFilter[Any, Any, Any, Any, Any] = filter""")
+        }
+    }
+
+    "noop" - {
+
+        "passes through unchanged" in {
+            val filter = HttpFilter.noop
+            typeCheck("""val _: HttpFilter[Any, Any, Any, Any, Any] = filter""")
         }
     }
 
     "andThen" - {
 
-        "composes two response-adding filters" in {
-            val f1 = HttpFilter.transparent {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        next(req).map(_ & ("a" ~ 1))
-            }
-            val f2 = HttpFilter.transparent {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        next(req).map(_ & ("b" ~ 2))
-            }
+        "composes two passthrough filters" in {
+            val f1 = new HttpFilter.Passthrough[Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request.setHeader("X-A", "1"))
+            val f2 = new HttpFilter.Passthrough[Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request.setHeader("X-B", "2"))
             val composed = f1.andThen(f2)
-            typeCheck("""val _: HttpFilter[Any, Any, Any, "a" ~ Int & "b" ~ Int, Any] = composed""")
+            typeCheck("""val _: HttpFilter[Any, Any, Any, Any, Any] = composed""")
         }
 
-        "composes request-reading and response-adding filters" in {
-            val reqFilter = HttpFilter.request["auth" ~ String, Any] {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        val _ = req.auth
-                        next(req)
-            }
-            val resFilter = HttpFilter.transparent {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        next(req).map(_ & ("server" ~ "kyo"))
-            }
-            val composed = reqFilter.andThen(resFilter)
-            typeCheck("""val _: HttpFilter["auth" ~ String, Any, Any, "server" ~ String, Any] = composed""")
+        "composes request-reading and passthrough filters" in {
+            val reqFilter = new HttpFilter.Request["auth" ~ String, Any, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In & "auth" ~ String],
+                    next: HttpRequest[In & "auth" ~ String] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    val _ = request.fields.auth
+                    next(request)
+                end apply
+            val passFilter = new HttpFilter.Passthrough[Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request)
+            val composed = reqFilter.andThen(passFilter)
+            typeCheck("""val _: HttpFilter["auth" ~ String, Any, Any, Any, Any] = composed""")
         }
 
         "composes request-adding filters" in {
-            val f1 = HttpFilter.request[Any, "a" ~ Int] {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        next(req & ("a" ~ 1))
-            }
-            val f2 = HttpFilter.request[Any, "b" ~ Int] {
-                [In, Out, S2] =>
-                    (req, next) =>
-                        next(req & ("b" ~ 2))
-            }
+            val f1 = new HttpFilter.Request[Any, "a" ~ Int, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In & "a" ~ Int] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request & ("a" ~ 1))
+            val f2 = new HttpFilter.Request[Any, "b" ~ Int, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In & "b" ~ Int] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request & ("b" ~ 2))
             val composed = f1.andThen(f2)
             typeCheck("""val _: HttpFilter[Any, "a" ~ Int & "b" ~ Int, Any, Any, Any] = composed""")
         }
