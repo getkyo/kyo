@@ -18,23 +18,6 @@ import scala.language.implicitConversions
   * combinations with static type checking, making them ideal for configuration, data transformation, and API integrations where the shape
   * of data needs to be flexible but still type-safe.
   *
-  * =Record vs Row=
-  * Record and [[Row]] both provide type-safe named fields, but represent different abstractions:
-  *
-  * '''Record''' is a '''labeled set''' — fields are unordered, a record with more fields can be used where fewer are expected (structural
-  * subtyping), and the same name can appear with different types. Use Record when different consumers need different field subsets or when
-  * composing fields from multiple sources.
-  *
-  * '''Row''' is a '''labeled sequence''' — fields have a fixed order, each name is unique, and the type must match exactly. Use Row when
-  * field order matters, when you need positional operations (head/tail/take/drop), or when working with case classes.
-  *
-  * The two interconvert freely:
-  * {{{
-  * val record = "name" ~ "Alice" & "age" ~ 30
-  * val row  = Row.fromRecord(record)    // Record -> Row (rejects duplicate field names)
-  * val back = row.toRecord               // Row -> Record
-  * }}}
-  *
   * =Creation=
   * Records can be created through direct field construction using the `~` operator and combined with `&`:
   * {{{
@@ -183,6 +166,10 @@ object Record:
         case (n *: EmptyTuple, v *: EmptyTuple) => n ~ v
         case (n *: ns, v *: vs)                 => (n ~ v) & FieldsOf[ns, vs]
 
+    type FieldValues[T <: Tuple] <: Tuple = T match
+        case EmptyTuple              => EmptyTuple
+        case Record.`~`[n, v] *: rest => v *: FieldValues[rest]
+
     type ZipLookup[N <: String, T <: Tuple] = T match
         case (N ~ v) *: _ => v
         case _ *: rest    => ZipLookup[N, rest]
@@ -195,11 +182,6 @@ object Record:
     /** Creates a Record from a product type (case class or tuple).
       */
     def fromProduct[A](value: A)(using ar: AsRecord[A]): Record[ar.Fields] = ar.asRecord(value)
-
-    /** Creates a Record from a Row.
-      */
-    inline def fromRow[A <: NamedTuple.AnyNamedTuple](row: Row[A]): Record[Row.ToRecordFields[Row.Names[A], Row.Values[A]]] =
-        row.toRecord
 
     /** A field in a Record, containing a name and associated type information.
       *
@@ -217,8 +199,8 @@ object Record:
         inline def fields(using ti: TypeIntersection[Fields]): List[String] =
             collectFieldNames[ti.AsTuple]
 
-        inline def values(using ti: TypeIntersection[Fields]): Row.FieldValues[ti.AsTuple] =
-            collectValues[ti.AsTuple](self.toMap).asInstanceOf[Row.FieldValues[ti.AsTuple]]
+        inline def values(using ti: TypeIntersection[Fields]): FieldValues[ti.AsTuple] =
+            collectValues[ti.AsTuple](self.toMap).asInstanceOf[FieldValues[ti.AsTuple]]
 
         def update[Name <: String & Singleton, Value](name: Name, value: Value)(using
             @implicitNotFound("""
