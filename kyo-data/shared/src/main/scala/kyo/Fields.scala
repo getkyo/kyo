@@ -22,24 +22,20 @@ sealed abstract class Fields[A] extends Serializable:
     type Map[F[_]] = Fields.Join[Tuple.Map[AsTuple, F]]
 
     /** Runtime field names, materialized by the macro. */
-    val names: List[String]
+    val names: Set[String]
 
-    /** Runtime field name set, materialized by the macro. */
-    val nameSet: Set[String]
-
-    /** Runtime Field descriptors, materialized by the macro. */
-    val fields: List[Field[?, ?]]
+    /** Runtime Field descriptors, lazily materialized. */
+    lazy val fields: List[Field[?, ?]]
 
 end Fields
 
 object Fields:
 
-    private def create[A, T <: Tuple](_names: List[String], _fields: List[Field[?, ?]]): Fields.Aux[A, T] =
+    private def create[A, T <: Tuple](_names: Set[String], _fields: => List[Field[?, ?]]): Fields.Aux[A, T] =
         new Fields[A]:
             type AsTuple = T
-            val names   = _names
-            val nameSet = _names.toSet
-            val fields  = _fields
+            val names       = _names
+            lazy val fields = _fields
 
     private type Join[A <: Tuple] = Tuple.Fold[A, Any, [B, C] =>> B & C]
 
@@ -54,23 +50,25 @@ object Fields:
     def fields[A](using f: Fields[A]): List[Field[?, ?]] = f.fields
 
     /** Collect field names from A. */
-    def names[A](using f: Fields[A]): List[String] = f.names
+    def names[A](using f: Fields[A]): Set[String] = f.names
 
-    /** Collect field name set from A. */
-    def nameSet[A](using f: Fields[A]): Set[String] = f.nameSet
+    opaque type SummonAll[A, F[_]] = Map[String, F[Any]]
 
-    /** Typeclass that summons `F[v]` for each field's value type, paired with the field name. */
-    class SummonAll[A, F[_]](val map: Map[String, Any])
+    extension [A, F[_]](sa: SummonAll[A, F])
+        def get(name: String): F[Any]            = sa(name)
+        def contains(name: String): Boolean      = sa.contains(name)
+        def iterator: Iterator[(String, F[Any])] = sa.iterator
+    end extension
 
     object SummonAll:
         inline given [A, F[_]](using f: Fields[A]): SummonAll[A, F] =
-            new SummonAll(summonLoop[f.AsTuple, F])
+            summonLoop[f.AsTuple, F]
 
-        private inline def summonLoop[T <: Tuple, F[_]]: Map[String, Any] =
+        private inline def summonLoop[T <: Tuple, F[_]]: Map[String, F[Any]] =
             inline erasedValue[T] match
                 case _: EmptyTuple => Map.empty
                 case _: ((n ~ v) *: rest) =>
-                    summonLoop[rest, F].updated(constValue[n & String], summonInline[F[v]])
+                    summonLoop[rest, F].updated(constValue[n & String], summonInline[F[v]].asInstanceOf[F[Any]])
     end SummonAll
 
     // --- Macro ---
@@ -104,38 +102,36 @@ object Fields:
 
         val components = decompose(TypeRepr.of[A].dealias)
 
-        case class FieldInfo(name: String, nameExpr: Expr[String], tagExpr: Expr[Any], nestedExpr: Expr[List[Field[?, ?]]])
+        case class ComponentInfo(name: String, nameExpr: Expr[String], tagExpr: Expr[Any], nestedExpr: Expr[List[Field[?, ?]]])
 
-        def extractField(tpe: TypeRepr): Option[FieldInfo] =
+        def extractComponent(tpe: TypeRepr): Option[ComponentInfo] =
             tpe match
-                case AppliedType(_, List(nameType, valueType)) =>
-                    nameType match
-                        case ConstantType(StringConstant(name)) =>
-                            val nameExpr = Expr(name)
-                            val tagExpr = valueType.asType match
-                                case '[v] =>
-                                    Expr.summon[Tag[v]].getOrElse(
-                                        report.errorAndAbort(s"Cannot summon Tag for field '$name' value type: ${valueType.show}")
-                                    )
-                            val nestedExpr = valueType.asType match
-                                case '[Record2[f]] =>
-                                    Expr.summon[Fields[f]] match
-                                        case Some(fields) => '{ $fields.fields }
-                                        case None         => '{ Nil: List[Field[?, ?]] }
-                                case _ => '{ Nil: List[Field[?, ?]] }
-                            Some(FieldInfo(name, nameExpr, tagExpr, nestedExpr))
-                        case _ => None
+                case AppliedType(_, List(ConstantType(StringConstant(name)), valueType)) =>
+                    val nameExpr = Expr(name)
+                    val tagExpr = valueType.asType match
+                        case '[v] =>
+                            Expr.summon[Tag[v]].getOrElse(
+                                report.errorAndAbort(s"Cannot summon Tag for field '$name': ${valueType.show}")
+                            )
+                    val nestedExpr = valueType.asType match
+                        case '[Record2[f]] =>
+                            Expr.summon[Fields[f]] match
+                                case Some(fields) => '{ $fields.fields }
+                                case None         => '{ Nil: List[Field[?, ?]] }
+                        case _ => '{ Nil: List[Field[?, ?]] }
+                    Some(ComponentInfo(name, nameExpr, tagExpr, nestedExpr))
                 case _ => None
 
-        val fieldInfos = components.flatMap(extractField)
-        val namesList  = Expr.ofList(fieldInfos.map(_.nameExpr).toList)
-        val fieldsList = Expr.ofList(fieldInfos.map(fi =>
-            '{ Field[String, Any](${ fi.nameExpr }, ${ fi.tagExpr }.asInstanceOf[Tag[Any]], ${ fi.nestedExpr }) }
+        val infos    = components.flatMap(extractComponent)
+        val nameArgs = infos.map(_.nameExpr).toList
+        val namesSet = '{ Set(${ Varargs(nameArgs) }*) }
+        val fieldsList = Expr.ofList(infos.map(ci =>
+            '{ Field[String, Any](${ ci.nameExpr }, ${ ci.tagExpr }.asInstanceOf[Tag[Any]], ${ ci.nestedExpr }) }
         ).toList)
 
         tupled(components).asType match
             case '[type x <: Tuple; x] =>
-                '{ create[A, x]($namesList, $fieldsList) }
+                '{ create[A, x]($namesSet, $fieldsList) }
         end match
     end deriveImpl
 

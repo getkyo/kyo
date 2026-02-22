@@ -20,7 +20,7 @@ final class Record2[F] private[Record2] (private val underlying: Map[String, Any
     def toMap: Map[String, Any] = underlying
 
     def compact(using f: Fields[F]): Record2[F] =
-        Record2.make(underlying.view.filterKeys(f.nameSet.contains).toMap)
+        Record2.make(underlying.view.filterKeys(f.names.contains).toMap)
 
     def map[G[_]](using
         f: Fields[F]
@@ -64,12 +64,11 @@ object Record2:
         def ~[Value](value: Value): Record2[self.type ~ Value] =
             new Record2(Map(self -> value))
 
-    given render[F](using f: Fields[F], sa: Fields.SummonAll[F, Render]): Render[Record2[F]] =
+    given render[F](using f: Fields[F], renders: Fields.SummonAll[F, Render]): Render[Record2[F]] =
         Render.from: (value: Record2[F]) =>
             value.toMap.iterator.collect {
-                case (name, v) if sa.map.contains(name) =>
-                    val r = sa.map(name).asInstanceOf[Render[Any]]
-                    name + " ~ " + r.asText(v)
+                case (name, v) if renders.contains(name) =>
+                    name + " ~ " + renders.get(name).asText(v)
             }.mkString(" & ")
 
 end Record2

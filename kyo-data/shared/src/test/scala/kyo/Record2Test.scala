@@ -117,7 +117,7 @@ class Record2Test extends Test:
     // R16: Fields metadata
     "R16: Fields.names" in {
         val names = Fields.names["name" ~ String & "age" ~ Int]
-        assert(names.toSet == Set("name", "age"))
+        assert(names == Set("name", "age"))
     }
 
     "R17: Fields.fields" in {
