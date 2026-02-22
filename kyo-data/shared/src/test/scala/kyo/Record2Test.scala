@@ -134,30 +134,30 @@ class Record2Test extends Test:
         assert(mapped.age == Some(30))
     }
 
-    // R19: equality
+    // R19: equality via is
     "R19: equality" in {
         val r1 = ("name" ~ "Alice") & ("age" ~ 30)
         val r2 = ("name" ~ "Alice") & ("age" ~ 30)
         val r3 = ("name" ~ "Bob") & ("age" ~ 25)
-        assert(r1 == r2)
-        assert(r1 != r3)
-        assert(Record2.empty == Record2.empty)
+        assert(r1.is(r2))
+        assert(!r1.is(r3))
+        assert(Record2.empty.is(Record2.empty))
     }
 
-    // R19b: CanEqual rejects non-comparable field types
-    "R19b: CanEqual rejects non-comparable fields" in {
+    // R19b: Comparable rejects non-comparable field types
+    "R19b: Comparable rejects non-comparable fields" in {
         typeCheckFailure("""
             class NoEq
             val a: Record2["x" ~ NoEq] = "x" ~ new NoEq
             val b: Record2["x" ~ NoEq] = "x" ~ new NoEq
-            a == b
-        """)("cannot be compared")
+            a.is(b)
+        """)("Comparable")
     }
 
-    // R20: toString
-    "R20: toString" in {
+    // R20: show
+    "R20: show" in {
         val r = "name" ~ "Alice"
-        assert(r.toString.contains("name ~ Alice"))
+        assert(r.show.contains("name ~ Alice"))
     }
 
     // R21: nested record Fields
