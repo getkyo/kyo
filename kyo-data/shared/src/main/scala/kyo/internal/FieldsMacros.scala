@@ -6,6 +6,23 @@ import scala.quoted.*
 
 object FieldsMacros:
 
+    /** If `tpe` is a case class, return its fields as `("name" ~ ValueType)` TypeReprs. */
+    private def caseClassFields(using Quotes)(tpe: quotes.reflect.TypeRepr): Option[Vector[quotes.reflect.TypeRepr]] =
+        import quotes.reflect.*
+        val sym = tpe.typeSymbol
+        if sym.isClassDef && sym.flags.is(Flags.Case) then
+            val tildeType = TypeRepr.of[Record2.~]
+            val fields = sym.caseFields.map: field =>
+                val fieldName = field.name
+                val fieldType = tpe.memberType(field)
+                val nameType  = ConstantType(StringConstant(fieldName))
+                tildeType.appliedTo(List(nameType, fieldType))
+            Some(fields.toVector)
+        else
+            None
+        end if
+    end caseClassFields
+
     def deriveImpl[A: Type](using Quotes): Expr[Fields[A]] =
         import quotes.reflect.*
 
@@ -15,17 +32,18 @@ object FieldsMacros:
                 case _ =>
                     if tpe =:= TypeRepr.of[Any] then Vector()
                     else
-                        try
-                            tpe.typeSymbol.tree match
-                                case typeDef: TypeDef =>
-                                    typeDef.rhs match
-                                        case bounds: TypeBoundsTree =>
-                                            val hi = bounds.hi.tpe
-                                            if !(hi =:= TypeRepr.of[Any]) then decompose(hi)
-                                            else Vector(tpe)
-                                        case _ => Vector(tpe)
-                                case _ => Vector(tpe)
-                        catch case _: Exception => Vector(tpe)
+                        caseClassFields(tpe).getOrElse:
+                            try
+                                tpe.typeSymbol.tree match
+                                    case typeDef: TypeDef =>
+                                        typeDef.rhs match
+                                            case bounds: TypeBoundsTree =>
+                                                val hi = bounds.hi.tpe
+                                                if !(hi =:= TypeRepr.of[Any]) then decompose(hi)
+                                                else Vector(tpe)
+                                            case _ => Vector(tpe)
+                                    case _ => Vector(tpe)
+                            catch case _: Exception => Vector(tpe)
 
         def tupled(typs: Vector[TypeRepr]): TypeRepr =
             typs match
@@ -83,17 +101,23 @@ object FieldsMacros:
                 case _ =>
                     if tpe =:= TypeRepr.of[Any] then None
                     else
-                        try
-                            tpe.typeSymbol.tree match
-                                case typeDef: TypeDef =>
-                                    typeDef.rhs match
-                                        case bounds: TypeBoundsTree =>
-                                            val hi = bounds.hi.tpe
-                                            if !(hi =:= TypeRepr.of[Any]) then findValueType(hi)
-                                            else None
-                                        case _ => None
-                                case _ => None
-                        catch case _: Exception => None
+                        // Check case class fields
+                        val sym = tpe.typeSymbol
+                        if sym.isClassDef && sym.flags.is(Flags.Case) then
+                            sym.caseFields.find(_.name == nameStr).map(f => tpe.memberType(f))
+                        else
+                            try
+                                tpe.typeSymbol.tree match
+                                    case typeDef: TypeDef =>
+                                        typeDef.rhs match
+                                            case bounds: TypeBoundsTree =>
+                                                val hi = bounds.hi.tpe
+                                                if !(hi =:= TypeRepr.of[Any]) then findValueType(hi)
+                                                else None
+                                            case _ => None
+                                    case _ => None
+                            catch case _: Exception => None
+                        end if
 
         findValueType(TypeRepr.of[F]) match
             case Some(valueType) =>
@@ -118,17 +142,22 @@ object FieldsMacros:
                 case _ =>
                     if tpe =:= TypeRepr.of[Any] then Vector()
                     else
-                        try
-                            tpe.typeSymbol.tree match
-                                case typeDef: TypeDef =>
-                                    typeDef.rhs match
-                                        case bounds: TypeBoundsTree =>
-                                            val hi = bounds.hi.tpe
-                                            if !(hi =:= TypeRepr.of[Any]) then decompose(hi)
-                                            else Vector()
-                                        case _ => Vector()
-                                case _ => Vector()
-                        catch case _: Exception => Vector()
+                        val sym = tpe.typeSymbol
+                        if sym.isClassDef && sym.flags.is(Flags.Case) then
+                            sym.caseFields.map(f => (f.name, tpe.memberType(f))).toVector
+                        else
+                            try
+                                tpe.typeSymbol.tree match
+                                    case typeDef: TypeDef =>
+                                        typeDef.rhs match
+                                            case bounds: TypeBoundsTree =>
+                                                val hi = bounds.hi.tpe
+                                                if !(hi =:= TypeRepr.of[Any]) then decompose(hi)
+                                                else Vector()
+                                            case _ => Vector()
+                                    case _ => Vector()
+                            catch case _: Exception => Vector()
+                        end if
 
         for (name, valueType) <- decompose(TypeRepr.of[A]) do
             valueType.asType match
@@ -143,5 +172,48 @@ object FieldsMacros:
 
         '{ Fields.Comparable.unsafe[A] }
     end comparableImpl
+
+    def fromProductImpl[A <: Product: Type](value: Expr[A])(using Quotes): Expr[Any] =
+        import quotes.reflect.*
+
+        val tpe = TypeRepr.of[A].dealias
+        val sym = tpe.typeSymbol
+
+        if !sym.isClassDef || !sym.flags.is(Flags.Case) then
+            report.errorAndAbort(s"fromProduct requires a case class, got: ${tpe.show}")
+
+        val fields    = sym.caseFields
+        val n         = fields.size
+        val tildeType = TypeRepr.of[Record2.~]
+
+        val fieldsType =
+            if fields.isEmpty then TypeRepr.of[Any]
+            else
+                fields.map { f =>
+                    tildeType.appliedTo(List(ConstantType(StringConstant(f.name)), tpe.memberType(f)))
+                }.reduce(AndType(_, _))
+
+        // Build keys-first array: [k0, k1, ..., v0, v1, ...]
+        // Uses direct field access (value.name) instead of productElement to avoid boxing
+        val arrayExprs: List[Expr[Any]] =
+            fields.map(f => Expr(f.name)) ++
+                fields.map(f => Select.unique(value.asTerm, f.name).asExprOf[Any])
+
+        fieldsType.asType match
+            case '[f] =>
+                '{
+                    val arr = new Array[Any](${ Expr(n * 2) })
+                    ${
+                        Expr.block(
+                            arrayExprs.zipWithIndex.map: (expr, i) =>
+                                '{ arr(${ Expr(i) }) = $expr }.asTerm
+                            .toList.map(_.asExprOf[Unit]),
+                            '{ () }
+                        )
+                    }
+                    new Record2[f](Dict.fromArrayUnsafe(arr.asInstanceOf[Array[String | Any]]))
+                }
+        end match
+    end fromProductImpl
 
 end FieldsMacros

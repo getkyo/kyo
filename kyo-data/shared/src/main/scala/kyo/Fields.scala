@@ -20,6 +20,12 @@ sealed abstract class Fields[A] extends Serializable:
       */
     type Map[F[_]] = Fields.Join[Tuple.Map[AsTuple, F]]
 
+    /** Extracts value types as a Tuple: `Fields["a" ~ Int & "b" ~ String].Values` = `(Int, String)` */
+    type Values = Fields.ExtractValues[AsTuple]
+
+    /** Zips with another field tuple by name, pairing value types. */
+    type Zipped[T2 <: Tuple] = Fields.ZipValues[AsTuple, T2]
+
     /** Runtime field names, materialized by the macro. */
     val names: Set[String]
 
@@ -36,7 +42,23 @@ object Fields:
             val names       = _names
             lazy val fields = _fields
 
-    private type Join[A <: Tuple] = Tuple.Fold[A, Any, [B, C] =>> B & C]
+    private[kyo] type Join[A <: Tuple] = Tuple.Fold[A, Any, [B, C] =>> B & C]
+
+    /** Extracts value types from field components into a plain Tuple. */
+    type ExtractValues[T <: Tuple] <: Tuple = T match
+        case EmptyTuple      => EmptyTuple
+        case (n ~ v) *: rest => v *: ExtractValues[rest]
+
+    /** Looks up the value type for field name `N` in field components. */
+    type LookupValue[N <: String, T <: Tuple] = T match
+        case (N ~ v) *: _ => v
+        case _ *: rest    => LookupValue[N, rest]
+
+    /** Zips two sets of field components by name, pairing their value types. */
+    type ZipValues[T1 <: Tuple, T2 <: Tuple] = T1 match
+        case EmptyTuple             => Any
+        case (n ~ v1) *: EmptyTuple => n ~ (v1, LookupValue[n, T2])
+        case (n ~ v1) *: rest       => (n ~ (v1, LookupValue[n, T2])) & ZipValues[rest, T2]
 
     type Aux[A, T] =
         Fields[A]:
