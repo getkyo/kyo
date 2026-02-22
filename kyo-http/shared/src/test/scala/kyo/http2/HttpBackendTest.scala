@@ -16,21 +16,19 @@ class HttpBackendTest extends Test:
 
     case class User(id: Int, name: String) derives Schema, CanEqual
 
-    // Stub client — body is never evaluated since tests only check return types
     val stubClient: HttpBackend.Client = new HttpBackend.Client:
-        def send[In, Out, S](
-            route: HttpRoute[In, Out, S],
+        def send[In, Out](
+            route: HttpRoute[In, Out, Any],
             request: HttpRequest[In]
-        )(using Frame): HttpResponse[Out] < (S & Async & Abort[HttpError]) =
+        )(using Frame): HttpResponse[Out] < (Async & Abort[HttpError]) =
             Abort.fail(new HttpError.ParseError("stub"))
 
-    // Stub server that captures handlers
     val stubServer: HttpBackend.Server = new HttpBackend.Server:
-        def bind[S](
-            handlers: Seq[HttpHandler[?, ?, S]],
+        def bind(
+            handlers: Seq[HttpHandler[?, ?, Any]],
             port: Int,
             host: String
-        )(using Frame): HttpBackend.Binding < (S & Async) =
+        )(using Frame): HttpBackend.Binding < Async =
             new HttpBackend.Binding:
                 val port: Int                                               = 0
                 val host: String                                            = "localhost"
@@ -58,20 +56,18 @@ class HttpBackendTest extends Test:
             succeed
         }
 
-        "send with filter effects propagated" in {
+        "send rejects route with pending effects" in {
             val filter = new HttpFilter.Passthrough[Abort[String]]:
                 def apply[In, Out, S2](
                     request: HttpRequest[In],
                     next: HttpRequest[In] => HttpResponse[Out] < S2
                 ): HttpResponse[Out] < (Abort[String] & S2) =
                     next(request)
-            val route = HttpRoute.get("users")
-                .filter(filter)
-                .response(_.bodyText)
+            val route   = HttpRoute.get("users").filter(filter).response(_.bodyText)
             val request = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/users"))
-            val result  = stubClient.send(route, request)
-            val _: HttpResponse["body" ~ String] < (Abort[String] & Async & Abort[HttpError]) = result
-            succeed
+            typeCheckFailure("stubClient.send(route, request)")(
+                "Required"
+            )
         }
 
         "send rejects request missing required fields" in {
@@ -96,18 +92,18 @@ class HttpBackendTest extends Test:
             succeed
         }
 
-        "bind propagates handler effects" in {
+        "bind rejects handlers with pending effects" in {
             val filter = new HttpFilter.Passthrough[Abort[String]]:
                 def apply[In, Out, S2](
                     request: HttpRequest[In],
                     next: HttpRequest[In] => HttpResponse[Out] < S2
                 ): HttpResponse[Out] < (Abort[String] & S2) =
                     next(request)
-            val route                                            = HttpRoute.get("users").filter(filter).response(_.bodyText)
-            val handler                                          = route.handle(_ => HttpResponse.ok.addField("body", "hello"))
-            val result                                           = stubServer.bind(Seq(handler), 8080, "0.0.0.0")
-            val _: HttpBackend.Binding < (Abort[String] & Async) = result
-            succeed
+            val route   = HttpRoute.get("users").filter(filter).response(_.bodyText)
+            val handler = route.handle(_ => HttpResponse.ok.addField("body", "hello"))
+            typeCheckFailure("stubServer.bind(Seq(handler), 8080, \"0.0.0.0\")")(
+                "Required"
+            )
         }
 
         "bind accepts multiple handlers with different In/Out" in {

@@ -116,6 +116,28 @@ class HttpHandlerTest extends Test:
         }
     }
 
+    "handler.handle" - {
+
+        "resolves effects producing HttpHandler with S2" in {
+            val filter = new HttpFilter.Passthrough[Abort[String]]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < (Abort[String] & S2) =
+                    next(request)
+            val route   = HttpRoute.get("users").filter(filter).response(_.bodyText)
+            val handler = route.handle(_ => HttpResponse.ok.addField("body", "hello"))
+            val resolved = HttpHandler.handle(handler) { response =>
+                Abort.run[String](response).map {
+                    case kyo.Result.Success(r) => r
+                    case _                     => HttpResponse.ok.addField("body", "error")
+                }
+            }
+            val _: HttpHandler[Any, "body" ~ String, Any] = resolved
+            succeed
+        }
+    }
+
     "HttpHandler.const" - {
 
         "returns fixed response for effectless route" in {
@@ -169,25 +191,13 @@ class HttpHandlerTest extends Test:
         }
     }
 
-    "route bound (? >: S)" - {
+    "route accessor" - {
 
-        "handler's route retains effect information" in {
-            val filter = new HttpFilter.Passthrough[Abort[String]]:
-                def apply[In, Out, S2](
-                    request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < S2
-                ): HttpResponse[Out] < (Abort[String] & S2) =
-                    next(request)
-
+        "handler exposes its route" in {
             val route = HttpRoute.get("users")
-                .filter(filter)
                 .response(_.bodyText)
-
-            val handler = route.handle { _ =>
-                HttpResponse.ok.addField("body", "hello")
-            }
-
-            val _: HttpRoute[Any, "body" ~ String, ? >: Abort[String]] = handler.route
+            val handler                               = route.handle(_ => HttpResponse.ok.addField("body", "hello"))
+            val _: HttpRoute[Any, "body" ~ String, ?] = handler.route
             succeed
         }
     }

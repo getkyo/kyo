@@ -10,10 +10,10 @@ import kyo.seconds
 object HttpBackend:
 
     trait Client:
-        def send[In, Out, S](
-            route: HttpRoute[In, Out, S],
+        def send[In, Out](
+            route: HttpRoute[In, Out, Any],
             request: HttpRequest[In]
-        )(using Frame): HttpResponse[Out] < (S & Async & Abort[HttpError])
+        )(using Frame): HttpResponse[Out] < (Async & Abort[HttpError])
     end Client
 
     trait Server:
