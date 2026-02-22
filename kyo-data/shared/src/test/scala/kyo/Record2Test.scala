@@ -407,29 +407,23 @@ class Record2Test extends Test:
         "equal records" in {
             val r1 = ("name" ~ "Alice") & ("age" ~ 30)
             val r2 = ("name" ~ "Alice") & ("age" ~ 30)
-            assert(r1.is(r2))
+            assert(r1 == r2)
         }
 
         "not equal different values" in {
             val r1 = ("name" ~ "Alice") & ("age" ~ 30)
             val r2 = ("name" ~ "Bob") & ("age" ~ 25)
-            assert(!r1.is(r2))
+            assert(r1 != r2)
         }
 
         "field order independence" in {
             val r1 = ("name" ~ "Alice") & ("age" ~ 30)
             val r2 = ("age" ~ 30) & ("name" ~ "Alice")
-            assert(r1.is(r2))
+            assert(r1 == r2)
             assert(r1.hashCode == r2.hashCode)
         }
 
-        "CanEqual with Comparable" in {
-            val r1 = ("name" ~ "Alice") & ("age" ~ 30)
-            val r2 = ("name" ~ "Alice") & ("age" ~ 30)
-            assert(r1 == r2)
-        }
-
-        "CanEqual rejects without Comparable" in {
+        "rejects without Comparable" in {
             class NoEq
             val r1: Record2["x" ~ NoEq] = "x" ~ new NoEq
             val r2: Record2["x" ~ NoEq] = "x" ~ new NoEq
@@ -444,12 +438,6 @@ class Record2Test extends Test:
             assert(r1 != r3)
         }
 
-        "== rejects without Comparable" in {
-            class NoEq
-            val a: Record2["x" ~ NoEq] = "x" ~ new NoEq
-            val b: Record2["x" ~ NoEq] = "x" ~ new NoEq
-            typeCheckFailure("""a == b""")("cannot be compared")
-        }
     }
 
     "show and Render" - {
