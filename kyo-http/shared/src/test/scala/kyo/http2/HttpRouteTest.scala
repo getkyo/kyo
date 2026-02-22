@@ -1263,7 +1263,7 @@ class HttpRouteTest extends Test:
             typeCheck("""val _: HttpRoute["limit" ~ Int & "user" ~ String, Any, Any] = route""")
         }
 
-        "replacing request def completely drops filter's In requirement" in {
+        "lambda overload that ignores input and drops filter fields is rejected" in {
             val f = new HttpFilter.Request[Any, "user" ~ String, Any]:
                 def apply[In, Out, S2](
                     request: HttpRequest[In],
@@ -1271,28 +1271,21 @@ class HttpRouteTest extends Test:
                 ): HttpResponse[Out] < S2 =
                     next(request.addField("user", "test"))
 
-            // Add filter, then replace request — does "user" ~ String survive?
+            // Ignoring the input RequestDef and building a fresh one drops filter fields
+            typeCheckFailure("""
+                HttpRoute.get("users").filter(f).request(_ =>
+                    HttpRoute.RequestDef[Any](HttpPath.Literal("items")).query[Int]("page")
+                )
+            """)(
+                "Cannot prove"
+            )
+
+            // But chaining from the input preserves filter fields
             val route = HttpRoute.get("users")
                 .filter(f)
                 .request(_.query[Int]("limit"))
-
-            // BUG: The overload request[In2](req: RequestDef[In2]) completely replaces In.
-            // Filter added "user" ~ String but if we use the direct RequestDef overload,
-            // the filter's contribution is lost.
-            val f2 = new HttpFilter.Request[Any, "user" ~ String, Any]:
-                def apply[In, Out, S2](
-                    request: HttpRequest[In],
-                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < S2
-                ): HttpResponse[Out] < S2 =
-                    next(request.addField("user", "test"))
-
-            val newReq = HttpRoute.RequestDef[Any](HttpPath.Literal("items"))
-                .query[Int]("page")
-            val route2 = HttpRoute.get("users").filter(f2).request(newReq)
-            // This should include "user" ~ String from the filter, but does it?
-            // With request[In2](req: RequestDef[In2]), In becomes In2 = "page" ~ Int
-            // The filter's "user" ~ String is lost!
-            typeCheck("""val _: HttpRoute["page" ~ Int, Any, Any] = route2""")
+            val _: HttpRoute["user" ~ String & "limit" ~ Int, Any, Any] = route
+            succeed
         }
     }
 

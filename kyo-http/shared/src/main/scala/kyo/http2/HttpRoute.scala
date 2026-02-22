@@ -31,17 +31,11 @@ case class HttpRoute[In, Out, -S](
     def pathPrepend[In2](prefix: HttpPath[In2]): HttpRoute[In & In2, Out, S] =
         copy(request = request.pathPrepend(prefix))
 
-    def request[R](f: RequestDef[In] => R)(using s: Strict[RequestDef, R]): HttpRoute[s.Out, Out, S] =
+    def request[R](f: RequestDef[In] => R)(using s: Strict[RequestDef, R])(using s.Out <:< In): HttpRoute[s.Out, Out, S] =
         HttpRoute(method, s(f(request)), response, filter, metadata)
 
-    def request[In2](req: RequestDef[In2]): HttpRoute[In2, Out, S] =
-        HttpRoute(method, req, response, filter, metadata)
-
-    def response[R](f: ResponseDef[Out] => R)(using s: Strict[ResponseDef, R]): HttpRoute[In, s.Out, S] =
+    def response[R](f: ResponseDef[Out] => R)(using s: Strict[ResponseDef, R])(using s.Out <:< Out): HttpRoute[In, s.Out, S] =
         HttpRoute(method, request, s(f(response)), filter, metadata)
-
-    def response[Out2](res: ResponseDef[Out2]): HttpRoute[In, Out2, S] =
-        HttpRoute(method, request, res, filter, metadata)
 
     def filter[ReqIn >: In, ReqOut, ResIn >: Out, ResOut, S2](
         f: HttpFilter[ReqIn, ReqOut, ResIn, ResOut, S2]
