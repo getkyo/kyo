@@ -127,7 +127,7 @@ class HttpHandlerTest extends Test:
                     next(request)
             val route   = HttpRoute.get("users").filter(filter).response(_.bodyText)
             val handler = route.handle(_ => HttpResponse.ok.addField("body", "hello"))
-            val resolved = HttpHandler.handle(handler) { response =>
+            val resolved = handler.handle { response =>
                 Abort.run[String](response).map {
                     case kyo.Result.Success(r) => r
                     case _                     => HttpResponse.ok.addField("body", "error")
@@ -191,13 +191,25 @@ class HttpHandlerTest extends Test:
         }
     }
 
-    "route accessor" - {
+    "route bound (? >: S)" - {
 
-        "handler exposes its route" in {
+        "handler's route retains effect information" in {
+            val filter = new HttpFilter.Passthrough[Abort[String]]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < (Abort[String] & S2) =
+                    next(request)
+
             val route = HttpRoute.get("users")
+                .filter(filter)
                 .response(_.bodyText)
-            val handler                               = route.handle(_ => HttpResponse.ok.addField("body", "hello"))
-            val _: HttpRoute[Any, "body" ~ String, ?] = handler.route
+
+            val handler = route.handle { _ =>
+                HttpResponse.ok.addField("body", "hello")
+            }
+
+            val _: HttpRoute[Any, "body" ~ String, ? >: Abort[String]] = handler.route
             succeed
         }
     }

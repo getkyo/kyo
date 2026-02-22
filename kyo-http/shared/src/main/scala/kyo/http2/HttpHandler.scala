@@ -8,6 +8,10 @@ sealed abstract class HttpHandler[In, Out, -S](val route: HttpRoute[In, Out, ? >
 
     def apply(request: HttpRequest[In])(using Frame): HttpResponse[Out] < S
 
+    def handle[S2](f: HttpResponse[Out] < S => HttpResponse[Out] < S2)(using Frame): HttpHandler[In, Out, S2] =
+        val self = this
+        HttpHandler(self.route, req => f(self(req)))
+
 end HttpHandler
 
 object HttpHandler:
@@ -19,13 +23,6 @@ object HttpHandler:
         new HttpHandler[In, Out, S](route):
             def apply(request: HttpRequest[In])(using Frame): HttpResponse[Out] < S =
                 handler(request)
-
-    def handle[In, Out, S, S2](
-        handler: HttpHandler[In, Out, S]
-    )(f: HttpResponse[Out] < S => HttpResponse[Out] < S2)(using Frame): HttpHandler[In, Out, S2] =
-        new HttpHandler[In, Out, S2](handler.route.asInstanceOf[HttpRoute[In, Out, ? >: S2]]):
-            def apply(request: HttpRequest[In])(using Frame): HttpResponse[Out] < S2 =
-                f(handler(request))
 
     def const[In, Out](
         route: HttpRoute[In, Out, ? >: Any],
