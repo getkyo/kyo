@@ -146,15 +146,16 @@ class DictBuilderTest extends Test:
     }
 
     "value equality dedup" in {
-        val k1 = new String("key")
-        val k2 = new String("key")
+        case class Key(value: String)
+        val k1 = Key("key")
+        val k2 = Key("key")
         assert(!(k1 eq k2)) // different references
-        val b = DictBuilder.init[String, Int]
+        val b = DictBuilder.init[Key, Int]
         b.add(k1, 1)
         b.add(k2, 2)
         val d = b.result()
         assert(d.size == 1)
-        assert(d("key") == 2)
+        assert(d(Key("key")) == 2)
     }
 
     "reuse after result" in {
