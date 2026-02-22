@@ -565,7 +565,7 @@ object Dict:
 
         /** Formats all entries as a string with the given separator. Each entry is rendered as `key -> value`. */
         def mkString(separator: String): String =
-            val sb    = new java.lang.StringBuilder
+            val sb    = new java.lang.StringBuilder(self.size * 4 + 8)
             var first = true
             foreach { (k, v) =>
                 if !first then discard(sb.append(separator))
