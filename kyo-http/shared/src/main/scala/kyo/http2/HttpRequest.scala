@@ -2,16 +2,15 @@ package kyo.http2
 
 import kyo.Frame
 import kyo.Maybe
-import kyo.Record
-import kyo.Record.~
+import kyo.Record2
+import kyo.Record2.~
 import kyo.Result
-import kyo.Tag
 
-case class HttpRequest[+Fields](
+case class HttpRequest[Fields](
     method: HttpMethod,
     url: HttpUrl,
     headers: HttpHeaders,
-    fields: Record[Fields]
+    fields: Record2[Fields]
 ):
     def path: String = url.path
 
@@ -19,10 +18,10 @@ case class HttpRequest[+Fields](
 
     def queryAll(name: String): Seq[String] = url.queryAll(name)
 
-    def addField[N <: String & Singleton, V](name: N, value: V)(using Tag[V]): HttpRequest[Fields & name.type ~ V] =
+    def addField[N <: String & Singleton, V](name: N, value: V): HttpRequest[Fields & name.type ~ V] =
         copy(fields = fields & name ~ value)
 
-    def addFields[Fields2](r: Record[Fields2]): HttpRequest[Fields & Fields2] =
+    def addFields[Fields2](r: Record2[Fields2]): HttpRequest[Fields & Fields2] =
         copy(fields = fields & r)
 
     def addHeader(name: String, value: String): HttpRequest[Fields] =
@@ -36,7 +35,7 @@ end HttpRequest
 object HttpRequest:
 
     def apply(method: HttpMethod, url: HttpUrl): HttpRequest[Any] =
-        HttpRequest(method, url, HttpHeaders.empty, Record.empty)
+        HttpRequest(method, url, HttpHeaders.empty, Record2.empty)
 
     def parse(method: HttpMethod, rawUrl: String)(using Frame): Result[HttpError, HttpRequest[Any]] =
         HttpUrl.parse(rawUrl).map(url => apply(method, url))

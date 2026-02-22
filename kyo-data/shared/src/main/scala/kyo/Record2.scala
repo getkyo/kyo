@@ -7,8 +7,8 @@ import scala.language.implicitConversions
 
 sealed abstract class Record2[F] extends Dynamic:
 
-    def selectDynamic[Name <: String & Singleton](name: Name)(using f: Fields[F]): FieldValue[f.AsTuple, Name] =
-        get(name).asInstanceOf[FieldValue[f.AsTuple, Name]]
+    transparent inline def selectDynamic[Name <: String & Singleton](name: Name): Any =
+        ${ internal.Record2Macros.selectDynamic[F, Name]('this, 'name) }
 
     def &[A](other: Record2[A]): Record2[F & A] =
         Record2.combine(this, other)
@@ -46,7 +46,7 @@ sealed abstract class Record2[F] extends Dynamic:
         sb.toString
     end toString
 
-    private[Record2] def get(name: String): Any
+    private[kyo] def get(name: String): Any
     private[Record2] def foreach(fn: (String, Any) => Unit): Unit
 
 end Record2
@@ -61,6 +61,7 @@ object Record2:
     object `~`:
         type MapValue[G[_]] = [x] =>> x match
             case n ~ v => n ~ G[v]
+    end `~`
 
     type FieldValue[T <: Tuple, Name <: String] = T match
         case (Name ~ v) *: _ => v
@@ -68,8 +69,18 @@ object Record2:
 
     val empty: Record2[Any] = new SmallRecord(Span.empty[Any])
 
-    given widen[A <: B, B]: Conversion[Record2[A], Record2[B]] =
-        _.asInstanceOf[Record2[B]]
+    opaque type FieldsComparable[A] = Unit
+    object FieldsComparable:
+        private[kyo] def unsafe[A]: FieldsComparable[A] = ()
+
+    transparent inline given fieldsComparable[A]: FieldsComparable[A] =
+        ${ internal.Record2Macros.fieldsComparableImpl[A] }
+
+    given canEqual[A, B](using FieldsComparable[A], FieldsComparable[B]): CanEqual[Record2[A], Record2[B]] =
+        CanEqual.derived
+
+    inline given widen[A, B]: Conversion[Record2[A], Record2[B]] =
+        ${ internal.Record2Macros.widenImpl[A, B] }
 
     extension (self: String)
         def ~[Value](value: Value): Record2[self.type ~ Value] =
@@ -168,7 +179,7 @@ object Record2:
             foreach((k, v) => b += (k -> v))
             b.result()
         end toMap
-        private[Record2] def get(name: String) =
+        private[kyo] def get(name: String) =
             var i = 0
             while i < entries.size do
                 if entries(i).asInstanceOf[String] == name then return entries(i + 1)
@@ -186,9 +197,9 @@ object Record2:
     final private class LargeRecord[F](
         private[Record2] val map: Map[String, Any]
     ) extends Record2[F]:
-        def size                               = map.size
-        def toMap                              = map
-        private[Record2] def get(name: String) = map(name)
+        def size                           = map.size
+        def toMap                          = map
+        private[kyo] def get(name: String) = map(name)
         private[Record2] def foreach(fn: (String, Any) => Unit) =
             map.foreach((k, v) => fn(k, v))
     end LargeRecord

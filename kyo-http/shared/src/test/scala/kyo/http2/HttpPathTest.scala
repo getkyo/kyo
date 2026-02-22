@@ -1,6 +1,6 @@
 package kyo.http2
 
-import kyo.Record.~
+import kyo.Record2.~
 import kyo.Test
 import scala.language.implicitConversions
 
@@ -55,12 +55,12 @@ class HttpPathTest extends Test:
     }
 
     "Capture" - {
-        "defaults wireName to fieldName" in {
+        "defaults wireName to empty" in {
             val p = HttpPath.Capture[Int]("id")
             p match
                 case HttpPath.Capture(fn, wn, _) =>
                     assert(fn == "id")
-                    assert(wn == "id")
+                    assert(wn == "")
                 case _ => fail("Expected Capture")
             end match
         }
@@ -88,7 +88,7 @@ class HttpPathTest extends Test:
             p match
                 case HttpPath.Capture(fn, wn, _) =>
                     assert(fn == "user_id")
-                    assert(wn == "user_id")
+                    assert(wn == "")
                 case _ => fail("Expected Capture")
             end match
         }
@@ -135,7 +135,7 @@ class HttpPathTest extends Test:
             p match
                 case HttpPath.Capture(_, _, codec) =>
                     assert(codec.encode(42) == "42")
-                    assert(codec.decode("42") == 42)
+                    assert(codec.decode("42").equals(42))
                 case _ => fail("Expected Capture")
             end match
         }

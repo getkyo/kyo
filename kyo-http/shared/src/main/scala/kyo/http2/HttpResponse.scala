@@ -1,18 +1,17 @@
 package kyo.http2
 
-import kyo.Record
-import kyo.Record.~
-import kyo.Tag
+import kyo.Record2
+import kyo.Record2.~
 
-case class HttpResponse[+Fields](
+case class HttpResponse[Fields](
     status: HttpStatus,
     headers: HttpHeaders,
-    fields: Record[Fields]
+    fields: Record2[Fields]
 ):
-    def addField[N <: String & Singleton, V](name: N, value: V)(using Tag[V]): HttpResponse[Fields & name.type ~ V] =
+    def addField[N <: String & Singleton, V](name: N, value: V): HttpResponse[Fields & name.type ~ V] =
         copy(fields = fields & name ~ value)
 
-    def addFields[Fields2](r: Record[Fields2]): HttpResponse[Fields & Fields2] =
+    def addFields[Fields2](r: Record2[Fields2]): HttpResponse[Fields & Fields2] =
         copy(fields = fields & r)
 
     def addHeader(name: String, value: String): HttpResponse[Fields] =
@@ -41,7 +40,7 @@ end HttpResponse
 object HttpResponse:
 
     def apply(status: HttpStatus): HttpResponse[Any] =
-        HttpResponse(status, HttpHeaders.empty, Record.empty)
+        HttpResponse(status, HttpHeaders.empty, Record2.empty)
 
     // 2xx
     def ok: HttpResponse[Any]        = apply(HttpStatus.OK)

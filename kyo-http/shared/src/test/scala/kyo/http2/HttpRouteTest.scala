@@ -4,7 +4,7 @@ import kyo.<
 import kyo.Absent
 import kyo.Maybe
 import kyo.Present
-import kyo.Record.~
+import kyo.Record2.~
 import kyo.Test
 import scala.language.implicitConversions
 

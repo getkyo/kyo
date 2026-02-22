@@ -5,7 +5,7 @@ import kyo.Abort
 import kyo.Async
 import kyo.Duration
 import kyo.Frame
-import kyo.Record.~
+import kyo.Record2.~
 import kyo.Test
 import kyo.seconds
 import scala.language.implicitConversions

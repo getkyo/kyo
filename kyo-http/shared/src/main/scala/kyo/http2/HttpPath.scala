@@ -1,6 +1,6 @@
 package kyo.http2
 
-import kyo.Record.~
+import kyo.Record2.~
 import scala.language.implicitConversions
 
 enum HttpPath[+A] derives CanEqual:

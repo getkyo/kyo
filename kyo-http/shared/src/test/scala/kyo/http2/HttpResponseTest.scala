@@ -1,8 +1,8 @@
 package kyo.http2
 
 import kyo.Present
-import kyo.Record
-import kyo.Record.~
+import kyo.Record2
+import kyo.Record2.~
 import kyo.Test
 
 class HttpResponseTest extends Test:
@@ -14,7 +14,7 @@ class HttpResponseTest extends Test:
             val res = HttpResponse(HttpStatus.OK)
             assert(res.status == HttpStatus.OK)
             assert(res.headers.isEmpty)
-            assert(res.fields == Record.empty)
+            assert(res.fields == Record2.empty)
         }
 
         "full constructor" in {
@@ -169,7 +169,7 @@ class HttpResponseTest extends Test:
         val res2 = res1.addHeader("X-Test", "value")
         val res3 = res1.addField("key", "val")
         assert(res1.headers.isEmpty)
-        assert(res1.fields == Record.empty)
+        assert(res1.fields == Record2.empty)
         assert(res2.headers.get("X-Test") == Present("value"))
         assert(res3.fields.key == "val")
     }

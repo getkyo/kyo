@@ -1,6 +1,7 @@
 package kyo
 
 import Record2.*
+import Record2.given
 import scala.language.implicitConversions
 
 class Record2Test extends Test:
@@ -138,7 +139,20 @@ class Record2Test extends Test:
     "R19: equality" in {
         val r1 = ("name" ~ "Alice") & ("age" ~ 30)
         val r2 = ("name" ~ "Alice") & ("age" ~ 30)
-        assert(r1.equals(r2))
+        val r3 = ("name" ~ "Bob") & ("age" ~ 25)
+        assert(r1 == r2)
+        assert(r1 != r3)
+        assert(Record2.empty == Record2.empty)
+    }
+
+    // R19b: CanEqual rejects non-comparable field types
+    "R19b: CanEqual rejects non-comparable fields" in {
+        typeCheckFailure("""
+            class NoEq
+            val a: Record2["x" ~ NoEq] = "x" ~ new NoEq
+            val b: Record2["x" ~ NoEq] = "x" ~ new NoEq
+            a == b
+        """)("cannot be compared")
     }
 
     // R20: toString

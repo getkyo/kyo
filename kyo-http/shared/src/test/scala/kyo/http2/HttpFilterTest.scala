@@ -1,8 +1,7 @@
 package kyo.http2
 
 import kyo.<
-import kyo.Record
-import kyo.Record.~
+import kyo.Record2.~
 import kyo.Tag
 import kyo.Test
 

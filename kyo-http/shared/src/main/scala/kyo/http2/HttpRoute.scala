@@ -9,7 +9,7 @@ import kyo.Emit
 import kyo.Frame
 import kyo.Maybe
 import kyo.Present
-import kyo.Record.~
+import kyo.Record2.~
 import kyo.Scope
 import kyo.Span
 import kyo.Stream

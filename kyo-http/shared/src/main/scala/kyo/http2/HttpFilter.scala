@@ -13,8 +13,7 @@ import kyo.Maybe
 import kyo.Meter
 import kyo.Present
 import kyo.Random
-import kyo.Record
-import kyo.Record.~
+import kyo.Record2.~
 import kyo.Result
 import kyo.Sync
 

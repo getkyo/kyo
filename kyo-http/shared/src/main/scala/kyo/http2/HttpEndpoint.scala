@@ -2,7 +2,7 @@ package kyo.http2
 
 import kyo.<
 import kyo.Frame
-import kyo.Record.~
+import kyo.Record2.~
 
 sealed abstract class HttpEndpoint[In, Out, -S](val route: HttpRoute[In, Out, ?]):
     self =>
@@ -27,11 +27,12 @@ object HttpEndpoint:
             def apply(request: HttpRequest[In])(using Frame) =
                 handler(request)
 
-    def const[In, Out, S](
-        route: HttpRoute[In, Out, S],
-        response: HttpResponse[Out]
-    ): HttpEndpoint[In, Out, S] =
-        HttpEndpoint(route)(_ => response)
+    // TODO: revisit const API
+    // def const[In, Out, S](
+    //     route: HttpRoute[In, Out, S],
+    //     response: HttpResponse[Out]
+    // ): HttpEndpoint[In, Out, S] =
+    //     HttpEndpoint(route)(_ => response)
 
     def health()(using Frame): HttpEndpoint[Any, "body" ~ String, Any] =
         health("health")
