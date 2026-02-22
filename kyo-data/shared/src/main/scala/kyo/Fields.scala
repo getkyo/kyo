@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Record2.*
 import scala.compiletime.*
-import scala.quoted.*
 
 /** Reifies the metadata of an intersection of `~[Name, Value]` field types.
   *
@@ -31,7 +30,7 @@ end Fields
 
 object Fields:
 
-    private def create[A, T <: Tuple](_names: Set[String], _fields: => List[Field[?, ?]]): Fields.Aux[A, T] =
+    private[kyo] def createAux[A, T <: Tuple](_names: Set[String], _fields: => List[Field[?, ?]]): Fields.Aux[A, T] =
         new Fields[A]:
             type AsTuple = T
             val names       = _names
@@ -44,7 +43,7 @@ object Fields:
             type AsTuple = T
 
     transparent inline given derive[A]: Fields[A] =
-        ${ deriveImpl[A] }
+        ${ internal.FieldsMacros.deriveImpl[A] }
 
     /** Summon Field instances for each component in A. */
     def fields[A](using f: Fields[A]): List[Field[?, ?]] = f.fields
@@ -71,68 +70,27 @@ object Fields:
                     summonLoop[rest, F].updated(constValue[n & String], summonInline[F[v]].asInstanceOf[F[Any]])
     end SummonAll
 
-    // --- Macro ---
+    sealed abstract class Have[F, Name <: String]:
+        type Value
 
-    private def deriveImpl[A: Type](using Quotes): Expr[Fields[A]] =
-        import quotes.reflect.*
+    object Have:
+        private[kyo] def unsafe[F, Name <: String, V]: Have[F, Name] { type Value = V } =
+            new Have[F, Name]:
+                type Value = V
 
-        def decompose(tpe: TypeRepr): Vector[TypeRepr] =
-            tpe match
-                case AndType(l, r) =>
-                    decompose(l) ++ decompose(r)
-                case _ =>
-                    if tpe =:= TypeRepr.of[Any] then Vector()
-                    else
-                        try
-                            tpe.typeSymbol.tree match
-                                case typeDef: TypeDef =>
-                                    typeDef.rhs match
-                                        case bounds: TypeBoundsTree =>
-                                            val hi = bounds.hi.tpe
-                                            if !(hi =:= TypeRepr.of[Any]) then decompose(hi)
-                                            else Vector(tpe)
-                                        case _ => Vector(tpe)
-                                case _ => Vector(tpe)
-                        catch case _: Exception => Vector(tpe)
+        transparent inline given [F, Name <: String]: Have[F, Name] =
+            ${ internal.FieldsMacros.haveImpl[F, Name] }
+    end Have
 
-        def tupled(typs: Vector[TypeRepr]): TypeRepr =
-            typs match
-                case h +: t => TypeRepr.of[*:].appliedTo(List(h, tupled(t)))
-                case _      => TypeRepr.of[EmptyTuple]
+    // --- Comparable ---
 
-        val components = decompose(TypeRepr.of[A].dealias)
+    opaque type Comparable[A] = Unit
 
-        case class ComponentInfo(name: String, nameExpr: Expr[String], tagExpr: Expr[Any], nestedExpr: Expr[List[Field[?, ?]]])
+    object Comparable:
+        private[kyo] def unsafe[A]: Comparable[A] = ()
 
-        def extractComponent(tpe: TypeRepr): Option[ComponentInfo] =
-            tpe match
-                case AppliedType(_, List(ConstantType(StringConstant(name)), valueType)) =>
-                    val nameExpr = Expr(name)
-                    val tagExpr = valueType.asType match
-                        case '[v] =>
-                            Expr.summon[Tag[v]].getOrElse(
-                                report.errorAndAbort(s"Cannot summon Tag for field '$name': ${valueType.show}")
-                            )
-                    val nestedExpr = valueType.asType match
-                        case '[Record2[f]] =>
-                            Expr.summon[Fields[f]] match
-                                case Some(fields) => '{ $fields.fields }
-                                case None         => '{ Nil: List[Field[?, ?]] }
-                        case _ => '{ Nil: List[Field[?, ?]] }
-                    Some(ComponentInfo(name, nameExpr, tagExpr, nestedExpr))
-                case _ => None
-
-        val infos    = components.flatMap(extractComponent)
-        val nameArgs = infos.map(_.nameExpr).toList
-        val namesSet = '{ Set(${ Varargs(nameArgs) }*) }
-        val fieldsList = Expr.ofList(infos.map(ci =>
-            '{ Field[String, Any](${ ci.nameExpr }, ${ ci.tagExpr }.asInstanceOf[Tag[Any]], ${ ci.nestedExpr }) }
-        ).toList)
-
-        tupled(components).asType match
-            case '[type x <: Tuple; x] =>
-                '{ create[A, x]($namesSet, $fieldsList) }
-        end match
-    end deriveImpl
+        transparent inline given derive[A]: Comparable[A] =
+            ${ internal.FieldsMacros.comparableImpl[A] }
+    end Comparable
 
 end Fields

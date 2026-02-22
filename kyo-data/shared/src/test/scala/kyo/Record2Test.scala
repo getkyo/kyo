@@ -1,7 +1,6 @@
 package kyo
 
 import Record2.*
-import Record2.given
 import scala.language.implicitConversions
 
 class Record2Test extends Test:
