@@ -7,7 +7,7 @@ import kyo.Record.~
 import kyo.Result
 import kyo.Tag
 
-case class HttpRequest[Fields](
+case class HttpRequest[+Fields](
     method: HttpMethod,
     url: HttpUrl,
     headers: HttpHeaders,

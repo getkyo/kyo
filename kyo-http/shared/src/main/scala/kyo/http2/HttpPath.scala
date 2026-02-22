@@ -15,7 +15,7 @@ object HttpPath:
 
     object Capture:
         def apply[A](using codec: HttpCodec[A])[N <: String & Singleton](fieldName: N): HttpPath[N ~ A] =
-            HttpPath.Capture(fieldName, fieldName, codec)
+            HttpPath.Capture(fieldName, "", codec)
 
         def apply[A](using codec: HttpCodec[A])[N <: String & Singleton](fieldName: N, wireName: String): HttpPath[N ~ A] =
             HttpPath.Capture(fieldName, wireName, codec)

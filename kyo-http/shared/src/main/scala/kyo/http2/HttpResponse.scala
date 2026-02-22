@@ -4,7 +4,7 @@ import kyo.Record
 import kyo.Record.~
 import kyo.Tag
 
-case class HttpResponse[Fields](
+case class HttpResponse[+Fields](
     status: HttpStatus,
     headers: HttpHeaders,
     fields: Record[Fields]

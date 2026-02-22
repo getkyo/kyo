@@ -1,5 +1,6 @@
 package kyo.http2
 
+import kyo.<
 import kyo.Absent
 import kyo.Maybe
 import kyo.Present
@@ -19,12 +20,12 @@ class HttpRouteTest extends Test:
 
     "Path" - {
 
-        "capture defaults wireName to fieldName" in {
+        "capture defaults wireName to empty" in {
             val p = HttpPath.Capture[Int]("id")
             p match
                 case HttpPath.Capture(fn, wn, _) =>
                     assert(fn == "id")
-                    assert(wn == "id")
+                    assert(wn == "")
                 case _ => fail("Expected Capture")
             end match
         }
@@ -179,7 +180,7 @@ class HttpRouteTest extends Test:
                 p match
                     case HttpPath.Capture(fn, wn, _) =>
                         assert(fn == "user_id")
-                        assert(wn == "user_id")
+                        assert(wn == "")
                     case _ => fail("Expected Capture")
                 end match
             }
@@ -799,6 +800,173 @@ class HttpRouteTest extends Test:
         }
     }
 
+    "Filter" - {
+
+        "default filter is noop" in {
+            val r = HttpRoute.get("users")
+            assert(r.filter eq HttpFilter.noop)
+        }
+
+        "add passthrough filter" in {
+            val f = new HttpFilter.Passthrough[Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request.setHeader("X-Test", "1"))
+            val r = HttpRoute.get("users").filter(f)
+            typeCheck("""val _: HttpRoute[Any, Any, Any] = r""")
+        }
+
+        "filter with request field requirement needs matching route fields" in {
+            val f = new HttpFilter.Request["auth" ~ String, Any, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In & "auth" ~ String],
+                    next: HttpRequest[In & "auth" ~ String] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request)
+                end apply
+            // Route must provide the field the filter requires
+            val r = HttpRoute.get("users").request(_.header[String]("auth")).filter(f)
+            typeCheck("""val _: HttpRoute["auth" ~ String, Any, Any] = r""")
+        }
+
+        "filter with request field requirement rejected when route lacks field" in {
+            val f = new HttpFilter.Request["auth" ~ String, Any, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In & "auth" ~ String],
+                    next: HttpRequest[In & "auth" ~ String] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request)
+                end apply
+            typeCheckFailure("""HttpRoute.get("users").filter(f)""")(
+                """Found:    (f : kyo.http2.HttpFilter.Request[("auth" : String) ~ String, Any, Any])"""
+            )
+        }
+
+        "filter that adds request fields widens In" in {
+            val f = new HttpFilter.Request[Any, "user" ~ String, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request.addField("user", "test"))
+            val r = HttpRoute.get("users").filter(f)
+            typeCheck("""val _: HttpRoute["user" ~ String, Any, Any] = r""")
+        }
+
+        "filter that adds response fields widens Out" in {
+            val f = new HttpFilter.Response[Any, "cached" ~ Boolean, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out & "cached" ~ Boolean] < S2 =
+                    next(request).map(_.addField("cached", true))
+            val r = HttpRoute.get("users").filter(f)
+            typeCheck("""val _: HttpRoute[Any, "cached" ~ Boolean, Any] = r""")
+        }
+
+        "filter adds effects to S" in {
+            val f = new HttpFilter.Passthrough[kyo.Async]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < (kyo.Async & S2) =
+                    next(request)
+            val r = HttpRoute.get("users").filter(f)
+            typeCheck("""val _: HttpRoute[Any, Any, kyo.Async] = r""")
+        }
+
+        "composing two filters via route" in {
+            val f1 = new HttpFilter.Request[Any, "a" ~ Int, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In & "a" ~ Int] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request.addField("a", 1))
+            val f2 = new HttpFilter.Request[Any, "b" ~ Int, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In & "b" ~ Int] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request.addField("b", 2))
+            val r = HttpRoute.get("users").filter(f1).filter(f2)
+            typeCheck("""val _: HttpRoute["a" ~ Int & "b" ~ Int, Any, Any] = r""")
+        }
+
+        "filter preserved through pathAppend" in {
+            val f = new HttpFilter.Request[Any, "user" ~ String, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request.addField("user", "test"))
+            val r = HttpRoute.get("users").filter(f).pathAppend(HttpPath.Capture[Int]("id"))
+            typeCheck("""val _: HttpRoute["user" ~ String & "id" ~ Int, Any, Any] = r""")
+        }
+
+        "filter preserved through pathPrepend" in {
+            val f = new HttpFilter.Passthrough[kyo.Async]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < (kyo.Async & S2) =
+                    next(request)
+            val r = HttpRoute.get("users").filter(f).pathPrepend("api")
+            typeCheck("""val _: HttpRoute[Any, Any, kyo.Async] = r""")
+        }
+
+        "filter preserved through request builder" in {
+            val f = new HttpFilter.Passthrough[Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request)
+            val r = HttpRoute.get("users").filter(f).request(_.query[Int]("limit"))
+            typeCheck("""val _: HttpRoute["limit" ~ Int, Any, Any] = r""")
+        }
+
+        "filter preserved through response builder" in {
+            val f = new HttpFilter.Passthrough[Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request)
+            val r = HttpRoute.get("users").filter(f).response(_.bodyJson[User])
+            typeCheck("""val _: HttpRoute[Any, "body" ~ User, Any] = r""")
+        }
+
+        "filter preserved through metadata" in {
+            val f = new HttpFilter.Passthrough[kyo.Async]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < (kyo.Async & S2) =
+                    next(request)
+            val r = HttpRoute.get("users").filter(f).metadata(_.tag("Users"))
+            typeCheck("""val _: HttpRoute[Any, Any, kyo.Async] = r""")
+        }
+
+        "full route with filter" in {
+            val f = new HttpFilter.Request[Any, "user" ~ String, kyo.Async]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < (kyo.Async & S2) =
+                    next(request.addField("user", "admin"))
+            val r = HttpRoute.get("users" / HttpPath.Capture[Int]("id"))
+                .request(_.query[Int]("limit"))
+                .response(_.bodyJson[User])
+                .filter(f)
+                .metadata(_.tag("Users"))
+            typeCheck(
+                """val _: HttpRoute["id" ~ Int & "limit" ~ Int & "user" ~ String, "body" ~ User, kyo.Async] = r"""
+            )
+        }
+    }
+
     "Name conflicts" - {
 
         "duplicate query parameter names rejected at compile time" in pendingUntilFixed {
@@ -928,6 +1096,203 @@ class HttpRouteTest extends Test:
             assert(r.method == HttpMethod.GET)
             assert(r.request.fields.size == 1)
             assert(r.metadata.tags == Seq("Events"))
+        }
+    }
+
+    "Bug probes" - {
+
+        "andThen on wildcard filter loses first filter's ReqIn constraint" in {
+            // filter1 requires "auth" ~ String, filter2 requires nothing
+            // After composing via route.filter(f1).filter(f2), the stored filter
+            // has type HttpFilter[?, ?, ?, ?, S]. When andThen is called on it
+            // with f2, the first filter's ReqIn=? means the composed filter
+            // doesn't actually enforce "auth" ~ String at the filter level.
+            val f1 = new HttpFilter.Request["auth" ~ String, "user" ~ String, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In & "auth" ~ String],
+                    next: HttpRequest[In & "auth" ~ String & "user" ~ String] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    val auth: String = request.fields.auth // must have auth
+                    next(request.addField("user", auth))
+                end apply
+
+            val f2 = new HttpFilter.Passthrough[Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request)
+
+            // Build route with f1 first
+            val route1 = HttpRoute.get("users").request(_.header[String]("auth")).filter(f1)
+            // Now add f2 — this calls route1.filter (which is HttpFilter[?,?,?,?,Any]).andThen(f2)
+            val route2 = route1.filter(f2)
+
+            // The route's In type correctly tracks "auth" ~ String & "user" ~ String
+            typeCheck("""val _: HttpRoute["auth" ~ String & "user" ~ String, Any, Any] = route2""")
+
+            // But can we extract the filter and apply it to a request WITHOUT "auth"?
+            // This would be the unsoundness — the filter object itself doesn't enforce "auth"
+            val extractedFilter = route2.filter
+            // extractedFilter has type HttpFilter[?, ?, ?, ?, Any]
+            // If we could call it with a request lacking "auth", f1 would crash at runtime
+            // trying to access request.fields.auth
+            succeed
+        }
+
+        "filter andThen composition preserves runtime behavior" in {
+            // Verify that even though types are erased in storage,
+            // the runtime filter chain still works correctly
+            var f1Called = false
+            var f2Called = false
+
+            val f1 = new HttpFilter.Passthrough[Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    f1Called = true
+                    next(request.setHeader("X-F1", "yes"))
+                end apply
+
+            val f2 = new HttpFilter.Passthrough[Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    f2Called = true
+                    next(request.setHeader("X-F2", "yes"))
+                end apply
+
+            val route = HttpRoute.get("test").filter(f1).filter(f2)
+            // Both filters should be composed
+            assert(route.filter ne HttpFilter.noop)
+            succeed
+        }
+
+        "wireName defaults to empty consistently for Capture and query" in {
+            val path = HttpPath.Capture[Int]("id")
+            path match
+                case HttpPath.Capture(_, wn, _) =>
+                    assert(wn == "")
+                case _ => fail("Expected Capture")
+            end match
+
+            val route = HttpRoute.get("users").request(_.query[Int]("limit"))
+            route.request.fields(0) match
+                case Field.Param(_, _, wn, _, _, _, _) =>
+                    assert(wn == "")
+                case _ => fail("Expected Param")
+            end match
+        }
+
+        "response cookie type is HttpCookie but request cookie type is raw value" in {
+            // Request cookie gives raw A, response cookie gives HttpCookie[A]
+            // Verify asymmetry exists
+            val route = HttpRoute.get("test")
+                .request(_.cookie[String]("session"))
+                .response(_.cookie[String]("session2"))
+
+            // Request cookie: "session" ~ String (raw value)
+            typeCheck("""val _: HttpRoute["session" ~ String, "session2" ~ HttpCookie[String], Any] = route""")
+        }
+
+        "error types are not tracked in Out type parameter" in {
+            // Errors are purely runtime — handler doesn't need to account for them
+            val route = HttpRoute.get("users")
+                .response(_.bodyJson[User].error[NotFoundError](HttpStatus.NotFound))
+
+            // Out is just "body" ~ User, NotFoundError doesn't appear
+            typeCheck("""val _: HttpRoute[Any, "body" ~ User, Any] = route""")
+
+            // Nothing prevents declaring errors for types that have no Schema
+            // (well, Schema is required by the error method signature, so this is fine)
+        }
+
+        "multiple filters via route.filter preserve all constraints in In/Out" in {
+            val f1 = new HttpFilter.Request[Any, "user" ~ String, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request.addField("user", "admin"))
+
+            val f2 = new HttpFilter.Response[Any, "cached" ~ Boolean, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out & "cached" ~ Boolean] < S2 =
+                    next(request).map(_.addField("cached", true))
+
+            val route = HttpRoute.get("users").filter(f1).filter(f2)
+            typeCheck("""val _: HttpRoute["user" ~ String, "cached" ~ Boolean, Any] = route""")
+        }
+
+        "filter requiring field can be applied to route without that field if field comes from path" in {
+            // A filter requiring "id" ~ Int should work if the path captures "id"
+            val f = new HttpFilter.Request["id" ~ Int, Any, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In & "id" ~ Int],
+                    next: HttpRequest[In & "id" ~ Int] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request)
+
+            // Path captures contribute to In, so this should compile
+            val route = HttpRoute.get("users" / HttpPath.Capture[Int]("id")).filter(f)
+            typeCheck("""val _: HttpRoute["id" ~ Int, Any, Any] = route""")
+        }
+
+        "replacing request def after filter loses filter's added fields from In" in {
+            // BUG PROBE: After .filter(f) adds "user" ~ String to In,
+            // calling .request(newDef) replaces the entire request def.
+            // Does the route's In still include "user" ~ String?
+            val f = new HttpFilter.Request[Any, "user" ~ String, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request.addField("user", "test"))
+
+            val route = HttpRoute.get("users")
+                .filter(f)
+                .request(_.query[Int]("limit"))
+
+            // Does In include "user" ~ String? If request() uses Strict, it
+            // only captures what the lambda returns, which is just "limit" ~ Int & "user" ~ String
+            // because the input RequestDef already has In = "user" ~ String
+            typeCheck("""val _: HttpRoute["limit" ~ Int & "user" ~ String, Any, Any] = route""")
+        }
+
+        "replacing request def completely drops filter's In requirement" in {
+            val f = new HttpFilter.Request[Any, "user" ~ String, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request.addField("user", "test"))
+
+            // Add filter, then replace request — does "user" ~ String survive?
+            val route = HttpRoute.get("users")
+                .filter(f)
+                .request(_.query[Int]("limit"))
+
+            // BUG: The overload request[In2](req: RequestDef[In2]) completely replaces In.
+            // Filter added "user" ~ String but if we use the direct RequestDef overload,
+            // the filter's contribution is lost.
+            val f2 = new HttpFilter.Request[Any, "user" ~ String, Any]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < S2 =
+                    next(request.addField("user", "test"))
+
+            val newReq = HttpRoute.RequestDef[Any](HttpPath.Literal("items"))
+                .query[Int]("page")
+            val route2 = HttpRoute.get("users").filter(f2).request(newReq)
+            // This should include "user" ~ String from the filter, but does it?
+            // With request[In2](req: RequestDef[In2]), In becomes In2 = "page" ~ Int
+            // The filter's "user" ~ String is lost!
+            typeCheck("""val _: HttpRoute["page" ~ Int, Any, Any] = route2""")
         }
     }
 

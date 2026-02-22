@@ -20,6 +20,7 @@ case class HttpRoute[In, Out, -S](
     method: HttpMethod,
     request: HttpRoute.RequestDef[In],
     response: HttpRoute.ResponseDef[Out] = HttpRoute.ResponseDef(),
+    filter: HttpFilter[?, ?, ?, ?, S] = HttpFilter.noop,
     metadata: HttpRoute.Metadata = HttpRoute.Metadata()
 ) derives CanEqual:
     import HttpRoute.*
@@ -31,36 +32,35 @@ case class HttpRoute[In, Out, -S](
         copy(request = request.pathPrepend(prefix))
 
     def request[R](f: RequestDef[In] => R)(using s: Strict[RequestDef, R]): HttpRoute[s.Out, Out, S] =
-        HttpRoute(method, s(f(request)), response, metadata)
+        HttpRoute(method, s(f(request)), response, filter, metadata)
 
     def request[In2](req: RequestDef[In2]): HttpRoute[In2, Out, S] =
-        HttpRoute(method, req, response, metadata)
+        HttpRoute(method, req, response, filter, metadata)
 
     def response[R](f: ResponseDef[Out] => R)(using s: Strict[ResponseDef, R]): HttpRoute[In, s.Out, S] =
-        HttpRoute(method, request, s(f(response)), metadata)
+        HttpRoute(method, request, s(f(response)), filter, metadata)
 
     def response[Out2](res: ResponseDef[Out2]): HttpRoute[In, Out2, S] =
-        HttpRoute(method, request, res, metadata)
+        HttpRoute(method, request, res, filter, metadata)
 
-    // def filter[ReqOut, ResOut, S2](
-    //     f: HttpFilter[PathIn & In, ReqOut, Out, ResOut, S2]
-    // ): HttpRoute[PathIn, In & ReqOut, Out & ResOut, S & S2] =
-    //     val composed = this.filter.andThen(f)
-    //     HttpRoute(method, path, request, response, composed, metadata)
-    // end filter
+    def filter[ReqIn >: In, ReqOut, ResIn >: Out, ResOut, S2](
+        f: HttpFilter[ReqIn, ReqOut, ResIn, ResOut, S2]
+    ): HttpRoute[In & ReqOut, Out & ResOut, S & S2] =
+        HttpRoute(method, request, response, this.filter.andThen(f), metadata)
+    end filter
 
     def metadata(f: Metadata => Metadata): HttpRoute[In, Out, S] =
-        HttpRoute(method, request, response, f(metadata))
+        copy(metadata = f(metadata))
 
     def metadata(meta: Metadata): HttpRoute[In, Out, S] =
-        HttpRoute(method, request, response, meta)
+        copy(metadata = meta)
 
 end HttpRoute
 
 object HttpRoute:
 
     private def make[A](method: HttpMethod, path: HttpPath[A]): HttpRoute[A, Any, Any] =
-        HttpRoute[A, Any, Any](method, RequestDef[A](path), ResponseDef[Any](), Metadata())
+        HttpRoute[A, Any, Any](method, RequestDef[A](path), ResponseDef[Any](), HttpFilter.noop, Metadata())
 
     def get[A](path: HttpPath[A]): HttpRoute[A, Any, Any]     = make(HttpMethod.GET, path)
     def post[A](path: HttpPath[A]): HttpRoute[A, Any, Any]    = make(HttpMethod.POST, path)

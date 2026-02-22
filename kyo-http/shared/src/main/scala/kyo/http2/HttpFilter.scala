@@ -307,4 +307,16 @@ object HttpFilter:
 
     end client
 
+    /** Adapts a composed filter into the normalized form `HttpFilter[In & ReqOut, Any, Out & ResOut, Any, S]` for storage in HttpRoute.
+      */
+    def adapt[In, ReqOut, Out, ResOut, S](
+        composed: HttpFilter[In, ReqOut, Out, ResOut, S]
+    ): HttpFilter[In & ReqOut, Any, Out & ResOut, Any, S] =
+        new HttpFilter[In & ReqOut, Any, Out & ResOut, Any, S]:
+            def apply[In2, Out2, S2](
+                request: HttpRequest[In2 & (In & ReqOut)],
+                next: HttpRequest[In2 & (In & ReqOut)] => HttpResponse[Out2 & (Out & ResOut)] < S2
+            ): HttpResponse[Out2 & (Out & ResOut)] < (S & S2) =
+                composed[In2 & ReqOut, Out2 & ResOut, S2](request, next)
+
 end HttpFilter
