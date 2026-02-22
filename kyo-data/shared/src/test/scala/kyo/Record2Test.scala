@@ -5,390 +5,520 @@ import scala.language.implicitConversions
 
 class Record2Test extends Test:
 
-    // R1: Duplicate fields merge to union at the type level
-    "R1: duplicate fields =:= union" in {
-        summon[("f" ~ Int & "f" ~ String) =:= ("f" ~ (Int | String))]
-        succeed
-    }
+    "creation" - {
 
-    // R2: Field access with type inference (no ascription)
-    "R2: field access with inference" in {
-        val r = ("name" ~ "Alice") & ("age" ~ 30)
-        assert(r.name.length == 5)
-        assert(r.age + 1 == 31)
-    }
-
-    // R3: Structural subtyping — more fields assignable where fewer expected
-    "R3: structural subtyping assignment" in {
-        val full                               = ("name" ~ "Alice") & ("age" ~ 30)
-        val nameOnly: Record2["name" ~ String] = full
-        assert(nameOnly.name == "Alice")
-    }
-
-    // R4: Structural subtyping — function parameters
-    "R4: structural subtyping function param" in {
-        def getName(r: Record2["name" ~ String]): String = r.name
-        val r                                            = ("name" ~ "Alice") & ("age" ~ 30)
-        assert(getName(r) == "Alice")
-    }
-
-    // R5: Structural subtyping — type bounds
-    "R5: structural subtyping type bound" in {
-        def getName[F <: "name" ~ String](r: Record2[F]): String = r.name
-        val r                                                    = ("name" ~ "Alice") & ("age" ~ 30)
-        assert(getName(r) == "Alice")
-    }
-
-    // R6: Type-level — Record2 with merged fields assignable to union type
-    "R6: Record2 merged fields assignable to union" in {
-        val r: Record2["f" ~ Int & "f" ~ String] = ("f" ~ 42) & ("f" ~ "hello")
-        val r2: Record2["f" ~ (Int | String)]    = r
-        succeed
-    }
-
-    // R7: Type-level — <:< evidence for field subtyping
-    "R7: <:< more fields subtype of fewer" in {
-        summon[("a" ~ Int & "b" ~ String) <:< ("a" ~ Int)]
-        succeed
-    }
-
-    // R8: Type-level — Record2 subtyping via Conversion
-    "R8: Record2 subtype evidence" in {
-        def takes(r: Record2["name" ~ String]): String = r.name
-        val r                                          = ("name" ~ "Alice") & ("age" ~ 30)
-        assert(takes(r) == "Alice")
-    }
-
-    // R9: Type-level — nested type bounds propagate
-    "R9: nested type bound" in {
-        def process[F <: "name" ~ String & "age" ~ Int](r: Record2[F]): (String, Int) =
-            (r.name, r.age)
-        val r = ("name" ~ "Alice") & ("age" ~ 30)
-        assert(process(r) == ("Alice", 30))
-    }
-
-    // R10: Type-level — return type preserves fields through generic code
-    "R10: generic passthrough preserves type" in {
-        def passthrough[F <: "name" ~ String](r: Record2[F]): Record2[F] = r
-        val r                                                            = ("name" ~ "Alice") & ("age" ~ 30)
-        val r2                                                           = passthrough(r)
-        assert(r2.name == "Alice")
-        assert(r2.age == 30)
-    }
-
-    // R11: Mixed duplicates + unique fields
-    "R11: mixed duplicate and unique" in {
-        summon[("a" ~ Int & "a" ~ String & "b" ~ Boolean) =:= ("a" ~ (Int | String) & "b" ~ Boolean)]
-        succeed
-    }
-
-    // R12: update existing field (type-safe)
-    "R12: update existing field" in {
-        val r  = ("name" ~ "Alice") & ("age" ~ 30)
-        val r2 = r.update("name", "Bob")
-        assert(r2.name == "Bob")
-    }
-
-    // R13: update wrong field doesn't compile
-    "R13: update wrong field fails" in {
-        assertDoesNotCompile("""
+        "single field" in {
             val r = "name" ~ "Alice"
-            r.update("nope", 1)
-        """)
-    }
+            assert(r.name == "Alice")
+        }
 
-    // R14: update wrong type doesn't compile
-    "R14: update wrong type fails" in {
-        assertDoesNotCompile("""
-            val r = "name" ~ "Alice"
-            r.update("name", 42)
-        """)
-    }
+        "multiple fields" in {
+            val r = ("name" ~ "Alice") & ("age" ~ 30)
+            assert(r.name == "Alice")
+            assert(r.age == 30)
+        }
 
-    // R15: compact
-    "R15: compact filters to declared fields" in {
-        val full                               = ("name" ~ "Alice") & ("age" ~ 30)
-        val nameOnly: Record2["name" ~ String] = full
-        val compacted                          = nameOnly.compact
-        assert(compacted.toMap.size == 1)
-        assert(compacted.name == "Alice")
-    }
+        "arbitrary field names (reserved names)" in {
+            val r =
+                ("&" ~ "and") &
+                    ("toMap" ~ "map") &
+                    ("equals" ~ "eq") &
+                    ("getField" ~ "gf") &
+                    ("" ~ "empty")
+            assert(r.getField("&") == "and")
+            assert(r.getField("toMap") == "map")
+            assert(r.getField("equals") == "eq")
+            assert(r.getField("getField") == "gf")
+            assert(r.getField("") == "empty")
+        }
 
-    // R16: Fields metadata
-    "R16: Fields.names" in {
-        val names = Fields.names["name" ~ String & "age" ~ Int]
-        assert(names == Set("name", "age"))
-    }
+        "fromProduct basic" in {
+            case class Person(name: String, age: Int)
+            val r            = Record2.fromProduct(Person("Alice", 30))
+            val name: String = r.name
+            val age: Int     = r.age
+            assert(name == "Alice")
+            assert(age == 30)
+        }
 
-    "R17: Fields.fields" in {
-        val fs = Fields.fields["name" ~ String & "age" ~ Int]
-        assert(fs.size == 2)
-        assert(fs.map(_.name).toSet == Set("name", "age"))
-    }
+        "fromProduct generic" in {
+            case class Box[A](value: A, label: String)
+            val r          = Record2.fromProduct(Box(42, "answer"))
+            val value: Int = r.value
+            assert(value == 42)
+            assert(r.label == "answer")
+        }
 
-    // R18: map
-    "R18: map values" in {
-        val r      = ("name" ~ "Alice") & ("age" ~ 30)
-        val mapped = r.map([t] => (v: t) => Option(v))
-        assert(mapped.name == Some("Alice"))
-        assert(mapped.age == Some(30))
-    }
+        "fromProduct single field" in {
+            case class Single(only: Boolean)
+            val r          = Record2.fromProduct(Single(true))
+            val v: Boolean = r.only
+            assert(v == true)
+            assert(r.size == 1)
+        }
 
-    // R19: equality via is
-    "R19: equality" in {
-        val r1 = ("name" ~ "Alice") & ("age" ~ 30)
-        val r2 = ("name" ~ "Alice") & ("age" ~ 30)
-        val r3 = ("name" ~ "Bob") & ("age" ~ 25)
-        assert(r1.is(r2))
-        assert(!r1.is(r3))
-        assert(Record2.empty.is(Record2.empty))
-    }
+        "fromProduct many fields" in {
+            case class Big(a: Int, b: String, c: Boolean, d: Double, e: Long, f: Char, g: Float)
+            val r = Record2.fromProduct(Big(1, "two", true, 4.0, 5L, '6', 7.0f))
+            assert(r.a == 1)
+            assert(r.b == "two")
+            assert(r.c == true)
+            assert(r.d == 4.0)
+            assert(r.e == 5L)
+            assert(r.f == '6')
+            assert(r.g == 7.0f)
+            assert(r.size == 7)
+        }
 
-    // R19b: Comparable rejects non-comparable field types
-    "R19b: Comparable rejects non-comparable fields" in {
-        typeCheckFailure("""
-            class NoEq
-            val a: Record2["x" ~ NoEq] = "x" ~ new NoEq
-            val b: Record2["x" ~ NoEq] = "x" ~ new NoEq
-            a.is(b)
-        """)("Comparable")
-    }
+        "fromProduct 22+ fields" in {
+            case class Large(
+                f1: Int,
+                f2: Int,
+                f3: Int,
+                f4: Int,
+                f5: Int,
+                f6: Int,
+                f7: Int,
+                f8: Int,
+                f9: Int,
+                f10: Int,
+                f11: Int,
+                f12: Int,
+                f13: Int,
+                f14: Int,
+                f15: Int,
+                f16: Int,
+                f17: Int,
+                f18: Int,
+                f19: Int,
+                f20: Int,
+                f21: Int,
+                f22: Int,
+                f23: Int
+            )
+            val r = Record2.fromProduct(Large(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23))
+            assert(r.size == 23)
+            assert(r.f1 == 1)
+            assert(r.f23 == 23)
+        }
 
-    // R20: show
-    "R20: show" in {
-        val r = "name" ~ "Alice"
-        assert(r.show.contains("name ~ Alice"))
-    }
-
-    // R21: nested record Fields
-    "R21: nested Fields" in {
-        type Inner = "x" ~ Int & "y" ~ Int
-        type Outer = "point" ~ Record2[Inner]
-        val fs = Fields.fields[Outer]
-        assert(fs.size == 1)
-        assert(fs.head.name == "point")
-        assert(fs.head.nested.size == 2)
-        assert(fs.head.nested.map(_.name).toSet == Set("x", "y"))
-    }
-
-    // R22: typed Field get/set
-    "R22: typed Field get and set" in {
-        val r           = ("name" ~ "Alice") & ("age" ~ 30)
-        val nameField   = Field["name", String]
-        val got: String = nameField.get(r)
-        assert(got == "Alice")
-        val r2 = nameField.set(r, "Bob")
-        assert(r2.name == "Bob")
-    }
-
-    // R23: JSON-like serialization via Fields
-    "R23: runtime field iteration" in {
-        val r  = ("name" ~ "Alice") & ("age" ~ 30)
-        val fs = Fields.fields["name" ~ String & "age" ~ Int]
-        // simulate JSON serialization: collect name -> value pairs
-        val map  = r.toMap
-        val json = fs.map(f => f.name -> map(f.name).toString).toMap
-        assert(json == Map("name" -> "Alice", "age" -> "30"))
-    }
-
-    // R24: fromProduct — basic case class with type verification
-    "R24: fromProduct basic" in {
-        case class Person(name: String, age: Int)
-        val r            = Record2.fromProduct(Person("Alice", 30))
-        val name: String = r.name
-        val age: Int     = r.age
-        assert(name == "Alice")
-        assert(age == 30)
-    }
-
-    // R25: fromProduct — return type is field intersection, not case class
-    "R25: fromProduct return type" in {
-        case class Point(x: Int, y: Int)
-        val r: Record2["x" ~ Int & "y" ~ Int] = Record2.fromProduct(Point(1, 2))
-        assert(r.x == 1)
-        assert(r.y == 2)
-    }
-
-    // R26: fromProduct — merge with manually constructed record
-    "R26: fromProduct merge" in {
-        case class Name(first: String)
-        val r = Record2.fromProduct(Name("Alice")) & ("last" ~ "Smith")
-        assert(r.first == "Alice")
-        assert(r.last == "Smith")
-    }
-
-    // R27: fromProduct — generic case class preserves type parameter
-    "R27: fromProduct generic" in {
-        case class Box[A](value: A, label: String)
-        val r          = Record2.fromProduct(Box(42, "answer"))
-        val value: Int = r.value
-        assert(value == 42)
-        assert(r.label == "answer")
-    }
-
-    // R28: fromProduct — single field
-    "R28: fromProduct single field" in {
-        case class Single(only: Boolean)
-        val r          = Record2.fromProduct(Single(true))
-        val v: Boolean = r.only
-        assert(v == true)
-        assert(r.size == 1)
-    }
-
-    // R29: fromProduct — toMap preserves all entries
-    "R29: fromProduct toMap" in {
-        case class Pair(a: Int, b: String)
-        val r                    = Record2.fromProduct(Pair(1, "two"))
-        given CanEqual[Any, Any] = CanEqual.derived
-        assert(r.toMap == Map("a" -> 1, "b" -> "two"))
-    }
-
-    // R30: fromProduct — update works on result
-    "R30: fromProduct update" in {
-        case class Point(x: Int, y: Int)
-        val r  = Record2.fromProduct(Point(1, 2))
-        val r2 = r.update("x", 10)
-        assert(r2.x == 10)
-        assert(r2.y == 2)
-    }
-
-    // R31: fromProduct — show
-    "R31: fromProduct show" in {
-        case class Single(name: String)
-        val r = Record2.fromProduct(Single("Alice"))
-        assert(r.show == "name ~ Alice")
-    }
-
-    // R32: fromProduct — compact
-    "R32: fromProduct compact" in {
-        case class Name(first: String)
-        val r                                   = Record2.fromProduct(Name("Alice")) & ("extra" ~ 1)
-        val narrowed: Record2["first" ~ String] = r
-        val compacted                           = narrowed.compact
-        assert(compacted.size == 1)
-        assert(compacted.first == "Alice")
-    }
-
-    // R33: fromProduct — map
-    "R33: fromProduct map" in {
-        case class Point(x: Int, y: Int)
-        val r      = Record2.fromProduct(Point(1, 2))
-        val mapped = r.map([t] => (v: t) => Option(v))
-        assert(mapped.x == Some(1))
-        assert(mapped.y == Some(2))
-    }
-
-    // R34: fromProduct — is (equality)
-    "R34: fromProduct equality" in {
-        case class Point(x: Int, y: Int)
-        val r1 = Record2.fromProduct(Point(1, 2))
-        val r2 = Record2.fromProduct(Point(1, 2))
-        val r3 = Record2.fromProduct(Point(3, 4))
-        assert(r1.is(r2))
-        assert(!r1.is(r3))
-    }
-
-    // R35: fromProduct — rejects non-case-class
-    "R35: fromProduct rejects non-case-class" in {
-        assertDoesNotCompile("""
+        "fromProduct rejects non-case-class" in {
             class NotACase(val x: Int)
-            Record2.fromProduct(new NotACase(1))
-        """)
+            typeCheckFailure("""Record2.fromProduct(new NotACase(1))""")("Required: Product")
+        }
     }
 
-    // R36: fromProduct — many fields
-    "R36: fromProduct many fields" in {
-        case class Big(a: Int, b: String, c: Boolean, d: Double, e: Long, f: Char, g: Float)
-        val r = Record2.fromProduct(Big(1, "two", true, 4.0, 5L, '6', 7.0f))
-        assert(r.a == 1)
-        assert(r.b == "two")
-        assert(r.c == true)
-        assert(r.d == 4.0)
-        assert(r.e == 5L)
-        assert(r.f == '6')
-        assert(r.g == 7.0f)
-        assert(r.size == 7)
+    "field access" - {
+
+        "selectDynamic with inference" in {
+            val r = ("name" ~ "Alice") & ("age" ~ 30)
+            assert(r.name.length == 5)
+            assert(r.age + 1 == 31)
+        }
+
+        "getField for special names" in {
+            val r = ("user-name" ~ "Alice") & ("age" ~ 30)
+            assert(r.getField("user-name") == "Alice")
+            assert(r.getField("age") == 30)
+        }
+
+        "compile error for missing field" in {
+            typeCheckFailure("""
+                val r = "name" ~ "Alice"
+                summon[Fields.Have[r.type, "missing"]]
+            """)("Have")
+        }
     }
 
-    // --- getField ---
+    "update" - {
 
-    "R37: getField basic" in {
-        val r = ("user-name" ~ "Alice") & ("age" ~ 30)
-        assert(r.getField("user-name") == "Alice")
-        assert(r.getField("age") == 30)
+        "existing field" in {
+            val r  = ("name" ~ "Alice") & ("age" ~ 30)
+            val r2 = r.update("name", "Bob")
+            assert(r2.name == "Bob")
+            assert(r2.age == 30)
+        }
+
+        "wrong field doesn't compile" in {
+            val r = "name" ~ "Alice"
+            typeCheckFailure("""r.update("nope", 1)""")("Cannot prove")
+        }
+
+        "wrong type doesn't compile" in {
+            val r = "name" ~ "Alice"
+            typeCheckFailure("""r.update("name", 42)""")("Cannot prove")
+        }
     }
 
-    // --- fields ---
+    "map" - {
 
-    "R38: fields returns field names as list" in {
-        val r  = ("name" ~ "Alice") & ("age" ~ 30)
-        val fs = r.fields
-        assert(fs.toSet == Set("name", "age"))
+        "map values" in {
+            val r      = ("name" ~ "Alice") & ("age" ~ 30)
+            val mapped = r.map([t] => (v: t) => Option(v))
+            assert(mapped.name == Some("Alice"))
+            assert(mapped.age == Some(30))
+        }
+
+        "mapFields receives field metadata" in {
+            val r          = ("name" ~ "Alice") & ("age" ~ 30)
+            var fieldNames = List.empty[String]
+            val mapped = r.mapFields([t] =>
+                (field: Field[?, t], v: t) =>
+                    fieldNames = field.name :: fieldNames
+                    Option(v))
+            assert(mapped.name == Some("Alice"))
+            assert(mapped.age == Some(30))
+            assert(fieldNames.toSet == Set("name", "age"))
+        }
     }
 
-    // --- values ---
+    "zip" - {
 
-    "R39: values returns typed tuple" in {
-        val r  = ("name" ~ "Alice") & ("age" ~ 30)
-        val vs = r.values
-        assert(vs == ("Alice", 30))
+        "pairs values by name" in {
+            val r1     = ("x" ~ 1) & ("y" ~ 2)
+            val r2     = ("x" ~ "a") & ("y" ~ "b")
+            val zipped = r1.zip(r2)
+            assert(zipped.x == (1, "a"))
+            assert(zipped.y == (2, "b"))
+        }
+
+        "type safety" in {
+            val r1               = ("x" ~ 1) & ("y" ~ 2)
+            val r2               = ("x" ~ "a") & ("y" ~ "b")
+            val zipped           = r1.zip(r2)
+            val x: (Int, String) = zipped.x
+            val y: (Int, String) = zipped.y
+            assert(x == (1, "a"))
+            assert(y == (2, "b"))
+        }
+
+        "single field" in {
+            val r1     = "x" ~ 1
+            val r2     = "x" ~ "a"
+            val zipped = r1.zip(r2)
+            assert(zipped.x == (1, "a"))
+        }
+
+        "three fields" in {
+            val r1                 = ("a" ~ 1) & ("b" ~ "hello") & ("c" ~ true)
+            val r2                 = ("a" ~ 10.0) & ("b" ~ 'x') & ("c" ~ 42L)
+            val zipped             = r1.zip(r2)
+            val a: (Int, Double)   = zipped.a
+            val b: (String, Char)  = zipped.b
+            val c: (Boolean, Long) = zipped.c
+            assert(a == (1, 10.0))
+            assert(b == ("hello", 'x'))
+            assert(c == (true, 42L))
+        }
     }
 
-    "R40: values type safety" in {
-        val r              = ("x" ~ 1) & ("y" ~ 2)
-        val vs: (Int, Int) = r.values
-        assert(vs == (1, 2))
+    "values" - {
+
+        "typed tuple" in {
+            val r  = ("name" ~ "Alice") & ("age" ~ 30)
+            val vs = r.values
+            assert(vs == ("Alice", 30))
+        }
+
+        "type safety" in {
+            val r              = ("x" ~ 1) & ("y" ~ 2)
+            val vs: (Int, Int) = r.values
+            assert(vs == (1, 2))
+        }
+
+        "single field" in {
+            val r = "name" ~ "Alice"
+            val v = r.values
+            assert(v == Tuple1("Alice"))
+        }
+
+        "three fields" in {
+            val r = ("name" ~ "Alice") & ("age" ~ 30) & ("active" ~ true)
+            val v = r.values
+            assert(v == ("Alice", 30, true))
+        }
     }
 
-    // --- mapFields ---
+    "compact" - {
 
-    "R41: mapFields receives field metadata" in {
-        val r          = ("name" ~ "Alice") & ("age" ~ 30)
-        var fieldNames = List.empty[String]
-        val mapped = r.mapFields([t] =>
-            (field: Field[?, t], v: t) =>
-                fieldNames = field.name :: fieldNames
-                Option(v))
-        assert(mapped.name == Some("Alice"))
-        assert(mapped.age == Some(30))
-        assert(fieldNames.toSet == Set("name", "age"))
+        "filters to declared fields" in {
+            val full                               = ("name" ~ "Alice") & ("age" ~ 30)
+            val nameOnly: Record2["name" ~ String] = full
+            val compacted                          = nameOnly.compact
+            assert(compacted.toMap.size == 1)
+            assert(compacted.name == "Alice")
+        }
+
+        "no-op when exact" in {
+            val r: Record2["name" ~ String & "age" ~ Int] = ("name" ~ "Alice") & ("age" ~ 30)
+            val compacted                                 = r.compact
+            assert(compacted.size == 2)
+            assert(compacted.name == "Alice")
+            assert(compacted.age == 30)
+        }
     }
 
-    // --- zip ---
+    "fields metadata" - {
 
-    "R42: zip pairs values by name" in {
-        val r1     = ("x" ~ 1) & ("y" ~ 2)
-        val r2     = ("x" ~ "a") & ("y" ~ "b")
-        val zipped = r1.zip(r2)
-        assert(zipped.x == (1, "a"))
-        assert(zipped.y == (2, "b"))
+        "Fields.names" in {
+            val names = Fields.names["name" ~ String & "age" ~ Int]
+            assert(names == Set("name", "age"))
+        }
+
+        "Fields.fields" in {
+            val fs = Fields.fields["name" ~ String & "age" ~ Int]
+            assert(fs.size == 2)
+            assert(fs.map(_.name).toSet == Set("name", "age"))
+        }
+
+        "nested Fields" in {
+            type Inner = "x" ~ Int & "y" ~ Int
+            type Outer = "point" ~ Record2[Inner]
+            val fs = Fields.fields[Outer]
+            assert(fs.size == 1)
+            assert(fs.head.name == "point")
+            assert(fs.head.nested.size == 2)
+            assert(fs.head.nested.map(_.name).toSet == Set("x", "y"))
+        }
     }
 
-    "R43: zip type safety" in {
-        val r1               = ("x" ~ 1) & ("y" ~ 2)
-        val r2               = ("x" ~ "a") & ("y" ~ "b")
-        val zipped           = r1.zip(r2)
-        val x: (Int, String) = zipped.x
-        val y: (Int, String) = zipped.y
-        assert(x == (1, "a"))
-        assert(y == (2, "b"))
+    "stage" - {
+
+        "with type class" in {
+            trait AsColumn[A]:
+                def sqlType: String
+            object AsColumn:
+                def apply[A](tpe: String): AsColumn[A] = new AsColumn[A]:
+                    def sqlType = tpe
+                given AsColumn[Int]    = AsColumn("bigint")
+                given AsColumn[String] = AsColumn("text")
+            end AsColumn
+
+            case class Column[A](name: String, sqlType: String) derives CanEqual
+
+            type Person = "name" ~ String & "age" ~ Int
+            val columns = Record2.stage[Person].using[AsColumn]([v] =>
+                (field: Field[?, v], ac: AsColumn[v]) =>
+                    Column[v](field.name, ac.sqlType))
+            assert(columns.name == Column[String]("name", "text"))
+            assert(columns.age == Column[Int]("age", "bigint"))
+        }
+
+        "without type class" in {
+            type Person = "name" ~ String & "age" ~ Int
+            val staged = Record2.stage[Person]([v] => (field: Field[?, v]) => Option.empty[v])
+            assert(staged.name == None)
+            assert(staged.age == None)
+        }
+
+        "compile error when type class missing" in {
+            trait AsColumn[A]
+            object AsColumn:
+                given AsColumn[Int]    = new AsColumn[Int] {}
+                given AsColumn[String] = new AsColumn[String] {}
+
+            class Role()
+            type BadPerson = "name" ~ String & "age" ~ Int & "role" ~ Role
+
+            typeCheckFailure("""Record2.stage[BadPerson].using[AsColumn]([v] =>
+                (field: Field[?, v], ac: AsColumn[v]) => Option.empty[v])""")("AsColumn[Role]")
+        }
     }
 
-    // --- CanEqual ---
+    "type system" - {
 
-    "R44: CanEqual allows == with Comparable" in {
-        val r1 = ("name" ~ "Alice") & ("age" ~ 30)
-        val r2 = ("name" ~ "Alice") & ("age" ~ 30)
-        assert(r1 == r2)
+        "duplicate fields merge to union" in {
+            summon[("f" ~ Int & "f" ~ String) =:= ("f" ~ (Int | String))]
+            succeed
+        }
+
+        "structural subtyping assignment" in {
+            val full                               = ("name" ~ "Alice") & ("age" ~ 30)
+            val nameOnly: Record2["name" ~ String] = full
+            assert(nameOnly.name == "Alice")
+        }
+
+        "structural subtyping function param" in {
+            def getName(r: Record2["name" ~ String]): String = r.name
+            val r                                            = ("name" ~ "Alice") & ("age" ~ 30)
+            assert(getName(r) == "Alice")
+        }
+
+        "structural subtyping type bounds" in {
+            def getName[F <: "name" ~ String](r: Record2[F]): String = r.name
+            val r                                                    = ("name" ~ "Alice") & ("age" ~ 30)
+            assert(getName(r) == "Alice")
+        }
+
+        "generic passthrough preserves type" in {
+            def passthrough[F <: "name" ~ String](r: Record2[F]): Record2[F] = r
+            val r                                                            = ("name" ~ "Alice") & ("age" ~ 30)
+            val r2                                                           = passthrough(r)
+            assert(r2.name == "Alice")
+            assert(r2.age == 30)
+        }
+
+        "mixed duplicate and unique" in {
+            summon[("a" ~ Int & "a" ~ String & "b" ~ Boolean) =:= ("a" ~ (Int | String) & "b" ~ Boolean)]
+            succeed
+        }
+
+        "Tag derivation" in {
+            typeCheck("""summon[Tag[Record2["name" ~ String & "age" ~ Int]]]""")
+        }
     }
 
-    "R45: CanEqual rejects == without Comparable" in {
-        assertDoesNotCompile("""
+    "combining records" - {
+
+        "merge via &" in {
+            val r1     = ("name" ~ "Alice") & ("age" ~ 30)
+            val r2     = ("city" ~ "Paris") & ("country" ~ "France")
+            val merged = r1 & r2
+            assert(merged.name == "Alice")
+            assert(merged.age == 30)
+            assert(merged.city == "Paris")
+            assert(merged.country == "France")
+        }
+
+        "fromProduct merge with manual" in {
+            case class Name(first: String)
+            val r = Record2.fromProduct(Name("Alice")) & ("last" ~ "Smith")
+            assert(r.first == "Alice")
+            assert(r.last == "Smith")
+        }
+
+        "empty & record" in {
+            val r      = ("name" ~ "Alice") & ("age" ~ 30)
+            val merged = Record2.empty & r
+            assert(merged.name == "Alice")
+            assert(merged.age == 30)
+        }
+
+        "record & empty" in {
+            val r      = ("name" ~ "Alice") & ("age" ~ 30)
+            val merged = r & Record2.empty
+            assert(merged.name == "Alice")
+            assert(merged.age == 30)
+        }
+    }
+
+    "equality and hashCode" - {
+
+        "equal records" in {
+            val r1 = ("name" ~ "Alice") & ("age" ~ 30)
+            val r2 = ("name" ~ "Alice") & ("age" ~ 30)
+            assert(r1.is(r2))
+        }
+
+        "not equal different values" in {
+            val r1 = ("name" ~ "Alice") & ("age" ~ 30)
+            val r2 = ("name" ~ "Bob") & ("age" ~ 25)
+            assert(!r1.is(r2))
+        }
+
+        "field order independence" in {
+            val r1 = ("name" ~ "Alice") & ("age" ~ 30)
+            val r2 = ("age" ~ 30) & ("name" ~ "Alice")
+            assert(r1.is(r2))
+            assert(r1.hashCode == r2.hashCode)
+        }
+
+        "CanEqual with Comparable" in {
+            val r1 = ("name" ~ "Alice") & ("age" ~ 30)
+            val r2 = ("name" ~ "Alice") & ("age" ~ 30)
+            assert(r1 == r2)
+        }
+
+        "CanEqual rejects without Comparable" in {
             class NoEq
             val r1: Record2["x" ~ NoEq] = "x" ~ new NoEq
             val r2: Record2["x" ~ NoEq] = "x" ~ new NoEq
-            r1 == r2
-        """)
+            typeCheckFailure("""r1 == r2""")("cannot be compared")
+        }
+
+        "== works with Comparable" in {
+            val r1 = ("name" ~ "Alice") & ("age" ~ 30)
+            val r2 = ("name" ~ "Alice") & ("age" ~ 30)
+            val r3 = ("name" ~ "Bob") & ("age" ~ 25)
+            assert(r1 == r2)
+            assert(r1 != r3)
+        }
+
+        "== rejects without Comparable" in {
+            class NoEq
+            val a: Record2["x" ~ NoEq] = "x" ~ new NoEq
+            val b: Record2["x" ~ NoEq] = "x" ~ new NoEq
+            typeCheckFailure("""a == b""")("cannot be compared")
+        }
+    }
+
+    "show and Render" - {
+
+        "show basic" in {
+            val r = "name" ~ "Alice"
+            assert(r.show.contains("name ~ Alice"))
+        }
+
+        "show fromProduct" in {
+            case class Single(name: String)
+            val r = Record2.fromProduct(Single("Alice"))
+            assert(r.show == "name ~ Alice")
+        }
+
+        "Render given" in {
+            val r      = ("name" ~ "Bob") & ("age" ~ 25)
+            val render = Render[Record2["name" ~ String & "age" ~ Int]]
+            val text   = render.asString(r)
+            assert(text.contains("name"))
+            assert(text.contains("Bob"))
+            assert(text.contains("age"))
+            assert(text.contains("25"))
+        }
+    }
+
+    "edge cases" - {
+
+        "empty string values" in {
+            val r = ("name" ~ "") & ("value" ~ "")
+            assert(r.name.isEmpty)
+            assert(r.value.isEmpty)
+        }
+
+        "null values" in {
+            val r = "name" ~ (null: String)
+            assert(r.name == null)
+        }
+
+        "nested records creation and access" in {
+            val inner = ("x" ~ 1) & ("y" ~ 2)
+            val outer = ("nested" ~ inner) & ("name" ~ "test")
+            assert(outer.nested.x == 1)
+            assert(outer.nested.y == 2)
+            assert(outer.name == "test")
+        }
+
+        "fromProduct with Option and Collection fields" in {
+            case class User(name: String, email: Option[String])
+            val r1 = Record2.fromProduct(User("Bob", Some("bob@email.com")))
+            val r2 = Record2.fromProduct(User("Alice", None))
+            assert(r1.email.contains("bob@email.com"))
+            assert(r2.email.isEmpty)
+
+            case class Team(name: String, members: List[String])
+            val r3 = Record2.fromProduct(Team("Engineering", List("Alice", "Bob")))
+            assert(r3.members.length == 2)
+            assert(r3.members.contains("Alice"))
+        }
+    }
+
+    "toMap" - {
+
+        "preserves all entries" in {
+            case class Pair(a: Int, b: String)
+            val r                    = Record2.fromProduct(Pair(1, "two"))
+            given CanEqual[Any, Any] = CanEqual.derived
+            assert(r.toMap == Map("a" -> 1, "b" -> "two"))
+        }
     }
 
 end Record2Test

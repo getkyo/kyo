@@ -133,10 +133,39 @@ object Record2:
                     first = false
             sb.toString
 
+    import scala.compiletime.*
+
+    inline def stage[A](using f: Fields[A]): StageOps[A, f.AsTuple] = new StageOps(())
+
+    class StageOps[A, T <: Tuple](dummy: Unit) extends AnyVal:
+        inline def apply[G[_]](fn: [v] => Field[?, v] => G[v])(using f: Fields[A]): Record2[f.Map[~.MapValue[G]]] =
+            new Record2(stageLoop[f.AsTuple, G](fn)).asInstanceOf[Record2[f.Map[~.MapValue[G]]]]
+
+        inline def using[TC[_]]: StageWith[A, T, TC] = new StageWith(())
+    end StageOps
+
+    class StageWith[A, T <: Tuple, TC[_]](dummy: Unit) extends AnyVal:
+        inline def apply[G[_]](fn: [v] => (Field[?, v], TC[v]) => G[v])(using f: Fields[A]): Record2[f.Map[~.MapValue[G]]] =
+            new Record2(stageLoopWith[f.AsTuple, TC, G](fn)).asInstanceOf[Record2[f.Map[~.MapValue[G]]]]
+
+    private[kyo] inline def stageLoop[T <: Tuple, G[_]](fn: [v] => Field[?, v] => G[v]): Dict[String, Any] =
+        inline erasedValue[T] match
+            case _: EmptyTuple => Dict.empty[String, Any]
+            case _: ((n ~ v) *: rest) =>
+                val name  = constValue[n & String]
+                val value = fn[v](Field(name, summonInline[Tag[v]]))
+                stageLoop[rest, G](fn) ++ Dict[String, Any](name -> value)
+
+    private[kyo] inline def stageLoopWith[T <: Tuple, TC[_], G[_]](fn: [v] => (Field[?, v], TC[v]) => G[v]): Dict[String, Any] =
+        inline erasedValue[T] match
+            case _: EmptyTuple => Dict.empty[String, Any]
+            case _: ((n ~ v) *: rest) =>
+                val name  = constValue[n & String]
+                val value = fn[v](Field(name, summonInline[Tag[v]]), summonInline[TC[v]])
+                stageLoopWith[rest, TC, G](fn) ++ Dict[String, Any](name -> value)
+
     transparent inline def fromProduct[A <: Product](value: A): Any =
         ${ internal.FieldsMacros.fromProductImpl[A]('value) }
-
-    import scala.compiletime.*
 
     private[kyo] inline def collectValues[T <: Tuple](dict: Dict[String, Any]): Tuple =
         inline erasedValue[T] match

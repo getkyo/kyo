@@ -53,7 +53,7 @@ class FieldsTest extends Test:
     }
 
     "case class: Have rejects missing field" in {
-        assertDoesNotCompile("""summon[Fields.Have[Person, "missing"]]""")
+        typeCheckFailure("""summon[Fields.Have[Person, "missing"]]""")("Fields.Have")
     }
 
     "case class: Fields.fields has correct tags" in {
