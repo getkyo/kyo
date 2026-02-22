@@ -1,36 +1,62 @@
 package kyo
 
+import java.util.ArrayDeque
+import java.util.ArrayList
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.collection.immutable.HashMap
 
-sealed class DictBuilder[K, V]:
-    private val builder = ChunkBuilder.init[K | V]
+sealed class DictBuilder[K, V] extends Serializable:
+    private var buffer = Maybe.empty[ArrayList[Any]]
 
     final def add(key: K, value: V): this.type =
-        builder.addOne(key)
-        builder.addOne(value)
+        buffer match
+            case Absent =>
+                val buf = DictBuilder.acquireBuffer()
+                buf.add(key)
+                buf.add(value)
+                buffer = Present(buf)
+            case Present(buf) =>
+                discard(buf.add(key))
+                discard(buf.add(value))
+        end match
         this
     end add
 
-    final def size: Int = builder.knownSize / 2
+    final def size: Int = buffer.fold(0)(_.size / 2)
 
-    final def clear(): Unit = builder.clear()
+    final def clear(): Unit = buffer.foreach(_.clear())
 
     final def result(): Dict[K, V] =
-        val chunk = builder.result()
-        val n     = chunk.length / 2
-        if n == 0 then Dict.empty[K, V]
-        else if n <= Dict.threshold then
-            DictBuilder.buildSmall(chunk, n)
-        else
-            DictBuilder.buildLarge(chunk, n)
-        end if
+        val dict = buffer.fold(Dict.empty[K, V]) { buf =>
+            val n = buf.size / 2
+            if n == 0 then Dict.empty[K, V]
+            else if n <= Dict.threshold then
+                DictBuilder.buildSmall(buf, n)
+            else
+                DictBuilder.buildLarge(buf, n)
+            end if
+        }
+        buffer.foreach(DictBuilder.releaseBuffer)
+        buffer = Absent
+        dict
     end result
 
 end DictBuilder
 
 object DictBuilder:
+
+    private val bufferCache =
+        new ThreadLocal[ArrayDeque[ArrayList[?]]]:
+            override def initialValue() = new ArrayDeque[ArrayList[?]]
+
+    private[kyo] def acquireBuffer(): ArrayList[Any] =
+        Maybe(bufferCache.get().poll()).getOrElse(new ArrayList).asInstanceOf[ArrayList[Any]]
+
+    private[kyo] def releaseBuffer(buffer: ArrayList[?]): Unit =
+        buffer.clear()
+        discard(bufferCache.get().add(buffer))
+
     def init[K, V]: DictBuilder[K, V] = new DictBuilder[K, V]
 
     @nowarn("msg=anonymous")
@@ -39,7 +65,7 @@ object DictBuilder:
             def apply(k: K, v: V): Unit = f(this, k, v)
 
     // Build keys-first array with dedup via linear scan (n ≤ 8)
-    private def buildSmall[K, V](chunk: Chunk[K | V], n: Int): Dict[K, V] =
+    private def buildSmall[K, V](entries: ArrayList[Any], n: Int): Dict[K, V] =
         val arr = new Array[Any](n * 2).asInstanceOf[Array[K | V]]
 
         @tailrec def findDup(arr: Array[K | V], kr: AnyRef, key: Any, j: Int, idx: Int): Int =
@@ -52,9 +78,9 @@ object DictBuilder:
         @tailrec def loop(i: Int, j: Int): Int =
             if i >= n then j
             else
-                val key = chunk(i * 2)
+                val key = entries.get(i * 2).asInstanceOf[K | V]
                 val kr  = key.asInstanceOf[AnyRef]
-                val v   = chunk(i * 2 + 1)
+                val v   = entries.get(i * 2 + 1).asInstanceOf[K | V]
                 val dup = findDup(arr, kr, key, j, 0)
                 if dup >= 0 then
                     arr(n + dup) = v
@@ -75,10 +101,10 @@ object DictBuilder:
         end if
     end buildSmall
 
-    private def buildLarge[K, V](chunk: Chunk[K | V], n: Int): Dict[K, V] =
+    private def buildLarge[K, V](entries: ArrayList[Any], n: Int): Dict[K, V] =
         @tailrec def loop(i: Int, map: HashMap[K, V]): HashMap[K, V] =
             if i >= n then map
-            else loop(i + 1, map.updated(chunk(i * 2).asInstanceOf[K], chunk(i * 2 + 1).asInstanceOf[V]))
+            else loop(i + 1, map.updated(entries.get(i * 2).asInstanceOf[K], entries.get(i * 2 + 1).asInstanceOf[V]))
 
         val map  = loop(0, HashMap.empty)
         val size = map.size

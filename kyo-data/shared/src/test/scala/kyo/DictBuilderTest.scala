@@ -157,4 +157,50 @@ class DictBuilderTest extends Test:
         assert(d("key") == 2)
     }
 
+    "reuse after result" in {
+        val b = DictBuilder.init[String, Int]
+        b.add("a", 1)
+        val d1 = b.result()
+        assert(d1.size == 1)
+        assert(d1("a") == 1)
+        b.add("b", 2)
+        b.add("c", 3)
+        val d2 = b.result()
+        assert(d2.size == 2)
+        assert(d2("b") == 2)
+        assert(d2("c") == 3)
+    }
+
+    "nested builders" in {
+        val outer = DictBuilder.init[String, Int]
+        outer.add("a", 1)
+        val inner = DictBuilder.init[String, Int]
+        inner.add("x", 10)
+        inner.add("y", 20)
+        val innerDict = inner.result()
+        outer.add("b", 2)
+        val outerDict = outer.result()
+        assert(innerDict.size == 2)
+        assert(innerDict("x") == 10)
+        assert(innerDict("y") == 20)
+        assert(outerDict.size == 2)
+        assert(outerDict("a") == 1)
+        assert(outerDict("b") == 2)
+    }
+
+    "serializable" in {
+        val b   = DictBuilder.init[String, Int]
+        val bos = new java.io.ByteArrayOutputStream()
+        val oos = new java.io.ObjectOutputStream(bos)
+        oos.writeObject(b)
+        oos.close()
+        val bis = new java.io.ByteArrayInputStream(bos.toByteArray)
+        val ois = new java.io.ObjectInputStream(bis)
+        val b2  = ois.readObject().asInstanceOf[DictBuilder[String, Int]]
+        b2.add("a", 1)
+        val d = b2.result()
+        assert(d.size == 1)
+        assert(d("a") == 1)
+    }
+
 end DictBuilderTest

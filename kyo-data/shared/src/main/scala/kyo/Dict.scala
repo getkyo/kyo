@@ -382,7 +382,7 @@ object Dict:
                     }
                     map.foreachEntry(b)
                     b.result()
-            ).asInstanceOf[Dict[K, V2]]
+            )
         end mapValues
 
         // Keys/Values
