@@ -1,5 +1,7 @@
 package kyo
 
+import Record2.~
+
 /** A reified field descriptor carrying the field name, its value type's Tag, and any nested fields (when the value is itself a Record2).
   */
 case class Field[Name <: String, Value](
@@ -7,10 +9,10 @@ case class Field[Name <: String, Value](
     tag: Tag[Value],
     nested: List[Field[?, ?]] = Nil
 ):
-    def get(record: Record2[?]): Value =
+    def get[F](record: Record2[F])(using F <:< (Name ~ Value)): Value =
         record.toMap(name).asInstanceOf[Value]
 
-    def set[F](record: Record2[F], value: Value): Record2[F] =
+    def set[F](record: Record2[F], value: Value)(using F <:< (Name ~ Value)): Record2[F] =
         Record2.make(record.toMap.updated(name, value))
 end Field
 

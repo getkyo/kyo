@@ -173,7 +173,8 @@ class Record2Test extends Test:
         val r  = ("name" ~ "Alice") & ("age" ~ 30)
         val fs = Fields.fields["name" ~ String & "age" ~ Int]
         // simulate JSON serialization: collect name -> value pairs
-        val json = fs.map(f => f.name -> f.get(r).toString).toMap
+        val map  = r.toMap
+        val json = fs.map(f => f.name -> map(f.name).toString).toMap
         assert(json == Map("name" -> "Alice", "age" -> "30"))
     }
 
