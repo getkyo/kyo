@@ -1,10 +1,12 @@
 package kyo.http2
 
+import kyo.<
 import kyo.Absent
 import kyo.Async
 import kyo.Chunk
 import kyo.ConcreteTag
 import kyo.Emit
+import kyo.Frame
 import kyo.Maybe
 import kyo.Present
 import kyo.Record.~
@@ -48,6 +50,9 @@ case class HttpRoute[In, Out, -S](
 
     def metadata(meta: Metadata): HttpRoute[In, Out, S] =
         copy(metadata = meta)
+
+    def handle[S2](f: HttpRequest[In] => HttpResponse[Out] < S2)(using Frame): HttpHandler[In, Out, S & S2] =
+        HttpHandler(this, req => f(req))
 
 end HttpRoute
 
