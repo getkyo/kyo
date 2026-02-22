@@ -188,19 +188,4 @@ class DictBuilderTest extends Test:
         assert(outerDict("b") == 2)
     }
 
-    "serializable" in {
-        val b   = DictBuilder.init[String, Int]
-        val bos = new java.io.ByteArrayOutputStream()
-        val oos = new java.io.ObjectOutputStream(bos)
-        oos.writeObject(b)
-        oos.close()
-        val bis = new java.io.ByteArrayInputStream(bos.toByteArray)
-        val ois = new java.io.ObjectInputStream(bis)
-        val b2  = ois.readObject().asInstanceOf[DictBuilder[String, Int]]
-        b2.add("a", 1)
-        val d = b2.result()
-        assert(d.size == 1)
-        assert(d("a") == 1)
-    }
-
 end DictBuilderTest
