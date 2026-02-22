@@ -26,8 +26,8 @@ object Dict:
             map match
                 case hm: HashMap[K, V] @unchecked => hm
                 case _ =>
-                    val b = DictBuilder.init[K, V]
-                    map.foreach((k, v) => discard(b.add(k, v)))
+                    val b = DictBuilder.initTransform[K, V, K, V]((b, k, v) => discard(b.add(k, v)))
+                    map.foreachEntry(b)
                     b.result()
 
     private[kyo] def fromArrayUnsafe[K, V](arr: Array[K | V]): Dict[K, V] =
@@ -59,30 +59,44 @@ object Dict:
 
         def apply(key: K): V = reduce(
             span =>
-                val n  = Span.size(span) / 2
-                val kr = key.asInstanceOf[AnyRef]
+                val n = Span.size(span) / 2
                 @tailrec def loop(i: Int): V =
                     if i >= n then throw new NoSuchElementException(key.toString)
                     else
                         val k = Span.apply(span)(i)
-                        if (k.asInstanceOf[AnyRef] eq kr) || k.equals(key) then Span.apply(span)(n + i).asInstanceOf[V]
+                        if (k.asInstanceOf[AnyRef] eq key.asInstanceOf[AnyRef]) || k.equals(key) then
+                            Span.apply(span)(n + i).asInstanceOf[V]
                         else loop(i + 1)
                 loop(0)
             ,
             map => map(key)
         )
 
-        def get(key: K): Maybe[V] =
-            val r = lookupOrSentinel(key)
-            if r.asInstanceOf[AnyRef] eq sentinel then Maybe.empty
-            else Maybe(r.asInstanceOf[V])
-        end get
+        def get(key: K): Maybe[V] = reduce(
+            span =>
+                val n  = Span.size(span) / 2
+                val kr = key.asInstanceOf[AnyRef]
+                @tailrec def loop(i: Int): Maybe[V] =
+                    if i >= n then Maybe.empty
+                    else
+                        val k = Span.apply(span)(i)
+                        if (k.asInstanceOf[AnyRef] eq kr) || k.equals(key) then Maybe(Span.apply(span)(n + i).asInstanceOf[V])
+                        else loop(i + 1)
+                loop(0)
+            ,
+            map =>
+                val r = map.getOrElse(key, sentinel)
+                if r.asInstanceOf[AnyRef] eq sentinel then Maybe.empty
+                else Maybe(r.asInstanceOf[V])
+        )
 
         inline def getOrElse(key: K, inline default: => V): V =
-            lookup(key, v => v, default)
+            get(key) match
+                case Present(v) => v
+                case _          => default
 
         def contains(key: K): Boolean =
-            lookupOrSentinel(key).asInstanceOf[AnyRef] ne sentinel
+            get(key).nonEmpty
 
         // Modification
 
@@ -105,10 +119,11 @@ object Dict:
                     Span.fromUnsafe(arr)
                 else
                     val b = DictBuilder.init[K, V]
-                    var i = 0
-                    while i < n do
-                        discard(b.add(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]))
-                        i += 1
+                    @tailrec def loop(i: Int): Unit =
+                        if i < n then
+                            discard(b.add(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]))
+                            loop(i + 1)
+                    loop(0)
                     discard(b.add(key, value))
                     b.result()
                 end if
@@ -120,12 +135,11 @@ object Dict:
             span =>
                 val n   = Span.size(span) / 2
                 val src = Span.toArrayUnsafe(span)
-                val kr  = key.asInstanceOf[AnyRef]
                 @tailrec def indexOf(i: Int): Int =
                     if i >= n then -1
                     else
                         val k = Span.apply(span)(i)
-                        if (k.asInstanceOf[AnyRef] eq kr) || k.equals(key) then i
+                        if (k.asInstanceOf[AnyRef] eq key.asInstanceOf[AnyRef]) || k.equals(key) then i
                         else indexOf(i + 1)
                 val idx = indexOf(0)
                 if idx < 0 then self
@@ -143,30 +157,13 @@ object Dict:
         )
 
         def concat(other: Dict[K, V]): Dict[K, V] =
-            reduce(
-                span1 =>
-                    other.reduce(
-                        span2 =>
-                            val n1    = Span.size(span1) / 2
-                            val n2    = Span.size(span2) / 2
-                            val total = n1 + n2
-                            if total <= threshold then
-                                val src1 = Span.toArrayUnsafe(span1)
-                                val src2 = Span.toArrayUnsafe(span2)
-                                val arr  = new Array[Any](total * 2).asInstanceOf[Array[K | V]]
-                                System.arraycopy(src1, 0, arr, 0, n1)
-                                System.arraycopy(src2, 0, arr, n1, n2)
-                                System.arraycopy(src1, n1, arr, total, n1)
-                                System.arraycopy(src2, n2, arr, total + n1, n2)
-                                Span.fromUnsafe(arr)
-                            else
-                                concatViaBuilder(other)
-                            end if
-                        ,
-                        _ => concatViaBuilder(other)
-                    ),
-                _ => concatViaBuilder(other)
-            )
+            if other.isEmpty then self
+            else if isEmpty then other
+            else
+                val b = DictBuilder.init[K, V]
+                foreach((k, v) => discard(b.add(k, v)))
+                other.foreach((k, v) => discard(b.add(k, v)))
+                b.result()
         end concat
 
         infix def ++(other: Dict[K, V]): Dict[K, V] = concat(other)
@@ -209,12 +206,20 @@ object Dict:
             map => map.foreachEntry((_, v) => fn(v))
         )
 
+        // Note: forall, exists, count, find use while loops instead of @tailrec
+        // due to a Scala 3 compiler bug where @tailrec inside inline methods
+        // fails with "TailRec optimisation not applicable, method loop contains
+        // no recursive calls"
+
         inline def forall(inline fn: (K, V) => Boolean): Boolean = reduce(
             span =>
-                val n = Span.size(span) / 2
-                @tailrec def loop(i: Int): Boolean =
-                    i >= n || (fn(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]) && loop(i + 1))
-                loop(0)
+                val n      = Span.size(span) / 2
+                var i      = 0
+                var result = true
+                while i < n && result do
+                    result = fn(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V])
+                    i += 1
+                result
             ,
             map =>
                 var result = true
@@ -226,10 +231,13 @@ object Dict:
 
         inline def exists(inline fn: (K, V) => Boolean): Boolean = reduce(
             span =>
-                val n = Span.size(span) / 2
-                @tailrec def loop(i: Int): Boolean =
-                    i < n && (fn(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]) || loop(i + 1))
-                loop(0)
+                val n      = Span.size(span) / 2
+                var i      = 0
+                var result = false
+                while i < n && !result do
+                    result = fn(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V])
+                    i += 1
+                result
             ,
             map =>
                 var result = false
@@ -241,12 +249,13 @@ object Dict:
 
         inline def count(inline fn: (K, V) => Boolean): Int = reduce(
             span =>
-                val n = Span.size(span) / 2
-                @tailrec def loop(i: Int, acc: Int): Int =
-                    if i >= n then acc
-                    else if fn(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]) then loop(i + 1, acc + 1)
-                    else loop(i + 1, acc)
-                loop(0, 0)
+                val n   = Span.size(span) / 2
+                var i   = 0
+                var acc = 0
+                while i < n do
+                    if fn(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]) then acc += 1
+                    i += 1
+                acc
             ,
             map =>
                 var acc = 0
@@ -258,15 +267,16 @@ object Dict:
 
         inline def find(inline fn: (K, V) => Boolean): Maybe[(K, V)] = reduce(
             span =>
-                val n = Span.size(span) / 2
-                @tailrec def loop(i: Int): Maybe[(K, V)] =
-                    if i >= n then Maybe.empty
-                    else
-                        val k = Span.apply(span)(i).asInstanceOf[K]
-                        val v = Span.apply(span)(n + i).asInstanceOf[V]
-                        if fn(k, v) then Maybe((k, v))
-                        else loop(i + 1)
-                loop(0)
+                val n                     = Span.size(span) / 2
+                var i                     = 0
+                var result: Maybe[(K, V)] = Maybe.empty
+                while i < n && result.isEmpty do
+                    val k = Span.apply(span)(i).asInstanceOf[K]
+                    val v = Span.apply(span)(n + i).asInstanceOf[V]
+                    if fn(k, v) then result = Maybe((k, v))
+                    i += 1
+                end while
+                result
             ,
             map =>
                 var result: Maybe[(K, V)] = Maybe.empty
@@ -381,10 +391,11 @@ object Dict:
             span =>
                 val n   = Span.size(span) / 2
                 val arr = new Array[K](n)
-                var i   = 0
-                while i < n do
-                    arr(i) = Span.apply(span)(i).asInstanceOf[K]
-                    i += 1
+                @tailrec def loop(i: Int): Unit =
+                    if i < n then
+                        arr(i) = Span.apply(span)(i).asInstanceOf[K]
+                        loop(i + 1)
+                loop(0)
                 Span.fromUnsafe(arr)
             ,
             map =>
@@ -400,10 +411,11 @@ object Dict:
             span =>
                 val n   = Span.size(span) / 2
                 val arr = new Array[V](n)
-                var i   = 0
-                while i < n do
-                    arr(i) = Span.apply(span)(n + i).asInstanceOf[V]
-                    i += 1
+                @tailrec def loop(i: Int): Unit =
+                    if i < n then
+                        arr(i) = Span.apply(span)(n + i).asInstanceOf[V]
+                        loop(i + 1)
+                loop(0)
                 Span.fromUnsafe(arr)
             ,
             map =>
@@ -419,13 +431,11 @@ object Dict:
 
         def toMap: Map[K, V] = reduce(
             span =>
-                val n   = Span.size(span) / 2
-                var map = HashMap.empty[K, V]
-                var i   = 0
-                while i < n do
-                    map = map.updated(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V])
-                    i += 1
-                map
+                val n = Span.size(span) / 2
+                @tailrec def loop(i: Int, map: HashMap[K, V]): HashMap[K, V] =
+                    if i >= n then map
+                    else loop(i + 1, map.updated(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]))
+                loop(0, HashMap.empty)
             ,
             map => map
         )
@@ -434,8 +444,9 @@ object Dict:
 
         def is(other: Dict[K, V])(using CanEqual[K, K], CanEqual[V, V]): Boolean =
             size == other.size && forall { (k, v) =>
-                val r = other.lookupOrSentinel(k)
-                (r.asInstanceOf[AnyRef] ne sentinel) && r.equals(v)
+                other.get(k) match
+                    case Present(v2) => v.equals(v2)
+                    case _           => false
             }
 
         def mkString(separator: String): String =
@@ -462,34 +473,6 @@ object Dict:
         ): B =
             if self.isInstanceOf[HashMap[?, ?]] then large(self.asInstanceOf[HashMap[K, V]])
             else small(self.asInstanceOf[Span[K | V]])
-
-        private inline def lookup[B](key: K, inline defined: V => B, inline undefined: => B): B =
-            val r = lookupOrSentinel(key)
-            if r.asInstanceOf[AnyRef] eq sentinel then undefined
-            else defined(r.asInstanceOf[V])
-        end lookup
-
-        private def lookupOrSentinel(key: K): Any = reduce(
-            span =>
-                val n  = Span.size(span) / 2
-                val kr = key.asInstanceOf[AnyRef]
-                @tailrec def loop(i: Int): Any =
-                    if i >= n then sentinel
-                    else
-                        val k = Span.apply(span)(i)
-                        if (k.asInstanceOf[AnyRef] eq kr) || k.equals(key) then Span.apply(span)(n + i)
-                        else loop(i + 1)
-                loop(0)
-            ,
-            map => map.getOrElse(key, sentinel)
-        )
-
-        private def concatViaBuilder(other: Dict[K, V]): Dict[K, V] =
-            val b = DictBuilder.init[K, V]
-            foreach((k, v) => discard(b.add(k, v)))
-            other.foreach((k, v) => discard(b.add(k, v)))
-            b.result()
-        end concatViaBuilder
 
     end extension
 
