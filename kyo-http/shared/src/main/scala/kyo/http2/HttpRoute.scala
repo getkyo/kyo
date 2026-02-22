@@ -51,8 +51,8 @@ case class HttpRoute[In, Out, -S](
     def metadata(meta: Metadata): HttpRoute[In, Out, S] =
         copy(metadata = meta)
 
-    def handle[S2](f: HttpRequest[In] => HttpResponse[Out] < S2)(using Frame): HttpHandler[In, Out, S & S2] =
-        HttpHandler(this, req => f(req))
+    def endpoint[S2](f: HttpRequest[In] => HttpResponse[Out] < S2)(using Frame): HttpEndpoint[In, Out, S & S2] =
+        HttpEndpoint(this)(req => f(req))
 
 end HttpRoute
 

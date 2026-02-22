@@ -18,7 +18,7 @@ object HttpBackend:
 
     trait Server:
         def bind(
-            handlers: Seq[HttpHandler[?, ?, Any]],
+            handlers: Seq[HttpEndpoint[?, ?, Any]],
             port: Int,
             host: String
         )(using Frame): Binding < Async

@@ -9,21 +9,21 @@ import kyo.Tag
 import kyo.Test
 import scala.language.implicitConversions
 
-class HttpHandlerTest extends Test:
+class HttpEndpointTest extends Test:
 
     import HttpPath.*
 
     case class User(id: Int, name: String) derives Schema, CanEqual
 
-    "route.handle" - {
+    "route.endpoint" - {
 
         "creates handler from route" in {
             val route = HttpRoute.get("users")
                 .response(_.bodyText)
-            val handler = route.handle { request =>
+            val handler = route.endpoint { request =>
                 HttpResponse.ok.addField("body", "hello")
             }
-            val _: HttpHandler[Any, "body" ~ String, Any] = handler
+            val _: HttpEndpoint[Any, "body" ~ String, Any] = handler
             succeed
         }
 
@@ -31,24 +31,24 @@ class HttpHandlerTest extends Test:
             val route = HttpRoute.get("users" / Capture[Int]("id"))
                 .request(_.query[String]("include"))
                 .response(_.bodyJson[User])
-            val handler = route.handle { request =>
+            val handler = route.endpoint { request =>
                 val _: Int    = request.fields.id
                 val _: String = request.fields.include
                 HttpResponse.ok.addField("body", User(1, "alice"))
             }
-            val _: HttpHandler["id" ~ Int & "include" ~ String, "body" ~ User, Any] = handler
+            val _: HttpEndpoint["id" ~ Int & "include" ~ String, "body" ~ User, Any] = handler
             succeed
         }
 
         "preserves Out type with multiple response fields" in {
             val route = HttpRoute.get("users")
                 .response(_.bodyJson[User].header[String]("etag"))
-            val handler = route.handle { _ =>
+            val handler = route.endpoint { _ =>
                 HttpResponse.ok
                     .addField("body", User(1, "alice"))
                     .addField("etag", "abc")
             }
-            val _: HttpHandler[Any, "body" ~ User & "etag" ~ String, Any] = handler
+            val _: HttpEndpoint[Any, "body" ~ User & "etag" ~ String, Any] = handler
             succeed
         }
 
@@ -64,12 +64,12 @@ class HttpHandlerTest extends Test:
                 .filter(filter)
                 .response(_.bodyText)
 
-            val handler = route.handle { _ =>
+            val handler = route.endpoint { _ =>
                 Async.sleep(kyo.Duration.Zero).andThen(
                     HttpResponse.ok.addField("body", "hello")
                 )
             }
-            val _: HttpHandler[Any, "body" ~ String, Abort[String] & Async] = handler
+            val _: HttpEndpoint[Any, "body" ~ String, Abort[String] & Async] = handler
             succeed
         }
 
@@ -85,11 +85,11 @@ class HttpHandlerTest extends Test:
                 .filter(filter)
                 .response(_.bodyText)
 
-            val handler = route.handle { request =>
+            val handler = route.endpoint { request =>
                 val user: String = request.fields.user
                 HttpResponse.ok.addField("body", user)
             }
-            val _: HttpHandler["user" ~ String, "body" ~ String, Any] = handler
+            val _: HttpEndpoint["user" ~ String, "body" ~ String, Any] = handler
             succeed
         }
 
@@ -106,45 +106,72 @@ class HttpHandlerTest extends Test:
                 .request(_.query[Int]("page"))
                 .response(_.bodyText)
 
-            val handler = route.handle { request =>
+            val handler = route.endpoint { request =>
                 val _: String = request.fields.user
                 val _: Int    = request.fields.page
                 HttpResponse.ok.addField("body", "ok")
             }
-            val _: HttpHandler["user" ~ String & "page" ~ Int, "body" ~ String, Any] = handler
+            val _: HttpEndpoint["user" ~ String & "page" ~ Int, "body" ~ String, Any] = handler
             succeed
         }
     }
 
-    "handler.handle" - {
+    "endpoint.handle" - {
 
-        "resolves effects producing HttpHandler with S2" in {
+        "narrows effects" in {
+            val filter = new HttpFilter.Passthrough[Abort[String] & Abort[Int]]:
+                def apply[In, Out, S2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < S2
+                ): HttpResponse[Out] < (Abort[String] & Abort[Int] & S2) =
+                    next(request)
+            val route    = HttpRoute.get("users").filter(filter).response(_.bodyText)
+            val endpoint = route.endpoint(_ => HttpResponse.ok.addField("body", "hello"))
+            val resolved = endpoint.handle[Abort[Int]] { response =>
+                Abort.run[String](response).map {
+                    case kyo.Result.Success(r) => r
+                    case _                     => HttpResponse.ok.addField("body", "error")
+                }
+            }
+            val _: HttpEndpoint[Any, "body" ~ String, Abort[Int]] = resolved
+            succeed
+        }
+
+        "fully resolves effects to Any" in {
             val filter = new HttpFilter.Passthrough[Abort[String]]:
                 def apply[In, Out, S2](
                     request: HttpRequest[In],
                     next: HttpRequest[In] => HttpResponse[Out] < S2
                 ): HttpResponse[Out] < (Abort[String] & S2) =
                     next(request)
-            val route   = HttpRoute.get("users").filter(filter).response(_.bodyText)
-            val handler = route.handle(_ => HttpResponse.ok.addField("body", "hello"))
-            val resolved = handler.handle { response =>
+            val route    = HttpRoute.get("users").filter(filter).response(_.bodyText)
+            val endpoint = route.endpoint(_ => HttpResponse.ok.addField("body", "hello"))
+            val resolved = endpoint.handle[Any] { response =>
                 Abort.run[String](response).map {
                     case kyo.Result.Success(r) => r
                     case _                     => HttpResponse.ok.addField("body", "error")
                 }
             }
-            val _: HttpHandler[Any, "body" ~ String, Any] = resolved
+            val _: HttpEndpoint[Any, "body" ~ String, Any] = resolved
+            succeed
+        }
+
+        "handler with no effects handles to Any" in {
+            val route                                      = HttpRoute.get("users").response(_.bodyText)
+            val endpoint                                   = route.endpoint(_ => HttpResponse.ok.addField("body", "hello"))
+            val resolved                                   = endpoint.handle(identity)
+            val _: HttpEndpoint[Any, "body" ~ String, Any] = resolved
             succeed
         }
     }
 
-    "HttpHandler.const" - {
+    "HttpEndpoint.const" - {
 
         "returns fixed response for effectless route" in {
-            val route                                     = HttpRoute.get("health").response(_.bodyText)
-            val response                                  = HttpResponse.ok.addField("body", "healthy")
-            val handler                                   = HttpHandler.const(route, response)
-            val _: HttpHandler[Any, "body" ~ String, Any] = handler
+            val route                                      = HttpRoute.get("health").response(_.bodyText)
+            val response                                   = HttpResponse.ok.addField("body", "healthy")
+            val handler                                    = HttpEndpoint.const(route, response)
+            val _: HttpEndpoint[Any, "body" ~ String, Any] = handler
             succeed
         }
 
@@ -159,30 +186,30 @@ class HttpHandlerTest extends Test:
                 .filter(filter)
                 .response(_.bodyText)
             val response = HttpResponse.ok.addField("body", "hello")
-            typeCheckFailure("""HttpHandler.const(route, response)""")(
+            typeCheckFailure("""HttpEndpoint.const(route, response)""")(
                 "Required"
             )
         }
     }
 
-    "HttpHandler.health" - {
+    "HttpEndpoint.health" - {
 
         "default path" in {
-            val _: HttpHandler[Any, "body" ~ String, Any] = HttpHandler.health()
+            val _: HttpEndpoint[Any, "body" ~ String, Any] = HttpEndpoint.health()
             succeed
         }
 
         "custom path" in {
-            val _: HttpHandler[Any, "body" ~ String, Any] = HttpHandler.health("healthz")
+            val _: HttpEndpoint[Any, "body" ~ String, Any] = HttpEndpoint.health("healthz")
             succeed
         }
     }
 
     "sealed" - {
 
-        "cannot extend HttpHandler directly" in {
+        "cannot extend HttpEndpoint directly" in {
             typeCheckFailure("""
-                new HttpHandler[Any, Any, Any](HttpRoute.get("test")):
+                new HttpEndpoint[Any, Any, Any](HttpRoute.get("test")):
                     def apply(request: HttpRequest[Any])(using Frame): HttpResponse[Any] < Any =
                         HttpResponse.ok
             """)(
@@ -191,9 +218,9 @@ class HttpHandlerTest extends Test:
         }
     }
 
-    "route bound (? >: S)" - {
+    "route accessor" - {
 
-        "handler's route retains effect information" in {
+        "endpoint's route retains effect information" in {
             val filter = new HttpFilter.Passthrough[Abort[String]]:
                 def apply[In, Out, S2](
                     request: HttpRequest[In],
@@ -205,13 +232,13 @@ class HttpHandlerTest extends Test:
                 .filter(filter)
                 .response(_.bodyText)
 
-            val handler = route.handle { _ =>
+            val endpoint = route.endpoint { _ =>
                 HttpResponse.ok.addField("body", "hello")
             }
 
-            val _: HttpRoute[Any, "body" ~ String, ? >: Abort[String]] = handler.route
+            val _: HttpRoute[Any, "body" ~ String, ?] = endpoint.route
             succeed
         }
     }
 
-end HttpHandlerTest
+end HttpEndpointTest

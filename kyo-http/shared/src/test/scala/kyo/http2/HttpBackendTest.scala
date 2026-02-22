@@ -25,7 +25,7 @@ class HttpBackendTest extends Test:
 
     val stubServer: HttpBackend.Server = new HttpBackend.Server:
         def bind(
-            handlers: Seq[HttpHandler[?, ?, Any]],
+            handlers: Seq[HttpEndpoint[?, ?, Any]],
             port: Int,
             host: String
         )(using Frame): HttpBackend.Binding < Async =
@@ -86,7 +86,7 @@ class HttpBackendTest extends Test:
 
         "bind accepts handlers and returns binding" in {
             val route                          = HttpRoute.get("users").response(_.bodyText)
-            val handler                        = route.handle(_ => HttpResponse.ok.addField("body", "hello"))
+            val handler                        = route.endpoint(_ => HttpResponse.ok.addField("body", "hello"))
             val result                         = stubServer.bind(Seq(handler), 8080, "0.0.0.0")
             val _: HttpBackend.Binding < Async = result
             succeed
@@ -100,7 +100,7 @@ class HttpBackendTest extends Test:
                 ): HttpResponse[Out] < (Abort[String] & S2) =
                     next(request)
             val route   = HttpRoute.get("users").filter(filter).response(_.bodyText)
-            val handler = route.handle(_ => HttpResponse.ok.addField("body", "hello"))
+            val handler = route.endpoint(_ => HttpResponse.ok.addField("body", "hello"))
             typeCheckFailure("stubServer.bind(Seq(handler), 8080, \"0.0.0.0\")")(
                 "Required"
             )
@@ -108,10 +108,10 @@ class HttpBackendTest extends Test:
 
         "bind accepts multiple handlers with different In/Out" in {
             val route1   = HttpRoute.get("users").response(_.bodyText)
-            val handler1 = route1.handle(_ => HttpResponse.ok.addField("body", "users"))
+            val handler1 = route1.endpoint(_ => HttpResponse.ok.addField("body", "users"))
 
             val route2   = HttpRoute.post("users").request(_.bodyJson[User]).response(_.bodyJson[User])
-            val handler2 = route2.handle(req => HttpResponse.ok.addField("body", req.fields.body))
+            val handler2 = route2.endpoint(req => HttpResponse.ok.addField("body", req.fields.body))
 
             val result                         = stubServer.bind(Seq(handler1, handler2), 8080, "0.0.0.0")
             val _: HttpBackend.Binding < Async = result
