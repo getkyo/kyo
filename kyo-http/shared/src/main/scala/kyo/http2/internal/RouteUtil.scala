@@ -143,29 +143,23 @@ object RouteUtil:
                 case Absent =>
                     Result.succeed(HttpResponse(status, headers, Record2.empty.asInstanceOf[Record2[Out]]))
                 case Present(bf) =>
-                    decodeBufferedBodyValue(bf.contentType, body) match
-                        case f: Result.Failure[?] => f.asInstanceOf[Result[HttpError, HttpResponse[Out]]]
-                        case Result.Success(value) =>
-                            val builder = DictBuilder.init[String, Any]
-                            discard(builder.add(bf.fieldName, value))
-                            Result.succeed(HttpResponse(status, headers, makeRecord(builder)))
-                        case p: Result.Panic => p.asInstanceOf[Result[HttpError, HttpResponse[Out]]]
+                    decodeBufferedBodyValue(bf.contentType, body).map { value =>
+                        val builder = DictBuilder.init[String, Any]
+                        discard(builder.add(bf.fieldName, value))
+                        HttpResponse(status, headers, Record2(builder.result()))
+                    }
         else
             val builder = DictBuilder.init[String, Any]
-            decodeParamFields(fields, headers, Absent, builder) match
-                case f: Result.Failure[?] => f.asInstanceOf[Result[HttpError, HttpResponse[Out]]]
-                case _ =>
-                    bodyField match
-                        case Absent =>
-                            Result.succeed(HttpResponse(status, headers, makeRecord(builder)))
-                        case Present(bf) =>
-                            decodeBufferedBodyValue(bf.contentType, body) match
-                                case f: Result.Failure[?] => f.asInstanceOf[Result[HttpError, HttpResponse[Out]]]
-                                case Result.Success(value) =>
-                                    discard(builder.add(bf.fieldName, value))
-                                    Result.succeed(HttpResponse(status, headers, makeRecord(builder)))
-                                case p: Result.Panic => p.asInstanceOf[Result[HttpError, HttpResponse[Out]]]
-            end match
+            decodeParamFields(fields, headers, Absent, builder).flatMap { _ =>
+                bodyField match
+                    case Absent =>
+                        Result.succeed(HttpResponse(status, headers, Record2(builder.result())))
+                    case Present(bf) =>
+                        decodeBufferedBodyValue(bf.contentType, body).map { value =>
+                            discard(builder.add(bf.fieldName, value))
+                            HttpResponse(status, headers, Record2(builder.result()))
+                        }
+            }
         end if
     end decodeBufferedResponse
 
@@ -182,23 +176,13 @@ object RouteUtil:
         val builder = DictBuilder.init[String, Any]
 
         if !hasParams then
-            bodyField match
-                case Present(bf) =>
-                    discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream)))
-                case Absent =>
-            end match
-            Result.succeed(HttpResponse(status, headers, makeRecord(builder)))
+            bodyField.foreach(bf => discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream))))
+            Result.succeed(HttpResponse(status, headers, Record2(builder.result())))
         else
-            decodeParamFields(fields, headers, Absent, builder) match
-                case f: Result.Failure[?] => f.asInstanceOf[Result[HttpError, HttpResponse[Out]]]
-                case _ =>
-                    bodyField match
-                        case Present(bf) =>
-                            discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream)))
-                        case Absent =>
-                    end match
-                    Result.succeed(HttpResponse(status, headers, makeRecord(builder)))
-            end match
+            decodeParamFields(fields, headers, Absent, builder).map { _ =>
+                bodyField.foreach(bf => discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream))))
+                HttpResponse(status, headers, Record2(builder.result()))
+            }
         end if
     end decodeStreamingResponse
 
@@ -216,27 +200,21 @@ object RouteUtil:
         val hasParams = fields.size > (if bodyField.isDefined then 1 else 0)
         val builder   = DictBuilder.init[String, Any]
 
-        decodeCaptures(route.request.path, pathCaptures, builder) match
-            case f: Result.Failure[?] => f.asInstanceOf[Result[HttpError, HttpRequest[In]]]
-            case _ =>
-                val paramsResult =
-                    if hasParams then decodeParamFields(fields, headers, Present(queryParam), builder)
-                    else Result.unit
-                paramsResult match
-                    case f: Result.Failure[?] => f.asInstanceOf[Result[HttpError, HttpRequest[In]]]
-                    case _ =>
-                        bodyField match
-                            case Absent =>
-                                Result.succeed(buildRequest(route, headers, builder))
-                            case Present(bf) =>
-                                decodeBufferedBodyValue(bf.contentType, body) match
-                                    case f: Result.Failure[?] => f.asInstanceOf[Result[HttpError, HttpRequest[In]]]
-                                    case Result.Success(value) =>
-                                        discard(builder.add(bf.fieldName, value))
-                                        Result.succeed(buildRequest(route, headers, builder))
-                                    case p: Result.Panic => p.asInstanceOf[Result[HttpError, HttpRequest[In]]]
-                end match
-        end match
+        decodeCaptures(route.request.path, pathCaptures, builder).flatMap { _ =>
+            val paramsResult =
+                if hasParams then decodeParamFields(fields, headers, Present(queryParam), builder)
+                else Result.unit
+            paramsResult.flatMap { _ =>
+                bodyField match
+                    case Absent =>
+                        Result.succeed(buildRequest(route, headers, builder))
+                    case Present(bf) =>
+                        decodeBufferedBodyValue(bf.contentType, body).map { value =>
+                            discard(builder.add(bf.fieldName, value))
+                            buildRequest(route, headers, builder)
+                        }
+            }
+        }
     end decodeBufferedRequest
 
     def decodeStreamingRequest[In, Out, S](
@@ -251,23 +229,15 @@ object RouteUtil:
         val hasParams = fields.size > (if bodyField.isDefined then 1 else 0)
         val builder   = DictBuilder.init[String, Any]
 
-        decodeCaptures(route.request.path, pathCaptures, builder) match
-            case f: Result.Failure[?] => f.asInstanceOf[Result[HttpError, HttpRequest[In]]]
-            case _ =>
-                val paramsResult =
-                    if hasParams then decodeParamFields(fields, headers, Present(queryParam), builder)
-                    else Result.unit
-                paramsResult match
-                    case f: Result.Failure[?] => f.asInstanceOf[Result[HttpError, HttpRequest[In]]]
-                    case _ =>
-                        bodyField match
-                            case Absent =>
-                                Result.succeed(buildRequest(route, headers, builder))
-                            case Present(bf) =>
-                                discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream)))
-                                Result.succeed(buildRequest(route, headers, builder))
-                end match
-        end match
+        decodeCaptures(route.request.path, pathCaptures, builder).flatMap { _ =>
+            val paramsResult =
+                if hasParams then decodeParamFields(fields, headers, Present(queryParam), builder)
+                else Result.unit
+            paramsResult.map { _ =>
+                bodyField.foreach(bf => discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream))))
+                buildRequest(route, headers, builder)
+            }
+        }
     end decodeStreamingRequest
 
     // ==================== Server: encode response ====================
@@ -354,7 +324,7 @@ object RouteUtil:
 
     private def spanToString(bytes: Span[Byte]): String =
         if bytes.isEmpty then ""
-        else new String(bytes.toArrayUnsafe.asInstanceOf[Array[Byte]], utf8)
+        else new String(bytes.toArrayUnsafe, utf8)
 
     private def stringToSpan(s: String): Span[Byte] =
         Span.fromUnsafe(s.getBytes(utf8))
@@ -421,9 +391,7 @@ object RouteUtil:
                         Result.unit
                 end match
             case c: HttpPath.Concat[?, ?] =>
-                decodeCaptures(c.left, captures, builder) match
-                    case f: Result.Failure[?] => f.asInstanceOf[Result[HttpError, Unit]]
-                    case _                    => decodeCaptures(c.right, captures, builder)
+                decodeCaptures(c.left, captures, builder).flatMap(_ => decodeCaptures(c.right, captures, builder))
     end decodeCaptures
 
     // ==================== Internal: param encoding ====================
@@ -557,17 +525,15 @@ object RouteUtil:
         queryParam: Maybe[String => Maybe[String]],
         builder: DictBuilder[String, Any]
     )(using Frame): Result[HttpError, Unit] =
-        @tailrec def loop(i: Int): Result[HttpError, Unit] =
+        def loop(i: Int): Result[HttpError, Unit] =
             if i >= fields.size then Result.unit
             else
                 fields(i) match
                     case param: Field.Param[?, ?, ?] =>
-                        decodeParam(param, headers, queryParam) match
-                            case f: Result.Failure[?] => f.asInstanceOf[Result[HttpError, Unit]]
-                            case Result.Success(value) =>
-                                discard(builder.add(param.fieldName, value))
-                                loop(i + 1)
-                            case p: Result.Panic => p.asInstanceOf[Result[HttpError, Unit]]
+                        decodeParam(param, headers, queryParam).flatMap { value =>
+                            discard(builder.add(param.fieldName, value))
+                            loop(i + 1)
+                        }
                     case _: Field.Body[?, ?] => loop(i + 1)
                 end match
         loop(0)
@@ -641,11 +607,8 @@ object RouteUtil:
             case _: ContentType.Binary =>
                 Result.succeed(bytes)
             case json: ContentType.Json[?] =>
-                json.schema.decode(spanToString(bytes)) match
-                    case Result.Success(v) => Result.succeed(v)
-                    case Result.Failure(msg) =>
-                        Result.fail(HttpError.ParseError(s"JSON decode failed: $msg"))
-                    case p: Result.Panic => p.asInstanceOf[Result[HttpError, Any]]
+                json.schema.decode(spanToString(bytes))
+                    .mapFailure(msg => HttpError.ParseError(s"JSON decode failed: $msg"))
             case form: ContentType.Form[?] =>
                 try Result.succeed(form.codec.asInstanceOf[HttpFormCodec[Any]].decode(spanToString(bytes)))
                 catch
@@ -736,14 +699,11 @@ object RouteUtil:
         loop(0)
     end findBodyField
 
-    private def makeRecord[F](builder: DictBuilder[String, Any]): Record2[F] =
-        new Record2[F](builder.result())
-
     private def buildRequest[In, Out, S](
         route: HttpRoute[In, Out, S],
         headers: HttpHeaders,
         builder: DictBuilder[String, Any]
     ): HttpRequest[In] =
-        HttpRequest(route.method, HttpUrl(Absent, "", 0, "", Absent), headers, makeRecord(builder))
+        HttpRequest(route.method, HttpUrl(Absent, "", 0, "", Absent), headers, Record2(builder.result()))
 
 end RouteUtil

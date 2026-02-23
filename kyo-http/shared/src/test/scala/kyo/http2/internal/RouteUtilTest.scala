@@ -7,6 +7,8 @@ import kyo.Record2
 import kyo.Result
 import kyo.Span
 import kyo.http2.HttpCodec
+import kyo.http2.HttpCookie
+import kyo.http2.HttpFormCodec
 import kyo.http2.HttpHeaders
 import kyo.http2.HttpMethod
 import kyo.http2.HttpPath
@@ -26,6 +28,7 @@ class RouteUtilTest extends kyo.Test:
     given CanEqual[Any, Any] = CanEqual.derived
 
     case class User(name: String, age: Int) derives Schema, CanEqual
+    case class LoginForm(username: String, password: String) derives HttpFormCodec
 
     // ==================== Route inspection ====================
 
@@ -461,6 +464,468 @@ class RouteUtilTest extends kyo.Test:
         }
     }
 
+    // ==================== encodeRequest edge cases ====================
+
+    "encodeRequest edge cases" - {
+        "body + query + header combined" in {
+            val route = HttpRoute.post("items")
+                .request(_.query[Int]("page").header[String]("auth", wireName = "Authorization").bodyJson[User])
+            val request = HttpRequest(
+                HttpMethod.POST,
+                HttpUrl.parse("http://localhost/items").getOrThrow,
+                HttpHeaders.empty,
+                Record2.empty
+            ).addField("page", 1).addField("auth", "Bearer tok").addField("body", User("X", 1))
+
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (_, _) => fail("expected buffered"),
+                onBuffered = (url, headers, ct, bytes) =>
+                    assert(url.contains("page=1"))
+                    assert(headers.get("Authorization") == Present("Bearer tok"))
+                    assert(ct == "application/json")
+                    val bodyStr = new String(bytes.toArrayUnsafe.asInstanceOf[Array[Byte]], "UTF-8")
+                    assert(bodyStr.contains("X"))
+                ,
+                onStreaming = (_, _, _, _) => fail("expected buffered")
+            )
+        }
+
+        "multiple cookies" in {
+            val route = HttpRoute.get("data")
+                .request(_.cookie[String]("session").cookie[String]("theme"))
+            val request = HttpRequest(
+                HttpMethod.GET,
+                HttpUrl.parse("http://localhost/data").getOrThrow,
+                HttpHeaders.empty,
+                Record2.empty
+            ).addField("session", "abc").addField("theme", "dark")
+
+            var headers = HttpHeaders.empty
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (_, h) => headers = h,
+                onBuffered = (_, _, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _, _) => fail("expected empty")
+            )
+            val cookie = headers.get("Cookie")
+            assert(cookie.isDefined)
+            val cookieStr = cookie.getOrElse("")
+            assert(cookieStr.contains("session=abc"))
+            assert(cookieStr.contains("theme=dark"))
+            assert(cookieStr.contains("; "))
+        }
+
+        "URL-encoded special characters in query" in {
+            val route = HttpRoute.get("search").request(_.query[String]("q"))
+            val request = HttpRequest(
+                HttpMethod.GET,
+                HttpUrl.parse("http://localhost/search").getOrThrow,
+                HttpHeaders.empty,
+                Record2.empty
+            ).addField("q", "hello world&foo=bar")
+
+            var url = ""
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (u, _) => url = u,
+                onBuffered = (_, _, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _, _) => fail("expected empty")
+            )
+            assert(!url.contains(" "))
+            assert(url.contains("q="))
+            // Decoded value should round-trip
+            val encoded = url.split("q=")(1)
+            assert(java.net.URLDecoder.decode(encoded, "UTF-8") == "hello world&foo=bar")
+        }
+
+        "URL-encoded special characters in path capture" in {
+            val route = HttpRoute.get("users" / HttpPath.Capture[String]("name"))
+            val request = HttpRequest(
+                HttpMethod.GET,
+                HttpUrl.parse("http://localhost/users/x").getOrThrow,
+                HttpHeaders.empty,
+                Record2.empty
+            ).addField("name", "John Doe")
+
+            var url = ""
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (u, _) => url = u,
+                onBuffered = (_, _, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _, _) => fail("expected empty")
+            )
+            assert(!url.contains(" "))
+            assert(url.startsWith("/users/"))
+        }
+
+        "preserves existing request headers" in {
+            val route           = HttpRoute.get("data").request(_.header[String]("extra", wireName = "X-Extra"))
+            val existingHeaders = HttpHeaders.empty.add("X-Existing", "keep-me")
+            val request = HttpRequest(
+                HttpMethod.GET,
+                HttpUrl.parse("http://localhost/data").getOrThrow,
+                existingHeaders,
+                Record2.empty
+            ).addField("extra", "new-val")
+
+            var headers = HttpHeaders.empty
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (_, h) => headers = h,
+                onBuffered = (_, _, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _, _) => fail("expected empty")
+            )
+            assert(headers.get("X-Existing") == Present("keep-me"))
+            assert(headers.get("X-Extra") == Present("new-val"))
+        }
+
+        "optional header absent" in {
+            val route = HttpRoute.get("data").request(_.headerOpt[String]("auth", wireName = "Authorization"))
+            val request = HttpRequest(
+                HttpMethod.GET,
+                HttpUrl.parse("http://localhost/data").getOrThrow,
+                HttpHeaders.empty,
+                Record2.empty
+            ).addField("auth", Absent: Maybe[String])
+
+            var headers = HttpHeaders.empty
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (_, h) => headers = h,
+                onBuffered = (_, _, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _, _) => fail("expected empty")
+            )
+            assert(!headers.contains("Authorization"))
+        }
+
+        "binary body" in {
+            val route = HttpRoute.post("upload").request(_.bodyBinary)
+            val data  = Span.fromUnsafe(Array[Byte](1, 2, 3, 4))
+            val request = HttpRequest(
+                HttpMethod.POST,
+                HttpUrl.parse("http://localhost/upload").getOrThrow,
+                HttpHeaders.empty,
+                Record2.empty
+            ).addField("body", data)
+
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (_, _) => fail("expected buffered"),
+                onBuffered = (_, _, ct, bytes) =>
+                    assert(ct == "application/octet-stream")
+                    assert(bytes.toArrayUnsafe.asInstanceOf[Array[Byte]].toSeq == Seq[Byte](1, 2, 3, 4))
+                ,
+                onStreaming = (_, _, _, _) => fail("expected buffered")
+            )
+        }
+
+        "form body" in {
+            val route = HttpRoute.post("login").request(_.bodyForm[LoginForm])
+            val request = HttpRequest(
+                HttpMethod.POST,
+                HttpUrl.parse("http://localhost/login").getOrThrow,
+                HttpHeaders.empty,
+                Record2.empty
+            ).addField("body", LoginForm("alice", "secret"))
+
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (_, _) => fail("expected buffered"),
+                onBuffered = (_, _, ct, bytes) =>
+                    assert(ct == "application/x-www-form-urlencoded")
+                    val bodyStr = new String(bytes.toArrayUnsafe.asInstanceOf[Array[Byte]], "UTF-8")
+                    assert(bodyStr.contains("username=alice"))
+                    assert(bodyStr.contains("password=secret"))
+                ,
+                onStreaming = (_, _, _, _) => fail("expected buffered")
+            )
+        }
+    }
+
+    // ==================== decodeBufferedRequest edge cases ====================
+
+    "decodeBufferedRequest edge cases" - {
+        "header params" in {
+            val route   = HttpRoute.get("data").request(_.header[String]("auth", wireName = "Authorization"))
+            val headers = HttpHeaders.empty.add("Authorization", "Bearer xyz")
+
+            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, headers, Span.empty[Byte]) match
+                case Result.Success(req) =>
+                    assert(req.fields.dict("auth") == "Bearer xyz")
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "cookie params" in {
+            val route   = HttpRoute.get("data").request(_.cookie[String]("session"))
+            val headers = HttpHeaders.empty.add("Cookie", "session=abc123; theme=dark")
+
+            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, headers, Span.empty[Byte]) match
+                case Result.Success(req) =>
+                    assert(req.fields.dict("session") == "abc123")
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "optional header present" in {
+            val route   = HttpRoute.get("data").request(_.headerOpt[String]("auth", wireName = "Authorization"))
+            val headers = HttpHeaders.empty.add("Authorization", "Bearer xyz")
+
+            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, headers, Span.empty[Byte]) match
+                case Result.Success(req) =>
+                    assert(req.fields.dict("auth") == Present("Bearer xyz"))
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "optional header absent" in {
+            val route = HttpRoute.get("data").request(_.headerOpt[String]("auth", wireName = "Authorization"))
+
+            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
+                case Result.Success(req) =>
+                    assert(req.fields.dict("auth") == Absent)
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "invalid int capture fails with parse error" in {
+            val route = HttpRoute.get("users" / HttpPath.Capture[Int]("userId"))
+
+            RouteUtil.decodeBufferedRequest(route, Map("userId" -> "notanumber"), _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
+                case Result.Success(_)   => fail("expected failure")
+                case Result.Failure(err) => assert(err.getMessage.contains("Failed to decode path capture"))
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "invalid int query param fails with parse error" in {
+            val route = HttpRoute.get("users").request(_.query[Int]("page"))
+
+            RouteUtil.decodeBufferedRequest(
+                route,
+                Map.empty,
+                name => if name == "page" then Present("abc") else Absent,
+                HttpHeaders.empty,
+                Span.empty[Byte]
+            ) match
+                case Result.Success(_)   => fail("expected failure")
+                case Result.Failure(err) => assert(err.getMessage.contains("Failed to decode param"))
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "default param ignored when value present" in {
+            val route = HttpRoute.get("users").request(_.query[Int]("page", default = Present(1)))
+
+            RouteUtil.decodeBufferedRequest(
+                route,
+                Map.empty,
+                name => if name == "page" then Present("5") else Absent,
+                HttpHeaders.empty,
+                Span.empty[Byte]
+            ) match
+                case Result.Success(req) =>
+                    assert(req.fields.dict("page") == 5)
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "invalid json body fails" in {
+            val route = HttpRoute.post("users").request(_.bodyJson[User])
+            val bytes = Span.fromUnsafe("not valid json".getBytes("UTF-8"))
+
+            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, bytes) match
+                case Result.Success(_)   => fail("expected failure")
+                case Result.Failure(err) => assert(err.getMessage.contains("JSON decode failed"))
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "binary body" in {
+            val route = HttpRoute.post("upload").request(_.bodyBinary)
+            val data  = Span.fromUnsafe(Array[Byte](10, 20, 30))
+
+            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, data) match
+                case Result.Success(req) =>
+                    val decoded = req.fields.dict("body").asInstanceOf[Span[Byte]]
+                    assert(decoded.toArrayUnsafe.asInstanceOf[Array[Byte]].toSeq == Seq[Byte](10, 20, 30))
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "form body" in {
+            val route = HttpRoute.post("login").request(_.bodyForm[LoginForm])
+            val bytes = Span.fromUnsafe("username=alice&password=secret".getBytes("UTF-8"))
+
+            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, bytes) match
+                case Result.Success(req) =>
+                    assert(req.fields.dict("body") == LoginForm("alice", "secret"))
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "empty body for no-body route" in {
+            val route = HttpRoute.get("health")
+
+            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
+                case Result.Success(req) =>
+                    assert(req.fields.dict.isEmpty)
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+    }
+
+    // ==================== decodeBufferedResponse edge cases ====================
+
+    "decodeBufferedResponse edge cases" - {
+        "invalid json body fails" in {
+            val route = HttpRoute.get("users").response(_.bodyJson[User])
+            val bytes = Span.fromUnsafe("{invalid".getBytes("UTF-8"))
+
+            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, HttpHeaders.empty, bytes) match
+                case Result.Success(_)   => fail("expected failure")
+                case Result.Failure(err) => assert(err.getMessage.contains("JSON decode failed"))
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "binary body" in {
+            val route = HttpRoute.get("download").response(_.bodyBinary)
+            val data  = Span.fromUnsafe(Array[Byte](5, 6, 7))
+
+            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, HttpHeaders.empty, data) match
+                case Result.Success(resp) =>
+                    val decoded = resp.fields.dict("body").asInstanceOf[Span[Byte]]
+                    assert(decoded.toArrayUnsafe.asInstanceOf[Array[Byte]].toSeq == Seq[Byte](5, 6, 7))
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "optional response header present" in {
+            val route   = HttpRoute.get("data").response(_.headerOpt[String]("etag", wireName = "ETag"))
+            val headers = HttpHeaders.empty.add("ETag", "abc")
+
+            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, headers, Span.empty[Byte]) match
+                case Result.Success(resp) =>
+                    assert(resp.fields.dict("etag") == Present("abc"))
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "optional response header absent" in {
+            val route = HttpRoute.get("data").response(_.headerOpt[String]("etag", wireName = "ETag"))
+
+            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, HttpHeaders.empty, Span.empty[Byte]) match
+                case Result.Success(resp) =>
+                    assert(resp.fields.dict("etag") == Absent)
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+    }
+
+    // ==================== encodeResponse edge cases ====================
+
+    "encodeResponse edge cases" - {
+        "status preserved with json body" in {
+            val route    = HttpRoute.get("users").response(_.bodyJson[User])
+            val response = HttpResponse(HttpStatus.Created, HttpHeaders.empty, Record2.empty).addField("body", User("X", 1))
+
+            var status: HttpStatus = HttpStatus.OK
+            RouteUtil.encodeResponse(route, response)(
+                onEmpty = (_, _) => fail("expected buffered"),
+                onBuffered = (s, _, _, _) => status = s,
+                onStreaming = (_, _, _, _) => fail("expected buffered")
+            )
+            assert(status == HttpStatus.Created)
+        }
+
+        "response cookie encoding" in {
+            val route = HttpRoute.get("login")
+                .response(_.cookie[String]("session", wireName = "session"))
+            val response = HttpResponse(HttpStatus.OK, HttpHeaders.empty, Record2.empty)
+                .addField("session", HttpCookie("tok123").httpOnly(true))
+
+            var headers = HttpHeaders.empty
+            RouteUtil.encodeResponse(route, response)(
+                onEmpty = (_, h) => headers = h,
+                onBuffered = (_, h, _, _) => headers = h,
+                onStreaming = (_, _, _, _) => fail("expected empty or buffered")
+            )
+            val setCookie = headers.get("Set-Cookie")
+            assert(setCookie.isDefined)
+            val sc = setCookie.getOrElse("")
+            assert(sc.contains("session=tok123"))
+            assert(sc.contains("HttpOnly"))
+        }
+
+        "text body" in {
+            val route    = HttpRoute.get("echo").response(_.bodyText)
+            val response = HttpResponse(HttpStatus.OK, HttpHeaders.empty, Record2.empty).addField("body", "hello")
+
+            var bodyStr = ""
+            RouteUtil.encodeResponse(route, response)(
+                onEmpty = (_, _) => fail("expected buffered"),
+                onBuffered = (_, _, ct, bytes) =>
+                    assert(ct == "text/plain; charset=utf-8")
+                    bodyStr = new String(bytes.toArrayUnsafe.asInstanceOf[Array[Byte]], "UTF-8")
+                ,
+                onStreaming = (_, _, _, _) => fail("expected buffered")
+            )
+            assert(bodyStr == "hello")
+        }
+    }
+
+    // ==================== matchError edge cases ====================
+
+    "matchError edge cases" - {
+        "multiple error mappings selects matching status" in {
+            val route = HttpRoute.get("users")
+                .response(_.bodyJson[User].error[String](HttpStatus.BadRequest).error[Int](HttpStatus.NotFound))
+            val body = Span.fromUnsafe("\"not found msg\"".getBytes("UTF-8"))
+
+            // Should not match BadRequest
+            assert(RouteUtil.matchError(route, HttpStatus.BadRequest, body) == Present("not found msg"))
+
+            // NotFound with int body
+            val intBody = Span.fromUnsafe("404".getBytes("UTF-8"))
+            assert(RouteUtil.matchError(route, HttpStatus.NotFound, intBody) == Present(404))
+        }
+
+        "decode failure skips to next mapping" in {
+            val route = HttpRoute.get("users")
+                .response(_.bodyJson[User].error[Int](HttpStatus.BadRequest).error[String](HttpStatus.BadRequest))
+            // "not a number" can't decode as Int, should fall through to String
+            val body = Span.fromUnsafe("\"fallback\"".getBytes("UTF-8"))
+
+            RouteUtil.matchError(route, HttpStatus.BadRequest, body) match
+                case Present(err) => assert(err == "fallback")
+                case Absent       => fail("expected error match")
+        }
+
+        "empty body returns Absent when decode fails" in {
+            val route = HttpRoute.get("users")
+                .response(_.bodyJson[User].error[User](HttpStatus.BadRequest))
+            val body = Span.empty[Byte]
+
+            // Empty string can't decode as User JSON, so should return Absent
+            assert(RouteUtil.matchError(route, HttpStatus.BadRequest, body) == Absent)
+        }
+
+        "empty body decodes when schema accepts empty" in {
+            val route = HttpRoute.get("users")
+                .response(_.bodyJson[User].error[String](HttpStatus.BadRequest))
+            val body = Span.empty[Byte]
+
+            // String schema accepts empty/plain strings as fallback
+            val result = RouteUtil.matchError(route, HttpStatus.BadRequest, body)
+            assert(result == Present(""))
+        }
+    }
+
     // ==================== Round-trip ====================
 
     "round-trip" - {
@@ -532,6 +997,29 @@ class RouteUtilTest extends kyo.Test:
                             assert(decoded.status == HttpStatus.OK)
                             assert(decoded.fields.dict("requestId") == "req-789")
                             assert(decoded.fields.dict("body") == User("Bob", 25))
+                        case Result.Failure(err) => fail(s"decode failed: $err")
+                        case p: Result.Panic     => throw p.exception
+                ,
+                onStreaming = (_, _, _, _) => fail("expected buffered")
+            )
+        }
+
+        "form body round-trip" in {
+            val route = HttpRoute.post("login").request(_.bodyForm[LoginForm])
+            val form  = LoginForm("bob", "pass123")
+            val request = HttpRequest(
+                HttpMethod.POST,
+                HttpUrl.parse("http://localhost/login").getOrThrow,
+                HttpHeaders.empty,
+                Record2.empty
+            ).addField("body", form)
+
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (_, _) => fail("expected buffered"),
+                onBuffered = (_, _, _, bytes) =>
+                    RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, bytes) match
+                        case Result.Success(decoded) =>
+                            assert(decoded.fields.dict("body") == form)
                         case Result.Failure(err) => fail(s"decode failed: $err")
                         case p: Result.Panic     => throw p.exception
                 ,
