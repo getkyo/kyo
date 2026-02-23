@@ -373,7 +373,7 @@ object RouteUtil:
                 captures.get(wireName) match
                     case Some(raw) =>
                         try
-                            discard(builder.add(c.fieldName, c.codec.asInstanceOf[HttpCodec[Any]].decode(raw)))
+                            discard(builder.add(c.fieldName, c.codec.decode(raw)))
                             Result.unit
                         catch
                             case e: Throwable =>
@@ -502,7 +502,7 @@ object RouteUtil:
         raw match
             case Present(str) =>
                 try
-                    val decoded = param.codec.asInstanceOf[HttpCodec[Any]].decode(str)
+                    val decoded = param.codec.decode(str)
                     if param.optional then Result.succeed(Present(decoded))
                     else Result.succeed(decoded)
                 catch
@@ -582,7 +582,7 @@ object RouteUtil:
                 val byteStream = stream.mapPure { v =>
                     stringToSpan(schema.encode(v) + "\n")
                 }(using ndjson.emitTag.asInstanceOf[Tag[Emit[Chunk[Any]]]], Tag[Emit[Chunk[Span[Byte]]]])
-                f("application/x-ndjson", byteStream.asInstanceOf[Stream[Span[Byte], Async & Scope]])
+                f("application/x-ndjson", byteStream)
             case _: ContentType.MultipartStream =>
                 val stream   = value.asInstanceOf[Stream[HttpPart, Async]]
                 val boundary = java.util.UUID.randomUUID().toString
@@ -590,7 +590,7 @@ object RouteUtil:
                     encodeMultipartPart(part, boundary)
                 }(using Tag[Emit[Chunk[HttpPart]]], Tag[Emit[Chunk[Span[Byte]]]])
                 // TODO: append closing boundary as final chunk
-                f(s"multipart/form-data; boundary=$boundary", byteStream.asInstanceOf[Stream[Span[Byte], Async & Scope]])
+                f(s"multipart/form-data; boundary=$boundary", byteStream)
             case _ =>
                 throw new IllegalStateException(s"Cannot encode non-streaming ContentType as stream: $ct")
     end encodeStreamBodyValue
@@ -610,7 +610,7 @@ object RouteUtil:
                 json.schema.decode(spanToString(bytes))
                     .mapFailure(msg => HttpError.ParseError(s"JSON decode failed: $msg"))
             case form: ContentType.Form[?] =>
-                try Result.succeed(form.codec.asInstanceOf[HttpFormCodec[Any]].decode(spanToString(bytes)))
+                try Result.succeed(form.codec.decode(spanToString(bytes)))
                 catch
                     case e: Throwable =>
                         Result.fail(HttpError.ParseError(s"Form decode failed: ${e.getMessage}"))
@@ -629,8 +629,7 @@ object RouteUtil:
             case _: ContentType.ByteStream =>
                 stream
             case ndjson: ContentType.Ndjson[?] =>
-                val schema = ndjson.schema.asInstanceOf[Schema[Any]]
-                // TODO: proper line splitting — for now assumes each chunk is one line
+                val schema = ndjson.schema // TODO: proper line splitting — for now assumes each chunk is one line
                 stream.mapPure { chunk =>
                     val line = spanToString(chunk).trim
                     schema.decode(line) match
@@ -638,7 +637,7 @@ object RouteUtil:
                         case Result.Failure(msg) => throw new RuntimeException(s"Ndjson decode failed: $msg")
                         case p: Result.Panic     => throw p.exception
                     end match
-                }(using Tag[Emit[Chunk[Span[Byte]]]], ndjson.emitTag.asInstanceOf[Tag[Emit[Chunk[Any]]]])
+                }(using Tag[Emit[Chunk[Span[Byte]]]], ndjson.emitTag)
             case _: ContentType.Sse[?] =>
                 // TODO: implement SSE frame parsing
                 stream
