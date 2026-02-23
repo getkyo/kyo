@@ -236,9 +236,22 @@ object Record:
         inline def apply[G[_]](fn: [v] => (Field[?, v], TC[v]) => G[v])(using f: Fields[A]): Record[f.Map[~.MapValue[G]]] =
             new Record(stageLoopWith[f.AsTuple, TC, G](fn)).asInstanceOf[Record[f.Map[~.MapValue[G]]]]
 
+    // Note: stageLoop/stageLoopWith use Dict here but SummonAll uses Map. Dict works in these methods
+    // but causes the compiler to hang in SummonAll, likely due to how the opaque type interacts with
+    // inline expansion in certain patterns.
     private[kyo] inline def stageLoop[T <: Tuple, G[_]](fn: [v] => Field[?, v] => G[v]): Dict[String, Any] =
         inline erasedValue[T] match
             case _: EmptyTuple => Dict.empty[String, Any]
+            case _: ((n1 ~ v1) *: (n2 ~ v2) *: (n3 ~ v3) *: (n4 ~ v4) *: rest) =>
+                val name1 = constValue[n1 & String]
+                val name2 = constValue[n2 & String]
+                val name3 = constValue[n3 & String]
+                val name4 = constValue[n4 & String]
+                stageLoop[rest, G](fn)
+                    ++ Dict[String, Any](name1 -> fn[v1](Field(name1, summonInline[Tag[v1]])))
+                    ++ Dict[String, Any](name2 -> fn[v2](Field(name2, summonInline[Tag[v2]])))
+                    ++ Dict[String, Any](name3 -> fn[v3](Field(name3, summonInline[Tag[v3]])))
+                    ++ Dict[String, Any](name4 -> fn[v4](Field(name4, summonInline[Tag[v4]])))
             case _: ((n ~ v) *: rest) =>
                 val name  = constValue[n & String]
                 val value = fn[v](Field(name, summonInline[Tag[v]]))
@@ -247,6 +260,16 @@ object Record:
     private[kyo] inline def stageLoopWith[T <: Tuple, TC[_], G[_]](fn: [v] => (Field[?, v], TC[v]) => G[v]): Dict[String, Any] =
         inline erasedValue[T] match
             case _: EmptyTuple => Dict.empty[String, Any]
+            case _: ((n1 ~ v1) *: (n2 ~ v2) *: (n3 ~ v3) *: (n4 ~ v4) *: rest) =>
+                val name1 = constValue[n1 & String]
+                val name2 = constValue[n2 & String]
+                val name3 = constValue[n3 & String]
+                val name4 = constValue[n4 & String]
+                stageLoopWith[rest, TC, G](fn)
+                    ++ Dict[String, Any](name1 -> fn[v1](Field(name1, summonInline[Tag[v1]]), summonInline[TC[v1]]))
+                    ++ Dict[String, Any](name2 -> fn[v2](Field(name2, summonInline[Tag[v2]]), summonInline[TC[v2]]))
+                    ++ Dict[String, Any](name3 -> fn[v3](Field(name3, summonInline[Tag[v3]]), summonInline[TC[v3]]))
+                    ++ Dict[String, Any](name4 -> fn[v4](Field(name4, summonInline[Tag[v4]]), summonInline[TC[v4]]))
             case _: ((n ~ v) *: rest) =>
                 val name  = constValue[n & String]
                 val value = fn[v](Field(name, summonInline[Tag[v]]), summonInline[TC[v]])
@@ -262,6 +285,10 @@ object Record:
     private[kyo] inline def collectValues[T <: Tuple](dict: Dict[String, Any]): Tuple =
         inline erasedValue[T] match
             case _: EmptyTuple => EmptyTuple
+            case _: ((n1 ~ v1) *: (n2 ~ v2) *: (n3 ~ v3) *: (n4 ~ v4) *: rest) =>
+                dict(constValue[n1 & String]) *: dict(constValue[n2 & String]) *:
+                    dict(constValue[n3 & String]) *: dict(constValue[n4 & String]) *:
+                    collectValues[rest](dict)
             case _: ((n ~ v) *: rest) =>
                 dict(constValue[n & String]) *: collectValues[rest](dict)
 

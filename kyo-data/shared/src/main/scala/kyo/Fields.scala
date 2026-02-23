@@ -105,9 +105,17 @@ object Fields:
         inline given [A, F[_]](using f: Fields[A]): SummonAll[A, F] =
             summonLoop[f.AsTuple, F]
 
+        // Note: uses Map instead of Dict because Dict (an opaque type) causes the compiler
+        // to hang when used inside inline recursive methods, likely due to cascading inline expansion.
         private inline def summonLoop[T <: Tuple, F[_]]: Map[String, F[Any]] =
             inline erasedValue[T] match
                 case _: EmptyTuple => Map.empty
+                case _: ((n1 ~ v1) *: (n2 ~ v2) *: (n3 ~ v3) *: (n4 ~ v4) *: rest) =>
+                    summonLoop[rest, F]
+                        .updated(constValue[n1 & String], summonInline[F[v1]].asInstanceOf[F[Any]])
+                        .updated(constValue[n2 & String], summonInline[F[v2]].asInstanceOf[F[Any]])
+                        .updated(constValue[n3 & String], summonInline[F[v3]].asInstanceOf[F[Any]])
+                        .updated(constValue[n4 & String], summonInline[F[v4]].asInstanceOf[F[Any]])
                 case _: ((n ~ v) *: rest) =>
                     summonLoop[rest, F].updated(constValue[n & String], summonInline[F[v]].asInstanceOf[F[Any]])
     end SummonAll
