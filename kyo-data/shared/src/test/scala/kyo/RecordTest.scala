@@ -106,47 +106,18 @@ class RecordTest extends Test:
             class NotACase(val x: Int)
             typeCheckFailure("""Record.fromProduct(new NotACase(1))""")("Required: Product")
         }
-    }
 
-    "field access" - {
+        "fromProduct with Option and Collection fields" in {
+            case class User(name: String, email: Option[String])
+            val r1 = Record.fromProduct(User("Bob", Some("bob@email.com")))
+            val r2 = Record.fromProduct(User("Alice", None))
+            assert(r1.email.contains("bob@email.com"))
+            assert(r2.email.isEmpty)
 
-        "selectDynamic with inference" in {
-            val r = ("name" ~ "Alice") & ("age" ~ 30)
-            assert(r.name.length == 5)
-            assert(r.age + 1 == 31)
-        }
-
-        "getField for special names" in {
-            val r = ("user-name" ~ "Alice") & ("age" ~ 30)
-            assert(r.getField("user-name") == "Alice")
-            assert(r.getField("age") == 30)
-        }
-
-        "compile error for missing field" in {
-            typeCheckFailure("""
-                val r = "name" ~ "Alice"
-                summon[Fields.Have[r.type, "missing"]]
-            """)("Have")
-        }
-    }
-
-    "update" - {
-
-        "existing field" in {
-            val r  = ("name" ~ "Alice") & ("age" ~ 30)
-            val r2 = r.update("name", "Bob")
-            assert(r2.name == "Bob")
-            assert(r2.age == 30)
-        }
-
-        "wrong field doesn't compile" in {
-            val r = "name" ~ "Alice"
-            typeCheckFailure("""r.update("nope", 1)""")("Cannot prove")
-        }
-
-        "wrong type doesn't compile" in {
-            val r = "name" ~ "Alice"
-            typeCheckFailure("""r.update("name", 42)""")("Cannot prove")
+            case class Team(name: String, members: List[String])
+            val r3 = Record.fromProduct(Team("Engineering", List("Alice", "Bob")))
+            assert(r3.members.length == 2)
+            assert(r3.members.contains("Alice"))
         }
     }
 
@@ -239,89 +210,101 @@ class RecordTest extends Test:
         }
     }
 
-    "compact" - {
+    "field access" - {
 
-        "filters to declared fields" in {
-            val full                              = ("name" ~ "Alice") & ("age" ~ 30)
-            val nameOnly: Record["name" ~ String] = full
-            val compacted                         = nameOnly.compact
-            assert(compacted.size == 1)
-            assert(compacted.name == "Alice")
+        "selectDynamic with inference" in {
+            val r = ("name" ~ "Alice") & ("age" ~ 30)
+            assert(r.name.length == 5)
+            assert(r.age + 1 == 31)
         }
 
-        "no-op when exact" in {
-            val r: Record["name" ~ String & "age" ~ Int] = ("name" ~ "Alice") & ("age" ~ 30)
-            val compacted                                = r.compact
-            assert(compacted.size == 2)
-            assert(compacted.name == "Alice")
-            assert(compacted.age == 30)
-        }
-    }
-
-    "fields metadata" - {
-
-        "Fields.names" in {
-            val names = Fields.names["name" ~ String & "age" ~ Int]
-            assert(names == Set("name", "age"))
+        "getField for special names" in {
+            val r = ("user-name" ~ "Alice") & ("age" ~ 30)
+            assert(r.getField("user-name") == "Alice")
+            assert(r.getField("age") == 30)
         }
 
-        "Fields.fields" in {
-            val fs = Fields.fields["name" ~ String & "age" ~ Int]
-            assert(fs.size == 2)
-            assert(fs.map(_.name).toSet == Set("name", "age"))
-        }
-
-        "nested Fields" in {
-            type Inner = "x" ~ Int & "y" ~ Int
-            type Outer = "point" ~ Record[Inner]
-            val fs = Fields.fields[Outer]
-            assert(fs.size == 1)
-            assert(fs.head.name == "point")
-            assert(fs.head.nested.size == 2)
-            assert(fs.head.nested.map(_.name).toSet == Set("x", "y"))
+        "compile error for missing field" in {
+            typeCheckFailure("""
+                val r = "name" ~ "Alice"
+                summon[Fields.Have[r.type, "missing"]]
+            """)("Have")
         }
     }
 
-    "stage" - {
+    "edge cases" - {
 
-        "with type class" in {
-            trait AsColumn[A]:
-                def sqlType: String
-            object AsColumn:
-                def apply[A](tpe: String): AsColumn[A] = new AsColumn[A]:
-                    def sqlType = tpe
-                given AsColumn[Int]    = AsColumn("bigint")
-                given AsColumn[String] = AsColumn("text")
-            end AsColumn
-
-            case class Column[A](name: String, sqlType: String) derives CanEqual
-
-            type Person = "name" ~ String & "age" ~ Int
-            val columns = Record.stage[Person].using[AsColumn]([v] =>
-                (field: Field[?, v], ac: AsColumn[v]) =>
-                    Column[v](field.name, ac.sqlType))
-            assert(columns.name == Column[String]("name", "text"))
-            assert(columns.age == Column[Int]("age", "bigint"))
+        "empty string values" in {
+            val r = ("name" ~ "") & ("value" ~ "")
+            assert(r.name.isEmpty)
+            assert(r.value.isEmpty)
         }
 
-        "without type class" in {
-            type Person = "name" ~ String & "age" ~ Int
-            val staged = Record.stage[Person]([v] => (field: Field[?, v]) => Option.empty[v])
-            assert(staged.name == None)
-            assert(staged.age == None)
+        "null values" in {
+            val r = "name" ~ (null: String)
+            assert(r.name == null)
         }
 
-        "compile error when type class missing" in {
-            trait AsColumn[A]
-            object AsColumn:
-                given AsColumn[Int]    = new AsColumn[Int] {}
-                given AsColumn[String] = new AsColumn[String] {}
+        "nested records creation and access" in {
+            val inner = ("x" ~ 1) & ("y" ~ 2)
+            val outer = ("nested" ~ inner) & ("name" ~ "test")
+            assert(outer.nested.x == 1)
+            assert(outer.nested.y == 2)
+            assert(outer.name == "test")
+        }
+    }
 
-            class Role()
-            type BadPerson = "name" ~ String & "age" ~ Int & "role" ~ Role
+    "update" - {
 
-            typeCheckFailure("""Record.stage[BadPerson].using[AsColumn]([v] =>
-                (field: Field[?, v], ac: AsColumn[v]) => Option.empty[v])""")("AsColumn[Role]")
+        "existing field" in {
+            val r  = ("name" ~ "Alice") & ("age" ~ 30)
+            val r2 = r.update("name", "Bob")
+            assert(r2.name == "Bob")
+            assert(r2.age == 30)
+        }
+
+        "wrong field doesn't compile" in {
+            val r = "name" ~ "Alice"
+            typeCheckFailure("""r.update("nope", 1)""")("Cannot prove")
+        }
+
+        "wrong type doesn't compile" in {
+            val r = "name" ~ "Alice"
+            typeCheckFailure("""r.update("name", 42)""")("Cannot prove")
+        }
+    }
+
+    "combining records" - {
+
+        "merge via &" in {
+            val r1     = ("name" ~ "Alice") & ("age" ~ 30)
+            val r2     = ("city" ~ "Paris") & ("country" ~ "France")
+            val merged = r1 & r2
+            assert(merged.name == "Alice")
+            assert(merged.age == 30)
+            assert(merged.city == "Paris")
+            assert(merged.country == "France")
+        }
+
+        "fromProduct merge with manual" in {
+            case class Name(first: String)
+            val r = Record.fromProduct(Name("Alice")) & ("last" ~ "Smith")
+            assert(r.first == "Alice")
+            assert(r.last == "Smith")
+        }
+
+        "empty & record" in {
+            val r      = ("name" ~ "Alice") & ("age" ~ 30)
+            val merged = Record.empty & r
+            assert(merged.name == "Alice")
+            assert(merged.age == 30)
+        }
+
+        "record & empty" in {
+            val r      = ("name" ~ "Alice") & ("age" ~ 30)
+            val merged = r & Record.empty
+            assert(merged.name == "Alice")
+            assert(merged.age == 30)
         }
     }
 
@@ -368,37 +351,13 @@ class RecordTest extends Test:
         }
     }
 
-    "combining records" - {
+    "toDict" - {
 
-        "merge via &" in {
-            val r1     = ("name" ~ "Alice") & ("age" ~ 30)
-            val r2     = ("city" ~ "Paris") & ("country" ~ "France")
-            val merged = r1 & r2
-            assert(merged.name == "Alice")
-            assert(merged.age == 30)
-            assert(merged.city == "Paris")
-            assert(merged.country == "France")
-        }
-
-        "fromProduct merge with manual" in {
-            case class Name(first: String)
-            val r = Record.fromProduct(Name("Alice")) & ("last" ~ "Smith")
-            assert(r.first == "Alice")
-            assert(r.last == "Smith")
-        }
-
-        "empty & record" in {
-            val r      = ("name" ~ "Alice") & ("age" ~ 30)
-            val merged = Record.empty & r
-            assert(merged.name == "Alice")
-            assert(merged.age == 30)
-        }
-
-        "record & empty" in {
-            val r      = ("name" ~ "Alice") & ("age" ~ 30)
-            val merged = r & Record.empty
-            assert(merged.name == "Alice")
-            assert(merged.age == 30)
+        "preserves all entries" in {
+            case class Pair(a: Int, b: String)
+            val r                    = Record.fromProduct(Pair(1, "two"))
+            given CanEqual[Any, Any] = CanEqual.derived
+            assert(r.toDict.is(Dict("a" -> 1, "b" -> "two")))
         }
     }
 
@@ -464,48 +423,89 @@ class RecordTest extends Test:
         }
     }
 
-    "edge cases" - {
+    "stage" - {
 
-        "empty string values" in {
-            val r = ("name" ~ "") & ("value" ~ "")
-            assert(r.name.isEmpty)
-            assert(r.value.isEmpty)
+        "with type class" in {
+            trait AsColumn[A]:
+                def sqlType: String
+            object AsColumn:
+                def apply[A](tpe: String): AsColumn[A] = new AsColumn[A]:
+                    def sqlType = tpe
+                given AsColumn[Int]    = AsColumn("bigint")
+                given AsColumn[String] = AsColumn("text")
+            end AsColumn
+
+            case class Column[A](name: String, sqlType: String) derives CanEqual
+
+            type Person = "name" ~ String & "age" ~ Int
+            val columns = Record.stage[Person].using[AsColumn]([v] =>
+                (field: Field[?, v], ac: AsColumn[v]) =>
+                    Column[v](field.name, ac.sqlType))
+            assert(columns.name == Column[String]("name", "text"))
+            assert(columns.age == Column[Int]("age", "bigint"))
         }
 
-        "null values" in {
-            val r = "name" ~ (null: String)
-            assert(r.name == null)
+        "without type class" in {
+            type Person = "name" ~ String & "age" ~ Int
+            val staged = Record.stage[Person]([v] => (field: Field[?, v]) => Option.empty[v])
+            assert(staged.name == None)
+            assert(staged.age == None)
         }
 
-        "nested records creation and access" in {
-            val inner = ("x" ~ 1) & ("y" ~ 2)
-            val outer = ("nested" ~ inner) & ("name" ~ "test")
-            assert(outer.nested.x == 1)
-            assert(outer.nested.y == 2)
-            assert(outer.name == "test")
-        }
+        "compile error when type class missing" in {
+            trait AsColumn[A]
+            object AsColumn:
+                given AsColumn[Int]    = new AsColumn[Int] {}
+                given AsColumn[String] = new AsColumn[String] {}
 
-        "fromProduct with Option and Collection fields" in {
-            case class User(name: String, email: Option[String])
-            val r1 = Record.fromProduct(User("Bob", Some("bob@email.com")))
-            val r2 = Record.fromProduct(User("Alice", None))
-            assert(r1.email.contains("bob@email.com"))
-            assert(r2.email.isEmpty)
+            class Role()
+            type BadPerson = "name" ~ String & "age" ~ Int & "role" ~ Role
 
-            case class Team(name: String, members: List[String])
-            val r3 = Record.fromProduct(Team("Engineering", List("Alice", "Bob")))
-            assert(r3.members.length == 2)
-            assert(r3.members.contains("Alice"))
+            typeCheckFailure("""Record.stage[BadPerson].using[AsColumn]([v] =>
+                (field: Field[?, v], ac: AsColumn[v]) => Option.empty[v])""")("AsColumn[Role]")
         }
     }
 
-    "toMap" - {
+    "compact" - {
 
-        "preserves all entries" in {
-            case class Pair(a: Int, b: String)
-            val r                    = Record.fromProduct(Pair(1, "two"))
-            given CanEqual[Any, Any] = CanEqual.derived
-            assert(r.toDict.is(Dict("a" -> 1, "b" -> "two")))
+        "filters to declared fields" in {
+            val full                              = ("name" ~ "Alice") & ("age" ~ 30)
+            val nameOnly: Record["name" ~ String] = full
+            val compacted                         = nameOnly.compact
+            assert(compacted.size == 1)
+            assert(compacted.name == "Alice")
+        }
+
+        "no-op when exact" in {
+            val r: Record["name" ~ String & "age" ~ Int] = ("name" ~ "Alice") & ("age" ~ 30)
+            val compacted                                = r.compact
+            assert(compacted.size == 2)
+            assert(compacted.name == "Alice")
+            assert(compacted.age == 30)
+        }
+    }
+
+    "fields metadata" - {
+
+        "Fields.names" in {
+            val names = Fields.names["name" ~ String & "age" ~ Int]
+            assert(names == Set("name", "age"))
+        }
+
+        "Fields.fields" in {
+            val fs = Fields.fields["name" ~ String & "age" ~ Int]
+            assert(fs.size == 2)
+            assert(fs.map(_.name).toSet == Set("name", "age"))
+        }
+
+        "nested Fields" in {
+            type Inner = "x" ~ Int & "y" ~ Int
+            type Outer = "point" ~ Record[Inner]
+            val fs = Fields.fields[Outer]
+            assert(fs.size == 1)
+            assert(fs.head.name == "point")
+            assert(fs.head.nested.size == 2)
+            assert(fs.head.nested.map(_.name).toSet == Set("x", "y"))
         }
     }
 
