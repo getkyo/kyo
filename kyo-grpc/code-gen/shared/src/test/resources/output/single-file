@@ -1,0 +1,169 @@
+package kgrpc.test
+
+trait TestService extends _root_.kyo.grpc.Service {
+  
+  override def definition: _root_.io.grpc.ServerServiceDefinition = TestService.service(this)
+  
+  def oneToOne(request: kgrpc.test.Request): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
+  def oneToMany(
+    request: kgrpc.test.Request
+  ): _root_.kyo.<[_root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc], _root_.kyo.grpc.Grpc]
+  def manyToOne(
+    requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+  ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
+  def manyToMany(
+    requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+  ): _root_.kyo.<[_root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc], _root_.kyo.grpc.Grpc]
+}
+
+object TestService {
+  
+  def service(serviceImpl: TestService): _root_.io.grpc.ServerServiceDefinition = {
+    _root_.io.grpc.ServerServiceDefinition.builder(_root_.kgrpc.test.TestServiceGrpc.SERVICE)
+    .addMethod(
+      _root_.kgrpc.test.TestServiceGrpc.METHOD_ONE_TO_ONE,
+      _root_.kyo.grpc.ServerHandler.unary(serviceImpl.oneToOne)
+    )
+    .addMethod(
+      _root_.kgrpc.test.TestServiceGrpc.METHOD_ONE_TO_MANY,
+      _root_.kyo.grpc.ServerHandler.serverStreaming(serviceImpl.oneToMany)
+    )
+    .addMethod(
+      _root_.kgrpc.test.TestServiceGrpc.METHOD_MANY_TO_ONE,
+      _root_.kyo.grpc.ServerHandler.clientStreaming(serviceImpl.manyToOne)
+    )
+    .addMethod(
+      _root_.kgrpc.test.TestServiceGrpc.METHOD_MANY_TO_MANY,
+      _root_.kyo.grpc.ServerHandler.bidiStreaming(serviceImpl.manyToMany)
+    )
+    .build()
+  }
+  
+  def client(
+    channel: _root_.io.grpc.Channel,
+    options: _root_.io.grpc.CallOptions = _root_.io.grpc.CallOptions.DEFAULT
+  ): Client = ClientImpl(channel, options)
+  
+  def managedClient(
+    host: String,
+    port: Int,
+    timeout: _root_.kyo.Duration = _root_.kyo.Duration.fromUnits(30, _root_.kyo.Duration.Units.Millis),
+    options: _root_.io.grpc.CallOptions = _root_.io.grpc.CallOptions.DEFAULT
+  )(
+    configure: _root_.io.grpc.ManagedChannelBuilder[?] => _root_.io.grpc.ManagedChannelBuilder[?],
+    shutdown: (_root_.io.grpc.ManagedChannel, _root_.kyo.Duration) => _root_.kyo.Frame ?=> _root_.kyo.<[Any, _root_.kyo.Sync] = _root_.kyo.grpc.Client.shutdown
+  )(using
+    _root_.kyo.Frame
+  ): _root_.kyo.<[Client, _root_.kyo.Resource & _root_.kyo.Sync] =
+    _root_.kyo.grpc.Client.channel(host, port, timeout)(configure, shutdown).map(TestService.client(_, options))
+  
+  trait Client {
+    def oneToOne(request: kgrpc.test.Request): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
+    def oneToMany(
+      request: kgrpc.test.Request
+    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
+    def manyToOne(
+      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
+    def manyToMany(
+      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
+  }
+  
+  class ClientImpl(channel: _root_.io.grpc.Channel, options: _root_.io.grpc.CallOptions)
+      extends Client {
+    override def oneToOne(
+      request: kgrpc.test.Request
+    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
+      _root_.kyo.grpc.ClientCall.unary(channel, _root_.kgrpc.test.TestServiceGrpc.METHOD_ONE_TO_ONE, options, request)
+    override def oneToMany(
+      request: kgrpc.test.Request
+    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
+      _root_.kyo.grpc.ClientCall.serverStreaming(channel, _root_.kgrpc.test.TestServiceGrpc.METHOD_ONE_TO_MANY, options, request)
+    override def manyToOne(
+      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
+      _root_.kyo.grpc.ClientCall.clientStreaming(channel, _root_.kgrpc.test.TestServiceGrpc.METHOD_MANY_TO_ONE, options, requests)
+    override def manyToMany(
+      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
+      _root_.kyo.grpc.ClientCall.bidiStreaming(channel, _root_.kgrpc.test.TestServiceGrpc.METHOD_MANY_TO_MANY, options, requests)
+  }
+}
+
+trait UtilityService extends _root_.kyo.grpc.Service {
+  
+  override def definition: _root_.io.grpc.ServerServiceDefinition = UtilityService.service(this)
+  
+  def health(request: kgrpc.test.Request): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
+  def monitor(
+    request: kgrpc.test.Request
+  ): _root_.kyo.<[_root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc], _root_.kyo.grpc.Grpc]
+  def batch(
+    requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+  ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
+}
+
+object UtilityService {
+  
+  def service(serviceImpl: UtilityService): _root_.io.grpc.ServerServiceDefinition = {
+    _root_.io.grpc.ServerServiceDefinition.builder(_root_.kgrpc.test.UtilityServiceGrpc.SERVICE)
+    .addMethod(
+      _root_.kgrpc.test.UtilityServiceGrpc.METHOD_HEALTH,
+      _root_.kyo.grpc.ServerHandler.unary(serviceImpl.health)
+    )
+    .addMethod(
+      _root_.kgrpc.test.UtilityServiceGrpc.METHOD_MONITOR,
+      _root_.kyo.grpc.ServerHandler.serverStreaming(serviceImpl.monitor)
+    )
+    .addMethod(
+      _root_.kgrpc.test.UtilityServiceGrpc.METHOD_BATCH,
+      _root_.kyo.grpc.ServerHandler.clientStreaming(serviceImpl.batch)
+    )
+    .build()
+  }
+  
+  def client(
+    channel: _root_.io.grpc.Channel,
+    options: _root_.io.grpc.CallOptions = _root_.io.grpc.CallOptions.DEFAULT
+  ): Client = ClientImpl(channel, options)
+  
+  def managedClient(
+    host: String,
+    port: Int,
+    timeout: _root_.kyo.Duration = _root_.kyo.Duration.fromUnits(30, _root_.kyo.Duration.Units.Millis),
+    options: _root_.io.grpc.CallOptions = _root_.io.grpc.CallOptions.DEFAULT
+  )(
+    configure: _root_.io.grpc.ManagedChannelBuilder[?] => _root_.io.grpc.ManagedChannelBuilder[?],
+    shutdown: (_root_.io.grpc.ManagedChannel, _root_.kyo.Duration) => _root_.kyo.Frame ?=> _root_.kyo.<[Any, _root_.kyo.Sync] = _root_.kyo.grpc.Client.shutdown
+  )(using
+    _root_.kyo.Frame
+  ): _root_.kyo.<[Client, _root_.kyo.Resource & _root_.kyo.Sync] =
+    _root_.kyo.grpc.Client.channel(host, port, timeout)(configure, shutdown).map(UtilityService.client(_, options))
+  
+  trait Client {
+    def health(request: kgrpc.test.Request): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
+    def monitor(
+      request: kgrpc.test.Request
+    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
+    def batch(
+      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
+  }
+  
+  class ClientImpl(channel: _root_.io.grpc.Channel, options: _root_.io.grpc.CallOptions)
+      extends Client {
+    override def health(
+      request: kgrpc.test.Request
+    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
+      _root_.kyo.grpc.ClientCall.unary(channel, _root_.kgrpc.test.UtilityServiceGrpc.METHOD_HEALTH, options, request)
+    override def monitor(
+      request: kgrpc.test.Request
+    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
+      _root_.kyo.grpc.ClientCall.serverStreaming(channel, _root_.kgrpc.test.UtilityServiceGrpc.METHOD_MONITOR, options, request)
+    override def batch(
+      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
+      _root_.kyo.grpc.ClientCall.clientStreaming(channel, _root_.kgrpc.test.UtilityServiceGrpc.METHOD_BATCH, options, requests)
+  }
+}
