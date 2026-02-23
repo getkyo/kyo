@@ -1,449 +1,267 @@
 package kyo
 
-import Record.*
-import kyo.internal.ForSome2
-import kyo.internal.Inliner
-import kyo.internal.TypeIntersection
-import scala.annotation.implicitNotFound
-import scala.compiletime.constValue
-import scala.compiletime.erasedValue
-import scala.compiletime.error
-import scala.compiletime.summonInline
-import scala.deriving.Mirror
+export Record.`~`
+import kyo.Record.*
 import scala.language.dynamics
 import scala.language.implicitConversions
 
-/** A type-safe, immutable record structure that maps field names to values. Records solve the common need to work with flexible key-value
-  * structures while maintaining type safety at compile time. Unlike traditional maps or case classes, Records allow dynamic field
-  * combinations with static type checking, making them ideal for configuration, data transformation, and API integrations where the shape
-  * of data needs to be flexible but still type-safe.
+/** A type-safe, immutable record that maps string field names to values using intersection types.
   *
-  * =Creation=
-  * Records can be created through direct field construction using the `~` operator and combined with `&`:
-  * {{{
-  * val record: Record["name" ~ String & "age" ~ Int] = "name" ~ "Alice" & "age" ~ 30
-  * }}}
+  * Record encodes its schema as an intersection of `Name ~ Value` pairs in the type parameter `F`. For example,
+  * `Record["name" ~ String & "age" ~ Int]` describes a record with a `name` field of type `String` and an `age` field of type `Int`. Fields
+  * are created with the `~` extension on `String` and combined with `&`. Case classes can also be converted via `fromProduct`.
   *
-  * For existing data types, Records can be automatically derived from case classes and tuples:
-  * {{{
-  * case class Person(name: String, age: Int)
-  * val record: Record["name" ~ String & "age" ~ Int] = Record.fromProduct(Person("Alice", 30))
-  * }}}
+  * =Subtyping via Implicit Conversion=
+  * The type parameter `F` is '''invariant''', but an implicit `widen` conversion in the companion object allows a `Record[A]` to be used
+  * wherever a `Record[B]` is expected, provided `A <: B`. Since `"name" ~ String & "age" ~ Int <: "name" ~ String` by Scala's intersection
+  * subtyping rules, a record with more fields can be assigned where fewer are expected. This gives the effect of structural subtyping while
+  * keeping the type parameter invariant, which avoids the unsoundness issues that a covariant parameter would introduce with `~`'s
+  * contravariant `Value` position. After widening, the underlying data still contains all original fields; use `compact` to strip fields
+  * not present in the declared type.
+  *
+  * =Duplicate Fields=
+  * The same field name may appear with different types. Scala normalizes `"f" ~ Int & "f" ~ String` to `"f" ~ (Int | String)` because `~`
+  * is contravariant in `Value`, so duplicates merge into a union at the type level.
   *
   * =Field Access=
-  * Fields are accessed with compile-time verification of both existence and type:
-  * {{{
-  * record.name // Returns "Alice" as String
-  * record.age  // Returns 30 as Int
-  * record.nonexistent // Won't compile
-  * (record.name: Int) // Won't compile
-  * }}}
+  * Fields are accessed via `selectDynamic` with compile-time verification through `Fields.Have`. The return type is fully inferred, so no
+  * type ascription is needed. For field names that are not valid Scala identifiers (e.g., `"user-name"`, `"&"`), use `getField` instead.
   *
-  * =Field Subsetting=
-  * Records are covariant in their fields, which means a record with more fields can be used anywhere a record with fewer fields is
-  * expected:
-  * {{{
-  * // A record with name, age, and city
-  * val full: Record["name" ~ String & "age" ~ Int & "city" ~ String] =
-  *   "name" ~ "Alice" & "age" ~ 30 & "city" ~ "Paris"
+  * =Equality=
+  * A `CanEqual` given enables `==` and `!=` when `Fields.Comparable` is available (i.e., all value types have `CanEqual`). Field order does
+  * not affect equality. Without `Comparable` evidence, `==` will not compile, preventing accidental comparisons on non-comparable types.
   *
-  * // Can be used as a record with just name and age
-  * val nameAge: Record["name" ~ String & "age" ~ Int] = full
-  *
-  * // Or just name
-  * val nameOnly: Record["name" ~ String] = full
-  *
-  * // While the above assignments work, the underlying record still contains all fields.
-  * // Use compact to create a new record containing only the specified fields:
-  * val nameOnlyCompact: Record["name" ~ String] = nameOnly.compact  // Contains only "name"
-  * }}}
-  *
-  * This allows Records to be passed to functions that only need a subset of their fields, making them more flexible while maintaining type
-  * safety. The `compact` method creates a new record that internally contains only the fields in its type signature, removing any
-  * additional fields that may have been present in the original record.
-  *
-  * =Duplicate Field Support=
-  * Records support duplicate field names with different types, enabling flexible data modeling:
-  * {{{
-  * val record = "value" ~ "string" & "value" ~ 42
-  * (record.value: String) // Returns "string"
-  * (record.value: Int)    // Returns 42
-  * }}}
+  * @tparam F
+  *   Intersection of `Name ~ Value` field types describing the record's schema
   */
-final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dynamic:
+final class Record[F](private[kyo] val dict: Dict[String, Any]) extends Dynamic:
 
-    /** Retrieves a value from the Record by field name.
-      *
-      * @param name
-      *   The field name to look up
+    /** Retrieves a field value by name via dynamic method syntax. The return type is inferred from the field's declared type. Requires
+      * `Fields.Have` evidence that the field exists in `F`.
       */
-    def selectDynamic[Name <: String & Singleton, Value](name: Name)(using
-        @implicitNotFound("""
-        Invalid field access: ${Name}
+    def selectDynamic[Name <: String & Singleton](name: Name)(using h: Fields.Have[F, Name]): h.Value =
+        dict(name).asInstanceOf[h.Value]
 
-        Record[${Fields}]
-
-        Possible causes:
-          1. The field does not exist in this Record
-          2. The field exists but has a different type than expected
-        """)
-        ev: Fields <:< Name ~ Value,
-        tag: Tag[Value]
-    ): Value =
-        toMap(Field(name, tag)).asInstanceOf[Value]
-
-    /** Retrieves a value from the Record by field name for any field name (even it's not a valid identifier).
-      *
-      * @param name
-      *   The field name to look up
+    /** Retrieves a field value by name. Unlike `selectDynamic`, this method works with any string literal, including names that are not
+      * valid Scala identifiers (e.g., `"user-name"`, `"&"`, `""`).
       */
-    def getField[Name <: String & Singleton, Value](using
-        @implicitNotFound("""
-        Invalid field access: ${Name}
+    def getField[Name <: String & Singleton, V](name: Name)(using h: Fields.Have[F, Name]): h.Value =
+        dict(name).asInstanceOf[h.Value]
 
-        Record[${Fields}]
-
-        Possible causes:
-          1. The field does not exist in this Record
-          2. The field exists but has a different type than expected
-        """)
-        ev: Fields <:< Name ~ Value,
-        tag: Tag[Value],
-        name: ValueOf[Name]
-    ): Value = toMap(Field(name.value, tag)).asInstanceOf[Value]
-
-    /** Combines this Record with another Record.
-      *
-      * @param other
-      *   The Record to combine with
-      * @return
-      *   A new Record containing all fields from both Records
+    /** Combines this record with another, producing a record whose type is the intersection of both field sets. If both records contain a
+      * field with the same name, the value from `other` takes precedence at runtime.
       */
-    def &[A](other: Record[A]): Record[Fields & A] =
-        Record(toMap ++ other.toMap)
+    def &[A](other: Record[A]): Record[F & A] =
+        new Record(dict ++ other.dict)
+
+    /** Returns a new record with the specified field's value replaced. The field name and value type must match a field in `F`. */
+    def update[Name <: String & Singleton, V](name: Name, value: V)(using F <:< (Name ~ V)): Record[F] =
+        new Record(dict.update(name, value.asInstanceOf[Any]))
+
+    /** Returns a new record containing only the fields declared in `F`, removing any extra fields that may be present in the underlying
+      * storage due to widening. Requires a `Fields` instance for `F`.
+      */
+    def compact(using f: Fields[F]): Record[F] =
+        new Record(dict.filter((k, _) => f.names.contains(k)))
+
+    /** Returns the field names declared in `F` as a list. */
+    def fields(using f: Fields[F]): List[String] =
+        f.fields.map(_.name)
+
+    /** Extracts all field values as a typed tuple, ordered by the field declaration in `F`. */
+    inline def values(using f: Fields[F]): f.Values =
+        Record.collectValues[f.AsTuple](dict).asInstanceOf[f.Values]
+
+    /** Applies a polymorphic function to each field value, wrapping each value type in `G`. Returns a new record where every field
+      * `Name ~ V` becomes `Name ~ G[V]`.
+      */
+    def map[G[_]](using
+        f: Fields[F]
+    )(
+        fn: [t] => t => G[t]
+    ): Record[f.Map[~.MapValue[G]]] =
+        new Record(
+            dict
+                .filter((k, _) => f.names.contains(k))
+                .mapValues(v => fn(v))
+        )
+
+    /** Like `map`, but the polymorphic function also receives the `Field` descriptor for each field, providing access to the field name and
+      * tag.
+      */
+    def mapFields[G[_]](using
+        f: Fields[F]
+    )(
+        fn: [t] => (Field[?, t], t) => G[t]
+    ): Record[f.Map[~.MapValue[G]]] =
+        val result = DictBuilder.init[String, Any]
+        f.fields.foreach: field =>
+            dict.get(field.name) match
+                case Present(v) =>
+                    discard(result.add(field.name, fn(field.asInstanceOf[Field[?, Any]], v)))
+                case _ =>
+        new Record(result.result())
+    end mapFields
+
+    /** Pairs the values of this record with another record by field name. For each field `Name ~ V1` in this record and `Name ~ V2` in
+      * `other`, the result contains `Name ~ (V1, V2)`. Only fields present in this record's type are included.
+      */
+    inline def zip[F2](other: Record[F2])(using
+        f1: Fields[F],
+        f2: Fields[F2]
+    ): Record[f1.Zipped[f2.AsTuple]] =
+        val result = DictBuilder.init[String, Any]
+        f1.fields.foreach: field =>
+            dict.get(field.name) match
+                case Present(v1) =>
+                    other.dict.get(field.name) match
+                        case Present(v2) =>
+                            discard(result.add(field.name, (v1, v2)))
+                        case _ =>
+                case _ =>
+        new Record(result.result())
+    end zip
+
+    /** Returns the number of fields stored in this record. */
+    def size: Int = dict.size
+
+    /** Returns the record's contents as a `Map[String, Any]`. */
+    def toMap: Map[String, Any] = dict.toMap
+
+    override def equals(that: Any): Boolean =
+        that match
+            case other: Record[?] =>
+                given CanEqual[Any, Any] = CanEqual.derived
+                dict.is(other.dict)
+            case _ => false
+
+    override def hashCode(): Int = dict.toMap.hashCode()
+
+    /** Returns a human-readable string representation in the form `"name ~ Alice & age ~ 30"`. */
+    def show: String =
+        val sb    = new StringBuilder
+        var first = true
+        dict.foreach: (k, v) =>
+            if !first then discard(sb.append(" & "))
+            discard(sb.append(k).append(" ~ ").append(v))
+            first = false
+        sb.toString
+    end show
+
 end Record
 
-export Record.`~`
-
+/** Companion object providing record construction, field type definitions, implicit conversions, and compile-time staging. */
 object Record:
-    /** Creates an empty Record
+
+    /** Phantom type representing a field binding from a singleton string name to a value type. Contravariant in `Value` so that duplicate
+      * field names with different types are normalized to a union: `"f" ~ Int & "f" ~ String =:= "f" ~ (Int | String)`.
       */
-    val empty: Record[Any] = Record[Any](Map.empty)
-
-    private[kyo] def unsafeFrom[Fields](map: Map[Field[?, ?], Any]): Record[Fields] = Record(map)
-
-    inline def stage[Fields]: StageOps[Fields] = new StageOps[Fields](())
-
-    class StageOps[Fields](dummy: Unit) extends AnyVal:
-        /** Applies `StageAs` logic to each field. Called on a record type `n1 ~ v1 & ... & nk ~ vk`, returns a new record of type
-          * `n1 ~ F[n1, v1] & ... & nk ~ F[nk, vk]`.
-          */
-        inline def apply[F[_, _]](as: Record.StageAs[F])(using
-            initFields: AsFields[Fields],
-            ev: TypeIntersection[Fields],
-            targetFields: AsFields[ev.Map[~.Map[F]]]
-        ): Record[ev.Map[~.Map[F]]] =
-            Record.unsafeFrom(TypeIntersection.inlineAll[Fields](as).view.map {
-                case (f, g) => (AsFieldAny.toField(f), g.unwrap)
-            }.toMap)
-    end StageOps
-
-    final infix class ~[Name <: String, Value] private () extends Serializable
+    final infix class ~[Name <: String, -Value] private () extends Serializable
 
     object `~`:
-        given [Name <: String, Value](using CanEqual[Value, Value]): CanEqual[Name ~ Value, Name ~ Value] =
-            CanEqual.derived
-
-        type Map[F[_, _]] = [x] =>> x match
-            case n ~ v => n ~ F[n, v]
-
-        type MapValue[F[_]] = Map[[n, v] =>> F[v]]
-
+        /** Type-level function that wraps the value component of a `Name ~ Value` pair in `G`. */
+        type MapValue[G[_]] = [x] =>> x match
+            case n ~ v => n ~ G[v]
     end `~`
 
-    type FieldsOf[Names <: Tuple, Values <: Tuple] = (Names, Values) match
-        case (EmptyTuple, EmptyTuple)           => Any
-        case (n *: EmptyTuple, v *: EmptyTuple) => n ~ v
-        case (n *: ns, v *: vs)                 => (n ~ v) & FieldsOf[ns, vs]
+    /** Match type that looks up the value type for `Name` in a tuple of `Name ~ Value` pairs. */
+    type FieldValue[T <: Tuple, Name <: String] = T match
+        case (Name ~ v) *: _ => v
+        case _ *: rest       => FieldValue[rest, Name]
 
-    type FieldValues[T <: Tuple] <: Tuple = T match
-        case EmptyTuple               => EmptyTuple
-        case Record.`~`[n, v] *: rest => v *: FieldValues[rest]
+    /** An empty record with type `Record[Any]`, which is the identity element for `&`. */
+    val empty: Record[Any] = new Record(Dict.empty[String, Any])
 
-    type ZipLookup[N <: String, T <: Tuple] = T match
-        case (N ~ v) *: _ => v
-        case _ *: rest    => ZipLookup[N, rest]
-
-    type ZipFields[T1 <: Tuple, T2 <: Tuple] = T1 match
-        case EmptyTuple             => Any
-        case (n ~ v1) *: EmptyTuple => n ~ (v1, ZipLookup[n, T2])
-        case (n ~ v1) *: rest       => (n ~ (v1, ZipLookup[n, T2])) & ZipFields[rest, T2]
-
-    /** Creates a Record from a product type (case class or tuple).
+    /** Implicit conversion that enables structural subtyping for Record. Since `F` is invariant, this conversion allows a `Record[A]` to be
+      * used where a `Record[B]` is expected whenever `A <: B`. This is safe because the underlying `Dict` storage is read-only, and the `~`
+      * type's contravariance ensures that field type relationships are correctly preserved through intersection subtyping.
       */
-    def fromProduct[A](value: A)(using ar: AsRecord[A]): Record[ar.Fields] = ar.asRecord(value)
+    implicit def widen[A <: B, B](r: Record[A]): Record[B] =
+        r.asInstanceOf[Record[B]]
 
-    /** A field in a Record, containing a name and associated type information.
-      *
-      * @param name
-      *   The name of the field
-      * @param tag
-      *   Type evidence for the field's value type
-      */
-    case class Field[Name <: String, Value](name: Name, tag: Tag[Value])
-
-    extension [Fields](self: Record[Fields])
-
-        def size: Int = self.toMap.size
-
-        inline def fields(using ti: TypeIntersection[Fields]): List[String] =
-            collectFieldNames[ti.AsTuple]
-
-        inline def values(using ti: TypeIntersection[Fields]): FieldValues[ti.AsTuple] =
-            collectValues[ti.AsTuple](self.toMap).asInstanceOf[FieldValues[ti.AsTuple]]
-
-        def update[Name <: String & Singleton, Value](name: Name, value: Value)(using
-            @implicitNotFound("""
-        Invalid field update: ${Name}
-
-        Record[${Fields}]
-
-        Possible causes:
-          1. The field does not exist in this Record
-          2. The field exists but has a different type than expected
-            """)
-            ev: Fields <:< Name ~ Value,
-            tag: Tag[Value]
-        ): Record[Fields] =
-            Record.unsafeFrom(self.toMap.updated(Field(name, tag), value))
-
-        inline def map[F[_]](using
-            ti: TypeIntersection[Fields]
-        )(
-            f: [t] => t => F[t]
-        ): Record[ti.Map[~.MapValue[F]]] =
-            mapFields([t] => (_: Field[?, t], v: t) => f[t](v))
-
-        inline def mapFields[F[_]](using
-            ti: TypeIntersection[Fields]
-        )(
-            f: [t] => (Field[?, t], t) => F[t]
-        ): Record[ti.Map[~.MapValue[F]]] =
-            Record.unsafeFrom[ti.Map[~.MapValue[F]]](
-                mapFieldsImpl[ti.AsTuple, F](self.toMap, f)
-            )
-
-        inline def zip[Fields2](other: Record[Fields2])(using
-            ti1: TypeIntersection[Fields],
-            ti2: TypeIntersection[Fields2]
-        ): Record[ZipFields[ti1.AsTuple, ti2.AsTuple]] =
-            Record.unsafeFrom[ZipFields[ti1.AsTuple, ti2.AsTuple]](
-                zipImpl[ti1.AsTuple, ti2.AsTuple](self.toMap, other.toMap)
-            )
-
-        def compact(using AsFields[Fields]): Record[Fields] =
-            Record(self.toMap.view.filterKeys(AsFields[Fields].contains(_)).toMap)
-    end extension
-
+    /** Creates a single-field record from a string literal name and a value. */
     extension (self: String)
-        /** Creates a single-field Record with the string as the field name.
-          *
-          * @param value
-          *   The value to associate with the field
-          */
-        def ~[Value](value: Value)(using tag: Tag[Value]): Record[self.type ~ Value] =
-            Record(Map.empty.updated(Field(self, tag), value))
-    end extension
+        def ~[Value](value: Value): Record[self.type ~ Value] =
+            new Record(Dict[String, Any](self -> value))
 
-    /** Type class for converting types to Records.
-      *
-      * This type class enables automatic derivation of Records from product types (case classes and tuples). It maintains type information
-      * about the fields and their values during conversion.
-      *
-      * @tparam A
-      *   The type to convert to a Record
-      */
-    trait AsRecord[A]:
-        /** The field structure of the converted Record */
-        type Fields
-
-        /** Converts a value to a Record */
-        def asRecord(value: A): Record[Fields]
-    end AsRecord
-
-    object AsRecord:
-
-        type RMirror[A, Names <: Tuple, Values <: Tuple] = Mirror.ProductOf[A] {
-            type MirroredElemLabels = Names
-            type MirroredElemTypes  = Values
-        }
-
-        trait RecordContents[Names <: Tuple, Values <: Tuple]:
-            def addTo(product: Product, idx: Int, map: Map[Field[?, ?], Any]): Map[Field[?, ?], Any]
-
-        object RecordContents:
-            given empty: RecordContents[EmptyTuple, EmptyTuple] with
-                def addTo(product: Product, idx: Int, map: Map[Field[?, ?], Any]): Map[Field[?, ?], Any] = map
-
-            given nonEmpty[NH <: (String & Singleton), NT <: Tuple, VH, VT <: Tuple](
-                using
-                tag: Tag[VH],
-                vo: ValueOf[NH],
-                next: RecordContents[NT, VT]
-            ): RecordContents[NH *: NT, VH *: VT] with
-                def addTo(product: Product, idx: Int, map: Map[Field[?, ?], Any]): Map[Field[?, ?], Any] =
-                    next.addTo(product, idx + 1, map.updated(Field[NH, VH](vo.value, tag), product.productElement(idx)))
-            end nonEmpty
-        end RecordContents
-
-        given [A <: Product, Names <: Tuple, Values <: Tuple](using
-            mir: RMirror[A, Names, Values],
-            rc: RecordContents[Names, Values]
-        ): AsRecord[A] with
-            type Fields = Record.FieldsOf[Names, Values]
-
-            def asRecord(value: A): Record[Fields] =
-                Record(rc.addTo(value, 0, Map.empty)).asInstanceOf[Record[Fields]]
-            end asRecord
-        end given
-    end AsRecord
-
-    /** Represents a field in a Record type at the type level.
-      *
-      * AsField is used to convert Record field types into concrete Field instances, maintaining type safety for field names and their
-      * associated values.
-      *
-      * @tparam A
-      *   The field type, typically in the form of `"fieldName" ~ ValueType`
-      */
-    type AsField[Name <: String, Value] = AsField.Type[Name, Value]
-    object AsField:
-        opaque type Type[Name <: String, Value] = Field[Name, Value]
-
-        inline given [N <: String, V](using tag: Tag[V]): AsField[N, V] =
-            Field(constValue[N], tag)
-
-        private[kyo] def fromField[Name <: String, Value](field: Field[Name, Value]): AsField[Name, Value] = field
-        private[kyo] def toField[Name <: String, Value](field: AsField[Name, Value]): Field[Name, Value]   = field
-    end AsField
-
-    private[kyo] type AsFieldAny[n, v] = AsField[n & String, v]
-    private[kyo] object AsFieldAny:
-        def toField(as: ForSome2[AsFieldAny]): Field[?, ?] = AsField.toField(as.unwrap)
-
-    /** Type class for working with sets of Record fields.
-      *
-      * AsFields provides type-safe field set operations and is used primarily for the `compact` operation on Records.
-      *
-      * @tparam A
-      *   The combined type of all fields in the set
-      */
-    type AsFields[+A] = AsFields.Type[A]
-
-    object AsFields:
-        opaque type Type[+A] <: Set[Field[?, ?]] = Set[Field[?, ?]]
-
-        def apply[A](using af: AsFields[A]): Set[Field[?, ?]] = af
-
-        inline given [Fields](using ev: TypeIntersection[Fields]): AsFields[Fields] =
-            AsFieldsInternal.summonAsField
-    end AsFields
-
-    given [Fields, T](using TypeIntersection.Aux[Fields, T], CanEqual[T, T]): CanEqual[Record[Fields], Record[Fields]] =
+    /** Provides `CanEqual` for records whose field types are all comparable, enabling `==` and `!=`. */
+    given [F](using Fields.Comparable[F]): CanEqual[Record[F], Record[F]] =
         CanEqual.derived
 
-    private object RenderInliner extends Inliner[(String, Render[?])]:
-        inline def apply[T]: (String, Render[?]) =
-            inline erasedValue[T] match
-                case _: (n ~ v) =>
-                    constValue[n & String] -> summonInline[Render[v]]
-    end RenderInliner
+    /** Provides a `Render` instance for records, rendering each field as `"name ~ value"` joined by `" & "`. Requires `Render` instances
+      * for all field value types.
+      */
+    given render[F](using f: Fields[F], renders: Fields.SummonAll[F, Render]): Render[Record[F]] =
+        Render.from: (value: Record[F]) =>
+            val sb    = new StringBuilder
+            var first = true
+            value.dict.foreach: (name, v) =>
+                if renders.contains(name) then
+                    if !first then discard(sb.append(" & "))
+                    discard(sb.append(name).append(" ~ ").append(renders.get(name).asText(v)))
+                    first = false
+            sb.toString
 
-    inline given [Fields: TypeIntersection]: Render[Record[Fields]] =
-        val insts = TypeIntersection.inlineAll[Fields](RenderInliner).toMap
-        Render.from: (value: Record[Fields]) =>
-            value.toMap.iterator.collect {
-                case (field, v) if insts.contains(field.name) =>
-                    val r = insts(field.name).asInstanceOf[Render[Any]]
-                    field.name + " ~ " + r.asText(v)
-            }.mkString(" & ")
-    end given
+    import scala.compiletime.*
 
-    trait StageAs[F[_, _]] extends Inliner[(ForSome2[AsFieldAny], ForSome2[F])]:
-        inline def stage[Name <: String, Value](field: Field[Name, Value]): F[Name, Value]
+    /** Begins compile-time staging for a field type `A`. Staging iterates over the fields at compile time (via inline expansion) and
+      * applies a polymorphic function to each, producing a new record. This is useful for deriving metadata, default values, or type class
+      * instances per field. Call the returned `StageOps` directly to stage without a type class, or chain `.using[TC]` to require a type
+      * class instance for each field's value type.
+      */
+    inline def stage[A](using f: Fields[A]): StageOps[A, f.AsTuple] = new StageOps(())
 
-        override inline def apply[T]: (ForSome2[AsFieldAny], ForSome2[F]) =
-            inline erasedValue[T] match
-                case _: (n ~ v) =>
-                    val name    = constValue[n]
-                    val prevTag = summonInline[Tag[v]]
-                    val nextTag = summonInline[Tag[F[n, v]]]
+    /** Intermediate builder for staging without a type class constraint. Apply a polymorphic function `Field[?, v] => G[v]` to produce a
+      * record where each field `Name ~ V` becomes `Name ~ G[V]`.
+      */
+    class StageOps[A, T <: Tuple](dummy: Unit) extends AnyVal:
+        inline def apply[G[_]](fn: [v] => Field[?, v] => G[v])(using f: Fields[A]): Record[f.Map[~.MapValue[G]]] =
+            new Record(stageLoop[f.AsTuple, G](fn)).asInstanceOf[Record[f.Map[~.MapValue[G]]]]
 
-                    (
-                        ForSome2.of[AsFieldAny](AsField.fromField(Field(name, nextTag))),
-                        ForSome2(stage[n, v](Field(name, prevTag)))
-                    )
-    end StageAs
+        /** Adds a type class constraint `TC` that must be available for each field's value type. Produces a `StageWith` that accepts a
+          * function receiving both the `Field` descriptor and the `TC` instance.
+          */
+        inline def using[TC[_]]: StageWith[A, T, TC] = new StageWith(())
+    end StageOps
 
-    private inline def collectFieldNames[T <: Tuple]: List[String] =
+    /** Intermediate builder for staging with a type class constraint `TC`. Apply a polymorphic function `(Field[?, v], TC[v]) => G[v]` to
+      * produce a record where each field `Name ~ V` becomes `Name ~ G[V]`. Fails at compile time if any field's value type lacks a `TC`
+      * instance.
+      */
+    class StageWith[A, T <: Tuple, TC[_]](dummy: Unit) extends AnyVal:
+        inline def apply[G[_]](fn: [v] => (Field[?, v], TC[v]) => G[v])(using f: Fields[A]): Record[f.Map[~.MapValue[G]]] =
+            new Record(stageLoopWith[f.AsTuple, TC, G](fn)).asInstanceOf[Record[f.Map[~.MapValue[G]]]]
+
+    private[kyo] inline def stageLoop[T <: Tuple, G[_]](fn: [v] => Field[?, v] => G[v]): Dict[String, Any] =
         inline erasedValue[T] match
-            case _: EmptyTuple => Nil
+            case _: EmptyTuple => Dict.empty[String, Any]
             case _: ((n ~ v) *: rest) =>
-                constValue[n & String] :: collectFieldNames[rest]
-            case _: (_ *: rest) =>
-                collectFieldNames[rest]
+                val name  = constValue[n & String]
+                val value = fn[v](Field(name, summonInline[Tag[v]]))
+                stageLoop[rest, G](fn) ++ Dict[String, Any](name -> value)
 
-    private inline def collectValues[T <: Tuple](
-        map: Map[Field[?, ?], Any]
-    ): Tuple =
+    private[kyo] inline def stageLoopWith[T <: Tuple, TC[_], G[_]](fn: [v] => (Field[?, v], TC[v]) => G[v]): Dict[String, Any] =
+        inline erasedValue[T] match
+            case _: EmptyTuple => Dict.empty[String, Any]
+            case _: ((n ~ v) *: rest) =>
+                val name  = constValue[n & String]
+                val value = fn[v](Field(name, summonInline[Tag[v]]), summonInline[TC[v]])
+                stageLoopWith[rest, TC, G](fn) ++ Dict[String, Any](name -> value)
+
+    /** Creates a record from a case class or other `Product` type. Each product element becomes a field whose name matches the element
+      * label. The return type is a `Record` with the appropriate field intersection, inferred transparently by the macro. Fails at compile
+      * time if `A` is not a `Product`.
+      */
+    transparent inline def fromProduct[A <: Product](value: A): Any =
+        ${ internal.FieldsMacros.fromProductImpl[A]('value) }
+
+    private[kyo] inline def collectValues[T <: Tuple](dict: Dict[String, Any]): Tuple =
         inline erasedValue[T] match
             case _: EmptyTuple => EmptyTuple
             case _: ((n ~ v) *: rest) =>
-                val name = constValue[n & String]
-                val tag  = summonInline[Tag[v]]
-                map(Field(name, tag)) *: collectValues[rest](map)
+                dict(constValue[n & String]) *: collectValues[rest](dict)
 
-    private inline def mapFieldsImpl[T <: Tuple, F[_]](
-        map: Map[Field[?, ?], Any],
-        f: [t] => (Field[?, t], t) => F[t]
-    ): Map[Field[?, ?], Any] =
-        inline erasedValue[T] match
-            case _: EmptyTuple => Map.empty
-            case _: ((n ~ v) *: rest) =>
-                val name    = constValue[n & String]
-                val prevTag = summonInline[Tag[v]]
-                val nextTag = summonInline[Tag[F[v]]]
-                val field   = Field(name, prevTag)
-                val value   = map(field).asInstanceOf[v]
-                val result  = f[v](field, value)
-                mapFieldsImpl[rest, F](map, f).updated(Field(name, nextTag), result)
+    private[kyo] def make[F](map: Map[String, Any]): Record[F] =
+        new Record(Dict.from(map))
 
-    private inline def zipImpl[T1 <: Tuple, T2 <: Tuple](
-        map1: Map[Field[?, ?], Any],
-        map2: Map[Field[?, ?], Any]
-    ): Map[Field[?, ?], Any] =
-        inline erasedValue[T1] match
-            case _: EmptyTuple => Map.empty
-            case _: ((n ~ v1) *: rest) =>
-                val name    = constValue[n & String]
-                val tag1    = summonInline[Tag[v1]]
-                val tag2    = summonInline[Tag[ZipLookup[n, T2]]]
-                val pairTag = summonInline[Tag[(v1, ZipLookup[n, T2])]]
-                val value1  = map1(Field(name, tag1))
-                val value2  = map2(Field(name, tag2))
-                zipImpl[rest, T2](map1, map2).updated(Field(name, pairTag), (value1, value2))
 end Record
-
-object AsFieldsInternal:
-    private object AsFieldInliner extends Inliner[ForSome2[AsFieldAny]]:
-        inline def apply[T]: ForSome2[AsFieldAny] =
-            inline erasedValue[T] match
-                case _: (n ~ v) =>
-                    ForSome2.of[AsFieldAny](summonInline[AsField[n, v]])
-                case _ => error("Given type doesn't match to expected field shape: Name ~ Value")
-    end AsFieldInliner
-
-    inline def summonAsField[Fields](using ev: TypeIntersection[Fields]): Set[Field[?, ?]] =
-        TypeIntersection.inlineAll[Fields](AsFieldInliner).map(Record.AsFieldAny.toField).toSet
-    end summonAsField
-end AsFieldsInternal
