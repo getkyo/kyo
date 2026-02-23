@@ -125,8 +125,8 @@ final class Record[F](private[kyo] val dict: Dict[String, Any]) extends Dynamic:
     /** Returns the number of fields stored in this record. */
     def size: Int = dict.size
 
-    /** Returns the record's contents as a `Map[String, Any]`. */
-    def toMap: Map[String, Any] = dict.toMap
+    /** Returns the record's contents as a `Dict[String, Any]`. */
+    def toDict: Dict[String, Any] = dict
 
     override def equals(that: Any): Boolean =
         that match
@@ -135,7 +135,11 @@ final class Record[F](private[kyo] val dict: Dict[String, Any]) extends Dynamic:
                 dict.is(other.dict)
             case _ => false
 
-    override def hashCode(): Int = dict.toMap.hashCode()
+    override def hashCode(): Int =
+        var h = 0
+        dict.foreach((k, v) => h = h ^ (k.hashCode * 31 + v.##))
+        h
+    end hashCode
 
     /** Returns a human-readable string representation in the form `"name ~ Alice & age ~ 30"`. */
     def show: String =
@@ -261,7 +265,7 @@ object Record:
             case _: ((n ~ v) *: rest) =>
                 dict(constValue[n & String]) *: collectValues[rest](dict)
 
-    private[kyo] def make[F](map: Map[String, Any]): Record[F] =
-        new Record(Dict.from(map))
+    private[kyo] def make[F](dict: Dict[String, Any]): Record[F] =
+        new Record(dict)
 
 end Record

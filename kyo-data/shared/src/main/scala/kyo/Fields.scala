@@ -11,8 +11,7 @@ import scala.compiletime.*
   * the product's element labels and types.
   *
   * Instances are derived transparently via a macro (`Fields.derive`), and are summoned implicitly by `Record` operations like `map`,
-  * `compact`, `values`, and `zip`. This is the single macro-powered abstraction in the Record system — all other operations are built on
-  * pure Scala using the metadata that `Fields` provides.
+  * `compact`, `values`, and `zip`.
   *
   * @tparam A
   *   The field intersection type (e.g., `"name" ~ String & "age" ~ Int`) or a case class type
@@ -34,21 +33,20 @@ sealed abstract class Fields[A] extends Serializable:
     /** Zips this field tuple with another by name, pairing their value types into tuples. */
     type Zipped[T2 <: Tuple] = Fields.ZipValues[AsTuple, T2]
 
-    /** The set of field names, materialized at runtime by the macro. */
-    val names: Set[String]
-
     /** Runtime `Field` descriptors (name, tag, nested), lazily materialized. */
     lazy val fields: List[Field[?, ?]]
+
+    /** The set of field names, derived from `fields`. */
+    def names: Set[String] = fields.iterator.map(_.name).toSet
 
 end Fields
 
 /** Companion providing derivation, type-level utilities, and evidence types for field operations. */
 object Fields:
 
-    private[kyo] def createAux[A, T <: Tuple](_names: Set[String], _fields: => List[Field[?, ?]]): Fields.Aux[A, T] =
+    private[kyo] def createAux[A, T <: Tuple](_fields: => List[Field[?, ?]]): Fields.Aux[A, T] =
         new Fields[A]:
             type AsTuple = T
-            val names       = _names
             lazy val fields = _fields
 
     private[kyo] type Join[A <: Tuple] = Tuple.Fold[A, Any, [B, C] =>> B & C]
@@ -97,7 +95,7 @@ object Fields:
         def contains(name: String): Boolean = sa.contains(name)
 
         /** Iterates over all (name, instance) pairs. */
-        def iterator: Iterator[(String, F[Any])] = sa.iterator
+        def foreach(fn: (String, F[Any]) => Unit): Unit = sa.foreach((k, v) => fn(k, v))
     end extension
 
     object SummonAll:

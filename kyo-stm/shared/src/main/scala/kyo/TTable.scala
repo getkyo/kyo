@@ -223,12 +223,14 @@ object TTable:
             @implicitNotFound(indexMismatch) ev: Indexes <:< A,
             frame: Frame
         ): Chunk[Id] < STM =
-            Kyo.foreach(filter.toMap.toSeq) { (name, value) =>
+            val pairs = filter.toDict.foldLeft(List.empty[(String, Any)])((acc, k, v) => (k, v) :: acc)
+            Kyo.foreach(pairs) { (name, value) =>
                 indexes(name).getOrElse(value, Set.empty)
             }.map { r =>
                 if r.isEmpty then Chunk.empty
                 else Chunk.from(r.reduce(_ intersect _).toSeq.sorted.map(unsafeId(_)))
             }
+        end queryIds
 
         /** Queries the table for records matching the given filter criteria using indexed fields.
           *
@@ -253,9 +255,9 @@ object TTable:
         end query
 
         private def updateIndexes(id: Id, record: Record[F])(using Frame): Unit < STM =
-            val map = record.toMap
+            val dict = record.toDict
             Kyo.foreachDiscard(indexes.toSeq) { case (name, idx) =>
-                idx.updateWith(map(name)) {
+                idx.updateWith(dict(name)) {
                     case Absent     => Maybe(Set(id))
                     case Present(c) => Maybe(c + id)
                 }
@@ -263,9 +265,9 @@ object TTable:
         end updateIndexes
 
         private def removeFromIndexes(id: Id, record: Record[F])(using Frame): Unit < STM =
-            val map = record.toMap
+            val dict = record.toDict
             Kyo.foreachDiscard(indexes.toSeq) { case (name, idx) =>
-                idx.updateWith(map(name)) {
+                idx.updateWith(dict(name)) {
                     case Absent     => Absent
                     case Present(c) => Maybe(c - id)
                 }

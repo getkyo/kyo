@@ -72,16 +72,14 @@ object FieldsMacros:
                     Some(ComponentInfo(name, nameExpr, tagExpr, nestedExpr))
                 case _ => None
 
-        val infos    = components.flatMap(extractComponent)
-        val nameArgs = infos.map(_.nameExpr).toList
-        val namesSet = '{ Set(${ Varargs(nameArgs) }*) }
+        val infos = components.flatMap(extractComponent)
         val fieldsList = Expr.ofList(infos.map(ci =>
             '{ Field[String, Any](${ ci.nameExpr }, ${ ci.tagExpr }.asInstanceOf[Tag[Any]], ${ ci.nestedExpr }) }
         ).toList)
 
         tupled(components).asType match
             case '[type x <: Tuple; x] =>
-                '{ Fields.createAux[A, x]($namesSet, $fieldsList) }
+                '{ Fields.createAux[A, x]($fieldsList) }
         end match
     end deriveImpl
 

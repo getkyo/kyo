@@ -20,11 +20,11 @@ case class Field[Name <: String, Value](
 ):
     /** Extracts this field's value from a record. Requires evidence that `F` contains `Name ~ Value`. */
     def get[F](record: Record[F])(using F <:< (Name ~ Value)): Value =
-        record.toMap(name).asInstanceOf[Value]
+        record.toDict(name).asInstanceOf[Value]
 
     /** Returns a new record with this field's value replaced. Requires evidence that `F` contains `Name ~ Value`. */
     def set[F](record: Record[F], value: Value)(using F <:< (Name ~ Value)): Record[F] =
-        Record.make(record.toMap.updated(name, value))
+        Record.make(record.toDict.update(name, value.asInstanceOf[Any]))
 end Field
 
 object Field:

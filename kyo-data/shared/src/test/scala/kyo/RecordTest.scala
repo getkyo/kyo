@@ -245,7 +245,7 @@ class RecordTest extends Test:
             val full                              = ("name" ~ "Alice") & ("age" ~ 30)
             val nameOnly: Record["name" ~ String] = full
             val compacted                         = nameOnly.compact
-            assert(compacted.toMap.size == 1)
+            assert(compacted.size == 1)
             assert(compacted.name == "Alice")
         }
 
@@ -505,7 +505,7 @@ class RecordTest extends Test:
             case class Pair(a: Int, b: String)
             val r                    = Record.fromProduct(Pair(1, "two"))
             given CanEqual[Any, Any] = CanEqual.derived
-            assert(r.toMap == Map("a" -> 1, "b" -> "two"))
+            assert(r.toDict.is(Dict("a" -> 1, "b" -> "two")))
         }
     }
 
