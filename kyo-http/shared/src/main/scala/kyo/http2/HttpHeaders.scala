@@ -23,6 +23,9 @@ object HttpHeaders:
 
     val empty: HttpHeaders = Chunk.empty[String]
 
+    /** Constructs HttpHeaders from a flat interleaved Chunk of [name, value, name, value, ...]. */
+    private[http2] def fromChunk(chunk: Chunk[String]): HttpHeaders = chunk
+
     extension (self: HttpHeaders)
 
         def size: Int = self.length / 2
@@ -182,7 +185,7 @@ object HttpHeaders:
         loop(0)
     end parseCookieHeader
 
-    private def serializeCookie[A](name: String, cookie: HttpCookie[A]): String =
+    private[http2] def serializeCookie[A](name: String, cookie: HttpCookie[A]): String =
         val sb = new StringBuilder
         discard(sb.append(name).append('=').append(cookie.codec.encode(cookie.value)))
         cookie.maxAge match
