@@ -45,8 +45,7 @@ class HttpClientTest extends Test:
         def sendWith[In, Out, A, S](
             conn: Connection,
             route: HttpRoute[In, Out, ?],
-            request: HttpRequest[In],
-            timeout: Maybe[Duration]
+            request: HttpRequest[In]
         )(f: HttpResponse[Out] => A < S)(using Frame): A < (S & Async & Abort[HttpError]) =
             callCount.incrementAndGet()
             f(respond(callCount).asInstanceOf[HttpResponse[Out]])

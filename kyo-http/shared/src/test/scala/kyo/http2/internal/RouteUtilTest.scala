@@ -1,6 +1,7 @@
 package kyo.http2.internal
 
 import kyo.Absent
+import kyo.Dict
 import kyo.Maybe
 import kyo.Maybe.Present
 import kyo.Record2
@@ -8,9 +9,11 @@ import kyo.Result
 import kyo.Span
 import kyo.http2.HttpCodec
 import kyo.http2.HttpCookie
+import kyo.http2.HttpEvent
 import kyo.http2.HttpFormCodec
 import kyo.http2.HttpHeaders
 import kyo.http2.HttpMethod
+import kyo.http2.HttpPart
 import kyo.http2.HttpPath
 import kyo.http2.HttpRequest
 import kyo.http2.HttpResponse
@@ -18,6 +21,7 @@ import kyo.http2.HttpRoute
 import kyo.http2.HttpStatus
 import kyo.http2.HttpUrl
 import kyo.http2.Schema
+import kyo.millis
 
 class RouteUtilTest extends kyo.Test:
 
@@ -312,7 +316,7 @@ class RouteUtilTest extends kyo.Test:
     "decodeBufferedRequest" - {
         "json body with path captures" in {
             val route    = HttpRoute.post("users" / HttpPath.Capture[Int]("userId")).request(_.bodyJson[User])
-            val captures = Map("userId" -> "42")
+            val captures = Dict("userId" -> "42")
             val json     = """{"name":"Alice","age":30}"""
             val bytes    = Span.fromUnsafe(json.getBytes("UTF-8"))
 
@@ -333,7 +337,7 @@ class RouteUtilTest extends kyo.Test:
                     case "sort" => Present("name")
                     case _      => Absent
 
-            RouteUtil.decodeBufferedRequest(route, Map.empty, queryFn, HttpHeaders.empty, Span.empty[Byte]) match
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], queryFn, HttpHeaders.empty, Span.empty[Byte]) match
                 case Result.Success(request) =>
                     assert(request.fields.page == 2)
                     assert(request.fields.sort == "name")
@@ -345,7 +349,7 @@ class RouteUtilTest extends kyo.Test:
         "optional query param absent" in {
             val route = HttpRoute.get("users").request(_.queryOpt[Int]("page"))
 
-            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
                 case Result.Success(request) =>
                     assert(request.fields.page == Absent)
                 case Result.Failure(err) => fail(s"decode failed: $err")
@@ -356,7 +360,7 @@ class RouteUtilTest extends kyo.Test:
         "default param value" in {
             val route = HttpRoute.get("users").request(_.query[Int]("page", default = Present(1)))
 
-            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
                 case Result.Success(request) =>
                     assert(request.fields.page == 1)
                 case Result.Failure(err) => fail(s"decode failed: $err")
@@ -367,7 +371,7 @@ class RouteUtilTest extends kyo.Test:
         "missing required param fails" in {
             val route = HttpRoute.get("users").request(_.query[Int]("page"))
 
-            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
                 case Result.Success(_)   => fail("expected failure")
                 case Result.Failure(err) => assert(err.getMessage.contains("Missing required param"))
                 case p: Result.Panic     => throw p.exception
@@ -377,7 +381,7 @@ class RouteUtilTest extends kyo.Test:
         "missing path capture fails" in {
             val route = HttpRoute.get("users" / HttpPath.Capture[Int]("userId"))
 
-            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
                 case Result.Success(_)   => fail("expected failure")
                 case Result.Failure(err) => assert(err.getMessage.contains("Missing path capture"))
                 case p: Result.Panic     => throw p.exception
@@ -642,7 +646,7 @@ class RouteUtilTest extends kyo.Test:
             val route   = HttpRoute.get("data").request(_.header[String]("auth", wireName = "Authorization"))
             val headers = HttpHeaders.empty.add("Authorization", "Bearer xyz")
 
-            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, headers, Span.empty[Byte]) match
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, headers, Span.empty[Byte]) match
                 case Result.Success(req) =>
                     assert(req.fields.dict("auth") == "Bearer xyz")
                 case Result.Failure(err) => fail(s"decode failed: $err")
@@ -654,7 +658,7 @@ class RouteUtilTest extends kyo.Test:
             val route   = HttpRoute.get("data").request(_.cookie[String]("session"))
             val headers = HttpHeaders.empty.add("Cookie", "session=abc123; theme=dark")
 
-            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, headers, Span.empty[Byte]) match
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, headers, Span.empty[Byte]) match
                 case Result.Success(req) =>
                     assert(req.fields.dict("session") == "abc123")
                 case Result.Failure(err) => fail(s"decode failed: $err")
@@ -666,7 +670,7 @@ class RouteUtilTest extends kyo.Test:
             val route   = HttpRoute.get("data").request(_.headerOpt[String]("auth", wireName = "Authorization"))
             val headers = HttpHeaders.empty.add("Authorization", "Bearer xyz")
 
-            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, headers, Span.empty[Byte]) match
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, headers, Span.empty[Byte]) match
                 case Result.Success(req) =>
                     assert(req.fields.dict("auth") == Present("Bearer xyz"))
                 case Result.Failure(err) => fail(s"decode failed: $err")
@@ -677,7 +681,7 @@ class RouteUtilTest extends kyo.Test:
         "optional header absent" in {
             val route = HttpRoute.get("data").request(_.headerOpt[String]("auth", wireName = "Authorization"))
 
-            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
                 case Result.Success(req) =>
                     assert(req.fields.dict("auth") == Absent)
                 case Result.Failure(err) => fail(s"decode failed: $err")
@@ -688,7 +692,7 @@ class RouteUtilTest extends kyo.Test:
         "invalid int capture fails with parse error" in {
             val route = HttpRoute.get("users" / HttpPath.Capture[Int]("userId"))
 
-            RouteUtil.decodeBufferedRequest(route, Map("userId" -> "notanumber"), _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
+            RouteUtil.decodeBufferedRequest(route, Dict("userId" -> "notanumber"), _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
                 case Result.Success(_)   => fail("expected failure")
                 case Result.Failure(err) => assert(err.getMessage.contains("Failed to decode path capture"))
                 case p: Result.Panic     => throw p.exception
@@ -700,7 +704,7 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.decodeBufferedRequest(
                 route,
-                Map.empty,
+                Dict.empty[String, String],
                 name => if name == "page" then Present("abc") else Absent,
                 HttpHeaders.empty,
                 Span.empty[Byte]
@@ -716,7 +720,7 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.decodeBufferedRequest(
                 route,
-                Map.empty,
+                Dict.empty[String, String],
                 name => if name == "page" then Present("5") else Absent,
                 HttpHeaders.empty,
                 Span.empty[Byte]
@@ -732,7 +736,7 @@ class RouteUtilTest extends kyo.Test:
             val route = HttpRoute.post("users").request(_.bodyJson[User])
             val bytes = Span.fromUnsafe("not valid json".getBytes("UTF-8"))
 
-            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, bytes) match
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, HttpHeaders.empty, bytes) match
                 case Result.Success(_)   => fail("expected failure")
                 case Result.Failure(err) => assert(err.getMessage.contains("JSON decode failed"))
                 case p: Result.Panic     => throw p.exception
@@ -743,7 +747,7 @@ class RouteUtilTest extends kyo.Test:
             val route = HttpRoute.post("upload").request(_.bodyBinary)
             val data  = Span.fromUnsafe(Array[Byte](10, 20, 30))
 
-            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, data) match
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, HttpHeaders.empty, data) match
                 case Result.Success(req) =>
                     val decoded = req.fields.dict("body").asInstanceOf[Span[Byte]]
                     assert(decoded.toArrayUnsafe.asInstanceOf[Array[Byte]].toSeq == Seq[Byte](10, 20, 30))
@@ -756,7 +760,7 @@ class RouteUtilTest extends kyo.Test:
             val route = HttpRoute.post("login").request(_.bodyForm[LoginForm])
             val bytes = Span.fromUnsafe("username=alice&password=secret".getBytes("UTF-8"))
 
-            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, bytes) match
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, HttpHeaders.empty, bytes) match
                 case Result.Success(req) =>
                     assert(req.fields.dict("body") == LoginForm("alice", "secret"))
                 case Result.Failure(err) => fail(s"decode failed: $err")
@@ -767,7 +771,7 @@ class RouteUtilTest extends kyo.Test:
         "empty body for no-body route" in {
             val route = HttpRoute.get("health")
 
-            RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, HttpHeaders.empty, Span.empty[Byte]) match
                 case Result.Success(req) =>
                     assert(req.fields.dict.isEmpty)
                 case Result.Failure(err) => fail(s"decode failed: $err")
@@ -961,7 +965,7 @@ class RouteUtilTest extends kyo.Test:
 
                     RouteUtil.decodeBufferedRequest(
                         route,
-                        Map("userId" -> "42"),
+                        Dict("userId" -> "42"),
                         queryFn,
                         headers,
                         bytes
@@ -1017,7 +1021,7 @@ class RouteUtilTest extends kyo.Test:
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, _) => fail("expected buffered"),
                 onBuffered = (_, _, _, bytes) =>
-                    RouteUtil.decodeBufferedRequest(route, Map.empty, _ => Absent, HttpHeaders.empty, bytes) match
+                    RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, HttpHeaders.empty, bytes) match
                         case Result.Success(decoded) =>
                             assert(decoded.fields.dict("body") == form)
                         case Result.Failure(err) => fail(s"decode failed: $err")
@@ -1025,6 +1029,213 @@ class RouteUtilTest extends kyo.Test:
                 ,
                 onStreaming = (_, _, _, _) => fail("expected buffered")
             )
+        }
+    }
+
+    // ==================== SSE encoding ====================
+
+    "SSE encoding" - {
+        "encodeResponse produces SSE frames" in run {
+            val route = HttpRoute.get("events").response(_.bodySse[User])
+            val events: kyo.Stream[HttpEvent[User], kyo.Async & kyo.Scope] = kyo.Stream.init(Seq(
+                HttpEvent(User("Alice", 30)),
+                HttpEvent(User("Bob", 25), event = Present("update")),
+                HttpEvent(User("Carol", 35), id = Present("3"), retry = Present(5000.millis))
+            ))
+            val response = HttpResponse(HttpStatus.OK, HttpHeaders.empty, Record2.empty)
+                .addField("body", events)
+
+            var contentType                                           = ""
+            var stream: kyo.Stream[Span[Byte], kyo.Async & kyo.Scope] = null
+            RouteUtil.encodeResponse(route, response)(
+                onEmpty = (_, _) => fail("expected streaming"),
+                onBuffered = (_, _, _, _) => fail("expected streaming"),
+                onStreaming = (_, _, ct, s) =>
+                    contentType = ct
+                    stream = s
+            )
+            assert(contentType == "text/event-stream")
+            kyo.Scope.run {
+                stream.run.map { chunks =>
+                    val frames = chunks.toSeq.map(span => new String(span.toArrayUnsafe, "UTF-8"))
+                    // First event: just data
+                    assert(frames(0).contains("data:"))
+                    assert(frames(0).contains("Alice"))
+                    assert(frames(0).endsWith("\n\n"))
+                    // Second event: data + event name
+                    assert(frames(1).contains("event: update"))
+                    assert(frames(1).contains("Bob"))
+                    // Third event: data + id + retry
+                    assert(frames(2).contains("id: 3"))
+                    assert(frames(2).contains("retry: 5000"))
+                    assert(frames(2).contains("Carol"))
+                }
+            }
+        }
+    }
+
+    // ==================== SSE decoding ====================
+
+    "SSE decoding" - {
+        "decodeStreamingResponse parses SSE frames" in run {
+            val route  = HttpRoute.get("events").response(_.bodySse[User])
+            val frame1 = "data: {\"name\":\"Alice\",\"age\":30}\n\n"
+            val frame2 = "event: update\ndata: {\"name\":\"Bob\",\"age\":25}\n\n"
+            val frame3 = "id: 3\nretry: 5000\ndata: {\"name\":\"Carol\",\"age\":35}\n\n"
+            val rawStream = kyo.Stream.init(Seq(
+                Span.fromUnsafe(frame1.getBytes("UTF-8")),
+                Span.fromUnsafe(frame2.getBytes("UTF-8")),
+                Span.fromUnsafe(frame3.getBytes("UTF-8"))
+            ))
+
+            RouteUtil.decodeStreamingResponse(route, HttpStatus.OK, HttpHeaders.empty, rawStream) match
+                case Result.Success(response) =>
+                    val eventStream = response.fields.body
+                    kyo.Scope.run {
+                        eventStream.run.map { events =>
+                            val evts = events.toSeq
+                            assert(evts.size == 3)
+                            assert(evts(0).data == User("Alice", 30))
+                            assert(evts(0).event == Absent)
+                            assert(evts(1).data == User("Bob", 25))
+                            assert(evts(1).event == Present("update"))
+                            assert(evts(2).data == User("Carol", 35))
+                            assert(evts(2).id == Present("3"))
+                            assert(evts(2).retry == Present(5000.millis))
+                        }
+                    }
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+    }
+
+    // ==================== Multipart buffered decoding ====================
+
+    "multipart buffered decoding" - {
+        "decodeBufferedRequest parses multipart body" in {
+            val route = HttpRoute.post("upload").request(_.bodyMultipart)
+            val body =
+                "------TestBoundary123\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\nContent-Type: text/plain\r\n\r\nhello world\r\n------TestBoundary123\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue123\r\n------TestBoundary123--\r\n"
+            val bytes   = Span.fromUnsafe(body.getBytes("UTF-8"))
+            val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=----TestBoundary123")
+
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], _ => Absent, headers, bytes) match
+                case Result.Success(request) =>
+                    val parts = request.fields.dict("body").asInstanceOf[Seq[HttpPart]]
+                    assert(parts.size == 2)
+                    assert(parts(0).name == "file")
+                    assert(parts(0).filename == Present("test.txt"))
+                    assert(parts(0).contentType == Present("text/plain"))
+                    assert(new String(parts(0).data.toArrayUnsafe, "UTF-8") == "hello world")
+                    assert(parts(1).name == "field")
+                    assert(parts(1).filename == Absent)
+                    assert(new String(parts(1).data.toArrayUnsafe, "UTF-8") == "value123")
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+    }
+
+    // ==================== NDJSON line splitting ====================
+
+    "NDJSON line splitting" - {
+        "handles multiple lines in one chunk" in run {
+            val route    = HttpRoute.get("events").response(_.bodyNdjson[User])
+            val combined = "{\"name\":\"Alice\",\"age\":30}\n{\"name\":\"Bob\",\"age\":25}\n"
+            val rawStream = kyo.Stream.init(Seq(
+                Span.fromUnsafe(combined.getBytes("UTF-8"))
+            ))
+
+            RouteUtil.decodeStreamingResponse(route, HttpStatus.OK, HttpHeaders.empty, rawStream) match
+                case Result.Success(response) =>
+                    val userStream = response.fields.body
+                    userStream.run.map { users =>
+                        val us = users.toSeq
+                        assert(us.size == 2)
+                        assert(us(0) == User("Alice", 30))
+                        assert(us(1) == User("Bob", 25))
+                    }
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "handles line split across chunks" in run {
+            val route = HttpRoute.get("events").response(_.bodyNdjson[User])
+            val part1 = "{\"name\":\"Ali"
+            val part2 = "ce\",\"age\":30}\n"
+            val rawStream = kyo.Stream.init(Seq(
+                Span.fromUnsafe(part1.getBytes("UTF-8")),
+                Span.fromUnsafe(part2.getBytes("UTF-8"))
+            ))
+
+            RouteUtil.decodeStreamingResponse(route, HttpStatus.OK, HttpHeaders.empty, rawStream) match
+                case Result.Success(response) =>
+                    val userStream = response.fields.body
+                    userStream.run.map { users =>
+                        val us = users.toSeq
+                        assert(us.size == 1)
+                        assert(us(0) == User("Alice", 30))
+                    }
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+    }
+
+    // ==================== Multipart streaming closing boundary ====================
+
+    "multipart streaming encoding" - {
+        "includes closing boundary" in run {
+            val route = HttpRoute.post("upload").request(_.bodyMultipartStream)
+            val parts: kyo.Stream[HttpPart, kyo.Async] = kyo.Stream.init(Seq(
+                HttpPart("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8")))
+            ))
+            val request = HttpRequest(
+                HttpMethod.POST,
+                HttpUrl.parse("http://localhost/upload").getOrThrow,
+                HttpHeaders.empty,
+                Record2.empty
+            ).addField("body", parts)
+
+            var stream: kyo.Stream[Span[Byte], kyo.Async & kyo.Scope] = null
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (_, _) => fail("expected streaming"),
+                onBuffered = (_, _, _, _) => fail("expected streaming"),
+                onStreaming = (_, _, _, s) => stream = s
+            )
+            kyo.Scope.run {
+                stream.run.map { chunks =>
+                    val all = chunks.toSeq.map(span => new String(span.toArrayUnsafe, "UTF-8")).mkString
+                    // Must end with closing boundary
+                    assert(all.contains("--"), "should contain boundary markers")
+                    val lastBoundaryIdx = all.lastIndexOf("--")
+                    assert(all.substring(lastBoundaryIdx - 2).contains("--\r\n"), "should end with closing boundary --boundary--")
+                }
+            }
+        }
+    }
+
+    // ==================== buildRequest URL preservation ====================
+
+    "server-side request URL preservation" - {
+        "decodeBufferedRequest preserves path" in {
+            val route = HttpRoute.get("users")
+
+            RouteUtil.decodeBufferedRequest(
+                route,
+                Dict.empty[String, String],
+                _ => Absent,
+                HttpHeaders.empty,
+                Span.empty[Byte],
+                "/users"
+            ) match
+                case Result.Success(request) =>
+                    assert(request.path != "", "request.path should not be empty")
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
         }
     }
 

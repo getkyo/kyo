@@ -117,14 +117,14 @@ final class HttpClient private (
             pool.poll(key) match
                 case Present(conn) =>
                     Sync.ensure(pool.release(key, conn)) {
-                        backend.sendWith(conn, route, request, config.connectTimeout)(f)
+                        backend.sendWith(conn, route, request)(f)
                     }
                 case _ =>
                     if pool.tryReserve(key) then
                         Sync.ensure(pool.unreserve(key)) {
                             backend.connectWith(request.url.host, request.url.port, request.url.ssl, config.connectTimeout) { conn =>
                                 Sync.ensure(pool.release(key, conn)) {
-                                    backend.sendWith(conn, route, request, config.connectTimeout)(f)
+                                    backend.sendWith(conn, route, request)(f)
                                 }
                             }
                         }
