@@ -265,7 +265,7 @@ object Record:
             case _: ((n ~ v) *: rest) =>
                 dict(constValue[n & String]) *: collectValues[rest](dict)
 
-    private[kyo] def make[F](dict: Dict[String, Any]): Record[F] =
+    private[kyo] def init[F](dict: Dict[String, Any]): Record[F] =
         new Record(dict)
 
 end Record

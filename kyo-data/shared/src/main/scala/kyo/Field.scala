@@ -24,7 +24,7 @@ case class Field[Name <: String, Value](
 
     /** Returns a new record with this field's value replaced. Requires evidence that `F` contains `Name ~ Value`. */
     def set[F](record: Record[F], value: Value)(using F <:< (Name ~ Value)): Record[F] =
-        Record.make(record.toDict.update(name, value.asInstanceOf[Any]))
+        Record.init(record.toDict.update(name, value.asInstanceOf[Any]))
 end Field
 
 object Field:
