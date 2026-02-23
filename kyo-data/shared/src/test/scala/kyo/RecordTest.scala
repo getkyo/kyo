@@ -346,6 +346,58 @@ class RecordTest extends Test:
             succeed
         }
 
+        "duplicate field: last writer wins at runtime" in {
+            val r = "f" ~ 1 & "f" ~ "hello"
+            // Type is "f" ~ (Int | String) due to contravariance
+            val v: Int | String = r.f
+            // Dict uses last-writer-wins, so "hello" from the right operand is stored
+            assert(v.equals("hello"))
+        }
+
+        "duplicate field: left operand value when no right override" in {
+            val r1 = "f" ~ 42
+            val r2 = "g" ~ "other"
+            val r  = r1 & r2
+            assert(r.f == 42)
+        }
+
+        "duplicate field: right operand overrides left" in {
+            val r1 = "f" ~ 1 & "g" ~ "a"
+            val r2 = "f" ~ 2 & "h" ~ true
+            val r  = r1 & r2
+            assert(r.f == 2)
+            assert(r.g == "a")
+            assert(r.h == true)
+        }
+
+        "duplicate field: return type is union" in {
+            val r = "f" ~ 1 & "f" ~ "hello"
+            // Verify the return type is Int | String (compile-time check)
+            typeCheck("""val _: Int | String = r.f""")
+            // Should NOT compile as just Int
+            typeCheckFailure("""val _: Int = r.f""")("Found:    Int | String")
+        }
+
+        "duplicate field: three-way union" in {
+            summon[("f" ~ Int & "f" ~ String & "f" ~ Boolean) =:= ("f" ~ (Int | String | Boolean))]
+            val r                         = "f" ~ 1 & "f" ~ "hello" & "f" ~ true
+            val v: Int | String | Boolean = r.f
+            assert(v.equals(true)) // last writer wins
+        }
+
+        "duplicate field: explicit union type annotation" in {
+            val r: Record["f" ~ (Int | String)] = "f" ~ 42
+            val v: Int | String                 = r.f
+            assert(v.equals(42))
+        }
+
+        "duplicate field: combine with non-duplicate" in {
+            val r = "name" ~ "Alice" & "value" ~ 1 & "value" ~ "str"
+            assert(r.name == "Alice")
+            val v: Int | String = r.value
+            assert(v.equals("str")) // last writer wins
+        }
+
         "Tag derivation" in {
             typeCheck("""summon[Tag[Record["name" ~ String & "age" ~ Int]]]""")
         }
