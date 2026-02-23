@@ -167,7 +167,7 @@ object Record:
         case (n *: ns, v *: vs)                 => (n ~ v) & FieldsOf[ns, vs]
 
     type FieldValues[T <: Tuple] <: Tuple = T match
-        case EmptyTuple              => EmptyTuple
+        case EmptyTuple               => EmptyTuple
         case Record.`~`[n, v] *: rest => v *: FieldValues[rest]
 
     type ZipLookup[N <: String, T <: Tuple] = T match
