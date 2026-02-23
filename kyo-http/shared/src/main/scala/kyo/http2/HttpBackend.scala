@@ -2,18 +2,45 @@ package kyo.http2
 
 import kyo.<
 import kyo.Abort
+import kyo.AllowUnsafe
 import kyo.Async
 import kyo.Duration
 import kyo.Frame
+import kyo.Maybe
 import kyo.seconds
 
 object HttpBackend:
 
     trait Client:
-        def send[In, Out](
-            route: HttpRoute[In, Out, Any],
-            request: HttpRequest[In]
-        )(using Frame): HttpResponse[Out] < (Async & Abort[HttpError])
+        type Connection
+
+        def connectWith[A, S](
+            host: String,
+            port: Int,
+            ssl: Boolean,
+            connectTimeout: Maybe[Duration]
+        )(
+            f: Connection => A < S
+        )(using Frame): A < (S & Async & Abort[HttpError])
+
+        def sendWith[In, Out, A, S](
+            conn: Connection,
+            route: HttpRoute[In, Out, ?],
+            request: HttpRequest[In],
+            timeout: Maybe[Duration]
+        )(
+            f: HttpResponse[Out] => A < S
+        )(using Frame): A < (S & Async & Abort[HttpError])
+
+        def isAlive(conn: Connection)(using AllowUnsafe): Boolean
+        def closeNowUnsafe(conn: Connection)(using AllowUnsafe): Unit
+        def close(conn: Connection, gracePeriod: Duration)(using Frame): Unit < Async
+        def close(conn: Connection)(using Frame): Unit < Async    = close(conn, 30.seconds)
+        def closeNow(conn: Connection)(using Frame): Unit < Async = close(conn, Duration.Zero)
+
+        def close(gracePeriod: Duration)(using Frame): Unit < Async
+        def close(using Frame): Unit < Async    = close(30.seconds)
+        def closeNow(using Frame): Unit < Async = close(Duration.Zero)
     end Client
 
     trait Server:

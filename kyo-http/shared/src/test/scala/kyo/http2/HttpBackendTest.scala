@@ -2,9 +2,11 @@ package kyo.http2
 
 import kyo.<
 import kyo.Abort
+import kyo.AllowUnsafe
 import kyo.Async
 import kyo.Duration
 import kyo.Frame
+import kyo.Maybe
 import kyo.Record2.~
 import kyo.Test
 import kyo.seconds
@@ -16,12 +18,32 @@ class HttpBackendTest extends Test:
 
     case class User(id: Int, name: String) derives Schema, CanEqual
 
-    val stubClient: HttpBackend.Client = new HttpBackend.Client:
-        def send[In, Out](
-            route: HttpRoute[In, Out, Any],
-            request: HttpRequest[In]
-        )(using Frame): HttpResponse[Out] < (Async & Abort[HttpError]) =
+    val stubClient = new HttpBackend.Client:
+        type Connection = Unit
+
+        def connectWith[A, S](
+            host: String,
+            port: Int,
+            ssl: Boolean,
+            connectTimeout: Maybe[Duration]
+        )(
+            f: Connection => A < S
+        )(using Frame): A < (S & Async & Abort[HttpError]) = f(())
+
+        def sendWith[In, Out, A, S](
+            conn: Connection,
+            route: HttpRoute[In, Out, ?],
+            request: HttpRequest[In],
+            timeout: Maybe[Duration]
+        )(
+            f: HttpResponse[Out] => A < S
+        )(using Frame): A < (S & Async & Abort[HttpError]) =
             Abort.fail(new HttpError.ParseError("stub"))
+
+        def isAlive(conn: Connection)(using AllowUnsafe): Boolean                     = true
+        def closeNowUnsafe(conn: Connection)(using AllowUnsafe): Unit                 = ()
+        def close(conn: Connection, gracePeriod: Duration)(using Frame): Unit < Async = ()
+        def close(gracePeriod: Duration)(using Frame): Unit < Async                   = ()
 
     val stubServer: HttpBackend.Server = new HttpBackend.Server:
         def bind(
@@ -38,9 +60,9 @@ class HttpBackendTest extends Test:
     "Client" - {
 
         "send returns response" in {
-            val route                                                         = HttpRoute.get("users").response(_.bodyText)
-            val request                                                       = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/users"))
-            val result                                                        = stubClient.send(route, request)
+            val route   = HttpRoute.get("users").response(_.bodyText)
+            val request = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/users"))
+            val result  = stubClient.sendWith((), route, request, Maybe.empty)(identity)
             val _: HttpResponse["body" ~ String] < (Async & Abort[HttpError]) = result
             succeed
         }
@@ -51,12 +73,12 @@ class HttpBackendTest extends Test:
             val request: HttpRequest["id" ~ Int] =
                 HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/users/1"))
                     .addField("id", 42)
-            val result                                                      = stubClient.send(route, request)
+            val result                                                      = stubClient.sendWith((), route, request, Maybe.empty)(identity)
             val _: HttpResponse["body" ~ User] < (Async & Abort[HttpError]) = result
             succeed
         }
 
-        "send rejects route with pending effects" in {
+        "send accepts route with any effect parameter" in {
             val filter = new HttpFilter.Passthrough[Abort[String]]:
                 def apply[In, Out, S2](
                     request: HttpRequest[In],
@@ -65,9 +87,10 @@ class HttpBackendTest extends Test:
                     next(request)
             val route   = HttpRoute.get("users").filter(filter).response(_.bodyText)
             val request = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/users"))
-            typeCheckFailure("stubClient.send(route, request)")(
-                "Required"
-            )
+            // Backend accepts any effect parameter — effect resolution is HttpClient's responsibility
+            val result = stubClient.sendWith((), route, request, Maybe.empty)(identity)
+            val _: HttpResponse["body" ~ String] < (Async & Abort[HttpError]) = result
+            succeed
         }
 
         "send rejects request missing required fields" in {
@@ -75,7 +98,7 @@ class HttpBackendTest extends Test:
                 val route = HttpRoute.get("users" / Capture[Int]("id"))
                     .response(_.bodyText)
                 val request: HttpRequest[Any] = ???
-                stubClient.send(route, request)
+                stubClient.sendWith((), route, request, Maybe.empty)(identity)
             """)(
                 "Required"
             )
