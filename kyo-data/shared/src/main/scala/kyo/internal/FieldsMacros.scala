@@ -50,6 +50,18 @@ object FieldsMacros:
                 case h +: t => TypeRepr.of[*:].appliedTo(List(h, tupled(t)))
                 case _      => TypeRepr.of[EmptyTuple]
 
+        def structural(typs: Vector[TypeRepr]): TypeRepr =
+            if typs.isEmpty then
+                TypeRepr.of[Fields.Structural]
+            else
+                val structType = typs.foldLeft[TypeRepr](TypeRepr.of[Any]) { (acc, tpe) =>
+                    tpe match
+                        case AppliedType(_, List(ConstantType(StringConstant(name)), valueType)) =>
+                            Refinement(acc, name, ByNameType(valueType))
+                        case _ => acc
+                }
+                AndType(TypeRepr.of[Fields.Structural], structType)
+
         val components = decompose(TypeRepr.of[A].dealias)
 
         case class ComponentInfo(name: String, nameExpr: Expr[String], tagExpr: Expr[Any], nestedExpr: Expr[List[Field[?, ?]]])
@@ -77,9 +89,9 @@ object FieldsMacros:
             '{ Field[String, Any](${ ci.nameExpr }, ${ ci.tagExpr }.asInstanceOf[Tag[Any]], ${ ci.nestedExpr }) }
         ).toList)
 
-        tupled(components).asType match
-            case '[type x <: Tuple; x] =>
-                '{ Fields.createAux[A, x]($fieldsList) }
+        (tupled(components).asType, structural(components).asType) match
+            case ('[type x <: Tuple; x], '[type s <: Fields.Structural; s]) =>
+                '{ Fields.createAux[A, x, s]($fieldsList) }
         end match
     end deriveImpl
 
