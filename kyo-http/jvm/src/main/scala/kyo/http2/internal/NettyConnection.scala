@@ -47,7 +47,7 @@ final private[http2] class NettyConnection(
         if port == 80 || port == 443 then host
         else s"$host:$port"
 
-    // Set by encodeNettyRequest, read immediately after in the same Sync.Unsafe.defer block.
+    // Set by encodeNettyRequest, read and cleared immediately after in the same Sync.Unsafe.defer block.
     // Safe: connection pool ensures sequential access (one request at a time per connection).
     private var encodedNettyReq: Maybe[HttpObject]                          = Absent
     private var encodedStreamBody: Maybe[Stream[Span[Byte], Async & Scope]] = Absent
@@ -75,6 +75,8 @@ final private[http2] class NettyConnection(
             encodeNettyRequest(route, request)
             val nettyReq   = encodedNettyReq.getOrElse(throw new IllegalStateException("No encoded request"))
             val streamBody = encodedStreamBody
+            encodedNettyReq = Absent
+            encodedStreamBody = Absent
 
             val pipeline = channel.pipeline()
             if pipeline.get("aggregator") == null then
@@ -108,8 +110,8 @@ final private[http2] class NettyConnection(
                             ))
                         }
                     }.andThen {
-                        NettyUtil.await(channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT))
-                    }.andThen(readResponse)
+                        NettyUtil.awaitWith(channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT))(readResponse)
+                    }
                 case Absent =>
                     readResponse
             end match
@@ -126,6 +128,8 @@ final private[http2] class NettyConnection(
             encodeNettyRequest(route, request)
             val nettyReq   = encodedNettyReq.getOrElse(throw new IllegalStateException("No encoded request"))
             val streamBody = encodedStreamBody
+            encodedNettyReq = Absent
+            encodedStreamBody = Absent
 
             val pipeline = channel.pipeline()
             if pipeline.get("aggregator") != null then
@@ -166,8 +170,8 @@ final private[http2] class NettyConnection(
                             ))
                         }
                     }.andThen {
-                        NettyUtil.await(channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT))
-                    }.andThen(readResponse)
+                        NettyUtil.awaitWith(channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT))(readResponse)
+                    }
                 case Absent => // No request body (e.g., GET to streaming endpoint)
                     readResponse
             end match
@@ -177,7 +181,7 @@ final private[http2] class NettyConnection(
     private def encodeNettyRequest[In, Out](
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
-    )(using Frame): Unit =
+    )(using AllowUnsafe, Frame): Unit =
         RouteUtil.encodeRequest(route, request)(
             onEmpty = (url, headers) =>
                 val nettyReq =
@@ -215,7 +219,7 @@ final private[http2] class NettyConnection(
         nettyReq: io.netty.handler.codec.http.HttpRequest,
         headers: HttpHeaders,
         request: HttpRequest[In]
-    ): Unit =
+    )(using AllowUnsafe): Unit =
         request.headers.foreach((k, v) => discard(nettyReq.headers().add(k, v)))
         headers.foreach((k, v) => discard(nettyReq.headers().add(k, v)))
         if !nettyReq.headers().contains("Host") then

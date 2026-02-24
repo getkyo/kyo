@@ -291,7 +291,7 @@ final private[http2] class NettyServerHandler(
         end if
     end deliverStreamingContent
 
-    private def handleDiscardingContent(ctx: ChannelHandlerContext, content: HttpContent): Unit =
+    private def handleDiscardingContent(ctx: ChannelHandlerContext, content: HttpContent)(using AllowUnsafe): Unit =
         if content.isInstanceOf[LastHttpContent] then
             val status       = discardStatus
             val extraHeaders = discardExtraHeaders
@@ -301,7 +301,7 @@ final private[http2] class NettyServerHandler(
         end if
     end handleDiscardingContent
 
-    private def handleExpectContinue(ctx: ChannelHandlerContext, nettyReq: NettyHttpRequest): Unit =
+    private def handleExpectContinue(ctx: ChannelHandlerContext, nettyReq: NettyHttpRequest)(using AllowUnsafe): Unit =
         if HttpUtil.is100ContinueExpected(nettyReq) then
             val continueResponse = new DefaultFullHttpResponse(
                 HttpVersion.HTTP_1_1,
@@ -366,7 +366,7 @@ final private[http2] class NettyServerHandler(
         headers: HttpHeaders,
         body: Span[Byte],
         keepAlive: Boolean
-    ): Unit =
+    )(using AllowUnsafe): Unit =
         val content   = if body.isEmpty then Unpooled.EMPTY_BUFFER else Unpooled.wrappedBuffer(body.toArrayUnsafe)
         val nettyResp = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.valueOf(status.code), content)
 
@@ -417,9 +417,7 @@ final private[http2] class NettyServerHandler(
                         )
                     }
                 }.andThen {
-                    NettyUtil.await(
-                        ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT)
-                    )
+                    NettyUtil.await(ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT))
                 }
             }).map {
                 case Result.Success(_) =>
@@ -441,7 +439,7 @@ final private[http2] class NettyServerHandler(
         status: HttpStatus,
         extraHeaders: HttpHeaders,
         keepAlive: Boolean
-    ): Unit =
+    )(using AllowUnsafe): Unit =
         val nettyResp = new DefaultFullHttpResponse(
             HttpVersion.HTTP_1_1,
             HttpResponseStatus.valueOf(status.code),
@@ -459,16 +457,20 @@ final private[http2] class NettyServerHandler(
     end sendErrorResponse
 
     private def buildAllowHeaderValue(allowed: Set[HttpMethod]): String =
+        import scala.annotation.tailrec
         val sb   = new StringBuilder
         val iter = allowed.iterator
         if iter.hasNext then sb.append(iter.next().name)
-        while iter.hasNext do
-            sb.append(", ")
-            sb.append(iter.next().name)
+        @tailrec def loop(): Unit =
+            if iter.hasNext then
+                sb.append(", ")
+                sb.append(iter.next().name)
+                loop()
+        loop()
         sb.toString
     end buildAllowHeaderValue
 
-    private def resetState(): Unit =
+    private def resetState()(using AllowUnsafe): Unit =
         state = STATE_IDLE
         pendingRouteMatch = Absent
         pendingUri = ""
@@ -499,6 +501,7 @@ final private[http2] class NettyServerHandler(
     end channelInactive
 
     override def exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable): Unit =
+        import AllowUnsafe.embrace.danger // Override entry point — cannot use (using AllowUnsafe)
         val nettyResp = new DefaultFullHttpResponse(
             HttpVersion.HTTP_1_1,
             HttpResponseStatus.INTERNAL_SERVER_ERROR,

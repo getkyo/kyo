@@ -62,18 +62,21 @@ private[http2] object NettyUtil:
             p.safe.get
         }
 
-    def await(nettyFuture: ChannelFuture)(using Frame): Unit < Async =
+    inline def awaitWith[A, S](nettyFuture: ChannelFuture)(inline f: => A < S)(using Frame): A < (Async & S) =
         Sync.Unsafe.defer {
-            val p = Promise.Unsafe.init[Unit, Any]()
+            val p = Promise.Unsafe.init[A, S]()
             p.onComplete(_ => discard(nettyFuture.cancel(true)))
             nettyFuture.addListener((future: ChannelFuture) =>
                 discard {
-                    if future.isSuccess then p.complete(unitResult)
+                    if future.isSuccess then p.complete(Result.succeed(f))
                     else p.complete(panicFromCause(future.cause()))
                 }
             )
             p.safe.get
         }
+
+    def await(nettyFuture: ChannelFuture)(using Frame): Unit < Async =
+        awaitWith(nettyFuture)(())
 
     def await[A](f: io.netty.util.concurrent.Future[A])(using Frame): Unit < Async =
         Sync.Unsafe.defer {
@@ -92,15 +95,16 @@ private[http2] object NettyUtil:
         val headerCount = nettyHeaders.size()
         if headerCount == 0 then HttpHeaders.empty
         else
+            import scala.annotation.tailrec
             val arr  = new Array[String](headerCount * 2)
             val iter = nettyHeaders.iteratorAsString()
-            var i    = 0
-            while iter.hasNext do
-                val entry = iter.next()
-                arr(i) = entry.getKey
-                arr(i + 1) = entry.getValue
-                i += 2
-            end while
+            @tailrec def loop(i: Int): Unit =
+                if iter.hasNext then
+                    val entry = iter.next()
+                    arr(i) = entry.getKey
+                    arr(i + 1) = entry.getValue
+                    loop(i + 2)
+            loop(0)
             HttpHeaders.fromChunk(Chunk.fromNoCopy(arr))
         end if
     end extractHeaders
