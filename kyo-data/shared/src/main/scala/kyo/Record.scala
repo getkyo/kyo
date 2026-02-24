@@ -136,17 +136,6 @@ final class Record[F](private[kyo] val dict: Dict[String, Any]) extends Dynamic:
         h
     end hashCode
 
-    /** Returns a human-readable string representation in the form `"name ~ Alice & age ~ 30"`. */
-    def show: String =
-        val sb    = new StringBuilder
-        var first = true
-        dict.foreach: (k, v) =>
-            if !first then discard(sb.append(" & "))
-            discard(sb.append(k).append(" ~ ").append(v))
-            first = false
-        sb.toString
-    end show
-
 end Record
 
 /** Companion object providing record construction, field type definitions, implicit conversions, and compile-time staging. */

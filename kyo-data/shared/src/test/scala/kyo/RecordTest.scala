@@ -481,18 +481,7 @@ class RecordTest extends Test:
 
     }
 
-    "show and Render" - {
-
-        "show basic" in {
-            val r = "name" ~ "Alice"
-            assert(r.show.contains("name ~ Alice"))
-        }
-
-        "show fromProduct" in {
-            case class Single(name: String)
-            val r = Record.fromProduct(Single("Alice"))
-            assert(r.show == "name ~ Alice")
-        }
+    "Render" - {
 
         "Render given" in {
             val r      = ("name" ~ "Bob") & ("age" ~ 25)
