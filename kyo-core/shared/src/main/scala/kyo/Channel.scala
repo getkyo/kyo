@@ -173,6 +173,23 @@ object Channel:
             }
         end take
 
+        /** Takes an element from the channel and applies an inline function, avoiding a `.map` closure allocation.
+          *
+          * @return
+          *   The result of applying the function to the taken element
+          */
+        inline def takeWith[B, S](inline f: A => B < S)(using Frame): B < (S & Abort[Closed] & Async) =
+            Sync.Unsafe.defer {
+                self.poll().foldError(
+                    {
+                        case Present(value) => f(value)
+                        case Absent         => self.takeFiber().safe.use(f)
+                    },
+                    Abort.error
+                )
+            }
+        end takeWith
+
         /** Takes [[n]] elements from the channel, semantically blocking until enough elements are present. Note that if enough elements are
           * not added to the channel it can block indefinitely.
           *

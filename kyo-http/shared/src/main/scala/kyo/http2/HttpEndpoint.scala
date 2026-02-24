@@ -27,13 +27,6 @@ object HttpEndpoint:
             def apply(request: HttpRequest[In])(using Frame) =
                 handler(request)
 
-    // TODO: revisit const API
-    // def const[In, Out, S](
-    //     route: HttpRoute[In, Out, S],
-    //     response: HttpResponse[Out]
-    // ): HttpEndpoint[In, Out, S] =
-    //     HttpEndpoint(route)(_ => response)
-
     def health()(using Frame): HttpEndpoint[Any, "body" ~ String, Any] =
         health("health")
 

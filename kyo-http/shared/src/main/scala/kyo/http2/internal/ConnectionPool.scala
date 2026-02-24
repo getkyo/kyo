@@ -15,7 +15,7 @@ import scala.annotation.tailrec
   * Manages per-host pools of idle connections with bounded capacity and health checks. Returns Maybe.empty when no connection is available;
   * the caller decides what to do.
   */
-private[http2] class ConnectionPool[C](
+final private[http2] class ConnectionPool[C](
     maxConnectionsPerHost: Int,
     pools: ConcurrentHashMap[ConnectionPool.HostKey, ConnectionPool.HostPool[C]],
     isAlive: C => Boolean,
@@ -66,7 +66,7 @@ private[http2] object ConnectionPool:
 
     private[http2] case class HostKey(host: String, port: Int) derives CanEqual
 
-    private[internal] class HostPool[C](maxConnections: Int):
+    final private[internal] class HostPool[C](maxConnections: Int):
         private val idle     = new ConcurrentLinkedQueue[C]()
         private val inFlight = new AtomicInteger(0)
 

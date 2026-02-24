@@ -66,21 +66,21 @@ object RouteUtil:
 
     // ==================== Client: encode request ====================
 
-    def encodeRequest[In, Out, S, A](
+    inline def encodeRequest[In, Out, S, A](
         route: HttpRoute[In, Out, S],
         request: HttpRequest[In]
     )(
-        onEmpty: ( /* url */ String, HttpHeaders) => A,
-        onBuffered: ( /* url */ String, HttpHeaders, /* contentType */ String, Span[Byte]) => A,
-        onStreaming: ( /* url */ String, HttpHeaders, /* contentType */ String, Stream[Span[Byte], Async & Scope]) => A
+        inline onEmpty: ( /* url */ String, HttpHeaders) => A,
+        inline onBuffered: ( /* url */ String, HttpHeaders, /* contentType */ String, Span[Byte]) => A,
+        inline onStreaming: ( /* url */ String, HttpHeaders, /* contentType */ String, Stream[Span[Byte], Async & Scope]) => A
     )(using Frame): A =
         val fields    = route.request.fields
         val dict      = request.fields.dict
         val bodyField = findBodyField(fields)
         val hasParams = fields.size > (if bodyField.isDefined then 1 else 0)
 
-        // Only allocate builders when params exist
-        val headers =
+        // Compute url and headers, then encode body once
+        val (url, hdrs) =
             if hasParams then
                 val queryBuilder  = new StringBuilder
                 val headerBuilder = ChunkBuilder.init[String]
@@ -96,22 +96,21 @@ object RouteUtil:
                 val url          = if queryBuilder.isEmpty then path else s"$path?$queryBuilder"
                 val hdrs = if extraHeaders.isEmpty then request.headers
                 else request.headers.concat(extraHeaders)
-                encodeBody(bodyField, dict, url, hdrs)(onEmpty, onBuffered, onStreaming)
+                (url, hdrs)
             else
-                val url = buildPath(route.request.path, dict)
-                encodeBody(bodyField, dict, url, request.headers)(onEmpty, onBuffered, onStreaming)
-        headers
+                (buildPath(route.request.path, dict), request.headers)
+        encodeBody(bodyField, dict, url, hdrs)(onEmpty, onBuffered, onStreaming)
     end encodeRequest
 
-    private def encodeBody[A](
+    private inline def encodeBody[A](
         bodyField: Maybe[Field.Body[?, ?]],
         dict: Dict[String, Any],
         url: String,
         headers: HttpHeaders
     )(
-        onEmpty: (String, HttpHeaders) => A,
-        onBuffered: (String, HttpHeaders, String, Span[Byte]) => A,
-        onStreaming: (String, HttpHeaders, String, Stream[Span[Byte], Async & Scope]) => A
+        inline onEmpty: (String, HttpHeaders) => A,
+        inline onBuffered: (String, HttpHeaders, String, Span[Byte]) => A,
+        inline onStreaming: (String, HttpHeaders, String, Stream[Span[Byte], Async & Scope]) => A
     )(using Frame): A =
         bodyField match
             case Absent => onEmpty(url, headers)
@@ -193,7 +192,7 @@ object RouteUtil:
     def decodeBufferedRequest[In, Out, S](
         route: HttpRoute[In, Out, S],
         pathCaptures: Dict[String, String],
-        queryParam: String => Maybe[String],
+        queryParam: Maybe[HttpUrl],
         headers: HttpHeaders,
         body: Span[Byte],
         path: String = ""
@@ -205,7 +204,7 @@ object RouteUtil:
 
         decodeCaptures(route.request.path, pathCaptures, builder).flatMap { _ =>
             val paramsResult =
-                if hasParams then decodeParamFields(fields, headers, Present(queryParam), builder)
+                if hasParams then decodeParamFields(fields, headers, queryParam, builder)
                 else Result.unit
             paramsResult.flatMap { _ =>
                 bodyField match
@@ -223,7 +222,7 @@ object RouteUtil:
     def decodeStreamingRequest[In, Out, S](
         route: HttpRoute[In, Out, S],
         pathCaptures: Dict[String, String],
-        queryParam: String => Maybe[String],
+        queryParam: Maybe[HttpUrl],
         headers: HttpHeaders,
         stream: Stream[Span[Byte], Async & Scope],
         path: String = ""
@@ -235,7 +234,7 @@ object RouteUtil:
 
         decodeCaptures(route.request.path, pathCaptures, builder).flatMap { _ =>
             val paramsResult =
-                if hasParams then decodeParamFields(fields, headers, Present(queryParam), builder)
+                if hasParams then decodeParamFields(fields, headers, queryParam, builder)
                 else Result.unit
             paramsResult.map { _ =>
                 bodyField.foreach(bf => discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream))))
@@ -490,14 +489,14 @@ object RouteUtil:
     private def decodeParam(
         param: Field.Param[?, ?, ?],
         headers: HttpHeaders,
-        queryParam: Maybe[String => Maybe[String]]
+        queryParam: Maybe[HttpUrl]
     )(using Frame): Result[HttpError, Any] =
         val wireName = if param.wireName.isEmpty then param.fieldName else param.wireName
         val raw: Maybe[String] = param.kind match
             case Field.Param.Location.Query =>
                 queryParam match
-                    case Present(qp) => qp(wireName)
-                    case Absent      => Absent
+                    case Present(url) => url.query(wireName)
+                    case Absent       => Absent
             case Field.Param.Location.Header =>
                 headers.get(wireName)
             case Field.Param.Location.Cookie =>
@@ -526,7 +525,7 @@ object RouteUtil:
     private def decodeParamFields(
         fields: Chunk[Field[?]],
         headers: HttpHeaders,
-        queryParam: Maybe[String => Maybe[String]],
+        queryParam: Maybe[HttpUrl],
         builder: DictBuilder[String, Any]
     )(using Frame): Result[HttpError, Unit] =
         def loop(i: Int): Result[HttpError, Unit] =

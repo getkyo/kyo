@@ -22,4 +22,7 @@ object HttpError:
     case class ConnectionPoolExhausted(host: String, port: Int, maxConnections: Int)(using Frame)
         extends HttpError(s"Connection pool exhausted for $host:$port (max $maxConnections)")
 
+    case class ConnectionError(message: String, cause: Throwable)(using Frame)
+        extends HttpError(message, cause)
+
 end HttpError
