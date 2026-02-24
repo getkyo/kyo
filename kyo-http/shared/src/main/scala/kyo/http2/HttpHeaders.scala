@@ -137,6 +137,27 @@ object HttpHeaders:
                 case Absent     => Seq.empty
                 case Present(v) => HttpHeaders.parseCookieHeader(v)
 
+        /** Returns the value of a response cookie by name, parsed from Set-Cookie headers. */
+        def responseCookie(name: String): Maybe[String] =
+            val setCookies = self.getAll("Set-Cookie")
+            @tailrec def loop(i: Int): Maybe[String] =
+                if i >= setCookies.size then Absent
+                else
+                    val header = setCookies(i)
+                    val eqIdx  = header.indexOf('=')
+                    if eqIdx > 0 then
+                        val cookieName = header.substring(0, eqIdx).trim
+                        if cookieName == name then
+                            val semIdx = header.indexOf(';', eqIdx + 1)
+                            val end    = if semIdx < 0 then header.length else semIdx
+                            Present(header.substring(eqIdx + 1, end).trim)
+                        else loop(i + 1)
+                        end if
+                    else loop(i + 1)
+                    end if
+            loop(0)
+        end responseCookie
+
         /** Adds a Set-Cookie header for a response cookie. */
         def addCookie[A](name: String, cookie: HttpCookie[A]): HttpHeaders =
             self.add("Set-Cookie", HttpHeaders.serializeCookie(name, cookie))

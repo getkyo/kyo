@@ -25,7 +25,7 @@ final class NettyServerBackend extends HttpBackend.Server:
     private val flushConsolidationLimit = 256
 
     def bind(
-        handlers: Seq[HttpEndpoint[?, ?, Any]],
+        handlers: Seq[HttpHandler[?, ?, ?]],
         port: Int,
         host: String
     )(using Frame): HttpBackend.Binding < Async =

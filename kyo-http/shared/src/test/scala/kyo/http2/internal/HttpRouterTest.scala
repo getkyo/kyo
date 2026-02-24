@@ -4,7 +4,7 @@ import kyo.Dict
 import kyo.Frame
 import kyo.Result
 import kyo.http2.HttpCodec
-import kyo.http2.HttpEndpoint
+import kyo.http2.HttpHandler
 import kyo.http2.HttpMethod
 import kyo.http2.HttpPath
 import kyo.http2.HttpRequest
@@ -23,8 +23,8 @@ class HttpRouterTest extends kyo.Test:
 
     case class User(name: String, age: Int) derives Schema
 
-    def mkEndpoint(route: HttpRoute[?, ?, ?]): HttpEndpoint[?, ?, Any] =
-        HttpEndpoint(route.asInstanceOf[HttpRoute[Any, Any, Any]])(req => HttpResponse.ok)
+    def mkEndpoint(route: HttpRoute[?, ?, ?]): HttpHandler[?, ?, ?] =
+        HttpHandler.init(route.asInstanceOf[HttpRoute[Any, Any, Any]])(req => HttpResponse.ok)
 
     // ==================== Empty router ====================
 
@@ -303,7 +303,7 @@ class HttpRouterTest extends kyo.Test:
         }
 
         "streaming response" in {
-            val route  = HttpRoute.get("events").response(_.bodySse[User])
+            val route  = HttpRoute.get("events").response(_.bodySseJson[User])
             val router = HttpRouter(Seq(mkEndpoint(route)))
             router.find(HttpMethod.GET, "/events") match
                 case Result.Success(m) =>
