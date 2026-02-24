@@ -320,26 +320,31 @@ final private[http2] class NettyServerHandler(
 
     private def invokeHandler(
         ctx: ChannelHandlerContext,
-        endpoint: HttpEndpoint[?, ?, Any],
+        handler: HttpHandler[?, ?, ?],
         route: HttpRoute[?, ?, ?],
         request: HttpRequest[?],
         keepAlive: Boolean
     )(using AllowUnsafe): Unit =
 
-        val ep  = endpoint.asInstanceOf[HttpEndpoint[Any, Any, Async]]
+        val h   = handler.asInstanceOf[HttpHandler[Any, Any, Any]]
         val req = request.asInstanceOf[HttpRequest[Any]]
         val rt  = route.asInstanceOf[HttpRoute[Any, Any, Any]]
 
         val fiber = NettyUtil.launchFiber {
-            ep(req).map { response =>
-                RouteUtil.encodeResponse(rt, response)(
-                    onEmpty = (status, headers) =>
-                        sendBufferedResponse(ctx, status, headers, Span.empty[Byte], keepAlive),
-                    onBuffered = (status, headers, contentType, body) =>
-                        sendBufferedResponse(ctx, status, headers.add("Content-Type", contentType), body, keepAlive),
-                    onStreaming = (status, headers, contentType, stream) =>
-                        sendStreamingResponse(ctx, status, headers.add("Content-Type", contentType), stream, keepAlive)
-                )
+            Abort.run[Any](h(req)).map {
+                case Result.Success(response) =>
+                    RouteUtil.encodeResponse(rt, response)(
+                        onEmpty = (status, headers) =>
+                            sendBufferedResponse(ctx, status, headers, Span.empty[Byte], keepAlive),
+                        onBuffered = (status, headers, contentType, body) =>
+                            sendBufferedResponse(ctx, status, headers.add("Content-Type", contentType), body, keepAlive),
+                        onStreaming = (status, headers, contentType, stream) =>
+                            sendStreamingResponse(ctx, status, headers.add("Content-Type", contentType), stream, keepAlive)
+                    )
+                case Result.Failure(halt: HttpResponse.Halt) =>
+                    sendBufferedResponse(ctx, halt.response.status, halt.response.headers, Span.empty[Byte], keepAlive)
+                case Result.Failure(error) =>
+                    sendBufferedResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, Span.empty[Byte], keepAlive)
             }
         }
 

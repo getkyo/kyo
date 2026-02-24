@@ -73,7 +73,7 @@ class RouteUtilTest extends kyo.Test:
             assert(RouteUtil.isStreamingResponse(route))
         }
         "true for sse body" in {
-            val route = HttpRoute.get("events").response(_.bodySse[User])
+            val route = HttpRoute.get("events").response(_.bodySseJson[User])
             assert(RouteUtil.isStreamingResponse(route))
         }
     }
@@ -915,14 +915,14 @@ class RouteUtilTest extends kyo.Test:
             assert(RouteUtil.matchError(route, HttpStatus.BadRequest, body) == Absent)
         }
 
-        "empty body decodes when schema accepts empty" in {
+        "empty body fails to decode as JSON String (no fallback)" in {
             val route = HttpRoute.get("users")
                 .response(_.bodyJson[User].error[String](HttpStatus.BadRequest))
             val body = Span.empty[Byte]
 
-            // String schema accepts empty/plain strings as fallback
+            // Empty body is not valid JSON — decode should fail (fallback removed)
             val result = RouteUtil.matchError(route, HttpStatus.BadRequest, body)
-            assert(result == Present(""))
+            assert(result == Absent)
         }
     }
 
@@ -1028,7 +1028,7 @@ class RouteUtilTest extends kyo.Test:
 
     "SSE encoding" - {
         "encodeResponse produces SSE frames" in run {
-            val route = HttpRoute.get("events").response(_.bodySse[User])
+            val route = HttpRoute.get("events").response(_.bodySseJson[User])
             val events: kyo.Stream[HttpEvent[User], kyo.Async & kyo.Scope] = kyo.Stream.init(Seq(
                 HttpEvent(User("Alice", 30)),
                 HttpEvent(User("Bob", 25), event = Present("update")),
@@ -1070,7 +1070,7 @@ class RouteUtilTest extends kyo.Test:
 
     "SSE decoding" - {
         "decodeStreamingResponse parses SSE frames" in run {
-            val route  = HttpRoute.get("events").response(_.bodySse[User])
+            val route  = HttpRoute.get("events").response(_.bodySseJson[User])
             val frame1 = "data: {\"name\":\"Alice\",\"age\":30}\n\n"
             val frame2 = "event: update\ndata: {\"name\":\"Bob\",\"age\":25}\n\n"
             val frame3 = "id: 3\nretry: 5000\ndata: {\"name\":\"Carol\",\"age\":35}\n\n"

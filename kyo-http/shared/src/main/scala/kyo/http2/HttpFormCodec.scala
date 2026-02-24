@@ -1,5 +1,6 @@
 package kyo.http2
 
+import scala.annotation.tailrec
 import scala.compiletime.*
 import scala.deriving.Mirror
 
@@ -26,39 +27,39 @@ object HttpFormCodec:
             val map    = new java.util.HashMap[String, String](fieldNames.length * 2)
             if s.nonEmpty then
                 val pairs = s.split('&')
-                var i     = 0
-                while i < pairs.length do
-                    val pair  = pairs(i)
-                    val eqIdx = pair.indexOf('=')
-                    if eqIdx >= 0 then
-                        val key   = java.net.URLDecoder.decode(pair.substring(0, eqIdx), "UTF-8")
-                        val value = java.net.URLDecoder.decode(pair.substring(eqIdx + 1), "UTF-8")
-                        kyo.discard(map.put(key, value))
-                    end if
-                    i += 1
-                end while
+                @tailrec def parsePairs(i: Int): Unit =
+                    if i < pairs.length then
+                        val pair  = pairs(i)
+                        val eqIdx = pair.indexOf('=')
+                        if eqIdx >= 0 then
+                            val key   = java.net.URLDecoder.decode(pair.substring(0, eqIdx), "UTF-8")
+                            val value = java.net.URLDecoder.decode(pair.substring(eqIdx + 1), "UTF-8")
+                            kyo.discard(map.put(key, value))
+                        end if
+                        parsePairs(i + 1)
+                parsePairs(0)
             end if
-            var j = 0
-            while j < fieldNames.length do
-                val raw = map.get(fieldNames(j))
-                if raw == null then
-                    throw new IllegalArgumentException(s"Missing required form field: ${fieldNames(j)}")
-                values(j) = fieldCodecs(j).decode(raw)
-                j += 1
-            end while
+            @tailrec def fillValues(j: Int): Unit =
+                if j < fieldNames.length then
+                    val raw = map.get(fieldNames(j))
+                    if raw == null then
+                        throw new IllegalArgumentException(s"Missing required form field: ${fieldNames(j)}")
+                    values(j) = fieldCodecs(j).decode(raw)
+                    fillValues(j + 1)
+            fillValues(0)
             mirror.fromProduct(Tuple.fromArray(values))
         end decode
 
         def encode(a: A): String =
             val sb = new java.lang.StringBuilder()
-            var i  = 0
-            while i < fieldNames.length do
-                if i > 0 then kyo.discard(sb.append('&'))
-                sb.append(java.net.URLEncoder.encode(fieldNames(i), "UTF-8"))
-                sb.append('=')
-                sb.append(java.net.URLEncoder.encode(fieldCodecs(i).encode(a.productElement(i)), "UTF-8"))
-                i += 1
-            end while
+            @tailrec def loop(i: Int): Unit =
+                if i < fieldNames.length then
+                    if i > 0 then kyo.discard(sb.append('&'))
+                    sb.append(java.net.URLEncoder.encode(fieldNames(i), "UTF-8"))
+                    sb.append('=')
+                    sb.append(java.net.URLEncoder.encode(fieldCodecs(i).encode(a.productElement(i)), "UTF-8"))
+                    loop(i + 1)
+            loop(0)
             sb.toString
         end encode
     end ProductFormCodec

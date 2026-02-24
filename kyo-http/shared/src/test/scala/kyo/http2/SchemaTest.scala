@@ -81,16 +81,16 @@ class SchemaTest extends Test:
             assert(Schema[String].decode("\"hello\"") == Result.succeed("hello"))
         }
 
-        "decode falls back to raw text on JSON failure" in {
-            assert(Schema[String].decode("plain text") == Result.succeed("plain text"))
+        "decode rejects non-JSON text" in {
+            assert(Schema[String].decode("plain text").isFailure)
         }
 
         "decode JSON-encoded string" in {
             assert(Schema[String].decode("\"hello world\"") == Result.succeed("hello world"))
         }
 
-        "decode empty string" in {
-            assert(Schema[String].decode("") == Result.succeed(""))
+        "decode rejects empty string" in {
+            assert(Schema[String].decode("").isFailure)
         }
     }
 

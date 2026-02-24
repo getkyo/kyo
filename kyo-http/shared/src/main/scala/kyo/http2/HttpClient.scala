@@ -10,11 +10,14 @@ import kyo.Frame
 import kyo.Local
 import kyo.Maybe
 import kyo.Present
+import kyo.Record2.~
 import kyo.Result
 import kyo.Schedule
 import kyo.Scope
+import kyo.Span
 import kyo.Sync
 import kyo.http2.internal.ConnectionPool
+import kyo.http2.internal.HttpPlatformBackend
 import kyo.seconds
 
 final class HttpClient private (
@@ -31,13 +34,23 @@ final class HttpClient private (
     )(
         f: HttpResponse[Out] => A < S
     )(using Frame): A < (S & Async & Abort[HttpError]) =
-        HttpClient.configLocal.use { config =>
-            val resolved = config.baseUrl match
-                case Present(base) if request.url.scheme.isEmpty =>
-                    request.copy(url = HttpUrl(base.scheme, base.host, base.port, request.url.path, request.url.rawQuery))
-                case _ => request
-            retryWith(route, resolved, config)(f)
+        HttpClient.local.use { (_, config) =>
+            sendWithConfig(route, request, config)(f)
         }
+
+    private[http2] def sendWithConfig[In, Out, A, S](
+        route: HttpRoute[In, Out, Any],
+        request: HttpRequest[In],
+        config: HttpClient.Config
+    )(
+        f: HttpResponse[Out] => A < S
+    )(using Frame): A < (S & Async & Abort[HttpError]) =
+        val resolved = config.baseUrl match
+            case Present(base) if request.url.scheme.isEmpty =>
+                request.copy(url = HttpUrl(base.scheme, base.host, base.port, request.url.path, request.url.rawQuery))
+            case _ => request
+        retryWith(route, resolved, config)(f)
+    end sendWithConfig
 
     private def retryWith[In, Out, A, S](
         route: HttpRoute[In, Out, Any],
@@ -81,7 +94,11 @@ final class HttpClient private (
                             case Present(location) =>
                                 HttpUrl.parse(location) match
                                     case Result.Success(newUrl) =>
-                                        loop(req.copy(url = newUrl), count + 1)
+                                        // Preserve original host/port/scheme for relative redirects
+                                        val resolved =
+                                            if newUrl.host.nonEmpty then newUrl
+                                            else newUrl.copy(scheme = req.url.scheme, host = req.url.host, port = req.url.port)
+                                        loop(req.copy(url = resolved), count + 1)
                                     case Result.Failure(err) =>
                                         Abort.fail(err)
                             case Absent => f(res)
@@ -138,7 +155,7 @@ final class HttpClient private (
         }
 
     def close(gracePeriod: Duration)(using Frame): Unit < Async =
-        Sync.Unsafe.defer(pool.closeAll()).andThen(backend.close(gracePeriod))
+        Sync.Unsafe.defer(pool.closeAll())
     end close
     def close(using Frame): Unit < Async    = close(30.seconds)
     def closeNow(using Frame): Unit < Async = close(Duration.Zero)
@@ -161,15 +178,44 @@ object HttpClient:
         connectTimeout.foreach(d => require(d > Duration.Zero, s"connectTimeout must be positive: $d"))
     end Config
 
-    private val configLocal: Local[Config] = Local.init(Config())
+    // --- Default client ---
+
+    private lazy val defaultClient: HttpClient =
+        import kyo.AllowUnsafe.embrace.danger
+        val backend = HttpPlatformBackend.client
+        val pool = ConnectionPool.init[backend.Connection](
+            100,
+            conn => backend.isAlive(conn),
+            conn => backend.closeNowUnsafe(conn)
+        )
+        new HttpClient(backend, pool, 100)
+    end defaultClient
+
+    private val local: Local[(HttpClient, Config)] = Local.init((defaultClient, Config()))
+
+    // --- Context management ---
+
+    /** Sets the client for the given computation. */
+    def let[A, S](client: HttpClient)(v: A < S)(using Frame): A < S =
+        local.use { (_, config) => local.let((client, config))(v) }
+
+    /** Accesses the current client. */
+    def use[A, S](f: HttpClient => A < S)(using Frame): A < S =
+        local.use { (client, _) => f(client) }
+
+    /** Transforms the current client for the given computation. */
+    def update[A, S](f: HttpClient => HttpClient)(v: A < S)(using Frame): A < S =
+        local.use { (client, config) => local.let((f(client), config))(v) }
 
     /** Applies a config transformation for the given computation (stacks with current config). */
     def withConfig[A, S](f: Config => Config)(v: A < S)(using Frame): A < S =
-        configLocal.update(f)(v)
+        local.use { (client, config) => local.let((client, f(config)))(v) }
 
     /** Sets the config for the given computation. */
     def withConfig[A, S](config: Config)(v: A < S)(using Frame): A < S =
-        configLocal.let(config)(v)
+        local.use { (client, _) => local.let((client, config))(v) }
+
+    // --- Factory methods ---
 
     def init(
         backend: HttpBackend.Client,
@@ -191,5 +237,77 @@ object HttpClient:
             new HttpClient(backend, pool, maxConnectionsPerHost)
         }
     end initUnscoped
+
+    // --- Convenience methods (use current client from Local) ---
+
+    // GET
+    def getJson[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.get("").response(_.bodyJson[A]))(_.fields.body)
+
+    def getText(url: String)(using Frame): String < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.get("").response(_.bodyText))(_.fields.body)
+
+    def getBinary(url: String)(using Frame): Span[Byte] < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.get("").response(_.bodyBinary))(_.fields.body)
+
+    // POST
+    def postJson[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.post("").request(_.bodyJson[B]).response(_.bodyJson[A]), body)(_.fields.body)
+
+    def postText(url: String, body: String)(using Frame): String < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.post("").request(_.bodyText).response(_.bodyText), body)(_.fields.body)
+
+    def postBinary(url: String, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.post("").request(_.bodyBinary).response(_.bodyBinary), body)(_.fields.body)
+
+    // PUT
+    def putJson[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.put("").request(_.bodyJson[B]).response(_.bodyJson[A]), body)(_.fields.body)
+
+    def putText(url: String, body: String)(using Frame): String < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.put("").request(_.bodyText).response(_.bodyText), body)(_.fields.body)
+
+    // DELETE
+    def deleteJson[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.delete("").response(_.bodyJson[A]))(_.fields.body)
+
+    def deleteText(url: String)(using Frame): String < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.delete("").response(_.bodyText))(_.fields.body)
+
+    // PATCH
+    def patchJson[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.patch("").request(_.bodyJson[B]).response(_.bodyJson[A]), body)(_.fields.body)
+
+    def patchText(url: String, body: String)(using Frame): String < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.patch("").request(_.bodyText).response(_.bodyText), body)(_.fields.body)
+
+    // --- Internal ---
+
+    private def parseAndSend[Out, A](
+        rawUrl: String,
+        route: HttpRoute[Any, Out, Any]
+    )(
+        extract: HttpResponse[Out] => A
+    )(using Frame): A < (Async & Abort[HttpError]) =
+        HttpUrl.parse(rawUrl) match
+            case Result.Success(url) =>
+                local.use { (client, config) =>
+                    client.sendWithConfig(route, HttpRequest(route.method, url), config)(extract)
+                }
+            case error: Result.Error[?] => Abort.fail(HttpError.ParseError(error.toString))
+
+    private def parseAndSend[B, Out, A](
+        rawUrl: String,
+        route: HttpRoute["body" ~ B, Out, Any],
+        body: B
+    )(
+        extract: HttpResponse[Out] => A
+    )(using Frame): A < (Async & Abort[HttpError]) =
+        HttpUrl.parse(rawUrl) match
+            case Result.Success(url) =>
+                local.use { (client, config) =>
+                    client.sendWithConfig(route, HttpRequest(route.method, url).addField("body", body), config)(extract)
+                }
+            case error: Result.Error[?] => Abort.fail(HttpError.ParseError(error.toString))
 
 end HttpClient

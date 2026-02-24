@@ -8,7 +8,7 @@ import kyo.Maybe.Present
 import kyo.Result
 import kyo.Span
 import kyo.discard
-import kyo.http2.HttpEndpoint
+import kyo.http2.HttpHandler
 import kyo.http2.HttpMethod
 import kyo.http2.HttpPath
 import scala.annotation.tailrec
@@ -22,7 +22,7 @@ import scala.annotation.tailrec
   */
 final class HttpRouter private (
     private val nodes: Span[HttpRouter.Node],
-    private val endpoints: Span[HttpEndpoint[?, ?, Any]],
+    private val endpoints: Span[HttpHandler[?, ?, ?]],
     private val captureWireNames: Span[Span[String]],
     private val streamingReqFlags: Span[Boolean],
     private val streamingRespFlags: Span[Boolean]
@@ -68,14 +68,12 @@ final class HttpRouter private (
     end resolveEndpoint
 
     private val maxCaptures: Int =
-        var max = 0
-        var i   = 0
-        while i < captureWireNames.size do
-            val len = captureWireNames(i).size
-            if len > max then max = len
-            i += 1
-        end while
-        max
+        @tailrec def loop(i: Int, max: Int): Int =
+            if i >= captureWireNames.size then max
+            else
+                val len = captureWireNames(i).size
+                loop(i + 1, if len > max then len else max)
+        loop(0, 0)
     end maxCaptures
 
     private val emptyCaptures: Array[String] = Array.empty[String]
@@ -86,11 +84,11 @@ final class HttpRouter private (
             if captureCount == 0 then Dict.empty[String, String]
             else
                 val builder = DictBuilder.init[String, String]
-                var i       = 0
-                while i < captureCount && i < wireNames.size do
-                    discard(builder.add(wireNames(i), captureValues(i)))
-                    i += 1
-                end while
+                @tailrec def loop(i: Int): Unit =
+                    if i < captureCount && i < wireNames.size then
+                        discard(builder.add(wireNames(i), captureValues(i)))
+                        loop(i + 1)
+                loop(0)
                 builder.result()
         RouteMatch(
             endpoints(endpointIdx),
@@ -176,7 +174,7 @@ end HttpRouter
 object HttpRouter:
 
     case class RouteMatch(
-        endpoint: HttpEndpoint[?, ?, Any],
+        endpoint: HttpHandler[?, ?, ?],
         pathCaptures: Dict[String, String],
         isStreamingRequest: Boolean,
         isStreamingResponse: Boolean
@@ -212,7 +210,7 @@ object HttpRouter:
         end match
     end methodIndex
 
-    def apply(endpointSeq: Seq[HttpEndpoint[?, ?, Any]]): HttpRouter =
+    def apply(endpointSeq: Seq[HttpHandler[?, ?, ?]]): HttpRouter =
         if endpointSeq.isEmpty then
             val emptyNode = new Node(Span.empty, Span.empty, -1, -1, Span.fromUnsafe(Array.fill(MethodCount)(-1)), Set.empty)
             new HttpRouter(Span(emptyNode), Span.empty, Span.empty, Span.empty, Span.empty)
@@ -232,7 +230,7 @@ object HttpRouter:
             )
 
             val flatNodes        = new Array[Node](nodeCount)
-            val flatEndpoints    = new Array[HttpEndpoint[?, ?, Any]](epCount)
+            val flatEndpoints    = new Array[HttpHandler[?, ?, ?]](epCount)
             val flatCaptureNames = new Array[Span[String]](epCount)
             val flatStreamReq    = new Array[Boolean](epCount)
             val flatStreamResp   = new Array[Boolean](epCount)
@@ -270,7 +268,7 @@ object HttpRouter:
     // ==================== Build Phase ====================
 
     final private class MutableNode(
-        var endpoints: Map[HttpMethod, HttpEndpoint[?, ?, Any]] = Map.empty,
+        var endpoints: Map[HttpMethod, HttpHandler[?, ?, ?]] = Map.empty,
         var literalChildren: Map[String, MutableNode] = Map.empty,
         var captureChild: Maybe[MutableNode] = Absent,
         var restChild: Maybe[MutableNode] = Absent
@@ -314,7 +312,7 @@ object HttpRouter:
         node: MutableNode,
         segments: List[Segment],
         method: HttpMethod,
-        endpoint: HttpEndpoint[?, ?, Any]
+        endpoint: HttpHandler[?, ?, ?]
     ): Unit =
         segments match
             case Nil =>
@@ -371,7 +369,7 @@ object HttpRouter:
 
     private class SerializeState(
         val nodes: Array[Node],
-        val endpoints: Array[HttpEndpoint[?, ?, Any]],
+        val endpoints: Array[HttpHandler[?, ?, ?]],
         val captureNames: Array[Span[String]],
         val streamReq: Array[Boolean],
         val streamResp: Array[Boolean]

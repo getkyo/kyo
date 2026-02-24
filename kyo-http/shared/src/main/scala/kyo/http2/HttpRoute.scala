@@ -1,6 +1,7 @@
 package kyo.http2
 
 import kyo.<
+import kyo.Abort
 import kyo.Absent
 import kyo.Async
 import kyo.Chunk
@@ -18,56 +19,61 @@ import scala.annotation.implicitNotFound
 import scala.annotation.targetName
 import scala.compiletime
 
-case class HttpRoute[In, Out, -S](
+case class HttpRoute[In, Out, +E](
     method: HttpMethod,
     request: HttpRoute.RequestDef[In],
     response: HttpRoute.ResponseDef[Out] = HttpRoute.ResponseDef(),
-    filter: HttpFilter[?, ?, ?, ?, S] = HttpFilter.noop,
+    filter: HttpFilter[?, ?, ?, ?, ? <: E] = HttpFilter.noop,
     metadata: HttpRoute.Metadata = HttpRoute.Metadata()
 ) derives CanEqual:
     import HttpRoute.*
 
-    def pathAppend[In2](suffix: HttpPath[In2]): HttpRoute[In & In2, Out, S] =
+    def pathAppend[In2](suffix: HttpPath[In2]): HttpRoute[In & In2, Out, E] =
         copy(request = request.pathAppend(suffix))
 
-    def pathPrepend[In2](prefix: HttpPath[In2]): HttpRoute[In & In2, Out, S] =
+    def pathPrepend[In2](prefix: HttpPath[In2]): HttpRoute[In & In2, Out, E] =
         copy(request = request.pathPrepend(prefix))
 
-    def request[R](f: RequestDef[In] => R)(using s: Strict[RequestDef, R])(using s.Out <:< In): HttpRoute[s.Out, Out, S] =
+    def request[R](f: RequestDef[In] => R)(using s: Strict[RequestDef, R])(using s.Out <:< In): HttpRoute[s.Out, Out, E] =
         HttpRoute(method, s(f(request)), response, filter, metadata)
 
-    def response[R](f: ResponseDef[Out] => R)(using s: Strict[ResponseDef, R])(using s.Out <:< Out): HttpRoute[In, s.Out, S] =
+    def response[R](f: ResponseDef[Out] => R)(using s: Strict[ResponseDef, R])(using s.Out <:< Out): HttpRoute[In, s.Out, E] =
         HttpRoute(method, request, s(f(response)), filter, metadata)
 
-    def filter[ReqIn >: In, ReqOut, ResIn >: Out, ResOut, S2](
-        f: HttpFilter[ReqIn, ReqOut, ResIn, ResOut, S2]
-    ): HttpRoute[In & ReqOut, Out & ResOut, S & S2] =
+    def filter[ReqIn >: In, ReqOut, ResIn >: Out, ResOut, E2](
+        f: HttpFilter[ReqIn, ReqOut, ResIn, ResOut, E2]
+    ): HttpRoute[In & ReqOut, Out & ResOut, E | E2] =
         HttpRoute(method, request, response, this.filter.andThen(f), metadata)
     end filter
 
-    def metadata(f: Metadata => Metadata): HttpRoute[In, Out, S] =
+    def error[E2](using schema: Schema[E2], tag: ConcreteTag[E2])(s: HttpStatus): HttpRoute[In, Out, E | E2] =
+        copy(response = response.error[E2](s))
+
+    def metadata(f: Metadata => Metadata): HttpRoute[In, Out, E] =
         copy(metadata = f(metadata))
 
-    def metadata(meta: Metadata): HttpRoute[In, Out, S] =
+    def metadata(meta: Metadata): HttpRoute[In, Out, E] =
         copy(metadata = meta)
 
-    def endpoint[S2](f: HttpRequest[In] => HttpResponse[Out] < S2)(using Frame): HttpEndpoint[In, Out, S & S2] =
-        HttpEndpoint(this)(req => f(req))
+    def handler[E2 >: E](f: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]))(using
+        Frame
+    ): HttpHandler[In, Out, E2] =
+        HttpHandler.init(this)(req => f(req))
 
 end HttpRoute
 
 object HttpRoute:
 
-    private def make[A](method: HttpMethod, path: HttpPath[A]): HttpRoute[A, Any, Any] =
-        HttpRoute[A, Any, Any](method, RequestDef[A](path), ResponseDef[Any](), HttpFilter.noop, Metadata())
+    private def make[A](method: HttpMethod, path: HttpPath[A]): HttpRoute[A, Any, Nothing] =
+        HttpRoute[A, Any, Nothing](method, RequestDef[A](path), ResponseDef[Any](), HttpFilter.noop, Metadata())
 
-    def get[A](path: HttpPath[A]): HttpRoute[A, Any, Any]     = make(HttpMethod.GET, path)
-    def post[A](path: HttpPath[A]): HttpRoute[A, Any, Any]    = make(HttpMethod.POST, path)
-    def put[A](path: HttpPath[A]): HttpRoute[A, Any, Any]     = make(HttpMethod.PUT, path)
-    def patch[A](path: HttpPath[A]): HttpRoute[A, Any, Any]   = make(HttpMethod.PATCH, path)
-    def delete[A](path: HttpPath[A]): HttpRoute[A, Any, Any]  = make(HttpMethod.DELETE, path)
-    def head[A](path: HttpPath[A]): HttpRoute[A, Any, Any]    = make(HttpMethod.HEAD, path)
-    def options[A](path: HttpPath[A]): HttpRoute[A, Any, Any] = make(HttpMethod.OPTIONS, path)
+    def get[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]     = make(HttpMethod.GET, path)
+    def post[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]    = make(HttpMethod.POST, path)
+    def put[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]     = make(HttpMethod.PUT, path)
+    def patch[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]   = make(HttpMethod.PATCH, path)
+    def delete[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]  = make(HttpMethod.DELETE, path)
+    def head[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]    = make(HttpMethod.HEAD, path)
+    def options[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing] = make(HttpMethod.OPTIONS, path)
 
     // ==================== ContentType ====================
 
@@ -80,7 +86,8 @@ object HttpRoute:
         case Json[A](schema: Schema[A])                                         extends ContentType[A]
         case Ndjson[V](schema: Schema[V], emitTag: Tag[Emit[Chunk[V]]])         extends ContentType[Stream[V, Async]]
         case Sse[V](schema: Schema[V], emitTag: Tag[Emit[Chunk[HttpEvent[V]]]]) extends ContentType[Stream[HttpEvent[V], Async & Scope]]
-        case Form[A](codec: HttpFormCodec[A])                                   extends ContentType[A]
+        case SseText(emitTag: Tag[Emit[Chunk[HttpEvent[String]]]]) extends ContentType[Stream[HttpEvent[String], Async & Scope]]
+        case Form[A](codec: HttpFormCodec[A])                      extends ContentType[A]
     end ContentType
 
     // ==================== Field ====================
@@ -359,13 +366,13 @@ object HttpRoute:
         ): ResponseDef[Out & N ~ Stream[V, Async]] =
             addField(Field.Body(fieldName, ContentType.Ndjson(schema, emitTag), description))
 
-        def bodySse[V](using
+        def bodySseJson[V](using
             schema: Schema[V],
             emitTag: Tag[Emit[Chunk[HttpEvent[V]]]]
         )(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ Stream[HttpEvent[V], Async & Scope]] =
             addField(Field.Body("body", ContentType.Sse(schema, emitTag), ""))
 
-        def bodySse[V](using
+        def bodySseJson[V](using
             schema: Schema[V],
             emitTag: Tag[Emit[Chunk[HttpEvent[V]]]]
         )[N <: String & Singleton](
@@ -373,6 +380,19 @@ object HttpRoute:
             description: String = ""
         )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Stream[HttpEvent[V], Async & Scope]] =
             addField(Field.Body(fieldName, ContentType.Sse(schema, emitTag), description))
+
+        def bodySseText(using
+            emitTag: Tag[Emit[Chunk[HttpEvent[String]]]]
+        )(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ Stream[HttpEvent[String], Async & Scope]] =
+            addField(Field.Body("body", ContentType.SseText(emitTag), ""))
+
+        def bodySseText(using
+            emitTag: Tag[Emit[Chunk[HttpEvent[String]]]]
+        )[N <: String & Singleton](
+            fieldName: N,
+            description: String = ""
+        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Stream[HttpEvent[String], Async & Scope]] =
+            addField(Field.Body(fieldName, ContentType.SseText(emitTag), description))
 
         def error[E](using schema: Schema[E], tag: ConcreteTag[E])(s: HttpStatus): ResponseDef[Out] =
             ResponseDef(this.status, this.fields, this.errors.append(ErrorMapping(s, schema, tag.asInstanceOf[ConcreteTag[Any]])))
