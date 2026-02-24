@@ -168,4 +168,10 @@ object Fields:
     trait Structural extends Selectable:
         def fields: Dict[String, Any]
         def selectDynamic(name: String): Any = fields(name)
+
+    object Structural:
+        private[kyo] def from(dict: Dict[String, Any]): Structural =
+            new Structural:
+                val fields = dict
+    end Structural
 end Fields

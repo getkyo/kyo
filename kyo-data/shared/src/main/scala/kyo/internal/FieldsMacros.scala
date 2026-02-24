@@ -265,7 +265,7 @@ object FieldsMacros:
                             '{ () }
                         )
                     }
-                    new Record[f](Dict.fromArrayUnsafe(arr.asInstanceOf[Array[String | Any]]))
+                    Dict.fromArrayUnsafe(arr.asInstanceOf[Array[Any]])
                 }
         end match
     end fromProductImpl
