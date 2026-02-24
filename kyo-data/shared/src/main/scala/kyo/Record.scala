@@ -103,22 +103,17 @@ final class Record[F](private[kyo] val dict: Dict[String, Any]) extends Dynamic:
         new Record(result.result())
     end mapFields
 
-    /** Pairs the values of this record with another record by field name. For each field `Name ~ V1` in this record and `Name ~ V2` in
-      * `other`, the result contains `Name ~ (V1, V2)`. Only fields present in this record's type are included.
+    /** Pairs the values of this record with another record by field name. Both records must have the same field names (verified at compile
+      * time). For each field `Name ~ V1` in this record and `Name ~ V2` in `other`, the result contains `Name ~ (V1, V2)`.
       */
     inline def zip[F2](other: Record[F2])(using
         f1: Fields[F],
-        f2: Fields[F2]
+        f2: Fields[F2],
+        ev: Fields.SameNames[F, F2]
     ): Record[f1.Zipped[f2.AsTuple]] =
         val result = DictBuilder.init[String, Any]
         f1.fields.foreach: field =>
-            dict.get(field.name) match
-                case Present(v1) =>
-                    other.dict.get(field.name) match
-                        case Present(v2) =>
-                            discard(result.add(field.name, (v1, v2)))
-                        case _ =>
-                case _ =>
+            discard(result.add(field.name, (dict(field.name), other.dict(field.name))))
         new Record(result.result())
     end zip
 

@@ -171,6 +171,50 @@ object FieldsMacros:
         '{ Fields.Comparable.unsafe[A] }
     end comparableImpl
 
+    def sameNamesImpl[A: Type, B: Type](using Quotes): Expr[Fields.SameNames[A, B]] =
+        import quotes.reflect.*
+
+        def fieldNames(tpe: TypeRepr): Set[String] =
+            tpe.dealias match
+                case AndType(l, r) => fieldNames(l) ++ fieldNames(r)
+                case AppliedType(_, List(ConstantType(StringConstant(name)), _)) =>
+                    Set(name)
+                case _ =>
+                    if tpe =:= TypeRepr.of[Any] then Set.empty
+                    else
+                        val sym = tpe.typeSymbol
+                        if sym.isClassDef && sym.flags.is(Flags.Case) then
+                            sym.caseFields.map(_.name).toSet
+                        else
+                            try
+                                tpe.typeSymbol.tree match
+                                    case typeDef: TypeDef =>
+                                        typeDef.rhs match
+                                            case bounds: TypeBoundsTree =>
+                                                val hi = bounds.hi.tpe
+                                                if !(hi =:= TypeRepr.of[Any]) then fieldNames(hi)
+                                                else Set.empty
+                                            case _ => Set.empty
+                                    case _ => Set.empty
+                            catch case _: Exception => Set.empty
+                        end if
+
+        val namesA = fieldNames(TypeRepr.of[A])
+        val namesB = fieldNames(TypeRepr.of[B])
+
+        if namesA != namesB then
+            val onlyA = (namesA -- namesB).toList.sorted
+            val onlyB = (namesB -- namesA).toList.sorted
+            val parts = List(
+                if onlyA.nonEmpty then Some(s"fields only in left: ${onlyA.mkString(", ")}") else None,
+                if onlyB.nonEmpty then Some(s"fields only in right: ${onlyB.mkString(", ")}") else None
+            ).flatten.mkString("; ")
+            report.errorAndAbort(s"Cannot zip records with different fields: $parts")
+        end if
+
+        '{ Fields.SameNames.unsafe[A, B] }
+    end sameNamesImpl
+
     def fromProductImpl[A <: Product: Type](value: Expr[A])(using Quotes): Expr[Any] =
         import quotes.reflect.*
 

@@ -149,4 +149,15 @@ object Fields:
             ${ internal.FieldsMacros.comparableImpl[A] }
     end Comparable
 
+    /** Opaque evidence that field types `A` and `B` have the same set of field names, enabling type-safe `zip`. */
+    opaque type SameNames[A, B] = Unit
+
+    object SameNames:
+        private[kyo] def unsafe[A, B]: SameNames[A, B] = ()
+
+        /** Macro-derived given that verifies `A` and `B` have identical field names. Fails at compile time if they differ. */
+        transparent inline given derive[A, B]: SameNames[A, B] =
+            ${ internal.FieldsMacros.sameNamesImpl[A, B] }
+    end SameNames
+
 end Fields

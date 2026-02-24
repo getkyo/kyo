@@ -181,6 +181,36 @@ class RecordTest extends Test:
             assert(b == ("hello", 'x'))
             assert(c == (true, 42L))
         }
+
+        "rejects mismatched fields - left has extra" in {
+            typeCheckFailure("""
+                val r1 = "a" ~ 1 & "b" ~ 2
+                val r2 = "a" ~ "x"
+                r1.zip(r2)
+            """)(
+                "SameNames"
+            )
+        }
+
+        "rejects mismatched fields - right has extra" in {
+            typeCheckFailure("""
+                val r1 = "a" ~ 1
+                val r2 = "a" ~ "x" & "b" ~ "y"
+                r1.zip(r2)
+            """)(
+                "SameNames"
+            )
+        }
+
+        "rejects mismatched fields - no overlap" in {
+            typeCheckFailure("""
+                val r1 = "a" ~ 1
+                val r2 = "b" ~ "x"
+                r1.zip(r2)
+            """)(
+                "SameNames"
+            )
+        }
     }
 
     "values" - {
