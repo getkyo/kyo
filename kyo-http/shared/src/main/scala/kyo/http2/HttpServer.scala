@@ -4,8 +4,10 @@ import kyo.<
 import kyo.Async
 import kyo.Duration
 import kyo.Frame
+import kyo.Record2.~
 import kyo.Scope
 import kyo.http2.internal.HttpPlatformBackend
+import kyo.http2.internal.OpenApiGenerator
 
 final class HttpServer private (binding: HttpBackend.Binding):
     def port: Int                                               = binding.port

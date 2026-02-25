@@ -1068,4 +1068,24 @@ class HttpServerTest extends Test:
         }
     }
 
+    "HttpClient.getText against server" - {
+
+        "simple GET returns body text" in run {
+            val route = HttpRoute.get("ping").response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.okText("pong"))
+            withServer(ep) { port =>
+                // First verify the direct path works
+                send(port, route, HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/ping"))).map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                    assert(resp.fields.body == "pong")
+                }.andThen {
+                    // Now test via HttpClient.getText
+                    HttpClient.getText(s"http://localhost:$port/ping").map { text =>
+                        assert(text == "pong")
+                    }
+                }
+            }
+        }
+    }
+
 end HttpServerTest

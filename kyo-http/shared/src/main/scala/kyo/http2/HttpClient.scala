@@ -4,8 +4,10 @@ import kyo.<
 import kyo.Abort
 import kyo.Absent
 import kyo.Async
+import kyo.Chunk
 import kyo.Clock
 import kyo.Duration
+import kyo.Emit
 import kyo.Frame
 import kyo.Local
 import kyo.Maybe
@@ -15,7 +17,9 @@ import kyo.Result
 import kyo.Schedule
 import kyo.Scope
 import kyo.Span
+import kyo.Stream
 import kyo.Sync
+import kyo.Tag
 import kyo.http2.internal.ConnectionPool
 import kyo.http2.internal.HttpPlatformBackend
 import kyo.seconds
@@ -267,6 +271,9 @@ object HttpClient:
     def putText(url: String, body: String)(using Frame): String < (Async & Abort[HttpError]) =
         parseAndSend(url, HttpRoute.put("").request(_.bodyText).response(_.bodyText), body)(_.fields.body)
 
+    def putBinary(url: String, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.put("").request(_.bodyBinary).response(_.bodyBinary), body)(_.fields.body)
+
     // DELETE
     def deleteJson[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpError]) =
         parseAndSend(url, HttpRoute.delete("").response(_.bodyJson[A]))(_.fields.body)
@@ -280,6 +287,31 @@ object HttpClient:
 
     def patchText(url: String, body: String)(using Frame): String < (Async & Abort[HttpError]) =
         parseAndSend(url, HttpRoute.patch("").request(_.bodyText).response(_.bodyText), body)(_.fields.body)
+
+    def patchBinary(url: String, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.patch("").request(_.bodyBinary).response(_.bodyBinary), body)(_.fields.body)
+
+    def deleteBinary(url: String)(using Frame): Span[Byte] < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.delete("").response(_.bodyBinary))(_.fields.body)
+
+    // Streaming
+    def getSseJson[V: Schema: Tag](url: String)(using
+        Frame,
+        Tag[Emit[Chunk[HttpEvent[V]]]]
+    ): Stream[HttpEvent[V], Async & Scope] < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.get("").response(_.bodySseJson[V]))(_.fields.body)
+
+    def getSseText(url: String)(using
+        Frame,
+        Tag[Emit[Chunk[HttpEvent[String]]]]
+    ): Stream[HttpEvent[String], Async & Scope] < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.get("").response(_.bodySseText))(_.fields.body)
+
+    def getNdJson[V: Schema: Tag](url: String)(using
+        Frame,
+        Tag[Emit[Chunk[V]]]
+    ): Stream[V, Async] < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.get("").response(_.bodyNdjson[V]))(_.fields.body)
 
     // --- Internal ---
 

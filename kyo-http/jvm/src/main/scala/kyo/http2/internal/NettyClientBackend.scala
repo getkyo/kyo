@@ -4,6 +4,7 @@ import io.netty.bootstrap.Bootstrap
 import io.netty.channel.{Channel as NettyChannel, *}
 import io.netty.channel.socket.SocketChannel
 import io.netty.handler.codec.http.HttpClientCodec
+import io.netty.handler.codec.http.HttpDecoderConfig
 import io.netty.handler.ssl.SslContextBuilder
 import io.netty.util.concurrent.DefaultThreadFactory
 import java.net.InetSocketAddress
@@ -47,7 +48,16 @@ final class NettyClientBackend extends HttpBackend.Client:
                         val pipeline = ch.pipeline()
                         if ssl then
                             discard(pipeline.addLast("ssl", sslContext.newHandler(ch.alloc(), host, port)))
-                        discard(pipeline.addLast("codec", new HttpClientCodec())))
+                        discard(pipeline.addLast(
+                            "codec",
+                            new HttpClientCodec(
+                                new HttpDecoderConfig()
+                                    .setHeadersFactory(FlatNettyHttpHeaders.factory)
+                                    .setTrailersFactory(FlatNettyHttpHeaders.factory),
+                                false, // parseHttpAfterConnectRequest
+                                false  // failOnMissingResponse
+                            )
+                        )))
             connectTimeout.foreach { timeout =>
                 discard(b.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Integer.valueOf(timeout.toMillis.toInt)))
             }

@@ -170,28 +170,28 @@ class HttpHandlerTest extends Test:
 
     "HttpHandler shortcut methods" - {
 
-        "get" in {
-            val handler = HttpHandler.get("users")(_ => HttpResponse.ok)
+        "getRaw" in {
+            val handler = HttpHandler.getRaw("users")(_ => HttpResponse.ok)
             assert(handler.route.method == HttpMethod.GET)
         }
 
-        "post" in {
-            val handler = HttpHandler.post("users")(_ => HttpResponse.ok)
+        "postRaw" in {
+            val handler = HttpHandler.postRaw("users")(_ => HttpResponse.ok)
             assert(handler.route.method == HttpMethod.POST)
         }
 
-        "put" in {
-            val handler = HttpHandler.put("users")(_ => HttpResponse.ok)
+        "putRaw" in {
+            val handler = HttpHandler.putRaw("users")(_ => HttpResponse.ok)
             assert(handler.route.method == HttpMethod.PUT)
         }
 
-        "patch" in {
-            val handler = HttpHandler.patch("users")(_ => HttpResponse.ok)
+        "patchRaw" in {
+            val handler = HttpHandler.patchRaw("users")(_ => HttpResponse.ok)
             assert(handler.route.method == HttpMethod.PATCH)
         }
 
-        "delete" in {
-            val handler = HttpHandler.delete("users")(_ => HttpResponse.ok)
+        "deleteRaw" in {
+            val handler = HttpHandler.deleteRaw("users")(_ => HttpResponse.ok)
             assert(handler.route.method == HttpMethod.DELETE)
         }
 
@@ -206,7 +206,7 @@ class HttpHandlerTest extends Test:
         }
 
         "shortcut with errors tracks E type" in {
-            val handler = HttpHandler.get[String]("users") { _ =>
+            val handler = HttpHandler.getRaw[String]("users") { _ =>
                 Abort.fail("bad request")
             }
             val _: HttpHandler[Any, Any, String] = handler

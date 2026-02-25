@@ -184,32 +184,49 @@ final private[http2] class NettyConnection(
     )(using AllowUnsafe, Frame): Unit =
         RouteUtil.encodeRequest(route, request)(
             onEmpty = (url, headers) =>
+                val flatHeaders = FlatNettyHttpHeaders.acquire()
                 val nettyReq =
-                    new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, NettyHttpMethod.valueOf(route.method.name), url, Unpooled.EMPTY_BUFFER)
+                    new DefaultFullHttpRequest(
+                        HttpVersion.HTTP_1_1,
+                        NettyHttpMethod.valueOf(route.method.name),
+                        url,
+                        Unpooled.EMPTY_BUFFER,
+                        flatHeaders,
+                        FlatNettyHttpHeaders.acquire()
+                    )
                 applyHeaders(nettyReq, headers, request)
-                if !nettyReq.headers().contains("Content-Length") then
-                    discard(nettyReq.headers().setInt("Content-Length", 0))
+                if !flatHeaders.contains("Content-Length") then
+                    discard(flatHeaders.setInt("Content-Length", 0))
                 encodedNettyReq = Present(nettyReq)
                 encodedStreamBody =
                     Absent
             ,
             onBuffered = (url, headers, contentType, body) =>
-                val content  = Unpooled.wrappedBuffer(body.toArrayUnsafe)
-                val nettyReq = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, NettyHttpMethod.valueOf(route.method.name), url, content)
+                val flatHeaders = FlatNettyHttpHeaders.acquire()
+                val content     = Unpooled.wrappedBuffer(body.toArrayUnsafe)
+                val nettyReq = new DefaultFullHttpRequest(
+                    HttpVersion.HTTP_1_1,
+                    NettyHttpMethod.valueOf(route.method.name),
+                    url,
+                    content,
+                    flatHeaders,
+                    FlatNettyHttpHeaders.acquire()
+                )
                 applyHeaders(nettyReq, headers, request)
-                discard(nettyReq.headers().set("Content-Type", contentType))
-                if !nettyReq.headers().contains("Content-Length") then
-                    discard(nettyReq.headers().setInt("Content-Length", content.readableBytes()))
+                discard(flatHeaders.set("Content-Type", contentType))
+                if !flatHeaders.contains("Content-Length") then
+                    discard(flatHeaders.setInt("Content-Length", content.readableBytes()))
                 encodedNettyReq = Present(nettyReq)
                 encodedStreamBody =
                     Absent
             ,
             onStreaming = (url, headers, contentType, stream) =>
-                val nettyReq = new DefaultHttpRequest(HttpVersion.HTTP_1_1, NettyHttpMethod.valueOf(route.method.name), url)
+                val flatHeaders = FlatNettyHttpHeaders.acquire()
+                val nettyReq    = new DefaultHttpRequest(HttpVersion.HTTP_1_1, NettyHttpMethod.valueOf(route.method.name), url, flatHeaders)
                 applyHeaders(nettyReq, headers, request)
-                discard(nettyReq.headers().set("Content-Type", contentType))
-                if !nettyReq.headers().contains("Transfer-Encoding") then
-                    discard(nettyReq.headers().set("Transfer-Encoding", "chunked"))
+                discard(flatHeaders.set("Content-Type", contentType))
+                if !flatHeaders.contains("Transfer-Encoding") then
+                    discard(flatHeaders.set("Transfer-Encoding", "chunked"))
                 encodedNettyReq = Present(nettyReq)
                 encodedStreamBody = Present(stream)
         )
@@ -256,8 +273,11 @@ final private[http2] class NettyHttpResponseHandler(
     override def channelRead0(ctx: ChannelHandlerContext, msg: FullHttpResponse): Unit =
         import AllowUnsafe.embrace.danger
         val status  = HttpStatus(msg.status().code())
-        val headers = NettyUtil.extractHeaders(msg.headers())
-        val buf     = msg.content()
+        val headers = msg.headers().asInstanceOf[FlatNettyHttpHeaders].toKyoHeaders
+        msg.trailingHeaders() match
+            case flat: FlatNettyHttpHeaders => flat.release() // return pooled instance, no HttpHeaders allocation
+            case _                          =>                // aggregator uses EmptyHttpHeaders
+        val buf = msg.content()
         val body =
             if buf.readableBytes() == 0 then Span.empty[Byte]
             else
@@ -292,7 +312,7 @@ final private[http2] class NettyHttp2StreamingResponseHandler(
             case resp: NettyHttpResponse if !headersReceived =>
                 headersReceived = true
                 val status  = HttpStatus(resp.status().code())
-                val headers = NettyUtil.extractHeaders(resp.headers())
+                val headers = resp.headers().asInstanceOf[FlatNettyHttpHeaders].toKyoHeaders
                 discard(headerPromise.complete(Result.succeed(NettyHttp2StreamingHeaderData(status, headers))))
                 msg match
                     // FullHttpResponse extends both HttpResponse and LastHttpContent

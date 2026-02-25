@@ -15,15 +15,15 @@ object HttpPath:
 
     object Capture:
         def apply[A](using codec: HttpCodec[A])[N <: String & Singleton](fieldName: N): HttpPath[N ~ A] =
-            HttpPath.Capture(fieldName, "", codec)
+            new HttpPath.Capture(fieldName, "", codec)
 
         def apply[A](using codec: HttpCodec[A])[N <: String & Singleton](fieldName: N, wireName: String): HttpPath[N ~ A] =
-            HttpPath.Capture(fieldName, wireName, codec)
+            new HttpPath.Capture(fieldName, wireName, codec)
     end Capture
 
     object Rest:
         def apply[N <: String & Singleton](fieldName: N): HttpPath[N ~ String] =
-            HttpPath.Rest(fieldName)
+            new HttpPath.Rest(fieldName)
     end Rest
 
     extension [A](self: HttpPath[A])
