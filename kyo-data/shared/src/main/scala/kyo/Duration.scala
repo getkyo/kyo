@@ -36,7 +36,7 @@ object Duration:
                         Result.catching[NumberFormatException](value.toLong)
                             .mapFailure(_ => InvalidDuration(s"Invalid number: $value"))
                     unitEnum <-
-                        Units.values.find(_.names.exists(_.startsWith(unit)))
+                        Units.all.find(_.names.exists(_.startsWith(unit)))
                             .map(Result.succeed)
                             .getOrElse(Result.fail(InvalidDuration(s"Invalid unit: $unit")))
                 yield fromUnits(longValue, unitEnum)
@@ -116,7 +116,9 @@ object Duration:
     end Units
 
     object Units:
-        private val byChronoUnit: Map[ChronoUnit, Units] = Units.values.map(u => (u.chronoUnit, u)).toMap
+        val all = Units.values
+
+        private val byChronoUnit: Map[ChronoUnit, Units] = Units.all.map(u => (u.chronoUnit, u)).toMap
 
         def fromJava(chronoUnit: ChronoUnit): Units =
             byChronoUnit.get(chronoUnit)
@@ -212,7 +214,7 @@ object Duration:
             else if self == Infinity then "Duration.Infinity"
             else
                 val nanos = self.toNanos
-                Units.values.reverse.find(unit => nanos % unit.factor.toLong == 0) match
+                Units.all.reverse.find(unit => nanos % unit.factor.toLong == 0) match
                     case Some(unit) =>
                         val value = (nanos / unit.factor).toLong
                         val name  = unit.toString.toLowerCase
