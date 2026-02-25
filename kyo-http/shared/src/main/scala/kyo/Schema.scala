@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.*
 import scala.deriving.Mirror
 
 /** JSON encoding/decoding type class that bridges typed Scala values and HTTP wire format.
@@ -9,9 +10,8 @@ import scala.deriving.Mirror
   * automatically for case classes and sealed traits via `derives Schema`. Built-in instances cover primitives, collections (`Seq`, `List`,
   * `Vector`, `Set`, `Map`), `Option`, `Either`, and `Maybe`.
   *
-  * Note: `encode` can throw on encoding failure — it is not effect-tracked. `decode` throws `IllegalArgumentException` on failure. String
-  * decoding falls back to raw text if JSON parsing fails, supporting both JSON-encoded strings and plain text bodies. Unit decoding accepts
-  * empty bodies and JSON null.
+  * Note: `encode` can throw on encoding failure — it is not effect-tracked. `decode` returns `Result.fail` on failure. Unit decoding
+  * accepts empty bodies and JSON null.
   *
   * @tparam A
   *   The type to encode/decode
@@ -63,13 +63,7 @@ object Schema:
     given Schema[Byte]    = wrap(zio.schema.Schema[Byte])
     given Schema[Char]    = wrap(zio.schema.Schema[Char])
 
-    // String: if JSON decode fails, return raw text (supports both JSON strings and plain text)
-    given Schema[String] = new Schema[String]:
-        val zpiSchema: zio.schema.Schema[String] = zio.schema.Schema[String]
-        override def decode(json: String): Result[String, String] =
-            zio.schema.codec.JsonCodec.jsonDecoder(zpiSchema).decodeJson(json) match
-                case Right(a) => Result.succeed(a)
-                case Left(_)  => Result.succeed(json) // Return raw text as fallback
+    given Schema[String] = wrap(zio.schema.Schema[String])
 
     // Unit: accept empty body or JSON null
     given Schema[Unit] = new Schema[Unit]:

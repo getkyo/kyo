@@ -50,7 +50,7 @@ class HttpServerContentionBench
         val url = s"http://localhost:${kyoSrv.port}/ping"
         Sync.Unsafe.evalOrThrow(
             Fiber.initUnscoped(
-                Async.fill(concurrency, concurrency)(HttpClient.send(HttpRequest.get(url)).map(_.bodyText))
+                Async.fill(concurrency, concurrency)(HttpClient.send(HttpRequest.getRaw(url)).map(_.bodyText))
             ).flatMap(_.block(Duration.Infinity))
         ).getOrThrow
     end forkKyoHttp

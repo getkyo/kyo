@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.*
+
 /** HTTP response status code with category classification.
   *
   * A sealed hierarchy covering all standard HTTP status codes organized into `Informational` (1xx), `Success` (2xx), `Redirect` (3xx),

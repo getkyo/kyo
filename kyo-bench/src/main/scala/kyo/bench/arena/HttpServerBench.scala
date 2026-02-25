@@ -47,7 +47,7 @@ class HttpServerBench extends ArenaBench.ForkOnly("pong"):
         val url = s"http://localhost:${kyoSrv.port}/ping"
         Sync.Unsafe.evalOrThrow(
             Fiber.initUnscoped(
-                HttpClient.send(HttpRequest.get(url)).map(_.bodyText)
+                HttpClient.send(HttpRequest.getRaw(url)).map(_.bodyText)
             ).flatMap(_.block(Duration.Infinity))
         ).getOrThrow
     end forkKyoHttp

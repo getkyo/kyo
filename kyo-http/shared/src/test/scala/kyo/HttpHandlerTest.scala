@@ -1,333 +1,237 @@
-// Old kyo package test — commented out, replaced by kyo.http2 tests
-// package kyo
-//
-// import HttpRequest.Method
-// import kyo.HttpStatus
-//
-// class HttpHandlerTest extends Test:
-//
-//     case class User(id: Int, name: String) derives Schema, CanEqual
-//     case class CreateUser(name: String) derives Schema, CanEqual
-//     case class ApiError(message: String) derives Schema, CanEqual
-//
-//     val simpleHandler = HttpHandler.get("/test") { _ => HttpResponse.ok("hello") }
-//
-//     "method convenience factories" - {
-//         "get" in run {
-//             val handler = HttpHandler.get("/m") { _ => HttpResponse.ok("get") }
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/m")
-//             yield assertBodyText(response, "get")
-//             end for
-//         }
-//
-//         "post" in run {
-//             val handler = HttpHandler.post("/m") { req => HttpResponse.ok("post") }
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testPost(port, "/m", "body")
-//             yield assertBodyText(response, "post")
-//             end for
-//         }
-//
-//         "put" in run {
-//             val handler = HttpHandler.put("/m") { req => HttpResponse.ok("put") }
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testPut(port, "/m", "body")
-//             yield assertBodyText(response, "put")
-//             end for
-//         }
-//
-//         "delete" in run {
-//             val handler = HttpHandler.delete("/m") { _ => HttpResponse.ok("delete") }
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testDelete(port, "/m")
-//             yield assertBodyText(response, "delete")
-//             end for
-//         }
-//
-//         "patch" in run {
-//             val handler = HttpHandler.patch("/m") { req => HttpResponse.ok("patch") }
-//             for
-//                 port <- startTestServer(handler)
-//                 response <- HttpClient.send(
-//                     HttpRequest.patch(s"http://localhost:$port/m", "body")
-//                 )
-//             yield assertBodyText(response, "patch")
-//             end for
-//         }
-//
-//         "head" in run {
-//             val handler = HttpHandler.head("/m") { _ => HttpResponse.ok }
-//             for
-//                 port <- startTestServer(handler)
-//                 response <- HttpClient.send(
-//                     HttpRequest.head(s"http://localhost:$port/m")
-//                 )
-//             yield assertStatus(response, HttpStatus.OK)
-//             end for
-//         }
-//
-//         "options" in run {
-//             val handler = HttpHandler.options("/m") { _ => HttpResponse.ok("options") }
-//             for
-//                 port <- startTestServer(handler)
-//                 response <- HttpClient.send(
-//                     HttpRequest.options(s"http://localhost:$port/m")
-//                 )
-//             yield assertBodyText(response, "options")
-//             end for
-//         }
-//     }
-//
-//     "health" - {
-//         "returns healthy with default path" in run {
-//             val handler = HttpHandler.health()
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/health")
-//             yield assertBodyText(response, "healthy")
-//             end for
-//         }
-//
-//         "custom path" in run {
-//             val handler = HttpHandler.health("/ping")
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/ping")
-//             yield assertBodyText(response, "healthy")
-//             end for
-//         }
-//     }
-//
-//     "const" - {
-//         "with status" in run {
-//             val handler = HttpHandler.const(Method.GET, "/gone", HttpStatus.Gone)
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/gone")
-//             yield assertStatus(response, HttpStatus.Gone)
-//             end for
-//         }
-//
-//         "with response" in run {
-//             val resp    = HttpResponse.ok("fixed")
-//             val handler = HttpHandler.const(Method.GET, "/fixed", resp)
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/fixed")
-//             yield assertBodyText(response, "fixed")
-//             end for
-//         }
-//     }
-//
-//     "path captures" - {
-//         "int capture" in run {
-//             val handler = HttpHandler.get("/items" / Capture[Int]("id")) { in =>
-//                 HttpResponse.ok(s"item:${in.id}")
-//             }
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/items/42")
-//             yield assertBodyText(response, "item:42")
-//             end for
-//         }
-//
-//         "string capture" in run {
-//             val handler = HttpHandler.get("/greet" / Capture[String]("name")) { in =>
-//                 HttpResponse.ok(s"hello:${in.name}")
-//             }
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/greet/world")
-//             yield assertBodyText(response, "hello:world")
-//             end for
-//         }
-//
-//         "multiple captures" in run {
-//             val handler = HttpHandler.get("/users" / Capture[String]("name") / Capture[Int]("id")) { in =>
-//                 HttpResponse.ok(s"${in.name}:${in.id}")
-//             }
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/users/alice/7")
-//             yield assertBodyText(response, "alice:7")
-//             end for
-//         }
-//
-//         "long capture" in run {
-//             val handler = HttpHandler.get("/big" / Capture[Long]("n")) { in =>
-//                 HttpResponse.ok(s"n:${in.n}")
-//             }
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/big/9999999999")
-//             yield assertBodyText(response, "n:9999999999")
-//             end for
-//         }
-//
-//         "boolean capture" in run {
-//             val handler = HttpHandler.get("/flag" / Capture[Boolean]("b")) { in =>
-//                 HttpResponse.ok(s"flag:${in.b}")
-//             }
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/flag/true")
-//             yield assertBodyText(response, "flag:true")
-//             end for
-//         }
-//     }
-//
-//     "route-based handler" - {
-//         "JSON input/output" in run {
-//             val route = HttpRoute.post("/users").request(_.bodyJson[CreateUser]).response(_.bodyJson[User])
-//             val handler = route.handle { in =>
-//                 User(1, in.body.name)
-//             }
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testPost(port, "/users", CreateUser("alice"))
-//             yield
-//                 val body = response.bodyText
-//                 assert(body.contains("\"id\""))
-//                 assert(body.contains("\"alice\""))
-//             end for
-//         }
-//
-//         "output-only route" in run {
-//             val route   = HttpRoute.get("/users").response(_.bodyJson[List[User]])
-//             val handler = route.handle(_ => List(User(1, "a"), User(2, "b")))
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/users")
-//             yield
-//                 assert(response.bodyText.contains("\"a\""))
-//                 assert(response.bodyText.contains("\"b\""))
-//             end for
-//         }
-//
-//         "no output schema returns 200 OK" in run {
-//             val route   = HttpRoute.post("/action")
-//             val handler = route.handle(_ => ())
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testPost(port, "/action", "")
-//             yield assertStatus(response, HttpStatus.OK)
-//             end for
-//         }
-//     }
-//
-//     "error handling" - {
-//         "handler exception returns 500" in run {
-//             val handler = HttpHandler.get("/boom") { _ =>
-//                 throw new RuntimeException("explosion")
-//             }
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/boom")
-//             yield assertStatus(response, HttpStatus.InternalServerError)
-//             end for
-//         }
-//
-//         "route handler Abort maps to error response" in run {
-//             val route = HttpRoute.post("/validate")
-//                 .request(_.bodyJson[CreateUser])
-//                 .response(_.bodyJson[User].error[ApiError](HttpStatus.BadRequest))
-//             val handler = route.handle { _ =>
-//                 Abort.fail(ApiError("invalid"))
-//             }
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testPost(port, "/validate", CreateUser("x"))
-//             yield
-//                 assertStatus(response, HttpStatus.BadRequest)
-//                 assert(response.bodyText.contains("invalid"))
-//             end for
-//         }
-//
-//         "unmatched Abort error returns 500" in run {
-//             val route = HttpRoute.post("/fail").request(_.bodyJson[CreateUser]).response(_.bodyJson[User])
-//             val handler = route.handle { _ =>
-//                 Abort.fail(ApiError("oops"))
-//             }
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testPost(port, "/fail", CreateUser("x"))
-//             yield assertStatus(response, HttpStatus.InternalServerError)
-//             end for
-//         }
-//     }
-//
-//     "query parameters" - {
-//         "required query param" in run {
-//             val route   = HttpRoute.get("/search").request(_.query[String]("q")).response(_.bodyJson[String])
-//             val handler = route.handle(in => s"found:${in.q}")
-//             for
-//                 port <- startTestServer(handler)
-//                 response <- HttpClient.send(
-//                     HttpRequest.get(s"http://localhost:$port/search?q=test")
-//                 )
-//             yield assertBodyContains(response, "found:test")
-//             end for
-//         }
-//
-//         "missing required query param returns 400" in run {
-//             val route   = HttpRoute.get("/search").request(_.query[String]("q")).response(_.bodyJson[String])
-//             val handler = route.handle(in => s"found:${in.q}")
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/search")
-//             yield assertStatus(response, HttpStatus.BadRequest)
-//             end for
-//         }
-//
-//         "query param with default" in run {
-//             val route   = HttpRoute.get("/page").request(_.query[Int]("n", default = Some(1))).response(_.bodyJson[String])
-//             val handler = route.handle(in => s"page:${in.n}")
-//             for
-//                 port     <- startTestServer(handler)
-//                 response <- testGet(port, "/page")
-//             yield assertBodyContains(response, "page:1")
-//             end for
-//         }
-//     }
-//
-//     "multiple handlers" - {
-//         "dispatches to correct handler by path" in run {
-//             val h1 = HttpHandler.get("/a") { _ => HttpResponse.ok("handler-a") }
-//             val h2 = HttpHandler.get("/b") { _ => HttpResponse.ok("handler-b") }
-//             for
-//                 port <- startTestServer(h1, h2)
-//                 ra   <- testGet(port, "/a")
-//                 rb   <- testGet(port, "/b")
-//             yield
-//                 assertBodyText(ra, "handler-a")
-//                 assertBodyText(rb, "handler-b")
-//             end for
-//         }
-//
-//         "dispatches to correct handler by method" in run {
-//             val h1 = HttpHandler.get("/x") { _ => HttpResponse.ok("got") }
-//             val h2 = HttpHandler.post("/x") { _ => HttpResponse.ok("posted") }
-//             for
-//                 port <- startTestServer(h1, h2)
-//                 rg   <- testGet(port, "/x")
-//                 rp   <- testPost(port, "/x", "")
-//             yield
-//                 assertBodyText(rg, "got")
-//                 assertBodyText(rp, "posted")
-//             end for
-//         }
-//
-//         "unmatched path returns 404" in run {
-//             for
-//                 port     <- startTestServer(simpleHandler)
-//                 response <- testGet(port, "/nonexistent")
-//             yield assertStatus(response, HttpStatus.NotFound)
-//         }
-//     }
-//
-// end HttpHandlerTest
+package kyo
+
+import kyo.*
+import kyo.Record2.~
+import scala.language.implicitConversions
+
+class HttpHandlerTest extends Test:
+
+    import HttpPath.*
+
+    case class User(id: Int, name: String) derives Schema, CanEqual
+
+    "route.handler" - {
+
+        "creates handler from route" in {
+            val route = HttpRoute.getRaw("users")
+                .response(_.bodyText)
+            val handler = route.handler { request =>
+                HttpResponse.ok.addField("body", "hello")
+            }
+            val _: HttpHandler[Any, "body" ~ String, Nothing] = handler
+            succeed
+        }
+
+        "preserves In type from path captures and request fields" in {
+            val route = HttpRoute.getRaw("users" / Capture[Int]("id"))
+                .request(_.query[String]("include"))
+                .response(_.bodyJson[User])
+            val handler = route.handler { request =>
+                val _: Int    = request.fields.id
+                val _: String = request.fields.include
+                HttpResponse.ok.addField("body", User(1, "alice"))
+            }
+            val _: HttpHandler["id" ~ Int & "include" ~ String, "body" ~ User, Nothing] = handler
+            succeed
+        }
+
+        "preserves Out type with multiple response fields" in {
+            val route = HttpRoute.getRaw("users")
+                .response(_.bodyJson[User].header[String]("etag"))
+            val handler = route.handler { _ =>
+                HttpResponse.ok
+                    .addField("body", User(1, "alice"))
+                    .addField("etag", "abc")
+            }
+            val _: HttpHandler[Any, "body" ~ User & "etag" ~ String, Nothing] = handler
+            succeed
+        }
+
+        "handler can use Abort[HttpResponse.Halt]" in {
+            val route = HttpRoute.getRaw("users")
+                .response(_.bodyText)
+            val handler = route.handler { _ =>
+                Abort.fail(HttpResponse.Halt(HttpResponse.unauthorized))
+            }
+            val _: HttpHandler[Any, "body" ~ String, Nothing] = handler
+            succeed
+        }
+
+        "error accumulation on route" in {
+            val route = HttpRoute.getRaw("users")
+                .response(_.bodyText)
+                .error[String](HttpStatus.BadRequest)
+                .error[Int](HttpStatus.NotFound)
+            val handler = route.handler { _ =>
+                HttpResponse.ok.addField("body", "hello")
+            }
+            val _: HttpHandler[Any, "body" ~ String, String | Int] = handler
+            succeed
+        }
+
+        "filter E accumulates with route E" in {
+            val filter = new HttpFilter.Passthrough[String]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[String | E2 | HttpResponse.Halt]) =
+                    next(request)
+
+            val route = HttpRoute.getRaw("users")
+                .filter(filter)
+                .response(_.bodyText)
+
+            val handler = route.handler { _ =>
+                HttpResponse.ok.addField("body", "hello")
+            }
+            val _: HttpHandler[Any, "body" ~ String, String] = handler
+            succeed
+        }
+
+        "filter-added request fields are accessible in handler" in {
+            val filter = new HttpFilter.Request[Any, "user" ~ String, Nothing]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next(request.addField("user", "alice"))
+
+            val route = HttpRoute.getRaw("users")
+                .filter(filter)
+                .response(_.bodyText)
+
+            val handler = route.handler { request =>
+                val user: String = request.fields.user
+                HttpResponse.ok.addField("body", user)
+            }
+            val _: HttpHandler["user" ~ String, "body" ~ String, Nothing] = handler
+            succeed
+        }
+
+        "filter-added fields survive request builder chaining" in {
+            val filter = new HttpFilter.Request[Any, "user" ~ String, Nothing]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next(request.addField("user", "alice"))
+
+            val route = HttpRoute.getRaw("users")
+                .filter(filter)
+                .request(_.query[Int]("page"))
+                .response(_.bodyText)
+
+            val handler = route.handler { request =>
+                val _: String = request.fields.user
+                val _: Int    = request.fields.page
+                HttpResponse.ok.addField("body", "ok")
+            }
+            val _: HttpHandler["user" ~ String & "page" ~ Int, "body" ~ String, Nothing] = handler
+            succeed
+        }
+    }
+
+    "HttpHandler.health" - {
+
+        "default path" in {
+            val _: HttpHandler[Any, "body" ~ String, Nothing] = HttpHandler.health()
+            succeed
+        }
+
+        "custom path" in {
+            val _: HttpHandler[Any, "body" ~ String, Nothing] = HttpHandler.health("healthz")
+            succeed
+        }
+    }
+
+    "HttpHandler.const" - {
+
+        "returns fixed status" in {
+            val handler                           = HttpHandler.const(HttpMethod.GET, "status", HttpStatus.NoContent)
+            val _: HttpHandler[Any, Any, Nothing] = handler
+            assert(handler.route.method == HttpMethod.GET)
+        }
+
+        "returns fixed response" in {
+            val handler                           = HttpHandler.const(HttpMethod.POST, "echo", HttpResponse.ok)
+            val _: HttpHandler[Any, Any, Nothing] = handler
+            assert(handler.route.method == HttpMethod.POST)
+        }
+    }
+
+    "HttpHandler shortcut methods" - {
+
+        "getRaw" in {
+            val handler = HttpHandler.getRaw("users")(_ => HttpResponse.ok)
+            assert(handler.route.method == HttpMethod.GET)
+        }
+
+        "postRaw" in {
+            val handler = HttpHandler.postRaw("users")(_ => HttpResponse.ok)
+            assert(handler.route.method == HttpMethod.POST)
+        }
+
+        "putRaw" in {
+            val handler = HttpHandler.putRaw("users")(_ => HttpResponse.ok)
+            assert(handler.route.method == HttpMethod.PUT)
+        }
+
+        "patchRaw" in {
+            val handler = HttpHandler.patchRaw("users")(_ => HttpResponse.ok)
+            assert(handler.route.method == HttpMethod.PATCH)
+        }
+
+        "deleteRaw" in {
+            val handler = HttpHandler.deleteRaw("users")(_ => HttpResponse.ok)
+            assert(handler.route.method == HttpMethod.DELETE)
+        }
+
+        "head" in {
+            val handler = HttpHandler.headRaw("users")(_ => HttpResponse.ok)
+            assert(handler.route.method == HttpMethod.HEAD)
+        }
+
+        "options" in {
+            val handler = HttpHandler.optionsRaw("users")(_ => HttpResponse.ok)
+            assert(handler.route.method == HttpMethod.OPTIONS)
+        }
+
+        "shortcut with errors tracks E type" in {
+            val handler = HttpHandler.getRaw[String]("users") { _ =>
+                Abort.fail("bad request")
+            }
+            val _: HttpHandler[Any, Any, String] = handler
+            succeed
+        }
+    }
+
+    "sealed" - {
+
+        "cannot extend HttpHandler directly" in {
+            typeCheckFailure("""
+                new HttpHandler[Any, Any, Nothing](HttpRoute.getRaw("test")):
+                    def apply(request: HttpRequest[Any])(using Frame): HttpResponse[Any] < (Async & Abort[Nothing | HttpResponse.Halt]) =
+                        HttpResponse.ok
+            """)(
+                "Cannot extend"
+            )
+        }
+    }
+
+    "route accessor" - {
+
+        "handler's route retains error information" in {
+            val route = HttpRoute.getRaw("users")
+                .response(_.bodyText)
+                .error[String](HttpStatus.BadRequest)
+
+            val handler = route.handler { _ =>
+                HttpResponse.ok.addField("body", "hello")
+            }
+
+            val _: HttpRoute[Any, "body" ~ String, ?] = handler.route
+            succeed
+        }
+    }
+
+end HttpHandlerTest

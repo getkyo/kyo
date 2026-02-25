@@ -1,353 +1,313 @@
 package kyo
 
-import kyo.HttpRequest.Method
-import scala.util.hashing.MurmurHash3
+import kyo.*
+import kyo.Record2.~
 
-/** Composable interceptor for transforming HTTP request/response flows on both client and server.
-  *
-  * Filters wrap the `request → response` pipeline with full execution control: they can short-circuit, transform, retry, delay, or inspect
-  * both buffered and streaming responses. Since `next` returns `HttpResponse[?]`, filters work uniformly regardless of whether the handler
-  * produces a buffered or streaming response.
-  *
-  * Filters compose with `andThen` (left-to-right: the leftmost filter runs first as the outermost wrapper) and are activated for a
-  * computation via `enable`. Filters work for both client and server because both share the same `request → response` pipeline shape. Both
-  * HttpServer and HttpClient read the current filter from a `Local` and apply it to every request.
-  *
-  * Pre-built filters are organized into `HttpFilter.server` (CORS, auth, rate limiting, logging, security headers, ETag, conditional
-  * requests) and `HttpFilter.client` (auth headers, logging, custom headers).
-  *
-  * {{{
-  * // Server-side
-  * HttpFilter.server.cors().andThen(HttpFilter.server.securityHeaders()).enable {
-  *     HttpServer.init(handlers*)
-  * }
-  *
-  * // Client-side
-  * HttpFilter.client.bearerAuth(token).enable {
-  *     HttpClient.send(request)
-  * }
-  * }}}
-  *
-  * IMPORTANT: `enable` composes onto the current filter stack (calls `andThen` on the existing filter), it does not replace. Nested
-  * `enable` calls stack.
-  *
-  * Note: Filters see `HttpResponse[?]` — they work uniformly for buffered and streaming responses, but can only inspect body content on
-  * buffered responses.
-  *
-  * @see
-  *   [[kyo.HttpClient]]
-  * @see
-  *   [[kyo.HttpServer]]
-  * @see
-  *   [[kyo.HttpFilter.server]]
-  * @see
-  *   [[kyo.HttpFilter.client]]
-  */
-abstract class HttpFilter:
+sealed abstract class HttpFilter[ReqIn, ReqOut, ResIn, ResOut, +E]:
 
-    def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame): HttpResponse[?] < (Async & S)
+    def apply[In, Out, E2](
+        request: HttpRequest[In & ReqIn],
+        next: HttpRequest[In & ReqIn & ReqOut] => HttpResponse[Out & ResIn] < (Async & Abort[E2 | HttpResponse.Halt])
+    )(using Frame): HttpResponse[Out & ResIn & ResOut] < (Async & Abort[E | E2 | HttpResponse.Halt])
 
-    /** Composes this filter with another. This filter runs first (outermost). */
-    final def andThen(other: HttpFilter): HttpFilter =
+    final def andThen[RI2, RO2, SI2, SO2, E2](
+        that: HttpFilter[RI2, RO2, SI2, SO2, E2]
+    ): HttpFilter[ReqIn & RI2, ReqOut & RO2, ResIn & SI2, ResOut & SO2, E | E2] =
         val self = this
-        new HttpFilter:
-            def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
-                Frame
-            ): HttpResponse[?] < (Async & S) =
-                self(request, innerReq => other(innerReq, next))
+        new HttpFilter[ReqIn & RI2, ReqOut & RO2, ResIn & SI2, ResOut & SO2, E | E2]:
+            def apply[In, Out, E3](
+                request: HttpRequest[In & ReqIn & RI2],
+                next: HttpRequest[In & ReqIn & RI2 & ReqOut & RO2] => HttpResponse[
+                    Out & ResIn & SI2
+                ] < (Async & Abort[E3 | HttpResponse.Halt])
+            )(using Frame): HttpResponse[Out & ResIn & SI2 & ResOut & SO2] < (Async & Abort[E | E2 | E3 | HttpResponse.Halt]) =
+                self(request, req => that(req, next))
         end new
     end andThen
 
-    /** Activates this filter for the given computation. Stacks with any already-active filter. */
-    final def enable[A, S](v: => A < S)(using Frame): A < S =
-        HttpFilter.let(this)(v)
 end HttpFilter
 
 object HttpFilter:
 
-    // --- No-op filter ---
+    abstract class Request[ReqIn, ReqOut, +E]
+        extends HttpFilter[ReqIn, ReqOut, Any, Any, E]
 
-    val noop: HttpFilter = new HttpFilter:
-        def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
-            Frame
-        ): HttpResponse[?] < (Async & S) =
-            next(request)
+    abstract class Response[ResIn, ResOut, +E]
+        extends HttpFilter[Any, Any, ResIn, ResOut, E]
 
-    /** Create a filter from a function that transforms the request before calling next */
-    def request(f: HttpRequest[?] => HttpRequest[?]): HttpFilter =
-        new HttpFilter:
-            def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
-                Frame
-            ): HttpResponse[?] < (Async & S) =
-                next(f(request))
+    abstract class Passthrough[+E]
+        extends HttpFilter[Any, Any, Any, Any, E]
+
+    val noop: Passthrough[Nothing] =
+        new Passthrough[Nothing]:
+            def apply[In, Out, E2](
+                request: HttpRequest[In],
+                next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+            )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                next(request)
 
     // --- Server-side filters ---
 
-    /** Server-side filters for handling incoming HTTP requests */
     object server:
 
-        /** Logs requests at info level with format: "METHOD /path -> STATUS (Xms)" */
-        def logging(using Frame): HttpFilter = timedLogging(_.path)
-
-        /** Logs requests with custom handler */
-        def logging(log: (HttpRequest[?], HttpResponse[?], Duration) => Unit < Sync): HttpFilter =
-            timedLogging(log)
-
-        /** Generates or propagates request ID header with random ID generator */
-        def requestId(using Frame): HttpFilter =
-            requestId("X-Request-ID", Random.nextStringAlphanumeric(32))
-
-        /** Generates or propagates request ID header */
-        def requestId(
-            headerName: String,
-            generate: => String < Sync
-        ): HttpFilter =
-            new HttpFilter:
-                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                    val getId = request.header(headerName) match
-                        case Present(id) => id: String < Any
-                        case Absent      => generate
-                    getId.map { id =>
-                        val reqWithId = request.addHeader(headerName, id)
-                        next(reqWithId).map(_.setHeader(headerName, id))
-                    }
+        /** Validates Basic auth credentials. Reads "authorization" from request fields, adds "user" ~ String for downstream handlers.
+          * Short-circuits with Abort[HttpResponse.Halt] on failure.
+          */
+        def basicAuth(validate: (String, String) => Boolean < Async) =
+            new Request["authorization" ~ Maybe[String], "user" ~ String, Nothing]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In & "authorization" ~ Maybe[String]],
+                    next: HttpRequest[In & "authorization" ~ Maybe[String] & "user" ~ String] => HttpResponse[
+                        Out
+                    ] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    val unauthorized = HttpResponse.Halt(
+                        HttpResponse.unauthorized
+                            .setHeader("WWW-Authenticate", "Basic")
+                    )
+                    request.fields.authorization match
+                        case Present(auth) if auth.startsWith("Basic ") =>
+                            try
+                                val decoded = new String(
+                                    java.util.Base64.getDecoder.decode(auth.drop(6)),
+                                    "UTF-8"
+                                )
+                                decoded.split(":", 2) match
+                                    case Array(username, password) =>
+                                        validate(username, password).map { valid =>
+                                            if valid then next(request.addField("user", username))
+                                            else Abort.fail(unauthorized)
+                                        }
+                                    case _ => Abort.fail(unauthorized)
+                                end match
+                            catch case _: IllegalArgumentException => Abort.fail(unauthorized)
+                        case _ => Abort.fail(unauthorized)
+                    end match
                 end apply
 
-        /** Rate limits requests using a Meter, returning 429 when limit exceeded */
-        def rateLimit(meter: Meter, retryAfter: Int = 1): HttpFilter =
-            val tooManyRequests = HttpResponse(HttpStatus.TooManyRequests)
-                .setHeader("Retry-After", retryAfter.toString)
-            new HttpFilter:
-                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                    Abort.run(meter.tryRun(next(request))).map {
-                        case Result.Success(Present(response)) => response
-                        case Result.Success(Absent)            => tooManyRequests
-                        case Result.Failure(_: Closed)         => tooManyRequests
-                        case Result.Panic(e)                   => throw e
+        /** Validates Bearer token. Reads "authorization" from request fields. Short-circuits with Abort[HttpResponse.Halt] on failure.
+          */
+        def bearerAuth(validate: String => Boolean < Async) =
+            new Request["authorization" ~ Maybe[String], Any, Nothing]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In & "authorization" ~ Maybe[String]],
+                    next: HttpRequest[In & "authorization" ~ Maybe[String]] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    val unauthorized = HttpResponse.Halt(
+                        HttpResponse.unauthorized
+                            .setHeader("WWW-Authenticate", "Bearer")
+                    )
+                    request.fields.authorization match
+                        case Present(auth) if auth.startsWith("Bearer ") =>
+                            validate(auth.drop(7)).map { valid =>
+                                if valid then next(request)
+                                else Abort.fail(unauthorized)
+                            }
+                        case _ => Abort.fail(unauthorized)
+                    end match
+                end apply
+
+        /** Rate limits using a Meter. Short-circuits with Abort[HttpResponse.Halt] when limit exceeded.
+          */
+        def rateLimit(meter: Meter, retryAfter: Int = 1) =
+            val tooMany = HttpResponse.Halt(
+                HttpResponse.tooManyRequests
+                    .setHeader("Retry-After", retryAfter.toString)
+            )
+            new Passthrough[Nothing]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    Abort.run[Closed](meter.tryRun(next(request))).map {
+                        case Result.Success(Present(res)) => res
+                        case _                            => Abort.fail(tooMany)
                     }
             end new
         end rateLimit
 
-        /** Adds CORS (Cross-Origin Resource Sharing) headers to responses and handles preflight requests. */
+        /** CORS headers and preflight handling. */
+        def cors: Passthrough[Nothing] = cors()
+
         def cors(
             allowOrigin: String = "*",
-            allowMethods: Seq[Method] = Seq(Method.GET, Method.POST, Method.PUT, Method.DELETE),
+            allowMethods: Seq[HttpMethod] = Seq(
+                HttpMethod.GET,
+                HttpMethod.POST,
+                HttpMethod.PUT,
+                HttpMethod.DELETE
+            ),
             allowHeaders: Seq[String] = Seq.empty,
             exposeHeaders: Seq[String] = Seq.empty,
             allowCredentials: Boolean = false,
             maxAge: Maybe[Duration] = Absent
-        ): HttpFilter =
-            require(allowOrigin.nonEmpty, "CORS origin cannot be empty")
-            maxAge.foreach(d => require(d >= Duration.Zero, "CORS maxAge cannot be negative"))
+        ) =
+            new Passthrough[Nothing]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    def addCorsHeaders[F](res: HttpResponse[F]): HttpResponse[F] =
+                        val r0 = res.setHeader("Access-Control-Allow-Origin", allowOrigin)
+                        val r1 =
+                            if allowCredentials then r0.setHeader("Access-Control-Allow-Credentials", "true")
+                            else r0
+                        if exposeHeaders.nonEmpty
+                        then r1.setHeader("Access-Control-Expose-Headers", exposeHeaders.mkString(", "))
+                        else r1
+                    end addCorsHeaders
 
-            def addCorsHeaders(response: HttpResponse[?]): HttpResponse[?] =
-                val r0 = response.setHeader("Access-Control-Allow-Origin", allowOrigin)
-                val r1 = if allowCredentials then r0.setHeader("Access-Control-Allow-Credentials", "true") else r0
-                if exposeHeaders.nonEmpty then r1.setHeader("Access-Control-Expose-Headers", exposeHeaders.mkString(", "))
-                else r1
-            end addCorsHeaders
-
-            def preflightResponse: HttpResponse[HttpBody.Bytes] =
-                val r0 = HttpResponse(HttpStatus.NoContent)
-                    .setHeader("Access-Control-Allow-Origin", allowOrigin)
-                    .setHeader("Access-Control-Allow-Methods", allowMethods.map(_.name).mkString(", "))
-                val r1 = if allowHeaders.nonEmpty then r0.setHeader("Access-Control-Allow-Headers", allowHeaders.mkString(", ")) else r0
-                val r2 = if exposeHeaders.nonEmpty then r1.setHeader("Access-Control-Expose-Headers", exposeHeaders.mkString(", ")) else r1
-                val r3 = if allowCredentials then r2.setHeader("Access-Control-Allow-Credentials", "true") else r2
-                maxAge match
-                    case Present(d) => r3.setHeader("Access-Control-Max-Age", d.toSeconds.toString)
-                    case Absent     => r3
-            end preflightResponse
-
-            new HttpFilter:
-                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
-                    Frame
-                ): HttpResponse[?] < (Async & S) =
-                    if request.method == Method.OPTIONS then
-                        preflightResponse
+                    if request.method == HttpMethod.OPTIONS then
+                        val r0 = HttpResponse.noContent
+                            .setHeader("Access-Control-Allow-Origin", allowOrigin)
+                            .setHeader("Access-Control-Allow-Methods", allowMethods.map(_.name).mkString(", "))
+                        val r1 =
+                            if allowHeaders.nonEmpty
+                            then r0.setHeader("Access-Control-Allow-Headers", allowHeaders.mkString(", "))
+                            else r0
+                        val r2 =
+                            if exposeHeaders.nonEmpty
+                            then r1.setHeader("Access-Control-Expose-Headers", exposeHeaders.mkString(", "))
+                            else r1
+                        val r3 =
+                            if allowCredentials
+                            then r2.setHeader("Access-Control-Allow-Credentials", "true")
+                            else r2
+                        val preflight = maxAge match
+                            case Present(d) => r3.setHeader("Access-Control-Max-Age", d.toSeconds.toString)
+                            case Absent     => r3
+                        Abort.fail(HttpResponse.Halt(preflight))
                     else
                         next(request).map(addCorsHeaders)
-            end new
-        end cors
+                    end if
+                end apply
 
-        /** Validates HTTP Basic Authentication credentials. */
-        def basicAuth(validate: (String, String) => Boolean < Async)(using Frame): HttpFilter =
-            val unauthorized = HttpResponse(HttpStatus.Unauthorized).setHeader("WWW-Authenticate", "Basic")
-            new HttpFilter:
-                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
-                    Frame
-                ): HttpResponse[?] < (Async & S) =
-                    request.header("Authorization") match
-                        case Present(auth) if auth.startsWith("Basic ") =>
-                            try
-                                val decoded = new String(java.util.Base64.getDecoder.decode(auth.drop(6)), "UTF-8")
-                                decoded.split(":", 2) match
-                                    case Array(username, password) =>
-                                        validate(username, password).map { valid =>
-                                            if valid then next(request) else unauthorized
-                                        }
-                                    case _ => unauthorized: HttpResponse[HttpBody.Bytes]
-                                end match
-                            catch case _: IllegalArgumentException => unauthorized: HttpResponse[HttpBody.Bytes]
-                        case _ => unauthorized: HttpResponse[HttpBody.Bytes]
-            end new
-        end basicAuth
+        /** Adds standard security headers to responses. */
+        def securityHeaders: Passthrough[Nothing] = securityHeaders()
 
-        /** Validates HTTP Bearer token authentication. */
-        def bearerAuth(validate: String => Boolean < Async)(using Frame): HttpFilter =
-            val unauthorized = HttpResponse(HttpStatus.Unauthorized).setHeader("WWW-Authenticate", "Bearer")
-            new HttpFilter:
-                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
-                    Frame
-                ): HttpResponse[?] < (Async & S) =
-                    request.header("Authorization") match
-                        case Present(auth) if auth.startsWith("Bearer ") =>
-                            val token = auth.drop(7)
-                            validate(token).map { valid =>
-                                if valid then next(request) else unauthorized
-                            }
-                        case _ => unauthorized: HttpResponse[HttpBody.Bytes]
-            end new
-        end bearerAuth
-
-        /** Adds ETag headers to responses based on MurmurHash3 of body. Only for buffered responses. */
-        def etag: HttpFilter =
-            new HttpFilter:
-                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
-                    Frame
-                ): HttpResponse[?] < (Async & S) =
-                    next(request).map { response =>
-                        response.body.use(
-                            b => response.setHeader("ETag", computeETag(b.data)),
-                            _ => response // Skip ETag for streaming responses
-                        )
-                    }
-
-        /** Handles conditional requests (If-None-Match) returning 304 when content unchanged (only for buffered responses). */
-        def conditionalRequests: HttpFilter =
-            new HttpFilter:
-                def apply[S](req: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
-                    Frame
-                ): HttpResponse[?] < (Async & S) =
-                    next(req).map { response =>
-                        response.body.use(
-                            b =>
-                                val etagValue = computeETag(b.data)
-                                req.header("If-None-Match") match
-                                    case Present(clientEtag) if clientEtag == etagValue =>
-                                        HttpResponse(HttpStatus.NotModified)
-                                    case _ =>
-                                        response.setHeader("ETag", etagValue)
-                                end match
-                            ,
-                            _ => response // Skip conditional check for streaming responses
-                        )
-                    }
-
-        /** Adds common security headers to responses. */
         def securityHeaders(
             hsts: Maybe[Duration] = Absent,
             csp: Maybe[String] = Absent
-        ): HttpFilter =
-            new HttpFilter:
-                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
-                    Frame
-                ): HttpResponse[?] < (Async & S) =
-                    next(request).map { response =>
-                        val r0 = response
+        ) =
+            new Passthrough[Nothing]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next(request).map { res =>
+                        val r0 = res
                             .setHeader("X-Content-Type-Options", "nosniff")
                             .setHeader("X-Frame-Options", "DENY")
                             .setHeader("Referrer-Policy", "strict-origin-when-cross-origin")
                         val r1 = hsts match
-                            case Present(d) => r0.setHeader("Strict-Transport-Security", s"max-age=${d.toSeconds}")
-                            case Absent     => r0
+                            case Present(d) =>
+                                r0.setHeader("Strict-Transport-Security", s"max-age=${d.toSeconds}")
+                            case Absent => r0
                         csp match
                             case Present(v) => r1.setHeader("Content-Security-Policy", v)
                             case Absent     => r1
                     }
 
+        /** Logs requests: "METHOD /path -> STATUS (Xms)" */
+        def logging =
+            new Passthrough[Nothing]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    Clock.stopwatch.map { sw =>
+                        next(request).map { res =>
+                            sw.elapsed.map { dur =>
+                                Log.info(
+                                    s"${request.method.name} ${request.path} -> ${res.status.code} (${dur.toMillis}ms)"
+                                ).andThen(res)
+                            }
+                        }
+                    }
+
+        /** Generates or propagates request ID header. */
+        def requestId: Passthrough[Nothing] = requestId("X-Request-ID")
+
+        def requestId(headerName: String) =
+            new Passthrough[Nothing]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    val getId = request.headers.get(headerName) match
+                        case Present(id) => id: String < Any
+                        case Absent      => Random.nextStringAlphanumeric(32)
+                    getId.map { id =>
+                        next(request.setHeader(headerName, id)).map(_.setHeader(headerName, id))
+                    }
+                end apply
+
     end server
 
     // --- Client-side filters ---
 
-    /** Client-side filters for outgoing HTTP requests */
     object client:
 
-        /** Logs requests at info level with format: "METHOD url -> STATUS (Xms)" */
-        def logging(using Frame): HttpFilter = timedLogging(_.url)
+        /** Adds Bearer token header to outgoing requests. */
+        def bearerAuth(token: String) =
+            new Passthrough[Nothing]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next(request.setHeader("Authorization", s"Bearer $token"))
 
-        /** Logs requests with custom handler */
-        def logging(log: (HttpRequest[?], HttpResponse[?], Duration) => Unit < Sync): HttpFilter =
-            timedLogging(log)
+        /** Adds Basic auth header to outgoing requests. */
+        def basicAuth(username: String, password: String) =
+            val encoded = java.util.Base64.getEncoder.encodeToString(
+                s"$username:$password".getBytes("UTF-8")
+            )
+            new Passthrough[Nothing]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next(request.setHeader("Authorization", s"Basic $encoded"))
+            end new
+        end basicAuth
 
-        /** Adds a header to outgoing requests. */
-        def addHeader(name: String, value: String): HttpFilter =
-            HttpFilter.request(_.addHeader(name, value))
+        /** Adds a custom header to outgoing requests. */
+        def addHeader(name: String, value: String) =
+            new Passthrough[Nothing]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next(request.setHeader(name, value))
 
-        /** Adds HTTP Basic Authentication header to outgoing requests. */
-        def basicAuth(username: String, password: String): HttpFilter =
-            val encoded = java.util.Base64.getEncoder.encodeToString(s"$username:$password".getBytes("UTF-8"))
-            HttpFilter.request(_.addHeader("Authorization", s"Basic $encoded"))
-
-        /** Adds HTTP Bearer token header to outgoing requests. */
-        def bearerAuth(token: String): HttpFilter =
-            HttpFilter.request(_.addHeader("Authorization", s"Bearer $token"))
+        /** Logs requests: "METHOD /path -> STATUS (Xms)" */
+        def logging =
+            new Passthrough[Nothing]:
+                def apply[In, Out, E2](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    Clock.stopwatch.map { sw =>
+                        next(request).map { res =>
+                            sw.elapsed.map { dur =>
+                                Log.info(
+                                    s"${request.method.name} ${request.path} -> ${res.status.code} (${dur.toMillis}ms)"
+                                ).andThen(res)
+                            }
+                        }
+                    }
 
     end client
 
-    // --- Private ---
-
-    private val local: Local[HttpFilter] = Local.init(noop)
-
-    // Composes filter onto the current stack — stacks, doesn't replace
-    private[kyo] def let[A, S](filter: HttpFilter)(v: => A < S)(using Frame): A < S =
-        local.update(_.andThen(filter))(v)
-
-    /** Access current filter */
-    private[kyo] def use[A, S](f: HttpFilter => A < S)(using Frame): A < S =
-        local.use(f)
-
-    /** Get current filter as an effect */
-    private[kyo] def get(using Frame): HttpFilter < Any =
-        local.get
-
-    private def computeETag(bytes: Array[Byte]): String =
-        val h1 = MurmurHash3.bytesHash(bytes, 0)
-        val h2 = MurmurHash3.bytesHash(bytes, h1)
-        s"\"${"%08x".format(h1)}${"%08x".format(h2)}\""
-    end computeETag
-
-    /** Logs requests with custom handler. Shared implementation for server and client. */
-    private def logging(log: (HttpRequest[?], HttpResponse[?]) => Unit < Sync): HttpFilter =
-        new HttpFilter:
-            def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                next(request).map { response =>
-                    log(request, response).andThen(response)
-                }
-
-    /** Shared timed logging implementation. `formatUrl` extracts the URL portion for the log message. */
-    private def timedLogging(formatUrl: HttpRequest[?] => String)(using Frame): HttpFilter =
-        new HttpFilter:
-            def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                Clock.stopwatch.map { sw =>
-                    next(request).map { response =>
-                        sw.elapsed.map { dur =>
-                            Log.info(s"${request.method.name} ${formatUrl(request)} -> ${response.status.code} (${dur.toMillis}ms)")
-                                .andThen(response)
-                        }
-                    }
-                }
-
-    /** Shared custom timed logging implementation. */
-    private def timedLogging(log: (HttpRequest[?], HttpResponse[?], Duration) => Unit < Sync): HttpFilter =
-        new HttpFilter:
-            def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                Clock.stopwatch.map { sw =>
-                    next(request).map { response =>
-                        sw.elapsed.map { dur =>
-                            log(request, response, dur).andThen(response)
-                        }
-                    }
-                }
+    /** Adapts a composed filter into the normalized form for storage in HttpRoute. */
+    def adapt[In, ReqOut, Out, ResOut, E](
+        composed: HttpFilter[In, ReqOut, Out, ResOut, E]
+    ): HttpFilter[In & ReqOut, Any, Out & ResOut, Any, E] =
+        new HttpFilter[In & ReqOut, Any, Out & ResOut, Any, E]:
+            def apply[In2, Out2, E2](
+                request: HttpRequest[In2 & (In & ReqOut)],
+                next: HttpRequest[In2 & (In & ReqOut)] => HttpResponse[Out2 & (Out & ResOut)] < (Async & Abort[E2 | HttpResponse.Halt])
+            )(using Frame): HttpResponse[Out2 & (Out & ResOut)] < (Async & Abort[E | E2 | HttpResponse.Halt]) =
+                composed[In2 & ReqOut, Out2 & ResOut, E2](request, next)
 
 end HttpFilter

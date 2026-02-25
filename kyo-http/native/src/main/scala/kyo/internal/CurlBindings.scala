@@ -123,6 +123,12 @@ private[kyo] object CurlBindings:
     inline val CURL_POLL_INOUT  = 3
     inline val CURL_POLL_REMOVE = 4
 
+    // Read callback (streaming request body)
+    inline val CURLOPT_READFUNCTION = 20012
+    inline val CURLOPT_READDATA     = 10009
+    inline val CURLOPT_UPLOAD       = 46
+    val CURL_READFUNC_PAUSE: CSize  = 0x10000001L.toCSize
+
     // Pause/unpause
     val CURL_WRITEFUNC_PAUSE: CSize = 0x10000001L.toCSize
     inline val CURLPAUSE_CONT       = 0

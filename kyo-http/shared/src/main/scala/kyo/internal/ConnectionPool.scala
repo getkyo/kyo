@@ -1,174 +1,199 @@
 package kyo.internal
 
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicLongArray
 import kyo.*
+import kyo.discard
 import scala.annotation.tailrec
 
-/** Shared connection pool — works with any Backend.ConnectionFactory.
+/** Fully unsafe connection pool — no kyo effects or data structures.
   *
-  * Manages per-host pools of idle connections with bounded capacity, health checks, and acquire timeouts. Generalizes the same logic as the
-  * old NettyChannelPool but is backend-agnostic.
+  * Manages per-host pools of idle connections with bounded capacity, health checks, and idle eviction. Uses a lock-free Vyukov MPMC ring
+  * buffer per host for zero-allocation on the hot path.
   */
-final private[kyo] class ConnectionPool(
-    factory: Backend.ConnectionFactory,
-    maxConnectionsPerHost: Maybe[Int],
-    connectionAcquireTimeout: Duration
-)(using AllowUnsafe):
+final private[kyo] class ConnectionPool[C](
+    maxConnectionsPerHost: Int,
+    idleConnectionTimeoutNanos: Long,
+    pools: ConcurrentHashMap[ConnectionPool.HostKey, ConnectionPool.HostPool],
+    isAlive: C => Boolean,
+    discardConn: C => Unit
+):
 
     import ConnectionPool.*
 
-    private val pools = new java.util.concurrent.ConcurrentHashMap[PoolKey, HostPool]()
+    /** Try to get a live idle connection for the given host. */
+    def poll(key: HostKey)(using AllowUnsafe): Maybe[C] =
+        getPool(key).poll(idleConnectionTimeoutNanos, isAlive, discardConn)
 
-    /** Acquire a connection to the given host, reusing an idle one if available. */
-    def acquire(key: PoolKey, connectTimeout: Maybe[Duration])(using
-        Frame
-    ): Backend.Connection < (Async & Abort[HttpError]) =
-        val hostPool = pools.computeIfAbsent(key, _ => HostPool.init(maxConnectionsPerHost))
-        hostPool.acquire(factory, key.host, key.port, HttpUrl.isSsl(key.port), connectTimeout, connectionAcquireTimeout)
-    end acquire
+    /** Return a connection to the idle pool. If the ring is full, discard it. */
+    def release(key: HostKey, conn: C)(using AllowUnsafe): Unit =
+        getPool(key).release(conn, discardConn)
 
-    /** Release a connection back to the pool. Synchronous — suitable for ensure blocks. */
-    def release(key: PoolKey, conn: Backend.Connection)(using AllowUnsafe, Frame): Unit =
-        val hostPool = pools.get(key)
-        if hostPool != null then hostPool.release(conn)
-        else conn.closeAbruptly()
-    end release
+    /** Try to reserve an in-flight slot. Returns true if under the per-host limit. */
+    def tryReserve(key: HostKey)(using AllowUnsafe): Boolean =
+        getPool(key).tryReserve()
 
-    /** Create a direct (non-pooled) connection for streaming. */
-    def connectDirect(host: String, port: Int, ssl: Boolean, connectTimeout: Maybe[Duration])(using
-        Frame
-    ): Backend.Connection < (Async & Abort[HttpError]) =
-        factory.connect(host, port, ssl, connectTimeout)
+    /** Release an in-flight slot. Always call this after tryReserve, on both success and failure paths. */
+    def unreserve(key: HostKey)(using AllowUnsafe): Unit =
+        getPool(key).unreserve()
 
-    /** Shut down all pools and the underlying factory. */
-    def close(gracePeriod: Duration)(using Frame): Unit < Async =
-        Sync.Unsafe.defer {
-            pools.values().forEach(_.close())
-            pools.clear()
-        }.andThen(factory.close(gracePeriod))
+    /** Close all pools, discarding remaining idle connections. */
+    def closeAll()(using AllowUnsafe): Unit =
+        pools.values().forEach(_.closeAll(discardConn))
+        pools.clear()
+    end closeAll
+
+    private def getPool(key: HostKey)(using AllowUnsafe): HostPool =
+        pools.computeIfAbsent(key, _ => new HostPool(maxConnectionsPerHost))
 
 end ConnectionPool
 
 private[kyo] object ConnectionPool:
 
-    private[kyo] case class PoolKey(host: String, port: Int) derives CanEqual
+    private val MaxConnectionsPerHost = 1024
 
-    /** Per-host pool managing idle connections with bounded capacity. */
-    final private class HostPool(
-        idleChannels: Channel.Unsafe[Backend.Connection],
-        totalCount: AtomicInt.Unsafe,
-        maxConnections: Int
-    ):
+    def init[C](
+        maxConnectionsPerHost: Int,
+        idleConnectionTimeout: Duration,
+        isAlive: C => Boolean,
+        discard: C => Unit
+    )(using AllowUnsafe): ConnectionPool[C] =
+        require(
+            maxConnectionsPerHost >= 2 && maxConnectionsPerHost <= MaxConnectionsPerHost,
+            s"maxConnectionsPerHost must be >= 2 and <= $MaxConnectionsPerHost: $maxConnectionsPerHost"
+        )
+        new ConnectionPool(
+            maxConnectionsPerHost,
+            idleConnectionTimeout.toNanos,
+            new ConcurrentHashMap(),
+            isAlive,
+            discard
+        )
+    end init
 
-        def acquire(
-            factory: Backend.ConnectionFactory,
-            host: String,
-            port: Int,
-            ssl: Boolean,
-            connectTimeout: Maybe[Duration],
-            acquireTimeout: Duration
-        )(using Frame): Backend.Connection < (Async & Abort[HttpError]) =
-            Sync.Unsafe.defer {
-                // First try to reuse an idle connection (fast path, no I/O)
-                pollActive() match
-                    case Present(conn) => conn
-                    case Absent        =>
-                        // Under the per-host limit — open a new connection
-                        if tryIncrementCount() then
-                            factory.connect(host, port, ssl, connectTimeout).map { conn =>
-                                conn
-                            }
-                        else
-                            // At capacity — block until a connection is released or timeout
-                            Abort.recover[kyo.Timeout](_ =>
-                                Abort.fail(HttpError.ConnectionFailed(
-                                    host,
-                                    port,
-                                    new RuntimeException(s"Timed out acquiring connection ($acquireTimeout)")
-                                ))
-                            )(Async.timeout(acquireTimeout)(waitForActive(factory, host, port, ssl, connectTimeout)))
-            }
-        end acquire
+    private[kyo] case class HostKey(host: String, port: Int) derives CanEqual
 
-        def release(conn: Backend.Connection)(using AllowUnsafe, Frame): Unit =
-            // Always offer to idle channel — even dead connections — so that fibers
-            // blocked in waitForActive are woken up and can create fresh connections.
-            idleChannels.offer(conn) match
-                case Result.Success(true) => ()
-                case _                    => discardConnection(conn)
+    /** Lock-free MPMC ring buffer for idle connections, inspired by Dmitry Vyukov's MPMC queue (as implemented in Agrona's
+      * ManyToManyConcurrentArrayQueue).
+      *
+      * Uses three parallel pre-allocated arrays (connections, timestamps, sequences) for zero allocation on the hot path. The sequence
+      * array coordinates concurrent access: each slot's sequence number acts as a per-slot state machine that ensures writers have
+      * exclusive ownership before writing and readers see completed writes before reading.
+      *
+      * Requires capacity >= 2 (same as Agrona) because with capacity == 1 the sequence values for "written, awaiting read" (seq = tail + 1)
+      * and "read, ready for write" (seq = head + capacity) collide.
+      */
+    final private[internal] class HostPool(capacity: Int):
+        require(capacity >= 2, s"maxConnectionsPerHost must be >= 2: $capacity")
+
+        private val connections = new Array[AnyRef](capacity)
+        private val timestamps  = new Array[Long](capacity)
+        private val sequences   = new AtomicLongArray(capacity)
+        private val head        = new AtomicLong(0)
+        private val tail        = new AtomicLong(0)
+        private val inFlight    = new AtomicInteger(0)
+
+        // Initialize sequences: slot i is "ready for writing at tail position i"
+        locally {
+            @tailrec def loop(i: Int): Unit =
+                if i < capacity then
+                    sequences.lazySet(i, i.toLong)
+                    loop(i + 1)
+            loop(0)
+        }
+
+        /** Try to take an idle connection. Discards expired or dead connections and retries. */
+        @tailrec final def poll[C](
+            idleTimeoutNanos: Long,
+            isAlive: C => Boolean,
+            discardConn: C => Unit
+        )(using AllowUnsafe): Maybe[C] =
+            val currentHead = head.get()
+            val idx         = (currentHead % capacity).toInt
+            val seq         = sequences.get(idx)
+            if seq < currentHead + 1 then
+                // Ring is empty — no completed write at this position
+                Maybe.empty
+            else if !head.compareAndSet(currentHead, currentHead + 1) then
+                // Another reader won, retry
+                poll(idleTimeoutNanos, isAlive, discardConn)
+            else
+                // Claimed the slot — read data
+                val conn = connections(idx).asInstanceOf[C]
+                val ts   = timestamps(idx)
+                connections(idx) = null
+                // Release slot back to writers
+                sequences.lazySet(idx, currentHead + capacity)
+                // Check idle timeout and liveness
+                val elapsed = java.lang.System.nanoTime() - ts
+                if elapsed > idleTimeoutNanos then
+                    discardConn(conn)
+                    poll(idleTimeoutNanos, isAlive, discardConn)
+                else if !isAlive(conn) then
+                    discardConn(conn)
+                    poll(idleTimeoutNanos, isAlive, discardConn)
+                else
+                    Present(conn)
+                end if
+            end if
+        end poll
+
+        /** Return a connection to the ring. If full, discard it. */
+        @tailrec final def release[C](conn: C, discardConn: C => Unit)(using AllowUnsafe): Unit =
+            val currentTail = tail.get()
+            val idx         = (currentTail % capacity).toInt
+            val seq         = sequences.get(idx)
+            if seq < currentTail then
+                // Ring is full — slot still holds an unread write
+                discardConn(conn)
+            else if !tail.compareAndSet(currentTail, currentTail + 1) then
+                // Another writer won, retry
+                release(conn, discardConn)
+            else
+                // Claimed the slot — write data
+                connections(idx) = conn.asInstanceOf[AnyRef]
+                timestamps(idx) = java.lang.System.nanoTime()
+                sequences.lazySet(idx, currentTail + 1)
+            end if
         end release
 
-        def close()(using AllowUnsafe, Frame): Unit =
-            idleChannels.close() match
-                case Present(remaining) =>
-                    remaining.foreach(discardConnection)
-                case Absent => ()
-            end match
-        end close
-
-        @tailrec
-        private def pollActive()(using AllowUnsafe, Frame): Maybe[Backend.Connection] =
-            idleChannels.poll() match
-                case Result.Success(Present(conn)) =>
-                    if conn.isAlive then Present(conn)
-                    else
-                        discardConnection(conn)
-                        pollActive()
-                case _ => Absent
-            end match
-        end pollActive
-
-        private def discardConnection(conn: Backend.Connection)(using AllowUnsafe): Unit =
-            discard(totalCount.decrementAndGet())
-            conn.closeAbruptly()
-
-        private def tryIncrementCount()(using AllowUnsafe): Boolean =
+        /** Reserve an in-flight slot to prevent connection storms. */
+        def tryReserve()(using AllowUnsafe): Boolean =
             @tailrec def loop(): Boolean =
-                val current = totalCount.get()
-                if current >= maxConnections then false
-                else if totalCount.compareAndSet(current, current + 1) then true
+                val current  = inFlight.get()
+                val idleSize = (tail.get() - head.get()).toInt.max(0)
+                if current + idleSize >= capacity then false
+                else if inFlight.compareAndSet(current, current + 1) then true
                 else loop()
             end loop
             loop()
-        end tryIncrementCount
+        end tryReserve
 
-        private def waitForActive(
-            factory: Backend.ConnectionFactory,
-            host: String,
-            port: Int,
-            ssl: Boolean,
-            connectTimeout: Maybe[Duration]
-        )(using Frame, AllowUnsafe): Backend.Connection < (Async & Abort[HttpError]) =
-            // Blocks until another fiber releases a connection back to idle
-            Abort.run[Closed](idleChannels.safe.take).map {
-                case Result.Success(conn) =>
-                    // Connection may have gone stale while idle — discard and retry
-                    if conn.isAlive then conn
-                    else
-                        Sync.Unsafe.defer {
-                            discardConnection(conn)
-                        }.andThen(acquire(factory, host, port, ssl, connectTimeout, Duration.Infinity))
-                case Result.Failure(_) =>
-                    Abort.fail(HttpError.ConnectionFailed(
-                        host,
-                        port,
-                        new RuntimeException("Connection pool is closed")
-                    ))
-                case Result.Panic(e) =>
-                    Abort.fail(HttpError.fromThrowable(e, host, port))
-            }
-        end waitForActive
+        /** Release an in-flight slot. */
+        def unreserve()(using AllowUnsafe): Unit =
+            discard(inFlight.decrementAndGet())
 
-    end HostPool
+        /** Drain and discard all idle connections. */
+        def closeAll[C](discardConn: C => Unit)(using AllowUnsafe): Unit =
+            @tailrec def loop(): Unit =
+                val currentHead = head.get()
+                val idx         = (currentHead % capacity).toInt
+                val seq         = sequences.get(idx)
+                if seq < currentHead + 1 then () // empty, done
+                else if head.compareAndSet(currentHead, currentHead + 1) then
+                    val conn = connections(idx)
+                    connections(idx) = null
+                    sequences.lazySet(idx, currentHead + capacity)
+                    if conn ne null then discardConn(conn.asInstanceOf[C])
+                    loop()
+                else loop() // CAS failed, retry
+                end if
+            end loop
+            loop()
+        end closeAll
 
-    private object HostPool:
-        private inline def DefaultIdleCapacity = 256
-
-        def init(maxConnections: Maybe[Int])(using AllowUnsafe, Frame): HostPool =
-            val capacity     = maxConnections.getOrElse(DefaultIdleCapacity)
-            val idleChannels = Channel.Unsafe.init[Backend.Connection](capacity)
-            val totalCount   = AtomicInt.Unsafe.init(0)
-            new HostPool(idleChannels, totalCount, maxConnections.getOrElse(Int.MaxValue))
-        end init
     end HostPool
 
 end ConnectionPool

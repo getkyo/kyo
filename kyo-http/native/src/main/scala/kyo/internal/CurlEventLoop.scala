@@ -1,10 +1,12 @@
 package kyo.internal
 
-import java.io.ByteArrayOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicLong
 import kyo.*
+import kyo.internal.CurlBindings
+import kyo.internal.CurlBindings.*
+import scala.annotation.tailrec
 import scala.collection.mutable.HashMap
 import scala.scalanative.runtime.Intrinsics
 import scala.scalanative.runtime.fromRawPtr
@@ -12,68 +14,21 @@ import scala.scalanative.runtime.toRawPtr
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
 
-/** Transfer state for a single curl easy handle. */
-sealed private[kyo] trait TransferState:
-    def easyHandle: CurlBindings.CURL
-    def headerList: Ptr[Byte]
-    def setHeaderList(p: Ptr[Byte]): Unit
-    def responseHeaders: StringBuilder
-    def statusCode: Int
-    def setStatusCode(code: Int): Unit
-end TransferState
-
-final private[kyo] class BufferedTransferState(
-    val promise: Promise.Unsafe[HttpResponse[HttpBody.Bytes], Abort[HttpError]],
-    val easyHandle: CurlBindings.CURL,
-    val host: String,
-    val port: Int
-) extends TransferState:
-    val responseBody: ByteArrayOutputStream = new ByteArrayOutputStream()
-    val responseHeaders: StringBuilder      = new StringBuilder()
-    private var _statusCode: Int            = 0
-    private var _headerList: Ptr[Byte]      = null
-
-    def statusCode: Int                   = _statusCode
-    def setStatusCode(code: Int): Unit    = _statusCode = code
-    def headerList: Ptr[Byte]             = _headerList
-    def setHeaderList(p: Ptr[Byte]): Unit = _headerList = p
-end BufferedTransferState
-
-final private[kyo] class StreamingTransferState(
-    val headerPromise: Promise.Unsafe[StreamingHeaders, Abort[HttpError]],
-    val bodyChannel: Channel.Unsafe[Span[Byte]],
-    val easyHandle: CurlBindings.CURL,
-    val host: String,
-    val port: Int
-) extends TransferState:
-    val responseHeaders: StringBuilder = new StringBuilder()
-    private var _statusCode: Int       = 0
-    private var _headerList: Ptr[Byte] = null
-    var headersCompleted: Boolean      = false
-    @volatile var isPaused: Boolean    = false
-
-    def statusCode: Int                   = _statusCode
-    def setStatusCode(code: Int): Unit    = _statusCode = code
-    def headerList: Ptr[Byte]             = _headerList
-    def setHeaderList(p: Ptr[Byte]): Unit = _headerList = p
-end StreamingTransferState
-
-/** Dedicated event loop thread running curl_multi_socket_action.
+/** Dedicated event loop thread running curl_multi_socket_action for the http backend.
   *
-  * Architecture mirrors Netty event loop -> Promise bridge:
-  *   - Kyo threads enqueue transfers via requestQueue + self-pipe wakeup
-  *   - Event loop thread polls, drives curl, and completes promises
+  * Kyo threads enqueue transfers via requestQueue + self-pipe wakeup. The event loop thread polls, drives curl, and completes promises with
+  * raw response data.
   */
 final private[kyo] class CurlEventLoop(daemon: Boolean):
     import AllowUnsafe.embrace.danger
-    import CurlBindings.*
+
     private given Frame = Frame.internal
 
     private val multi: CURLM = curl_multi_init()
 
     // Transfer management
-    private[internal] val transfers = new ConcurrentHashMap[Long, TransferState]()
-    private val requestQueue        = new ConcurrentLinkedQueue[java.lang.Long]()
+    private[kyo] val transfers = new ConcurrentHashMap[Long, CurlTransferState]()
+    private val requestQueue   = new ConcurrentLinkedQueue[java.lang.Long]()
 
     // Socket tracking (event loop thread only)
     private val socketMap = new HashMap[Int, Short]()
@@ -111,12 +66,12 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
     }
 
     // Start the event loop thread
-    private val thread = new Thread(() => eventLoop(), "kyo-curl-event-loop")
+    private val thread = new Thread(() => eventLoop(), "kyo-http-curl-event-loop")
     thread.setDaemon(daemon)
     thread.start()
 
     /** Enqueue a transfer for processing by the event loop. */
-    def enqueue(transferId: Long, state: TransferState): Unit =
+    def enqueue(transferId: Long, state: CurlTransferState): Unit =
         discard(transfers.put(transferId, state))
         discard(requestQueue.add(java.lang.Long.valueOf(transferId)))
         wakeUp()
@@ -124,7 +79,6 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
 
     /** Shut down the event loop. */
     def shutdown(): Unit =
-        // Signal loop to stop and wake it up
         running = false
         wakeUp()
         thread.join(5000)
@@ -135,17 +89,16 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
         while iter.hasNext do
             val entry = iter.next()
             val state = entry.getValue
-            failTransfer(state, HttpError.ConnectionFailed("", 0, new RuntimeException("Event loop shut down")))
+            failTransfer(state, HttpError.ConnectionError("Event loop shut down", new RuntimeException("Event loop shut down")))
             iter.remove()
         end while
 
-        // Clean up curl multi and self-pipe fds
         discard(curl_multi_cleanup(multi))
         discard(posix_close(pipeReadFd))
         discard(posix_close(pipeWriteFd))
     end shutdown
 
-    private def wakeUp(): Unit =
+    private[kyo] def wakeUp(): Unit =
         Zone {
             val buf = stackalloc[Byte](1)
             !buf = 1.toByte
@@ -162,12 +115,9 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
             discard(curl_multi_socket_action(multi, CURL_SOCKET_TIMEOUT, 0, runningHandles))
 
             while running do
-                // New transfers arrive via requestQueue; add them to curl_multi before polling
                 drainRequestQueue()
-                // Streaming transfers may have been paused due to full channels — unpause if space freed
                 checkPausedTransfers()
 
-                // Build poll fd array: self-pipe (for wakeup) + tracked curl sockets
                 val numSockets = socketMap.size
                 val totalFds   = Math.min(numSockets + 1, maxPollFds)
 
@@ -183,7 +133,6 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
                     idx += 1
                 }
 
-                // Blocks until I/O ready or timeout — drives curl_multi_socket_action below
                 val pollResult = posix_poll(fds, totalFds.toCSize, timeoutMs)
 
                 if pollResult > 0 then
@@ -217,8 +166,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
             val state = transfers.get(id)
             if state != null then
                 val handle = state.easyHandle
-                // Set the transferId as private data for later retrieval
-                val idPtr = fromRawPtr[Byte](Intrinsics.castLongToRawPtr(id))
+                val idPtr  = fromRawPtr[Byte](Intrinsics.castLongToRawPtr(id))
                 discard(curl_easy_setopt(handle, CURLOPT_PRIVATE, idPtr))
                 discard(curl_multi_add_handle(multi, handle))
             end if
@@ -230,8 +178,11 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
         val iter = transfers.entrySet().iterator()
         while iter.hasNext do
             val entry = iter.next()
-            entry.getValue match
-                case st: StreamingTransferState if st.isPaused =>
+            val state = entry.getValue
+
+            // Response write pause (streaming response)
+            state match
+                case st: CurlStreamingTransferState if st.isPaused =>
                     st.bodyChannel.full() match
                         case Result.Success(false) =>
                             st.isPaused = false
@@ -239,6 +190,16 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
                         case _ => ()
                 case _ => ()
             end match
+
+            // Request read pause (streaming request body)
+            val rs = state.readState
+            if rs != null && rs.isPaused then
+                rs.channel.empty() match
+                    case Result.Success(false) =>
+                        rs.isPaused = false
+                        discard(curl_easy_pause(state.easyHandle, CURLPAUSE_CONT))
+                    case _ => ()
+            end if
         end while
     end checkPausedTransfers
 
@@ -251,7 +212,6 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
                     val easyHandle = msg._2
                     val curlResult = msg._3
 
-                    // Retrieve transferId from CURLINFO_PRIVATE
                     val privatePtr = stackalloc[Ptr[Byte]](1)
                     discard(curl_easy_getinfo(easyHandle, CURLINFO_PRIVATE, privatePtr))
                     val transferId = Intrinsics.castRawPtrToLong(toRawPtr(!privatePtr))
@@ -274,51 +234,64 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
         }
     end processCompletedTransfers
 
-    private def completeTransfer(state: TransferState): Unit =
+    private def completeTransfer(state: CurlTransferState): Unit =
         state match
-            case bs: BufferedTransferState =>
-                val status  = HttpStatus(bs.statusCode)
+            case bs: CurlBufferedTransferState =>
                 val headers = parseHeaders(bs.responseHeaders.toString)
                 val body    = bs.responseBody.toByteArray
-                val resp    = HttpResponse.initBytes(status, headers, Span.fromUnsafe(body))
-                discard(bs.promise.complete(Result.succeed(resp)))
+                val result  = CurlBufferedResult(bs.statusCode, headers, Span.fromUnsafe(body))
+                discard(bs.promise.complete(Result.succeed(result)))
 
-            case ss: StreamingTransferState =>
-                // Complete header promise if not already done
+            case ss: CurlStreamingTransferState =>
                 if !ss.headersCompleted then
-                    val status  = HttpStatus(ss.statusCode)
                     val headers = parseHeaders(ss.responseHeaders.toString)
                     ss.headersCompleted = true
-                    discard(ss.headerPromise.complete(Result.succeed(StreamingHeaders(status, headers))))
+                    discard(ss.headerPromise.complete(Result.succeed(CurlStreamingHeaders(ss.statusCode, headers))))
                 end if
-                // Signal end of stream
-                discard(ss.bodyChannel.closeAwaitEmpty())
+                // Signal end of stream with Absent sentinel
+                discard(ss.bodyChannel.putFiber(Absent))
     end completeTransfer
 
-    private def failTransfer(state: TransferState, error: HttpError): Unit =
+    private def failTransfer(state: CurlTransferState, error: HttpError): Unit =
         state match
-            case bs: BufferedTransferState =>
+            case bs: CurlBufferedTransferState =>
                 discard(bs.promise.complete(Result.fail(error)))
-            case ss: StreamingTransferState =>
+            case ss: CurlStreamingTransferState =>
                 discard(ss.headerPromise.complete(Result.fail(error)))
-                discard(ss.bodyChannel.closeAwaitEmpty())
+                discard(ss.bodyChannel.close())
     end failTransfer
 
-    private def cleanupTransfer(state: TransferState): Unit =
+    private def cleanupTransfer(state: CurlTransferState): Unit =
+        if state.readState != null then
+            discard(state.readState.channel.close())
         if state.headerList != null then
             curl_slist_free_all(state.headerList)
         curl_easy_cleanup(state.easyHandle)
     end cleanupTransfer
 
-    private def curlResultToError(code: CInt, state: TransferState): HttpError =
+    private def curlResultToError(code: CInt, state: CurlTransferState): HttpError =
         val (host, port) = state match
-            case bs: BufferedTransferState  => (bs.host, bs.port)
-            case ss: StreamingTransferState => (ss.host, ss.port)
+            case bs: CurlBufferedTransferState  => (bs.host, bs.port)
+            case ss: CurlStreamingTransferState => (ss.host, ss.port)
         CurlEventLoop.curlResultToError(code, host, port)
     end curlResultToError
 
+    /** Parse raw header lines into HttpHeaders (flat interleaved Chunk). */
     private def parseHeaders(raw: String): HttpHeaders =
-        RawHeaderParser.parseHeaders(raw)
+        val builder = ChunkBuilder.init[String]
+        val lines   = raw.split("\r\n")
+        var i       = 0
+        while i < lines.length do
+            val line     = lines(i)
+            val colonIdx = line.indexOf(':')
+            if colonIdx > 0 then
+                discard(builder += line.substring(0, colonIdx).trim)
+                discard(builder += line.substring(colonIdx + 1).trim)
+            end if
+            i += 1
+        end while
+        HttpHeaders.fromChunk(builder.result())
+    end parseHeaders
 
     private def drainPipe(): Unit =
         Zone {
@@ -329,7 +302,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
 
     // ── Callback handling (called by curl on event loop thread) ──────
 
-    private[internal] def onSocket(easyHandle: CURL, sockfd: CInt, what: CInt): Unit =
+    private[kyo] def onSocket(easyHandle: CURL, sockfd: CInt, what: CInt): Unit =
         what match
             case CURL_POLL_REMOVE =>
                 discard(socketMap.remove(sockfd))
@@ -343,31 +316,28 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
         end match
     end onSocket
 
-    private[internal] def onTimer(timeoutMsNew: Long): Unit =
+    private[kyo] def onTimer(timeoutMsNew: Long): Unit =
         timeoutMs = if timeoutMsNew < 0 then 1000 else timeoutMsNew.toInt
     end onTimer
 
-    private[internal] def onWrite(transferId: Long, data: Ptr[Byte], size: CSize): CSize =
+    private[kyo] def onWrite(transferId: Long, data: Ptr[Byte], size: CSize): CSize =
         val state = transfers.get(transferId)
         if state == null then size
         else
             val intSize = size.toInt
             state match
-                case bs: BufferedTransferState =>
+                case bs: CurlBufferedTransferState =>
                     bs.responseBody.write(copyFromPointer(data, intSize))
                     size
 
-                // Headers are only available after the first body data arrives from curl
-                case ss: StreamingTransferState =>
+                case ss: CurlStreamingTransferState =>
                     if !ss.headersCompleted then
-                        val status  = HttpStatus(ss.statusCode)
                         val headers = parseHeaders(ss.responseHeaders.toString)
                         ss.headersCompleted = true
-                        discard(ss.headerPromise.complete(Result.succeed(StreamingHeaders(status, headers))))
+                        discard(ss.headerPromise.complete(Result.succeed(CurlStreamingHeaders(ss.statusCode, headers))))
                     end if
 
-                    // Pause curl if channel is full (backpressure)
-                    ss.bodyChannel.offer(Span.fromUnsafe(copyFromPointer(data, intSize))) match
+                    ss.bodyChannel.offer(Present(Span.fromUnsafe(copyFromPointer(data, intSize)))) match
                         case Result.Success(true) => size
                         case Result.Success(false) =>
                             ss.isPaused = true
@@ -379,14 +349,72 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
         end if
     end onWrite
 
-    private[internal] def onHeader(transferId: Long, data: Ptr[Byte], size: CSize): CSize =
+    private[kyo] def onRead(transferId: Long, buffer: Ptr[Byte], maxSize: CSize): CSize =
+        val state = transfers.get(transferId)
+        if state == null then 0.toCSize // EOF
+        else
+            val rs = state.readState
+            if rs == null then 0.toCSize // no streaming body
+            else
+                val max = maxSize.toInt
+                // If we have leftover bytes from a previous chunk, serve those first
+                if rs.currentChunk != null then
+                    val remaining = rs.currentChunk.length - rs.offset
+                    val toCopy    = Math.min(remaining, max)
+                    var i         = 0
+                    while i < toCopy do
+                        buffer(i) = rs.currentChunk(rs.offset + i)
+                        i += 1
+                    rs.offset += toCopy
+                    if rs.offset >= rs.currentChunk.length then
+                        rs.currentChunk = null
+                        rs.offset = 0
+                    toCopy.toCSize
+                else
+                    // Poll channel for next chunk
+                    // channel type: Channel.Unsafe[Maybe[Span[Byte]]]
+                    // poll() returns Result[Closed, Maybe[Maybe[Span[Byte]]]]
+                    // Present(Present(span)) = data, Present(Absent) = EOF sentinel, Absent = channel empty
+                    rs.channel.poll() match
+                        case Result.Success(Present(Present(span))) =>
+                            val bytes = span.toArrayUnsafe
+                            if bytes.length <= max then
+                                var i = 0
+                                while i < bytes.length do
+                                    buffer(i) = bytes(i)
+                                    i += 1
+                                bytes.length.toCSize
+                            else
+                                // Partial: copy max, buffer the rest
+                                var i = 0
+                                while i < max do
+                                    buffer(i) = bytes(i)
+                                    i += 1
+                                rs.currentChunk = bytes
+                                rs.offset = max
+                                max.toCSize
+                            end if
+                        case Result.Success(Present(Absent)) =>
+                            0.toCSize // EOF sentinel
+                        case Result.Success(Absent) =>
+                            // Channel empty, no data yet — pause
+                            rs.isPaused = true
+                            CURL_READFUNC_PAUSE
+                        case _ =>
+                            0.toCSize // Channel closed or error — EOF
+                    end match
+                end if
+            end if
+        end if
+    end onRead
+
+    private[kyo] def onHeader(transferId: Long, data: Ptr[Byte], size: CSize): CSize =
         val state = transfers.get(transferId)
         if state == null then size
         else
             val intSize = size.toInt
             val line    = new String(copyFromPointer(data, intSize), "UTF-8")
 
-            // curl delivers status line ("HTTP/1.1 200 OK") and headers through the same callback
             if line.startsWith("HTTP/") then
                 val spaceIdx = line.indexOf(' ')
                 if spaceIdx > 0 then
@@ -417,27 +445,33 @@ private[kyo] object CurlEventLoop:
     import CurlBindings.*
     import scala.scalanative.runtime.Intrinsics
 
-    private[internal] val nextId = new AtomicLong(0)
-    private[internal] val loops  = new ConcurrentHashMap[Long, CurlEventLoop]()
+    private[kyo] val nextId = new AtomicLong(0)
+    private[kyo] val loops  = new ConcurrentHashMap[Long, CurlEventLoop]()
 
     /** Map a curl result code to the appropriate HttpError. */
     private[kyo] def curlResultToError(code: Int, host: String, port: Int)(using Frame): HttpError =
         code match
-            case 6 | 7 => HttpError.ConnectionFailed(host, port, new RuntimeException(s"curl error $code"))
-            case 28    => HttpError.Timeout(s"curl timeout (error $code)")
+            case 6 | 7 =>
+                HttpError.ConnectionError(
+                    s"Connection failed to $host:$port (curl error $code)",
+                    new RuntimeException(s"curl error $code")
+                )
+            case 28 => HttpError.TimeoutError(Duration.Zero) // curl doesn't tell us the configured timeout
             case 35 | 51 | 53 | 54 | 58 | 59 | 60 =>
-                HttpError.SslError(s"curl SSL error $code", new RuntimeException(s"curl error $code"))
-            case _ => HttpError.InvalidResponse(s"curl error $code")
+                HttpError.ConnectionError(
+                    s"SSL error connecting to $host:$port (curl error $code)",
+                    new RuntimeException(s"curl SSL error $code")
+                )
+            case _ => HttpError.ConnectionError(s"curl error $code for $host:$port", new RuntimeException(s"curl error $code"))
         end match
     end curlResultToError
 
     // ── Static C callbacks ─────────────────────────────────────────────
-    // These are CFuncPtrs that route to the correct CurlEventLoop instance via userp.
 
     private def ptrToLong(p: Ptr[Byte]): Long =
         Intrinsics.castRawPtrToLong(toRawPtr(p))
 
-    private[internal] val socketCallback: CFuncPtr5[CURL, CInt, CInt, Ptr[Byte], Ptr[Byte], CInt] =
+    private[kyo] val socketCallback: CFuncPtr5[CURL, CInt, CInt, Ptr[Byte], Ptr[Byte], CInt] =
         CFuncPtr5.fromScalaFunction { (easy: CURL, sockfd: CInt, what: CInt, userp: Ptr[Byte], socketp: Ptr[Byte]) =>
             val loopId = ptrToLong(userp)
             val loop   = loops.get(loopId)
@@ -445,7 +479,7 @@ private[kyo] object CurlEventLoop:
             0
         }
 
-    private[internal] val timerCallback: CFuncPtr3[CURLM, Long, Ptr[Byte], CInt] =
+    private[kyo] val timerCallback: CFuncPtr3[CURLM, Long, Ptr[Byte], CInt] =
         CFuncPtr3.fromScalaFunction { (multi: CURLM, timeoutMs: Long, userp: Ptr[Byte]) =>
             val loopId = ptrToLong(userp)
             val loop   = loops.get(loopId)
@@ -453,14 +487,29 @@ private[kyo] object CurlEventLoop:
             0
         }
 
+    private[kyo] val readCallback: CFuncPtr4[Ptr[Byte], CSize, CSize, Ptr[Byte], CSize] =
+        CFuncPtr4.fromScalaFunction { (buffer: Ptr[Byte], size: CSize, nmemb: CSize, userdata: Ptr[Byte]) =>
+            val maxSize    = size * nmemb
+            val transferId = ptrToLong(userdata)
+            val iter       = loops.values().iterator()
+            var result     = 0.toCSize // EOF by default
+            var found      = false
+            while iter.hasNext && !found do
+                val loop = iter.next()
+                if loop.transfers.containsKey(transferId) then
+                    result = loop.onRead(transferId, buffer, maxSize)
+                    found = true
+            end while
+            result
+        }
+
     private[kyo] val writeCallback: CFuncPtr4[Ptr[Byte], CSize, CSize, Ptr[Byte], CSize] =
         CFuncPtr4.fromScalaFunction { (data: Ptr[Byte], size: CSize, nmemb: CSize, userdata: Ptr[Byte]) =>
             val totalSize  = size * nmemb
             val transferId = ptrToLong(userdata)
-            // Find the loop that owns this transfer
-            val iter   = loops.values().iterator()
-            var result = totalSize
-            var found  = false
+            val iter       = loops.values().iterator()
+            var result     = totalSize
+            var found      = false
             while iter.hasNext && !found do
                 val loop = iter.next()
                 if loop.transfers.containsKey(transferId) then
