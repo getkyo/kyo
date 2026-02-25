@@ -143,4 +143,49 @@ object Fields:
             ${ internal.FieldsMacros.comparableImpl[A] }
     end Comparable
 
+    /** Anchors a field name type variable so the compiler commits to its precise singleton type immediately.
+      *
+      * **Problem:** When a builder method introduces a type variable `N <: String & Singleton` into an intersection (e.g.,
+      * `def query[N <: ...](name: N): Def[In & N ~ A]`), Scala 3 may defer resolving `N` and later normalize the intersection, collapsing
+      * `"page" ~ Int & "sort" ~ String` into `("page" | "sort") ~ (Int | String)`.
+      *
+      * **Solution:** Adding `(using Pin[N])` forces the compiler to solve `N` eagerly at each call site, preserving each field as a
+      * distinct intersection component. Only needed on methods with a type variable `N` — methods with a concrete literal like `"body"`
+      * don't need it.
+      *
+      * This is a workaround for the absence of `Precise` (SIP-64). `Pin` and `Exact` work together: `Pin` anchors names at each builder
+      * step, while `Exact` preserves the full intersection at lambda boundaries.
+      *
+      * @tparam N
+      *   the singleton string field name to anchor
+      */
+    private object Pin:
+        opaque type Pin[+N <: String] = Unit
+        given [N <: String]: Pin[N] = ()
+    end Pin
+    export Pin.*
+
+    /** Preserves the precise intersection type inferred inside a builder lambda at the point where it escapes.
+      *
+      * **Problem:** When a lambda like `_.query[Int]("page").header[String]("sort")` returns `Def[A]`, the compiler infers `A` as an
+      * intersection type internally, but may normalize/widen it when assigning the result to the outer scope, losing the distinct field
+      * structure.
+      *
+      * **Solution:** `Exact[F, R]` pattern-matches the lambda's return type `R` against `F[A]`, extracting `A` as a dependent type (`Out`).
+      * Because `A` is captured via unification rather than inference, the compiler preserves the exact intersection. The `apply` method
+      * provides an identity conversion back to `F[Out]`.
+      *
+      * This is a workaround for the absence of `Precise` (SIP-64). `Pin` and `Exact` work together: `Pin` anchors names at each builder
+      * step, while `Exact` preserves the full intersection at lambda boundaries.
+      */
+    sealed trait Exact[F[_], R]:
+        type Out
+        def apply(r: R): F[Out]
+
+    object Exact:
+        given [F[_], A]: Exact[F, F[A]] with
+            type Out = A
+            def apply(r: F[A]): F[A] = r
+    end Exact
+
 end Fields
