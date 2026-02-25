@@ -54,11 +54,15 @@ object FieldsMacros:
             if typs.isEmpty then
                 TypeRepr.of[Fields.Structural]
             else
-                val structType = typs.foldLeft[TypeRepr](TypeRepr.of[Any]) { (acc, tpe) =>
-                    tpe match
-                        case AppliedType(_, List(ConstantType(StringConstant(name)), valueType)) =>
-                            Refinement(acc, name, ByNameType(valueType))
-                        case _ => acc
+                val structType = typs.foldLeft(Map[String, TypeRepr]()) {
+                    case (acc, AppliedType(_, List(ConstantType(StringConstant(name)), valueType))) =>
+                        acc.get(name) match
+                            case Some(x) => acc + (name -> OrType(x, valueType))
+                            case None    => acc + (name -> valueType)
+                    case (acc, _) => acc
+                }.foldLeft(TypeRepr.of[Any]) {
+                    case (acc, (name, valueType)) =>
+                        Refinement(acc, name, ByNameType(valueType))
                 }
                 AndType(TypeRepr.of[Fields.Structural], structType)
 
@@ -265,7 +269,7 @@ object FieldsMacros:
                             '{ () }
                         )
                     }
-                    Dict.fromArrayUnsafe(arr.asInstanceOf[Array[Any]])
+                    Dict.fromArrayUnsafe(arr.asInstanceOf[Array[Any]]).asInstanceOf[Record[f]]
                 }
         end match
     end fromProductImpl

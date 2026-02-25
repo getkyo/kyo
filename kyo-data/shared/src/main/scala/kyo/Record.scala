@@ -34,125 +34,81 @@ import scala.language.implicitConversions
   * @tparam F
   *   Intersection of `Name ~ Value` field types describing the record's schema
   */
-// final class Record[F](private[kyo] val dict: Dict[String, Any]) extends Dynamic:
+type Record[F] = Record.Impl[F]
 
-//     /** Retrieves a field value by name via dynamic method syntax. The return type is inferred from the field's declared type. Requires
-//       * `Fields.Have` evidence that the field exists in `F`.
-//       */
-//     def selectDynamic[Name <: String & Singleton](name: Name)(using h: Fields.Have[F, Name]): h.Value =
-//         dict(name).asInstanceOf[h.Value]
+trait RecordDictSyntax:
+    extension [F](record: Record[F])
+        def update[Name <: String & Singleton, V](name: Name, value: V)(using F <:< (Name ~ V)): Record[F] =
+            Record.from(record.toDict.update(name, value.asInstanceOf[Any]))
 
-//     /** Retrieves a field value by name. Unlike `selectDynamic`, this method works with any string literal, including names that are not
-//       * valid Scala identifiers (e.g., `"user-name"`, `"&"`, `""`).
-//       */
-//     def getField[Name <: String & Singleton, V](name: Name)(using h: Fields.Have[F, Name]): h.Value =
-//         dict(name).asInstanceOf[h.Value]
-
-//     /** Combines this record with another, producing a record whose type is the intersection of both field sets. If both records contain a
-//       * field with the same name, the value from `other` takes precedence at runtime.
-//       */
-//     def &[A](other: Record[A]): Record[F & A] =
-//         new Record(dict ++ other.dict)
-
-//     /** Returns a new record with the specified field's value replaced. The field name and value type must match a field in `F`. */
-//     def update[Name <: String & Singleton, V](name: Name, value: V)(using F <:< (Name ~ V)): Record[F] =
-//         new Record(dict.update(name, value.asInstanceOf[Any]))
-
-//     /** Returns a new record containing only the fields declared in `F`, removing any extra fields that may be present in the underlying
-//       * storage due to widening. Requires a `Fields` instance for `F`.
-//       */
-//     def compact(using f: Fields[F]): Record[F] =
-//         new Record(dict.filter((k, _) => f.names.contains(k)))
-
-//     /** Returns the field names declared in `F` as a list. */
-//     def fields(using f: Fields[F]): List[String] =
-//         f.fields.map(_.name)
-
-//     /** Extracts all field values as a typed tuple, ordered by the field declaration in `F`. */
-//     inline def values(using f: Fields[F]): f.Values =
-//         Record.collectValues[f.AsTuple](dict).asInstanceOf[f.Values]
-
-//     /** Applies a polymorphic function to each field value, wrapping each value type in `G`. Returns a new record where every field
-//       * `Name ~ V` becomes `Name ~ G[V]`.
-//       */
-//     def map[G[_]](using
-//         f: Fields[F]
-//     )(
-//         fn: [t] => t => G[t]
-//     ): Record[f.Map[~.MapValue[G]]] =
-//         new Record(
-//             dict
-//                 .filter((k, _) => f.names.contains(k))
-//                 .mapValues(v => fn(v))
-//         )
-
-//     /** Like `map`, but the polymorphic function also receives the `Field` descriptor for each field, providing access to the field name and
-//       * tag.
-//       */
-//     def mapFields[G[_]](using
-//         f: Fields[F]
-//     )(
-//         fn: [t] => (Field[?, t], t) => G[t]
-//     ): Record[f.Map[~.MapValue[G]]] =
-//         val result = DictBuilder.init[String, Any]
-//         f.fields.foreach: field =>
-//             dict.get(field.name) match
-//                 case Present(v) =>
-//                     discard(result.add(field.name, fn(field.asInstanceOf[Field[?, Any]], v)))
-//                 case _ =>
-//         new Record(result.result())
-//     end mapFields
-
-//     /** Pairs the values of this record with another record by field name. Both records must have the same field names (verified at compile
-//       * time). For each field `Name ~ V1` in this record and `Name ~ V2` in `other`, the result contains `Name ~ (V1, V2)`.
-//       */
-//     inline def zip[F2](other: Record[F2])(using
-//         f1: Fields[F],
-//         f2: Fields[F2],
-//         ev: Fields.SameNames[F, F2]
-//     ): Record[f1.Zipped[f2.AsTuple]] =
-//         val result = DictBuilder.init[String, Any]
-//         f1.fields.foreach: field =>
-//             discard(result.add(field.name, (dict(field.name), other.dict(field.name))))
-//         new Record(result.result())
-//     end zip
-
-//     /** Returns the number of fields stored in this record. */
-//     def size: Int = dict.size
-
-//     /** Returns the record's contents as a `Dict[String, Any]`. */
-//     def toDict: Dict[String, Any] = dict
-
-//     override def equals(that: Any): Boolean =
-//         that match
-//             case other: Record[?] =>
-//                 given CanEqual[Any, Any] = CanEqual.derived
-//                 dict.is(other.dict)
-//             case _ => false
-
-//     override def hashCode(): Int =
-//         var h = 0
-//         dict.foreach((k, v) => h = h ^ (k.hashCode * 31 + v.##))
-//         h
-//     end hashCode
-
-// end Record
-
-opaque type Record[F] = Record.Impl[F]
+        def size: Int = record.toDict.size
+    end extension
+end RecordDictSyntax
 
 /** Companion object providing record construction, field type definitions, implicit conversions, and compile-time staging. */
-object Record:
+object Record extends RecordDictSyntax:
     opaque type Impl[F] = Dict[String, Any]
 
-    extension [F](record: Record[F])
+    private[kyo] def from[F](dict: Dict[String, Any]): Record[F] = dict
+
+    extension [F](record: Impl[F])
+        def getField[Name <: String & Singleton, V](name: Name)(using h: Fields.Have[F, Name]): h.Value =
+            (record: Dict[String, Any])(name).asInstanceOf[h.Value]
+
         def toDict: Dict[String, Any] = record
+
         def &[A](other: Record[A]): Record[F & A] =
             (record: Dict[String, Any]) ++ other
+
+        def compact(using f: Fields[F]): Record[F] =
+            record.filter((k, _) => f.names.contains(k))
+
+        def fields(using f: Fields[F]): List[String] =
+            f.fields.map(_.name)
+
+        inline def values(using f: Fields[F]): f.Values =
+            Record.collectValues[f.AsTuple](record).asInstanceOf[f.Values]
+
+        def map[G[_]](using
+            f: Fields[F]
+        )(
+            fn: [t] => t => G[t]
+        ): Record[f.Map[~.MapValue[G]]] =
+            Record.from[f.Map[~.MapValue[G]]](
+                record
+                    .filter((k, _) => f.names.contains(k))
+                    .mapValues(v => fn(v))
+            )
+
+        def mapFields[G[_]](using
+            f: Fields[F]
+        )(
+            fn: [t] => (Field[?, t], t) => G[t]
+        ): Record[f.Map[~.MapValue[G]]] =
+            val result = DictBuilder.init[String, Any]
+            f.fields.foreach: field =>
+                toDict.get(field.name) match
+                    case Present(v) =>
+                        discard(result.add(field.name, fn(field.asInstanceOf[Field[?, Any]], v)))
+                    case _ =>
+            Record.from[f.Map[~.MapValue[G]]](result.result())
+        end mapFields
+
+        inline def zip[F2](other: Record[F2])(using
+            f1: Fields[F],
+            f2: Fields[F2],
+            ev: Fields.SameNames[F, F2]
+        ): Record[f1.Zipped[f2.AsTuple]] =
+            val result = DictBuilder.init[String, Any]
+            f1.fields.foreach: field =>
+                discard(result.add(field.name, (toDict(field.name), other.toDict(field.name))))
+            Record.from[f1.Zipped[f2.AsTuple]](result.result())
+        end zip
     end extension
 
-    given [F, T, S](using c: Fields.Aux[F, T, S]): Conversion[Record[F], S] =
-        new Conversion[Record[F], S]:
-            def apply(r: Record[F]): S = Fields.Structural.from(r).asInstanceOf[S]
+    given [F, T, S](using c: Fields.Aux[F, T, S]): Conversion[Impl[F], S] =
+        new Conversion[Impl[F], S]:
+            def apply(r: Impl[F]): S = Fields.Structural.from(r)
 
     /** Phantom type representing a field binding from a singleton string name to a value type. Contravariant in `Value` so that duplicate
       * field names with different types are normalized to a union: `"f" ~ Int & "f" ~ String =:= "f" ~ (Int | String)`.
@@ -293,3 +249,12 @@ object Record:
         dict
 
 end Record
+
+// object Test:
+//     case class Person(name: String, age: Int)
+//     val r = Record.fromProduct(Person("Alice", 30))
+//     println(r.size)
+//     println(r & ("lol" ~ "kek"))
+//     val name: String = r.name
+//     val age: Int     = r.age
+// end Test

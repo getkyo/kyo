@@ -1,6 +1,7 @@
 package kyo
 
 import Record.*
+import scala.language.implicitConversions
 
 class FieldTest extends Test:
 

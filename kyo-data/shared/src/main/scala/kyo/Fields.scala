@@ -170,8 +170,9 @@ object Fields:
         def selectDynamic(name: String): Any = fields(name)
 
     object Structural:
-        private[kyo] def from(dict: Dict[String, Any]): Structural =
-            new Structural:
+        private[kyo] def from[A](dict: Dict[String, Any]): Structural & A =
+            (new Structural:
                 val fields = dict
+            ).asInstanceOf[Structural & A]
     end Structural
 end Fields
