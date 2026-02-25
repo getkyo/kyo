@@ -62,7 +62,7 @@ class HttpServerContentionBench
     lazy val kyo2Srv =
         import kyo.*
         import AllowUnsafe.embrace.danger
-        val h = http2.HttpRoute.get("ping").response(_.bodyText).handler(_ => http2.HttpResponse.okText("pong"))
+        val h = http2.HttpRoute.getText("ping").handler(_ => http2.HttpResponse.okText("pong"))
         val srv = Sync.Unsafe.evalOrThrow(
             Fiber.initUnscoped(
                 http2.HttpServer.initUnscoped(9010, "0.0.0.0")(h)
