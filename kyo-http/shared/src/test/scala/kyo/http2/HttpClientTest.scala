@@ -1363,4 +1363,132 @@ class HttpClientTest extends Test:
         }
     }
 
+    "client cancellation and error handling" - {
+
+        "buffered request: fiber interruption cancels in-flight request" in run {
+            // Server delays response. Client times out. Request should be cancelled, not leak.
+            val route = HttpRoute.getRaw("slow").response(_.bodyText)
+            val ep = route.handler { _ =>
+                Async.sleep(5.seconds).andThen {
+                    HttpResponse.okText("too late")
+                }
+            }
+            withServer(ep) { port =>
+                Abort.run[HttpError | kyo.Timeout] {
+                    Async.timeout(100.millis) {
+                        send(port, route, HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/slow")))
+                    }
+                }.map { result =>
+                    // Should fail with timeout, not hang
+                    assert(result.isFailure || result.isPanic)
+                }
+            }
+        }
+
+        "streaming response: fiber interruption stops stream consumption" in run {
+            // Server sends an infinite stream. Client reads one chunk then cancels via scope close.
+            val route = HttpRoute.getRaw("infinite").response(_.bodyStream)
+            val ep = route.handler { _ =>
+                val chunks = Stream[Span[Byte], Async & Scope] {
+                    kyo.Loop.foreach {
+                        Async.sleep(10.millis).andThen {
+                            kyo.Emit.valueWith(Chunk(Span.fromUnsafe("data\n".getBytes("UTF-8"))))(kyo.Loop.continue[Unit])
+                        }
+                    }
+                }
+                HttpResponse.ok.addField("body", chunks)
+            }
+            withServer(ep) { port =>
+                Async.timeout(5.seconds) {
+                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                        Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                            client.sendWith(conn, route, HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/infinite"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                // Read just the first chunk, then let scope close — should not hang
+                                Scope.run {
+                                    resp.fields.body.take(1).run.map { chunks =>
+                                        assert(chunks.size == 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "streaming response: server-side stream error propagates to client" in run {
+            // Server stream throws after first chunk. Client should see an error, not hang.
+            val route = HttpRoute.getRaw("fail-stream").response(_.bodyStream)
+            val ep = route.handler { _ =>
+                val failingStream = Stream[Span[Byte], Async & Scope] {
+                    kyo.Emit.valueWith(Chunk(Span.fromUnsafe("ok\n".getBytes("UTF-8")))) {
+                        throw new RuntimeException("stream error")
+                    }
+                }
+                HttpResponse.ok.addField("body", failingStream)
+            }
+            withServer(ep) { port =>
+                Async.timeout(5.seconds) {
+                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                        Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                            client.sendWith(conn, route, HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/fail-stream"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                // Stream should either deliver partial data or error, but not hang
+                                Scope.run {
+                                    Abort.run[Throwable](Abort.catching[Throwable] {
+                                        resp.fields.body.run.map { _ => succeed }
+                                    }).map(_ => succeed)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "buffered response: connection error is classified as HttpError" in run {
+            val route = HttpRoute.getRaw("test").response(_.bodyText)
+            Abort.run[HttpError] {
+                send(1, route, HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/test")))
+            }.map { result =>
+                result match
+                    case Result.Failure(e: HttpError.ConnectionError) => succeed
+                    case other                                        => fail(s"Expected ConnectionError but got $other")
+            }
+        }
+
+        "streaming request body: sent correctly" in run {
+            val route = HttpRoute.postRaw("echo")
+                .request(_.bodyStream)
+                .response(_.bodyText)
+            val ep = route.handler { req =>
+                Scope.run {
+                    req.fields.body.run.map { chunks =>
+                        val text = chunks.foldLeft("")((acc, span) =>
+                            acc + new String(span.toArrayUnsafe, "UTF-8")
+                        )
+                        HttpResponse.okText(text)
+                    }
+                }
+            }
+            withServer(ep) { port =>
+                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        val bodyStream: Stream[Span[Byte], Async & Scope] = Stream.init(Seq(
+                            Span.fromUnsafe("hello ".getBytes("UTF-8")),
+                            Span.fromUnsafe("world".getBytes("UTF-8"))
+                        ))
+                        val request = HttpRequest(HttpMethod.POST, HttpUrl.fromUri("/echo"))
+                            .addField("body", bodyStream)
+                        client.sendWith(conn, route, request) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            assert(resp.fields.body == "hello world")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end HttpClientTest

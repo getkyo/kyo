@@ -248,10 +248,24 @@ final class NodeServerBackend extends HttpBackend.Server:
             }
         ))
 
+        var reqEnded = false
+
         discard(req.on(
             "end",
             { () =>
+                reqEnded = true
                 discard(byteChannel.offer(Absent))
+            }
+        ))
+
+        // Close channel on request error so handler doesn't hang
+        discard(req.on("error", { () => discard(byteChannel.close()) }))
+
+        // Close channel on client disconnect (but not on normal completion)
+        discard(req.on(
+            "close",
+            { () =>
+                if !reqEnded then discard(byteChannel.close())
             }
         ))
 
@@ -348,7 +362,7 @@ final class NodeServerBackend extends HttpBackend.Server:
         jsHeaders("Transfer-Encoding") = "chunked"
         discard(res.writeHead(status.code, jsHeaders))
 
-        discard(launchFiber {
+        val writeFiber = launchFiber {
             Abort.run[Throwable](Abort.catching[Throwable] {
                 Scope.run {
                     stream.foreach { bytes =>
@@ -357,7 +371,7 @@ final class NodeServerBackend extends HttpBackend.Server:
                         if !canWrite then
                             // Backpressure: wait for drain event
                             val drainP = Promise.Unsafe.init[Unit, Any]()
-                            discard(res.on(
+                            discard(res.once(
                                 "drain",
                                 { () =>
                                     import AllowUnsafe.embrace.danger
@@ -372,7 +386,16 @@ final class NodeServerBackend extends HttpBackend.Server:
             }).map { _ =>
                 res.endEmpty()
             }
-        })
+        }
+
+        // Interrupt write fiber when client disconnects
+        discard(res.on(
+            "close",
+            { () =>
+                import AllowUnsafe.embrace.danger
+                discard(writeFiber.unsafe.interrupt(Result.Panic(new Exception("Client disconnected"))))
+            }
+        ))
     end writeStreamingResponse
 
     private def sendErrorResponse(

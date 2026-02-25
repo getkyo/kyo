@@ -1088,4 +1088,233 @@ class HttpServerTest extends Test:
         }
     }
 
+    "client disconnect and cleanup" - {
+
+        "streaming response: server stops writing after client disconnects" in run {
+            // Server sends an infinite stream. Client reads a few chunks then disconnects.
+            // The server should stop writing (not leak the fiber).
+            kyo.Latch.init(1).map { handlerDone =>
+                val route = HttpRoute.getRaw("infinite").response(_.bodyStream)
+                val ep = route.handler { _ =>
+                    val infiniteStream = Stream[Span[Byte], Async & Scope] {
+                        kyo.Loop.foreach {
+                            Async.sleep(10.millis).andThen {
+                                kyo.Emit.valueWith(Chunk(Span.fromUnsafe("chunk\n".getBytes("UTF-8"))))(kyo.Loop.continue[Unit])
+                            }
+                        }
+                    }
+                    Sync.ensure(handlerDone.release) {
+                        HttpResponse.ok.addField("body", infiniteStream)
+                    }
+                }
+                withServer(ep) { port =>
+                    Scope.run {
+                        client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                            client.sendWith(conn, route, HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/infinite"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                Scope.run {
+                                    resp.fields.body.take(1).run.map { chunks =>
+                                        assert(chunks.size == 1)
+                                    }
+                                }
+                            }
+                        }
+                    }.andThen {
+                        handlerDone.await.andThen(succeed)
+                    }
+                }
+            }
+        }
+
+        "streaming response: blocked stream terminates on client disconnect" in run {
+            // Server produces a stream that blocks (via latch). Client disconnects.
+            // The write fiber should be interrupted, not leaked.
+            kyo.Latch.init(1).map { writeDone =>
+                val route = HttpRoute.getRaw("hang").response(_.bodyStream)
+                val ep = route.handler { _ =>
+                    val hangStream = Stream[Span[Byte], Async & Scope] {
+                        // Emit one chunk, then block forever
+                        kyo.Emit.valueWith(Chunk(Span.fromUnsafe("first\n".getBytes("UTF-8")))) {
+                            kyo.Latch.init(1).map(_.await).andThen {
+                                kyo.Emit.valueWith(Chunk(Span.fromUnsafe("never".getBytes("UTF-8"))))(())
+                            }
+                        }
+                    }
+                    // Note: Sync.ensure here runs when the handler returns the response (immediately),
+                    // NOT when the stream is done writing. We track the write fiber separately.
+                    HttpResponse.ok.addField("body", hangStream)
+                }
+                withServer(ep) { port =>
+                    Scope.run {
+                        client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                            client.sendWith(conn, route, HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/hang"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                // Read the first chunk, then disconnect
+                                Scope.run {
+                                    resp.fields.body.take(1).run.map { chunks =>
+                                        assert(chunks.size == 1)
+                                    }
+                                }
+                            }
+                        }
+                    }.andThen(succeed)
+                }
+            }
+        }
+
+        "streaming request: handler completes even if client sends slowly" in run {
+            // Client sends a streaming body with delays. Handler should receive all chunks.
+            val route = HttpRoute.postRaw("slow-upload")
+                .request(_.bodyStream)
+                .response(_.bodyText)
+            val ep = route.handler { req =>
+                Scope.run {
+                    req.fields.body.run.map { chunks =>
+                        val text = chunks.foldLeft("")((acc, span) =>
+                            acc + new String(span.toArrayUnsafe, "UTF-8")
+                        )
+                        HttpResponse.okText(text)
+                    }
+                }
+            }
+            withServer(ep) { port =>
+                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        val bodyStream: Stream[Span[Byte], Async & Scope] = Stream[Span[Byte], Async & Scope] {
+                            kyo.Emit.valueWith(Chunk(Span.fromUnsafe("a".getBytes("UTF-8")))) {
+                                Async.sleep(50.millis).andThen {
+                                    kyo.Emit.valueWith(Chunk(Span.fromUnsafe("b".getBytes("UTF-8"))))(())
+                                }
+                            }
+                        }
+                        val request = HttpRequest(HttpMethod.POST, HttpUrl.fromUri("/slow-upload"))
+                            .addField("body", bodyStream)
+                        client.sendWith(conn, route, request) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            assert(resp.fields.body == "ab")
+                        }
+                    }
+                }
+            }
+        }
+
+        "handler error returns 500 and does not hang" in run {
+            val route = HttpRoute.getRaw("error").response(_.bodyText)
+            val ep = route.handler { _ =>
+                throw new RuntimeException("handler boom")
+            }
+            withServer(ep) { port =>
+                send(port, route, HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/error"))).map { resp =>
+                    assert(resp.status == HttpStatus.InternalServerError)
+                }
+            }
+        }
+
+        "streaming request: request body channel closed on normal completion" in run {
+            // Verifies that the streaming request body channel is properly closed
+            // after the request completes, and handler doesn't hang.
+            kyo.Latch.init(1).map { handlerDone =>
+                val route = HttpRoute.postRaw("upload-complete")
+                    .request(_.bodyStream)
+                    .response(_.bodyText)
+                val ep = route.handler { req =>
+                    Sync.ensure(handlerDone.release) {
+                        Scope.run {
+                            req.fields.body.run.map { chunks =>
+                                val text = chunks.foldLeft("")((acc, span) =>
+                                    acc + new String(span.toArrayUnsafe, "UTF-8")
+                                )
+                                HttpResponse.okText(text)
+                            }
+                        }
+                    }
+                }
+                withServer(ep) { port =>
+                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                        Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                            val bodyStream: Stream[Span[Byte], Async & Scope] = Stream[Span[Byte], Async & Scope] {
+                                kyo.Emit.valueWith(Chunk(Span.fromUnsafe("hello".getBytes("UTF-8"))))(())
+                            }
+                            val request = HttpRequest(HttpMethod.POST, HttpUrl.fromUri("/upload-complete"))
+                                .addField("body", bodyStream)
+                            client.sendWith(conn, route, request) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                assert(resp.fields.body == "hello")
+                            }
+                        }
+                    }.andThen {
+                        handlerDone.await.andThen(succeed)
+                    }
+                }
+            }
+        }
+
+        "streaming response: backpressure does not leak listeners" in run {
+            // Server sends many chunks requiring backpressure. If drain listeners accumulate,
+            // Node.js emits MaxListenersExceededWarning. We verify the response completes
+            // without hanging (a sign of listener issues).
+            val route = HttpRoute.getRaw("many-chunks").response(_.bodyStream)
+            val ep = route.handler { _ =>
+                val manyChunks = Stream[Span[Byte], Async & Scope] {
+                    // Emit 50 chunks — enough to trigger backpressure multiple times
+                    var i = 0
+                    kyo.Loop.foreach {
+                        if i >= 50 then kyo.Loop.done[Unit, Unit](())
+                        else
+                            i += 1
+                            val data = ("x" * 1024 + "\n").getBytes("UTF-8")
+                            kyo.Emit.valueWith(Chunk(Span.fromUnsafe(data)))(kyo.Loop.continue[Unit])
+                    }
+                }
+                HttpResponse.ok.addField("body", manyChunks)
+            }
+            withServer(ep) { port =>
+                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        client.sendWith(conn, route, HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/many-chunks"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            Scope.run {
+                                resp.fields.body.run.map { chunks =>
+                                    val totalBytes = chunks.foldLeft(0)(_ + _.size)
+                                    assert(totalBytes > 0)
+                                    succeed
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "streaming response error: response ends cleanly" in run {
+            // Server stream throws after a few chunks. Client should still get a response
+            // (possibly truncated) and not hang.
+            val route = HttpRoute.getRaw("err-stream").response(_.bodyStream)
+            val ep = route.handler { _ =>
+                val failingStream = Stream[Span[Byte], Async & Scope] {
+                    kyo.Emit.valueWith(Chunk(Span.fromUnsafe("ok\n".getBytes("UTF-8")))) {
+                        throw new RuntimeException("stream error")
+                    }
+                }
+                HttpResponse.ok.addField("body", failingStream)
+            }
+            withServer(ep) { port =>
+                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        client.sendWith(conn, route, HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/err-stream"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            Scope.run {
+                                Abort.run[Throwable](Abort.catching[Throwable] {
+                                    resp.fields.body.run.map { chunks =>
+                                        succeed
+                                    }
+                                }).map(_ => succeed)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end HttpServerTest

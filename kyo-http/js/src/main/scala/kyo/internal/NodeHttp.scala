@@ -43,6 +43,7 @@ trait ServerResponse extends js.Object:
     def write(chunk: Uint8Array): Boolean                                          = js.native
     def end(data: Uint8Array): Unit                                                = js.native
     @JSName("end")
-    def endEmpty(): Unit                                                = js.native
-    def on(event: String, listener: js.Function0[Unit]): ServerResponse = js.native
+    def endEmpty(): Unit                                                  = js.native
+    def on(event: String, listener: js.Function0[Unit]): ServerResponse   = js.native
+    def once(event: String, listener: js.Function0[Unit]): ServerResponse = js.native
 end ServerResponse

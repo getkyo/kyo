@@ -136,9 +136,10 @@ object FetchClientBackend:
             kyoHeaders: HttpHeaders,
             body: Maybe[Uint8Array]
         )(using Frame): HttpResponse[Out] < (Async & Abort[HttpError]) =
-            // AbortController cancels the in-flight HTTP request when the fiber is interrupted.
-            // Async.fromFuture does NOT cancel the underlying Future — it just ignores the result.
-            // Without the controller, interrupted fibers would leak network connections.
+            // AbortController provides a signal that cancels the in-flight fetch request.
+            // Sync.ensure registers controller.abort() to run when the fiber is interrupted,
+            // which causes the fetch promise to reject with AbortError.
+            // This is needed because Async.fromFuture does NOT cancel the underlying request.
             val controller = new dom.AbortController()
             val init       = buildInit(method, kyoHeaders, body)
             init.signal = controller.signal
@@ -204,7 +205,9 @@ object FetchClientBackend:
                     val reader  = response.body.getReader()
 
                     val bodyStream: Stream[Span[Byte], Async & Scope] = Stream[Span[Byte], Async & Scope] {
-                        Loop.foreach {
+                        // Abort the fetch when the stream's Scope closes (consumer done or fiber interrupted).
+                        // Without this, interrupted fibers would leak the in-flight HTTP connection.
+                        Scope.ensure(controller.abort()).andThen(Loop.foreach {
                             Abort.recover[Throwable](
                                 // Network error mid-stream — propagate as Panic so the stream consumer sees the failure
                                 e => throw classifyError(e),
@@ -212,7 +215,6 @@ object FetchClientBackend:
                             ) {
                                 Async.fromFuture(reader.read().toFuture).map { chunk =>
                                     if chunk.done then
-                                        controller.abort()
                                         Loop.done[Unit, Unit](())
                                     else
                                         val uint8 = chunk.value
@@ -220,7 +222,7 @@ object FetchClientBackend:
                                         Emit.valueWith(Chunk(bytes))(Loop.continue[Unit])
                                 }
                             }
-                        }
+                        })
                     }
 
                     RouteUtil.decodeStreamingResponse(route, status, headers, bodyStream) match
