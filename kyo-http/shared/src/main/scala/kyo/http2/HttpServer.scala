@@ -1,9 +1,12 @@
 package kyo.http2
 
 import kyo.<
+import kyo.Absent
 import kyo.Async
 import kyo.Duration
 import kyo.Frame
+import kyo.Maybe
+import kyo.Present
 import kyo.Record2.~
 import kyo.Scope
 import kyo.http2.internal.HttpPlatformBackend
@@ -20,16 +23,51 @@ end HttpServer
 
 object HttpServer:
 
+    case class Config(
+        port: Int = 0,
+        host: String = "0.0.0.0",
+        openApi: Maybe[Config.OpenApiEndpoint] = Absent
+    ) derives CanEqual:
+        def port(p: Int): Config    = copy(port = p)
+        def host(h: String): Config = copy(host = h)
+        def openApi(
+            path: String = "/openapi.json",
+            title: String = "API",
+            version: String = "1.0.0",
+            description: Option[String] = None
+        ): Config =
+            copy(openApi = Present(Config.OpenApiEndpoint(path, title, version, description)))
+    end Config
+
+    object Config:
+        val default: Config = Config()
+
+        case class OpenApiEndpoint(
+            path: String = "/openapi.json",
+            title: String = "API",
+            version: String = "1.0.0",
+            description: Option[String] = None
+        ) derives CanEqual
+    end Config
+
     def init(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
-        init(0, "0.0.0.0")(handlers*)
+        init(Config.default)(handlers*)
 
     def init(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
-        init(HttpPlatformBackend.server, port, host)(handlers*)
+        init(Config(port, host))(handlers*)
+
+    def init(config: Config)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
+        init(HttpPlatformBackend.server, config)(handlers*)
+
+    def init(backend: HttpBackend.Server, config: Config)(handlers: HttpHandler[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < (Async & Scope) =
+        Scope.acquireRelease(initUnscoped(backend, config)(handlers*))(_.closeNow)
 
     def init(backend: HttpBackend.Server, port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
     ): HttpServer < (Async & Scope) =
-        Scope.acquireRelease(initUnscoped(backend, port, host)(handlers*))(_.closeNow)
+        init(backend, Config(port, host))(handlers*)
 
     def initWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using Frame): A < (S & Async & Scope) =
         init(handlers*).map(f)
@@ -39,21 +77,45 @@ object HttpServer:
     ): A < (S & Async & Scope) =
         init(port, host)(handlers*).map(f)
 
+    def initWith[A, S](config: Config)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
+        Frame
+    ): A < (S & Async & Scope) =
+        init(config)(handlers*).map(f)
+
     def initWith[A, S](backend: HttpBackend.Server, port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(
         f: HttpServer => A < S
     )(using Frame): A < (S & Async & Scope) =
         init(backend, port, host)(handlers*).map(f)
 
     def initUnscoped(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
-        initUnscoped(0, "0.0.0.0")(handlers*)
+        initUnscoped(Config.default)(handlers*)
 
     def initUnscoped(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
-        initUnscoped(HttpPlatformBackend.server, port, host)(handlers*)
+        initUnscoped(Config(port, host))(handlers*)
+
+    def initUnscoped(config: Config)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
+        initUnscoped(HttpPlatformBackend.server, config)(handlers*)
 
     def initUnscoped(backend: HttpBackend.Server, port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
     ): HttpServer < Async =
-        backend.bind(handlers, port, host).map(new HttpServer(_))
+        initUnscoped(backend, Config(port, host))(handlers*)
+
+    def initUnscoped(backend: HttpBackend.Server, config: Config)(handlers: HttpHandler[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < Async =
+        val allHandlers = config.openApi match
+            case Present(ep) =>
+                val spec = OpenApiGenerator.generate(
+                    handlers,
+                    OpenApiGenerator.Config(ep.title, ep.version, ep.description)
+                )
+                val json = OpenApi.toJson(spec)
+                handlers :+ HttpHandler.getText(ep.path)(_ => json)
+            case Absent =>
+                handlers
+        backend.bind(allHandlers, config.port, config.host).map(new HttpServer(_))
+    end initUnscoped
 
     def initUnscopedWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using Frame): A < (S & Async) =
         initUnscoped(handlers*).map(f)
@@ -62,6 +124,11 @@ object HttpServer:
         Frame
     ): A < (S & Async) =
         initUnscoped(port, host)(handlers*).map(f)
+
+    def initUnscopedWith[A, S](config: Config)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
+        Frame
+    ): A < (S & Async) =
+        initUnscoped(config)(handlers*).map(f)
 
     def initUnscopedWith[A, S](backend: HttpBackend.Server, port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(
         f: HttpServer => A < S
