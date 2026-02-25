@@ -79,12 +79,16 @@ object FieldsMacros:
                             Expr.summon[Tag[v]].getOrElse(
                                 report.errorAndAbort(s"Cannot summon Tag for field '$name': ${valueType.show}")
                             )
-                    val nestedExpr = valueType.asType match
-                        case '[Record[f]] =>
-                            Expr.summon[Fields[f]] match
-                                case Some(fields) => '{ $fields.fields }
-                                case None         => '{ Nil: List[Field[?, ?]] }
-                        case _ => '{ Nil: List[Field[?, ?]] }
+                    val recordRepr = TypeRepr.of[Record]
+                    val nestedExpr = valueType.dealias match
+                        case AppliedType(recordRepr, List(f)) =>
+                            f.asType match
+                                case '[f] =>
+                                    Expr.summon[Fields[f]] match
+                                        case Some(fields) => '{ $fields.fields }
+                                        case None         => '{ Nil: List[Field[?, ?]] }
+                        case _ =>
+                            '{ Nil: List[Field[?, ?]] }
                     Some(ComponentInfo(name, nameExpr, tagExpr, nestedExpr))
                 case _ => None
 
@@ -269,7 +273,7 @@ object FieldsMacros:
                             '{ () }
                         )
                     }
-                    Dict.fromArrayUnsafe(arr.asInstanceOf[Array[Any]]).asInstanceOf[Record[f]]
+                    Dict.fromArrayUnsafe(arr.asInstanceOf[Array[Any]]).asInstanceOf[Record[f]] // Record.from leads to cyclic macro error
                 }
         end match
     end fromProductImpl
