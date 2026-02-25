@@ -46,7 +46,7 @@ class OpenApiGeneratorTest extends kyo.Test:
         }
 
         "path capture" in {
-            val route = HttpRoute.get("pets" / HttpPath.Capture[Int]("petId"))
+            val route = HttpRoute.getRaw("pets" / HttpPath.Capture[Int]("petId"))
             val h     = route.handler(_ => HttpResponse.ok)
             val spec  = OpenApiGenerator.generate(Seq(h))
             assert(spec.paths.contains("/pets/{petId}"))
@@ -59,7 +59,7 @@ class OpenApiGeneratorTest extends kyo.Test:
         }
 
         "query parameter" in {
-            val route      = HttpRoute.get("pets").request(_.query[Int]("limit"))
+            val route      = HttpRoute.getRaw("pets").request(_.query[Int]("limit"))
             val h          = route.handler(_ => HttpResponse.ok)
             val spec       = OpenApiGenerator.generate(Seq(h))
             val params     = spec.paths("/pets").get.get.parameters.get
@@ -70,7 +70,7 @@ class OpenApiGeneratorTest extends kyo.Test:
         }
 
         "optional query parameter" in {
-            val route      = HttpRoute.get("pets").request(_.queryOpt[Int]("limit"))
+            val route      = HttpRoute.getRaw("pets").request(_.queryOpt[Int]("limit"))
             val h          = route.handler(_ => HttpResponse.ok)
             val spec       = OpenApiGenerator.generate(Seq(h))
             val params     = spec.paths("/pets").get.get.parameters.get
@@ -79,7 +79,7 @@ class OpenApiGeneratorTest extends kyo.Test:
         }
 
         "header parameter" in {
-            val route  = HttpRoute.get("pets").request(_.header[String]("X-Request-Id"))
+            val route  = HttpRoute.getRaw("pets").request(_.header[String]("X-Request-Id"))
             val h      = route.handler(_ => HttpResponse.ok)
             val spec   = OpenApiGenerator.generate(Seq(h))
             val params = spec.paths("/pets").get.get.parameters.get
@@ -87,7 +87,7 @@ class OpenApiGeneratorTest extends kyo.Test:
         }
 
         "json response body" in {
-            val route = HttpRoute.get("greeting").response(_.bodyJson[String])
+            val route = HttpRoute.getRaw("greeting").response(_.bodyJson[String])
             val h     = route.handler(_ => HttpResponse.okJson("hello"))
             val spec  = OpenApiGenerator.generate(Seq(h))
             val resp  = spec.paths("/greeting").get.get.responses("200")
@@ -96,7 +96,7 @@ class OpenApiGeneratorTest extends kyo.Test:
         }
 
         "json request body" in {
-            val route = HttpRoute.post("pets").request(_.bodyJson[String])
+            val route = HttpRoute.postRaw("pets").request(_.bodyJson[String])
             val h     = route.handler(_ => HttpResponse.ok)
             val spec  = OpenApiGenerator.generate(Seq(h))
             val op    = spec.paths("/pets").post.get
@@ -106,7 +106,7 @@ class OpenApiGeneratorTest extends kyo.Test:
         }
 
         "text response body" in {
-            val route = HttpRoute.get("hello").response(_.bodyText)
+            val route = HttpRoute.getRaw("hello").response(_.bodyText)
             val h     = route.handler(_ => HttpResponse.okText("hi"))
             val spec  = OpenApiGenerator.generate(Seq(h))
             val resp  = spec.paths("/hello").get.get.responses("200")
@@ -114,7 +114,7 @@ class OpenApiGeneratorTest extends kyo.Test:
         }
 
         "metadata" in {
-            val route = HttpRoute.get("pets")
+            val route = HttpRoute.getRaw("pets")
                 .metadata(_.summary("List pets").description("Returns all pets").operationId("listPets").tag("pets"))
             val h    = route.handler(_ => HttpResponse.ok)
             val spec = OpenApiGenerator.generate(Seq(h))
@@ -126,7 +126,7 @@ class OpenApiGeneratorTest extends kyo.Test:
         }
 
         "deprecated route" in {
-            val route = HttpRoute.get("old").metadata(_.markDeprecated)
+            val route = HttpRoute.getRaw("old").metadata(_.markDeprecated)
             val h     = route.handler(_ => HttpResponse.ok)
             val spec  = OpenApiGenerator.generate(Seq(h))
             assert(spec.paths("/old").get.get.deprecated == Some(true))
@@ -134,7 +134,7 @@ class OpenApiGeneratorTest extends kyo.Test:
 
         "codec type inference" - {
             "string codec" in {
-                val route = HttpRoute.get("test").request(_.query[String]("q"))
+                val route = HttpRoute.getRaw("test").request(_.query[String]("q"))
                 val h     = route.handler(_ => HttpResponse.ok)
                 val spec  = OpenApiGenerator.generate(Seq(h))
                 val param = spec.paths("/test").get.get.parameters.get.head
@@ -142,7 +142,7 @@ class OpenApiGeneratorTest extends kyo.Test:
             }
 
             "boolean codec" in {
-                val route = HttpRoute.get("test").request(_.query[Boolean]("flag"))
+                val route = HttpRoute.getRaw("test").request(_.query[Boolean]("flag"))
                 val h     = route.handler(_ => HttpResponse.ok)
                 val spec  = OpenApiGenerator.generate(Seq(h))
                 val param = spec.paths("/test").get.get.parameters.get.head
@@ -150,7 +150,7 @@ class OpenApiGeneratorTest extends kyo.Test:
             }
 
             "long codec" in {
-                val route = HttpRoute.get("test" / HttpPath.Capture[Long]("id"))
+                val route = HttpRoute.getRaw("test" / HttpPath.Capture[Long]("id"))
                 val h     = route.handler(_ => HttpResponse.ok)
                 val spec  = OpenApiGenerator.generate(Seq(h))
                 val param = spec.paths("/test/{id}").get.get.parameters.get.head
@@ -159,7 +159,7 @@ class OpenApiGeneratorTest extends kyo.Test:
         }
 
         "roundtrip to JSON" in {
-            val route = HttpRoute.get("pets" / HttpPath.Capture[Int]("petId"))
+            val route = HttpRoute.getRaw("pets" / HttpPath.Capture[Int]("petId"))
                 .request(_.query[Boolean]("verbose"))
                 .response(_.bodyJson[String])
                 .metadata(_.operationId("getPet").summary("Get a pet"))

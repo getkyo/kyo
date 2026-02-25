@@ -61,11 +61,11 @@
 //         }
 
 //         "returns 404 for unknown path" in run {
-//             val route = HttpRoute.get("test").response(_.bodyText)
+//             val route = HttpRoute.getRaw("test").response(_.bodyText)
 //             val ep    = route.endpoint(_ => Http2Response.ok.addField("body", "hello"))
 
 //             // Use a different route for the client request to hit an unregistered path
-//             val unknownRoute = HttpRoute.get("unknown").response(_.bodyText)
+//             val unknownRoute = HttpRoute.getRaw("unknown").response(_.bodyText)
 //             withServer(ep) { port =>
 //                 sendRequest(port, unknownRoute, Http2Request(Http2Method.GET, Http2Url.fromUri("/unknown"))).map { resp =>
 //                     assert(resp.status == Http2Status.NotFound)
@@ -74,10 +74,10 @@
 //         }
 
 //         "returns 405 for wrong method" in run {
-//             val route = HttpRoute.get("test").response(_.bodyText)
+//             val route = HttpRoute.getRaw("test").response(_.bodyText)
 //             val ep    = route.endpoint(_ => Http2Response.ok.addField("body", "hello"))
 
-//             val postRoute = HttpRoute.post("test").response(_.bodyText)
+//             val postRoute = HttpRoute.postRaw("test").response(_.bodyText)
 
 //             withServer(ep) { port =>
 //                 sendRequest(port, postRoute, Http2Request(Http2Method.POST, Http2Url.fromUri("/test"))).map { resp =>
@@ -87,7 +87,7 @@
 //         }
 
 //         "handles GET with text body response" in run {
-//             val route = HttpRoute.get("hello").response(_.bodyText)
+//             val route = HttpRoute.getRaw("hello").response(_.bodyText)
 //             val ep    = route.endpoint(_ => Http2Response.ok.addField("body", "world"))
 //             withServer(ep) { port =>
 //                 sendRequest(port, route, Http2Request(Http2Method.GET, Http2Url.fromUri("/hello"))).map { resp =>
@@ -98,7 +98,7 @@
 //         }
 
 //         "handles GET with JSON response" in run {
-//             val route = HttpRoute.get("user").response(_.bodyJson[User])
+//             val route = HttpRoute.getRaw("user").response(_.bodyJson[User])
 //             val ep    = route.endpoint(_ => Http2Response.ok.addField("body", User(1, "alice")))
 //             withServer(ep) { port =>
 //                 sendRequest(port, route, Http2Request(Http2Method.GET, Http2Url.fromUri("/user"))).map { resp =>
@@ -109,7 +109,7 @@
 //         }
 
 //         "handles POST with JSON request and response" in run {
-//             val route = HttpRoute.post("user")
+//             val route = HttpRoute.postRaw("user")
 //                 .request(_.bodyJson[User])
 //                 .response(_.bodyJson[User])
 //             val ep = route.endpoint { req =>
@@ -127,7 +127,7 @@
 //         }
 
 //         "handles path captures" in run {
-//             val route = HttpRoute.get("users" / Capture[Int]("id")).response(_.bodyText)
+//             val route = HttpRoute.getRaw("users" / Capture[Int]("id")).response(_.bodyText)
 //             val ep = route.endpoint { req =>
 //                 val id = req.fields.id
 //                 Http2Response.ok.addField("body", s"user-$id")
@@ -145,7 +145,7 @@
 //         }
 
 //         "handles query parameters" in run {
-//             val route = HttpRoute.get("search")
+//             val route = HttpRoute.getRaw("search")
 //                 .request(_.query[String]("q"))
 //                 .response(_.bodyText)
 //             val ep = route.endpoint { req =>
@@ -165,10 +165,10 @@
 //         }
 
 //         "handles multiple endpoints" in run {
-//             val route1 = HttpRoute.get("a").response(_.bodyText)
+//             val route1 = HttpRoute.getRaw("a").response(_.bodyText)
 //             val ep1    = route1.endpoint(_ => Http2Response.ok.addField("body", "endpoint-a"))
 
-//             val route2 = HttpRoute.get("b").response(_.bodyText)
+//             val route2 = HttpRoute.getRaw("b").response(_.bodyText)
 //             val ep2    = route2.endpoint(_ => Http2Response.ok.addField("body", "endpoint-b"))
 
 //             withServer(ep1, ep2) { port =>
@@ -182,7 +182,7 @@
 //         }
 
 //         "handles response headers" in run {
-//             val route = HttpRoute.get("headers")
+//             val route = HttpRoute.getRaw("headers")
 //                 .response(_.header[String]("X-Custom").bodyText)
 //             val ep = route.endpoint { _ =>
 //                 Http2Response.ok
@@ -199,7 +199,7 @@
 //         }
 
 //         "handles empty body response" in run {
-//             val route = HttpRoute.get("empty")
+//             val route = HttpRoute.getRaw("empty")
 //             val ep    = route.endpoint(_ => Http2Response(Http2Status.NoContent))
 //             withServer(ep) { port =>
 //                 sendRequest(port, route, Http2Request(Http2Method.GET, Http2Url.fromUri("/empty"))).map { resp =>
@@ -212,7 +212,7 @@
 //     "streaming" - {
 
 //         "streaming response" in run {
-//             val route = HttpRoute.get("stream").response(_.bodyStream)
+//             val route = HttpRoute.getRaw("stream").response(_.bodyStream)
 //             val ep = route.endpoint { _ =>
 //                 val chunks = Stream.init(Seq(
 //                     Span.fromUnsafe("hello ".getBytes("UTF-8")),
@@ -238,7 +238,7 @@
 //         }
 
 //         "streaming request" in run {
-//             val route = HttpRoute.post("upload")
+//             val route = HttpRoute.postRaw("upload")
 //                 .request(_.bodyStream)
 //                 .response(_.bodyText)
 //             val ep = route.endpoint { req =>
@@ -266,7 +266,7 @@
 //         }
 
 //         "connection drop during streaming response" in run {
-//             val route = HttpRoute.get("slow-stream").response(_.bodyStream)
+//             val route = HttpRoute.getRaw("slow-stream").response(_.bodyStream)
 //             val ep = route.endpoint { _ =>
 //                 val chunks: Stream[Span[Byte], Async & Scope] = Stream[Span[Byte], Async & Scope] {
 //                     Loop(0) { i =>
@@ -307,7 +307,7 @@
 //     "client" - {
 
 //         "connects and sends request" in run {
-//             val route = HttpRoute.get("ping").response(_.bodyText)
+//             val route = HttpRoute.getRaw("ping").response(_.bodyText)
 //             val ep    = route.endpoint(_ => Http2Response.ok.addField("body", "pong"))
 //             withServer(ep) { port =>
 //                 sendRequest(port, route, Http2Request(Http2Method.GET, Http2Url.fromUri("/ping"))).map { resp =>
@@ -329,7 +329,7 @@
 //         }
 
 //         "handles connection close" in run {
-//             val route = HttpRoute.get("test").response(_.bodyText)
+//             val route = HttpRoute.getRaw("test").response(_.bodyText)
 //             val ep    = route.endpoint(_ => Http2Response.ok.addField("body", "ok"))
 //             withServer(ep) { port =>
 //                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>

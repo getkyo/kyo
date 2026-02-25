@@ -59,7 +59,7 @@ class HttpBackendTest extends Test:
     "Client" - {
 
         "send returns response" in {
-            val route                                                         = HttpRoute.get("users").response(_.bodyText)
+            val route                                                         = HttpRoute.getRaw("users").response(_.bodyText)
             val request                                                       = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/users"))
             val result                                                        = stubClient.sendWith((), route, request)(identity)
             val _: HttpResponse["body" ~ String] < (Async & Abort[HttpError]) = result
@@ -67,7 +67,7 @@ class HttpBackendTest extends Test:
         }
 
         "send with path captures" in {
-            val route = HttpRoute.get("users" / Capture[Int]("id"))
+            val route = HttpRoute.getRaw("users" / Capture[Int]("id"))
                 .response(_.bodyJson[User])
             val request: HttpRequest["id" ~ Int] =
                 HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/users/1"))
@@ -84,7 +84,7 @@ class HttpBackendTest extends Test:
                     next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
                 ): HttpResponse[Out] < (Async & Abort[String | E2 | HttpResponse.Halt]) =
                     next(request)
-            val route   = HttpRoute.get("users").filter(filter).response(_.bodyText)
+            val route   = HttpRoute.getRaw("users").filter(filter).response(_.bodyText)
             val request = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/users"))
             // Backend accepts any error parameter — error resolution is HttpServer's responsibility
             val result                                                        = stubClient.sendWith((), route, request)(identity)
@@ -94,7 +94,7 @@ class HttpBackendTest extends Test:
 
         "send rejects request missing required fields" in {
             typeCheckFailure("""
-                val route = HttpRoute.get("users" / Capture[Int]("id"))
+                val route = HttpRoute.getRaw("users" / Capture[Int]("id"))
                     .response(_.bodyText)
                 val request: HttpRequest[Any] = ???
                 stubClient.sendWith((), route, request)(identity)
@@ -107,7 +107,7 @@ class HttpBackendTest extends Test:
     "Server" - {
 
         "bind accepts handlers and returns binding" in {
-            val route                          = HttpRoute.get("users").response(_.bodyText)
+            val route                          = HttpRoute.getRaw("users").response(_.bodyText)
             val handler                        = route.handler(_ => HttpResponse.ok.addField("body", "hello"))
             val result                         = stubServer.bind(Seq(handler), 8080, "0.0.0.0")
             val _: HttpBackend.Binding < Async = result
@@ -121,7 +121,7 @@ class HttpBackendTest extends Test:
                     next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
                 ): HttpResponse[Out] < (Async & Abort[String | E2 | HttpResponse.Halt]) =
                     next(request)
-            val route                                        = HttpRoute.get("users").filter(filter).response(_.bodyText)
+            val route                                        = HttpRoute.getRaw("users").filter(filter).response(_.bodyText)
             val handler                                      = route.handler(_ => HttpResponse.ok.addField("body", "hello"))
             val _: HttpHandler[Any, "body" ~ String, String] = handler
             val _                                            = stubServer.bind(Seq(handler), 8080, "0.0.0.0")
@@ -129,10 +129,10 @@ class HttpBackendTest extends Test:
         }
 
         "bind accepts multiple handlers with different In/Out" in {
-            val route1   = HttpRoute.get("users").response(_.bodyText)
+            val route1   = HttpRoute.getRaw("users").response(_.bodyText)
             val handler1 = route1.handler(_ => HttpResponse.ok.addField("body", "users"))
 
-            val route2   = HttpRoute.post("users").request(_.bodyJson[User]).response(_.bodyJson[User])
+            val route2   = HttpRoute.postRaw("users").request(_.bodyJson[User]).response(_.bodyJson[User])
             val handler2 = route2.handler(req => HttpResponse.ok.addField("body", req.fields.body))
 
             val result                         = stubServer.bind(Seq(handler1, handler2), 8080, "0.0.0.0")

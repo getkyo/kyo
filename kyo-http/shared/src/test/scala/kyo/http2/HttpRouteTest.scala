@@ -193,71 +193,71 @@ class HttpRouteTest extends Test:
 
         "HTTP methods" - {
             "get" in {
-                val r = HttpRoute.get("users")
+                val r = HttpRoute.getRaw("users")
                 assert(r.method == HttpMethod.GET)
             }
 
             "post" in {
-                val r = HttpRoute.post("users")
+                val r = HttpRoute.postRaw("users")
                 assert(r.method == HttpMethod.POST)
             }
 
             "put" in {
-                val r = HttpRoute.put("users")
+                val r = HttpRoute.putRaw("users")
                 assert(r.method == HttpMethod.PUT)
             }
 
             "patch" in {
-                val r = HttpRoute.patch("users")
+                val r = HttpRoute.patchRaw("users")
                 assert(r.method == HttpMethod.PATCH)
             }
 
             "delete" in {
-                val r = HttpRoute.delete("users")
+                val r = HttpRoute.deleteRaw("users")
                 assert(r.method == HttpMethod.DELETE)
             }
 
             "head" in {
-                val r = HttpRoute.head("users")
+                val r = HttpRoute.headRaw("users")
                 assert(r.method == HttpMethod.HEAD)
             }
 
             "options" in {
-                val r = HttpRoute.options("users")
+                val r = HttpRoute.optionsRaw("users")
                 assert(r.method == HttpMethod.OPTIONS)
             }
         }
 
         "with path capture tracks In" in {
-            val r = HttpRoute.get("users" / HttpPath.Capture[Int]("id"))
+            val r = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("id"))
             assert(r.method == HttpMethod.GET)
             typeCheck("""val _: HttpRoute["id" ~ Int, Any, Any] = r""")
         }
 
         "pathAppend adds suffix and tracks type" in {
-            val r = HttpRoute.get("users").pathAppend(HttpPath.Capture[Int]("id") / "details")
+            val r = HttpRoute.getRaw("users").pathAppend(HttpPath.Capture[Int]("id") / "details")
             typeCheck("""val _: HttpRoute["id" ~ Int, Any, Any] = r""")
         }
 
         "pathAppend combines with existing path captures" in {
-            val r = HttpRoute.get("orgs" / HttpPath.Capture[String]("org"))
+            val r = HttpRoute.getRaw("orgs" / HttpPath.Capture[String]("org"))
                 .pathAppend(HttpPath.Capture[Int]("id"))
             typeCheck("""val _: HttpRoute["org" ~ String & "id" ~ Int, Any, Any] = r""")
         }
 
         "pathPrepend adds prefix and tracks type" in {
-            val r = HttpRoute.get("users" / HttpPath.Capture[Int]("id")).pathPrepend("api" / "v1")
+            val r = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("id")).pathPrepend("api" / "v1")
             typeCheck("""val _: HttpRoute["id" ~ Int, Any, Any] = r""")
         }
 
         "pathPrepend combines with existing path captures" in {
-            val r = HttpRoute.get("items" / HttpPath.Capture[Int]("itemId"))
+            val r = HttpRoute.getRaw("items" / HttpPath.Capture[Int]("itemId"))
                 .pathPrepend("orgs" / HttpPath.Capture[String]("org"))
             typeCheck("""val _: HttpRoute["itemId" ~ Int & "org" ~ String, Any, Any] = r""")
         }
 
         "pathAppend preserves request fields" in {
-            val r = HttpRoute.get("users")
+            val r = HttpRoute.getRaw("users")
                 .request(_.query[Int]("limit"))
                 .pathAppend(HttpPath.Capture[Int]("id"))
             typeCheck("""val _: HttpRoute["limit" ~ Int & "id" ~ Int, Any, Any] = r""")
@@ -265,7 +265,7 @@ class HttpRouteTest extends Test:
         }
 
         "pathPrepend preserves request fields" in {
-            val r = HttpRoute.get("items" / HttpPath.Capture[Int]("id"))
+            val r = HttpRoute.getRaw("items" / HttpPath.Capture[Int]("id"))
                 .request(_.query[String]("format"))
                 .pathPrepend("api" / HttpPath.Capture[String]("version"))
             typeCheck("""val _: HttpRoute["id" ~ Int & "format" ~ String & "version" ~ String, Any, Any] = r""")
@@ -276,7 +276,7 @@ class HttpRouteTest extends Test:
     "Query parameters" - {
 
         "required stores correct location, fieldName, optional=false" in {
-            val r = HttpRoute.get("users").request(_.query[Int]("limit"))
+            val r = HttpRoute.getRaw("users").request(_.query[Int]("limit"))
             assert(r.request.fields.size == 1)
             r.request.fields(0) match
                 case Field.Param(Field.Param.Location.Query, fn, wn, _, _, opt, _) =>
@@ -288,7 +288,7 @@ class HttpRouteTest extends Test:
         }
 
         "custom wireName" in {
-            val r = HttpRoute.get("users").request(_.query[Int]("limit", wireName = "page_size"))
+            val r = HttpRoute.getRaw("users").request(_.query[Int]("limit", wireName = "page_size"))
             r.request.fields(0) match
                 case Field.Param(_, _, wn, _, _, _, _) => assert(wn == "page_size")
                 case _                                 => fail("Expected Query Param")
@@ -296,7 +296,7 @@ class HttpRouteTest extends Test:
         }
 
         "with default value" in {
-            val r = HttpRoute.get("users").request(_.query[Int]("limit", default = Present(20)))
+            val r = HttpRoute.getRaw("users").request(_.query[Int]("limit", default = Present(20)))
             r.request.fields(0) match
                 case p: Field.Param[?, Int, ?] =>
                     assert(p.default.contains(20))
@@ -305,7 +305,7 @@ class HttpRouteTest extends Test:
         }
 
         "with description" in {
-            val r = HttpRoute.get("users").request(_.query[Int]("limit", description = "Max results"))
+            val r = HttpRoute.getRaw("users").request(_.query[Int]("limit", description = "Max results"))
             r.request.fields(0) match
                 case Field.Param(_, _, _, _, _, _, desc) => assert(desc == "Max results")
                 case _                                   => fail("Expected Query Param")
@@ -313,7 +313,7 @@ class HttpRouteTest extends Test:
         }
 
         "optional stores optional=true" in {
-            val r = HttpRoute.get("users").request(_.queryOpt[String]("search"))
+            val r = HttpRoute.getRaw("users").request(_.queryOpt[String]("search"))
             r.request.fields(0) match
                 case Field.Param(Field.Param.Location.Query, fn, _, _, _, opt, _) =>
                     assert(fn == "search")
@@ -323,24 +323,24 @@ class HttpRouteTest extends Test:
         }
 
         "multiple accumulates fields in order" in {
-            val r = HttpRoute.get("users").request(_.query[Int]("limit").query[Int]("offset"))
+            val r = HttpRoute.getRaw("users").request(_.query[Int]("limit").query[Int]("offset"))
             assert(r.request.fields.size == 2)
             assert(r.request.fields(0).asInstanceOf[Field.Param[?, ?, ?]].fieldName == "limit")
             assert(r.request.fields(1).asInstanceOf[Field.Param[?, ?, ?]].fieldName == "offset")
         }
 
         "type tracks required fields" in {
-            val r = HttpRoute.get("users").request(_.query[Int]("limit").query[Int]("offset"))
+            val r = HttpRoute.getRaw("users").request(_.query[Int]("limit").query[Int]("offset"))
             typeCheck("""val _: HttpRoute["limit" ~ Int & "offset" ~ Int, Any, Any] = r""")
         }
 
         "type tracks optional fields as Maybe" in {
-            val r = HttpRoute.get("users").request(_.queryOpt[String]("search"))
+            val r = HttpRoute.getRaw("users").request(_.queryOpt[String]("search"))
             typeCheck("""val _: HttpRoute["search" ~ kyo.Maybe[String], Any, Any] = r""")
         }
 
         "path and query tracked together in In" in {
-            val r = HttpRoute.get("users" / HttpPath.Capture[Int]("id")).request(_.query[String]("fields"))
+            val r = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("id")).request(_.query[String]("fields"))
             typeCheck("""val _: HttpRoute["id" ~ Int & "fields" ~ String, Any, Any] = r""")
         }
     }
@@ -348,7 +348,7 @@ class HttpRouteTest extends Test:
     "Headers" - {
 
         "required" in {
-            val r = HttpRoute.get("users").request(_.header[String]("X-Request-Id"))
+            val r = HttpRoute.getRaw("users").request(_.header[String]("X-Request-Id"))
             r.request.fields(0) match
                 case Field.Param(Field.Param.Location.Header, fn, _, _, _, opt, _) =>
                     assert(fn == "X-Request-Id")
@@ -358,7 +358,7 @@ class HttpRouteTest extends Test:
         }
 
         "optional" in {
-            val r = HttpRoute.get("users").request(_.headerOpt[String]("X-Trace-Id"))
+            val r = HttpRoute.getRaw("users").request(_.headerOpt[String]("X-Trace-Id"))
             r.request.fields(0) match
                 case Field.Param(Field.Param.Location.Header, _, _, _, _, opt, _) =>
                     assert(opt)
@@ -368,7 +368,7 @@ class HttpRouteTest extends Test:
 
         "type tracks required and optional" in {
             val r =
-                HttpRoute.get("users").request(_.header[String]("X-Request-Id").headerOpt[String]("X-Trace-Id"))
+                HttpRoute.getRaw("users").request(_.header[String]("X-Request-Id").headerOpt[String]("X-Trace-Id"))
             typeCheck("""val _: HttpRoute["X-Request-Id" ~ String & "X-Trace-Id" ~ kyo.Maybe[String], Any, Any] = r""")
         }
     }
@@ -376,7 +376,7 @@ class HttpRouteTest extends Test:
     "Cookies" - {
 
         "request cookie" in {
-            val r = HttpRoute.get("dashboard").request(_.cookie[String]("session"))
+            val r = HttpRoute.getRaw("dashboard").request(_.cookie[String]("session"))
             r.request.fields(0) match
                 case Field.Param(Field.Param.Location.Cookie, fn, _, _, _, opt, _) =>
                     assert(fn == "session")
@@ -386,7 +386,7 @@ class HttpRouteTest extends Test:
         }
 
         "request cookie optional" in {
-            val r = HttpRoute.get("dashboard").request(_.cookieOpt[String]("theme"))
+            val r = HttpRoute.getRaw("dashboard").request(_.cookieOpt[String]("theme"))
             r.request.fields(0) match
                 case Field.Param(Field.Param.Location.Cookie, _, _, _, _, opt, _) =>
                     assert(opt)
@@ -395,14 +395,14 @@ class HttpRouteTest extends Test:
         }
 
         "request cookie type tracks value type" in {
-            val r = HttpRoute.get("dashboard").request(_.cookie[String]("session").cookieOpt[String]("theme"))
+            val r = HttpRoute.getRaw("dashboard").request(_.cookie[String]("session").cookieOpt[String]("theme"))
             typeCheck(
                 """val _: HttpRoute["session" ~ String & "theme" ~ kyo.Maybe[String], Any, Any] = r"""
             )
         }
 
         "response cookie" in {
-            val r = HttpRoute.get("login").response(_.cookie[String]("session"))
+            val r = HttpRoute.getRaw("login").response(_.cookie[String]("session"))
             r.response.fields(0) match
                 case Field.Param(Field.Param.Location.Cookie, fn, _, _, _, opt, _) =>
                     assert(fn == "session")
@@ -412,7 +412,7 @@ class HttpRouteTest extends Test:
         }
 
         "response cookie optional" in {
-            val r = HttpRoute.get("login").response(_.cookieOpt[String]("prefs"))
+            val r = HttpRoute.getRaw("login").response(_.cookieOpt[String]("prefs"))
             r.response.fields(0) match
                 case Field.Param(Field.Param.Location.Cookie, _, _, _, _, opt, _) =>
                     assert(opt)
@@ -421,7 +421,7 @@ class HttpRouteTest extends Test:
         }
 
         "response cookie type tracks HttpCookie" in {
-            val r = HttpRoute.get("login").response(_.cookie[String]("session"))
+            val r = HttpRoute.getRaw("login").response(_.cookie[String]("session"))
             typeCheck(
                 """val _: HttpRoute[Any, "session" ~ HttpCookie[String], Any] = r"""
             )
@@ -431,7 +431,7 @@ class HttpRouteTest extends Test:
     "Request body" - {
 
         "JSON stores field name and schema" in {
-            val r = HttpRoute.post("users").request(_.bodyJson[CreateUser])
+            val r = HttpRoute.postRaw("users").request(_.bodyJson[CreateUser])
             assert(r.request.fields.size == 1)
             r.request.fields(0) match
                 case Field.Body(fn, ContentType.Json(_), _) =>
@@ -441,7 +441,7 @@ class HttpRouteTest extends Test:
         }
 
         "JSON with custom field name" in {
-            val r = HttpRoute.post("users").request(_.bodyJson[CreateUser]("payload"))
+            val r = HttpRoute.postRaw("users").request(_.bodyJson[CreateUser]("payload"))
             r.request.fields(0) match
                 case Field.Body(fn, _, _) => assert(fn == "payload")
                 case _                    => fail("Expected Body")
@@ -449,7 +449,7 @@ class HttpRouteTest extends Test:
         }
 
         "JSON with description" in {
-            val r = HttpRoute.post("users").request(_.bodyJson[CreateUser]("payload", "User data"))
+            val r = HttpRoute.postRaw("users").request(_.bodyJson[CreateUser]("payload", "User data"))
             r.request.fields(0) match
                 case Field.Body(_, _, desc) => assert(desc == "User data")
                 case _                      => fail("Expected Body")
@@ -457,7 +457,7 @@ class HttpRouteTest extends Test:
         }
 
         "text" in {
-            val r = HttpRoute.post("echo").request(_.bodyText)
+            val r = HttpRoute.postRaw("echo").request(_.bodyText)
             r.request.fields(0) match
                 case Field.Body(fn, ContentType.Text(), _) => assert(fn == "body")
                 case _                                     => fail("Expected Text body")
@@ -465,7 +465,7 @@ class HttpRouteTest extends Test:
         }
 
         "binary" in {
-            val r = HttpRoute.post("upload").request(_.bodyBinary)
+            val r = HttpRoute.postRaw("upload").request(_.bodyBinary)
             r.request.fields(0) match
                 case Field.Body(fn, ContentType.Binary(), _) => assert(fn == "body")
                 case _                                       => fail("Expected Binary body")
@@ -473,7 +473,7 @@ class HttpRouteTest extends Test:
         }
 
         "stream" in {
-            val r = HttpRoute.post("upload").request(_.bodyStream)
+            val r = HttpRoute.postRaw("upload").request(_.bodyStream)
             r.request.fields(0) match
                 case Field.Body(fn, ContentType.ByteStream(), _) => assert(fn == "body")
                 case _                                           => fail("Expected ByteStream body")
@@ -481,7 +481,7 @@ class HttpRouteTest extends Test:
         }
 
         "multipart" in {
-            val r = HttpRoute.post("upload").request(_.bodyMultipart)
+            val r = HttpRoute.postRaw("upload").request(_.bodyMultipart)
             r.request.fields(0) match
                 case Field.Body(fn, ContentType.Multipart(), _) => assert(fn == "body")
                 case _                                          => fail("Expected Multipart body")
@@ -489,7 +489,7 @@ class HttpRouteTest extends Test:
         }
 
         "multipartStream" in {
-            val r = HttpRoute.post("upload").request(_.bodyMultipartStream)
+            val r = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
             r.request.fields(0) match
                 case Field.Body(fn, ContentType.MultipartStream(), _) => assert(fn == "body")
                 case _                                                => fail("Expected MultipartStream body")
@@ -498,7 +498,7 @@ class HttpRouteTest extends Test:
 
         "form" in {
             case class LoginForm(username: String, password: String) derives HttpFormCodec
-            val r = HttpRoute.post("login").request(_.bodyForm[LoginForm])
+            val r = HttpRoute.postRaw("login").request(_.bodyForm[LoginForm])
             r.request.fields(0) match
                 case Field.Body(fn, ContentType.Form(_), _) => assert(fn == "body")
                 case _                                      => fail("Expected Form body")
@@ -507,7 +507,7 @@ class HttpRouteTest extends Test:
 
         "form with custom field name" in {
             case class LoginForm(username: String, password: String) derives HttpFormCodec
-            val r = HttpRoute.post("login").request(_.bodyForm[LoginForm]("credentials"))
+            val r = HttpRoute.postRaw("login").request(_.bodyForm[LoginForm]("credentials"))
             r.request.fields(0) match
                 case Field.Body(fn, _, _) => assert(fn == "credentials")
                 case _                    => fail("Expected Body")
@@ -516,22 +516,22 @@ class HttpRouteTest extends Test:
 
         "form type tracks body field" in {
             case class LoginForm(username: String, password: String) derives HttpFormCodec
-            val r = HttpRoute.post("login").request(_.bodyForm[LoginForm])
+            val r = HttpRoute.postRaw("login").request(_.bodyForm[LoginForm])
             typeCheck("""val _: HttpRoute["body" ~ LoginForm, Any, Any] = r""")
         }
 
         "type tracks body field" in {
-            val r = HttpRoute.post("users").request(_.bodyJson[CreateUser])
+            val r = HttpRoute.postRaw("users").request(_.bodyJson[CreateUser])
             typeCheck("""val _: HttpRoute["body" ~ CreateUser, Any, Any] = r""")
         }
 
         "type tracks custom-named body field" in {
-            val r = HttpRoute.post("users").request(_.bodyJson[CreateUser]("payload"))
+            val r = HttpRoute.postRaw("users").request(_.bodyJson[CreateUser]("payload"))
             typeCheck("""val _: HttpRoute["payload" ~ CreateUser, Any, Any] = r""")
         }
 
         "combined with path and query" in {
-            val r = HttpRoute.put("users" / HttpPath.Capture[Int]("id"))
+            val r = HttpRoute.putRaw("users" / HttpPath.Capture[Int]("id"))
                 .request(_.query[String]("reason").bodyJson[CreateUser])
             assert(r.request.fields.size == 2)
             typeCheck("""val _: HttpRoute["id" ~ Int & "reason" ~ String & "body" ~ CreateUser, Any, Any] = r""")
@@ -541,7 +541,7 @@ class HttpRouteTest extends Test:
     "Response" - {
 
         "header" in {
-            val r = HttpRoute.get("users").response(_.header[String]("X-Request-Id"))
+            val r = HttpRoute.getRaw("users").response(_.header[String]("X-Request-Id"))
             assert(r.response.fields.size == 1)
             r.response.fields(0) match
                 case Field.Param(Field.Param.Location.Header, fn, _, _, _, opt, _) =>
@@ -552,7 +552,7 @@ class HttpRouteTest extends Test:
         }
 
         "headerOpt" in {
-            val r = HttpRoute.get("users").response(_.headerOpt[String]("X-Trace-Id"))
+            val r = HttpRoute.getRaw("users").response(_.headerOpt[String]("X-Trace-Id"))
             r.response.fields(0) match
                 case Field.Param(Field.Param.Location.Header, _, _, _, _, opt, _) =>
                     assert(opt)
@@ -561,7 +561,7 @@ class HttpRouteTest extends Test:
         }
 
         "body JSON" in {
-            val r = HttpRoute.get("users").response(_.bodyJson[Seq[User]])
+            val r = HttpRoute.getRaw("users").response(_.bodyJson[Seq[User]])
             r.response.fields(0) match
                 case Field.Body(fn, ContentType.Json(_), _) => assert(fn == "body")
                 case _                                      => fail("Expected Json body")
@@ -569,7 +569,7 @@ class HttpRouteTest extends Test:
         }
 
         "body SSE" in {
-            val r = HttpRoute.get("events").response(_.bodySseJson[User])
+            val r = HttpRoute.getRaw("events").response(_.bodySseJson[User])
             r.response.fields(0) match
                 case Field.Body(fn, ContentType.Sse(_, _), _) => assert(fn == "body")
                 case _                                        => fail("Expected Sse body")
@@ -577,7 +577,7 @@ class HttpRouteTest extends Test:
         }
 
         "body NDJSON" in {
-            val r = HttpRoute.get("data").response(_.bodyNdjson[User])
+            val r = HttpRoute.getRaw("data").response(_.bodyNdjson[User])
             r.response.fields(0) match
                 case Field.Body(fn, ContentType.Ndjson(_, _), _) => assert(fn == "body")
                 case _                                           => fail("Expected Ndjson body")
@@ -585,7 +585,7 @@ class HttpRouteTest extends Test:
         }
 
         "body text" in {
-            val r = HttpRoute.get("health").response(_.bodyText)
+            val r = HttpRoute.getRaw("health").response(_.bodyText)
             r.response.fields(0) match
                 case Field.Body(fn, ContentType.Text(), _) => assert(fn == "body")
                 case _                                     => fail("Expected Text body")
@@ -593,12 +593,12 @@ class HttpRouteTest extends Test:
         }
 
         "status" in {
-            val r = HttpRoute.post("users").response(_.status(HttpStatus.Created))
+            val r = HttpRoute.postRaw("users").response(_.status(HttpStatus.Created))
             assert(r.response.status == HttpStatus.Created)
         }
 
         "type tracks response fields" in {
-            val r = HttpRoute.get("users").response(_.header[String]("X-Request-Id").bodyJson[Seq[User]])
+            val r = HttpRoute.getRaw("users").response(_.header[String]("X-Request-Id").bodyJson[Seq[User]])
             typeCheck("""val _: HttpRoute[Any, "X-Request-Id" ~ String & "body" ~ Seq[User], Any] = r""")
         }
     }
@@ -606,14 +606,14 @@ class HttpRouteTest extends Test:
     "Errors" - {
 
         "single error type" in {
-            val r = HttpRoute.get("users" / HttpPath.Capture[Int]("id"))
+            val r = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("id"))
                 .response(_.bodyJson[User].error[NotFoundError](HttpStatus.NotFound))
             assert(r.response.errors.size == 1)
             assert(r.response.errors(0).status == HttpStatus.NotFound)
         }
 
         "multiple error types accumulate" in {
-            val r = HttpRoute.post("users")
+            val r = HttpRoute.postRaw("users")
                 .request(_.bodyJson[CreateUser])
                 .response(_.bodyJson[User]
                     .error[NotFoundError](HttpStatus.NotFound)
@@ -627,53 +627,53 @@ class HttpRouteTest extends Test:
     "Metadata" - {
 
         "tag" in {
-            val r = HttpRoute.get("users").metadata(_.tag("Users"))
+            val r = HttpRoute.getRaw("users").metadata(_.tag("Users"))
             assert(r.metadata.tags.contains("Users"))
         }
 
         "multiple tags" in {
-            val r = HttpRoute.get("users").metadata(_.tags("Users", "Admin"))
+            val r = HttpRoute.getRaw("users").metadata(_.tags("Users", "Admin"))
             assert(r.metadata.tags == Seq("Users", "Admin"))
         }
 
         "summary" in {
-            val r = HttpRoute.get("users").metadata(_.summary("List all users"))
+            val r = HttpRoute.getRaw("users").metadata(_.summary("List all users"))
             assert(r.metadata.summary == Present("List all users"))
         }
 
         "description" in {
-            val r = HttpRoute.get("users").metadata(_.description("Returns a paginated list"))
+            val r = HttpRoute.getRaw("users").metadata(_.description("Returns a paginated list"))
             assert(r.metadata.description == Present("Returns a paginated list"))
         }
 
         "operationId" in {
-            val r = HttpRoute.get("users").metadata(_.operationId("listUsers"))
+            val r = HttpRoute.getRaw("users").metadata(_.operationId("listUsers"))
             assert(r.metadata.operationId == Present("listUsers"))
         }
 
         "deprecated" in {
-            val r = HttpRoute.get("users/old").metadata(_.markDeprecated)
+            val r = HttpRoute.getRaw("users/old").metadata(_.markDeprecated)
             assert(r.metadata.deprecated)
         }
 
         "externalDocs url only" in {
-            val r = HttpRoute.get("users").metadata(_.externalDocs("https://docs.example.com"))
+            val r = HttpRoute.getRaw("users").metadata(_.externalDocs("https://docs.example.com"))
             assert(r.metadata.externalDocsUrl == Present("https://docs.example.com"))
         }
 
         "externalDocs url and description" in {
-            val r = HttpRoute.get("users").metadata(_.externalDocs("https://docs.example.com", "API Docs"))
+            val r = HttpRoute.getRaw("users").metadata(_.externalDocs("https://docs.example.com", "API Docs"))
             assert(r.metadata.externalDocsUrl == Present("https://docs.example.com"))
             assert(r.metadata.externalDocsDesc == Present("API Docs"))
         }
 
         "security" in {
-            val r = HttpRoute.get("users").metadata(_.security("bearerAuth"))
+            val r = HttpRoute.getRaw("users").metadata(_.security("bearerAuth"))
             assert(r.metadata.security == Present("bearerAuth"))
         }
 
         "chaining" in {
-            val r = HttpRoute.get("users")
+            val r = HttpRoute.getRaw("users")
                 .metadata(
                     _.tag("Users")
                         .summary("List users")
@@ -694,7 +694,7 @@ class HttpRouteTest extends Test:
     "Mixed inputs" - {
 
         "path + query + header + body" in {
-            val r = HttpRoute.post("users" / HttpPath.Capture[Int]("id"))
+            val r = HttpRoute.postRaw("users" / HttpPath.Capture[Int]("id"))
                 .request(_.query[Int]("limit").header[String]("X-Tenant").bodyJson[CreateUser])
             assert(r.request.fields.size == 3)
             assert(r.request.fields(0).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Query)
@@ -711,7 +711,7 @@ class HttpRouteTest extends Test:
         }
 
         "path + query + cookie + optional header" in {
-            val r = HttpRoute.get("data" / HttpPath.Capture[Int]("id"))
+            val r = HttpRoute.getRaw("data" / HttpPath.Capture[Int]("id"))
                 .request(_.query[String]("format").cookie[String]("session").headerOpt[String]("X-Trace"))
             assert(r.request.fields.size == 3)
             assert(r.request.fields(0).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Query)
@@ -724,7 +724,7 @@ class HttpRouteTest extends Test:
         }
 
         "path + header + body with response headers and errors" in {
-            val r = HttpRoute.post("items" / HttpPath.Capture[Int]("id"))
+            val r = HttpRoute.postRaw("items" / HttpPath.Capture[Int]("id"))
                 .request(_.header[String]("X-Tenant").bodyJson[CreateUser])
                 .response(_.header[String]("X-Request-Id").bodyJson[User].error[NotFoundError](HttpStatus.NotFound))
             assert(r.request.fields.size == 2)
@@ -736,7 +736,7 @@ class HttpRouteTest extends Test:
         }
 
         "multiple queries + cookie + optional query" in {
-            val r = HttpRoute.get("search")
+            val r = HttpRoute.getRaw("search")
                 .request(_.query[String]("q").query[Int]("page").queryOpt[Int]("pageSize").cookie[String]("session"))
             assert(r.request.fields.size == 4)
             assert(!r.request.fields(0).asInstanceOf[Field.Param[?, ?, ?]].optional)
@@ -749,7 +749,7 @@ class HttpRouteTest extends Test:
         }
 
         "response with header + cookie + body + multiple errors" in {
-            val r = HttpRoute.get("users" / HttpPath.Capture[Int]("id"))
+            val r = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("id"))
                 .response(
                     _.header[String]("X-Request-Id")
                         .cookie[String]("session")
@@ -771,7 +771,7 @@ class HttpRouteTest extends Test:
         }
 
         "full route with request and response mixing all field kinds" in {
-            val r = HttpRoute.put("orgs" / HttpPath.Capture[String]("org") / "items" / HttpPath.Capture[Int]("id"))
+            val r = HttpRoute.putRaw("orgs" / HttpPath.Capture[String]("org") / "items" / HttpPath.Capture[Int]("id"))
                 .request(_.query[String]("reason").header[String]("X-Tenant").cookie[String]("auth").bodyJson[CreateUser])
                 .response(
                     _.header[String]("X-Request-Id")
@@ -805,7 +805,7 @@ class HttpRouteTest extends Test:
     "Filter" - {
 
         "default filter is noop" in {
-            val r = HttpRoute.get("users")
+            val r = HttpRoute.getRaw("users")
             assert(r.filter eq HttpFilter.noop)
         }
 
@@ -816,7 +816,7 @@ class HttpRouteTest extends Test:
                     next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
                 ): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.setHeader("X-Test", "1"))
-            val r = HttpRoute.get("users").filter(f)
+            val r = HttpRoute.getRaw("users").filter(f)
             typeCheck("""val _: HttpRoute[Any, Any, Any] = r""")
         }
 
@@ -829,7 +829,7 @@ class HttpRouteTest extends Test:
                     next(request)
                 end apply
             // Route must provide the field the filter requires
-            val r = HttpRoute.get("users").request(_.header[String]("auth")).filter(f)
+            val r = HttpRoute.getRaw("users").request(_.header[String]("auth")).filter(f)
             typeCheck("""val _: HttpRoute["auth" ~ String, Any, Any] = r""")
         }
 
@@ -841,7 +841,7 @@ class HttpRouteTest extends Test:
                 ): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request)
                 end apply
-            typeCheckFailure("""HttpRoute.get("users").filter(f)""")(
+            typeCheckFailure("""HttpRoute.getRaw("users").filter(f)""")(
                 """Found:    (f : kyo.http2.HttpFilter.Request[("auth" : String) ~ String, Any, Nothing])"""
             )
         }
@@ -853,7 +853,7 @@ class HttpRouteTest extends Test:
                     next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
                 ): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "test"))
-            val r = HttpRoute.get("users").filter(f)
+            val r = HttpRoute.getRaw("users").filter(f)
             typeCheck("""val _: HttpRoute["user" ~ String, Any, Any] = r""")
         }
 
@@ -864,7 +864,7 @@ class HttpRouteTest extends Test:
                     next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
                 ): HttpResponse[Out & "cached" ~ Boolean] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request).map(_.addField("cached", true))
-            val r = HttpRoute.get("users").filter(f)
+            val r = HttpRoute.getRaw("users").filter(f)
             typeCheck("""val _: HttpRoute[Any, "cached" ~ Boolean, Any] = r""")
         }
 
@@ -881,7 +881,7 @@ class HttpRouteTest extends Test:
                     next: HttpRequest[In & "b" ~ Int] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
                 ): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("b", 2))
-            val r = HttpRoute.get("users").filter(f1).filter(f2)
+            val r = HttpRoute.getRaw("users").filter(f1).filter(f2)
             typeCheck("""val _: HttpRoute["a" ~ Int & "b" ~ Int, Any, Any] = r""")
         }
 
@@ -892,7 +892,7 @@ class HttpRouteTest extends Test:
                     next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
                 ): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "test"))
-            val r = HttpRoute.get("users").filter(f).pathAppend(HttpPath.Capture[Int]("id"))
+            val r = HttpRoute.getRaw("users").filter(f).pathAppend(HttpPath.Capture[Int]("id"))
             typeCheck("""val _: HttpRoute["user" ~ String & "id" ~ Int, Any, Any] = r""")
         }
 
@@ -903,7 +903,7 @@ class HttpRouteTest extends Test:
                     next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
                 ): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request)
-            val r = HttpRoute.get("users").filter(f).pathPrepend("api")
+            val r = HttpRoute.getRaw("users").filter(f).pathPrepend("api")
             typeCheck("""val _: HttpRoute[Any, Any, Any] = r""")
         }
 
@@ -914,7 +914,7 @@ class HttpRouteTest extends Test:
                     next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
                 ): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request)
-            val r = HttpRoute.get("users").filter(f).request(_.query[Int]("limit"))
+            val r = HttpRoute.getRaw("users").filter(f).request(_.query[Int]("limit"))
             typeCheck("""val _: HttpRoute["limit" ~ Int, Any, Any] = r""")
         }
 
@@ -925,7 +925,7 @@ class HttpRouteTest extends Test:
                     next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
                 ): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request)
-            val r = HttpRoute.get("users").filter(f).response(_.bodyJson[User])
+            val r = HttpRoute.getRaw("users").filter(f).response(_.bodyJson[User])
             typeCheck("""val _: HttpRoute[Any, "body" ~ User, Any] = r""")
         }
 
@@ -936,7 +936,7 @@ class HttpRouteTest extends Test:
                     next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
                 ): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request)
-            val r = HttpRoute.get("users").filter(f).metadata(_.tag("Users"))
+            val r = HttpRoute.getRaw("users").filter(f).metadata(_.tag("Users"))
             typeCheck("""val _: HttpRoute[Any, Any, Any] = r""")
         }
 
@@ -947,7 +947,7 @@ class HttpRouteTest extends Test:
                     next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
                 ): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "admin"))
-            val r = HttpRoute.get("users" / HttpPath.Capture[Int]("id"))
+            val r = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("id"))
                 .request(_.query[Int]("limit"))
                 .response(_.bodyJson[User])
                 .filter(f)
@@ -961,7 +961,7 @@ class HttpRouteTest extends Test:
     "Error" - {
 
         "error accumulation on route" in {
-            val r = HttpRoute.get("users")
+            val r = HttpRoute.getRaw("users")
                 .response(_.bodyJson[User])
                 .error[String](HttpStatus.BadRequest)
                 .error[Int](HttpStatus.NotFound)
@@ -970,28 +970,28 @@ class HttpRouteTest extends Test:
         }
 
         "error preserved through pathAppend" in {
-            val r = HttpRoute.get("users")
+            val r = HttpRoute.getRaw("users")
                 .error[String](HttpStatus.BadRequest)
                 .pathAppend(HttpPath.Capture[Int]("id"))
             typeCheck("""val _: HttpRoute["id" ~ Int, Any, String] = r""")
         }
 
         "error preserved through request builder" in {
-            val r = HttpRoute.get("users")
+            val r = HttpRoute.getRaw("users")
                 .error[String](HttpStatus.BadRequest)
                 .request(_.query[Int]("limit"))
             typeCheck("""val _: HttpRoute["limit" ~ Int, Any, String] = r""")
         }
 
         "error preserved through response builder" in {
-            val r = HttpRoute.get("users")
+            val r = HttpRoute.getRaw("users")
                 .error[String](HttpStatus.BadRequest)
                 .response(_.bodyJson[User])
             typeCheck("""val _: HttpRoute[Any, "body" ~ User, String] = r""")
         }
 
         "error preserved through metadata" in {
-            val r = HttpRoute.get("users")
+            val r = HttpRoute.getRaw("users")
                 .error[String](HttpStatus.BadRequest)
                 .metadata(_.tag("Users"))
             typeCheck("""val _: HttpRoute[Any, Any, String] = r""")
@@ -1002,28 +1002,28 @@ class HttpRouteTest extends Test:
 
         "duplicate query parameter names rejected at compile time" in pendingUntilFixed {
             typeCheckFailure("""
-                HttpRoute.get("users")
+                HttpRoute.getRaw("users")
                     .request(_.query[Int]("page").query[Int]("page"))
             """)("Duplicate request field")
         }
 
         "query and header with same name rejected at compile time" in pendingUntilFixed {
             typeCheckFailure("""
-                HttpRoute.get("users")
+                HttpRoute.getRaw("users")
                     .request(_.query[String]("token").header[String]("token"))
             """)("Duplicate request field")
         }
 
         "query named 'body' conflicts with bodyJson" in pendingUntilFixed {
             typeCheckFailure("""
-                HttpRoute.post("data")
+                HttpRoute.postRaw("data")
                     .request(_.query[String]("body").bodyJson[String])
             """)("Duplicate request field")
         }
 
         "duplicate response header names rejected at compile time" in pendingUntilFixed {
             typeCheckFailure("""
-                HttpRoute.get("users")
+                HttpRoute.getRaw("users")
                     .response(_.header[String]("X-Id").header[String]("X-Id"))
             """)("Duplicate response field")
         }
@@ -1032,7 +1032,7 @@ class HttpRouteTest extends Test:
     "Query parameter defaults" - {
 
         "with default value stores default" in {
-            val r = HttpRoute.get("users").request(_.query[Int]("limit", default = Present(20)))
+            val r = HttpRoute.getRaw("users").request(_.query[Int]("limit", default = Present(20)))
             r.request.fields(0) match
                 case p: Field.Param[?, Int, ?] =>
                     assert(p.default == Present(20))
@@ -1041,7 +1041,7 @@ class HttpRouteTest extends Test:
         }
 
         "without default has Absent" in {
-            val r = HttpRoute.get("users").request(_.query[Int]("limit"))
+            val r = HttpRoute.getRaw("users").request(_.query[Int]("limit"))
             r.request.fields(0) match
                 case p: Field.Param[?, Int, ?] =>
                     assert(p.default == Absent)
@@ -1053,7 +1053,7 @@ class HttpRouteTest extends Test:
     "Header defaults" - {
 
         "with default value" in {
-            val r = HttpRoute.get("users").request(_.header[String]("Accept", default = Present("application/json")))
+            val r = HttpRoute.getRaw("users").request(_.header[String]("Accept", default = Present("application/json")))
             r.request.fields(0) match
                 case p: Field.Param[?, String, ?] =>
                     assert(p.default == Present("application/json"))
@@ -1062,7 +1062,7 @@ class HttpRouteTest extends Test:
         }
 
         "multiple headers accumulate in order" in {
-            val r = HttpRoute.get("users").request(_.header[String]("X-Request-Id").header[String]("X-Trace-Id"))
+            val r = HttpRoute.getRaw("users").request(_.header[String]("X-Request-Id").header[String]("X-Trace-Id"))
             assert(r.request.fields.size == 2)
             assert(r.request.fields(0).asInstanceOf[Field.Param[?, ?, ?]].fieldName == "X-Request-Id")
             assert(r.request.fields(1).asInstanceOf[Field.Param[?, ?, ?]].fieldName == "X-Trace-Id")
@@ -1072,7 +1072,7 @@ class HttpRouteTest extends Test:
     "Cookie defaults" - {
 
         "with default value" in {
-            val r = HttpRoute.get("dashboard").request(_.cookie[String]("theme", default = Present("light")))
+            val r = HttpRoute.getRaw("dashboard").request(_.cookie[String]("theme", default = Present("light")))
             r.request.fields(0) match
                 case p: Field.Param[?, String, ?] =>
                     assert(p.default == Present("light"))
@@ -1084,21 +1084,21 @@ class HttpRouteTest extends Test:
     "Full route examples" - {
 
         "CRUD API" in {
-            val list = HttpRoute.get("users")
+            val list = HttpRoute.getRaw("users")
                 .request(_.query[Int]("limit").query[Int]("offset"))
                 .response(_.bodyJson[Seq[User]])
                 .metadata(_.tag("Users"))
 
-            val get = HttpRoute.get("users" / HttpPath.Capture[Int]("id"))
+            val get = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("id"))
                 .response(_.bodyJson[User].error[NotFoundError](HttpStatus.NotFound))
                 .metadata(_.tag("Users"))
 
-            val create = HttpRoute.post("users")
+            val create = HttpRoute.postRaw("users")
                 .request(_.bodyJson[CreateUser])
                 .response(_.bodyJson[User].error[ValidationError](HttpStatus.BadRequest))
                 .metadata(_.tag("Users"))
 
-            val update = HttpRoute.put("users" / HttpPath.Capture[Int]("id"))
+            val update = HttpRoute.putRaw("users" / HttpPath.Capture[Int]("id"))
                 .request(_.bodyJson[CreateUser])
                 .response(_.bodyJson[User]
                     .error[NotFoundError](HttpStatus.NotFound)
@@ -1120,7 +1120,7 @@ class HttpRouteTest extends Test:
         }
 
         "streaming SSE endpoint" in {
-            val r = HttpRoute.get("events" / HttpPath.Capture[String]("channel"))
+            val r = HttpRoute.getRaw("events" / HttpPath.Capture[String]("channel"))
                 .request(_.queryOpt[String]("filter"))
                 .response(_.bodySseJson[User])
                 .metadata(_.tag("Events").summary("Subscribe to events"))
@@ -1155,7 +1155,7 @@ class HttpRouteTest extends Test:
                     next(request)
 
             // Build route with f1 first
-            val route1 = HttpRoute.get("users").request(_.header[String]("auth")).filter(f1)
+            val route1 = HttpRoute.getRaw("users").request(_.header[String]("auth")).filter(f1)
             // Now add f2 — this calls route1.filter (which is HttpFilter[?,?,?,?,?]).andThen(f2)
             val route2 = route1.filter(f2)
 
@@ -1195,7 +1195,7 @@ class HttpRouteTest extends Test:
                     next(request.setHeader("X-F2", "yes"))
                 end apply
 
-            val route = HttpRoute.get("test").filter(f1).filter(f2)
+            val route = HttpRoute.getRaw("test").filter(f1).filter(f2)
             // Both filters should be composed
             assert(route.filter ne HttpFilter.noop)
             succeed
@@ -1209,7 +1209,7 @@ class HttpRouteTest extends Test:
                 case _ => fail("Expected Capture")
             end match
 
-            val route = HttpRoute.get("users").request(_.query[Int]("limit"))
+            val route = HttpRoute.getRaw("users").request(_.query[Int]("limit"))
             route.request.fields(0) match
                 case Field.Param(_, _, wn, _, _, _, _) =>
                     assert(wn == "")
@@ -1220,7 +1220,7 @@ class HttpRouteTest extends Test:
         "response cookie type is HttpCookie but request cookie type is raw value" in {
             // Request cookie gives raw A, response cookie gives HttpCookie[A]
             // Verify asymmetry exists
-            val route = HttpRoute.get("test")
+            val route = HttpRoute.getRaw("test")
                 .request(_.cookie[String]("session"))
                 .response(_.cookie[String]("session2"))
 
@@ -1229,7 +1229,7 @@ class HttpRouteTest extends Test:
         }
 
         "error types are tracked in E type parameter, not Out" in {
-            val route = HttpRoute.get("users")
+            val route = HttpRoute.getRaw("users")
                 .response(_.bodyJson[User])
                 .error[NotFoundError](HttpStatus.NotFound)
 
@@ -1252,7 +1252,7 @@ class HttpRouteTest extends Test:
                 ): HttpResponse[Out & "cached" ~ Boolean] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request).map(_.addField("cached", true))
 
-            val route = HttpRoute.get("users").filter(f1).filter(f2)
+            val route = HttpRoute.getRaw("users").filter(f1).filter(f2)
             typeCheck("""val _: HttpRoute["user" ~ String, "cached" ~ Boolean, Any] = route""")
         }
 
@@ -1266,7 +1266,7 @@ class HttpRouteTest extends Test:
                     next(request)
 
             // Path captures contribute to In, so this should compile
-            val route = HttpRoute.get("users" / HttpPath.Capture[Int]("id")).filter(f)
+            val route = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("id")).filter(f)
             typeCheck("""val _: HttpRoute["id" ~ Int, Any, Any] = route""")
         }
 
@@ -1281,7 +1281,7 @@ class HttpRouteTest extends Test:
                 ): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "test"))
 
-            val route = HttpRoute.get("users")
+            val route = HttpRoute.getRaw("users")
                 .filter(f)
                 .request(_.query[Int]("limit"))
 
@@ -1301,7 +1301,7 @@ class HttpRouteTest extends Test:
 
             // Ignoring the input RequestDef and building a fresh one drops filter fields
             typeCheckFailure("""
-                HttpRoute.get("users").filter(f).request(_ =>
+                HttpRoute.getRaw("users").filter(f).request(_ =>
                     HttpRoute.RequestDef[Any](HttpPath.Literal("items")).query[Int]("page")
                 )
             """)(
@@ -1309,7 +1309,7 @@ class HttpRouteTest extends Test:
             )
 
             // But chaining from the input preserves filter fields
-            val route = HttpRoute.get("users")
+            val route = HttpRoute.getRaw("users")
                 .filter(f)
                 .request(_.query[Int]("limit"))
             val _: HttpRoute["user" ~ String & "limit" ~ Int, Any, Any] = route

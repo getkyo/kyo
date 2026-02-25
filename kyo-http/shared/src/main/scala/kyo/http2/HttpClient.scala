@@ -242,76 +242,76 @@ object HttpClient:
         }
     end initUnscoped
 
-    // --- Convenience methods (use current client from Local) ---
+    // ==================== JSON methods ====================
 
-    // GET
     def getJson[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.get("").response(_.bodyJson[A]))(_.fields.body)
+        parseAndSend(url, HttpRoute.getJson[A](""))(_.fields.body)
+
+    def postJson[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.postJson[A, B](""), body)(_.fields.body)
+
+    def putJson[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.putJson[A, B](""), body)(_.fields.body)
+
+    def patchJson[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.patchJson[A, B](""), body)(_.fields.body)
+
+    def deleteJson[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.deleteJson[A](""))(_.fields.body)
+
+    // ==================== Text methods ====================
 
     def getText(url: String)(using Frame): String < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.get("").response(_.bodyText))(_.fields.body)
-
-    def getBinary(url: String)(using Frame): Span[Byte] < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.get("").response(_.bodyBinary))(_.fields.body)
-
-    // POST
-    def postJson[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.post("").request(_.bodyJson[B]).response(_.bodyJson[A]), body)(_.fields.body)
+        parseAndSend(url, HttpRoute.getText(""))(_.fields.body)
 
     def postText(url: String, body: String)(using Frame): String < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.post("").request(_.bodyText).response(_.bodyText), body)(_.fields.body)
-
-    def postBinary(url: String, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.post("").request(_.bodyBinary).response(_.bodyBinary), body)(_.fields.body)
-
-    // PUT
-    def putJson[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.put("").request(_.bodyJson[B]).response(_.bodyJson[A]), body)(_.fields.body)
+        parseAndSend(url, HttpRoute.postText(""), body)(_.fields.body)
 
     def putText(url: String, body: String)(using Frame): String < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.put("").request(_.bodyText).response(_.bodyText), body)(_.fields.body)
-
-    def putBinary(url: String, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.put("").request(_.bodyBinary).response(_.bodyBinary), body)(_.fields.body)
-
-    // DELETE
-    def deleteJson[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.delete("").response(_.bodyJson[A]))(_.fields.body)
-
-    def deleteText(url: String)(using Frame): String < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.delete("").response(_.bodyText))(_.fields.body)
-
-    // PATCH
-    def patchJson[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.patch("").request(_.bodyJson[B]).response(_.bodyJson[A]), body)(_.fields.body)
+        parseAndSend(url, HttpRoute.putText(""), body)(_.fields.body)
 
     def patchText(url: String, body: String)(using Frame): String < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.patch("").request(_.bodyText).response(_.bodyText), body)(_.fields.body)
+        parseAndSend(url, HttpRoute.patchText(""), body)(_.fields.body)
+
+    def deleteText(url: String)(using Frame): String < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.deleteText(""))(_.fields.body)
+
+    // ==================== Binary methods ====================
+
+    def getBinary(url: String)(using Frame): Span[Byte] < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.getBinary(""))(_.fields.body)
+
+    def postBinary(url: String, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.postBinary(""), body)(_.fields.body)
+
+    def putBinary(url: String, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpError]) =
+        parseAndSend(url, HttpRoute.putBinary(""), body)(_.fields.body)
 
     def patchBinary(url: String, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.patch("").request(_.bodyBinary).response(_.bodyBinary), body)(_.fields.body)
+        parseAndSend(url, HttpRoute.patchBinary(""), body)(_.fields.body)
 
     def deleteBinary(url: String)(using Frame): Span[Byte] < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.delete("").response(_.bodyBinary))(_.fields.body)
+        parseAndSend(url, HttpRoute.deleteBinary(""))(_.fields.body)
 
-    // Streaming
+    // ==================== Streaming methods ====================
+
     def getSseJson[V: Schema: Tag](url: String)(using
         Frame,
         Tag[Emit[Chunk[HttpEvent[V]]]]
     ): Stream[HttpEvent[V], Async & Scope] < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.get("").response(_.bodySseJson[V]))(_.fields.body)
+        parseAndSend(url, HttpRoute.getRaw("").response(_.bodySseJson[V]))(_.fields.body)
 
     def getSseText(url: String)(using
         Frame,
         Tag[Emit[Chunk[HttpEvent[String]]]]
     ): Stream[HttpEvent[String], Async & Scope] < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.get("").response(_.bodySseText))(_.fields.body)
+        parseAndSend(url, HttpRoute.getRaw("").response(_.bodySseText))(_.fields.body)
 
     def getNdJson[V: Schema: Tag](url: String)(using
         Frame,
         Tag[Emit[Chunk[V]]]
     ): Stream[V, Async] < (Async & Abort[HttpError]) =
-        parseAndSend(url, HttpRoute.get("").response(_.bodyNdjson[V]))(_.fields.body)
+        parseAndSend(url, HttpRoute.getRaw("").response(_.bodyNdjson[V]))(_.fields.body)
 
     // --- Internal ---
 

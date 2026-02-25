@@ -22,7 +22,7 @@ class HttpHandlerTest extends Test:
     "route.handler" - {
 
         "creates handler from route" in {
-            val route = HttpRoute.get("users")
+            val route = HttpRoute.getRaw("users")
                 .response(_.bodyText)
             val handler = route.handler { request =>
                 HttpResponse.ok.addField("body", "hello")
@@ -32,7 +32,7 @@ class HttpHandlerTest extends Test:
         }
 
         "preserves In type from path captures and request fields" in {
-            val route = HttpRoute.get("users" / Capture[Int]("id"))
+            val route = HttpRoute.getRaw("users" / Capture[Int]("id"))
                 .request(_.query[String]("include"))
                 .response(_.bodyJson[User])
             val handler = route.handler { request =>
@@ -45,7 +45,7 @@ class HttpHandlerTest extends Test:
         }
 
         "preserves Out type with multiple response fields" in {
-            val route = HttpRoute.get("users")
+            val route = HttpRoute.getRaw("users")
                 .response(_.bodyJson[User].header[String]("etag"))
             val handler = route.handler { _ =>
                 HttpResponse.ok
@@ -57,7 +57,7 @@ class HttpHandlerTest extends Test:
         }
 
         "handler can use Abort[HttpResponse.Halt]" in {
-            val route = HttpRoute.get("users")
+            val route = HttpRoute.getRaw("users")
                 .response(_.bodyText)
             val handler = route.handler { _ =>
                 Abort.fail(HttpResponse.Halt(HttpResponse.unauthorized))
@@ -67,7 +67,7 @@ class HttpHandlerTest extends Test:
         }
 
         "error accumulation on route" in {
-            val route = HttpRoute.get("users")
+            val route = HttpRoute.getRaw("users")
                 .response(_.bodyText)
                 .error[String](HttpStatus.BadRequest)
                 .error[Int](HttpStatus.NotFound)
@@ -86,7 +86,7 @@ class HttpHandlerTest extends Test:
                 ): HttpResponse[Out] < (Async & Abort[String | E2 | HttpResponse.Halt]) =
                     next(request)
 
-            val route = HttpRoute.get("users")
+            val route = HttpRoute.getRaw("users")
                 .filter(filter)
                 .response(_.bodyText)
 
@@ -105,7 +105,7 @@ class HttpHandlerTest extends Test:
                 ): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "alice"))
 
-            val route = HttpRoute.get("users")
+            val route = HttpRoute.getRaw("users")
                 .filter(filter)
                 .response(_.bodyText)
 
@@ -125,7 +125,7 @@ class HttpHandlerTest extends Test:
                 ): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "alice"))
 
-            val route = HttpRoute.get("users")
+            val route = HttpRoute.getRaw("users")
                 .filter(filter)
                 .request(_.query[Int]("page"))
                 .response(_.bodyText)
@@ -196,12 +196,12 @@ class HttpHandlerTest extends Test:
         }
 
         "head" in {
-            val handler = HttpHandler.head("users")(_ => HttpResponse.ok)
+            val handler = HttpHandler.headRaw("users")(_ => HttpResponse.ok)
             assert(handler.route.method == HttpMethod.HEAD)
         }
 
         "options" in {
-            val handler = HttpHandler.options("users")(_ => HttpResponse.ok)
+            val handler = HttpHandler.optionsRaw("users")(_ => HttpResponse.ok)
             assert(handler.route.method == HttpMethod.OPTIONS)
         }
 
@@ -218,7 +218,7 @@ class HttpHandlerTest extends Test:
 
         "cannot extend HttpHandler directly" in {
             typeCheckFailure("""
-                new HttpHandler[Any, Any, Nothing](HttpRoute.get("test")):
+                new HttpHandler[Any, Any, Nothing](HttpRoute.getRaw("test")):
                     def apply(request: HttpRequest[Any])(using Frame): HttpResponse[Any] < (Async & Abort[Nothing | HttpResponse.Halt]) =
                         HttpResponse.ok
             """)(
@@ -230,7 +230,7 @@ class HttpHandlerTest extends Test:
     "route accessor" - {
 
         "handler's route retains error information" in {
-            val route = HttpRoute.get("users")
+            val route = HttpRoute.getRaw("users")
                 .response(_.bodyText)
                 .error[String](HttpStatus.BadRequest)
 

@@ -15,9 +15,6 @@ import kyo.Scope
 import kyo.Span
 import kyo.Stream
 import kyo.Tag
-import scala.annotation.implicitNotFound
-import scala.annotation.targetName
-import scala.compiletime
 
 case class HttpRoute[In, Out, +E](
     method: HttpMethod,
@@ -67,13 +64,66 @@ object HttpRoute:
     private def make[A](method: HttpMethod, path: HttpPath[A]): HttpRoute[A, Any, Nothing] =
         HttpRoute[A, Any, Nothing](method, RequestDef[A](path), ResponseDef[Any](), HttpFilter.noop, Metadata())
 
-    def get[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]     = make(HttpMethod.GET, path)
-    def post[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]    = make(HttpMethod.POST, path)
-    def put[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]     = make(HttpMethod.PUT, path)
-    def patch[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]   = make(HttpMethod.PATCH, path)
-    def delete[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]  = make(HttpMethod.DELETE, path)
-    def head[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]    = make(HttpMethod.HEAD, path)
-    def options[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing] = make(HttpMethod.OPTIONS, path)
+    // ==================== Raw methods ====================
+
+    def getRaw[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]     = make(HttpMethod.GET, path)
+    def postRaw[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]    = make(HttpMethod.POST, path)
+    def putRaw[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]     = make(HttpMethod.PUT, path)
+    def patchRaw[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]   = make(HttpMethod.PATCH, path)
+    def deleteRaw[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]  = make(HttpMethod.DELETE, path)
+    def headRaw[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing]    = make(HttpMethod.HEAD, path)
+    def optionsRaw[A](path: HttpPath[A]): HttpRoute[A, Any, Nothing] = make(HttpMethod.OPTIONS, path)
+
+    // ==================== JSON methods ====================
+
+    def getJson[A: Schema](path: HttpPath[Any]): HttpRoute[Any, "body" ~ A, Nothing] =
+        getRaw(path).response(_.bodyJson[A])
+
+    def postJson[A: Schema, B: Schema](path: HttpPath[Any]): HttpRoute["body" ~ B, "body" ~ A, Nothing] =
+        postRaw(path).request(_.bodyJson[B]).response(_.bodyJson[A])
+
+    def putJson[A: Schema, B: Schema](path: HttpPath[Any]): HttpRoute["body" ~ B, "body" ~ A, Nothing] =
+        putRaw(path).request(_.bodyJson[B]).response(_.bodyJson[A])
+
+    def patchJson[A: Schema, B: Schema](path: HttpPath[Any]): HttpRoute["body" ~ B, "body" ~ A, Nothing] =
+        patchRaw(path).request(_.bodyJson[B]).response(_.bodyJson[A])
+
+    def deleteJson[A: Schema](path: HttpPath[Any]): HttpRoute[Any, "body" ~ A, Nothing] =
+        deleteRaw(path).response(_.bodyJson[A])
+
+    // ==================== Text methods ====================
+
+    def getText(path: HttpPath[Any]): HttpRoute[Any, "body" ~ String, Nothing] =
+        getRaw(path).response(_.bodyText)
+
+    def postText(path: HttpPath[Any]): HttpRoute["body" ~ String, "body" ~ String, Nothing] =
+        postRaw(path).request(_.bodyText).response(_.bodyText)
+
+    def putText(path: HttpPath[Any]): HttpRoute["body" ~ String, "body" ~ String, Nothing] =
+        putRaw(path).request(_.bodyText).response(_.bodyText)
+
+    def patchText(path: HttpPath[Any]): HttpRoute["body" ~ String, "body" ~ String, Nothing] =
+        patchRaw(path).request(_.bodyText).response(_.bodyText)
+
+    def deleteText(path: HttpPath[Any]): HttpRoute[Any, "body" ~ String, Nothing] =
+        deleteRaw(path).response(_.bodyText)
+
+    // ==================== Binary methods ====================
+
+    def getBinary(path: HttpPath[Any]): HttpRoute[Any, "body" ~ Span[Byte], Nothing] =
+        getRaw(path).response(_.bodyBinary)
+
+    def postBinary(path: HttpPath[Any]): HttpRoute["body" ~ Span[Byte], "body" ~ Span[Byte], Nothing] =
+        postRaw(path).request(_.bodyBinary).response(_.bodyBinary)
+
+    def putBinary(path: HttpPath[Any]): HttpRoute["body" ~ Span[Byte], "body" ~ Span[Byte], Nothing] =
+        putRaw(path).request(_.bodyBinary).response(_.bodyBinary)
+
+    def patchBinary(path: HttpPath[Any]): HttpRoute["body" ~ Span[Byte], "body" ~ Span[Byte], Nothing] =
+        patchRaw(path).request(_.bodyBinary).response(_.bodyBinary)
+
+    def deleteBinary(path: HttpPath[Any]): HttpRoute[Any, "body" ~ Span[Byte], Nothing] =
+        deleteRaw(path).response(_.bodyBinary)
 
     // ==================== ContentType ====================
 
@@ -142,7 +192,7 @@ object HttpRoute:
             wireName: String = "",
             default: Maybe[A] = Absent,
             description: String = ""
-        )(using UniqueRequestField[In, N]): RequestDef[In & N ~ A] =
+        )(using FieldAnchor[In, N]): RequestDef[In & N ~ A] =
             add(Field.Param(Field.Param.Location.Query, fieldName, wireName, codec, default, false, description))
 
         def queryOpt[A](using
@@ -152,7 +202,7 @@ object HttpRoute:
             wireName: String = "",
             default: Maybe[A] = Absent,
             description: String = ""
-        )(using UniqueRequestField[In, N]): RequestDef[In & N ~ Maybe[A]] =
+        )(using FieldAnchor[In, N]): RequestDef[In & N ~ Maybe[A]] =
             add(Field.Param(Field.Param.Location.Query, fieldName, wireName, codec, default, true, description))
 
         def header[A](using
@@ -162,7 +212,7 @@ object HttpRoute:
             wireName: String = "",
             default: Maybe[A] = Absent,
             description: String = ""
-        )(using UniqueRequestField[In, N]): RequestDef[In & N ~ A] =
+        )(using FieldAnchor[In, N]): RequestDef[In & N ~ A] =
             add(Field.Param(Field.Param.Location.Header, fieldName, wireName, codec, default, false, description))
 
         def headerOpt[A](using
@@ -172,7 +222,7 @@ object HttpRoute:
             wireName: String = "",
             default: Maybe[A] = Absent,
             description: String = ""
-        )(using UniqueRequestField[In, N]): RequestDef[In & N ~ Maybe[A]] =
+        )(using FieldAnchor[In, N]): RequestDef[In & N ~ Maybe[A]] =
             add(Field.Param(Field.Param.Location.Header, fieldName, wireName, codec, default, true, description))
 
         def cookie[A](using
@@ -182,7 +232,7 @@ object HttpRoute:
             wireName: String = "",
             default: Maybe[A] = Absent,
             description: String = ""
-        )(using UniqueRequestField[In, N]): RequestDef[In & N ~ A] =
+        )(using FieldAnchor[In, N]): RequestDef[In & N ~ A] =
             add(Field.Param(Field.Param.Location.Cookie, fieldName, wireName, codec, default, false, description))
 
         def cookieOpt[A](using
@@ -192,57 +242,58 @@ object HttpRoute:
             wireName: String = "",
             default: Maybe[A] = Absent,
             description: String = ""
-        )(using UniqueRequestField[In, N]): RequestDef[In & N ~ Maybe[A]] =
+        )(using FieldAnchor[In, N]): RequestDef[In & N ~ Maybe[A]] =
             add(Field.Param(Field.Param.Location.Cookie, fieldName, wireName, codec, default, true, description))
 
-        def bodyJson[A](using schema: Schema[A])(using UniqueRequestField[In, "body"]): RequestDef[In & "body" ~ A] =
+        def bodyJson[A](using schema: Schema[A], a: FieldAnchor[In, "body"]): RequestDef[In & "body" ~ A] =
             add(Field.Body("body", ContentType.Json(schema), ""))
 
         def bodyJson[A](using
             schema: Schema[A]
-        )[N <: String & Singleton](fieldName: N, description: String = "")(using UniqueRequestField[In, N]): RequestDef[In & N ~ A] =
+        )[N <: String & Singleton](fieldName: N, description: String = "")(using FieldAnchor[In, N]): RequestDef[In & N ~ A] =
             add(Field.Body(fieldName, ContentType.Json(schema), description))
 
-        def bodyText(using UniqueRequestField[In, "body"]): RequestDef[In & "body" ~ String] =
+        def bodyText(using FieldAnchor[In, "body"]): RequestDef[In & "body" ~ String] =
             add(Field.Body("body", ContentType.Text(), ""))
 
         def bodyText[N <: String & Singleton](fieldName: N, description: String = "")(using
-            UniqueRequestField[In, N]
+            FieldAnchor[In, N]
         ): RequestDef[In & N ~ String] =
             add(Field.Body(fieldName, ContentType.Text(), description))
 
-        def bodyBinary(using UniqueRequestField[In, "body"]): RequestDef[In & "body" ~ Span[Byte]] =
+        def bodyBinary(using FieldAnchor[In, "body"]): RequestDef[In & "body" ~ Span[Byte]] =
             add(Field.Body("body", ContentType.Binary(), ""))
 
         def bodyBinary[N <: String & Singleton](fieldName: N, description: String = "")(using
-            UniqueRequestField[In, N]
+            FieldAnchor[In, N]
         ): RequestDef[In & N ~ Span[Byte]] =
             add(Field.Body(fieldName, ContentType.Binary(), description))
 
-        def bodyStream(using UniqueRequestField[In, "body"]): RequestDef[In & "body" ~ Stream[Span[Byte], Async & Scope]] =
+        def bodyStream(using FieldAnchor[In, "body"]): RequestDef[In & "body" ~ Stream[Span[Byte], Async & Scope]] =
             add(Field.Body("body", ContentType.ByteStream(), ""))
 
         def bodyStream[N <: String & Singleton](
             fieldName: N,
             description: String = ""
-        )(using UniqueRequestField[In, N]): RequestDef[In & N ~ Stream[Span[Byte], Async & Scope]] =
+        )(using FieldAnchor[In, N]): RequestDef[In & N ~ Stream[Span[Byte], Async & Scope]] =
             add(Field.Body(fieldName, ContentType.ByteStream(), description))
 
         def bodyNdjson[V](using
             schema: Schema[V],
-            emitTag: Tag[Emit[Chunk[V]]]
-        )(using UniqueRequestField[In, "body"]): RequestDef[In & "body" ~ Stream[V, Async]] =
+            emitTag: Tag[Emit[Chunk[V]]],
+            a: FieldAnchor[In, "body"]
+        ): RequestDef[In & "body" ~ Stream[V, Async]] =
             add(Field.Body("body", ContentType.Ndjson(schema, emitTag), ""))
 
         def bodyNdjson[V](using
             schema: Schema[V],
             emitTag: Tag[Emit[Chunk[V]]]
         )[N <: String & Singleton](fieldName: N, description: String = "")(using
-            UniqueRequestField[In, N]
+            FieldAnchor[In, N]
         ): RequestDef[In & N ~ Stream[V, Async]] =
             add(Field.Body(fieldName, ContentType.Ndjson(schema, emitTag), description))
 
-        def bodyForm[A](using codec: HttpFormCodec[A])(using UniqueRequestField[In, "body"]): RequestDef[In & "body" ~ A] =
+        def bodyForm[A](using codec: HttpFormCodec[A], a: FieldAnchor[In, "body"]): RequestDef[In & "body" ~ A] =
             add(Field.Body("body", ContentType.Form(codec), ""))
 
         def bodyForm[A](using
@@ -250,24 +301,24 @@ object HttpRoute:
         )[N <: String & Singleton](
             fieldName: N,
             description: String = ""
-        )(using UniqueRequestField[In, N]): RequestDef[In & N ~ A] =
+        )(using FieldAnchor[In, N]): RequestDef[In & N ~ A] =
             add(Field.Body(fieldName, ContentType.Form(codec), description))
 
-        def bodyMultipart(using UniqueRequestField[In, "body"]): RequestDef[In & "body" ~ Seq[HttpPart]] =
+        def bodyMultipart(using FieldAnchor[In, "body"]): RequestDef[In & "body" ~ Seq[HttpPart]] =
             add(Field.Body("body", ContentType.Multipart(), ""))
 
         def bodyMultipart[N <: String & Singleton](fieldName: N, description: String = "")(using
-            UniqueRequestField[In, N]
+            FieldAnchor[In, N]
         ): RequestDef[In & N ~ Seq[HttpPart]] =
             add(Field.Body(fieldName, ContentType.Multipart(), description))
 
-        def bodyMultipartStream(using UniqueRequestField[In, "body"]): RequestDef[In & "body" ~ Stream[HttpPart, Async]] =
+        def bodyMultipartStream(using FieldAnchor[In, "body"]): RequestDef[In & "body" ~ Stream[HttpPart, Async]] =
             add(Field.Body("body", ContentType.MultipartStream(), ""))
 
         def bodyMultipartStream[N <: String & Singleton](
             fieldName: N,
             description: String = ""
-        )(using UniqueRequestField[In, N]): RequestDef[In & N ~ Stream[HttpPart, Async]] =
+        )(using FieldAnchor[In, N]): RequestDef[In & N ~ Stream[HttpPart, Async]] =
             add(Field.Body(fieldName, ContentType.MultipartStream(), description))
 
         private def add[F](field: Field[F]): RequestDef[In & F] =
@@ -289,7 +340,7 @@ object HttpRoute:
             fieldName: N,
             wireName: String = "",
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ A] =
+        )(using FieldAnchor[Out, N]): ResponseDef[Out & N ~ A] =
             addField(Field.Param(Field.Param.Location.Header, fieldName, wireName, codec, Absent, false, description))
 
         def headerOpt[A](using
@@ -298,7 +349,7 @@ object HttpRoute:
             fieldName: N,
             wireName: String = "",
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Maybe[A]] =
+        )(using FieldAnchor[Out, N]): ResponseDef[Out & N ~ Maybe[A]] =
             addField(Field.Param(Field.Param.Location.Header, fieldName, wireName, codec, Absent, true, description))
 
         def cookie[A](using
@@ -307,7 +358,7 @@ object HttpRoute:
             fieldName: N,
             wireName: String = "",
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ HttpCookie[A]] =
+        )(using FieldAnchor[Out, N]): ResponseDef[Out & N ~ HttpCookie[A]] =
             addField(Field.Param(Field.Param.Location.Cookie, fieldName, wireName, codec, Absent, false, description))
 
         def cookieOpt[A](using
@@ -316,60 +367,62 @@ object HttpRoute:
             fieldName: N,
             wireName: String = "",
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Maybe[HttpCookie[A]]] =
+        )(using FieldAnchor[Out, N]): ResponseDef[Out & N ~ Maybe[HttpCookie[A]]] =
             addField(Field.Param(Field.Param.Location.Cookie, fieldName, wireName, codec, Absent, true, description))
 
-        def bodyJson[A](using schema: Schema[A])(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ A] =
+        def bodyJson[A](using schema: Schema[A], a: FieldAnchor[Out, "body"]): ResponseDef[Out & "body" ~ A] =
             addField(Field.Body("body", ContentType.Json(schema), ""))
 
         def bodyJson[A](using
             schema: Schema[A]
-        )[N <: String & Singleton](fieldName: N, description: String = "")(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ A] =
+        )[N <: String & Singleton](fieldName: N, description: String = "")(using FieldAnchor[Out, N]): ResponseDef[Out & N ~ A] =
             addField(Field.Body(fieldName, ContentType.Json(schema), description))
 
-        def bodyText(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ String] =
+        def bodyText(using FieldAnchor[Out, "body"]): ResponseDef[Out & "body" ~ String] =
             addField(Field.Body("body", ContentType.Text(), ""))
 
         def bodyText[N <: String & Singleton](fieldName: N, description: String = "")(using
-            UniqueResponseField[Out, N]
+            FieldAnchor[Out, N]
         ): ResponseDef[Out & N ~ String] =
             addField(Field.Body(fieldName, ContentType.Text(), description))
 
-        def bodyBinary(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ Span[Byte]] =
+        def bodyBinary(using FieldAnchor[Out, "body"]): ResponseDef[Out & "body" ~ Span[Byte]] =
             addField(Field.Body("body", ContentType.Binary(), ""))
 
         def bodyBinary[N <: String & Singleton](fieldName: N, description: String = "")(using
-            UniqueResponseField[Out, N]
+            FieldAnchor[Out, N]
         ): ResponseDef[Out & N ~ Span[Byte]] =
             addField(Field.Body(fieldName, ContentType.Binary(), description))
 
-        def bodyStream(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ Stream[Span[Byte], Async & Scope]] =
+        def bodyStream(using FieldAnchor[Out, "body"]): ResponseDef[Out & "body" ~ Stream[Span[Byte], Async & Scope]] =
             addField(Field.Body("body", ContentType.ByteStream(), ""))
 
         def bodyStream[N <: String & Singleton](
             fieldName: N,
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Stream[Span[Byte], Async & Scope]] =
+        )(using FieldAnchor[Out, N]): ResponseDef[Out & N ~ Stream[Span[Byte], Async & Scope]] =
             addField(Field.Body(fieldName, ContentType.ByteStream(), description))
 
         def bodyNdjson[V](using
             schema: Schema[V],
-            emitTag: Tag[Emit[Chunk[V]]]
-        )(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ Stream[V, Async]] =
+            emitTag: Tag[Emit[Chunk[V]]],
+            a: FieldAnchor[Out, "body"]
+        ): ResponseDef[Out & "body" ~ Stream[V, Async]] =
             addField(Field.Body("body", ContentType.Ndjson(schema, emitTag), ""))
 
         def bodyNdjson[V](using
             schema: Schema[V],
             emitTag: Tag[Emit[Chunk[V]]]
         )[N <: String & Singleton](fieldName: N, description: String = "")(using
-            UniqueResponseField[Out, N]
+            FieldAnchor[Out, N]
         ): ResponseDef[Out & N ~ Stream[V, Async]] =
             addField(Field.Body(fieldName, ContentType.Ndjson(schema, emitTag), description))
 
         def bodySseJson[V](using
             schema: Schema[V],
-            emitTag: Tag[Emit[Chunk[HttpEvent[V]]]]
-        )(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ Stream[HttpEvent[V], Async & Scope]] =
+            emitTag: Tag[Emit[Chunk[HttpEvent[V]]]],
+            a: FieldAnchor[Out, "body"]
+        ): ResponseDef[Out & "body" ~ Stream[HttpEvent[V], Async & Scope]] =
             addField(Field.Body("body", ContentType.Sse(schema, emitTag), ""))
 
         def bodySseJson[V](using
@@ -378,12 +431,13 @@ object HttpRoute:
         )[N <: String & Singleton](
             fieldName: N,
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Stream[HttpEvent[V], Async & Scope]] =
+        )(using FieldAnchor[Out, N]): ResponseDef[Out & N ~ Stream[HttpEvent[V], Async & Scope]] =
             addField(Field.Body(fieldName, ContentType.Sse(schema, emitTag), description))
 
         def bodySseText(using
-            emitTag: Tag[Emit[Chunk[HttpEvent[String]]]]
-        )(using UniqueResponseField[Out, "body"]): ResponseDef[Out & "body" ~ Stream[HttpEvent[String], Async & Scope]] =
+            emitTag: Tag[Emit[Chunk[HttpEvent[String]]]],
+            a: FieldAnchor[Out, "body"]
+        ): ResponseDef[Out & "body" ~ Stream[HttpEvent[String], Async & Scope]] =
             addField(Field.Body("body", ContentType.SseText(emitTag), ""))
 
         def bodySseText(using
@@ -391,7 +445,7 @@ object HttpRoute:
         )[N <: String & Singleton](
             fieldName: N,
             description: String = ""
-        )(using UniqueResponseField[Out, N]): ResponseDef[Out & N ~ Stream[HttpEvent[String], Async & Scope]] =
+        )(using FieldAnchor[Out, N]): ResponseDef[Out & N ~ Stream[HttpEvent[String], Async & Scope]] =
             addField(Field.Body(fieldName, ContentType.SseText(emitTag), description))
 
         def error[E](using schema: Schema[E], tag: ConcreteTag[E])(s: HttpStatus): ResponseDef[Out] =
@@ -452,25 +506,10 @@ object HttpRoute:
             def apply(r: F[A]): F[A] = r
     end Strict
 
-    sealed trait HasFieldName[Fields, N <: String]
-    object HasFieldName:
-        given direct[N <: String, V]: HasFieldName[N ~ V, N]                               = null
-        given inLeft[A, B, N <: String](using HasFieldName[A, N]): HasFieldName[A & B, N]  = null
-        given inRight[A, B, N <: String](using HasFieldName[B, N]): HasFieldName[A & B, N] = null
-    end HasFieldName
-
-    @implicitNotFound("Duplicate request field '${N}' — this field was already added to the request definition")
-    opaque type UniqueRequestField[+A, N <: String] = Unit
-    inline given [A, N <: String]: UniqueRequestField[A, N] =
-        val _ = scala.compiletime.summonInline[scala.util.NotGiven[HasFieldName[A, N]]]
-        ()
-    private[http2] def unsafeUniqueRequestField[A, N <: String]: UniqueRequestField[A, N] = ()
-
-    @implicitNotFound("Duplicate response field '${N}' — this field was already added to the response definition")
-    opaque type UniqueResponseField[+A, N <: String] = Unit
-    inline given [A, N <: String]: UniqueResponseField[A, N] =
-        val _ = scala.compiletime.summonInline[scala.util.NotGiven[HasFieldName[A, N]]]
-        ()
-    private[http2] def unsafeUniqueResponseField[A, N <: String]: UniqueResponseField[A, N] = ()
+    /** Anchors type inference so that `Strict` preserves precise intersection types in builder lambdas. Without this extra `using` clause,
+      * the compiler may normalize/collapse intersection components before `Strict` gets to see them.
+      */
+    opaque type FieldAnchor[+A, N <: String] = Unit
+    given [A, N <: String]: FieldAnchor[A, N] = ()
 
 end HttpRoute
