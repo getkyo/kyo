@@ -5,7 +5,6 @@ import kyo.http2.HttpPath./
 import kyo.http2.internal.OpenApiGenerator
 
 class OpenApiGeneratorTest extends kyo.Test:
-    override protected def useTestClient: Boolean = false
 
     "OpenApiGenerator" - {
 

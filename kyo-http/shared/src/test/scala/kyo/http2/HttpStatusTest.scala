@@ -6,8 +6,6 @@ import kyo.Test
 
 class HttpStatusTest extends Test:
 
-    override protected def useTestClient: Boolean = false
-
     "code" - {
         "informational codes are in 1xx range" in {
             assert(HttpStatus.Continue.code == 100)

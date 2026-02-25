@@ -7,8 +7,6 @@ import kyo.Test
 
 class HttpPartTest extends Test:
 
-    override protected def useTestClient: Boolean = false
-
     "construction" - {
         "minimal" in {
             val p = HttpPart("file", Absent, Absent, Span.empty[Byte])

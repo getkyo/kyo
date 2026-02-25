@@ -5,8 +5,6 @@ import kyo.Test
 
 class HttpCodecTest extends Test:
 
-    override protected def useTestClient: Boolean = false
-
     "Int codec" - {
         "encode" in {
             assert(summon[HttpCodec[Int]].encode(42) == "42")
@@ -97,7 +95,7 @@ class HttpCodecTest extends Test:
     "Double codec" - {
         "encode" in {
             assert(summon[HttpCodec[Double]].encode(3.14) == "3.14")
-            assert(summon[HttpCodec[Double]].encode(0.0) == "0.0")
+            assert(summon[HttpCodec[Double]].decode(summon[HttpCodec[Double]].encode(0.0)) == 0.0)
         }
 
         "decode" in {

@@ -8,8 +8,6 @@ import kyo.Test
 
 class SchemaTest extends Test:
 
-    override protected def useTestClient: Boolean = false
-
     case class User(id: Int, name: String) derives Schema, CanEqual
     case class Nested(user: User, active: Boolean) derives Schema, CanEqual
     case class Empty() derives Schema, CanEqual

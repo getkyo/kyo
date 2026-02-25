@@ -7,8 +7,6 @@ import kyo.hours
 
 class HttpHeadersTest extends Test:
 
-    override protected def useTestClient: Boolean = false
-
     "cookie" - {
         "parses single cookie" in {
             val h = HttpHeaders.empty.add("Cookie", "session=abc123")

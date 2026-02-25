@@ -8,8 +8,6 @@ import kyo.seconds
 
 class HttpEventTest extends Test:
 
-    override protected def useTestClient: Boolean = false
-
     "construction" - {
         "data only" in {
             val e = HttpEvent("hello")

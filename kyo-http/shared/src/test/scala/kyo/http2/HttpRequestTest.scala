@@ -9,8 +9,6 @@ import kyo.Test
 
 class HttpRequestTest extends Test:
 
-    override protected def useTestClient: Boolean = false
-
     "construction" - {
         "from method and HttpUrl" in {
             val url = HttpUrl.parse("https://example.com/path").getOrThrow

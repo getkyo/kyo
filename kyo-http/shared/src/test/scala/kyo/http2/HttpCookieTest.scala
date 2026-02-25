@@ -7,8 +7,6 @@ import kyo.hours
 
 class HttpCookieTest extends Test:
 
-    override protected def useTestClient: Boolean = false
-
     "stores value and codec" in {
         val c = HttpCookie("session123")
         assert(c.value == "session123")

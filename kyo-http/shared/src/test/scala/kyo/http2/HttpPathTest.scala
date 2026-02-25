@@ -8,8 +8,6 @@ class HttpPathTest extends Test:
 
     import HttpPath.*
 
-    override protected def useTestClient: Boolean = false
-
     "Literal" - {
         "stores value" in {
             val p = HttpPath.Literal("users")

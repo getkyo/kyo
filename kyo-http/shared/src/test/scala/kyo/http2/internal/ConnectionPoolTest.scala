@@ -212,12 +212,13 @@ class ConnectionPoolTest extends Test:
                 discarded
             )
 
-        "evicts expired connection on poll" in {
+        "evicts expired connection on poll" in run {
             val (pool, discarded) = mkPoolWithTimeout(timeoutNanos = 1L) // 1 nanosecond
             pool.release(key1, "old")
-            Thread.sleep(1) // ensure at least 1ms passes
-            assert(pool.poll(key1) == Maybe.empty)
-            assert(discarded.get() == 1)
+            Async.sleep(1.millis).andThen { // ensure at least 1ms passes
+                assert(pool.poll(key1) == Maybe.empty)
+                assert(discarded.get() == 1)
+            }
         }
 
         "returns fresh connection within timeout" in {
@@ -227,36 +228,33 @@ class ConnectionPoolTest extends Test:
             assert(discarded.get() == 0)
         }
 
-        "evicts expired, returns fresh (FIFO order)" in {
-            val (pool, discarded) = mkPoolWithTimeout(timeoutNanos = 1L) // 1 nanosecond
-            pool.release(key1, "old")
-            Thread.sleep(1)
-            // "old" is now expired. Release a fresh one.
-            // But with 1ns timeout, "new" might also expire.
-            // Use a longer timeout to test mixed scenario.
+        "evicts expired, returns fresh (FIFO order)" in run {
             val (pool2, discarded2) = mkPoolWithTimeout(max = 2, timeoutNanos = 5000000000L) // 5 seconds
             pool2.release(key1, "old")
-            Thread.sleep(50) // 50ms — well within 5s timeout
-            pool2.release(key1, "new")
-            // Both should be fresh
-            assert(pool2.poll(key1) == Present("old"))
-            assert(pool2.poll(key1) == Present("new"))
+            Async.sleep(50.millis).andThen { // 50ms — well within 5s timeout
+                pool2.release(key1, "new")
+                // Both should be fresh
+                assert(pool2.poll(key1) == Present("old"))
+                assert(pool2.poll(key1) == Present("new"))
+            }
         }
 
-        "Duration.Infinity means no eviction" in {
+        "Duration.Infinity means no eviction" in run {
             val pool = mkPool(max = 2) // uses Duration.Infinity
             pool.release(key1, "conn")
-            Thread.sleep(10)
-            assert(pool.poll(key1) == Present("conn"))
+            Async.sleep(10.millis).andThen {
+                assert(pool.poll(key1) == Present("conn"))
+            }
         }
 
-        "all expired returns empty" in {
+        "all expired returns empty" in run {
             val (pool, discarded) = mkPoolWithTimeout(max = 2, timeoutNanos = 1L)
             pool.release(key1, "a")
             pool.release(key1, "b")
-            Thread.sleep(1)
-            assert(pool.poll(key1) == Maybe.empty)
-            assert(discarded.get() == 2)
+            Async.sleep(1.millis).andThen {
+                assert(pool.poll(key1) == Maybe.empty)
+                assert(discarded.get() == 2)
+            }
         }
     }
 

@@ -6,8 +6,6 @@ import kyo.*
 class MultipartStreamDecoderTest extends Test:
     import AllowUnsafe.embrace.danger
 
-    override protected def useTestClient: Boolean = false
-
     private def makeMultipartBody(boundary: String, parts: Seq[(String, Option[String], Option[String], Array[Byte])]): Array[Byte] =
         val out = new java.io.ByteArrayOutputStream()
         parts.foreach { case (name, filename, contentType, content) =>

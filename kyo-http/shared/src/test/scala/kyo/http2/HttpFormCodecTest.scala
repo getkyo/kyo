@@ -4,8 +4,6 @@ import kyo.Test
 
 class HttpFormCodecTest extends Test:
 
-    override protected def useTestClient: Boolean = false
-
     case class LoginForm(username: String, password: String) derives HttpFormCodec, CanEqual
     case class SearchForm(query: String, page: Int) derives HttpFormCodec, CanEqual
     case class SingleField(name: String) derives HttpFormCodec, CanEqual

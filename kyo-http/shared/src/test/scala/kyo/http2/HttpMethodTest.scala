@@ -4,8 +4,6 @@ import kyo.Test
 
 class HttpMethodTest extends Test:
 
-    override protected def useTestClient: Boolean = false
-
     "constants" - {
         "GET" in {
             assert(HttpMethod.GET.name == "GET")

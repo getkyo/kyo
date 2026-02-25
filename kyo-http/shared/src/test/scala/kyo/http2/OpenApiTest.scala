@@ -4,7 +4,6 @@ import kyo.Record2.*
 import kyo.Result
 
 class OpenApiTest extends kyo.Test:
-    override protected def useTestClient: Boolean = false
 
     val petStoreSpec = OpenApi(
         openapi = "3.0.0",

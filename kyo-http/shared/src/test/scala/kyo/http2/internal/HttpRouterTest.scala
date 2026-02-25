@@ -15,8 +15,6 @@ import kyo.http2.Schema
 
 class HttpRouterTest extends kyo.Test:
 
-    override protected def useTestClient: Boolean = false
-
     import HttpPath./
 
     given CanEqual[Any, Any] = CanEqual.derived

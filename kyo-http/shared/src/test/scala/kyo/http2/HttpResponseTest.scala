@@ -7,8 +7,6 @@ import kyo.Test
 
 class HttpResponseTest extends Test:
 
-    override protected def useTestClient: Boolean = false
-
     "construction" - {
         "from status" in {
             val res = HttpResponse(HttpStatus.OK)

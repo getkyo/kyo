@@ -29,7 +29,7 @@ class HttpClientTest extends Test:
     case class User(id: Int, name: String) derives Schema, CanEqual
     case class LoginForm(username: String, password: String) derives HttpFormCodec, CanEqual
 
-    val client = kyo.http2.internal.NettyPlatformBackend.client
+    val client = kyo.http2.internal.HttpPlatformBackend.client
 
     def withServer[A, S](handlers: HttpHandler[?, ?, ?]*)(
         test: Int => A < (S & Async & Abort[HttpError])
@@ -641,9 +641,10 @@ class HttpClientTest extends Test:
     "connection errors" - {
 
         "connection failure to invalid port" in run {
+            val route = HttpRoute.getRaw("test").response(_.bodyText)
             Abort.run[HttpError] {
-                client.connectWith("localhost", 1, ssl = false, Absent) { _ =>
-                    ()
+                client.connectWith("localhost", 1, ssl = false, Absent) { conn =>
+                    client.sendWith(conn, route, HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/test")))(identity)
                 }
             }.map { result =>
                 assert(result.isFailure || result.isPanic)

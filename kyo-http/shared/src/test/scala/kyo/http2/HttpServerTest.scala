@@ -28,7 +28,7 @@ class HttpServerTest extends Test:
     case class User(id: Int, name: String) derives Schema, CanEqual
     case class LoginForm(username: String, password: String) derives HttpFormCodec, CanEqual
 
-    val client = kyo.http2.internal.NettyPlatformBackend.client
+    val client = kyo.http2.internal.HttpPlatformBackend.client
 
     def withServer[A, S](handlers: HttpHandler[?, ?, ?]*)(
         test: Int => A < (S & Async & Abort[HttpError])

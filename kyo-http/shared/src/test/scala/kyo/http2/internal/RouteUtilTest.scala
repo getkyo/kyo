@@ -25,8 +25,6 @@ import kyo.millis
 
 class RouteUtilTest extends kyo.Test:
 
-    override protected def useTestClient: Boolean = false
-
     import HttpPath./
 
     given CanEqual[Any, Any] = CanEqual.derived

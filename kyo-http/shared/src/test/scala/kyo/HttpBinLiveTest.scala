@@ -10,7 +10,6 @@ class HttpBinLiveTest extends Test:
 
     // Use the default shared client (platform backend) instead of the test client,
     // since these tests make real HTTP calls to httpbin.org
-    override protected def useTestClient: Boolean = false
 
     case class HttpBinResponse(url: String, origin: String) derives Schema, CanEqual
 
