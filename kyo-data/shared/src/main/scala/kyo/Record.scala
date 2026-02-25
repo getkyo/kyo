@@ -38,9 +38,11 @@ type Record[F] = Record.Impl[F]
 
 trait RecordDictSyntax:
     extension [F](record: Record[F])
+        /** Returns a new record with the specified field's value replaced. The field name and value type must match a field in `F`. */
         def update[Name <: String & Singleton, V](name: Name, value: V)(using F <:< (Name ~ V)): Record[F] =
             Record.from(record.toDict.update(name, value.asInstanceOf[Any]))
 
+        /** Returns the number of fields stored in this record. */
         def size: Int = record.toDict.size
     end extension
 end RecordDictSyntax
@@ -52,23 +54,38 @@ object Record extends RecordDictSyntax:
     private[kyo] def from[F](dict: Dict[String, Any]): Record[F] = dict
 
     extension [F](record: Impl[F])
+        /** Retrieves a field value by name. Unlike `selectDynamic`, this method works with any string literal, including names that are not
+          * valid Scala identifiers (e.g., `"user-name"`, `"&"`, `""`).
+          */
         def getField[Name <: String & Singleton, V](name: Name)(using h: Fields.Have[F, Name]): h.Value =
             (record: Dict[String, Any])(name).asInstanceOf[h.Value]
 
+        /** Returns the record's contents as a `Dict[String, Any]`. */
         def toDict: Dict[String, Any] = record
 
+        /** Combines this record with another, producing a record whose type is the intersection of both field sets. If both records contain
+          * a field with the same name, the value from `other` takes precedence at runtime.
+          */
         def &[A](other: Record[A]): Record[F & A] =
             (record: Dict[String, Any]) ++ other
 
+        /** Returns a new record containing only the fields declared in `F`, removing any extra fields that may be present in the underlying
+          * storage due to widening. Requires a `Fields` instance for `F`.
+          */
         def compact(using f: Fields[F]): Record[F] =
             record.filter((k, _) => f.names.contains(k))
 
+        /** Returns the field names declared in `F` as a list. */
         def fields(using f: Fields[F]): List[String] =
             f.fields.map(_.name)
 
+        /** Extracts all field values as a typed tuple, ordered by the field declaration in `F`. */
         inline def values(using f: Fields[F]): f.Values =
             Record.collectValues[f.AsTuple](record).asInstanceOf[f.Values]
 
+        /** Applies a polymorphic function to each field value, wrapping each value type in `G`. Returns a new record where every field
+          * `Name ~ V` becomes `Name ~ G[V]`.
+          */
         def map[G[_]](using
             f: Fields[F]
         )(
@@ -80,6 +97,9 @@ object Record extends RecordDictSyntax:
                     .mapValues(v => fn(v))
             )
 
+        /** Like `map`, but the polymorphic function also receives the `Field` descriptor for each field, providing access to the field name
+          * and tag.
+          */
         def mapFields[G[_]](using
             f: Fields[F]
         )(
@@ -94,6 +114,9 @@ object Record extends RecordDictSyntax:
             Record.from[f.Map[~.MapValue[G]]](result.result())
         end mapFields
 
+        /** Pairs the values of this record with another record by field name. Both records must have the same field names (verified at
+          * compile time). For each field `Name ~ V1` in this record and `Name ~ V2` in `other`, the result contains `Name ~ (V1, V2)`.
+          */
         inline def zip[F2](other: Record[F2])(using
             f1: Fields[F],
             f2: Fields[F2],
@@ -106,6 +129,7 @@ object Record extends RecordDictSyntax:
         end zip
     end extension
 
+    /** Conversion that allows access to fields by name. */
     given [F, T, S](using c: Fields.Aux[F, T, S]): Conversion[Impl[F], S] =
         new Conversion[Impl[F], S]:
             def apply(r: Impl[F]): S = Fields.Structural.from(r)
