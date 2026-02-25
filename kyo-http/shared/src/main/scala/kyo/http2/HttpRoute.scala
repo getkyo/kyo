@@ -464,11 +464,13 @@ object HttpRoute:
     inline given [A, N <: String]: UniqueRequestField[A, N] =
         val _ = scala.compiletime.summonInline[scala.util.NotGiven[HasFieldName[A, N]]]
         ()
+    private[http2] def unsafeUniqueRequestField[A, N <: String]: UniqueRequestField[A, N] = ()
 
     @implicitNotFound("Duplicate response field '${N}' — this field was already added to the response definition")
     opaque type UniqueResponseField[+A, N <: String] = Unit
     inline given [A, N <: String]: UniqueResponseField[A, N] =
         val _ = scala.compiletime.summonInline[scala.util.NotGiven[HasFieldName[A, N]]]
         ()
+    private[http2] def unsafeUniqueResponseField[A, N <: String]: UniqueResponseField[A, N] = ()
 
 end HttpRoute

@@ -342,6 +342,131 @@ class OpenApiTest extends kyo.Test:
             assert(route.method == HttpMethod.GET)
         }
 
+        "query parameter" in {
+            val api = OpenApi.fromJson("""{
+                "openapi": "3.0.0",
+                "info": {"title": "Test", "version": "1.0"},
+                "paths": {
+                    "/pets": {
+                        "get": {
+                            "operationId": "listPets",
+                            "parameters": [{
+                                "name": "limit",
+                                "in": "query",
+                                "required": true,
+                                "schema": {"type": "integer", "format": "int32"}
+                            }],
+                            "responses": {"200": {"description": "ok"}}
+                        }
+                    }
+                }
+            }""")
+            val route: HttpRoute["limit" ~ Int, Any, Nothing] = api.listPets
+            assert(route.method == HttpMethod.GET)
+            assert(route.request.fields.size == 1)
+        }
+
+        "optional query parameter" in {
+            val api = OpenApi.fromJson("""{
+                "openapi": "3.0.0",
+                "info": {"title": "Test", "version": "1.0"},
+                "paths": {
+                    "/pets": {
+                        "get": {
+                            "operationId": "listPets",
+                            "parameters": [{
+                                "name": "limit",
+                                "in": "query",
+                                "schema": {"type": "integer", "format": "int32"}
+                            }],
+                            "responses": {"200": {"description": "ok"}}
+                        }
+                    }
+                }
+            }""")
+            val route: HttpRoute["limit" ~ kyo.Maybe[Int], Any, Nothing] = api.listPets
+            assert(route.request.fields.size == 1)
+        }
+
+        "header parameter" in {
+            val api = OpenApi.fromJson("""{
+                "openapi": "3.0.0",
+                "info": {"title": "Test", "version": "1.0"},
+                "paths": {
+                    "/pets": {
+                        "get": {
+                            "operationId": "listPets",
+                            "parameters": [{
+                                "name": "X-Request-Id",
+                                "in": "header",
+                                "required": true,
+                                "schema": {"type": "string"}
+                            }],
+                            "responses": {"200": {"description": "ok"}}
+                        }
+                    }
+                }
+            }""")
+            val route: HttpRoute["X-Request-Id" ~ String, Any, Nothing] = api.listPets
+            assert(route.request.fields.size == 1)
+        }
+
+        "response body json" in {
+            val api = OpenApi.fromJson("""{
+                "openapi": "3.0.0",
+                "info": {"title": "Test", "version": "1.0"},
+                "paths": {
+                    "/greeting": {
+                        "get": {
+                            "operationId": "greet",
+                            "responses": {
+                                "200": {
+                                    "description": "ok",
+                                    "content": {
+                                        "application/json": {
+                                            "schema": {"type": "string"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }""")
+            val route: HttpRoute[Any, "body" ~ String, Nothing] = api.greet
+            assert(route.response.fields.size == 1)
+        }
+
+        "path capture + query + response body" in {
+            val api = OpenApi.fromJson("""{
+                "openapi": "3.0.0",
+                "info": {"title": "Test", "version": "1.0"},
+                "paths": {
+                    "/pets/{petId}": {
+                        "get": {
+                            "operationId": "getPet",
+                            "parameters": [
+                                {"name": "petId", "in": "path", "required": true, "schema": {"type": "integer"}},
+                                {"name": "verbose", "in": "query", "required": true, "schema": {"type": "boolean"}}
+                            ],
+                            "responses": {
+                                "200": {
+                                    "description": "ok",
+                                    "content": {
+                                        "application/json": {"schema": {"type": "string"}}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }""")
+            val route: HttpRoute["petId" ~ Int & "verbose" ~ Boolean, "body" ~ String, Nothing] = api.getPet
+            assert(route.method == HttpMethod.GET)
+            assert(route.request.fields.size == 1)
+            assert(route.response.fields.size == 1)
+        }
+
         "generated operation name when no operationId" in {
             val api = OpenApi.fromJson("""{
                 "openapi": "3.0.0",

@@ -4,10 +4,10 @@ import kyo.Record2.~
 import scala.language.implicitConversions
 
 enum HttpPath[+A] derives CanEqual:
-    case Literal(value: String)                                                                   extends HttpPath[Any]
-    case Capture[N <: String & Singleton, A](fieldName: N, wireName: String, codec: HttpCodec[A]) extends HttpPath[N ~ A]
-    case Rest[N <: String & Singleton](fieldName: N)                                              extends HttpPath[N ~ String]
-    case Concat[A, B](left: HttpPath[A], right: HttpPath[B])                                      extends HttpPath[A & B]
+    case Literal(value: String)                                                       extends HttpPath[Any]
+    case Capture[N <: String, A](fieldName: N, wireName: String, codec: HttpCodec[A]) extends HttpPath[N ~ A]
+    case Rest[N <: String](fieldName: N)                                              extends HttpPath[N ~ String]
+    case Concat[A, B](left: HttpPath[A], right: HttpPath[B])                          extends HttpPath[A & B]
 end HttpPath
 
 object HttpPath:
@@ -20,6 +20,11 @@ object HttpPath:
         def apply[A](using codec: HttpCodec[A])[N <: String & Singleton](fieldName: N, wireName: String): HttpPath[N ~ A] =
             HttpPath.Capture(fieldName, wireName, codec)
     end Capture
+
+    object Rest:
+        def apply[N <: String & Singleton](fieldName: N): HttpPath[N ~ String] =
+            HttpPath.Rest(fieldName)
+    end Rest
 
     extension [A](self: HttpPath[A])
         def /[B](next: HttpPath[B]): HttpPath[A & B] =
