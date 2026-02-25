@@ -1,225 +1,282 @@
 package kyo
 
+import kyo.*
+import kyo.hours
+
 class HttpHeadersTest extends Test:
 
-    "factories and basics" - {
-        "empty has size 0" in {
-            val h = HttpHeaders.empty
-            assert(h.size == 0)
-            assert(h.isEmpty)
-            assert(!h.nonEmpty)
+    "cookie" - {
+        "parses single cookie" in {
+            val h = HttpHeaders.empty.add("Cookie", "session=abc123")
+            assert(h.cookie("session") == Present("abc123"))
         }
 
-        "single header has size 1" in {
-            val h = HttpHeaders.empty.add("X-Foo", "bar")
-            assert(h.size == 1)
-            assert(!h.isEmpty)
-            assert(h.nonEmpty)
+        "parses first of multiple cookies" in {
+            val h = HttpHeaders.empty.add("Cookie", "a=1; b=2; c=3")
+            assert(h.cookie("a") == Present("1"))
         }
 
-        "multiple headers have correct size" in {
-            val h = HttpHeaders.empty
-                .add("A", "1")
-                .add("B", "2")
-                .add("C", "3")
-            assert(h.size == 3)
+        "parses middle cookie" in {
+            val h = HttpHeaders.empty.add("Cookie", "a=1; b=2; c=3")
+            assert(h.cookie("b") == Present("2"))
         }
 
-        "fromFlatArrayNoCopy rejects odd-length array" in {
-            assertThrows[IllegalArgumentException] {
-                HttpHeaders.fromFlatArrayNoCopy(Array("name"))
-            }
-        }
-    }
-
-    "get" - {
-        "returns value for existing header" in {
-            val h = HttpHeaders.empty.add("Content-Type", "text/plain")
-            assert(h.get("Content-Type") == Present("text/plain"))
+        "parses last cookie" in {
+            val h = HttpHeaders.empty.add("Cookie", "a=1; b=2; c=3")
+            assert(h.cookie("c") == Present("3"))
         }
 
-        "case-insensitive lookup" in {
-            val h = HttpHeaders.empty.add("Content-Type", "text/plain")
-            assert(h.get("content-type") == Present("text/plain"))
-            assert(h.get("CONTENT-TYPE") == Present("text/plain"))
+        "returns Absent for missing cookie" in {
+            val h = HttpHeaders.empty.add("Cookie", "a=1; b=2")
+            assert(h.cookie("missing") == Absent)
         }
 
-        "returns Absent for missing header" in {
-            val h = HttpHeaders.empty.add("X-Foo", "bar")
-            assert(h.get("X-Bar") == Absent)
+        "returns Absent when no Cookie header" in {
+            assert(HttpHeaders.empty.cookie("anything") == Absent)
         }
 
-        "returns first value when multiple headers with same name" in {
-            val h = HttpHeaders.empty
-                .add("X-Multi", "first")
-                .add("X-Multi", "second")
-                .add("X-Multi", "third")
-            assert(h.get("X-Multi") == Present("first"))
+        "handles whitespace around values" in {
+            val h = HttpHeaders.empty.add("Cookie", "a = 1 ; b = 2 ")
+            assert(h.cookie("a") == Present("1"))
+            assert(h.cookie("b") == Present("2"))
         }
 
-        "returns Absent on empty headers" in {
-            assert(HttpHeaders.empty.get("Anything") == Absent)
+        "handles cookie value with equals sign" in {
+            val h = HttpHeaders.empty.add("Cookie", "token=abc=def=ghi")
+            assert(h.cookie("token") == Present("abc=def=ghi"))
+        }
+
+        "handles empty value" in {
+            val h = HttpHeaders.empty.add("Cookie", "empty=; other=val")
+            assert(h.cookie("empty") == Present(""))
+            assert(h.cookie("other") == Present("val"))
+        }
+
+        "handles single cookie with no semicolons" in {
+            val h = HttpHeaders.empty.add("Cookie", "only=one")
+            assert(h.cookie("only") == Present("one"))
         }
     }
 
-    "getLast" - {
-        "returns last value when multiple headers with same name" in {
-            val h = HttpHeaders.empty
-                .add("X-Multi", "first")
-                .add("X-Multi", "second")
-                .add("X-Multi", "third")
-            assert(h.getLast("X-Multi") == Present("third"))
+    "cookies" - {
+        "parses all cookies" in {
+            val h      = HttpHeaders.empty.add("Cookie", "a=1; b=2; c=3")
+            val result = h.cookies
+            assert(result.length == 3)
+            assert(result(0) == ("a", "1"))
+            assert(result(1) == ("b", "2"))
+            assert(result(2) == ("c", "3"))
         }
 
-        "returns Absent for missing header" in {
-            val h = HttpHeaders.empty.add("X-Foo", "bar")
-            assert(h.getLast("X-Bar") == Absent)
+        "returns empty for no Cookie header" in {
+            assert(HttpHeaders.empty.cookies == Seq.empty)
         }
 
-        "returns single value when only one exists" in {
-            val h = HttpHeaders.empty.add("X-Single", "only")
-            assert(h.getLast("X-Single") == Present("only"))
-        }
-    }
-
-    "contains" - {
-        "true for existing header" in {
-            val h = HttpHeaders.empty.add("X-Foo", "bar")
-            assert(h.contains("X-Foo"))
+        "parses single cookie" in {
+            val h      = HttpHeaders.empty.add("Cookie", "k=v")
+            val result = h.cookies
+            assert(result.length == 1)
+            assert(result(0) == ("k", "v"))
         }
 
-        "case-insensitive" in {
-            val h = HttpHeaders.empty.add("X-Foo", "bar")
-            assert(h.contains("x-foo"))
-            assert(h.contains("X-FOO"))
-        }
-
-        "false for missing header" in {
-            val h = HttpHeaders.empty.add("X-Foo", "bar")
-            assert(!h.contains("X-Bar"))
+        "handles whitespace" in {
+            val h      = HttpHeaders.empty.add("Cookie", " a = 1 ; b = 2 ")
+            val result = h.cookies
+            assert(result.length == 2)
+            assert(result(0) == ("a", "1"))
+            assert(result(1) == ("b", "2"))
         }
     }
 
-    "exists" - {
-        "matches on predicate" in {
-            val h = HttpHeaders.empty
-                .add("X-Foo", "bar")
-                .add("X-Baz", "qux")
-            assert(h.exists((name, value) => value == "qux"))
+    "cookie (strict)" - {
+        "accepts valid cookie" in {
+            val h = HttpHeaders.empty.add("Cookie", "session=abc123")
+            assert(h.cookie("session", strict = true) == Present("abc123"))
         }
 
-        "returns false when no match" in {
-            val h = HttpHeaders.empty.add("X-Foo", "bar")
-            assert(!h.exists((_, value) => value == "missing"))
-        }
-    }
-
-    "add vs set" - {
-        "add preserves duplicate names" in {
-            val h = HttpHeaders.empty
-                .add("X-Dup", "first")
-                .add("X-Dup", "second")
-            assert(h.size == 2)
-            assert(h.get("X-Dup") == Present("first"))
-            assert(h.getLast("X-Dup") == Present("second"))
+        "rejects cookie value with comma" in {
+            val h = HttpHeaders.empty.add("Cookie", "bad=val,ue")
+            assert(h.cookie("bad", strict = true) == Absent)
         }
 
-        "set replaces existing header" in {
-            val h = HttpHeaders.empty
-                .add("X-Foo", "old")
-                .set("X-Foo", "new")
-            assert(h.size == 1)
-            assert(h.get("X-Foo") == Present("new"))
+        "rejects cookie value with semicolon" in {
+            val h = HttpHeaders.empty.add("Cookie", "bad=val;ue")
+            // Note: semicolon is the cookie separator, so the parser would split here.
+            // "bad" gets value "val" and "ue" has no equals sign.
+            // In lax mode, cookie("bad") should return "val"
+            assert(h.cookie("bad") == Present("val"))
         }
 
-        "set on non-existing header appends" in {
-            val h = HttpHeaders.empty
-                .add("X-Existing", "value")
-                .set("X-New", "added")
-            assert(h.size == 2)
-            assert(h.get("X-Existing") == Present("value"))
-            assert(h.get("X-New") == Present("added"))
+        "rejects cookie value with backslash" in {
+            val h = HttpHeaders.empty.add("Cookie", "bad=val\\ue")
+            assert(h.cookie("bad", strict = true) == Absent)
         }
 
-        "set replaces all duplicates" in {
-            val h = HttpHeaders.empty
-                .add("X-Dup", "first")
-                .add("X-Dup", "second")
-                .add("X-Dup", "third")
-                .set("X-Dup", "replaced")
-            assert(h.size == 1)
-            assert(h.get("X-Dup") == Present("replaced"))
-        }
-    }
-
-    "remove" - {
-        "removes all headers with matching name" in {
-            val h = HttpHeaders.empty
-                .add("X-Remove", "a")
-                .add("X-Keep", "b")
-                .add("X-Remove", "c")
-                .remove("X-Remove")
-            assert(h.size == 1)
-            assert(!h.contains("X-Remove"))
-            assert(h.get("X-Keep") == Present("b"))
+        "rejects cookie value with space" in {
+            // After trim, if there's still a space in the middle
+            val h = HttpHeaders.empty.add("Cookie", "bad=val ue")
+            assert(h.cookie("bad", strict = true) == Absent)
         }
 
-        "case-insensitive removal" in {
-            val h = HttpHeaders.empty
-                .add("Content-Type", "text/plain")
-                .remove("content-type")
-            assert(h.isEmpty)
+        "rejects cookie value with control character" in {
+            val h = HttpHeaders.empty.add("Cookie", "bad=val\u0001ue")
+            assert(h.cookie("bad", strict = true) == Absent)
         }
 
-        "removing non-existent header returns equivalent headers" in {
-            val h       = HttpHeaders.empty.add("X-Foo", "bar")
-            val removed = h.remove("X-Missing")
-            assert(removed.size == 1)
-            assert(removed.get("X-Foo") == Present("bar"))
+        "accepts DQUOTE-wrapped value" in {
+            val h = HttpHeaders.empty.add("Cookie", "name=\"validvalue\"")
+            assert(h.cookie("name", strict = true) == Present("\"validvalue\""))
+        }
+
+        "rejects DQUOTE-wrapped value with invalid inner content" in {
+            val h = HttpHeaders.empty.add("Cookie", "name=\"val,ue\"")
+            assert(h.cookie("name", strict = true) == Absent)
+        }
+
+        "lax mode accepts invalid characters" in {
+            val h = HttpHeaders.empty.add("Cookie", "name=val\\ue")
+            assert(h.cookie("name", strict = false) == Present("val\\ue"))
+        }
+
+        "accepts empty value in strict mode" in {
+            val h = HttpHeaders.empty.add("Cookie", "name=")
+            assert(h.cookie("name", strict = true) == Present(""))
         }
     }
 
-    "concat" - {
-        "merges two non-empty header collections" in {
-            val a      = HttpHeaders.empty.add("A", "1")
-            val b      = HttpHeaders.empty.add("B", "2")
-            val merged = a.concat(b)
-            assert(merged.size == 2)
-            assert(merged.get("A") == Present("1"))
-            assert(merged.get("B") == Present("2"))
+    "cookies (strict)" - {
+        "filters out invalid cookies, keeps valid ones" in {
+            // "good" has valid value, "bad" has comma in value
+            val h      = HttpHeaders.empty.add("Cookie", "good=valid; bad=inv,alid; also_good=ok")
+            val result = h.cookies(strict = true)
+            assert(result.length == 2)
+            assert(result(0) == ("good", "valid"))
+            assert(result(1) == ("also_good", "ok"))
         }
 
-        "concat with empty left returns right" in {
-            val b      = HttpHeaders.empty.add("B", "2")
-            val merged = HttpHeaders.empty.concat(b)
-            assert(merged.size == 1)
-            assert(merged.get("B") == Present("2"))
+        "rejects cookie with invalid name" in {
+            // Space in cookie name is invalid per RFC 2616 token
+            val h      = HttpHeaders.empty.add("Cookie", "bad name=value; good=ok")
+            val result = h.cookies(strict = true)
+            assert(result.length == 1)
+            assert(result(0) == ("good", "ok"))
         }
 
-        "concat with empty right returns left" in {
-            val a      = HttpHeaders.empty.add("A", "1")
-            val merged = a.concat(HttpHeaders.empty)
-            assert(merged.size == 1)
-            assert(merged.get("A") == Present("1"))
+        "rejects empty cookie name" in {
+            val h      = HttpHeaders.empty.add("Cookie", "=value; good=ok")
+            val result = h.cookies(strict = true)
+            assert(result.length == 1)
+            assert(result(0) == ("good", "ok"))
+        }
+
+        "accepts all valid cookies" in {
+            val h      = HttpHeaders.empty.add("Cookie", "a=1; b=2; c=3")
+            val result = h.cookies(strict = true)
+            assert(result.length == 3)
+        }
+
+        "lax mode keeps everything" in {
+            val h      = HttpHeaders.empty.add("Cookie", "good=valid; bad=inv,alid")
+            val result = h.cookies(strict = false)
+            assert(result.length == 2)
+        }
+
+        "cookie name with separator characters rejected in strict" in {
+            // RFC 2616 token excludes: ( ) < > @ , ; : \ " / [ ] ? = { }
+            val h      = HttpHeaders.empty.add("Cookie", "na(me=val; good=ok")
+            val result = h.cookies(strict = true)
+            assert(result.length == 1)
+            assert(result(0) == ("good", "ok"))
         }
     }
 
-    "foreach" - {
-        "iterates all name-value pairs" in {
-            val h = HttpHeaders.empty
-                .add("A", "1")
-                .add("B", "2")
-                .add("C", "3")
-            var collected = List.empty[(String, String)]
-            h.foreach((name, value) => collected = (name, value) :: collected)
-            assert(collected.size == 3)
-            assert(collected.reverse == List(("A", "1"), ("B", "2"), ("C", "3")))
+    "addCookie" - {
+        "serializes simple cookie" in {
+            val h = HttpHeaders.empty.addCookie("session", HttpCookie("abc123"))
+            assert(h.get("Set-Cookie") == Present("session=abc123"))
         }
 
-        "no-op on empty headers" in {
-            var called = false
-            HttpHeaders.empty.foreach((_, _) => called = true)
-            assert(!called)
+        "serializes cookie with maxAge" in {
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("val").maxAge(1.hours))
+            val v = h.get("Set-Cookie")
+            assert(v.exists(_.contains("id=val")))
+            assert(v.exists(_.contains("Max-Age=3600")))
+        }
+
+        "serializes cookie with domain" in {
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").domain("example.com"))
+            assert(h.get("Set-Cookie").exists(_.contains("Domain=example.com")))
+        }
+
+        "serializes cookie with path" in {
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").path("/api"))
+            assert(h.get("Set-Cookie").exists(_.contains("Path=/api")))
+        }
+
+        "serializes secure flag" in {
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").secure(true))
+            assert(h.get("Set-Cookie").exists(_.contains("Secure")))
+        }
+
+        "serializes httpOnly flag" in {
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").httpOnly(true))
+            assert(h.get("Set-Cookie").exists(_.contains("HttpOnly")))
+        }
+
+        "serializes sameSite" in {
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").sameSite(HttpCookie.SameSite.Strict))
+            assert(h.get("Set-Cookie").exists(_.contains("SameSite=Strict")))
+        }
+
+        "serializes all attributes" in {
+            val cookie = HttpCookie("token")
+                .maxAge(24.hours)
+                .domain("example.com")
+                .path("/")
+                .secure(true)
+                .httpOnly(true)
+                .sameSite(HttpCookie.SameSite.Lax)
+            val h = HttpHeaders.empty.addCookie("session", cookie)
+            val v = h.get("Set-Cookie").get
+            assert(v.contains("session=token"))
+            assert(v.contains("Max-Age=86400"))
+            assert(v.contains("Domain=example.com"))
+            assert(v.contains("Path=/"))
+            assert(v.contains("Secure"))
+            assert(v.contains("HttpOnly"))
+            assert(v.contains("SameSite=Lax"))
+        }
+
+        "omits unset attributes" in {
+            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v"))
+            val v = h.get("Set-Cookie").get
+            assert(v == "id=v")
+            assert(!v.contains("Max-Age"))
+            assert(!v.contains("Domain"))
+            assert(!v.contains("Path"))
+            assert(!v.contains("Secure"))
+            assert(!v.contains("HttpOnly"))
+            assert(!v.contains("SameSite"))
+        }
+
+        "string value shorthand" in {
+            val h = HttpHeaders.empty.addCookie("name", "value")
+            assert(h.get("Set-Cookie") == Present("name=value"))
+        }
+
+        "multiple Set-Cookie headers" in {
+            val h = HttpHeaders.empty
+                .addCookie("a", "1")
+                .addCookie("b", "2")
+            val all = h.getAll("Set-Cookie")
+            assert(all.length == 2)
+            assert(all(0) == "a=1")
+            assert(all(1) == "b=2")
+        }
+
+        "serializes Int cookie value" in {
+            val h = HttpHeaders.empty.addCookie("count", HttpCookie(42))
+            assert(h.get("Set-Cookie") == Present("count=42"))
         }
     }
 

@@ -1,69 +1,52 @@
 package kyo
 
-import java.net.URI
+import kyo.*
+import kyo.discard
+import scala.annotation.tailrec
 
-/** Parsed URL holding pre-decomposed components to avoid build-then-parse round-trips.
+/** Parsed URL with structured access to components.
   *
-  * On the hot path (no baseUrl, no redirects), an `HttpUrl` is constructed directly from the request's Host header and stored path/query —
-  * zero string allocations. The full URL string is only materialized on demand (e.g. for redirect resolution).
+  * Constructed via `HttpUrl.parse` which returns `Result[String, HttpUrl]` for safe handling of malformed URLs. Query parameters are lazily
+  * parsed from the raw query string with safe URL decoding (falls back to raw value on malformed percent-encoding).
   */
-final class HttpUrl private (
-    val host: String,
-    val port: Int,
-    val rawPath: String,
-    val rawQuery: Maybe[String]
-):
-
-    def ssl: Boolean = HttpUrl.isSsl(port)
-
-    /** Pre-computed Host header value. Empty string when host is empty. */
-    private val hostHeaderValue: String =
-        if host.isEmpty then ""
-        else
-            val isIpv6     = host.contains(':')
-            val nonStdPort = port > 0 && !HttpUrl.isDefaultPort(port)
-            if !isIpv6 && !nonStdPort then host
-            else
-                val sb = new StringBuilder(host.length + 8)
-                if isIpv6 then discard(sb.append('[').append(host).append(']'))
-                else discard(sb.append(host))
-                if nonStdPort then discard(sb.append(':').append(port))
-                sb.toString
-            end if
-
-    /** Full URL string (e.g. "https://example.com:8080/path?q=1"). Computed on demand. */
+final case class HttpUrl(
+    scheme: Maybe[String],
+    host: String,
+    port: Int,
+    path: String,
+    rawQuery: Maybe[String]
+) derives CanEqual:
+    /** Full URL string (e.g. "https://example.com:8080/path?q=1"). */
     def full: String =
-        if host.isEmpty then
-            rawQuery match
-                case Present(q) => s"$rawPath?$q"
-                case Absent     => rawPath
-        else
-            val scheme      = if ssl then "https" else "http"
-            val defaultPort = if ssl then HttpUrl.DefaultHttpsPort else HttpUrl.DefaultHttpPort
-            val sb          = new StringBuilder(scheme.length + 3 + host.length + 8 + rawPath.length + rawQuery.fold(0)(_.length + 1))
-            discard(sb.append(scheme).append("://"))
-            if host.contains(':') then discard(sb.append('[').append(host).append(']'))
-            else discard(sb.append(host))
-            if port != defaultPort then discard(sb.append(':').append(port))
-            discard(sb.append(rawPath))
-            rawQuery match
-                case Present(q) => discard(sb.append('?').append(q))
-                case Absent     =>
-            sb.toString
-    end full
+        scheme match
+            case Absent =>
+                rawQuery match
+                    case Present(q) => s"$path?$q"
+                    case Absent     => path
+            case Present(s) =>
+                val defaultPort = if s == "https" then HttpUrl.DefaultHttpsPort else HttpUrl.DefaultHttpPort
+                val sb          = new StringBuilder(s.length + 3 + host.length + 8 + path.length + rawQuery.fold(0)(_.length + 1))
+                discard(sb.append(s).append("://").append(host))
+                if port != defaultPort then discard(sb.append(':').append(port))
+                discard(sb.append(path))
+                rawQuery match
+                    case Present(q) => discard(sb.append('?').append(q))
+                    case Absent     =>
+                sb.toString
 
-    /** Resolve a redirect Location header against this URL. */
-    def resolve(location: String): HttpUrl =
-        if location.startsWith("http://") || location.startsWith("https://") then
-            HttpUrl(location)
-        else
-            HttpUrl(new URI(full).resolve(location).toString)
+    def ssl: Boolean = port == HttpUrl.DefaultHttpsPort
 
-    /** Inject a Host header into the given headers if not already present. Uses this URL's host/port. */
-    def ensureHostHeader(headers: HttpHeaders): HttpHeaders =
-        if host.isEmpty || headers.contains("Host") then headers
-        else headers.add("Host", hostHeaderValue)
-    end ensureHostHeader
+    /** Returns the first value for the given query parameter name. */
+    def query(name: String): Maybe[String] =
+        rawQuery match
+            case Absent     => Absent
+            case Present(q) => HttpUrl.parseQueryParam(q, name)
+
+    /** Returns all values for the given query parameter name. */
+    def queryAll(name: String): Seq[String] =
+        rawQuery match
+            case Absent     => Seq.empty
+            case Present(q) => HttpUrl.parseQueryParamAll(q, name)
 
     override def toString: String = full
 
@@ -71,117 +54,42 @@ end HttpUrl
 
 object HttpUrl:
 
-    private inline val DefaultHttpPort  = 80
-    private inline val DefaultHttpsPort = 443
+    private val DefaultHttpPort  = 80
+    private val DefaultHttpsPort = 443
 
-    /** Returns true if the port is the standard HTTPS port (443). */
-    def isSsl(port: Int): Boolean =
-        port == DefaultHttpsPort
+    /** Parse a full URL string into an HttpUrl. */
+    def parse(url: String)(using Frame): Result[HttpError, HttpUrl] =
+        if url.isEmpty then Result.fail(HttpError.ParseError("URL cannot be empty"))
+        else
+            Result.catching[Exception] {
+                doParse(url)
+            }.mapFailure(e => HttpError.ParseError(s"Invalid URL '$url': ${e.getMessage}"))
 
-    /** Returns true if the port is a standard HTTP(S) default (80 or 443). */
-    def isDefaultPort(port: Int): Boolean =
-        port == DefaultHttpPort || port == DefaultHttpsPort
-
-    /** Parse a full URL string into an HttpUrl. Handles scheme, host, port, IPv6, path, query, and fragment. */
-    def apply(url: String): HttpUrl =
-        parseUrlParts(url) { (scheme, host, port, rawPath, rawQuery) =>
-            val ssl           = scheme.contains("https")
-            val effectivePort = if port < 0 then (if ssl then DefaultHttpsPort else DefaultHttpPort) else port
-            val rawHost = host.getOrElse("") match
-                case h if h.startsWith("[") && h.endsWith("]") => h.substring(1, h.length - 1)
-                case h                                         => h
-            new HttpUrl(rawHost, effectivePort, rawPath, rawQuery)
-        }
-
-    /** Construct from pre-parsed components. */
-    def apply(host: String, port: Int, rawPath: String, rawQuery: Maybe[String]): HttpUrl =
-        new HttpUrl(host, port, rawPath, rawQuery)
-
-    /** Parse a server-side request URI (path + optional query) into an HttpUrl with empty host.
-      *
-      * Used by backend implementations that receive path-only URIs (e.g. "/api/users?page=1").
-      */
-    private[kyo] def fromUri(uri: String): HttpUrl =
+    /** Parse a server-side request URI (path + optional query) with no host. */
+    def fromUri(uri: String): HttpUrl =
         val qIdx    = uri.indexOf('?')
         val hashIdx = uri.indexOf('#')
         if qIdx < 0 || (hashIdx >= 0 && hashIdx < qIdx) then
             val endIdx = if hashIdx >= 0 then hashIdx else uri.length
             val path   = if endIdx == 0 then "/" else uri.substring(0, endIdx)
-            new HttpUrl("", DefaultHttpPort, path, Absent)
+            HttpUrl(Absent, "", DefaultHttpPort, path, Absent)
         else
             val path   = if qIdx == 0 then "/" else uri.substring(0, qIdx)
             val afterQ = uri.substring(qIdx + 1)
             val qHash  = afterQ.indexOf('#')
             val q      = if qHash >= 0 then afterQ.substring(0, qHash) else afterQ
-            new HttpUrl("", DefaultHttpPort, path, if q.isEmpty then Absent else Present(q))
+            HttpUrl(Absent, "", DefaultHttpPort, path, if q.isEmpty then Absent else Present(q))
         end if
     end fromUri
 
-    /** Build an HttpUrl from a Host header value, scheme, and path/query components.
-      *
-      * Centralizes the Host header parsing logic (IPv6 brackets, port extraction, scheme-based default port).
-      */
-    private[kyo] def fromHostHeader(
-        hostHeader: Maybe[String],
-        scheme: Maybe[String],
-        rawPath: String,
-        rawQuery: Maybe[String]
-    ): HttpUrl =
-        hostHeader match
-            case Absent => new HttpUrl("", DefaultHttpPort, rawPath, rawQuery)
-            case Present(h) =>
-                if h.startsWith("[") then
-                    val endBracket = h.indexOf(']')
-                    if endBracket < 0 then new HttpUrl(h, DefaultHttpPort, rawPath, rawQuery)
-                    else
-                        val host = h.substring(1, endBracket)
-                        if endBracket + 1 < h.length && h.charAt(endBracket + 1) == ':' then
-                            new HttpUrl(host, h.substring(endBracket + 2).toInt, rawPath, rawQuery)
-                        else
-                            val defaultPort =
-                                if scheme.contains("https") then DefaultHttpsPort else DefaultHttpPort
-                            new HttpUrl(host, defaultPort, rawPath, rawQuery)
-                        end if
-                    end if
-                else
-                    val idx = h.indexOf(':')
-                    if idx >= 0 then
-                        new HttpUrl(h.substring(0, idx), h.substring(idx + 1).toInt, rawPath, rawQuery)
-                    else
-                        val defaultPort =
-                            if scheme.contains("https") then DefaultHttpsPort else DefaultHttpPort
-                        new HttpUrl(h, defaultPort, rawPath, rawQuery)
-                    end if
-    end fromHostHeader
+    // --- Private parsing ---
 
-    /** Build the effective HttpUrl for a request, applying baseUrl resolution if configured. */
-    private[kyo] def effective(baseUrl: Maybe[String], request: HttpRequest[?]): HttpUrl =
-        baseUrl match
-            case Present(base) =>
-                val httpUrl = request.httpUrl
-                if httpUrl.host.nonEmpty then httpUrl
-                else
-                    val url           = request.url
-                    val normalizedUrl = if url.startsWith("/") then url else "/" + url
-                    HttpUrl(new URI(base).resolve(normalizedUrl).toString)
-                end if
-            case Absent =>
-                request.httpUrl
-
-    // --- Private URL parsing (zero-allocation, inline continuation-passing) ---
-
-    /** Parse a full URL into (scheme, host, port, rawPath, rawQuery) without allocating intermediate objects.
-      *
-      * For path-only URLs (no scheme), scheme and host are Absent, port is -1.
-      */
-    private inline def parseUrlParts[A](url: String)(
-        inline f: (Maybe[String], Maybe[String], Int, String, Maybe[String]) => A
-    ): A =
+    private def doParse(url: String): HttpUrl =
         val schemeEnd = url.indexOf("://")
         if schemeEnd < 0 then
-            splitPathQuery(url) { (rawPath, rawQuery) =>
-                f(Absent, Absent, -1, rawPath, rawQuery)
-            }
+            // Path-only URL
+            val (path, query) = splitPathQuery(url)
+            HttpUrl(Absent, "", DefaultHttpPort, path, query)
         else
             val schemeName  = url.substring(0, schemeEnd)
             val afterScheme = schemeEnd + 3
@@ -194,54 +102,35 @@ object HttpUrl:
                 val m2 = if qIdx >= 0 && qIdx < m1 then qIdx else m1
                 if hashIdx >= 0 && hashIdx < m2 then hashIdx else m2
             end authorityEnd
-            val authority = url.substring(afterScheme, authorityEnd)
-            val remaining = if authorityEnd >= url.length then "/" else url.substring(authorityEnd)
-            parseAuthority(authority, schemeName) { (host, port) =>
-                splitPathQuery(remaining) { (rawPath, rawQuery) =>
-                    val fragIdx   = rawPath.indexOf('#')
-                    val cleanPath = if fragIdx >= 0 then rawPath.substring(0, fragIdx) else rawPath
-                    val finalPath = if cleanPath.isEmpty then "/" else cleanPath
-                    f(Present(schemeName), Present(host), port, finalPath, rawQuery)
-                }
-            }
+            val authority           = url.substring(afterScheme, authorityEnd)
+            val remaining           = if authorityEnd >= url.length then "/" else url.substring(authorityEnd)
+            val (host, port)        = parseAuthority(authority, schemeName)
+            val (rawPath, rawQuery) = splitPathQuery(remaining)
+            val fragIdx             = rawPath.indexOf('#')
+            val cleanPath           = if fragIdx >= 0 then rawPath.substring(0, fragIdx) else rawPath
+            val finalPath           = if cleanPath.isEmpty then "/" else cleanPath
+            HttpUrl(Present(schemeName), host, port, finalPath, rawQuery)
         end if
-    end parseUrlParts
+    end doParse
 
-    /** Split path?query, stripping scheme+authority if present and fragment per RFC 3986. */
-    private inline def splitPathQuery[A](url: String)(
-        inline f: (String, Maybe[String]) => A
-    ): A =
-        val pathStart = url.indexOf("://")
-        val pathPortion =
-            if pathStart < 0 then url
-            else
-                val afterScheme = pathStart + 3
-                val slashIdx    = url.indexOf('/', afterScheme)
-                if slashIdx < 0 then
-                    val qMarkIdx = url.indexOf('?', afterScheme)
-                    if qMarkIdx < 0 then "/" else url.substring(qMarkIdx)
-                else url.substring(slashIdx)
-                end if
-        val hashIdx       = pathPortion.indexOf('#')
-        val qIdx          = pathPortion.indexOf('?')
+    private def splitPathQuery(url: String): (String, Maybe[String]) =
+        val hashIdx       = url.indexOf('#')
+        val qIdx          = url.indexOf('?')
         val effectiveQIdx = if hashIdx >= 0 && (qIdx < 0 || hashIdx < qIdx) then -1 else qIdx
         if effectiveQIdx < 0 then
-            val p0 = if hashIdx >= 0 then pathPortion.substring(0, hashIdx) else pathPortion
+            val p0 = if hashIdx >= 0 then url.substring(0, hashIdx) else url
             val p  = if p0.isEmpty then "/" else p0
-            f(p, Absent)
+            (p, Absent)
         else
-            val p        = if effectiveQIdx == 0 then "/" else pathPortion.substring(0, effectiveQIdx)
-            val afterQ   = pathPortion.substring(effectiveQIdx + 1)
-            val qHashIdx = afterQ.indexOf('#')
-            val q        = if qHashIdx >= 0 then afterQ.substring(0, qHashIdx) else afterQ
-            f(p, if q.isEmpty then Absent else Present(q))
+            val p      = if effectiveQIdx == 0 then "/" else url.substring(0, effectiveQIdx)
+            val afterQ = url.substring(effectiveQIdx + 1)
+            val qHash  = afterQ.indexOf('#')
+            val q      = if qHash >= 0 then afterQ.substring(0, qHash) else afterQ
+            (p, if q.isEmpty then Absent else Present(q))
         end if
     end splitPathQuery
 
-    /** Parse authority "host:port" into (host, port). Handles IPv6 "[::1]:port" and userinfo "user:pass@host". */
-    private inline def parseAuthority[A](authority: String, scheme: String)(
-        inline f: (String, Int) => A
-    ): A =
+    private def parseAuthority(authority: String, scheme: String): (String, Int) =
         val defaultPort =
             if scheme == "https" then DefaultHttpsPort
             else DefaultHttpPort
@@ -252,29 +141,76 @@ object HttpUrl:
                 if atIdx < 0 then authority else authority.substring(atIdx + 1)
         if hostPort.startsWith("[") then
             val endBracket = hostPort.indexOf(']')
-            if endBracket < 0 then f(hostPort, defaultPort)
+            if endBracket < 0 then (hostPort, defaultPort)
             else
-                val host = hostPort.substring(0, endBracket + 1)
+                val host = hostPort.substring(1, endBracket)
                 if endBracket + 1 < hostPort.length && hostPort.charAt(endBracket + 1) == ':' then
-                    val port = hostPort.substring(endBracket + 2).toInt
-                    f(host, port)
+                    val portStr = hostPort.substring(endBracket + 2)
+                    (host, Integer.parseInt(portStr))
                 else
-                    f(host, defaultPort)
+                    (host, defaultPort)
                 end if
             end if
         else
             val colonIdx = hostPort.lastIndexOf(':')
-            if colonIdx < 0 then f(hostPort, defaultPort)
+            if colonIdx < 0 then (hostPort, defaultPort)
             else
                 val host    = hostPort.substring(0, colonIdx)
                 val portStr = hostPort.substring(colonIdx + 1)
                 if portStr.nonEmpty && portStr.forall(_.isDigit) then
-                    f(host, portStr.toInt)
+                    (host, Integer.parseInt(portStr))
                 else
-                    f(hostPort, defaultPort)
+                    (hostPort, defaultPort)
                 end if
             end if
         end if
     end parseAuthority
+
+    // --- Query parameter parsing ---
+
+    private def decodeUrl(s: String): String =
+        Result.catching[Exception] {
+            java.net.URLDecoder.decode(s, "UTF-8")
+        }.getOrElse(s) // fall back to raw value on malformed encoding
+
+    private def parseQueryParam(queryString: String, name: String): Maybe[String] =
+        @tailrec def loop(pos: Int): Maybe[String] =
+            if pos >= queryString.length then Absent
+            else
+                val ampIdx = queryString.indexOf('&', pos)
+                val end    = if ampIdx < 0 then queryString.length else ampIdx
+                val eqIdx  = queryString.indexOf('=', pos)
+                val next   = if ampIdx < 0 then queryString.length else ampIdx + 1
+                if eqIdx >= 0 && eqIdx < end then
+                    val key = decodeUrl(queryString.substring(pos, eqIdx))
+                    if key == name then Present(decodeUrl(queryString.substring(eqIdx + 1, end)))
+                    else loop(next)
+                else
+                    val key = decodeUrl(queryString.substring(pos, end))
+                    if key == name then Present("")
+                    else loop(next)
+                end if
+        loop(0)
+    end parseQueryParam
+
+    private def parseQueryParamAll(queryString: String, name: String): Seq[String] =
+        @tailrec def loop(pos: Int, acc: List[String]): Seq[String] =
+            if pos >= queryString.length then acc.reverse
+            else
+                val ampIdx = queryString.indexOf('&', pos)
+                val end    = if ampIdx < 0 then queryString.length else ampIdx
+                val eqIdx  = queryString.indexOf('=', pos)
+                val next   = if ampIdx < 0 then queryString.length else ampIdx + 1
+                if eqIdx >= 0 && eqIdx < end then
+                    val key = decodeUrl(queryString.substring(pos, eqIdx))
+                    if key == name then loop(next, decodeUrl(queryString.substring(eqIdx + 1, end)) :: acc)
+                    else loop(next, acc)
+                else
+                    val key = decodeUrl(queryString.substring(pos, end))
+                    if key == name then loop(next, "" :: acc)
+                    else loop(next, acc)
+                end if
+        loop(0, Nil)
+    end parseQueryParamAll
 
 end HttpUrl

@@ -1,53 +1,38 @@
 package kyo
 
+import kyo.*
+import kyo.discard
 import scala.annotation.tailrec
 
-/** Immutable HTTP headers backed by a flat interleaved `Chunk[String]` for zero tuple allocation.
+/** Immutable HTTP headers backed by a flat interleaved `Chunk[String]`.
   *
-  * Headers are stored as `[name0, value0, name1, value1, ...]` in a single `Chunk[String]`. This layout eliminates the per-header `Tuple2`
-  * allocation of `Seq[(String, String)]` and enables O(1) append via Chunk's structural sharing.
+  * Headers are stored as `[name0, value0, name1, value1, ...]`. All name lookups are case-insensitive per HTTP semantics. Header names
+  * preserve their original case for wire serialization.
   *
-  * All name lookups are case-insensitive per HTTP semantics. Header names preserve their original case for wire serialization.
-  *
-  * IMPORTANT: `add` appends without deduplication (suitable for requests), while `set` replaces existing headers with the same name
-  * (suitable for responses). Choose the method matching your HTTP message semantics.
-  *
-  * @see
-  *   [[kyo.HttpRequest]]
-  * @see
-  *   [[kyo.HttpResponse]]
+  * `add` appends without deduplication (multi-value semantics). `set` replaces existing headers with the same name.
   */
 opaque type HttpHeaders = Chunk[String]
 
 object HttpHeaders:
 
-    inline given CanEqual[HttpHeaders, HttpHeaders] = CanEqual.derived
+    given CanEqual[HttpHeaders, HttpHeaders] = CanEqual.derived
 
-    // --- Factories ---
-
-    /** Empty headers. */
     val empty: HttpHeaders = Chunk.empty[String]
 
-    // --- Extension methods ---
+    /** Constructs HttpHeaders from a flat interleaved Chunk of [name, value, name, value, ...]. */
+    private[kyo] def fromChunk(chunk: Chunk[String]): HttpHeaders = chunk
 
     extension (self: HttpHeaders)
 
-        /** Number of header entries. */
         def size: Int = self.length / 2
 
-        /** Whether this contains no headers. */
-        inline def isEmpty: Boolean = self.length == 0
+        def isEmpty: Boolean = self.length == 0
 
-        /** Whether this contains at least one header. */
-        inline def nonEmpty: Boolean = self.length != 0
+        def nonEmpty: Boolean = self.length != 0
 
         // --- Lookup ---
 
-        /** Returns the value of the first header matching `name` (case-insensitive).
-          *
-          * @param name
-          *   header name to find
-          */
+        /** Returns the value of the first header matching `name` (case-insensitive). */
         def get(name: String): Maybe[String] =
             @tailrec def loop(i: Int): Maybe[String] =
                 if i >= self.length then Absent
@@ -56,20 +41,17 @@ object HttpHeaders:
             loop(0)
         end get
 
-        /** Returns the value of the last header matching `name` (case-insensitive).
-          *
-          * Useful for response headers where the last value takes precedence.
-          *
-          * @param name
-          *   header name to find
-          */
-        def getLast(name: String): Maybe[String] =
-            @tailrec def loop(i: Int, result: Maybe[String]): Maybe[String] =
-                if i >= self.length then result
-                else if self(i).equalsIgnoreCase(name) then loop(i + 2, Present(self(i + 1)))
-                else loop(i + 2, result)
-            loop(0, Absent)
-        end getLast
+        /** Returns all values for headers matching `name` (case-insensitive). */
+        def getAll(name: String): Seq[String] =
+            val builder = Seq.newBuilder[String]
+            @tailrec def loop(i: Int): Seq[String] =
+                if i >= self.length then builder.result()
+                else
+                    if self(i).equalsIgnoreCase(name) then
+                        builder += self(i + 1)
+                    loop(i + 2)
+            loop(0)
+        end getAll
 
         /** Whether a header with the given name exists (case-insensitive). */
         def contains(name: String): Boolean =
@@ -80,22 +62,13 @@ object HttpHeaders:
             loop(0)
         end contains
 
-        /** Whether any header entry matches the predicate. */
-        inline def exists(inline f: (String, String) => Boolean): Boolean =
-            @tailrec def loop(i: Int): Boolean =
-                if i >= self.length then false
-                else if f(self(i), self(i + 1)) then true
-                else loop(i + 2)
-            loop(0)
-        end exists
-
         // --- Modification ---
 
-        /** Appends a header without replacing existing ones (multi-value / request semantics). */
+        /** Appends a header without replacing existing ones (multi-value semantics). */
         def add(name: String, value: String): HttpHeaders =
             self.append(name).append(value)
 
-        /** Replaces any existing header with the same name, then appends (set semantics / response semantics). */
+        /** Replaces any existing header with the same name, then appends. */
         def set(name: String, value: String): HttpHeaders =
             val builder = ChunkBuilder.init[String]
             @tailrec def loop(i: Int): Unit =
@@ -129,11 +102,9 @@ object HttpHeaders:
             builder.result()
         end remove
 
-        // --- Iteration ---
-
         /** Iterates over all headers as name-value pairs. */
-        inline def foreach(inline f: (String, String) => Unit): Unit =
-            def loop(i: Int): Unit =
+        def foreach(f: (String, String) => Unit): Unit =
+            @tailrec def loop(i: Int): Unit =
                 if i < self.length then
                     f(self(i), self(i + 1))
                     loop(i + 2)
@@ -141,26 +112,171 @@ object HttpHeaders:
         end foreach
 
         /** Folds over all headers as name-value pairs. */
-        inline def foldLeft[A](init: A)(inline f: (A, String, String) => A): A =
-            def loop(i: Int, acc: A): A =
+        def foldLeft[A](init: A)(f: (A, String, String) => A): A =
+            @tailrec def loop(i: Int, acc: A): A =
                 if i >= self.length then acc
                 else loop(i + 2, f(acc, self(i), self(i + 1)))
             loop(0, init)
         end foldLeft
 
+        // --- Cookies ---
+
+        /** Returns the value of a request cookie by name, parsed from the Cookie header (lax mode). */
+        def cookie(name: String): Maybe[String] =
+            self.get("Cookie") match
+                case Absent     => Absent
+                case Present(v) => HttpHeaders.findCookieValue(v, name, strict = false)
+
+        /** Returns the value of a request cookie by name, parsed from the Cookie header.
+          * @param strict
+          *   when true, validates cookie names/values against RFC 6265 and skips non-compliant cookies
+          */
+        def cookie(name: String, strict: Boolean): Maybe[String] =
+            self.get("Cookie") match
+                case Absent     => Absent
+                case Present(v) => HttpHeaders.findCookieValue(v, name, strict)
+
+        /** Returns all request cookies as name-value pairs, parsed from the Cookie header (lax mode). */
+        def cookies: Seq[(String, String)] =
+            self.get("Cookie") match
+                case Absent     => Seq.empty
+                case Present(v) => HttpHeaders.parseCookieHeader(v, strict = false)
+
+        /** Returns all request cookies as name-value pairs, parsed from the Cookie header.
+          * @param strict
+          *   when true, validates cookie names/values against RFC 6265 and skips non-compliant cookies
+          */
+        def cookies(strict: Boolean): Seq[(String, String)] =
+            self.get("Cookie") match
+                case Absent     => Seq.empty
+                case Present(v) => HttpHeaders.parseCookieHeader(v, strict)
+
+        /** Returns the value of a response cookie by name, parsed from Set-Cookie headers. */
+        def responseCookie(name: String): Maybe[String] =
+            val setCookies = self.getAll("Set-Cookie")
+            @tailrec def loop(i: Int): Maybe[String] =
+                if i >= setCookies.size then Absent
+                else
+                    val header = setCookies(i)
+                    val eqIdx  = header.indexOf('=')
+                    if eqIdx > 0 then
+                        val cookieName = header.substring(0, eqIdx).trim
+                        if cookieName == name then
+                            val semIdx = header.indexOf(';', eqIdx + 1)
+                            val end    = if semIdx < 0 then header.length else semIdx
+                            Present(header.substring(eqIdx + 1, end).trim)
+                        else loop(i + 1)
+                        end if
+                    else loop(i + 1)
+                    end if
+            loop(0)
+        end responseCookie
+
+        /** Adds a Set-Cookie header for a response cookie. */
+        def addCookie[A](name: String, cookie: HttpCookie[A]): HttpHeaders =
+            self.add("Set-Cookie", HttpHeaders.serializeCookie(name, cookie))
+
+        /** Adds a Set-Cookie header with a simple string value. */
+        def addCookie(name: String, value: String)(using HttpCodec[String]): HttpHeaders =
+            addCookie(name, HttpCookie(value))
+
     end extension
 
-    // --- Internal ---
+    // --- Cookie parsing ---
 
-    /** Creates headers from a flat interleaved array `[name0, value0, name1, value1, ...]`.
-      *
-      * @param arr
-      *   flat interleaved name-value array, must have even length
+    private def findCookieValue(header: String, name: String, strict: Boolean): Maybe[String] =
+        @tailrec def loop(pos: Int): Maybe[String] =
+            if pos >= header.length then Absent
+            else
+                val start = skipWhitespace(header, pos)
+                val eqIdx = header.indexOf('=', start)
+                if eqIdx < 0 then Absent
+                else
+                    val key    = header.substring(start, eqIdx).trim
+                    val semIdx = header.indexOf(';', eqIdx + 1)
+                    val end    = if semIdx < 0 then header.length else semIdx
+                    val value  = header.substring(eqIdx + 1, end).trim
+                    if key == name then
+                        if strict && !isValidCookieValue(value) then Absent
+                        else Present(value)
+                    else loop(if semIdx < 0 then header.length else semIdx + 1)
+                    end if
+                end if
+        loop(0)
+    end findCookieValue
+
+    private def parseCookieHeader(header: String, strict: Boolean): Seq[(String, String)] =
+        val builder = Seq.newBuilder[(String, String)]
+        @tailrec def loop(pos: Int): Seq[(String, String)] =
+            if pos >= header.length then builder.result()
+            else
+                val start = skipWhitespace(header, pos)
+                val eqIdx = header.indexOf('=', start)
+                if eqIdx < 0 then builder.result()
+                else
+                    val key    = header.substring(start, eqIdx).trim
+                    val semIdx = header.indexOf(';', eqIdx + 1)
+                    val end    = if semIdx < 0 then header.length else semIdx
+                    val value  = header.substring(eqIdx + 1, end).trim
+                    if !strict || (isValidCookieName(key) && isValidCookieValue(value)) then
+                        builder += ((key, value))
+                    loop(if semIdx < 0 then header.length else semIdx + 1)
+                end if
+        loop(0)
+    end parseCookieHeader
+
+    /** RFC 6265 cookie-name: token characters (RFC 2616 Section 2.2) */
+    private def isValidCookieName(name: String): Boolean =
+        var i = 0
+        while i < name.length do
+            val c = name.charAt(i)
+            if c <= 0x20 || c >= 0x7f || "\"(),/:;<=>?@[\\]{}".indexOf(c) >= 0 then
+                return false
+            i += 1
+        end while
+        name.nonEmpty
+    end isValidCookieName
+
+    /** RFC 6265 cookie-value: *cookie-octet / ( DQUOTE *cookie-octet DQUOTE ) cookie-octet = %x21 / %x23-2B / %x2D-3A / %x3C-5B / %x5D-7E
       */
-    private[kyo] def fromFlatArrayNoCopy(arr: Array[String]): HttpHeaders =
-        require(arr.length % 2 == 0, s"Header array length must be even, got ${arr.length}")
-        if arr.length == 0 then empty
-        else Chunk.fromNoCopy(arr)
-    end fromFlatArrayNoCopy
+    private def isValidCookieValue(value: String): Boolean =
+        val len = value.length
+        // Value may optionally be wrapped in DQUOTE
+        val (start, end) =
+            if len >= 2 && value.charAt(0) == '"' && value.charAt(len - 1) == '"' then (1, len - 1)
+            else (0, len)
+        var i = start
+        while i < end do
+            val c = value.charAt(i)
+            if c < 0x21 || c > 0x7e || c == '"' || c == ',' || c == ';' || c == '\\' then
+                return false
+            i += 1
+        end while
+        true
+    end isValidCookieValue
+
+    private[kyo] def serializeCookie[A](name: String, cookie: HttpCookie[A]): String =
+        val sb = new StringBuilder
+        discard(sb.append(name).append('=').append(cookie.codec.encode(cookie.value)))
+        cookie.maxAge match
+            case Present(d) => discard(sb.append("; Max-Age=").append(d.toSeconds))
+            case Absent     =>
+        cookie.domain match
+            case Present(d) => discard(sb.append("; Domain=").append(d))
+            case Absent     =>
+        cookie.path match
+            case Present(p) => discard(sb.append("; Path=").append(p))
+            case Absent     =>
+        if cookie.secure then discard(sb.append("; Secure"))
+        if cookie.httpOnly then discard(sb.append("; HttpOnly"))
+        cookie.sameSite match
+            case Present(s) => discard(sb.append("; SameSite=").append(s))
+            case Absent     =>
+        sb.toString
+    end serializeCookie
+
+    @tailrec private def skipWhitespace(s: String, pos: Int): Int =
+        if pos < s.length && s.charAt(pos) == ' ' then skipWhitespace(s, pos + 1)
+        else pos
 
 end HttpHeaders

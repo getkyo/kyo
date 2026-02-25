@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.*
+
 /** Server-Sent Event (SSE) with typed data payload.
   *
   * Follows the SSE wire protocol. The `data` field is serialized/deserialized via `Schema`. Optional `event` names a logical event type,
@@ -9,11 +11,11 @@ package kyo
   *   The type of the event data payload
   *
   * @see
-  *   [[kyo.HttpClient.streamSse]]
+  *   [[kyo.HttpClient.getSseJson]]
   * @see
-  *   [[kyo.HttpResponse.streamSse]]
+  *   [[kyo.HttpHandler.getSseJson]]
   * @see
-  *   [[kyo.HttpHandler.streamSse]]
+  *   [[kyo.HttpHandler.getSseText]]
   */
 case class HttpEvent[+A](
     data: A,

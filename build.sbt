@@ -561,7 +561,12 @@ lazy val `kyo-http` =
         .nativeSettings(
             `native-settings`,
             nativeConfig ~= { c =>
-                c.withLinkingOptions(c.linkingOptions ++ Seq("-lcurl"))
+                import scala.sys.process.*
+                val h2oCompileFlags = try "pkg-config --cflags libh2o-evloop".!!.trim.split("\\s+").toSeq catch { case _: Exception => Seq.empty }
+                val h2oLinkFlags    = try "pkg-config --libs libh2o-evloop".!!.trim.split("\\s+").toSeq catch { case _: Exception => Seq("-lh2o-evloop") }
+                val curlLinkFlags   = try "pkg-config --libs libcurl".!!.trim.split("\\s+").toSeq catch { case _: Exception => Seq("-lcurl") }
+                c.withCompileOptions(c.compileOptions ++ Seq("-DH2O_USE_LIBUV=0") ++ h2oCompileFlags)
+                    .withLinkingOptions(c.linkingOptions ++ curlLinkFlags ++ h2oLinkFlags)
             }
         )
 

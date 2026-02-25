@@ -44,7 +44,7 @@ class HttpClientBench extends ArenaBench.ForkOnly("pong"):
         import AllowUnsafe.embrace.danger
         Sync.Unsafe.evalOrThrow(
             Fiber.initUnscoped(
-                HttpClient.send(HttpRequest.get(url)).map(_.bodyText)
+                HttpClient.send(HttpRequest.getRaw(url)).map(_.bodyText)
             ).flatMap(_.block(Duration.Infinity))
         ).getOrThrow
     end forkKyoHttp

@@ -1,46 +1,64 @@
 package kyo
 
+import kyo.*
+import kyo.seconds
+
 class HttpEventTest extends Test:
 
     "construction" - {
         "data only" in {
-            val event = HttpEvent("hello")
-            assert(event.data == "hello")
-            assert(event.event == Absent)
-            assert(event.id == Absent)
-            assert(event.retry == Absent)
+            val e = HttpEvent("hello")
+            assert(e.data == "hello")
+            assert(e.event == Absent)
+            assert(e.id == Absent)
+            assert(e.retry == Absent)
         }
 
-        "all fields" in {
-            val event = HttpEvent(
-                data = "payload",
+        "with all fields" in {
+            val e = HttpEvent(
+                data = 42,
                 event = Present("update"),
-                id = Present("123"),
+                id = Present("evt-1"),
                 retry = Present(5.seconds)
             )
-            assert(event.data == "payload")
-            assert(event.event == Present("update"))
-            assert(event.id == Present("123"))
-            assert(event.retry == Present(5.seconds))
+            assert(e.data == 42)
+            assert(e.event == Present("update"))
+            assert(e.id == Present("evt-1"))
+            assert(e.retry == Present(5.seconds))
         }
 
-        "typed data" in {
-            val event = HttpEvent(42)
-            assert(event.data == 42)
+        "with event name" in {
+            val e = HttpEvent("data", event = Present("message"))
+            assert(e.event == Present("message"))
+        }
+
+        "with id" in {
+            val e = HttpEvent("data", id = Present("123"))
+            assert(e.id == Present("123"))
+        }
+
+        "with retry" in {
+            val e = HttpEvent("data", retry = Present(10.seconds))
+            assert(e.retry == Present(10.seconds))
+        }
+    }
+
+    "covariance" - {
+        "data type is covariant" in {
+            val e: HttpEvent[Any] = HttpEvent(42)
+            assert(e.data.equals(42))
         }
     }
 
     "equality" - {
-        "equal events" in {
-            val a = HttpEvent("hello", event = Present("test"))
-            val b = HttpEvent("hello", event = Present("test"))
-            assert(a == b)
+        "same events are equal" in {
+            assert(HttpEvent("a") == HttpEvent("a"))
+            assert(HttpEvent("a", Present("e")) == HttpEvent("a", Present("e")))
         }
 
-        "unequal data" in {
-            val a = HttpEvent("hello")
-            val b = HttpEvent("world")
-            assert(a != b)
+        "different events are not equal" in {
+            assert(HttpEvent("a") != HttpEvent("b"))
+            assert(HttpEvent("a") != HttpEvent("a", Present("e")))
         }
 
         "unequal event name" in {
@@ -49,7 +67,7 @@ class HttpEventTest extends Test:
             assert(a != b)
         }
 
-        "present vs absent" in {
+        "present vs absent id" in {
             val a = HttpEvent("hello", id = Present("1"))
             val b = HttpEvent("hello")
             assert(a != b)
@@ -57,7 +75,15 @@ class HttpEventTest extends Test:
     }
 
     "copy" - {
-        "preserves unchanged fields" in {
+        "modifies single field" in {
+            val e1 = HttpEvent("data")
+            val e2 = e1.copy(event = Present("update"))
+            assert(e1.event == Absent)
+            assert(e2.event == Present("update"))
+            assert(e2.data == "data")
+        }
+
+        "preserves all unchanged fields" in {
             val original = HttpEvent("data", event = Present("type"), id = Present("1"))
             val copied   = original.copy(data = "new-data")
             assert(copied.data == "new-data")
