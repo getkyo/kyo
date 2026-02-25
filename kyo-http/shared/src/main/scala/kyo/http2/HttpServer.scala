@@ -26,10 +26,22 @@ object HttpServer:
     case class Config(
         port: Int = 0,
         host: String = "0.0.0.0",
+        maxContentLength: Int = 65536,
+        backlog: Int = 128,
+        keepAlive: Boolean = true,
+        tcpFastOpen: Boolean = true,
+        flushConsolidationLimit: Int = 256,
+        strictCookieParsing: Boolean = false,
         openApi: Maybe[Config.OpenApiEndpoint] = Absent
     ) derives CanEqual:
-        def port(p: Int): Config    = copy(port = p)
-        def host(h: String): Config = copy(host = h)
+        def port(p: Int): Config                    = copy(port = p)
+        def host(h: String): Config                 = copy(host = h)
+        def maxContentLength(v: Int): Config        = copy(maxContentLength = v)
+        def backlog(v: Int): Config                 = copy(backlog = v)
+        def keepAlive(v: Boolean): Config           = copy(keepAlive = v)
+        def tcpFastOpen(v: Boolean): Config         = copy(tcpFastOpen = v)
+        def flushConsolidationLimit(v: Int): Config = copy(flushConsolidationLimit = v)
+        def strictCookieParsing(v: Boolean): Config = copy(strictCookieParsing = v)
         def openApi(
             path: String = "/openapi.json",
             title: String = "API",
@@ -114,7 +126,7 @@ object HttpServer:
                 handlers :+ HttpHandler.getText(ep.path)(_ => json)
             case Absent =>
                 handlers
-        backend.bind(allHandlers, config.port, config.host).map(new HttpServer(_))
+        backend.bind(allHandlers, config).map(new HttpServer(_))
     end initUnscoped
 
     def initUnscopedWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using Frame): A < (S & Async) =

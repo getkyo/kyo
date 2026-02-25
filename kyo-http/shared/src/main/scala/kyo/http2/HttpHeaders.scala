@@ -125,17 +125,35 @@ object HttpHeaders:
 
         // --- Cookies ---
 
-        /** Returns the value of a request cookie by name, parsed from the Cookie header. */
+        /** Returns the value of a request cookie by name, parsed from the Cookie header (lax mode). */
         def cookie(name: String): Maybe[String] =
             self.get("Cookie") match
                 case Absent     => Absent
-                case Present(v) => HttpHeaders.findCookieValue(v, name)
+                case Present(v) => HttpHeaders.findCookieValue(v, name, strict = false)
 
-        /** Returns all request cookies as name-value pairs, parsed from the Cookie header. */
+        /** Returns the value of a request cookie by name, parsed from the Cookie header.
+          * @param strict
+          *   when true, validates cookie names/values against RFC 6265 and skips non-compliant cookies
+          */
+        def cookie(name: String, strict: Boolean): Maybe[String] =
+            self.get("Cookie") match
+                case Absent     => Absent
+                case Present(v) => HttpHeaders.findCookieValue(v, name, strict)
+
+        /** Returns all request cookies as name-value pairs, parsed from the Cookie header (lax mode). */
         def cookies: Seq[(String, String)] =
             self.get("Cookie") match
                 case Absent     => Seq.empty
-                case Present(v) => HttpHeaders.parseCookieHeader(v)
+                case Present(v) => HttpHeaders.parseCookieHeader(v, strict = false)
+
+        /** Returns all request cookies as name-value pairs, parsed from the Cookie header.
+          * @param strict
+          *   when true, validates cookie names/values against RFC 6265 and skips non-compliant cookies
+          */
+        def cookies(strict: Boolean): Seq[(String, String)] =
+            self.get("Cookie") match
+                case Absent     => Seq.empty
+                case Present(v) => HttpHeaders.parseCookieHeader(v, strict)
 
         /** Returns the value of a response cookie by name, parsed from Set-Cookie headers. */
         def responseCookie(name: String): Maybe[String] =
@@ -170,7 +188,7 @@ object HttpHeaders:
 
     // --- Cookie parsing ---
 
-    private def findCookieValue(header: String, name: String): Maybe[String] =
+    private def findCookieValue(header: String, name: String, strict: Boolean): Maybe[String] =
         @tailrec def loop(pos: Int): Maybe[String] =
             if pos >= header.length then Absent
             else
@@ -181,13 +199,17 @@ object HttpHeaders:
                     val key    = header.substring(start, eqIdx).trim
                     val semIdx = header.indexOf(';', eqIdx + 1)
                     val end    = if semIdx < 0 then header.length else semIdx
-                    if key == name then Present(header.substring(eqIdx + 1, end).trim)
+                    val value  = header.substring(eqIdx + 1, end).trim
+                    if key == name then
+                        if strict && !isValidCookieValue(value) then Absent
+                        else Present(value)
                     else loop(if semIdx < 0 then header.length else semIdx + 1)
+                    end if
                 end if
         loop(0)
     end findCookieValue
 
-    private def parseCookieHeader(header: String): Seq[(String, String)] =
+    private def parseCookieHeader(header: String, strict: Boolean): Seq[(String, String)] =
         val builder = Seq.newBuilder[(String, String)]
         @tailrec def loop(pos: Int): Seq[(String, String)] =
             if pos >= header.length then builder.result()
@@ -200,11 +222,42 @@ object HttpHeaders:
                     val semIdx = header.indexOf(';', eqIdx + 1)
                     val end    = if semIdx < 0 then header.length else semIdx
                     val value  = header.substring(eqIdx + 1, end).trim
-                    builder += ((key, value))
+                    if !strict || (isValidCookieName(key) && isValidCookieValue(value)) then
+                        builder += ((key, value))
                     loop(if semIdx < 0 then header.length else semIdx + 1)
                 end if
         loop(0)
     end parseCookieHeader
+
+    /** RFC 6265 cookie-name: token characters (RFC 2616 Section 2.2) */
+    private def isValidCookieName(name: String): Boolean =
+        var i = 0
+        while i < name.length do
+            val c = name.charAt(i)
+            if c <= 0x20 || c >= 0x7f || "\"(),/:;<=>?@[\\]{}".indexOf(c) >= 0 then
+                return false
+            i += 1
+        end while
+        name.nonEmpty
+    end isValidCookieName
+
+    /** RFC 6265 cookie-value: *cookie-octet / ( DQUOTE *cookie-octet DQUOTE ) cookie-octet = %x21 / %x23-2B / %x2D-3A / %x3C-5B / %x5D-7E
+      */
+    private def isValidCookieValue(value: String): Boolean =
+        val len = value.length
+        // Value may optionally be wrapped in DQUOTE
+        val (start, end) =
+            if len >= 2 && value.charAt(0) == '"' && value.charAt(len - 1) == '"' then (1, len - 1)
+            else (0, len)
+        var i = start
+        while i < end do
+            val c = value.charAt(i)
+            if c < 0x21 || c > 0x7e || c == '"' || c == ',' || c == ';' || c == '\\' then
+                return false
+            i += 1
+        end while
+        true
+    end isValidCookieValue
 
     private[http2] def serializeCookie[A](name: String, cookie: HttpCookie[A]): String =
         val sb = new StringBuilder

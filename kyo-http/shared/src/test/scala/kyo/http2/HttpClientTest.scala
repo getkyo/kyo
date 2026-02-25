@@ -1070,16 +1070,19 @@ class HttpClientTest extends Test:
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
                     Scope.run {
-                        HttpClient.init(client, maxConnectionsPerHost = 1).map { c =>
+                        HttpClient.init(client, maxConnectionsPerHost = 2).map { c =>
                             val request = HttpRequest(HttpMethod.GET, HttpUrl(Present("http"), "localhost", port, "/slow", Absent))
+                            // Use both slots by nesting two sendWith calls, then try a third
                             c.sendWith(route, request) { _ =>
-                                Abort.run[HttpError](
-                                    c.sendWith(route, request)(identity)
-                                ).map {
-                                    case Result.Failure(_: HttpError.ConnectionPoolExhausted) =>
-                                        called = true
-                                        succeed
-                                    case other => fail(s"Expected ConnectionPoolExhausted, got $other")
+                                c.sendWith(route, request) { _ =>
+                                    Abort.run[HttpError](
+                                        c.sendWith(route, request)(identity)
+                                    ).map {
+                                        case Result.Failure(_: HttpError.ConnectionPoolExhausted) =>
+                                            called = true
+                                            succeed
+                                        case other => fail(s"Expected ConnectionPoolExhausted, got $other")
+                                    }
                                 }
                             }
                         }
@@ -1227,6 +1230,135 @@ class HttpClientTest extends Test:
                     }
                 }
             }
+        }
+    }
+
+    "maxContentLength" - {
+
+        def withServerConfig[A, S](config: HttpServer.Config)(handlers: HttpHandler[?, ?, ?]*)(
+            test: Int => A < (S & Async & Abort[HttpError])
+        )(using Frame): A < (S & Async & Scope & Abort[HttpError]) =
+            HttpServer.init(config)(handlers*).map(server => test(server.port))
+
+        "accepts body within limit" in run {
+            val route = HttpRoute.postRaw("data")
+                .request(_.bodyBinary)
+                .response(_.bodyText)
+            val ep     = route.handler(_ => HttpResponse.okText("ok"))
+            val config = HttpServer.Config(0, "localhost", maxContentLength = 1024)
+            withServerConfig(config)(ep) { port =>
+                val body = Span.fill(512)(0.toByte) // 512 bytes, within 1024 limit
+                send(port, route, HttpRequest(HttpMethod.POST, HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                }
+            }
+        }
+
+        "rejects body exceeding limit with 413" in run {
+            val route = HttpRoute.postRaw("data")
+                .request(_.bodyBinary)
+                .response(_.bodyText)
+            val ep     = route.handler(_ => HttpResponse.okText("ok"))
+            val config = HttpServer.Config(0, "localhost", maxContentLength = 64)
+            withServerConfig(config)(ep) { port =>
+                val body = Span.fill(128)(0.toByte) // 128 bytes, exceeds 64 limit
+                send(port, route, HttpRequest(HttpMethod.POST, HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
+                    assert(resp.status == HttpStatus.PayloadTooLarge)
+                }
+            }
+        }
+
+        "exact boundary: body equal to limit succeeds" in run {
+            val route = HttpRoute.postRaw("data")
+                .request(_.bodyBinary)
+                .response(_.bodyText)
+            val ep     = route.handler(_ => HttpResponse.okText("ok"))
+            val config = HttpServer.Config(0, "localhost", maxContentLength = 100)
+            withServerConfig(config)(ep) { port =>
+                val body = Span.fill(100)(0.toByte) // exactly 100 bytes
+                send(port, route, HttpRequest(HttpMethod.POST, HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                }
+            }
+        }
+
+        "one byte over limit gets 413" in run {
+            val route = HttpRoute.postRaw("data")
+                .request(_.bodyBinary)
+                .response(_.bodyText)
+            val ep     = route.handler(_ => HttpResponse.okText("ok"))
+            val config = HttpServer.Config(0, "localhost", maxContentLength = 100)
+            withServerConfig(config)(ep) { port =>
+                val body = Span.fill(101)(0.toByte) // 101 bytes, over 100 limit
+                send(port, route, HttpRequest(HttpMethod.POST, HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
+                    assert(resp.status == HttpStatus.PayloadTooLarge)
+                }
+            }
+        }
+
+        "empty body always succeeds" in run {
+            val route  = HttpRoute.getRaw("data").response(_.bodyText)
+            val ep     = route.handler(_ => HttpResponse.okText("ok"))
+            val config = HttpServer.Config(0, "localhost", maxContentLength = 1)
+            withServerConfig(config)(ep) { port =>
+                send(port, route, HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/data"))).map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                }
+            }
+        }
+
+        "server still works after rejecting oversized request" in run {
+            val route = HttpRoute.postRaw("data")
+                .request(_.bodyText)
+                .response(_.bodyText)
+            val ep     = route.handler(req => HttpResponse.okText(req.fields.body))
+            val config = HttpServer.Config(0, "localhost", maxContentLength = 64)
+            withServerConfig(config)(ep) { port =>
+                // First request: too large, should get 413
+                val bigBody = "x" * 128
+                send(port, route, HttpRequest(HttpMethod.POST, HttpUrl.fromUri("/data")).addField("body", bigBody)).map { resp =>
+                    assert(resp.status == HttpStatus.PayloadTooLarge)
+                }.andThen {
+                    // Second request: small enough, should succeed
+                    val smallBody = "hello"
+                    send(port, route, HttpRequest(HttpMethod.POST, HttpUrl.fromUri("/data")).addField("body", smallBody)).map {
+                        resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            assert(resp.fields.body == "hello")
+                    }
+                }
+            }
+        }
+    }
+
+    "HttpServer.Config" - {
+
+        "default config values" in {
+            val config = HttpServer.Config()
+            assert(config.port == 0)
+            assert(config.host == "0.0.0.0")
+            assert(config.maxContentLength == 65536)
+            assert(config.backlog == 128)
+            assert(config.keepAlive == true)
+            assert(config.tcpFastOpen == true)
+            assert(config.flushConsolidationLimit == 256)
+            assert(config.strictCookieParsing == false)
+        }
+
+        "builder methods" in {
+            val config = HttpServer.Config()
+                .maxContentLength(1024)
+                .backlog(256)
+                .keepAlive(false)
+                .tcpFastOpen(false)
+                .flushConsolidationLimit(128)
+                .strictCookieParsing(true)
+            assert(config.maxContentLength == 1024)
+            assert(config.backlog == 256)
+            assert(config.keepAlive == false)
+            assert(config.tcpFastOpen == false)
+            assert(config.flushConsolidationLimit == 128)
+            assert(config.strictCookieParsing == true)
         }
     }
 

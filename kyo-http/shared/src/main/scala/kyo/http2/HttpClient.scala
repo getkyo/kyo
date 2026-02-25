@@ -189,6 +189,7 @@ object HttpClient:
         val backend = HttpPlatformBackend.client
         val pool = ConnectionPool.init[backend.Connection](
             100,
+            60.seconds,
             conn => backend.isAlive(conn),
             conn => backend.closeNowUnsafe(conn)
         )
@@ -223,18 +224,22 @@ object HttpClient:
 
     def init(
         backend: HttpBackend.Client,
-        maxConnectionsPerHost: Int = 100
+        maxConnectionsPerHost: Int = 100,
+        idleConnectionTimeout: Duration = 60.seconds
     )(using Frame): HttpClient < (Async & Scope) =
-        Scope.acquireRelease(initUnscoped(backend, maxConnectionsPerHost))(_.closeNow)
+        Scope.acquireRelease(initUnscoped(backend, maxConnectionsPerHost, idleConnectionTimeout))(_.closeNow)
 
     def initUnscoped(
         backend: HttpBackend.Client,
-        maxConnectionsPerHost: Int = 100
+        maxConnectionsPerHost: Int = 100,
+        idleConnectionTimeout: Duration = 60.seconds
     )(using Frame): HttpClient < Sync =
         require(maxConnectionsPerHost > 0, s"maxConnectionsPerHost must be positive: $maxConnectionsPerHost")
+        require(idleConnectionTimeout > Duration.Zero, s"idleConnectionTimeout must be positive: $idleConnectionTimeout")
         Sync.Unsafe.defer {
             val pool = ConnectionPool.init[backend.Connection](
                 maxConnectionsPerHost,
+                idleConnectionTimeout,
                 conn => backend.isAlive(conn),
                 conn => backend.closeNowUnsafe(conn)
             )

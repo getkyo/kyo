@@ -92,6 +92,108 @@ class HttpHeadersTest extends Test:
         }
     }
 
+    "cookie (strict)" - {
+        "accepts valid cookie" in {
+            val h = HttpHeaders.empty.add("Cookie", "session=abc123")
+            assert(h.cookie("session", strict = true) == Present("abc123"))
+        }
+
+        "rejects cookie value with comma" in {
+            val h = HttpHeaders.empty.add("Cookie", "bad=val,ue")
+            assert(h.cookie("bad", strict = true) == Absent)
+        }
+
+        "rejects cookie value with semicolon" in {
+            val h = HttpHeaders.empty.add("Cookie", "bad=val;ue")
+            // Note: semicolon is the cookie separator, so the parser would split here.
+            // "bad" gets value "val" and "ue" has no equals sign.
+            // In lax mode, cookie("bad") should return "val"
+            assert(h.cookie("bad") == Present("val"))
+        }
+
+        "rejects cookie value with backslash" in {
+            val h = HttpHeaders.empty.add("Cookie", "bad=val\\ue")
+            assert(h.cookie("bad", strict = true) == Absent)
+        }
+
+        "rejects cookie value with space" in {
+            // After trim, if there's still a space in the middle
+            val h = HttpHeaders.empty.add("Cookie", "bad=val ue")
+            assert(h.cookie("bad", strict = true) == Absent)
+        }
+
+        "rejects cookie value with control character" in {
+            val h = HttpHeaders.empty.add("Cookie", "bad=val\u0001ue")
+            assert(h.cookie("bad", strict = true) == Absent)
+        }
+
+        "accepts DQUOTE-wrapped value" in {
+            val h = HttpHeaders.empty.add("Cookie", "name=\"validvalue\"")
+            assert(h.cookie("name", strict = true) == Present("\"validvalue\""))
+        }
+
+        "rejects DQUOTE-wrapped value with invalid inner content" in {
+            val h = HttpHeaders.empty.add("Cookie", "name=\"val,ue\"")
+            assert(h.cookie("name", strict = true) == Absent)
+        }
+
+        "lax mode accepts invalid characters" in {
+            val h = HttpHeaders.empty.add("Cookie", "name=val\\ue")
+            assert(h.cookie("name", strict = false) == Present("val\\ue"))
+        }
+
+        "accepts empty value in strict mode" in {
+            val h = HttpHeaders.empty.add("Cookie", "name=")
+            assert(h.cookie("name", strict = true) == Present(""))
+        }
+    }
+
+    "cookies (strict)" - {
+        "filters out invalid cookies, keeps valid ones" in {
+            // "good" has valid value, "bad" has comma in value
+            val h      = HttpHeaders.empty.add("Cookie", "good=valid; bad=inv,alid; also_good=ok")
+            val result = h.cookies(strict = true)
+            assert(result.length == 2)
+            assert(result(0) == ("good", "valid"))
+            assert(result(1) == ("also_good", "ok"))
+        }
+
+        "rejects cookie with invalid name" in {
+            // Space in cookie name is invalid per RFC 2616 token
+            val h      = HttpHeaders.empty.add("Cookie", "bad name=value; good=ok")
+            val result = h.cookies(strict = true)
+            assert(result.length == 1)
+            assert(result(0) == ("good", "ok"))
+        }
+
+        "rejects empty cookie name" in {
+            val h      = HttpHeaders.empty.add("Cookie", "=value; good=ok")
+            val result = h.cookies(strict = true)
+            assert(result.length == 1)
+            assert(result(0) == ("good", "ok"))
+        }
+
+        "accepts all valid cookies" in {
+            val h      = HttpHeaders.empty.add("Cookie", "a=1; b=2; c=3")
+            val result = h.cookies(strict = true)
+            assert(result.length == 3)
+        }
+
+        "lax mode keeps everything" in {
+            val h      = HttpHeaders.empty.add("Cookie", "good=valid; bad=inv,alid")
+            val result = h.cookies(strict = false)
+            assert(result.length == 2)
+        }
+
+        "cookie name with separator characters rejected in strict" in {
+            // RFC 2616 token excludes: ( ) < > @ , ; : \ " / [ ] ? = { }
+            val h      = HttpHeaders.empty.add("Cookie", "na(me=val; good=ok")
+            val result = h.cookies(strict = true)
+            assert(result.length == 1)
+            assert(result(0) == ("good", "ok"))
+        }
+    }
+
     "addCookie" - {
         "serializes simple cookie" in {
             val h = HttpHeaders.empty.addCookie("session", HttpCookie("abc123"))

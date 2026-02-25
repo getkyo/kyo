@@ -40,7 +40,8 @@ import kyo.http2.*
 import kyo.http2.internal.HttpRouter.*
 
 final private[http2] class NettyServerHandler(
-    router: HttpRouter
+    router: HttpRouter,
+    maxContentLength: Int
 )(using Frame) extends ChannelInboundHandlerAdapter:
 
     private val STATE_IDLE       = 0
@@ -58,6 +59,7 @@ final private[http2] class NettyServerHandler(
     private var pendingHeaders: HttpHeaders          = HttpHeaders.empty
     private var pendingKeepAlive: Boolean            = true
     private var bodyBuf: Maybe[CompositeByteBuf]     = Absent
+    private var bodySize: Int                        = 0
 
     // STREAMING state
     private var streamingChannel: Maybe[Channel.Unsafe[Maybe[Span[Byte]]]] = Absent
@@ -199,6 +201,23 @@ final private[http2] class NettyServerHandler(
     private def handleBufferingContent(ctx: ChannelHandlerContext, content: HttpContent)(using AllowUnsafe): Unit =
         val buf       = content.content()
         val chunkSize = buf.readableBytes()
+
+        bodySize += chunkSize
+        if bodySize > maxContentLength then
+            bodyBuf.foreach { bb => discard(bb.release()) }
+            bodyBuf = Absent
+            val keepAlive = pendingKeepAlive
+            resetState()
+            if content.isInstanceOf[LastHttpContent] then
+                sendErrorResponse(ctx, HttpStatus.PayloadTooLarge, HttpHeaders.empty, keepAlive)
+            else
+                discardStatus = HttpStatus.PayloadTooLarge
+                discardExtraHeaders = HttpHeaders.empty
+                pendingKeepAlive = keepAlive
+                state = STATE_DISCARDING
+            end if
+            return
+        end if
 
         bodyBuf.foreach { bb =>
             if chunkSize > 0 then
@@ -484,6 +503,7 @@ final private[http2] class NettyServerHandler(
         pendingHeaders = HttpHeaders.empty
         discardStatus = HttpStatus.NotFound
         discardExtraHeaders = HttpHeaders.empty
+        bodySize = 0
         bodyBuf.foreach { bb =>
             discard(bb.release())
         }
