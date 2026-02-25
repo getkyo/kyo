@@ -98,7 +98,7 @@ final private[http2] class NettyServerHandler(
         val method    = HttpMethod.unsafe(nettyReq.method().name())
         val uri       = nettyReq.uri()
         val keepAlive = HttpUtil.isKeepAlive(nettyReq)
-        val headers   = NettyUtil.extractHeaders(nettyReq.headers())
+        val headers   = nettyReq.headers().asInstanceOf[FlatNettyHttpHeaders].toKyoHeaders
 
         val pathEnd = uri.indexOf('?')
         val path    = if pathEnd >= 0 then uri.substring(0, pathEnd) else uri

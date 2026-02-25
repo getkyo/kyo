@@ -3,6 +3,7 @@ package kyo.http2.internal
 import io.netty.bootstrap.ServerBootstrap
 import io.netty.channel.*
 import io.netty.channel.socket.SocketChannel
+import io.netty.handler.codec.http.HttpDecoderConfig
 import io.netty.handler.codec.http.HttpServerCodec
 import io.netty.handler.flush.FlushConsolidationHandler
 import java.net.InetSocketAddress
@@ -46,7 +47,11 @@ final class NettyServerBackend extends HttpBackend.Server:
                                 flushConsolidationLimit,
                                 true
                             )))
-                            discard(pipeline.addLast(new HttpServerCodec()))
+                            discard(pipeline.addLast(new HttpServerCodec(
+                                new HttpDecoderConfig()
+                                    .setHeadersFactory(FlatNettyHttpHeaders.factory)
+                                    .setTrailersFactory(FlatNettyHttpHeaders.factory)
+                            )))
                             discard(pipeline.addLast(new NettyServerHandler(router))))
                     .childOption(ChannelOption.TCP_NODELAY, java.lang.Boolean.TRUE)
             }

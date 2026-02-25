@@ -55,6 +55,35 @@ class HttpServerContentionBench
         ).getOrThrow
     end forkKyoHttp
 
+    // --- Kyo http2 server + client ---
+
+    @volatile private var kyo2Started = false
+
+    lazy val kyo2Srv =
+        import kyo.*
+        import AllowUnsafe.embrace.danger
+        val h = http2.HttpRoute.get("ping").response(_.bodyText).handler(_ => http2.HttpResponse.okText("pong"))
+        val srv = Sync.Unsafe.evalOrThrow(
+            Fiber.initUnscoped(
+                http2.HttpServer.initUnscoped(9010, "0.0.0.0")(h)
+            ).flatMap(_.block(Duration.Infinity))
+        ).getOrThrow
+        kyo2Started = true
+        srv
+    end kyo2Srv
+
+    @Benchmark
+    def forkKyoHttp2(warmup: WarmupJITProfile.KyoForkWarmup): kyo.Chunk[String] =
+        import kyo.*
+        import AllowUnsafe.embrace.danger
+        val url = s"http://localhost:${kyo2Srv.port}/ping"
+        Sync.Unsafe.evalOrThrow(
+            Fiber.initUnscoped(
+                Async.fill(concurrency, concurrency)(http2.HttpClient.getText(url))
+            ).flatMap(_.block(Duration.Infinity))
+        ).getOrThrow
+    end forkKyoHttp2
+
     // --- ZIO server ---
 
     lazy val zioFiber =
@@ -148,6 +177,15 @@ class HttpServerContentionBench
                 import AllowUnsafe.embrace.danger
                 discard(Sync.Unsafe.evalOrThrow(
                     Fiber.initUnscoped(kyoSrv.closeNow).flatMap(_.block(Duration.Infinity))
+                ))
+            catch case _: Throwable => ()
+        end if
+        if kyo2Started then
+            try
+                import kyo.*
+                import AllowUnsafe.embrace.danger
+                discard(Sync.Unsafe.evalOrThrow(
+                    Fiber.initUnscoped(kyo2Srv.closeNow).flatMap(_.block(Duration.Infinity))
                 ))
             catch case _: Throwable => ()
         end if

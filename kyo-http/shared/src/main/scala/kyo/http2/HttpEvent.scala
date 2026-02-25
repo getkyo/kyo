@@ -13,11 +13,11 @@ import kyo.Maybe
   *   The type of the event data payload
   *
   * @see
-  *   [[kyo.HttpClient.streamSse]]
+  *   [[kyo.http2.HttpClient.getSseJson]]
   * @see
-  *   [[kyo.HttpResponse.streamSse]]
+  *   [[kyo.http2.HttpHandler.getSseJson]]
   * @see
-  *   [[kyo.HttpHandler.streamSse]]
+  *   [[kyo.http2.HttpHandler.getSseText]]
   */
 case class HttpEvent[+A](
     data: A,

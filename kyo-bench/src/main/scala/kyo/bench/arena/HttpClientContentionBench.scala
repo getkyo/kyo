@@ -55,6 +55,17 @@ class HttpClientContentionBench
         ).getOrThrow
     end forkKyoHttp
 
+    @Benchmark
+    def forkKyoHttp2(warmup: WarmupJITProfile.KyoForkWarmup): kyo.Chunk[String] =
+        import kyo.*
+        import AllowUnsafe.embrace.danger
+        Sync.Unsafe.evalOrThrow(
+            Fiber.initUnscoped(
+                Async.fill(concurrency, concurrency)(http2.HttpClient.getText(url))
+            ).flatMap(_.block(Duration.Infinity))
+        ).getOrThrow
+    end forkKyoHttp2
+
     val zioUrl =
         import zio.http.*
         URL.decode(this.url).toOption.get
