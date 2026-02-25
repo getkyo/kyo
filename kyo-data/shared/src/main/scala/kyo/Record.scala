@@ -273,12 +273,3 @@ object Record extends RecordDictSyntax:
         dict
 
 end Record
-
-// object Test:
-//     case class Person(name: String, age: Int)
-//     val r = Record.fromProduct(Person("Alice", 30))
-//     println(r.size)
-//     println(r & ("lol" ~ "kek"))
-//     val name: String = r.name
-//     val age: Int     = r.age
-// end Test
