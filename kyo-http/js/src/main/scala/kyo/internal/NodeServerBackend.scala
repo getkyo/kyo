@@ -293,8 +293,12 @@ final class NodeServerBackend extends HttpBackend.Server:
                     )
                 case Result.Failure(halt: HttpResponse.Halt) =>
                     writeBufferedResponse(res, halt.response.status, halt.response.headers, Span.empty[Byte])
-                case Result.Failure(_) =>
-                    writeBufferedResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty, Span.empty[Byte])
+                case Result.Failure(error) =>
+                    RouteUtil.encodeError(rt, error) match
+                        case Present((status, headers, body)) =>
+                            writeBufferedResponse(res, status, headers, body)
+                        case Absent =>
+                            writeBufferedResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty, Span.empty[Byte])
             }
         }
 

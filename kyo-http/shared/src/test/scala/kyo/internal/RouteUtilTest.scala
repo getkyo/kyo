@@ -413,35 +413,6 @@ class RouteUtilTest extends kyo.Test:
         }
     }
 
-    // ==================== matchError ====================
-
-    "matchError" - {
-        "matches error status" in {
-            val route = HttpRoute.getRaw("users")
-                .response(_.bodyJson[User].error[String](HttpStatus.BadRequest))
-            val body = Span.fromUnsafe("\"invalid input\"".getBytes("UTF-8"))
-
-            RouteUtil.matchError(route, HttpStatus.BadRequest, body) match
-                case Present(err) => assert(err == "invalid input")
-                case Absent       => fail("expected error match")
-        }
-
-        "no match for success status" in {
-            val route = HttpRoute.getRaw("users")
-                .response(_.bodyJson[User].error[String](HttpStatus.BadRequest))
-            val body = Span.fromUnsafe("\"ok\"".getBytes("UTF-8"))
-
-            assert(RouteUtil.matchError(route, HttpStatus.OK, body) == Absent)
-        }
-
-        "no match when no error mappings" in {
-            val route = HttpRoute.getRaw("users").response(_.bodyJson[User])
-            val body  = Span.fromUnsafe("\"err\"".getBytes("UTF-8"))
-
-            assert(RouteUtil.matchError(route, HttpStatus.BadRequest, body) == Absent)
-        }
-    }
-
     // ==================== encodeRequest edge cases ====================
 
     "encodeRequest edge cases" - {
@@ -854,53 +825,6 @@ class RouteUtilTest extends kyo.Test:
                 onStreaming = (_, _, _, _) => fail("expected buffered")
             )
             assert(bodyStr == "hello")
-        }
-    }
-
-    // ==================== matchError edge cases ====================
-
-    "matchError edge cases" - {
-        "multiple error mappings selects matching status" in {
-            val route = HttpRoute.getRaw("users")
-                .response(_.bodyJson[User].error[String](HttpStatus.BadRequest).error[Int](HttpStatus.NotFound))
-            val body = Span.fromUnsafe("\"not found msg\"".getBytes("UTF-8"))
-
-            // Should not match BadRequest
-            assert(RouteUtil.matchError(route, HttpStatus.BadRequest, body) == Present("not found msg"))
-
-            // NotFound with int body
-            val intBody = Span.fromUnsafe("404".getBytes("UTF-8"))
-            assert(RouteUtil.matchError(route, HttpStatus.NotFound, intBody) == Present(404))
-        }
-
-        "decode failure skips to next mapping" in {
-            val route = HttpRoute.getRaw("users")
-                .response(_.bodyJson[User].error[Int](HttpStatus.BadRequest).error[String](HttpStatus.BadRequest))
-            // "not a number" can't decode as Int, should fall through to String
-            val body = Span.fromUnsafe("\"fallback\"".getBytes("UTF-8"))
-
-            RouteUtil.matchError(route, HttpStatus.BadRequest, body) match
-                case Present(err) => assert(err == "fallback")
-                case Absent       => fail("expected error match")
-        }
-
-        "empty body returns Absent when decode fails" in {
-            val route = HttpRoute.getRaw("users")
-                .response(_.bodyJson[User].error[User](HttpStatus.BadRequest))
-            val body = Span.empty[Byte]
-
-            // Empty string can't decode as User JSON, so should return Absent
-            assert(RouteUtil.matchError(route, HttpStatus.BadRequest, body) == Absent)
-        }
-
-        "empty body fails to decode as JSON String (no fallback)" in {
-            val route = HttpRoute.getRaw("users")
-                .response(_.bodyJson[User].error[String](HttpStatus.BadRequest))
-            val body = Span.empty[Byte]
-
-            // Empty body is not valid JSON — decode should fail (fallback removed)
-            val result = RouteUtil.matchError(route, HttpStatus.BadRequest, body)
-            assert(result == Absent)
         }
     }
 

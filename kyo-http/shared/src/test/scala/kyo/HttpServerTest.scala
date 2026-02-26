@@ -42,6 +42,12 @@ class HttpServerTest extends Test:
     )(using Frame): HttpResponse["body" ~ String] < (Async & Abort[HttpError]) =
         send(port, rawRoute, HttpRequest(method, HttpUrl.fromUri(path)))
 
+    def sendGet[Out](port: Int, route: HttpRoute[Any, Out, ?], path: String)(using Frame): HttpResponse[Out] < (Async & Abort[HttpError]) =
+        Abort.get(HttpRequest.getRaw(path)).map(req => send(port, route, req))
+
+    def sendPost[Out](port: Int, route: HttpRoute[Any, Out, ?], path: String)(using Frame): HttpResponse[Out] < (Async & Abort[HttpError]) =
+        Abort.get(HttpRequest.postRaw(path)).map(req => send(port, route, req))
+
     "routing" - {
 
         "404 for unknown path" in run {
@@ -461,6 +467,58 @@ class HttpServerTest extends Test:
             }
         }
 
+        "route-declared status overrides response default" in run {
+            val route = HttpRoute.postRaw("items")
+                .response(_.bodyJson[User].status(HttpStatus.Created))
+            val ep = route.handler { _ =>
+                HttpResponse.ok.addField("body", User(1, "alice"))
+            }
+            withServer(ep) { port =>
+                sendPost(port, route, "/items").map { resp =>
+                    assert(resp.status == HttpStatus.Created)
+                    assert(resp.fields.body == User(1, "alice"))
+                }
+            }
+        }
+
+        "route-declared status with no body" in run {
+            val route = HttpRoute.getRaw("empty")
+                .response(_.status(HttpStatus.NoContent))
+            val ep = route.handler { _ =>
+                HttpResponse.ok
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/empty").map { resp =>
+                    assert(resp.status == HttpStatus.NoContent)
+                }
+            }
+        }
+
+        "route-declared status with text body" in run {
+            val route = HttpRoute.postRaw("accepted")
+                .response(_.bodyText.status(HttpStatus.Accepted))
+            val ep = route.handler { _ =>
+                HttpResponse.ok.addField("body", "queued")
+            }
+            withServer(ep) { port =>
+                sendPost(port, route, "/accepted").map { resp =>
+                    assert(resp.status == HttpStatus.Accepted)
+                    assert(resp.fields.body == "queued")
+                }
+            }
+        }
+
+        "handler-set status still works when route has no status override" in run {
+            val route = HttpRoute.postRaw("create2").response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.created.addField("body", "done"))
+            withServer(ep) { port =>
+                sendPost(port, route, "/create2").map { resp =>
+                    assert(resp.status == HttpStatus.Created)
+                    assert(resp.fields.body == "done")
+                }
+            }
+        }
+
         "response headers" in run {
             val route = HttpRoute.getRaw("headers")
                 .response(_.header[String]("X-Custom"))
@@ -672,6 +730,176 @@ class HttpServerTest extends Test:
             withServer(ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/abort"))).map { resp =>
                     assert(resp.status == HttpStatus.InternalServerError)
+                }
+            }
+        }
+
+        "Abort.fail with declared error mapping returns mapped status and body" in run {
+            case class ApiError(error: String) derives Schema, CanEqual
+            val route = HttpRoute.getRaw("items" / HttpPath.Capture[Int]("id"))
+                .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
+            val ep = route.handler { req =>
+                Abort.fail(ApiError(s"Item ${req.fields.id} not found"))
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/items/999").map { resp =>
+                    assert(resp.status == HttpStatus.NotFound)
+                    assert(resp.fields.body.contains("Item 999 not found"))
+                }
+            }
+        }
+
+        "Abort.fail with unmatched error type still returns 500" in run {
+            case class ApiError(error: String) derives Schema, CanEqual
+            case class OtherError(msg: String)
+            val route = HttpRoute.getRaw("items")
+                .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
+            val ep = route.handler { _ =>
+                Abort.fail(OtherError("unexpected")).asInstanceOf[Nothing < Any]
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/items").map { resp =>
+                    assert(resp.status == HttpStatus.InternalServerError)
+                }
+            }
+        }
+
+        "Abort.fail with multiple error mappings selects correct one" in run {
+            case class NotFoundError(error: String) derives Schema, CanEqual
+            case class ValidationError(error: String) derives Schema, CanEqual
+            val route = HttpRoute.getRaw("items")
+                .response(
+                    _.bodyJson[User]
+                        .error[NotFoundError](HttpStatus.NotFound)
+                        .error[ValidationError](HttpStatus.UnprocessableEntity)
+                )
+            val ep = route.handler { _ =>
+                Abort.fail(ValidationError("invalid name"))
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/items").map { resp =>
+                    assert(resp.status == HttpStatus.UnprocessableEntity)
+                    assert(resp.fields.body.contains("invalid name"))
+                }
+            }
+        }
+
+        "Abort.fail with first of multiple error mappings" in run {
+            case class NotFoundError(error: String) derives Schema, CanEqual
+            case class ValidationError(error: String) derives Schema, CanEqual
+            val route = HttpRoute.getRaw("items2")
+                .response(
+                    _.bodyJson[User]
+                        .error[NotFoundError](HttpStatus.NotFound)
+                        .error[ValidationError](HttpStatus.UnprocessableEntity)
+                )
+            val ep = route.handler { _ =>
+                Abort.fail(NotFoundError("gone"))
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/items2").map { resp =>
+                    assert(resp.status == HttpStatus.NotFound)
+                    assert(resp.fields.body.contains("gone"))
+                }
+            }
+        }
+
+        "successful handler ignores error mappings" in run {
+            case class ApiError(error: String) derives Schema, CanEqual
+            val route = HttpRoute.getRaw("ok-with-errors")
+                .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
+            val ep = route.handler { _ =>
+                HttpResponse.ok.addField("body", User(1, "alice"))
+            }
+            withServer(ep) { port =>
+                sendGet(port, route, "/ok-with-errors").map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                    assert(resp.fields.body == User(1, "alice"))
+                }
+            }
+        }
+
+        "route-declared status combined with error mapping - success path" in run {
+            case class ApiError(error: String) derives Schema, CanEqual
+            val route = HttpRoute.getRaw("create-with-error")
+                .response(
+                    _.bodyJson[User]
+                        .status(HttpStatus.Created)
+                        .error[ApiError](HttpStatus.Conflict)
+                )
+            val ep = route.handler { _ =>
+                HttpResponse.ok.addField("body", User(1, "alice"))
+            }
+            withServer(ep) { port =>
+                sendGet(port, route, "/create-with-error").map { resp =>
+                    assert(resp.status == HttpStatus.Created)
+                }
+            }
+        }
+
+        "route-declared status combined with error mapping - error path" in run {
+            case class ApiError(error: String) derives Schema, CanEqual
+            val route = HttpRoute.getRaw("create-with-error2")
+                .response(
+                    _.bodyJson[User]
+                        .status(HttpStatus.Created)
+                        .error[ApiError](HttpStatus.Conflict)
+                )
+            val ep = route.handler { _ =>
+                Abort.fail(ApiError("already exists"))
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/create-with-error2").map { resp =>
+                    assert(resp.status == HttpStatus.Conflict)
+                    assert(resp.fields.body.contains("already exists"))
+                }
+            }
+        }
+
+        "Halt still works alongside error mappings" in run {
+            case class ApiError(error: String) derives Schema, CanEqual
+            val route = HttpRoute.getRaw("halt-test")
+                .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
+            val ep = route.handler { _ =>
+                Abort.fail(HttpResponse.Halt(HttpResponse.forbidden))
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/halt-test").map { resp =>
+                    assert(resp.status == HttpStatus.Forbidden)
+                }
+            }
+        }
+
+        "error response body is valid JSON" in run {
+            case class ApiError(code: Int, message: String) derives Schema, CanEqual
+            val route = HttpRoute.getRaw("json-error")
+                .response(_.bodyJson[User].error[ApiError](HttpStatus.BadRequest))
+            val ep = route.handler { _ =>
+                Abort.fail(ApiError(42, "bad input"))
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/json-error").map { resp =>
+                    assert(resp.status == HttpStatus.BadRequest)
+                    val body = resp.fields.body
+                    assert(body.contains("\"code\":42"))
+                    assert(body.contains("\"message\":\"bad input\""))
+                }
+            }
+        }
+
+        "error response has Content-Type application/json" in run {
+            case class ApiError(error: String) derives Schema, CanEqual
+            val route = HttpRoute.getRaw("ct-error")
+                .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
+            val ep = route.handler { _ =>
+                Abort.fail(ApiError("missing"))
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/ct-error").map { resp =>
+                    assert(resp.status == HttpStatus.NotFound)
+                    val ct = resp.headers.get("Content-Type")
+                    assert(ct.isDefined)
+                    assert(ct.get.contains("application/json"))
                 }
             }
         }

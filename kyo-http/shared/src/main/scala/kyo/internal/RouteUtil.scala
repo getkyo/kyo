@@ -235,10 +235,11 @@ object RouteUtil:
         onBuffered: (HttpStatus, HttpHeaders, /* contentType */ String, Span[Byte]) => A,
         onStreaming: (HttpStatus, HttpHeaders, /* contentType */ String, Stream[Span[Byte], Async]) => A
     )(using Frame): A =
-        val fields    = route.response.fields
-        val status    = response.status
-        val bodyField = findBodyField(fields)
-        val hasParams = fields.size > (if bodyField.isDefined then 1 else 0)
+        val fields      = route.response.fields
+        val routeStatus = route.response.status
+        val status      = if routeStatus != HttpStatus.OK then routeStatus else response.status
+        val bodyField   = findBodyField(fields)
+        val hasParams   = fields.size > (if bodyField.isDefined then 1 else 0)
 
         // Fast path: no param headers to encode
         if !hasParams then
@@ -278,32 +279,32 @@ object RouteUtil:
                     }
                 end if
 
-    // ==================== Error mapping ====================
+    // ==================== Server: encode error ====================
 
-    def matchError[In, Out, S](
+    /** Try to match an error value against the route's declared error mappings. Returns the mapped status, Content-Type header, and
+      * serialized body if matched.
+      */
+    def encodeError[In, Out, S](
         route: HttpRoute[In, Out, S],
-        status: HttpStatus,
-        body: Span[Byte]
-    )(using Frame): Maybe[Any] =
+        error: Any
+    )(using Frame): Maybe[(HttpStatus, HttpHeaders, Span[Byte])] =
         val errors = route.response.errors
         if errors.isEmpty then Absent
         else
-            @tailrec def loop(i: Int, bodyStr: Maybe[String]): Maybe[Any] =
+            @tailrec def loop(i: Int): Maybe[(HttpStatus, HttpHeaders, Span[Byte])] =
                 if i >= errors.size then Absent
                 else
                     val mapping = errors(i)
-                    if mapping.status == status then
-                        val str = bodyStr match
-                            case Present(s) => s
-                            case Absent     => spanToString(body)
-                        mapping.schema.asInstanceOf[Schema[Any]].decode(str) match
-                            case Result.Success(err) => Present(err)
-                            case _                   => loop(i + 1, Present(str))
-                    else loop(i + 1, bodyStr)
+                    if mapping.tag.accepts(error) then
+                        val json    = mapping.schema.asInstanceOf[Schema[Any]].encode(error)
+                        val body    = stringToSpan(json)
+                        val headers = HttpHeaders.empty.add("Content-Type", "application/json")
+                        Present((mapping.status, headers, body))
+                    else loop(i + 1)
                     end if
-            loop(0, Absent)
+            loop(0)
         end if
-    end matchError
+    end encodeError
 
     // ==================== Internal: Span[Byte] <-> String ====================
 
