@@ -177,7 +177,8 @@ object RouteUtil:
         queryParam: Maybe[HttpUrl],
         headers: HttpHeaders,
         body: Span[Byte],
-        path: String = ""
+        path: String = "",
+        methodOverride: Maybe[HttpMethod] = Absent
     )(using Frame): Result[HttpError, HttpRequest[In]] =
         val fields    = route.request.fields
         val bodyField = findBodyField(fields)
@@ -191,11 +192,11 @@ object RouteUtil:
             paramsResult.flatMap { _ =>
                 bodyField match
                     case Absent =>
-                        Result.succeed(buildRequest(route, headers, builder, path))
+                        Result.succeed(buildRequest(route, headers, builder, path, methodOverride))
                     case Present(bf) =>
                         decodeBufferedBodyValue(bf.contentType, body, headers).map { value =>
                             discard(builder.add(bf.fieldName, value))
-                            buildRequest(route, headers, builder, path)
+                            buildRequest(route, headers, builder, path, methodOverride)
                         }
             }
         }
@@ -207,7 +208,8 @@ object RouteUtil:
         queryParam: Maybe[HttpUrl],
         headers: HttpHeaders,
         stream: Stream[Span[Byte], Async],
-        path: String = ""
+        path: String = "",
+        methodOverride: Maybe[HttpMethod] = Absent
     )(using Frame): Result[HttpError, HttpRequest[In]] =
         val fields    = route.request.fields
         val bodyField = findBodyField(fields)
@@ -220,7 +222,7 @@ object RouteUtil:
                 else Result.unit
             paramsResult.map { _ =>
                 bodyField.foreach(bf => discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream, headers))))
-                buildRequest(route, headers, builder, path)
+                buildRequest(route, headers, builder, path, methodOverride)
             }
         }
     end decodeStreamingRequest
@@ -916,12 +918,27 @@ object RouteUtil:
         route: HttpRoute[In, Out, S],
         headers: HttpHeaders,
         builder: DictBuilder[String, Any],
-        path: String = ""
+        path: String = "",
+        methodOverride: Maybe[HttpMethod] = Absent
     ): HttpRequest[In] =
         val url =
             if path.isEmpty then HttpUrl(Absent, "", 0, "", Absent)
             else HttpUrl(Absent, "", 0, path, Absent)
-        HttpRequest(route.method, url, headers, Record2(builder.result()))
+        val method = methodOverride match
+            case Present(m) => m
+            case Absent     => route.method
+        HttpRequest(method, url, headers, Record2(builder.result()))
     end buildRequest
+
+    // ==================== Error response body ====================
+
+    private[kyo] def encodeErrorBody(status: HttpStatus): Span[Byte] =
+        // Status names come from HttpStatus enum cases (e.g., "NotFound", "BadRequest")
+        // which are safe ASCII identifiers — no escaping needed.
+        val name = status.toString
+        val sb   = new StringBuilder(48)
+        discard(sb.append("{\"status\":").append(status.code).append(",\"error\":\"").append(name).append("\"}"))
+        stringToSpan(sb.toString)
+    end encodeErrorBody
 
 end RouteUtil

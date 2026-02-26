@@ -164,7 +164,7 @@ final private[kyo] class NettyConnection(
                 val nettyReq =
                     new DefaultFullHttpRequest(
                         HttpVersion.HTTP_1_1,
-                        NettyHttpMethod.valueOf(route.method.name),
+                        NettyHttpMethod.valueOf(request.method.name),
                         url,
                         Unpooled.EMPTY_BUFFER,
                         flatHeaders,
@@ -182,7 +182,7 @@ final private[kyo] class NettyConnection(
                 val content     = Unpooled.wrappedBuffer(body.toArrayUnsafe)
                 val nettyReq = new DefaultFullHttpRequest(
                     HttpVersion.HTTP_1_1,
-                    NettyHttpMethod.valueOf(route.method.name),
+                    NettyHttpMethod.valueOf(request.method.name),
                     url,
                     content,
                     flatHeaders,
@@ -198,7 +198,7 @@ final private[kyo] class NettyConnection(
             ,
             onStreaming = (url, headers, contentType, stream) =>
                 val flatHeaders = FlatNettyHttpHeaders.acquire()
-                val nettyReq    = new DefaultHttpRequest(HttpVersion.HTTP_1_1, NettyHttpMethod.valueOf(route.method.name), url, flatHeaders)
+                val nettyReq = new DefaultHttpRequest(HttpVersion.HTTP_1_1, NettyHttpMethod.valueOf(request.method.name), url, flatHeaders)
                 applyHeaders(nettyReq, headers, request)
                 discard(flatHeaders.set("Content-Type", contentType))
                 if !flatHeaders.contains("Transfer-Encoding") then

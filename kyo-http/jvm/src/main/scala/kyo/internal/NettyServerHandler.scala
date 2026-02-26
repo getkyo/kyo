@@ -38,6 +38,8 @@ final private[kyo] class NettyServerHandler(
     private var pendingPathEnd: Int                  = -1
     private var pendingHeaders: HttpHeaders          = HttpHeaders.empty
     private var pendingKeepAlive: Boolean            = true
+    private var pendingIsHead: Boolean               = false
+    private var pendingMethod: HttpMethod            = HttpMethod.GET
     private var bodyBuf: Maybe[CompositeByteBuf]     = Absent
     private var bodySize: Int                        = 0
 
@@ -141,10 +143,11 @@ final private[kyo] class NettyServerHandler(
                         queryFn,
                         headers,
                         bodyStream,
-                        path
+                        path,
+                        Present(method)
                     ) match
                         case Result.Success(request) =>
-                            invokeHandler(ctx, endpoint, route, request, keepAlive)
+                            invokeHandler(ctx, endpoint, route, request, keepAlive, method == HttpMethod.HEAD)
                         case Result.Failure(err) =>
                             streamingChannel.foreach(ch => discard(ch.close()))
                             streamingChannel = Absent
@@ -167,6 +170,8 @@ final private[kyo] class NettyServerHandler(
                     pendingPathEnd = pathEnd
                     pendingHeaders = headers
                     pendingKeepAlive = keepAlive
+                    pendingIsHead = method == HttpMethod.HEAD
+                    pendingMethod = method
                     bodyBuf = Present(ctx.alloc().compositeBuffer())
 
                     if nettyReq.isInstanceOf[HttpContent] then
@@ -225,6 +230,8 @@ final private[kyo] class NettyServerHandler(
             val pathEnd    = pendingPathEnd
             val headers    = pendingHeaders
             val keepAlive  = pendingKeepAlive
+            val isHead     = pendingIsHead
+            val method     = pendingMethod
 
             resetState()
 
@@ -240,10 +247,11 @@ final private[kyo] class NettyServerHandler(
                         queryFn,
                         headers,
                         bodyData,
-                        path
+                        path,
+                        Present(method)
                     ) match
                         case Result.Success(request) =>
-                            invokeHandler(ctx, endpoint, route, request, keepAlive)
+                            invokeHandler(ctx, endpoint, route, request, keepAlive, isHead)
                         case Result.Failure(err) =>
                             sendErrorResponse(ctx, HttpStatus.BadRequest, HttpHeaders.empty, keepAlive)
                         case Result.Panic(e) =>
@@ -322,7 +330,8 @@ final private[kyo] class NettyServerHandler(
         handler: HttpHandler[?, ?, ?],
         route: HttpRoute[?, ?, ?],
         request: HttpRequest[?],
-        keepAlive: Boolean
+        keepAlive: Boolean,
+        isHead: Boolean
     )(using AllowUnsafe): Unit =
 
         val h   = handler.asInstanceOf[HttpHandler[Any, Any, Any]]
@@ -336,18 +345,24 @@ final private[kyo] class NettyServerHandler(
                         onEmpty = (status, headers) =>
                             sendBufferedResponse(ctx, status, headers, Span.empty[Byte], keepAlive),
                         onBuffered = (status, headers, contentType, body) =>
-                            sendBufferedResponse(ctx, status, headers.add("Content-Type", contentType), body, keepAlive),
+                            val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                            sendBufferedResponse(ctx, status, h, if isHead then Span.empty[Byte] else body, keepAlive)
+                        ,
                         onStreaming = (status, headers, contentType, stream) =>
-                            sendStreamingResponse(ctx, status, headers.add("Content-Type", contentType), stream, keepAlive)
+                            val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                            if isHead then sendBufferedResponse(ctx, status, h, Span.empty[Byte], keepAlive)
+                            else sendStreamingResponse(ctx, status, h, stream, keepAlive)
                     )
                 case Result.Failure(halt: HttpResponse.Halt) =>
                     sendBufferedResponse(ctx, halt.response.status, halt.response.headers, Span.empty[Byte], keepAlive)
                 case Result.Failure(error) =>
                     RouteUtil.encodeError(rt, error) match
                         case Present((status, headers, body)) =>
-                            sendBufferedResponse(ctx, status, headers, body, keepAlive)
+                            sendBufferedResponse(ctx, status, headers, if isHead then Span.empty[Byte] else body, keepAlive)
                         case Absent =>
                             sendBufferedResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, Span.empty[Byte], keepAlive)
+                case Result.Panic(_) =>
+                    sendErrorResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, keepAlive)
             }
         }
 
@@ -446,13 +461,17 @@ final private[kyo] class NettyServerHandler(
         extraHeaders: HttpHeaders,
         keepAlive: Boolean
     )(using AllowUnsafe): Unit =
+        val bodySpan  = RouteUtil.encodeErrorBody(status)
+        val bodyBytes = bodySpan.toArrayUnsafe
+        val content   = Unpooled.wrappedBuffer(bodyBytes)
         val nettyResp = new DefaultFullHttpResponse(
             HttpVersion.HTTP_1_1,
             HttpResponseStatus.valueOf(status.code),
-            Unpooled.EMPTY_BUFFER
+            content
         )
         extraHeaders.foreach((k, v) => discard(nettyResp.headers().add(k, v)))
-        discard(nettyResp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, 0))
+        discard(nettyResp.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json"))
+        discard(nettyResp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, bodyBytes.length))
         if keepAlive then
             discard(nettyResp.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
             discard(ctx.writeAndFlush(nettyResp))
@@ -483,6 +502,8 @@ final private[kyo] class NettyServerHandler(
         pendingPath = ""
         pendingPathEnd = -1
         pendingHeaders = HttpHeaders.empty
+        pendingIsHead = false
+        pendingMethod = HttpMethod.GET
         discardStatus = HttpStatus.NotFound
         discardExtraHeaders = HttpHeaders.empty
         bodySize = 0

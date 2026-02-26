@@ -288,6 +288,7 @@ private[kyo] object H2oServerBackend:
                     if queryAt < 0 then Absent
                     else Present(HttpUrl.fromUri(fullPath))
 
+                val methodOvr = Present(method)
                 val decoded =
                     if routeMatch.isStreamingRequest then
                         val bodyStream =
@@ -299,7 +300,8 @@ private[kyo] object H2oServerBackend:
                             queryFn,
                             headers,
                             bodyStream,
-                            path
+                            path,
+                            methodOvr
                         )
                     else
                         RouteUtil.decodeBufferedRequest(
@@ -308,12 +310,13 @@ private[kyo] object H2oServerBackend:
                             queryFn,
                             headers,
                             body,
-                            path
+                            path,
+                            methodOvr
                         )
 
                 decoded match
                     case Result.Success(request) =>
-                        launchHandlerFiber(req, endpoint, route, request)
+                        launchHandlerFiber(req, endpoint, route, request, isHead = method == HttpMethod.HEAD)
                     case Result.Failure(_) =>
                         sendImmediateError(req, 400, HttpHeaders.empty)
                         discard(inFlight.decrementAndGet())
@@ -384,7 +387,8 @@ private[kyo] object H2oServerBackend:
         req: H2oReq,
         handler: HttpHandler[?, ?, ?],
         route: HttpRoute[?, ?, ?],
-        request: HttpRequest[?]
+        request: HttpRequest[?],
+        isHead: Boolean = false
     ): Unit =
         val h  = handler.asInstanceOf[HttpHandler[Any, Any, Any]]
         val r  = request.asInstanceOf[HttpRequest[Any]]
@@ -394,13 +398,13 @@ private[kyo] object H2oServerBackend:
             Abort.run[Any](h(r)).map {
                 case Result.Success(response) =>
                     val resp = response.asInstanceOf[HttpResponse[Any]]
-                    encodeAndEnqueue(req, rt, resp)
+                    encodeAndEnqueue(req, rt, resp, isHead)
                 case Result.Failure(halt: HttpResponse.Halt) =>
                     enqueueBuffered(req, halt.response.status.code, halt.response.headers, Span.empty[Byte])
                 case Result.Failure(error) =>
                     RouteUtil.encodeError(rt, error) match
                         case Present((status, headers, body)) =>
-                            enqueueBuffered(req, status.code, headers, body)
+                            enqueueBuffered(req, status.code, headers, if isHead then Span.empty[Byte] else body)
                         case Absent =>
                             enqueueError(req, 500, HttpHeaders.empty)
                 case Result.Panic(_) =>
@@ -420,49 +424,56 @@ private[kyo] object H2oServerBackend:
     private def encodeAndEnqueue(
         req: H2oReq,
         route: HttpRoute[Any, Any, Any],
-        response: HttpResponse[Any]
+        response: HttpResponse[Any],
+        isHead: Boolean = false
     ): Unit =
         RouteUtil.encodeResponse(route, response)(
             onEmpty = (status, headers) =>
                 enqueueBuffered(req, status.code, headers, Span.empty[Byte]),
             onBuffered = (status, headers, contentType, body) =>
-                enqueueBuffered(req, status.code, headers.add("Content-Type", contentType), body),
+                val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                enqueueBuffered(req, status.code, h, if isHead then Span.empty[Byte] else body)
+            ,
             onStreaming = (status, headers, contentType, stream) =>
-                val streamId      = nextStreamId.getAndIncrement()
-                val ctx           = new StreamContext(req, streamId, null)
-                val headersWithCt = headers.add("Content-Type", contentType)
-                discard(streams.put(streamId, ctx))
-                discard(responseQueue.add(new StreamStartResponse(ctx, status.code, headersWithCt)))
-                H2oBindings.wake(server)
+                val headersWithCt = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                if isHead then
+                    enqueueBuffered(req, status.code, headersWithCt, Span.empty[Byte])
+                else
+                    val streamId = nextStreamId.getAndIncrement()
+                    val ctx      = new StreamContext(req, streamId, null)
+                    discard(streams.put(streamId, ctx))
+                    discard(responseQueue.add(new StreamStartResponse(ctx, status.code, headersWithCt)))
+                    H2oBindings.wake(server)
 
-                discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
-                    Scope.run {
-                        Abort.run[Any] {
-                            stream.foreach { span =>
-                                Sync.defer {
-                                    if !ctx.stopped then
-                                        ctx.enqueueChunk(span.toArrayUnsafe, isFinal = false)
+                    discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
+                        Scope.run {
+                            Abort.run[Any] {
+                                stream.foreach { span =>
+                                    Sync.defer {
+                                        if !ctx.stopped then
+                                            ctx.enqueueChunk(span.toArrayUnsafe, isFinal = false)
+                                            discard(responseQueue.add(new StreamChunkNotify(ctx)))
+                                            H2oBindings.wake(server)
+                                    }
+                                }.andThen {
+                                    Sync.defer {
+                                        ctx.enqueueChunk(Array.emptyByteArray, isFinal = true)
                                         discard(responseQueue.add(new StreamChunkNotify(ctx)))
                                         H2oBindings.wake(server)
+                                    }
                                 }
-                            }.andThen {
-                                Sync.defer {
-                                    ctx.enqueueChunk(Array.emptyByteArray, isFinal = true)
-                                    discard(responseQueue.add(new StreamChunkNotify(ctx)))
-                                    H2oBindings.wake(server)
-                                }
+                            }.map {
+                                case Result.Failure(_) | Result.Panic(_) =>
+                                    if !ctx.stopped then
+                                        ctx.enqueueChunk(Array.emptyByteArray, isFinal = true)
+                                        discard(responseQueue.add(new StreamChunkNotify(ctx)))
+                                        H2oBindings.wake(server)
+                                    end if
+                                case _ => ()
                             }
-                        }.map {
-                            case Result.Failure(_) | Result.Panic(_) =>
-                                if !ctx.stopped then
-                                    ctx.enqueueChunk(Array.emptyByteArray, isFinal = true)
-                                    discard(responseQueue.add(new StreamChunkNotify(ctx)))
-                                    H2oBindings.wake(server)
-                                end if
-                            case _ => ()
                         }
-                    }
-                }))
+                    }))
+                end if
         )
     end encodeAndEnqueue
 
@@ -481,10 +492,8 @@ private[kyo] object H2oServerBackend:
     // ── Native response helpers (called on evloop thread) ───────────────
 
     private def sendImmediateError(req: H2oReq, status: Int, headers: HttpHeaders): Unit =
-        Zone {
-            val (names, nameLens, values, valueLens, headerCount) = encodeHeaders(headers)
-            H2oBindings.sendError(req, status, names, nameLens, values, valueLens, headerCount)
-        }
+        val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(status))
+        sendBufferedNative(req, status, headers.add("Content-Type", "application/json"), bodyBytes)
 
     private def sendBufferedNative(req: H2oReq, status: Int, headers: HttpHeaders, body: Span[Byte]): Unit =
         Zone {

@@ -53,10 +53,25 @@ final class HttpRouter private (
                 val getIdx = node.endpointIndices(GetMethodIdx)
                 if getIdx >= 0 then Result.succeed(buildMatch(getIdx, captureValues, captureCount))
                 else node.methodNotAllowedResult
+            else if methodIdx == OptionsMethodIdx && node.hasAllowedMethods then
+                // OPTIONS with no explicit handler: match any endpoint so filters (e.g. CORS) can handle it
+                val firstIdx = findFirstEndpoint(node)
+                if firstIdx >= 0 then Result.succeed(buildMatch(firstIdx, captureValues, captureCount))
+                else node.methodNotAllowedResult
             else node.methodNotAllowedResult
             end if
         end if
     end resolveEndpoint
+
+    private def findFirstEndpoint(node: Node): Int =
+        var i = 0
+        while i < MethodCount do
+            val idx = node.endpointIndices(i)
+            if idx >= 0 then return idx
+            i += 1
+        end while
+        -1
+    end findFirstEndpoint
 
     private val maxCaptures: Int =
         @tailrec def loop(i: Int, max: Int): Int =
@@ -178,9 +193,10 @@ object HttpRouter:
 
     private val NotFoundResult: Result[FindError, Nothing] = Result.fail(FindError.NotFound)
 
-    private val MethodCount   = 9
-    private val GetMethodIdx  = 0
-    private val HeadMethodIdx = 5
+    private val MethodCount      = 9
+    private val GetMethodIdx     = 0
+    private val HeadMethodIdx    = 5
+    private val OptionsMethodIdx = 6
 
     private[kyo] def methodIndex(method: HttpMethod): Int =
         val name = method.name

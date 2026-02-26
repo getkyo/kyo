@@ -114,8 +114,11 @@ object HttpServer:
                     handlers,
                     OpenApiGenerator.Config(ep.title, ep.version, ep.description)
                 )
-                val json = OpenApi.toJson(spec)
-                handlers :+ HttpHandler.getText(ep.path)(_ => json)
+                val json      = OpenApi.toJson(spec)
+                val jsonBytes = Span.fromUnsafe(json.getBytes("UTF-8"))
+                handlers :+ HttpHandler.init(HttpRoute.getRaw(ep.path).response(_.bodyBinary)) { _ =>
+                    HttpResponse.okBinary(jsonBytes).addHeader("Content-Type", "application/json")
+                }
             case Absent =>
                 handlers
         backend.bind(allHandlers, config).map(new HttpServer(_))

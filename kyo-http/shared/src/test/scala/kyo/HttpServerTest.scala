@@ -1494,4 +1494,348 @@ class HttpServerTest extends Test:
         }
     }
 
+    // ============================================================
+    // New tests from demo validation coverage analysis
+    // ============================================================
+
+    "error response bodies" - {
+
+        // Reproduces: BUG-1 from DEMO_VALIDATION — handler exception returns 500 with empty body
+        "500 response has non-empty body when handler throws" in run {
+            val route = HttpRoute.getRaw("throw-test").response(_.bodyText)
+            val ep = route.handler { _ =>
+                throw new RuntimeException("boom"); HttpResponse.okText("unreachable")
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/throw-test").map { resp =>
+                    assert(resp.status == HttpStatus.InternalServerError)
+                    assert(resp.fields.body.nonEmpty, "500 response body should not be empty")
+                }
+            }
+        }
+
+        // Reproduces: BUG-5 from DEMO_VALIDATION — missing query param returns 400 with empty body
+        "400 response for missing required query param includes error detail" in run {
+            val route = HttpRoute.getRaw("search-test")
+                .request(_.query[String]("q"))
+                .response(_.bodyText)
+            val ep        = route.handler(req => HttpResponse.okText(req.fields.q))
+            val bareRoute = HttpRoute.getRaw("search-test").response(_.bodyText)
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/search-test").map { resp =>
+                    assert(resp.status == HttpStatus.BadRequest)
+                    assert(resp.fields.body.nonEmpty, "400 response body should explain what's missing")
+                }
+            }
+        }
+
+        // Extends existing "malformed JSON returns 400" — verifies body contains parse error info
+        "400 response for malformed JSON includes error detail" in run {
+            val route = HttpRoute.postRaw("json-test")
+                .request(_.bodyJson[User])
+                .response(_.bodyText)
+            val ep = route.handler(_ => HttpResponse.okText("should not reach"))
+            val textRoute = HttpRoute.postRaw("json-test")
+                .request(_.bodyText)
+                .response(_.bodyText)
+            withServer(ep) { port =>
+                send(
+                    port,
+                    textRoute,
+                    HttpRequest.postRaw(HttpUrl.fromUri("/json-test"))
+                        .addField("body", "not json")
+                ).map { resp =>
+                    assert(resp.status == HttpStatus.BadRequest)
+                    assert(resp.fields.body.nonEmpty, "400 response body should include parse error details")
+                }
+            }
+        }
+    }
+
+    "CORS" - {
+
+        // Reproduces: BUG-2 from DEMO_VALIDATION — CORS preflight OPTIONS returns 405 instead of 200
+        "CORS preflight OPTIONS returns 200 with CORS headers" in run {
+            val route = HttpRoute.getRaw("cors-resource").response(_.bodyText)
+            val ep    = route.filter(HttpFilter.server.cors()).handler(_ => HttpResponse.okText("ok"))
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.OPTIONS, "/cors-resource").map { resp =>
+                    assert(
+                        resp.status == HttpStatus.NoContent || resp.status == HttpStatus.OK,
+                        s"CORS preflight should return 200 or 204, got ${resp.status}"
+                    )
+                    val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
+                    assert(allowOrigin.isDefined, "Response should include Access-Control-Allow-Origin")
+                    assert(allowOrigin.get == "*")
+                    val allowMethods = resp.headers.get("Access-Control-Allow-Methods")
+                    assert(allowMethods.isDefined, "Response should include Access-Control-Allow-Methods")
+                }
+            }
+        }
+
+        "CORS filter adds Access-Control-Allow-Origin on regular responses" in run {
+            val route = HttpRoute.getRaw("cors-get").response(_.bodyText)
+            val ep    = route.filter(HttpFilter.server.cors()).handler(_ => HttpResponse.okText("hello"))
+            withServer(ep) { port =>
+                send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-get"))).map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                    val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
+                    assert(allowOrigin.isDefined, "GET response should include Access-Control-Allow-Origin")
+                    assert(allowOrigin.get == "*")
+                }
+            }
+        }
+    }
+
+    "OpenAPI endpoint" - {
+
+        // Reproduces: BUG-3 from DEMO_VALIDATION — OpenAPI returns Content-Type text/plain instead of application/json
+        "OpenAPI endpoint returns Content-Type application/json" in run {
+            val route  = HttpRoute.getRaw("items").response(_.bodyText)
+            val ep     = route.handler(_ => HttpResponse.okText("ok"))
+            val config = HttpServer.Config(port = 0, host = "localhost").openApi("/openapi.json", "Test API")
+            HttpServer.init(config)(ep).map { server =>
+                val oaRoute = HttpRoute.getRaw("openapi.json").response(_.bodyText)
+                send(server.port, oaRoute, HttpRequest.getRaw(HttpUrl.fromUri("/openapi.json"))).map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                    val ct = resp.headers.get("Content-Type")
+                    assert(ct.isDefined)
+                    assert(
+                        ct.get.contains("application/json"),
+                        s"OpenAPI endpoint should return application/json, got ${ct.get}"
+                    )
+                    // Also verify the body is valid JSON (contains expected fields)
+                    assert(resp.fields.body.contains("\"openapi\""))
+                    assert(resp.fields.body.contains("Test API"))
+                }
+            }
+        }
+    }
+
+    "streaming with delays" - {
+
+        // Reproduces: BUG-7/BUG-9 from DEMO_VALIDATION — SSE with delayed events never sends data
+        "SSE with delayed first event" in run {
+            val route = HttpRoute.getRaw("sse-delayed").response(_.bodySseText)
+            val ep = route.handler { _ =>
+                val events = Stream.init(Chunk(1, 2, 3)).mapChunk { chunk =>
+                    Async.delay(100.millis) {
+                        chunk.map(i => HttpEvent(s"event-$i"))
+                    }
+                }
+                HttpResponse.ok.addField("body", events)
+            }
+            var called = false
+            withServer(ep) { port =>
+                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delayed"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            resp.fields.body.run.map { chunks =>
+                                called = true
+                                val events = chunks.toSeq
+                                assert(events.size == 3, s"Expected 3 delayed SSE events, got ${events.size}")
+                                assert(events(0).data == "event-1")
+                                assert(events(1).data == "event-2")
+                                assert(events(2).data == "event-3")
+                            }
+                        }
+                    }
+                }
+            }.andThen(assert(called))
+        }
+
+        "NDJSON with delayed chunks" in run {
+            val route = HttpRoute.getRaw("ndjson-delayed").response(_.bodyNdjson[User])
+            val ep = route.handler { _ =>
+                val users = Stream.init(Chunk(User(1, "alice"), User(2, "bob"))).mapChunk { chunk =>
+                    Async.delay(100.millis) {
+                        chunk
+                    }
+                }
+                HttpResponse.ok.addField("body", users)
+            }
+            var called = false
+            withServer(ep) { port =>
+                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-delayed"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            resp.fields.body.run.map { chunks =>
+                                called = true
+                                val users = chunks.toSeq
+                                assert(users.size == 2, s"Expected 2 delayed NDJSON items, got ${users.size}")
+                                assert(users(0) == User(1, "alice"))
+                                assert(users(1) == User(2, "bob"))
+                            }
+                        }
+                    }
+                }
+            }.andThen(assert(called))
+        }
+
+        // Tests the .map pattern (used in McpServer — BUG-9) vs .mapChunk pattern (used in EventBus — works)
+        "delayed stream via map pattern" in run {
+            val route = HttpRoute.getRaw("sse-map-delay").response(_.bodySseText)
+            val ep = route.handler { _ =>
+                val events = Stream.init(Chunk(1, 2, 3)).map { i =>
+                    Async.delay(100.millis) {
+                        HttpEvent(s"item-$i")
+                    }
+                }
+                HttpResponse.ok.addField("body", events)
+            }
+            var called = false
+            withServer(ep) { port =>
+                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-map-delay"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            resp.fields.body.run.map { chunks =>
+                                called = true
+                                val events = chunks.toSeq
+                                assert(events.size == 3, s"Expected 3 events via .map pattern, got ${events.size}")
+                                assert(events(0).data == "item-1")
+                            }
+                        }
+                    }
+                }
+            }.andThen(assert(called))
+        }
+    }
+
+    "HEAD request semantics" - {
+
+        // Reproduces: BUG-N3 from DEMO_VALIDATION_NATIVE — HEAD returns full body on Native
+        "HEAD response has empty body" in run {
+            val getRoute = HttpRoute.getRaw("head-body-test").response(_.bodyText)
+            val ep       = getRoute.handler(_ => HttpResponse.okText("this should not appear in HEAD"))
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.HEAD, "/head-body-test").map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                    // HEAD response body must be empty per RFC 9110 Section 9.3.2
+                    assert(
+                        resp.fields.body.isEmpty,
+                        s"HEAD response body should be empty, got: '${resp.fields.body}'"
+                    )
+                }
+            }
+        }
+
+        "HEAD response preserves Content-Type header from GET" in run {
+            val route = HttpRoute.getRaw("head-ct-test").response(_.bodyJson[User])
+            val ep    = route.handler(_ => HttpResponse.okJson(User(1, "alice")))
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.HEAD, "/head-ct-test").map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                    val ct = resp.headers.get("Content-Type")
+                    assert(ct.isDefined, "HEAD response should include Content-Type")
+                    assert(ct.get.contains("application/json"))
+                }
+            }
+        }
+    }
+
+    "streaming response headers" - {
+
+        // Reproduces: BUG-N2 from DEMO_VALIDATION_NATIVE — streaming headers corrupted on Native
+        "SSE response has Content-Type text/event-stream" in run {
+            val route = HttpRoute.getRaw("sse-ct").response(_.bodySseText)
+            val ep = route.handler { _ =>
+                val events = Stream.init(Seq(HttpEvent("test")))
+                HttpResponse.ok.addField("body", events)
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/sse-ct").map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                    val ct = resp.headers.get("Content-Type")
+                    assert(ct.isDefined, "SSE response should have Content-Type header")
+                    assert(
+                        ct.get.contains("text/event-stream"),
+                        s"SSE Content-Type should be text/event-stream, got: ${ct.get}"
+                    )
+                }
+            }
+        }
+
+        "NDJSON response has Content-Type application/x-ndjson" in run {
+            val route = HttpRoute.getRaw("ndjson-ct").response(_.bodyNdjson[User])
+            val ep = route.handler { _ =>
+                val users = Stream.init(Seq(User(1, "alice")))
+                HttpResponse.ok.addField("body", users)
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/ndjson-ct").map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                    val ct = resp.headers.get("Content-Type")
+                    assert(ct.isDefined, "NDJSON response should have Content-Type header")
+                    assert(
+                        ct.get.contains("application/x-ndjson"),
+                        s"NDJSON Content-Type should be application/x-ndjson, got: ${ct.get}"
+                    )
+                }
+            }
+        }
+    }
+
+    "expanded coverage" - {
+
+        "server recovers after 500 error" in run {
+            val route   = HttpRoute.getRaw("maybe-fail").response(_.bodyText)
+            var counter = 0
+            val ep = route.handler { _ =>
+                counter += 1
+                if counter == 1 then throw new RuntimeException("first request fails")
+                else HttpResponse.okText("recovered")
+            }
+            withServer(ep) { port =>
+                // First request → 500
+                sendRaw(port, HttpMethod.GET, "/maybe-fail").map { resp =>
+                    assert(resp.status == HttpStatus.InternalServerError)
+                }.andThen {
+                    // Second request → 200, server recovered
+                    sendRaw(port, HttpMethod.GET, "/maybe-fail").map { resp =>
+                        assert(resp.status == HttpStatus.OK)
+                        assert(resp.fields.body == "recovered")
+                    }
+                }
+            }
+        }
+
+        "concurrent error responses do not hang" in run {
+            val route = HttpRoute.getRaw("concurrent-err").response(_.bodyText)
+            val ep = route.handler { _ =>
+                throw new RuntimeException("fail"); HttpResponse.okText("x")
+            }
+            withServer(ep) { port =>
+                Async.foreach(1 to 5, 5) { _ =>
+                    sendRaw(port, HttpMethod.GET, "/concurrent-err")
+                }.map { responses =>
+                    assert(responses.forall(_.status == HttpStatus.InternalServerError))
+                }
+            }
+        }
+
+        "empty SSE stream returns 200 with no events" in run {
+            val route = HttpRoute.getRaw("sse-empty").response(_.bodySseText)
+            val ep = route.handler { _ =>
+                HttpResponse.ok.addField("body", Stream.empty[HttpEvent[String]])
+            }
+            var called = false
+            withServer(ep) { port =>
+                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-empty"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            resp.fields.body.run.map { chunks =>
+                                called = true
+                                assert(chunks.isEmpty, s"Empty SSE stream should produce 0 events, got ${chunks.size}")
+                            }
+                        }
+                    }
+                }
+            }.andThen(assert(called))
+        }
+    }
+
 end HttpServerTest

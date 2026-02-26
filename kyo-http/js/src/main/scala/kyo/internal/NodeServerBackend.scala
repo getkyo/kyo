@@ -110,9 +110,9 @@ final class NodeServerBackend extends HttpBackend.Server:
 
             case Result.Success(routeMatch) =>
                 if routeMatch.isStreamingRequest then
-                    handleStreaming(req, res, router, routeMatch, uri, path, pathEnd, headers)
+                    handleStreaming(req, res, router, routeMatch, uri, path, pathEnd, headers, method)
                 else
-                    handleBuffered(req, res, router, routeMatch, uri, path, pathEnd, headers, maxContentLength)
+                    handleBuffered(req, res, router, routeMatch, uri, path, pathEnd, headers, maxContentLength, method)
 
             case Result.Panic(_) =>
                 sendErrorResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty)
@@ -128,7 +128,8 @@ final class NodeServerBackend extends HttpBackend.Server:
         path: String,
         pathEnd: Int,
         headers: HttpHeaders,
-        maxContentLength: Int
+        maxContentLength: Int,
+        method: HttpMethod
     )(using AllowUnsafe, Frame): Unit =
         val chunks   = js.Array[Uint8Array]()
         var bodySize = 0
@@ -167,7 +168,8 @@ final class NodeServerBackend extends HttpBackend.Server:
                             queryFn,
                             headers,
                             bodyBytes,
-                            path
+                            path,
+                            Present(method)
                         ) match
                             case Result.Success(request) =>
                                 invokeHandler(res, endpoint, route, request)
@@ -190,7 +192,8 @@ final class NodeServerBackend extends HttpBackend.Server:
         uri: String,
         path: String,
         pathEnd: Int,
-        headers: HttpHeaders
+        headers: HttpHeaders,
+        method: HttpMethod
     )(using AllowUnsafe, Frame): Unit =
         val byteChannel = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
 
@@ -257,7 +260,8 @@ final class NodeServerBackend extends HttpBackend.Server:
             queryFn,
             headers,
             bodyStream,
-            path
+            path,
+            Present(method)
         ) match
             case Result.Success(request) =>
                 invokeHandler(res, endpoint, route, request)
@@ -287,9 +291,12 @@ final class NodeServerBackend extends HttpBackend.Server:
                         onEmpty = (status, headers) =>
                             writeBufferedResponse(res, status, headers, Span.empty[Byte]),
                         onBuffered = (status, headers, contentType, body) =>
-                            writeBufferedResponse(res, status, headers.add("Content-Type", contentType), body),
+                            val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                            writeBufferedResponse(res, status, h, body)
+                        ,
                         onStreaming = (status, headers, contentType, stream) =>
-                            writeStreamingResponse(res, status, headers.add("Content-Type", contentType), stream)
+                            val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                            writeStreamingResponse(res, status, h, stream)
                     )
                 case Result.Failure(halt: HttpResponse.Halt) =>
                     writeBufferedResponse(res, halt.response.status, halt.response.headers, Span.empty[Byte])
@@ -299,6 +306,8 @@ final class NodeServerBackend extends HttpBackend.Server:
                             writeBufferedResponse(res, status, headers, body)
                         case Absent =>
                             writeBufferedResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty, Span.empty[Byte])
+                case Result.Panic(_) =>
+                    sendErrorResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty)
             }
         }
 
@@ -383,7 +392,9 @@ final class NodeServerBackend extends HttpBackend.Server:
         status: HttpStatus,
         extraHeaders: HttpHeaders
     )(using AllowUnsafe): Unit =
-        writeBufferedResponse(res, status, extraHeaders, Span.empty[Byte])
+        val bodyBytes = RouteUtil.encodeErrorBody(status)
+        writeBufferedResponse(res, status, extraHeaders.add("Content-Type", "application/json"), bodyBytes)
+    end sendErrorResponse
 
     private inline def guardResponse(res: ServerResponse)(inline body: Unit)(using AllowUnsafe): Unit =
         try body
