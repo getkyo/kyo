@@ -24,7 +24,7 @@ final class NodeServerBackend extends HttpBackend.Server:
         config: HttpServer.Config
     )(using Frame): HttpBackend.Binding < Async =
         Sync.Unsafe.defer {
-            val router = HttpRouter(handlers)
+            val router = HttpRouter(handlers, config.cors)
             val p      = Promise.Unsafe.init[HttpBackend.Binding, Any]()
 
             val options = js.Dynamic.literal(
@@ -39,6 +39,16 @@ final class NodeServerBackend extends HttpBackend.Server:
                 options.asInstanceOf[js.Object],
                 requestListener
             )
+
+            discard(nodeServer.on(
+                "error",
+                { (err: js.Dynamic) =>
+                    import AllowUnsafe.embrace.danger
+                    val msg   = err.message.asInstanceOf[String]
+                    val cause = new Exception(msg)
+                    discard(p.complete(Result.Panic(HttpError.BindError(config.host, config.port, cause))))
+                }
+            ))
 
             discard(nodeServer.listen(
                 config.port,
@@ -98,6 +108,10 @@ final class NodeServerBackend extends HttpBackend.Server:
                 discard(req.resume())
                 discard(req.on("end", { () => sendErrorResponse(res, HttpStatus.NotFound, HttpHeaders.empty) }))
 
+            case Result.Failure(HttpRouter.FindError.Options(headers)) =>
+                discard(req.resume())
+                discard(req.on("end", { () => writeBufferedResponse(res, HttpStatus.NoContent, headers, Span.empty[Byte]) }))
+
             case Result.Failure(HttpRouter.FindError.MethodNotAllowed(allowed)) =>
                 val allowValue = allowed.iterator.map(_.name).mkString(", ")
                 discard(req.resume())
@@ -110,9 +124,9 @@ final class NodeServerBackend extends HttpBackend.Server:
 
             case Result.Success(routeMatch) =>
                 if routeMatch.isStreamingRequest then
-                    handleStreaming(req, res, router, routeMatch, uri, path, pathEnd, headers)
+                    handleStreaming(req, res, router, routeMatch, uri, path, pathEnd, headers, method)
                 else
-                    handleBuffered(req, res, router, routeMatch, uri, path, pathEnd, headers, maxContentLength)
+                    handleBuffered(req, res, router, routeMatch, uri, path, pathEnd, headers, maxContentLength, method)
 
             case Result.Panic(_) =>
                 sendErrorResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty)
@@ -128,7 +142,8 @@ final class NodeServerBackend extends HttpBackend.Server:
         path: String,
         pathEnd: Int,
         headers: HttpHeaders,
-        maxContentLength: Int
+        maxContentLength: Int,
+        method: HttpMethod
     )(using AllowUnsafe, Frame): Unit =
         val chunks   = js.Array[Uint8Array]()
         var bodySize = 0
@@ -167,10 +182,11 @@ final class NodeServerBackend extends HttpBackend.Server:
                             queryFn,
                             headers,
                             bodyBytes,
-                            path
+                            path,
+                            Present(method)
                         ) match
                             case Result.Success(request) =>
-                                invokeHandler(res, endpoint, route, request)
+                                invokeHandler(res, endpoint, route, request, method == HttpMethod.HEAD)
                             case Result.Failure(_) =>
                                 sendErrorResponse(res, HttpStatus.BadRequest, HttpHeaders.empty)
                             case Result.Panic(_) =>
@@ -190,7 +206,8 @@ final class NodeServerBackend extends HttpBackend.Server:
         uri: String,
         path: String,
         pathEnd: Int,
-        headers: HttpHeaders
+        headers: HttpHeaders,
+        method: HttpMethod
     )(using AllowUnsafe, Frame): Unit =
         val byteChannel = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
 
@@ -257,10 +274,11 @@ final class NodeServerBackend extends HttpBackend.Server:
             queryFn,
             headers,
             bodyStream,
-            path
+            path,
+            Present(method)
         ) match
             case Result.Success(request) =>
-                invokeHandler(res, endpoint, route, request)
+                invokeHandler(res, endpoint, route, request, method == HttpMethod.HEAD)
             case Result.Failure(_) =>
                 discard(byteChannel.close())
                 sendErrorResponse(res, HttpStatus.BadRequest, HttpHeaders.empty)
@@ -274,49 +292,76 @@ final class NodeServerBackend extends HttpBackend.Server:
         res: ServerResponse,
         handler: HttpHandler[?, ?, ?],
         route: HttpRoute[?, ?, ?],
-        request: HttpRequest[?]
+        request: HttpRequest[?],
+        isHead: Boolean
     )(using AllowUnsafe, Frame): Unit =
         val h   = handler.asInstanceOf[HttpHandler[Any, Any, Any]]
         val req = request.asInstanceOf[HttpRequest[Any]]
         val rt  = route.asInstanceOf[HttpRoute[Any, Any, Any]]
 
-        val fiber = launchFiber {
-            Abort.run[Any](h(req)).map {
-                case Result.Success(response) =>
-                    RouteUtil.encodeResponse(rt, response)(
-                        onEmpty = (status, headers) =>
-                            writeBufferedResponse(res, status, headers, Span.empty[Byte]),
-                        onBuffered = (status, headers, contentType, body) =>
-                            writeBufferedResponse(res, status, headers.add("Content-Type", contentType), body),
-                        onStreaming = (status, headers, contentType, stream) =>
-                            writeStreamingResponse(res, status, headers.add("Content-Type", contentType), stream)
-                    )
-                case Result.Failure(halt: HttpResponse.Halt) =>
-                    writeBufferedResponse(res, halt.response.status, halt.response.headers, Span.empty[Byte])
-                case Result.Failure(error) =>
-                    RouteUtil.encodeError(rt, error) match
-                        case Present((status, headers, body)) =>
+        try
+            val fiber = launchFiber {
+                Abort.run[Any](h(req)).map {
+                    case Result.Success(response) =>
+                        RouteUtil.encodeResponse(rt, response)(
+                            onEmpty = (status, headers) =>
+                                writeBufferedResponse(res, status, headers, Span.empty[Byte]),
+                            onBuffered = (status, headers, contentType, body) =>
+                                val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                                if isHead then
+                                    val hh = h.add("Content-Length", body.size.toString)
+                                    writeBufferedResponse(res, status, hh, Span.empty[Byte])
+                                else writeBufferedResponse(res, status, h, body)
+                                end if
+                            ,
+                            onStreaming = (status, headers, contentType, stream) =>
+                                val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                                if isHead then writeBufferedResponse(res, status, h, Span.empty[Byte])
+                                else writeStreamingResponse(res, status, h, stream)
+                        )
+                    case Result.Failure(halt: HttpResponse.Halt) =>
+                        RouteUtil.encodeHalt(halt)((status, headers, body) =>
                             writeBufferedResponse(res, status, headers, body)
-                        case Absent =>
-                            writeBufferedResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty, Span.empty[Byte])
+                        )
+                    case Result.Failure(error) =>
+                        RouteUtil.encodeError(rt, error) match
+                            case Present((status, headers, body)) =>
+                                writeBufferedResponse(res, status, headers, body)
+                            case Absent =>
+                                val handlerError = HttpError.HandlerError(error)
+                                val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
+                                writeBufferedResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty, body)
+                    case Result.Panic(_) =>
+                        sendErrorResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty)
+                }
             }
-        }
 
-        // Interrupt handler fiber on client disconnect
-        discard(res.on(
-            "close",
-            { () =>
-                import AllowUnsafe.embrace.danger
-                discard(fiber.unsafe.interrupt(Result.Panic(new Exception("Client disconnected"))))
+            // Interrupt handler fiber on client disconnect
+            discard(res.on(
+                "close",
+                { () =>
+                    import AllowUnsafe.embrace.danger
+                    discard(fiber.unsafe.interrupt(Result.Panic(new Exception("Client disconnected"))))
+                }
+            ))
+
+            fiber.unsafe.onComplete {
+                case Result.Failure(e) =>
+                    val handlerError = HttpError.HandlerError(e)
+                    val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
+                    writeBufferedResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty, body)
+                case Result.Panic(e) =>
+                    val handlerError = HttpError.HandlerError(e)
+                    val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
+                    writeBufferedResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty, body)
+                case _ => ()
             }
-        ))
-
-        fiber.unsafe.onComplete {
-            case Result.Failure(_) | Result.Panic(_) =>
-                try writeBufferedResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty, Span.empty[Byte])
-                catch case _: Throwable => ()
-            case _ => ()
-        }
+        catch
+            case e: Throwable =>
+                val handlerError = HttpError.HandlerError(e)
+                val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
+                writeBufferedResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty, body)
+        end try
     end invokeHandler
 
     private def writeBufferedResponse(
@@ -383,7 +428,9 @@ final class NodeServerBackend extends HttpBackend.Server:
         status: HttpStatus,
         extraHeaders: HttpHeaders
     )(using AllowUnsafe): Unit =
-        writeBufferedResponse(res, status, extraHeaders, Span.empty[Byte])
+        val bodyBytes = RouteUtil.encodeErrorBody(status)
+        writeBufferedResponse(res, status, extraHeaders.add("Content-Type", "application/json"), bodyBytes)
+    end sendErrorResponse
 
     private inline def guardResponse(res: ServerResponse)(inline body: Unit)(using AllowUnsafe): Unit =
         try body

@@ -46,12 +46,14 @@ object CryptoTicker extends KyoApp:
 
     // GET /stream — NDJSON stream of price ticks, polls every 15s
     val streamHandler = HttpHandler.getNdJson[Tick]("stream") { _ =>
-        Stream.repeatPresent[Tick, Async] {
-            for
-                _      <- Async.delay(15.seconds)(())
-                result <- Abort.run[HttpError](fetchPrices)
-                ticks = result.getOrElse(Seq.empty)
-            yield Maybe.Present(ticks)
+        Stream[Tick, Async] {
+            Loop.foreach {
+                for
+                    _      <- Async.delay(15.seconds)(())
+                    result <- Abort.run[HttpError](fetchPrices)
+                    ticks = result.getOrElse(Seq.empty)
+                yield Emit.valueWith(Chunk.from(ticks))(Loop.continue)
+            }
         }
     }
 

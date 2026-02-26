@@ -22,6 +22,28 @@ object HttpHandler:
                 f(request, handler)
     end init
 
+    private[kyo] def wrapHeaders[In, Out, E](
+        handler: HttpHandler[In, Out, E],
+        addHeaders: Seq[(String, String)]
+    ): HttpHandler[In, Out, E] =
+        val h = handler
+        new HttpHandler[In, Out, E](h.route):
+            private def applyHeaders[F](response: HttpResponse[F]): HttpResponse[F] =
+                var r = response
+                addHeaders.foreach((k, v) => r = r.addHeader(k, v))
+                r
+            end applyHeaders
+
+            def apply(request: HttpRequest[In])(using Frame) =
+                Abort.run[HttpResponse.Halt](h(request)).map {
+                    case kyo.Result.Success(response) =>
+                        applyHeaders(response)
+                    case kyo.Result.Failure(halt) =>
+                        Abort.fail(HttpResponse.Halt(applyHeaders(halt.response)))
+                }
+        end new
+    end wrapHeaders
+
     // ==================== Convenience helpers ====================
 
     def health()(using Frame): HttpHandler[Any, "body" ~ String, Nothing] =

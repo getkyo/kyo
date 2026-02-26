@@ -22,4 +22,15 @@ object HttpError:
     case class ConnectionError(message: String, cause: Throwable)(using Frame)
         extends HttpError(message, cause)
 
+    case class HandlerError(error: Any)(using Frame)
+        extends HttpError(
+            s"Handler failed: $error",
+            error match
+                case e: Throwable => e
+                case other        => String.valueOf(other)
+        )
+
+    case class BindError(host: String, port: Int, cause: Throwable)(using Frame)
+        extends HttpError(s"Server bind failed on $host:$port: ${cause.getMessage}", cause)
+
 end HttpError

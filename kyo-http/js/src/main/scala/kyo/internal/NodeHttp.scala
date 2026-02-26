@@ -21,6 +21,7 @@ trait NodeHttpServerJs extends js.Object:
     def closeAllConnections(): Unit                                                                   = js.native
     def closeIdleConnections(): Unit                                                                  = js.native
     def address(): js.Dynamic                                                                         = js.native
+    def on(event: String, listener: js.Function1[js.Dynamic, Unit]): NodeHttpServerJs                 = js.native
 end NodeHttpServerJs
 
 /** Node.js http.IncomingMessage (request). Extends Readable stream. */

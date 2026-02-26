@@ -38,6 +38,8 @@ final private[kyo] class NettyServerHandler(
     private var pendingPathEnd: Int                  = -1
     private var pendingHeaders: HttpHeaders          = HttpHeaders.empty
     private var pendingKeepAlive: Boolean            = true
+    private var pendingIsHead: Boolean               = false
+    private var pendingMethod: HttpMethod            = HttpMethod.GET
     private var bodyBuf: Maybe[CompositeByteBuf]     = Absent
     private var bodySize: Int                        = 0
 
@@ -97,6 +99,16 @@ final private[kyo] class NettyServerHandler(
                     state = STATE_DISCARDING
                 end if
 
+            case Result.Failure(FindError.Options(headers)) =>
+                if nettyReq.isInstanceOf[LastHttpContent] then
+                    sendBufferedResponse(ctx, HttpStatus.NoContent, headers, Span.empty[Byte], keepAlive)
+                else
+                    discardStatus = HttpStatus.NoContent
+                    discardExtraHeaders = headers
+                    pendingKeepAlive = keepAlive
+                    state = STATE_DISCARDING
+                end if
+
             case Result.Failure(FindError.MethodNotAllowed(allowed)) =>
                 val allowValue = buildAllowHeaderValue(allowed)
                 discardStatus = HttpStatus.MethodNotAllowed
@@ -141,10 +153,11 @@ final private[kyo] class NettyServerHandler(
                         queryFn,
                         headers,
                         bodyStream,
-                        path
+                        path,
+                        Present(method)
                     ) match
                         case Result.Success(request) =>
-                            invokeHandler(ctx, endpoint, route, request, keepAlive)
+                            invokeHandler(ctx, endpoint, route, request, keepAlive, method == HttpMethod.HEAD)
                         case Result.Failure(err) =>
                             streamingChannel.foreach(ch => discard(ch.close()))
                             streamingChannel = Absent
@@ -167,6 +180,8 @@ final private[kyo] class NettyServerHandler(
                     pendingPathEnd = pathEnd
                     pendingHeaders = headers
                     pendingKeepAlive = keepAlive
+                    pendingIsHead = method == HttpMethod.HEAD
+                    pendingMethod = method
                     bodyBuf = Present(ctx.alloc().compositeBuffer())
 
                     if nettyReq.isInstanceOf[HttpContent] then
@@ -225,6 +240,8 @@ final private[kyo] class NettyServerHandler(
             val pathEnd    = pendingPathEnd
             val headers    = pendingHeaders
             val keepAlive  = pendingKeepAlive
+            val isHead     = pendingIsHead
+            val method     = pendingMethod
 
             resetState()
 
@@ -240,10 +257,11 @@ final private[kyo] class NettyServerHandler(
                         queryFn,
                         headers,
                         bodyData,
-                        path
+                        path,
+                        Present(method)
                     ) match
                         case Result.Success(request) =>
-                            invokeHandler(ctx, endpoint, route, request, keepAlive)
+                            invokeHandler(ctx, endpoint, route, request, keepAlive, isHead)
                         case Result.Failure(err) =>
                             sendErrorResponse(ctx, HttpStatus.BadRequest, HttpHeaders.empty, keepAlive)
                         case Result.Panic(e) =>
@@ -296,7 +314,11 @@ final private[kyo] class NettyServerHandler(
             val extraHeaders = discardExtraHeaders
             val keepAlive    = pendingKeepAlive
             resetState()
-            sendErrorResponse(ctx, status, extraHeaders, keepAlive)
+            if status == HttpStatus.NoContent then
+                sendBufferedResponse(ctx, status, extraHeaders, Span.empty[Byte], keepAlive)
+            else
+                sendErrorResponse(ctx, status, extraHeaders, keepAlive)
+            end if
         end if
     end handleDiscardingContent
 
@@ -322,50 +344,76 @@ final private[kyo] class NettyServerHandler(
         handler: HttpHandler[?, ?, ?],
         route: HttpRoute[?, ?, ?],
         request: HttpRequest[?],
-        keepAlive: Boolean
+        keepAlive: Boolean,
+        isHead: Boolean
     )(using AllowUnsafe): Unit =
 
         val h   = handler.asInstanceOf[HttpHandler[Any, Any, Any]]
         val req = request.asInstanceOf[HttpRequest[Any]]
         val rt  = route.asInstanceOf[HttpRoute[Any, Any, Any]]
 
-        val fiber = NettyUtil.launchFiber {
-            Abort.run[Any](h(req)).map {
-                case Result.Success(response) =>
-                    RouteUtil.encodeResponse(rt, response)(
-                        onEmpty = (status, headers) =>
-                            sendBufferedResponse(ctx, status, headers, Span.empty[Byte], keepAlive),
-                        onBuffered = (status, headers, contentType, body) =>
-                            sendBufferedResponse(ctx, status, headers.add("Content-Type", contentType), body, keepAlive),
-                        onStreaming = (status, headers, contentType, stream) =>
-                            sendStreamingResponse(ctx, status, headers.add("Content-Type", contentType), stream, keepAlive)
-                    )
-                case Result.Failure(halt: HttpResponse.Halt) =>
-                    sendBufferedResponse(ctx, halt.response.status, halt.response.headers, Span.empty[Byte], keepAlive)
-                case Result.Failure(error) =>
-                    RouteUtil.encodeError(rt, error) match
-                        case Present((status, headers, body)) =>
+        try
+            val fiber = NettyUtil.launchFiber {
+                Abort.run[Any](h(req)).map {
+                    case Result.Success(response) =>
+                        RouteUtil.encodeResponse(rt, response)(
+                            onEmpty = (status, headers) =>
+                                sendBufferedResponse(ctx, status, headers, Span.empty[Byte], keepAlive),
+                            onBuffered = (status, headers, contentType, body) =>
+                                val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                                if isHead then
+                                    val hh = h.add("Content-Length", body.size.toString)
+                                    sendBufferedResponse(ctx, status, hh, Span.empty[Byte], keepAlive)
+                                else sendBufferedResponse(ctx, status, h, body, keepAlive)
+                                end if
+                            ,
+                            onStreaming = (status, headers, contentType, stream) =>
+                                val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                                if isHead then sendBufferedResponse(ctx, status, h, Span.empty[Byte], keepAlive)
+                                else sendStreamingResponse(ctx, status, h, stream, keepAlive)
+                        )
+                    case Result.Failure(halt: HttpResponse.Halt) =>
+                        RouteUtil.encodeHalt(halt)((status, headers, body) =>
                             sendBufferedResponse(ctx, status, headers, body, keepAlive)
-                        case Absent =>
-                            sendBufferedResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, Span.empty[Byte], keepAlive)
+                        )
+                    case Result.Failure(error) =>
+                        RouteUtil.encodeError(rt, error) match
+                            case Present((status, headers, body)) =>
+                                sendBufferedResponse(ctx, status, headers, if isHead then Span.empty[Byte] else body, keepAlive)
+                            case Absent =>
+                                val handlerError = HttpError.HandlerError(error)
+                                val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
+                                sendBufferedResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, body, keepAlive)
+                    case Result.Panic(_) =>
+                        sendErrorResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, keepAlive)
+                }
             }
-        }
 
-        discard {
-            ctx.channel().closeFuture().addListener { (_: ChannelFuture) =>
-                discard(fiber.unsafe.interrupt(disconnectedPanic))
+            discard {
+                ctx.channel().closeFuture().addListener { (_: ChannelFuture) =>
+                    discard(fiber.unsafe.interrupt(disconnectedPanic))
+                }
             }
-        }
 
-        fiber.unsafe.onComplete {
-            case Result.Failure(e) =>
-                if ctx.channel().isActive then
-                    sendErrorResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, keepAlive)
-            case Result.Panic(e) =>
-                if ctx.channel().isActive then
-                    sendErrorResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, keepAlive)
-            case _ => ()
-        }
+            fiber.unsafe.onComplete {
+                case Result.Failure(e) =>
+                    if ctx.channel().isActive then
+                        val handlerError = HttpError.HandlerError(e)
+                        val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
+                        sendBufferedResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, body, keepAlive)
+                case Result.Panic(e) =>
+                    if ctx.channel().isActive then
+                        val handlerError = HttpError.HandlerError(e)
+                        val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
+                        sendBufferedResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, body, keepAlive)
+                case _ => ()
+            }
+        catch
+            case e: Throwable =>
+                val handlerError = HttpError.HandlerError(e)
+                val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
+                sendBufferedResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, body, keepAlive)
+        end try
     end invokeHandler
 
     private def sendBufferedResponse(
@@ -446,13 +494,17 @@ final private[kyo] class NettyServerHandler(
         extraHeaders: HttpHeaders,
         keepAlive: Boolean
     )(using AllowUnsafe): Unit =
+        val bodySpan  = RouteUtil.encodeErrorBody(status)
+        val bodyBytes = bodySpan.toArrayUnsafe
+        val content   = Unpooled.wrappedBuffer(bodyBytes)
         val nettyResp = new DefaultFullHttpResponse(
             HttpVersion.HTTP_1_1,
             HttpResponseStatus.valueOf(status.code),
-            Unpooled.EMPTY_BUFFER
+            content
         )
         extraHeaders.foreach((k, v) => discard(nettyResp.headers().add(k, v)))
-        discard(nettyResp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, 0))
+        discard(nettyResp.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json"))
+        discard(nettyResp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, bodyBytes.length))
         if keepAlive then
             discard(nettyResp.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
             discard(ctx.writeAndFlush(nettyResp))
@@ -483,6 +535,8 @@ final private[kyo] class NettyServerHandler(
         pendingPath = ""
         pendingPathEnd = -1
         pendingHeaders = HttpHeaders.empty
+        pendingIsHead = false
+        pendingMethod = HttpMethod.GET
         discardStatus = HttpStatus.NotFound
         discardExtraHeaders = HttpHeaders.empty
         bodySize = 0
@@ -509,12 +563,15 @@ final private[kyo] class NettyServerHandler(
 
     override def exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable): Unit =
         import AllowUnsafe.embrace.danger // Override entry point — cannot use (using AllowUnsafe)
+        val handlerError = HttpError.HandlerError(cause)
+        val bodyBytes    = handlerError.getMessage.getBytes("UTF-8")
+        val content      = Unpooled.wrappedBuffer(bodyBytes)
         val nettyResp = new DefaultFullHttpResponse(
             HttpVersion.HTTP_1_1,
             HttpResponseStatus.INTERNAL_SERVER_ERROR,
-            Unpooled.EMPTY_BUFFER
+            content
         )
-        discard(nettyResp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, 0))
+        discard(nettyResp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, bodyBytes.length))
         discard(ctx.writeAndFlush(nettyResp).addListener(ChannelFutureListener.CLOSE))
     end exceptionCaught
 

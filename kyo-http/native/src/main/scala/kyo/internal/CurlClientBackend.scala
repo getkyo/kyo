@@ -164,9 +164,9 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
     )(using Zone, Frame, AllowUnsafe): Unit =
         RouteUtil.encodeRequest(route, request)(
             onEmpty = (url, headers) =>
-                configureCommon(handle, conn, route, url, headers, request.headers, transferId, state),
+                configureCommon(handle, conn, route, url, headers, request.headers, transferId, state, request.method),
             onBuffered = (url, headers, contentType, body) =>
-                configureCommon(handle, conn, route, url, headers, request.headers, transferId, state)
+                configureCommon(handle, conn, route, url, headers, request.headers, transferId, state, request.method)
                 // Set content type
                 var headerList = state.headerList
                 headerList = curl_slist_append(headerList, toCString(s"Content-Type: $contentType"))
@@ -187,7 +187,7 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
                 end if
             ,
             onStreaming = (url, headers, contentType, stream) =>
-                configureCommon(handle, conn, route, url, headers, request.headers, transferId, state)
+                configureCommon(handle, conn, route, url, headers, request.headers, transferId, state, request.method)
                 var headerList = state.headerList
                 headerList = curl_slist_append(headerList, toCString(s"Content-Type: $contentType"))
                 headerList = curl_slist_append(headerList, toCString("Expect:")) // suppress 100-continue
@@ -225,7 +225,8 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
         routeHeaders: Http2Headers,
         requestHeaders: Http2Headers,
         transferId: Long,
-        state: CurlTransferState
+        state: CurlTransferState,
+        method: HttpMethod
     )(using Zone): Unit =
         // Build full URL
         val scheme  = if conn.ssl then "https" else "http"
@@ -234,8 +235,8 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
         discard(curl_easy_setopt(handle, CURLOPT_URL, toCString(fullUrl)))
 
         // Method
-        discard(curl_easy_setopt(handle, CURLOPT_CUSTOMREQUEST, toCString(route.method.name)))
-        if route.method == HttpMethod.HEAD then
+        discard(curl_easy_setopt(handle, CURLOPT_CUSTOMREQUEST, toCString(method.name)))
+        if method == HttpMethod.HEAD then
             discard(curl_easy_setopt(handle, CURLOPT_NOBODY, 1L))
 
         // Disable signals (required for multi-threaded use)

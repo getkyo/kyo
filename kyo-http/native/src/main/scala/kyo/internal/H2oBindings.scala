@@ -40,10 +40,10 @@ private[kyo] object H2oBindings:
     // ── Callback registration ───────────────────────────────────────────
 
     @extern @name("kyo_h2o_set_handler")
-    def setHandler(server: H2oServer, fn: CFuncPtr1[H2oReq, CInt]): Unit = extern
+    def setHandler(server: H2oServer, fn: CFuncPtr2[H2oServer, H2oReq, CInt]): Unit = extern
 
     @extern @name("kyo_h2o_set_drain")
-    def setDrain(server: H2oServer, fn: CFuncPtr0[Unit]): Unit = extern
+    def setDrain(server: H2oServer, fn: CFuncPtr1[H2oServer, Unit]): Unit = extern
 
     @extern @name("kyo_h2o_set_proceed")
     def setProceed(server: H2oServer, fn: CFuncPtr1[CInt, Unit]): Unit = extern

@@ -37,6 +37,8 @@ import scala.scalanative.unsigned.*
   * h2o runs a single-threaded event loop. The handler callback fires on the event loop thread, extracts request data, and launches a Kyo
   * fiber. The fiber processes the request and enqueues the response. A pipe wakeup triggers the event loop to drain responses and call
   * h2o_send(). No threads block on Scala side.
+  *
+  * Multiple servers are supported — each server has its own state looked up via a global registry keyed by server pointer.
   */
 final class H2oServerBackend extends HttpBackend.Server:
 
@@ -45,7 +47,7 @@ final class H2oServerBackend extends HttpBackend.Server:
         config: HttpServer.Config
     )(using Frame): HttpBackend.Binding < Async =
         Sync.defer {
-            H2oServerBackend.startServer(HttpRouter(handlers), config)
+            H2oServerBackend.startServer(HttpRouter(handlers, config.cors), config)
         }
 
 end H2oServerBackend
@@ -55,16 +57,27 @@ private[kyo] object H2oServerBackend:
 
     private given Frame = Frame.internal
 
-    // ── Global state (one server per process, matching h2o's g_server) ───
+    // ── Per-server state ──────────────────────────────────────────────
 
-    @volatile private var server: H2oServer    = null
-    @volatile private var router: HttpRouter   = null
-    @volatile private var evloopThread: Thread = null
+    final private class ServerState(
+        val server: H2oServer,
+        val router: HttpRouter,
+        val responseQueue: ConcurrentLinkedQueue[PendingResponse],
+        val inFlight: AtomicInteger,
+        val streams: ConcurrentHashMap[Int, StreamContext],
+        var evloopThread: Thread
+    )
 
-    private val responseQueue = new ConcurrentLinkedQueue[PendingResponse]()
-    private val inFlight      = new AtomicInteger(0)
-    private val nextStreamId  = new AtomicInteger(1)
-    private val streams       = new ConcurrentHashMap[Int, StreamContext]()
+    // Registry mapping server pointer address to state
+    private val registry = new ConcurrentHashMap[Long, ServerState]()
+    // Global stream ID counter to avoid collisions across servers
+    private val nextStreamId = new AtomicInteger(1)
+
+    private def serverKey(server: H2oServer): Long =
+        server.toLong
+
+    private def lookupState(server: H2oServer): ServerState =
+        registry.get(serverKey(server))
 
     // ── Response types enqueued by fibers ────────────────────────────────
 
@@ -100,6 +113,7 @@ private[kyo] object H2oServerBackend:
     private val STOPPED             = 2
 
     final private class StreamContext(
+        val state0: ServerState,
         val req: H2oReq,
         val streamId: Int,
         var generator: H2oGenerator
@@ -111,7 +125,7 @@ private[kyo] object H2oServerBackend:
 
         def decrementInFlight(): Unit =
             if decremented.compareAndSet(false, true) then
-                discard(inFlight.decrementAndGet())
+                discard(state0.inFlight.decrementAndGet())
 
         def onProceed(): Unit =
             if stopped then return
@@ -142,7 +156,7 @@ private[kyo] object H2oServerBackend:
         def enqueueChunk(data: Array[Byte], isFinal: Boolean): Unit =
             if !stopped then
                 discard(chunkQueue.add((data, isFinal)))
-                H2oBindings.wake(server)
+                H2oBindings.wake(state0.server)
         end enqueueChunk
 
         def onStop(): Unit =
@@ -163,100 +177,131 @@ private[kyo] object H2oServerBackend:
                     H2oBindings.sendChunk(req, generator, null, 0, if isFinal then 1 else 0)
             }
             if isFinal then
-                discard(streams.remove(streamId))
+                discard(state0.streams.remove(streamId))
                 decrementInFlight()
         end sendChunkNative
 
     end StreamContext
 
-    // ── CFuncPtr callbacks (must only reference static symbols) ──────────
+    // ── CFuncPtr callbacks (look up per-server state from registry) ────
 
-    private val handlerCallback: CFuncPtr1[H2oReq, CInt] =
-        CFuncPtr1.fromScalaFunction { (req: H2oReq) =>
-            discard(inFlight.incrementAndGet())
-            try handleRequest(req)
-            catch
-                case _: Throwable =>
-                    sendImmediateError(req, 500, HttpHeaders.empty)
-                    discard(inFlight.decrementAndGet())
-            end try
-            0
+    private val handlerCallback: CFuncPtr2[H2oServer, H2oReq, CInt] =
+        CFuncPtr2.fromScalaFunction { (server: H2oServer, req: H2oReq) =>
+            val ss = lookupState(server)
+            if ss == null then
+                sendImmediateError(req, 500, HttpHeaders.empty)
+                0
+            else
+                discard(ss.inFlight.incrementAndGet())
+                try handleRequest(ss, req)
+                catch
+                    case _: Throwable =>
+                        sendImmediateError(req, 500, HttpHeaders.empty)
+                        discard(ss.inFlight.decrementAndGet())
+                end try
+                0
+            end if
         }
 
-    private val drainCallback: CFuncPtr0[Unit] =
-        CFuncPtr0.fromScalaFunction { () =>
-            var resp = responseQueue.poll()
-            while resp != null do
-                try
-                    resp match
-                        case br: BufferedResponse =>
-                            sendBufferedNative(br.req, br.status, br.headers, br.body)
-                        case sr: StreamStartResponse =>
-                            startStreamingNative(sr.streamCtx, sr.status, sr.headers)
-                            sr.streamCtx.tryDeliver()
-                        case sc: StreamChunkNotify =>
-                            sc.streamCtx.tryDeliver()
-                        case er: ErrorResponse =>
-                            sendImmediateError(er.req, er.status, er.extraHeaders)
-                catch case _: Throwable => ()
-                end try
-                resp = responseQueue.poll()
-            end while
+    private val drainCallback: CFuncPtr1[H2oServer, Unit] =
+        CFuncPtr1.fromScalaFunction { (server: H2oServer) =>
+            val ss = lookupState(server)
+            if ss != null then
+                var resp = ss.responseQueue.poll()
+                while resp != null do
+                    try
+                        resp match
+                            case br: BufferedResponse =>
+                                sendBufferedNative(br.req, br.status, br.headers, br.body)
+                            case sr: StreamStartResponse =>
+                                startStreamingNative(ss, sr.streamCtx, sr.status, sr.headers)
+                                sr.streamCtx.tryDeliver()
+                            case sc: StreamChunkNotify =>
+                                sc.streamCtx.tryDeliver()
+                            case er: ErrorResponse =>
+                                sendImmediateError(er.req, er.status, er.extraHeaders)
+                    catch case _: Throwable => ()
+                    end try
+                    resp = ss.responseQueue.poll()
+                end while
+            end if
         }
 
     private val proceedCallback: CFuncPtr1[CInt, Unit] =
         CFuncPtr1.fromScalaFunction { (streamId: CInt) =>
-            val ctx = streams.get(streamId: Int)
-            if ctx != null then ctx.onProceed()
+            // Stream contexts are shared across all servers, but IDs are globally unique
+            val iter  = registry.values().iterator()
+            var found = false
+            while iter.hasNext && !found do
+                val ss  = iter.next()
+                val ctx = ss.streams.get(streamId: Int)
+                if ctx != null then
+                    ctx.onProceed()
+                    found = true
+            end while
         }
 
     private val stopCallback: CFuncPtr1[CInt, Unit] =
         CFuncPtr1.fromScalaFunction { (streamId: CInt) =>
-            val ctx = streams.remove(streamId)
-            if ctx != null then
-                ctx.onStop()
-                ctx.decrementInFlight()
+            val iter  = registry.values().iterator()
+            var found = false
+            while iter.hasNext && !found do
+                val ss  = iter.next()
+                val ctx = ss.streams.remove(streamId)
+                if ctx != null then
+                    ctx.onStop()
+                    ctx.decrementInFlight()
+                    found = true
+                end if
+            end while
         }
 
     // ── Server lifecycle ────────────────────────────────────────────────
 
-    private def startServer(r: HttpRouter, config: HttpServer.Config): HttpBackend.Binding =
-        router = r
-        Zone {
-            server = H2oBindings.start(
+    private def startServer(router: HttpRouter, config: HttpServer.Config): HttpBackend.Binding =
+        val newServer = Zone {
+            H2oBindings.start(
                 toCString(config.host),
                 config.port,
                 config.maxContentLength,
                 config.backlog
             )
         }
-        if server == null then throw new RuntimeException("h2o server start failed")
+        if newServer == null then throw HttpError.BindError(config.host, config.port, new RuntimeException("h2o server returned null"))
 
-        H2oBindings.setHandler(server, handlerCallback)
-        H2oBindings.setDrain(server, drainCallback)
-        H2oBindings.setProceed(server, proceedCallback)
-        H2oBindings.setStop(server, stopCallback)
+        val ss = new ServerState(
+            server = newServer,
+            router = router,
+            responseQueue = new ConcurrentLinkedQueue[PendingResponse](),
+            inFlight = new AtomicInteger(0),
+            streams = new ConcurrentHashMap[Int, StreamContext](),
+            evloopThread = null
+        )
+        registry.put(serverKey(newServer), ss)
 
-        evloopThread = new Thread(
-            () => while H2oBindings.evloopRunOnce(server) == 0 do (),
+        H2oBindings.setHandler(newServer, handlerCallback)
+        H2oBindings.setDrain(newServer, drainCallback)
+        H2oBindings.setProceed(newServer, proceedCallback)
+        H2oBindings.setStop(newServer, stopCallback)
+
+        ss.evloopThread = new Thread(
+            () => while H2oBindings.evloopRunOnce(newServer) == 0 do (),
             "kyo-h2o-evloop"
         )
-        evloopThread.setDaemon(true)
-        evloopThread.start()
+        ss.evloopThread.setDaemon(true)
+        ss.evloopThread.start()
 
-        val boundPort = H2oBindings.port(server)
+        val boundPort = H2oBindings.port(newServer)
 
         new HttpBackend.Binding:
             def port: Int    = boundPort
             def host: String = config.host
             def close(gracePeriod: Duration)(using Frame): Unit < Async =
                 Sync.defer {
-                    H2oBindings.stop(server)
-                    evloopThread.join(gracePeriod.toMillis.max(5000))
-                    H2oBindings.destroy(server)
-                    server = null
-                    router = null
-                    evloopThread = null
+                    H2oBindings.stop(newServer)
+                    ss.evloopThread.join(gracePeriod.toMillis.max(5000))
+                    H2oBindings.destroy(newServer)
+                    discard(registry.remove(serverKey(newServer)))
                 }
             def await(using Frame): Unit < Async =
                 Async.sleep(Duration.Infinity)
@@ -265,7 +310,7 @@ private[kyo] object H2oServerBackend:
 
     // ── Request handling (called from handlerCallback on evloop thread) ──
 
-    private def handleRequest(req: H2oReq): Unit =
+    private def handleRequest(ss: ServerState, req: H2oReq): Unit =
         val methodPtr = H2oBindings.reqMethod(req)
         val methodLen = H2oBindings.reqMethodLen(req)
         val method    = HttpMethod.unsafe(new String(fromCStringLen(methodPtr, methodLen)))
@@ -276,7 +321,7 @@ private[kyo] object H2oServerBackend:
         val queryAt  = H2oBindings.reqQueryAt(req)
         val path     = if queryAt >= 0 && queryAt < fullPath.length then fullPath.substring(0, queryAt) else fullPath
 
-        router.find(method, path) match
+        ss.router.find(method, path) match
             case Result.Success(routeMatch) =>
                 val headers = readHeaders(req)
                 val body    = readBody(req)
@@ -288,6 +333,7 @@ private[kyo] object H2oServerBackend:
                     if queryAt < 0 then Absent
                     else Present(HttpUrl.fromUri(fullPath))
 
+                val methodOvr = Present(method)
                 val decoded =
                     if routeMatch.isStreamingRequest then
                         val bodyStream =
@@ -299,7 +345,8 @@ private[kyo] object H2oServerBackend:
                             queryFn,
                             headers,
                             bodyStream,
-                            path
+                            path,
+                            methodOvr
                         )
                     else
                         RouteUtil.decodeBufferedRequest(
@@ -308,32 +355,36 @@ private[kyo] object H2oServerBackend:
                             queryFn,
                             headers,
                             body,
-                            path
+                            path,
+                            methodOvr
                         )
 
                 decoded match
                     case Result.Success(request) =>
-                        launchHandlerFiber(req, endpoint, route, request)
+                        launchHandlerFiber(ss, req, endpoint, route, request, isHead = method == HttpMethod.HEAD)
                     case Result.Failure(_) =>
                         sendImmediateError(req, 400, HttpHeaders.empty)
-                        discard(inFlight.decrementAndGet())
+                        discard(ss.inFlight.decrementAndGet())
                     case Result.Panic(_) =>
                         sendImmediateError(req, 500, HttpHeaders.empty)
-                        discard(inFlight.decrementAndGet())
+                        discard(ss.inFlight.decrementAndGet())
                 end match
+
+            case Result.Failure(FindError.Options(headers)) =>
+                enqueueBuffered(ss, req, 204, headers, Span.empty[Byte])
 
             case Result.Failure(FindError.NotFound) =>
                 sendImmediateError(req, 404, HttpHeaders.empty)
-                discard(inFlight.decrementAndGet())
+                discard(ss.inFlight.decrementAndGet())
 
             case Result.Failure(FindError.MethodNotAllowed(allowed)) =>
                 val allowValue = allowed.iterator.map(_.name).mkString(", ")
                 sendImmediateError(req, 405, HttpHeaders.empty.add("Allow", allowValue))
-                discard(inFlight.decrementAndGet())
+                discard(ss.inFlight.decrementAndGet())
 
             case Result.Panic(_) =>
                 sendImmediateError(req, 500, HttpHeaders.empty)
-                discard(inFlight.decrementAndGet())
+                discard(ss.inFlight.decrementAndGet())
         end match
     end handleRequest
 
@@ -381,110 +432,135 @@ private[kyo] object H2oServerBackend:
     // ── Fiber launch ────────────────────────────────────────────────────
 
     private def launchHandlerFiber(
+        ss: ServerState,
         req: H2oReq,
         handler: HttpHandler[?, ?, ?],
         route: HttpRoute[?, ?, ?],
-        request: HttpRequest[?]
+        request: HttpRequest[?],
+        isHead: Boolean
     ): Unit =
         val h  = handler.asInstanceOf[HttpHandler[Any, Any, Any]]
         val r  = request.asInstanceOf[HttpRequest[Any]]
         val rt = route.asInstanceOf[HttpRoute[Any, Any, Any]]
 
-        val fiber = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
-            Abort.run[Any](h(r)).map {
-                case Result.Success(response) =>
-                    val resp = response.asInstanceOf[HttpResponse[Any]]
-                    encodeAndEnqueue(req, rt, resp)
-                case Result.Failure(halt: HttpResponse.Halt) =>
-                    enqueueBuffered(req, halt.response.status.code, halt.response.headers, Span.empty[Byte])
-                case Result.Failure(error) =>
-                    RouteUtil.encodeError(rt, error) match
-                        case Present((status, headers, body)) =>
-                            enqueueBuffered(req, status.code, headers, body)
-                        case Absent =>
-                            enqueueError(req, 500, HttpHeaders.empty)
-                case Result.Panic(_) =>
-                    enqueueError(req, 500, HttpHeaders.empty)
-            }
-        })
+        try
+            val fiber = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
+                Abort.run[Any](h(r)).map {
+                    case Result.Success(response) =>
+                        val resp = response.asInstanceOf[HttpResponse[Any]]
+                        encodeAndEnqueue(ss, req, rt, resp, isHead)
+                    case Result.Failure(halt: HttpResponse.Halt) =>
+                        RouteUtil.encodeHalt(halt)((status, headers, body) =>
+                            enqueueBuffered(ss, req, status.code, headers, body)
+                        )
+                    case Result.Failure(error) =>
+                        RouteUtil.encodeError(rt, error) match
+                            case Present((status, headers, body)) =>
+                                enqueueBuffered(ss, req, status.code, headers, if isHead then Span.empty[Byte] else body)
+                            case Absent =>
+                                val handlerError = HttpError.HandlerError(error)
+                                val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
+                                enqueueBuffered(ss, req, 500, HttpHeaders.empty, body)
+                    case Result.Panic(_) =>
+                        enqueueError(ss, req, 500, HttpHeaders.empty)
+                }
+            })
 
-        fiber.unsafe.onComplete {
-            case Result.Failure(_) | Result.Panic(_) =>
-                enqueueError(req, 500, HttpHeaders.empty)
-            case _ => ()
-        }
+            fiber.unsafe.onComplete {
+                case Result.Failure(e) =>
+                    val handlerError = HttpError.HandlerError(e)
+                    val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
+                    enqueueBuffered(ss, req, 500, HttpHeaders.empty, body)
+                case Result.Panic(e) =>
+                    val handlerError = HttpError.HandlerError(e)
+                    val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
+                    enqueueBuffered(ss, req, 500, HttpHeaders.empty, body)
+                case _ => ()
+            }
+        catch
+            case e: Throwable =>
+                val handlerError = HttpError.HandlerError(e)
+                val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
+                enqueueBuffered(ss, req, 500, HttpHeaders.empty, body)
+        end try
     end launchHandlerFiber
 
     // ── Response encoding and enqueueing ────────────────────────────────
 
     private def encodeAndEnqueue(
+        ss: ServerState,
         req: H2oReq,
         route: HttpRoute[Any, Any, Any],
-        response: HttpResponse[Any]
+        response: HttpResponse[Any],
+        isHead: Boolean
     ): Unit =
         RouteUtil.encodeResponse(route, response)(
             onEmpty = (status, headers) =>
-                enqueueBuffered(req, status.code, headers, Span.empty[Byte]),
+                enqueueBuffered(ss, req, status.code, headers, Span.empty[Byte]),
             onBuffered = (status, headers, contentType, body) =>
-                enqueueBuffered(req, status.code, headers.add("Content-Type", contentType), body),
+                val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                enqueueBuffered(ss, req, status.code, h, if isHead then Span.empty[Byte] else body)
+            ,
             onStreaming = (status, headers, contentType, stream) =>
-                val streamId      = nextStreamId.getAndIncrement()
-                val ctx           = new StreamContext(req, streamId, null)
-                val headersWithCt = headers.add("Content-Type", contentType)
-                discard(streams.put(streamId, ctx))
-                discard(responseQueue.add(new StreamStartResponse(ctx, status.code, headersWithCt)))
-                H2oBindings.wake(server)
+                val headersWithCt = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                if isHead then
+                    enqueueBuffered(ss, req, status.code, headersWithCt, Span.empty[Byte])
+                else
+                    val streamId = nextStreamId.getAndIncrement()
+                    val ctx      = new StreamContext(ss, req, streamId, null)
+                    discard(ss.streams.put(streamId, ctx))
+                    discard(ss.responseQueue.add(new StreamStartResponse(ctx, status.code, headersWithCt)))
+                    H2oBindings.wake(ss.server)
 
-                discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
-                    Scope.run {
-                        Abort.run[Any] {
-                            stream.foreach { span =>
-                                Sync.defer {
+                    discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
+                        Scope.run {
+                            Abort.run[Any] {
+                                stream.foreach { span =>
+                                    Sync.defer {
+                                        if !ctx.stopped then
+                                            ctx.enqueueChunk(span.toArrayUnsafe, isFinal = false)
+                                            discard(ss.responseQueue.add(new StreamChunkNotify(ctx)))
+                                            H2oBindings.wake(ss.server)
+                                    }
+                                }.andThen {
+                                    Sync.defer {
+                                        ctx.enqueueChunk(Array.emptyByteArray, isFinal = true)
+                                        discard(ss.responseQueue.add(new StreamChunkNotify(ctx)))
+                                        H2oBindings.wake(ss.server)
+                                    }
+                                }
+                            }.map {
+                                case Result.Failure(_) | Result.Panic(_) =>
                                     if !ctx.stopped then
-                                        ctx.enqueueChunk(span.toArrayUnsafe, isFinal = false)
-                                        discard(responseQueue.add(new StreamChunkNotify(ctx)))
-                                        H2oBindings.wake(server)
-                                }
-                            }.andThen {
-                                Sync.defer {
-                                    ctx.enqueueChunk(Array.emptyByteArray, isFinal = true)
-                                    discard(responseQueue.add(new StreamChunkNotify(ctx)))
-                                    H2oBindings.wake(server)
-                                }
+                                        ctx.enqueueChunk(Array.emptyByteArray, isFinal = true)
+                                        discard(ss.responseQueue.add(new StreamChunkNotify(ctx)))
+                                        H2oBindings.wake(ss.server)
+                                    end if
+                                case _ => ()
                             }
-                        }.map {
-                            case Result.Failure(_) | Result.Panic(_) =>
-                                if !ctx.stopped then
-                                    ctx.enqueueChunk(Array.emptyByteArray, isFinal = true)
-                                    discard(responseQueue.add(new StreamChunkNotify(ctx)))
-                                    H2oBindings.wake(server)
-                                end if
-                            case _ => ()
                         }
-                    }
-                }))
+                    }))
+                end if
         )
     end encodeAndEnqueue
 
-    private def enqueueBuffered(req: H2oReq, status: Int, headers: HttpHeaders, body: Span[Byte]): Unit =
-        discard(responseQueue.add(new BufferedResponse(req, status, headers, body)))
-        H2oBindings.wake(server)
-        discard(inFlight.decrementAndGet())
+    private def enqueueBuffered(ss: ServerState, req: H2oReq, status: Int, headers: HttpHeaders, body: Span[Byte]): Unit =
+        discard(ss.responseQueue.add(new BufferedResponse(req, status, headers, body)))
+        H2oBindings.wake(ss.server)
+        discard(ss.inFlight.decrementAndGet())
     end enqueueBuffered
 
-    private def enqueueError(req: H2oReq, status: Int, headers: HttpHeaders): Unit =
-        discard(responseQueue.add(new ErrorResponse(req, status, headers)))
-        H2oBindings.wake(server)
-        discard(inFlight.decrementAndGet())
+    private def enqueueError(ss: ServerState, req: H2oReq, status: Int, headers: HttpHeaders): Unit =
+        discard(ss.responseQueue.add(new ErrorResponse(req, status, headers)))
+        H2oBindings.wake(ss.server)
+        discard(ss.inFlight.decrementAndGet())
     end enqueueError
 
     // ── Native response helpers (called on evloop thread) ───────────────
 
     private def sendImmediateError(req: H2oReq, status: Int, headers: HttpHeaders): Unit =
-        Zone {
-            val (names, nameLens, values, valueLens, headerCount) = encodeHeaders(headers)
-            H2oBindings.sendError(req, status, names, nameLens, values, valueLens, headerCount)
-        }
+        val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(status))
+        sendBufferedNative(req, status, headers.add("Content-Type", "application/json"), bodyBytes)
 
     private def sendBufferedNative(req: H2oReq, status: Int, headers: HttpHeaders, body: Span[Byte]): Unit =
         Zone {
@@ -504,11 +580,11 @@ private[kyo] object H2oServerBackend:
             H2oBindings.sendBuffered(req, status, names, nameLens, values, valueLens, headerCount, bodyPtr, bodyBytes.length)
         }
 
-    private def startStreamingNative(ctx: StreamContext, status: Int, headers: HttpHeaders): Unit =
+    private def startStreamingNative(ss: ServerState, ctx: StreamContext, status: Int, headers: HttpHeaders): Unit =
         Zone {
             val (names, nameLens, values, valueLens, headerCount) = encodeHeaders(headers)
             ctx.generator = H2oBindings.startStreaming(
-                server,
+                ss.server,
                 ctx.req,
                 status,
                 names,

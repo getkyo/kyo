@@ -177,7 +177,8 @@ object RouteUtil:
         queryParam: Maybe[HttpUrl],
         headers: HttpHeaders,
         body: Span[Byte],
-        path: String = ""
+        path: String = "",
+        methodOverride: Maybe[HttpMethod] = Absent
     )(using Frame): Result[HttpError, HttpRequest[In]] =
         val fields    = route.request.fields
         val bodyField = findBodyField(fields)
@@ -191,11 +192,11 @@ object RouteUtil:
             paramsResult.flatMap { _ =>
                 bodyField match
                     case Absent =>
-                        Result.succeed(buildRequest(route, headers, builder, path))
+                        Result.succeed(buildRequest(route, headers, builder, path, methodOverride))
                     case Present(bf) =>
                         decodeBufferedBodyValue(bf.contentType, body, headers).map { value =>
                             discard(builder.add(bf.fieldName, value))
-                            buildRequest(route, headers, builder, path)
+                            buildRequest(route, headers, builder, path, methodOverride)
                         }
             }
         }
@@ -207,7 +208,8 @@ object RouteUtil:
         queryParam: Maybe[HttpUrl],
         headers: HttpHeaders,
         stream: Stream[Span[Byte], Async],
-        path: String = ""
+        path: String = "",
+        methodOverride: Maybe[HttpMethod] = Absent
     )(using Frame): Result[HttpError, HttpRequest[In]] =
         val fields    = route.request.fields
         val bodyField = findBodyField(fields)
@@ -220,7 +222,7 @@ object RouteUtil:
                 else Result.unit
             paramsResult.map { _ =>
                 bodyField.foreach(bf => discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream, headers))))
-                buildRequest(route, headers, builder, path)
+                buildRequest(route, headers, builder, path, methodOverride)
             }
         }
     end decodeStreamingRequest
@@ -643,15 +645,21 @@ object RouteUtil:
             case _: ContentType.Binary =>
                 Result.succeed(bytes)
             case json: ContentType.Json[?] =>
-                json.schema.decode(spanToString(bytes))
-                    .mapFailure(msg => HttpError.ParseError(s"JSON decode failed: $msg"))
+                if !checkContentType(headers, "application/json") then
+                    Result.fail(HttpError.ParseError("Unsupported Content-Type: expected application/json"))
+                else
+                    json.schema.decode(spanToString(bytes))
+                        .mapFailure(msg => HttpError.ParseError(s"JSON decode failed: $msg"))
             case form: ContentType.Form[?] =>
-                try Result.succeed(form.codec.decode(spanToString(bytes)))
-                catch
-                    case e: Throwable =>
-                        Result.fail(HttpError.ParseError(s"Form decode failed: ${e.getMessage}"))
+                if !checkContentType(headers, "application/x-www-form-urlencoded") then
+                    Result.fail(HttpError.ParseError("Unsupported Content-Type: expected application/x-www-form-urlencoded"))
+                else
+                    try Result.succeed(form.codec.decode(spanToString(bytes)))
+                    catch
+                        case e: Throwable =>
+                            Result.fail(HttpError.ParseError(s"Form decode failed: ${e.getMessage}"))
             case _: ContentType.Multipart =>
-                parseMultipartBody(spanToString(bytes), headers)
+                parseMultipartBody(bytes, headers)
             case _ =>
                 Result.fail(HttpError.ParseError(s"Cannot decode streaming ContentType as buffered: $ct"))
     end decodeBufferedBodyValue
@@ -783,10 +791,10 @@ object RouteUtil:
         end match
     end parseMultipartStream
 
+    /** Parse a multipart section from a String (used by streaming multipart parser). */
     private def parseMultipartSection(section: String): HttpPart =
         val headerBodySep = section.indexOf("\r\n\r\n")
         if headerBodySep < 0 then
-            // Fallback: treat entire section as body with empty name
             HttpPart("", Absent, Absent, Span.fromUnsafe(section.getBytes(StandardCharsets.UTF_8)))
         else
             val headerSection = section.substring(0, headerBodySep).trim
@@ -794,7 +802,6 @@ object RouteUtil:
             val cleanBody =
                 if bodySection.endsWith("\r\n") then bodySection.substring(0, bodySection.length - 2)
                 else bodySection
-
             val headerLines = headerSection.split("\r\n")
 
             @tailrec def parseHeaders(
@@ -831,9 +838,74 @@ object RouteUtil:
         end if
     end parseMultipartSection
 
-    /** Parses a buffered multipart body into a sequence of HttpPart. */
-    private def parseMultipartBody(body: String, headers: HttpHeaders)(using Frame): Result[HttpError, Seq[HttpPart]] =
-        // Extract boundary from Content-Type header
+    /** Parse a multipart section from raw bytes, keeping body data as raw bytes to avoid UTF-8 corruption. */
+    private def parseMultipartSectionBytes(section: Array[Byte], offset: Int, length: Int): HttpPart =
+        val sepIdx = indexOfBytes(section, offset, length, CrNlCrNl)
+        if sepIdx < 0 then
+            HttpPart("", Absent, Absent, Span.fromUnsafe(java.util.Arrays.copyOfRange(section, offset, offset + length)))
+        else
+            val headerStr = new String(section, offset, sepIdx - offset, StandardCharsets.US_ASCII).trim
+            val bodyStart = sepIdx + 4
+            var bodyEnd   = offset + length
+            // Strip trailing \r\n
+            if bodyEnd >= bodyStart + 2 && section(bodyEnd - 2) == '\r' && section(bodyEnd - 1) == '\n' then
+                bodyEnd -= 2
+            val bodyData    = java.util.Arrays.copyOfRange(section, bodyStart, bodyEnd)
+            val headerLines = headerStr.split("\r\n")
+
+            @tailrec def parseHeaders(
+                i: Int,
+                name: String,
+                filename: Maybe[String],
+                partCt: Maybe[String]
+            ): HttpPart =
+                if i >= headerLines.length then
+                    HttpPart(name, filename, partCt, Span.fromUnsafe(bodyData))
+                else
+                    val line = headerLines(i)
+                    if line.toLowerCase.startsWith("content-disposition:") then
+                        val disp    = line.substring(20).trim
+                        val nameIdx = disp.indexOf("name=\"")
+                        val parsedName =
+                            if nameIdx >= 0 then
+                                val nameEnd = disp.indexOf('"', nameIdx + 6)
+                                if nameEnd >= 0 then disp.substring(nameIdx + 6, nameEnd) else name
+                            else name
+                        val fnIdx = disp.indexOf("filename=\"")
+                        val parsedFilename =
+                            if fnIdx >= 0 then
+                                val fnEnd = disp.indexOf('"', fnIdx + 10)
+                                if fnEnd >= 0 then Present(disp.substring(fnIdx + 10, fnEnd)) else filename
+                            else filename
+                        parseHeaders(i + 1, parsedName, parsedFilename, partCt)
+                    else if line.toLowerCase.startsWith("content-type:") then
+                        parseHeaders(i + 1, name, filename, Present(line.substring(13).trim))
+                    else
+                        parseHeaders(i + 1, name, filename, partCt)
+                    end if
+            parseHeaders(0, "", Absent, Absent)
+        end if
+    end parseMultipartSectionBytes
+
+    private val CrNlCrNl = Array[Byte]('\r', '\n', '\r', '\n')
+
+    /** Find needle in haystack starting at offset within length. Returns absolute index or -1. */
+    private def indexOfBytes(haystack: Array[Byte], offset: Int, length: Int, needle: Array[Byte]): Int =
+        val end = offset + length - needle.length
+        @tailrec def outer(i: Int): Int =
+            if i > end then -1
+            else
+                @tailrec def inner(j: Int): Boolean =
+                    if j >= needle.length then true
+                    else if haystack(i + j) != needle(j) then false
+                    else inner(j + 1)
+                if inner(0) then i
+                else outer(i + 1)
+        outer(offset)
+    end indexOfBytes
+
+    /** Parses a buffered multipart body into a sequence of HttpPart, operating on raw bytes. */
+    private def parseMultipartBody(body: Span[Byte], headers: HttpHeaders)(using Frame): Result[HttpError, Seq[HttpPart]] =
         val boundaryOpt = headers.get("Content-Type").flatMap { ct =>
             val idx = ct.indexOf("boundary=")
             if idx >= 0 then Present(ct.substring(idx + 9).trim)
@@ -843,21 +915,51 @@ object RouteUtil:
             case Absent =>
                 Result.fail(HttpError.ParseError("Missing boundary in Content-Type header for multipart body"))
             case Present(boundary) =>
-                val delimiter = s"--$boundary"
-                val parts     = ChunkBuilder.init[HttpPart]
-                val sections  = body.split(java.util.regex.Pattern.quote(delimiter))
+                val delimBytes = s"--$boundary".getBytes(StandardCharsets.US_ASCII)
+                val bytes      = body.toArrayUnsafe
+                val parts      = ChunkBuilder.init[HttpPart]
 
-                @tailrec def loop(i: Int): Unit =
-                    if i < sections.length then
-                        val section = sections(i)
-                        if !section.startsWith("--") then // skip closing boundary
-                            val part = parseMultipartSection(section)
-                            if part.name.nonEmpty then
-                                discard(parts += part)
+                // Find all boundary positions
+                @tailrec def findSections(searchFrom: Int, isFirst: Boolean): Unit =
+                    val pos = indexOfBytes(bytes, searchFrom, bytes.length - searchFrom, delimBytes)
+                    if pos >= 0 then
+                        val afterDelim = pos + delimBytes.length
+                        if !isFirst then
+                            // The section runs from the end of the previous delimiter to this delimiter
+                            // We need to track the previous afterDelim — handled below
+                            ()
                         end if
-                        loop(i + 1)
-                loop(1) // skip preamble (before first boundary)
+                        // Skip \r\n after delimiter
+                        val sectionStart =
+                            if afterDelim + 1 < bytes.length && bytes(afterDelim) == '\r' && bytes(afterDelim + 1) == '\n' then
+                                afterDelim + 2
+                            else afterDelim
+                        // Check for closing boundary (--)
+                        if afterDelim + 1 < bytes.length && bytes(afterDelim) == '-' && bytes(afterDelim + 1) == '-' then
+                            () // closing boundary, done
+                        else
+                            // Find next boundary
+                            val nextPos = indexOfBytes(bytes, sectionStart, bytes.length - sectionStart, delimBytes)
+                            if nextPos >= 0 then
+                                val sectionLen = nextPos - sectionStart
+                                val part       = parseMultipartSectionBytes(bytes, sectionStart, sectionLen)
+                                if part.name.nonEmpty then
+                                    discard(parts += part)
+                                findSections(nextPos, false)
+                            else
+                                // No more boundaries — parse remaining as last section
+                                val sectionLen = bytes.length - sectionStart
+                                if sectionLen > 0 then
+                                    val part = parseMultipartSectionBytes(bytes, sectionStart, sectionLen)
+                                    if part.name.nonEmpty then
+                                        discard(parts += part)
+                                end if
+                            end if
+                        end if
+                    end if
+                end findSections
 
+                findSections(0, true)
                 Result.succeed(parts.result())
         end match
     end parseMultipartBody
@@ -865,34 +967,38 @@ object RouteUtil:
     // ==================== Internal: multipart encoding ====================
 
     private def encodeMultipartParts(parts: Seq[HttpPart], boundary: String): Span[Byte] =
-        val sb = new StringBuilder
+        val out = new java.io.ByteArrayOutputStream
         parts.foreach { part =>
-            appendMultipartPart(sb, part, boundary)
+            appendMultipartPartBytes(out, part, boundary)
         }
-        discard(sb.append("--").append(boundary).append("--\r\n"))
-        stringToSpan(sb.toString)
+        out.write(s"--$boundary--\r\n".getBytes(StandardCharsets.US_ASCII))
+        Span.fromUnsafe(out.toByteArray)
     end encodeMultipartParts
 
     private def encodeMultipartPart(part: HttpPart, boundary: String): Span[Byte] =
-        val sb = new StringBuilder
-        appendMultipartPart(sb, part, boundary)
-        stringToSpan(sb.toString)
+        val out = new java.io.ByteArrayOutputStream
+        appendMultipartPartBytes(out, part, boundary)
+        Span.fromUnsafe(out.toByteArray)
     end encodeMultipartPart
 
-    private def appendMultipartPart(sb: StringBuilder, part: HttpPart, boundary: String): Unit =
-        discard(sb.append("--").append(boundary).append("\r\n"))
-        discard(sb.append("Content-Disposition: form-data; name=\"").append(part.name).append('"'))
+    private def appendMultipartPartBytes(out: java.io.ByteArrayOutputStream, part: HttpPart, boundary: String): Unit =
+        val header = new StringBuilder
+        discard(header.append("--").append(boundary).append("\r\n"))
+        discard(header.append("Content-Disposition: form-data; name=\"").append(part.name).append('"'))
         part.filename match
-            case Present(fn) => discard(sb.append("; filename=\"").append(fn).append('"'))
+            case Present(fn) => discard(header.append("; filename=\"").append(fn).append('"'))
             case Absent      =>
-        discard(sb.append("\r\n"))
+        discard(header.append("\r\n"))
         part.contentType match
-            case Present(ct) => discard(sb.append("Content-Type: ").append(ct).append("\r\n"))
+            case Present(ct) => discard(header.append("Content-Type: ").append(ct).append("\r\n"))
             case Absent      =>
-        discard(sb.append("\r\n"))
-        discard(sb.append(spanToString(part.data)))
-        discard(sb.append("\r\n"))
-    end appendMultipartPart
+        discard(header.append("\r\n"))
+        out.write(header.toString.getBytes(StandardCharsets.US_ASCII))
+        // Write body data as raw bytes — no String conversion
+        val data = part.data.toArrayUnsafe
+        out.write(data, 0, data.length)
+        out.write("\r\n".getBytes(StandardCharsets.US_ASCII))
+    end appendMultipartPartBytes
 
     // ==================== Internal: helpers ====================
 
@@ -916,12 +1022,44 @@ object RouteUtil:
         route: HttpRoute[In, Out, S],
         headers: HttpHeaders,
         builder: DictBuilder[String, Any],
-        path: String = ""
+        path: String = "",
+        methodOverride: Maybe[HttpMethod] = Absent
     ): HttpRequest[In] =
         val url =
             if path.isEmpty then HttpUrl(Absent, "", 0, "", Absent)
             else HttpUrl(Absent, "", 0, path, Absent)
-        HttpRequest(route.method, url, headers, Record2(builder.result()))
+        val method = methodOverride match
+            case Present(m) => m
+            case Absent     => route.method
+        HttpRequest(method, url, headers, Record2(builder.result()))
     end buildRequest
+
+    /** Check that the request Content-Type matches the expected media type. Accepts if: header is absent (lenient), or starts with the
+      * expected type (allows charset params).
+      */
+    private def checkContentType(headers: HttpHeaders, expected: String): Boolean =
+        headers.get("Content-Type") match
+            case Absent => true
+            case Present(ct) =>
+                val lower = ct.toLowerCase
+                lower.startsWith(expected)
+    end checkContentType
+
+    // ==================== Error response body ====================
+
+    private[kyo] inline def encodeHalt[A](halt: HttpResponse.Halt)(inline f: (HttpStatus, HttpHeaders, Span[Byte]) => A): A =
+        val body    = encodeErrorBody(halt.response.status)
+        val headers = halt.response.headers.add("Content-Type", "application/json")
+        f(halt.response.status, headers, body)
+    end encodeHalt
+
+    private[kyo] def encodeErrorBody(status: HttpStatus): Span[Byte] =
+        // Status names come from HttpStatus enum cases (e.g., "NotFound", "BadRequest")
+        // which are safe ASCII identifiers — no escaping needed.
+        val name = status.toString
+        val sb   = new StringBuilder(48)
+        discard(sb.append("{\"status\":").append(status.code).append(",\"error\":\"").append(name).append("\"}"))
+        stringToSpan(sb.toString)
+    end encodeErrorBody
 
 end RouteUtil

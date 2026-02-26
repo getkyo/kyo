@@ -18,7 +18,7 @@ final class NettyServerBackend extends HttpBackend.Server:
         config: HttpServer.Config
     )(using Frame): HttpBackend.Binding < Async =
         Sync.defer {
-            val router      = HttpRouter(handlers)
+            val router      = HttpRouter(handlers, config.cors)
             val bossGroup   = new MultiThreadIoEventLoopGroup(1, NettyTransport.ioHandlerFactory)
             val workerGroup = new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
 
@@ -50,7 +50,7 @@ final class NettyServerBackend extends HttpBackend.Server:
 
             val bindFuture = bootstrap.bind(config.host, config.port)
 
-            NettyUtil.continue(bindFuture) { channel =>
+            NettyUtil.continue(bindFuture, e => HttpError.BindError(config.host, config.port, e)) { channel =>
                 val address = channel.localAddress().asInstanceOf[InetSocketAddress]
                 new HttpBackend.Binding:
                     def port: Int    = address.getPort

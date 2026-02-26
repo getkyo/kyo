@@ -127,8 +127,9 @@ object ApiGateway extends KyoApp:
     val health = HttpHandler.health()
 
     run {
+        val port = args.headOption.flatMap(_.toIntOption).getOrElse(0)
         HttpServer.init(
-            HttpServer.Config().port(3002).openApi("/openapi.json", "Travel API Gateway")
+            HttpServer.Config().port(port).openApi("/openapi.json", "Travel API Gateway")
         )(weatherRoute, ratesRoute, travelRoute, health).map { server =>
             for
                 _ <- Console.printLine(s"API Gateway running on http://localhost:${server.port}")

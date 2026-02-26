@@ -24,7 +24,8 @@ object HttpServer:
         tcpFastOpen: Boolean = true,
         flushConsolidationLimit: Int = 256,
         strictCookieParsing: Boolean = false,
-        openApi: Maybe[Config.OpenApiEndpoint] = Absent
+        openApi: Maybe[Config.OpenApiEndpoint] = Absent,
+        cors: Maybe[CorsConfig] = Absent
     ) derives CanEqual:
         def port(p: Int): Config                    = copy(port = p)
         def host(h: String): Config                 = copy(host = h)
@@ -34,6 +35,7 @@ object HttpServer:
         def tcpFastOpen(v: Boolean): Config         = copy(tcpFastOpen = v)
         def flushConsolidationLimit(v: Int): Config = copy(flushConsolidationLimit = v)
         def strictCookieParsing(v: Boolean): Config = copy(strictCookieParsing = v)
+        def cors(c: CorsConfig): Config             = copy(cors = Present(c))
         def openApi(
             path: String = "/openapi.json",
             title: String = "API",
@@ -114,8 +116,11 @@ object HttpServer:
                     handlers,
                     OpenApiGenerator.Config(ep.title, ep.version, ep.description)
                 )
-                val json = OpenApi.toJson(spec)
-                handlers :+ HttpHandler.getText(ep.path)(_ => json)
+                val json      = OpenApi.toJson(spec)
+                val jsonBytes = Span.fromUnsafe(json.getBytes("UTF-8"))
+                handlers :+ HttpHandler.init(HttpRoute.getRaw(ep.path).response(_.bodyBinary)) { _ =>
+                    HttpResponse.okBinary(jsonBytes).addHeader("Content-Type", "application/json")
+                }
             case Absent =>
                 handlers
         backend.bind(allHandlers, config).map(new HttpServer(_))

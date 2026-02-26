@@ -10,26 +10,21 @@ private[kyo] object NettyUtil:
 
     private val unitResult: Result[Nothing, Unit < Any] = Result.succeed(())
 
-    private[kyo] def panicFromCause(cause: Throwable): Result.Panic =
+    private[kyo] def panicFromCause(cause: Throwable, mapError: Throwable => Throwable = identity): Result.Panic =
         Maybe(cause) match
-            case Absent => Result.Panic(new Exception("Netty future failed with unknown cause"))
-            case Present(err) =>
-                val msg = Maybe(err.getMessage)
-                if err.isInstanceOf[java.net.BindException] ||
-                    msg.exists(_.contains("bind"))
-                then
-                    Result.Panic(new java.net.BindException(s"Server bind failed: ${msg.getOrElse("unknown")}"))
-                else Result.Panic(err)
-                end if
+            case Absent       => Result.Panic(mapError(new Exception("Netty future failed with unknown cause")))
+            case Present(err) => Result.Panic(mapError(err))
 
-    def continue[A, S](nettyFuture: ChannelFuture)(f: NettyChannel => A < S)(using Frame): A < (Async & S) =
+    def continue[A, S](nettyFuture: ChannelFuture, mapError: Throwable => Throwable = identity)(f: NettyChannel => A < S)(using
+        Frame
+    ): A < (Async & S) =
         Sync.Unsafe.defer {
             val p = Promise.Unsafe.init[A, S]()
             p.onComplete(_ => discard(nettyFuture.cancel(true)))
             nettyFuture.addListener((future: ChannelFuture) =>
                 discard {
                     if future.isSuccess then p.complete(Result.succeed(f(future.channel())))
-                    else p.complete(panicFromCause(future.cause()))
+                    else p.complete(panicFromCause(future.cause(), mapError))
                 }
             )
             p.safe.get

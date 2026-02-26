@@ -16,7 +16,8 @@ final class HttpRouter private (
     private val endpoints: Span[HttpHandler[?, ?, ?]],
     private val captureWireNames: Span[Span[String]],
     private val streamingReqFlags: Span[Boolean],
-    private val streamingRespFlags: Span[Boolean]
+    private val streamingRespFlags: Span[Boolean],
+    private[kyo] val corsConfig: Maybe[CorsConfig] = Absent
 ):
     import HttpRouter.*
 
@@ -53,10 +54,44 @@ final class HttpRouter private (
                 val getIdx = node.endpointIndices(GetMethodIdx)
                 if getIdx >= 0 then Result.succeed(buildMatch(getIdx, captureValues, captureCount))
                 else node.methodNotAllowedResult
+            else if methodIdx == OptionsMethodIdx && node.hasAllowedMethods then
+                Result.fail(FindError.Options(buildOptionsHeaders(node.allowedMethods)))
             else node.methodNotAllowedResult
             end if
         end if
     end resolveEndpoint
+
+    private def findFirstEndpoint(node: Node): Int =
+        var i = 0
+        while i < MethodCount do
+            val idx = node.endpointIndices(i)
+            if idx >= 0 then return idx
+            i += 1
+        end while
+        -1
+    end findFirstEndpoint
+
+    private def buildOptionsHeaders(allowedMethods: Set[HttpMethod]): HttpHeaders =
+        val allMethods = allowedMethods ++
+            (if allowedMethods.contains(HttpMethod.GET) then Set(HttpMethod.HEAD) else Set.empty) +
+            HttpMethod.OPTIONS
+        val allow = allMethods.iterator.map(_.name).mkString(", ")
+        var h = HttpHeaders.empty
+            .add("Allow", allow)
+            .add("Content-Length", "0")
+        corsConfig.foreach { cors =>
+            h = h.add("Access-Control-Allow-Origin", cors.allowOrigin)
+                .add("Access-Control-Allow-Methods", allow)
+            if cors.allowHeaders.nonEmpty then
+                h = h.add("Access-Control-Allow-Headers", cors.allowHeaders.mkString(", "))
+            if cors.exposeHeaders.nonEmpty then
+                h = h.add("Access-Control-Expose-Headers", cors.exposeHeaders.mkString(", "))
+            if cors.allowCredentials then
+                h = h.add("Access-Control-Allow-Credentials", "true")
+            h = h.add("Access-Control-Max-Age", cors.maxAge.toString)
+        }
+        h
+    end buildOptionsHeaders
 
     private val maxCaptures: Int =
         @tailrec def loop(i: Int, max: Int): Int =
@@ -174,13 +209,15 @@ object HttpRouter:
     enum FindError derives CanEqual:
         case MethodNotAllowed(allowedMethods: Set[HttpMethod])
         case NotFound
+        case Options(headers: HttpHeaders)
     end FindError
 
     private val NotFoundResult: Result[FindError, Nothing] = Result.fail(FindError.NotFound)
 
-    private val MethodCount   = 9
-    private val GetMethodIdx  = 0
-    private val HeadMethodIdx = 5
+    private val MethodCount      = 9
+    private val GetMethodIdx     = 0
+    private val HeadMethodIdx    = 5
+    private val OptionsMethodIdx = 6
 
     private[kyo] def methodIndex(method: HttpMethod): Int =
         val name = method.name
@@ -201,13 +238,23 @@ object HttpRouter:
         end match
     end methodIndex
 
-    def apply(endpointSeq: Seq[HttpHandler[?, ?, ?]]): HttpRouter =
-        if endpointSeq.isEmpty then
+    private def wrapWithCors(handler: HttpHandler[?, ?, ?], cors: CorsConfig): HttpHandler[?, ?, ?] =
+        val headers = Seq("Access-Control-Allow-Origin" -> cors.allowOrigin) ++
+            (if cors.allowCredentials then Seq("Access-Control-Allow-Credentials" -> "true") else Seq.empty) ++
+            (if cors.exposeHeaders.nonEmpty then Seq("Access-Control-Expose-Headers" -> cors.exposeHeaders.mkString(", ")) else Seq.empty)
+        HttpHandler.wrapHeaders(handler, headers)
+    end wrapWithCors
+
+    def apply(endpointSeq: Seq[HttpHandler[?, ?, ?]], cors: Maybe[CorsConfig] = Absent): HttpRouter =
+        val handlers = cors match
+            case Present(c) => endpointSeq.map(wrapWithCors(_, c))
+            case Absent     => endpointSeq
+        if handlers.isEmpty then
             val emptyNode = new Node(Span.empty, Span.empty, -1, -1, Span.fromUnsafe(Array.fill(MethodCount)(-1)), Set.empty)
-            new HttpRouter(Span(emptyNode), Span.empty, Span.empty, Span.empty, Span.empty)
+            new HttpRouter(Span(emptyNode), Span.empty, Span.empty, Span.empty, Span.empty, cors)
         else
             val root = new MutableNode()
-            endpointSeq.foreach { ep =>
+            handlers.foreach { ep =>
                 val segments = pathToSegments(ep.route.request.path)
                 insert(root, segments, ep.route.method, ep)
             }
@@ -233,7 +280,8 @@ object HttpRouter:
                 Span.fromUnsafe(flatEndpoints),
                 Span.fromUnsafe(flatCaptureNames),
                 Span.fromUnsafe(flatStreamReq),
-                Span.fromUnsafe(flatStreamResp)
+                Span.fromUnsafe(flatStreamResp),
+                cors
             )
         end if
     end apply

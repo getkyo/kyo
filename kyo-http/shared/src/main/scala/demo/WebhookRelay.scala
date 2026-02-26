@@ -77,20 +77,22 @@ object WebhookRelay extends KyoApp:
             // GET /hooks/stream — SSE text stream
             sseHandler = HttpHandler.getSseText("hooks/stream") { _ =>
                 AtomicRef.init(0).map { lastSeenRef =>
-                    Stream.repeatPresent[HttpEvent[String], Async] {
-                        for
-                            _        <- Async.delay(2.seconds)(())
-                            lastSeen <- lastSeenRef.get
-                            hooks    <- storeRef.get
-                            newHooks = hooks.filter(_.id > lastSeen).reverse
-                            _ <- lastSeenRef.set(hooks.headOption.map(_.id).getOrElse(lastSeen))
-                        yield Maybe.Present(newHooks.map { hook =>
-                            HttpEvent(
-                                data = s"[${hook.source}] ${hook.event}: ${hook.payload}",
-                                event = Present(hook.event),
-                                id = Present(hook.id.toString)
-                            )
-                        })
+                    Stream[HttpEvent[String], Async] {
+                        Loop.foreach {
+                            for
+                                _        <- Async.delay(2.seconds)(())
+                                lastSeen <- lastSeenRef.get
+                                hooks    <- storeRef.get
+                                newHooks = hooks.filter(_.id > lastSeen).reverse
+                                _ <- lastSeenRef.set(hooks.headOption.map(_.id).getOrElse(lastSeen))
+                            yield Emit.valueWith(Chunk.from(newHooks.map { hook =>
+                                HttpEvent(
+                                    data = s"[${hook.source}] ${hook.event}: ${hook.payload}",
+                                    event = Present(hook.event),
+                                    id = Present(hook.id.toString)
+                                )
+                            }))(Loop.continue)
+                        }
                     }
                 }
             }

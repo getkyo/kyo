@@ -9,6 +9,9 @@
  *
  * Streaming responses use h2o's generator (proceed/stop callbacks) with a
  * two-state machine coordinating between h2o pull and fiber push.
+ *
+ * Multiple servers are supported — no global state. Each server's callbacks
+ * receive the server pointer via socket data fields or custom handler structs.
  */
 
 #define H2O_USE_LIBUV 0
@@ -25,15 +28,19 @@
 #include <fcntl.h>
 #include <signal.h>
 
+/* ── Forward declaration ───────────────────────────────────────────── */
+
+typedef struct kyo_h2o_server kyo_h2o_server;
+
 /* ── Callback function pointer types (set from Scala) ──────────────── */
 
-/* Handler callback: receives h2o_req_t*, returns 0.
+/* Handler callback: receives server + h2o_req_t*, returns 0.
  * Scala extracts request data and launches a fiber. */
-typedef int (*kyo_h2o_handler_fn)(h2o_req_t *req);
+typedef int (*kyo_h2o_handler_fn)(kyo_h2o_server *server, h2o_req_t *req);
 
 /* Response pipe callback: called when response pipe is readable.
  * Scala drains the response queue and sends responses. */
-typedef void (*kyo_h2o_drain_fn)(void);
+typedef void (*kyo_h2o_drain_fn)(kyo_h2o_server *server);
 
 /* Generator proceed callback: called when h2o is ready for more data.
  * The stream_id identifies the StreamContext on the Scala side. */
@@ -44,7 +51,7 @@ typedef void (*kyo_h2o_stop_fn)(int stream_id);
 
 /* ── Server struct ─────────────────────────────────────────────────── */
 
-typedef struct {
+struct kyo_h2o_server {
     h2o_globalconf_t config;
     h2o_context_t ctx;
     h2o_accept_ctx_t accept_ctx;
@@ -61,7 +68,14 @@ typedef struct {
     kyo_h2o_drain_fn drain_fn;
     kyo_h2o_proceed_fn proceed_fn;
     kyo_h2o_stop_fn stop_fn;
-} kyo_h2o_server;
+};
+
+/* ── Custom handler struct (carries server pointer) ────────────────── */
+
+typedef struct {
+    h2o_handler_t super;
+    kyo_h2o_server *server;
+} kyo_h2o_handler;
 
 /* ── Streaming generator struct ────────────────────────────────────── */
 
@@ -88,28 +102,26 @@ static void generator_stop(h2o_generator_t *self, h2o_req_t *req) {
     }
 }
 
-/* ── Global server pointer (one server per process) ────────────────── */
-
-static kyo_h2o_server *g_server = NULL;
-
 /* ── Accept callback ───────────────────────────────────────────────── */
 
 static void on_accept(h2o_socket_t *listener, const char *err) {
     if (err != NULL) return;
-    if (g_server == NULL) return;
+    kyo_h2o_server *server = (kyo_h2o_server *)listener->data;
+    if (server == NULL) return;
 
     h2o_socket_t *sock = h2o_evloop_socket_accept(listener);
     if (sock == NULL) return;
 
-    h2o_accept(&g_server->accept_ctx, sock);
+    h2o_accept(&server->accept_ctx, sock);
 }
 
 /* ── Handler callback ──────────────────────────────────────────────── */
 
 static int on_req(h2o_handler_t *self, h2o_req_t *req) {
-    (void)self;
-    if (g_server && g_server->handler_fn) {
-        return g_server->handler_fn(req);
+    kyo_h2o_handler *h = (kyo_h2o_handler *)self;
+    kyo_h2o_server *server = h->server;
+    if (server && server->handler_fn) {
+        return server->handler_fn(server, req);
     }
     /* No handler registered — 500 */
     req->res.status = 500;
@@ -121,18 +133,18 @@ static int on_req(h2o_handler_t *self, h2o_req_t *req) {
 /* ── Response pipe callback ────────────────────────────────────────── */
 
 static void on_response_pipe(h2o_socket_t *sock, const char *err) {
-    (void)sock;
     (void)err;
-    if (g_server == NULL) return;
+    kyo_h2o_server *server = (kyo_h2o_server *)sock->data;
+    if (server == NULL) return;
 
     /* Drain the pipe (just a wakeup signal) */
     char buf[64];
-    while (read(g_server->response_pipe[0], buf, sizeof(buf)) > 0)
+    while (read(server->response_pipe[0], buf, sizeof(buf)) > 0)
         ;
 
     /* Call Scala to drain the response queue */
-    if (g_server->drain_fn) {
-        g_server->drain_fn();
+    if (server->drain_fn) {
+        server->drain_fn(server);
     }
 }
 
@@ -200,8 +212,11 @@ kyo_h2o_server *kyo_h2o_start(const char *host, int port,
         server->hostconf, "/", 0
     );
 
-    h2o_handler_t *handler = h2o_create_handler(pathconf, sizeof(*handler));
-    handler->on_req = on_req;
+    /* Use custom handler struct that carries the server pointer */
+    kyo_h2o_handler *handler = (kyo_h2o_handler *)h2o_create_handler(
+        pathconf, sizeof(kyo_h2o_handler));
+    handler->super.on_req = on_req;
+    handler->server = server;
 
     /* Create listener socket */
     server->listen_fd = create_listener(host, port, backlog);
@@ -228,20 +243,22 @@ kyo_h2o_server *kyo_h2o_start(const char *host, int port,
     /* Initialize context with event loop */
     h2o_context_init(&server->ctx, h2o_evloop_create(), &server->config);
 
-    /* Register listener with event loop */
+    /* Register listener with event loop, store server in socket data */
     server->listener = h2o_evloop_socket_create(
         server->ctx.loop,
         server->listen_fd,
         H2O_SOCKET_FLAG_DONT_READ
     );
+    server->listener->data = server;
     h2o_socket_read_start(server->listener, on_accept);
 
-    /* Register response pipe with event loop */
+    /* Register response pipe with event loop, store server in socket data */
     server->response_sock = h2o_evloop_socket_create(
         server->ctx.loop,
         server->response_pipe[0],
         H2O_SOCKET_FLAG_DONT_READ
     );
+    server->response_sock->data = server;
     h2o_socket_read_start(server->response_sock, on_response_pipe);
 
     /* Initialize accept context (plaintext) */
@@ -250,7 +267,6 @@ kyo_h2o_server *kyo_h2o_start(const char *host, int port,
     server->accept_ctx.hosts = server->config.hosts;
 
     server->running = 1;
-    g_server = server;
     return server;
 }
 
@@ -269,7 +285,6 @@ void kyo_h2o_stop(kyo_h2o_server *server) {
 }
 
 void kyo_h2o_destroy(kyo_h2o_server *server) {
-    if (g_server == server) g_server = NULL;
     if (server->listener) {
         h2o_socket_read_stop(server->listener);
         h2o_socket_close(server->listener);

@@ -63,14 +63,16 @@ object EventBus extends KyoApp:
             // NDJSON stream — polls for new events every 2 seconds
             ndjsonHandler = HttpHandler.getNdJson[StoredEvent]("stream") { _ =>
                 AtomicRef.init(0).map { lastSeenRef =>
-                    Stream.repeatPresent[StoredEvent, Async] {
-                        for
-                            _        <- Async.delay(2.seconds)(())
-                            lastSeen <- lastSeenRef.get
-                            events   <- eventsRef.get
-                            newEvents = events.filter(_.id > lastSeen).reverse
-                            _ <- lastSeenRef.set(events.headOption.map(_.id).getOrElse(lastSeen))
-                        yield Maybe.Present(newEvents)
+                    Stream[StoredEvent, Async] {
+                        Loop.foreach {
+                            for
+                                _        <- Async.delay(2.seconds)(())
+                                lastSeen <- lastSeenRef.get
+                                events   <- eventsRef.get
+                                newEvents = events.filter(_.id > lastSeen).reverse
+                                _ <- lastSeenRef.set(events.headOption.map(_.id).getOrElse(lastSeen))
+                            yield Emit.valueWith(Chunk.from(newEvents))(Loop.continue)
+                        }
                     }
                 }
             }
