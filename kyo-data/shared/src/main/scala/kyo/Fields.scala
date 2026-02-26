@@ -165,14 +165,15 @@ object Fields:
             ${ internal.FieldsMacros.sameNamesImpl[A, B] }
     end SameNames
 
-    trait Structural extends Selectable:
-        def fields: Dict[String, Any]
-        def selectDynamic(name: String): Any = fields(name)
-
+    type Structural = Structural.Impl & Selectable
     object Structural:
+        opaque type Impl = Dict[String, Any]
+
+        extension (s: Impl)
+            def selectDynamic(name: String): Any =
+                s(name)
+
         private[kyo] def from[A](dict: Dict[String, Any]): Structural & A =
-            (new Structural:
-                val fields = dict
-            ).asInstanceOf[Structural & A]
+            dict.asInstanceOf[Structural & A]
     end Structural
 end Fields
