@@ -391,26 +391,20 @@ private[kyo] object H2oServerBackend:
         val rt = route.asInstanceOf[HttpRoute[Any, Any, Any]]
 
         val fiber = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
-            Abort.run[Any](h(r)).map { outerResult =>
-                outerResult match
-                    case Result.Success(innerAny) =>
-                        val innerResult = innerAny.asInstanceOf[Result[Any, Any]]
-                        innerResult match
-                            case Result.Success(rawResponse) =>
-                                val resp = rawResponse.asInstanceOf[HttpResponse[Any]]
-                                encodeAndEnqueue(req, rt, resp)
-                            case Result.Failure(err) =>
-                                err match
-                                    case halt: HttpResponse.Halt =>
-                                        enqueueBuffered(req, halt.response.status.code, halt.response.headers, Span.empty[Byte])
-                                    case _ =>
-                                        enqueueError(req, 500, HttpHeaders.empty)
-                            case Result.Panic(_) =>
-                                enqueueError(req, 500, HttpHeaders.empty)
-                        end match
-                    case Result.Failure(_) | Result.Panic(_) =>
-                        enqueueError(req, 500, HttpHeaders.empty)
-                end match
+            Abort.run[Any](h(r)).map {
+                case Result.Success(response) =>
+                    val resp = response.asInstanceOf[HttpResponse[Any]]
+                    encodeAndEnqueue(req, rt, resp)
+                case Result.Failure(halt: HttpResponse.Halt) =>
+                    enqueueBuffered(req, halt.response.status.code, halt.response.headers, Span.empty[Byte])
+                case Result.Failure(error) =>
+                    RouteUtil.encodeError(rt, error) match
+                        case Present((status, headers, body)) =>
+                            enqueueBuffered(req, status.code, headers, body)
+                        case Absent =>
+                            enqueueError(req, 500, HttpHeaders.empty)
+                case Result.Panic(_) =>
+                    enqueueError(req, 500, HttpHeaders.empty)
             }
         })
 

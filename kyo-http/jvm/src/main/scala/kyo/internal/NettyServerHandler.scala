@@ -343,7 +343,11 @@ final private[kyo] class NettyServerHandler(
                 case Result.Failure(halt: HttpResponse.Halt) =>
                     sendBufferedResponse(ctx, halt.response.status, halt.response.headers, Span.empty[Byte], keepAlive)
                 case Result.Failure(error) =>
-                    sendBufferedResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, Span.empty[Byte], keepAlive)
+                    RouteUtil.encodeError(rt, error) match
+                        case Present((status, headers, body)) =>
+                            sendBufferedResponse(ctx, status, headers, body, keepAlive)
+                        case Absent =>
+                            sendBufferedResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, Span.empty[Byte], keepAlive)
             }
         }
 
