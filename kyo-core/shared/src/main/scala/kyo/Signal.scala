@@ -86,10 +86,57 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       *   A new signal containing transformed values
       */
     @nowarn("msg=anonymous")
-    inline def map[B](inline f: A => B)(using CanEqual[B, B]): Signal[B] =
+    inline def map[B](inline f: A => B)(using CanEqual[B, B], Frame): Signal[B] =
         Signal.initRaw(
             currentWith = [C, S] => g => self.currentWith(a => g(f(a))),
             nextWith = [C, S] => g => self.nextWith(a => g(f(a)))
+        )
+
+    /** Dynamically switches to an inner signal based on the current value.
+      *
+      * When the outer signal changes, switches to the new inner signal produced by `f`. When the current inner signal changes, propagates
+      * that change. Equivalent to Rx `switchMap`.
+      *
+      * @param f
+      *   The function that produces an inner signal from the current value
+      * @return
+      *   A new signal that tracks the current inner signal
+      */
+    def flatMap[B](f: A => Signal[B])(using CanEqual[B, B], Frame): Signal[B] =
+        Signal.initRaw(
+            currentWith = [C, S] => g => self.currentWith(a => f(a).currentWith(g)),
+            nextWith = [C, S] =>
+                g =>
+                    self.currentWith(a =>
+                        Signal.awaitAny(Seq(self, f(a)))
+                            .andThen(self.currentWith(a2 => f(a2).currentWith(g)))
+                )
+        )
+
+    /** Pairs this signal with another, waiting for both to change before emitting.
+      *
+      * @param other
+      *   The signal to pair with
+      * @return
+      *   A signal of pairs that updates only when both inputs have changed
+      */
+    def zip[B](other: Signal[B])(using CanEqual[(A, B), (A, B)], Frame): Signal[(A, B)] =
+        Signal.initRaw(
+            currentWith = [C, S] => g => self.currentWith(a => other.currentWith(b => g((a, b)))),
+            nextWith = [C, S] => g => self.next.andThen(other.next).andThen(self.currentWith(a => other.currentWith(b => g((a, b)))))
+        )
+
+    /** Pairs this signal with another, emitting when either changes.
+      *
+      * @param other
+      *   The signal to pair with
+      * @return
+      *   A signal of pairs that updates when either input changes
+      */
+    def zipLatest[B](other: Signal[B])(using CanEqual[B, B], CanEqual[(A, B), (A, B)], Frame): Signal[(A, B)] =
+        Signal.initRaw(
+            currentWith = [C, S] => g => self.currentWith(a => other.currentWith(b => g((a, b)))),
+            nextWith = [C, S] => g => Signal.awaitAny(Seq(self, other)).andThen(self.currentWith(a => other.currentWith(b => g((a, b)))))
         )
 
     /** Creates a stream that continuously emits the current value of the signal.
@@ -134,6 +181,16 @@ end Signal
 export Signal.SignalRef
 
 object Signal:
+
+    /** Waits for any of the given signals to change.
+      *
+      * Each signal's next is masked to prevent interrupt propagation, ensuring that racing doesn't corrupt signal state.
+      *
+      * @param signals
+      *   The signals to watch
+      */
+    def awaitAny(signals: Seq[Signal[?]])(using Frame): Unit < Async =
+        Async.race(signals.map(s => Async.mask(s.next))).unit
 
     private inline val missingCanEqual =
         "Cannot create Signal because values of type '${A}' cannot be compared for equality to detect changes. Make sure there is a 'CanEqual[${A}, ${A}]' instance available."
@@ -232,6 +289,45 @@ object Signal:
         canEqual: CanEqual[A, A]
     ): B < S =
         f(initConst(value))
+
+    /** Zips a sequence of signals, waiting for all to change before emitting.
+      *
+      * @param signals
+      *   The signals to zip
+      * @return
+      *   A signal of Chunk that updates when all inputs have changed
+      */
+    def collectAll[A](signals: Seq[Signal[A]])(
+        using
+        Frame,
+        CanEqual[A, A],
+        CanEqual[Chunk[A], Chunk[A]]
+    ): Signal[Chunk[A]] =
+        if signals.isEmpty then initConst(Chunk.empty[A])
+        else
+            val sigs = Chunk.from(signals)
+            initRaw(
+                currentWith = [B, S] => f => Kyo.foreach(sigs)(_.current).map(f),
+                nextWith = [B, S] => f => Kyo.foreachDiscard(signals)(_.next).andThen(Kyo.foreach(sigs)(_.current).map(f))
+            )
+
+    /** Zips a sequence of signals, emitting when any changes.
+      *
+      * @param signals
+      *   The signals to zip
+      * @return
+      *   A signal of Chunk that updates when any input changes
+      */
+    def collectAllLatest[A](signals: Seq[Signal[A]])(using Frame, CanEqual[A, A]): Signal[Chunk[A]] =
+        signals.size match
+            case 0 => initConst(Chunk.empty[A])
+            case 1 => signals.head.map(Chunk(_))
+            case _ =>
+                val sigs = Chunk.from(signals)
+                initRaw(
+                    currentWith = [C, S] => g => Kyo.foreach(sigs)(_.current).map(g),
+                    nextWith = [C, S] => g => awaitAny(sigs).andThen(Kyo.foreach(sigs)(_.current).map(g))
+                )
 
     /** Creates a new signal by specifying its fundamental operations.
       *

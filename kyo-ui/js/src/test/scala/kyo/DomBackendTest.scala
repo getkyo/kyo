@@ -331,6 +331,36 @@ class DomBackendTest extends Test:
                 )
             }
         }
+        "when does not rebuild DOM when condition source changes but condition stays true" in run {
+            clearBody()
+            Scope.run {
+                for
+                    items <- Signal.initRef(Chunk(1, 2, 3))
+                    doneCount = items.map(_.count(_ > 1))
+                    r <- backend.render(
+                        div(
+                            when(doneCount.map(_ > 0))(
+                                button.cls("clear")("Clear").onClick(items.getAndUpdate(_.filter(_ <= 1)).unit)
+                            )
+                        )
+                    )
+                    _ <- Async.sleep(50.millis)
+                    btn1 = document.body.querySelector(".clear")
+                    _    = assert(btn1 != null, "button should exist initially")
+
+                    // Change items but keep doneCount > 0 (still 2 items > 1)
+                    _ <- items.set(Chunk(1, 2, 3, 4))
+                    _ <- Async.sleep(50.millis)
+                    btn2 = document.body.querySelector(".clear")
+                    _    = assert(btn2 != null, "button should still exist")
+                yield
+                    // The DOM node should be the SAME reference — not rebuilt
+                    assert(
+                        btn1 eq btn2,
+                        "when() should not rebuild DOM when the rendered UI is structurally unchanged"
+                    )
+            }
+        }
     }
 
 end DomBackendTest

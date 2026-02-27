@@ -185,20 +185,28 @@ class SignalTest extends Test:
         }
     }
 
-    "Signal operations" - {
-        "current and next" in run {
+    "current and next" - {
+        "current reads value" in run {
+            for
+                ref <- Signal.initRef(1)
+                v   <- ref.current
+            yield assert(v == 1)
+        }
+
+        "next waits for change" in run {
             for
                 ref     <- Signal.initRef(1)
-                v1      <- ref.current
                 started <- Latch.init(1)
                 f       <- Fiber.initUnscoped(started.release.andThen(ref.next))
                 _       <- started.await
                 _       <- ref.set(2)
-                v2      <- f.get
-            yield assert(v1 == 1 && v2 == 2)
+                v       <- f.get
+            yield assert(v == 2)
         }
+    }
 
-        "map" in run {
+    "map" - {
+        "transforms current" in run {
             for
                 ref <- Signal.initRef(1)
                 mapped = ref.map(_ * 2)
@@ -208,27 +216,334 @@ class SignalTest extends Test:
             yield assert(v1 == 2 && v2 == 4)
         }
 
-        "streamCurrent" in run {
+        "transforms next" in run {
+            for
+                ref <- Signal.initRef(1)
+                mapped = ref.map(_ * 2)
+                started <- Latch.init(1)
+                f       <- Fiber.initUnscoped(started.release.andThen(mapped.next))
+                _       <- started.await
+                _       <- ref.set(5)
+                v       <- f.get
+            yield assert(v == 10)
+        }
+    }
+
+    "flatMap" - {
+        "current reads through inner signal" in run {
+            for
+                outer  <- Signal.initRef(1)
+                inner1 <- Signal.initRef(10)
+                inner2 <- Signal.initRef(20)
+                flat = outer.flatMap(v => if v == 1 then inner1 else inner2)
+                v1 <- flat.current
+                _  <- inner1.set(11)
+                v2 <- flat.current
+                _  <- outer.set(2)
+                v3 <- flat.current
+                _  <- inner2.set(21)
+                v4 <- flat.current
+            yield assert(v1 == 10 && v2 == 11 && v3 == 20 && v4 == 21)
+        }
+
+        "next fires on inner change" in run {
+            for
+                outer  <- Signal.initRef(1)
+                inner1 <- Signal.initRef(10)
+                inner2 <- Signal.initRef(20)
+                flat = outer.flatMap(v => if v == 1 then inner1 else inner2)
+                started <- Latch.init(1)
+                f       <- Fiber.initUnscoped(started.release.andThen(flat.next))
+                _       <- started.await
+                _       <- Async.sleep(10.millis)
+                _       <- inner1.set(11)
+                v       <- f.get
+            yield assert(v == 11)
+        }
+
+        "next fires on outer change and switches inner" in run {
+            for
+                outer  <- Signal.initRef(1)
+                inner1 <- Signal.initRef(10)
+                inner2 <- Signal.initRef(20)
+                flat = outer.flatMap(v => if v == 1 then inner1 else inner2)
+                started <- Latch.init(1)
+                f       <- Fiber.initUnscoped(started.release.andThen(flat.next))
+                _       <- started.await
+                _       <- Async.sleep(10.millis)
+                _       <- outer.set(2)
+                v       <- f.get
+            yield assert(v == 20)
+        }
+
+        "streamChanges tracks inner switches" in run {
+            for
+                outer  <- Signal.initRef(1)
+                inner1 <- Signal.initRef(10)
+                inner2 <- Signal.initRef(20)
+                flat = outer.flatMap(v => if v == 1 then inner1 else inner2)
+                f      <- Fiber.initUnscoped(flat.streamChanges.take(4).run)
+                _      <- Async.sleep(10.millis)
+                _      <- inner1.set(11)
+                _      <- Async.sleep(10.millis)
+                _      <- outer.set(2)
+                _      <- Async.sleep(10.millis)
+                _      <- inner2.set(21)
+                _      <- Async.sleep(10.millis)
+                values <- f.get
+            yield assert(values == Chunk(10, 11, 20, 21))
+        }
+    }
+
+    "zip" - {
+        "current reads both" in run {
+            for
+                a <- Signal.initRef(1)
+                b <- Signal.initRef("x")
+                zipped = a.zip(b)
+                v1 <- zipped.current
+                _  <- a.set(2)
+                v2 <- zipped.current
+                _  <- b.set("y")
+                v3 <- zipped.current
+            yield assert(v1 == (1, "x") && v2 == (2, "x") && v3 == (2, "y"))
+        }
+
+        "next waits for self then other" in run {
+            for
+                a <- Signal.initRef(1)
+                b <- Signal.initRef("x")
+                zipped = a.zip(b)
+                started <- Latch.init(1)
+                f       <- Fiber.initUnscoped(started.release.andThen(zipped.next))
+                _       <- started.await
+                _       <- Async.sleep(10.millis)
+                _       <- a.set(2)
+                _       <- Async.sleep(10.millis)
+                _       <- b.set("y")
+                v       <- f.get
+            yield assert(v == (2, "y"))
+        }
+
+        "next does not fire on only self change" in run {
+            for
+                a <- Signal.initRef(1)
+                b <- Signal.initRef("x")
+                zipped = a.zip(b)
+                started <- Latch.init(1)
+                done    <- Latch.init(1)
+                f <- Fiber.initUnscoped(
+                    started.release.andThen(zipped.next).map { v =>
+                        done.release.andThen(v)
+                    }
+                )
+                _       <- started.await
+                _       <- Async.sleep(10.millis)
+                _       <- a.set(2)
+                _       <- Async.sleep(10.millis)
+                pending <- done.pending
+                _       <- b.set("y")
+                v       <- f.get
+            yield assert(pending == 1 && v == (2, "y"))
+        }
+    }
+
+    "zipLatest" - {
+        "current reads both" in run {
+            for
+                a <- Signal.initRef(1)
+                b <- Signal.initRef("x")
+                zl = a.zipLatest(b)
+                v1 <- zl.current
+                _  <- a.set(2)
+                v2 <- zl.current
+                _  <- b.set("y")
+                v3 <- zl.current
+            yield assert(v1 == (1, "x") && v2 == (2, "x") && v3 == (2, "y"))
+        }
+
+        "next fires on either change" in run {
+            for
+                a <- Signal.initRef(1)
+                b <- Signal.initRef("x")
+                zl = a.zipLatest(b)
+                started <- Latch.init(1)
+                f       <- Fiber.initUnscoped(started.release.andThen(zl.next))
+                _       <- started.await
+                _       <- Async.sleep(10.millis)
+                _       <- b.set("y")
+                v       <- f.get
+            yield assert(v == (1, "y"))
+        }
+
+        "next fires on self change" in run {
+            for
+                a <- Signal.initRef(1)
+                b <- Signal.initRef("x")
+                zl = a.zipLatest(b)
+                started <- Latch.init(1)
+                f       <- Fiber.initUnscoped(started.release.andThen(zl.next))
+                _       <- started.await
+                _       <- Async.sleep(10.millis)
+                _       <- a.set(2)
+                v       <- f.get
+            yield assert(v == (2, "x"))
+        }
+
+        "streamChanges fires repeatedly" in run {
+            for
+                a <- Signal.initRef(1)
+                b <- Signal.initRef("x")
+                zl = a.zipLatest(b)
+                f      <- Fiber.initUnscoped(zl.streamChanges.take(3).run)
+                _      <- Async.sleep(10.millis)
+                _      <- a.set(2)
+                _      <- Async.sleep(10.millis)
+                _      <- b.set("y")
+                _      <- Async.sleep(10.millis)
+                values <- f.get
+            yield assert(values == Chunk((1, "x"), (2, "x"), (2, "y")))
+        }
+    }
+
+    "collectAll" - {
+        "current reads all" in run {
+            for
+                a <- Signal.initRef(1)
+                b <- Signal.initRef(2)
+                c <- Signal.initRef(3)
+                all = Signal.collectAll(Seq(a, b, c))
+                v1 <- all.current
+                _  <- b.set(20)
+                v2 <- all.current
+            yield assert(v1 == Chunk(1, 2, 3) && v2 == Chunk(1, 20, 3))
+        }
+
+        "next waits for all to change" in run {
+            for
+                a <- Signal.initRef(1)
+                b <- Signal.initRef(2)
+                all = Signal.collectAll(Seq(a, b))
+                started <- Latch.init(1)
+                done    <- Latch.init(1)
+                f <- Fiber.initUnscoped(
+                    started.release.andThen(all.next).map { v =>
+                        done.release.andThen(v)
+                    }
+                )
+                _       <- started.await
+                _       <- Async.sleep(10.millis)
+                _       <- a.set(10)
+                _       <- Async.sleep(10.millis)
+                pending <- done.pending
+                _       <- b.set(20)
+                v       <- f.get
+            yield assert(pending == 1 && v == Chunk(10, 20))
+        }
+
+        "single signal" in run {
+            for
+                a <- Signal.initRef(42)
+                all = Signal.collectAll(Seq(a))
+                v <- all.current
+            yield assert(v == Chunk(42))
+        }
+
+        "empty" in run {
+            val all = Signal.collectAll(Seq.empty[Signal[Int]])
+            for v <- all.current
+            yield assert(v == Chunk.empty)
+        }
+    }
+
+    "collectAllLatest" - {
+        "current reads all" in run {
+            for
+                a <- Signal.initRef(1)
+                b <- Signal.initRef(2)
+                c <- Signal.initRef(3)
+                all = Signal.collectAllLatest(Seq(a, b, c))
+                v1 <- all.current
+                _  <- b.set(20)
+                v2 <- all.current
+            yield assert(v1 == Chunk(1, 2, 3) && v2 == Chunk(1, 20, 3))
+        }
+
+        "next fires on any change" in run {
+            for
+                a <- Signal.initRef(1)
+                b <- Signal.initRef(2)
+                c <- Signal.initRef(3)
+                all = Signal.collectAllLatest(Seq(a, b, c))
+                started <- Latch.init(1)
+                f       <- Fiber.initUnscoped(started.release.andThen(all.next))
+                _       <- started.await
+                _       <- Async.sleep(10.millis)
+                _       <- c.set(30)
+                v       <- f.get
+            yield assert(v == Chunk(1, 2, 30))
+        }
+
+        "single signal" in run {
+            for
+                a <- Signal.initRef(42)
+                all = Signal.collectAllLatest(Seq(a))
+                v <- all.current
+            yield assert(v == Chunk(42))
+        }
+
+        "empty" in run {
+            val all = Signal.collectAllLatest(Seq.empty[Signal[Int]])
+            for v <- all.current
+            yield assert(v == Chunk.empty)
+        }
+    }
+
+    "streamCurrent" - {
+        "emits current value repeatedly" in run {
             for
                 ref <- Signal.initRef(1)
                 stream = ref.streamCurrent.take(3)
                 values <- stream.run
             yield assert(values == Chunk(1, 1, 1))
         }
+    }
 
-        "streamChanges" in run {
+    "streamChanges" - {
+        "emits only on value change" in run {
             for
                 ref    <- Signal.initRef(1)
                 f      <- Fiber.initUnscoped(ref.streamChanges.take(3).run)
-                _      <- Async.sleep(2.millis)
+                _      <- Async.sleep(10.millis)
                 _      <- ref.set(2)
-                _      <- Async.sleep(2.millis)
-                _      <- ref.set(2) // Should be ignored
-                _      <- Async.sleep(2.millis)
+                _      <- Async.sleep(10.millis)
+                _      <- ref.set(2) // duplicate ignored
+                _      <- Async.sleep(10.millis)
                 _      <- ref.set(3)
-                _      <- Async.sleep(2.millis)
+                _      <- Async.sleep(10.millis)
                 values <- f.get
             yield assert(values == Chunk(1, 2, 3))
+        }
+    }
+
+    "awaitAny" - {
+        "next works after losing a race" in run {
+            for
+                a        <- Signal.initRef(1)
+                b        <- Signal.initRef("x")
+                started  <- Latch.init(1)
+                raceF    <- Fiber.initUnscoped(started.release.andThen(Signal.awaitAny(Seq(a, b))))
+                _        <- started.await
+                _        <- Async.sleep(10.millis)
+                _        <- a.set(2)
+                _        <- raceF.get
+                started2 <- Latch.init(1)
+                f        <- Fiber.initUnscoped(started2.release.andThen(b.next))
+                _        <- started2.await
+                _        <- Async.sleep(10.millis)
+                _        <- b.set("y")
+                v        <- f.get
+            yield assert(v == "y")
         }
     }
 

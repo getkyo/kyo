@@ -317,8 +317,13 @@ class DomBackend extends UIBackend:
                     fiber <- Fiber.initUnscoped {
                         for node <- build(ui, rendered)
                         yield
-                            clearChildren(container)
-                            val _ = container.appendChild(node)
+                            val oldHtml = container.innerHTML
+                            val tmp     = document.createElement("span")
+                            val _       = tmp.appendChild(node)
+                            val newHtml = tmp.innerHTML
+                            if oldHtml != newHtml then
+                                clearChildren(container)
+                                val _ = container.appendChild(node)
                     }
                     _ <- ref.set(Present(fiber))
                     _ <- rendered.set(ui)
