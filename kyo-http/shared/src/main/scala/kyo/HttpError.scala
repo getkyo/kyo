@@ -30,6 +30,9 @@ object HttpError:
                 case other        => String.valueOf(other)
         )
 
+    case class StatusError(status: HttpStatus, body: String)(using Frame)
+        extends HttpError(s"HTTP ${status.code}: $body")
+
     case class BindError(host: String, port: Int, cause: Throwable)(using Frame)
         extends HttpError(s"Server bind failed on $host:$port: ${cause.getMessage}", cause)
 

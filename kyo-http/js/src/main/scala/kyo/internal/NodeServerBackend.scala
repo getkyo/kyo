@@ -328,9 +328,7 @@ final class NodeServerBackend extends HttpBackend.Server:
                             case Present((status, headers, body)) =>
                                 writeBufferedResponse(res, status, headers, body)
                             case Absent =>
-                                val handlerError = HttpError.HandlerError(error)
-                                val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
-                                writeBufferedResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty, body)
+                                sendErrorResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty)
                     case Result.Panic(_) =>
                         sendErrorResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty)
                 }

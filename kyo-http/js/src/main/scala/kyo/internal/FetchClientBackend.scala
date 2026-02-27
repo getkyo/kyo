@@ -264,20 +264,23 @@ object FetchClientBackend:
         end buildInit
 
         private def classifyError(e: Throwable)(using Frame): HttpError =
-            val jsError = e match
-                case ex: scala.scalajs.js.JavaScriptException => ex.exception.asInstanceOf[js.Dynamic]
-                case _                                        => e.asInstanceOf[js.Dynamic]
-            val cause = jsError.cause
-            if !js.isUndefined(cause) && !js.isUndefined(cause.code) then
-                val codeStr = cause.code.asInstanceOf[String]
-                if codeStr == "ECONNREFUSED" || codeStr == "ECONNRESET" then
-                    HttpError.ConnectionError(s"Connection to $host:$port failed: $codeStr", e)
-                else
-                    HttpError.ConnectionError(s"Connection error to $host:$port", e)
-                end if
-            else
-                HttpError.ConnectionError(s"Request to $host:$port failed", e)
-            end if
+            e match
+                case httpError: HttpError => httpError
+                case _ =>
+                    val jsError = e match
+                        case ex: scala.scalajs.js.JavaScriptException => ex.exception.asInstanceOf[js.Dynamic]
+                        case _                                        => e.asInstanceOf[js.Dynamic]
+                    val cause = jsError.cause
+                    if !js.isUndefined(cause) && !js.isUndefined(cause.code) then
+                        val codeStr = cause.code.asInstanceOf[String]
+                        if codeStr == "ECONNREFUSED" || codeStr == "ECONNRESET" then
+                            HttpError.ConnectionError(s"Connection to $host:$port failed: $codeStr", e)
+                        else
+                            HttpError.ConnectionError(s"Connection error to $host:$port", e)
+                        end if
+                    else
+                        HttpError.ConnectionError(s"Request to $host:$port failed", e)
+                    end if
         end classifyError
 
         private def buildFetchHeaders(kyoHeaders: HttpHeaders): FetchHeaders =

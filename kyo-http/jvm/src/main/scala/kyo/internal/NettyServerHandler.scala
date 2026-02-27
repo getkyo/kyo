@@ -381,9 +381,7 @@ final private[kyo] class NettyServerHandler(
                             case Present((status, headers, body)) =>
                                 sendBufferedResponse(ctx, status, headers, if isHead then Span.empty[Byte] else body, keepAlive)
                             case Absent =>
-                                val handlerError = HttpError.HandlerError(error)
-                                val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
-                                sendBufferedResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, body, keepAlive)
+                                sendErrorResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, keepAlive)
                     case Result.Panic(_) =>
                         sendErrorResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, keepAlive)
                 }

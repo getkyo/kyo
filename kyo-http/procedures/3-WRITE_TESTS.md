@@ -1,5 +1,7 @@
 # Procedure 3: Write Tests
 
+> **Before starting:** Read [0-READ_THIS_FIRST.md](0-READ_THIS_FIRST.md), especially the **Bash command rules**.
+
 Implement the test scenarios from [Procedure 2: Plan Test Coverage](2-PLAN_TEST_COVERAGE.md). A failing test that reproduces a bug is the most valuable outcome.
 
 ## Integrity
@@ -23,7 +25,7 @@ Use the approved plan from `TEST_COVERAGE_PLAN.md`. Each test should use the exi
 For each test:
 
 - **Name it descriptively** — the name describes the scenario: "SSE with delayed first event", "500 response has non-empty body", "bind to occupied port reports port number". Not "test1", not "fix bug #42".
-- **Do not add comments referencing specific bugs or validation runs.** Tests should stand on their own — their name and assertions describe the expected behavior. Bug references belong in the `TEST_COVERAGE_PLAN.md` and `TEST_RESULTS.md` files, not in the test source code.
+- **Add debug comments during development** — reference specific bugs or validation findings (e.g., `// Reproduces: SSE headers not flushed on Native`) to maintain traceability while working. These will be cleaned up in [Procedure 4](4-FIX_BUGS.md).
 - **Assert behavior precisely** — check status codes, response bodies, headers, streaming content. Vague assertions leave room for bugs to hide.
 - **Minimal setup** — the simplest test that exercises the behavior. Don't add routes, filters, or configuration irrelevant to what's being tested.
 - **Independence** — each test works in isolation. No shared mutable state between tests, no execution order dependencies.

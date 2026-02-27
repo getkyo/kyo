@@ -103,6 +103,32 @@ class OpenApiGeneratorTest extends kyo.Test:
             assert(op.requestBody.get.required == Some(true))
         }
 
+        "request body with Option fields excludes them from required" in {
+            case class UpdateItem(name: String, description: Option[String]) derives Schema
+            val route = HttpRoute.putRaw("items" / HttpPath.Capture[Int]("id"))
+                .request(_.bodyJson[UpdateItem])
+                .response(_.bodyJson[String])
+            val h    = route.handler(_ => HttpResponse.okJson("ok"))
+            val spec = OpenApiGenerator.generate(Seq(h))
+            val json = OpenApi.toJson(spec)
+            // The UpdateItem schema should have "name" in required but NOT "description"
+            assert(json.contains("properties"), s"OpenAPI should contain schema properties, got: $json")
+            // Find the schema — it may be inline or in components
+            val schema = spec.paths("/items/{id}").put.get.requestBody.get
+                .content("application/json").schema
+            val resolvedSchema: OpenApi.SchemaObject = schema.`$ref` match
+                case Some(ref) =>
+                    val schemaName = ref.stripPrefix("#/components/schemas/")
+                    spec.components.get.schemas.get.apply(schemaName)
+                case None => schema
+            val required = resolvedSchema.required.getOrElse(Nil)
+            assert(required.contains("name"), s"'name' (non-optional) should be in required, got: $required")
+            assert(
+                !required.contains("description"),
+                s"'description' (Option[String]) should NOT be in required, got: $required"
+            )
+        }
+
         "text response body" in {
             val route = HttpRoute.getRaw("hello").response(_.bodyText)
             val h     = route.handler(_ => HttpResponse.okText("hi"))

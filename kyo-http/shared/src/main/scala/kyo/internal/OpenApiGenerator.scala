@@ -303,9 +303,15 @@ private[kyo] object OpenApiGenerator:
             val props     = mutable.LinkedHashMap[String, OpenApi.SchemaObject]()
             val reqFields = mutable.ArrayBuffer[String]()
 
+            def isOptionalSchema(s: zio.schema.Schema[?]): Boolean = s match
+                case _: zio.schema.Schema.Optional[?]        => true
+                case l: zio.schema.Schema.Lazy[?]            => isOptionalSchema(l.schema)
+                case t: zio.schema.Schema.Transform[?, ?, ?] => isOptionalSchema(t.schema)
+                case _                                       => false
+
             fields.foreach { field =>
                 props(field.name.toString) = zioSchemaToOpenApi(field.schema)
-                if !field.optional then reqFields += field.name.toString
+                if !field.optional && !isOptionalSchema(field.schema) then reqFields += field.name.toString
             }
 
             OpenApi.SchemaObject(

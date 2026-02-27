@@ -120,30 +120,44 @@ object RouteUtil:
         val bodyField = findBodyField(fields)
         val hasParams = fields.size > (if bodyField.isDefined then 1 else 0)
 
-        // Fast path: no params to decode
-        if !hasParams then
-            bodyField match
-                case Absent =>
-                    Result.succeed(HttpResponse(status, headers, Record2.empty.asInstanceOf[Record2[Out]]))
-                case Present(bf) =>
-                    decodeBufferedBodyValue(bf.contentType, body, headers).map { value =>
-                        val builder = DictBuilder.init[String, Any]
-                        discard(builder.add(bf.fieldName, value))
-                        HttpResponse(status, headers, Record2(builder.result()))
-                    }
-        else
-            val builder = DictBuilder.init[String, Any]
-            decodeParamFields(fields, headers, Absent, builder, isResponse = true).flatMap { _ =>
+        def decodeBody(): Result[HttpError, HttpResponse[Out]] =
+            // Fast path: no params to decode
+            if !hasParams then
                 bodyField match
                     case Absent =>
-                        Result.succeed(HttpResponse(status, headers, Record2(builder.result())))
+                        Result.succeed(HttpResponse(status, headers, Record2.empty.asInstanceOf[Record2[Out]]))
                     case Present(bf) =>
                         decodeBufferedBodyValue(bf.contentType, body, headers).map { value =>
+                            val builder = DictBuilder.init[String, Any]
                             discard(builder.add(bf.fieldName, value))
                             HttpResponse(status, headers, Record2(builder.result()))
                         }
-            }
-        end if
+            else
+                val builder = DictBuilder.init[String, Any]
+                decodeParamFields(fields, headers, Absent, builder, isResponse = true).flatMap { _ =>
+                    bodyField match
+                        case Absent =>
+                            Result.succeed(HttpResponse(status, headers, Record2(builder.result())))
+                        case Present(bf) =>
+                            decodeBufferedBodyValue(bf.contentType, body, headers).map { value =>
+                                discard(builder.add(bf.fieldName, value))
+                                HttpResponse(status, headers, Record2(builder.result()))
+                            }
+                }
+            end if
+        end decodeBody
+
+        val result = decodeBody()
+        // When the body decoding fails on a non-2xx response, return a StatusError
+        // with the original status code and raw body instead of a confusing ParseError.
+        result match
+            case Result.Error(_: HttpError.ParseError) if !status.isSuccess =>
+                val bodyText =
+                    if body.isEmpty then ""
+                    else new String(body.toArrayUnsafe, "UTF-8")
+                Result.fail(HttpError.StatusError(status, bodyText))
+            case other => other
+        end match
     end decodeBufferedResponse
 
     def decodeStreamingResponse[In, Out, S](
@@ -1048,9 +1062,17 @@ object RouteUtil:
     // ==================== Error response body ====================
 
     private[kyo] inline def encodeHalt[A](halt: HttpResponse.Halt)(inline f: (HttpStatus, HttpHeaders, Span[Byte]) => A): A =
-        val body    = encodeErrorBody(halt.response.status)
-        val headers = halt.response.headers.add("Content-Type", "application/json")
-        f(halt.response.status, headers, body)
+        val status = halt.response.status
+        if status.code == 304 || status.code == 204 || (status.code >= 100 && status.code < 200) then
+            // 1xx, 204, and 304 responses MUST NOT contain a message body (RFC 7230 §3.3)
+            // and SHOULD NOT include Content-Type or Content-Length headers
+            val headers = halt.response.headers.remove("Content-Type").remove("Content-Length")
+            f(status, headers, Span.empty[Byte])
+        else
+            val body    = encodeErrorBody(status)
+            val headers = halt.response.headers.add("Content-Type", "application/json")
+            f(status, headers, body)
+        end if
     end encodeHalt
 
     private[kyo] def encodeErrorBody(status: HttpStatus): Span[Byte] =

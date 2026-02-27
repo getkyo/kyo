@@ -44,21 +44,10 @@ class HttpClientBench extends ArenaBench.ForkOnly("pong"):
         import AllowUnsafe.embrace.danger
         Sync.Unsafe.evalOrThrow(
             Fiber.initUnscoped(
-                HttpClient.send(HttpRequest.getRaw(url)).map(_.bodyText)
+                HttpClient.getText(url)
             ).flatMap(_.block(Duration.Infinity))
         ).getOrThrow
     end forkKyoHttp
-
-    @Benchmark
-    def forkKyoHttp2(warmup: WarmupJITProfile.KyoForkWarmup): String =
-        import kyo.*
-        import AllowUnsafe.embrace.danger
-        Sync.Unsafe.evalOrThrow(
-            Fiber.initUnscoped(
-                http2.HttpClient.getText(url)
-            ).flatMap(_.block(Duration.Infinity))
-        ).getOrThrow
-    end forkKyoHttp2
 
     val zioUrl =
         import zio.http.*

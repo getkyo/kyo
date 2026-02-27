@@ -118,15 +118,12 @@ object BookmarkStore extends KyoApp:
         }
 
         val delete = deleteRoute.handler { req =>
-            storeRef.updateAndGet { store =>
-                store.bookmarks.get(req.fields.id) match
-                    case Some(_) => Store(store.bookmarks - req.fields.id, store.nextId)
-                    case None    => store
-            }.map { store =>
+            storeRef.get.map { store =>
                 if !store.bookmarks.contains(req.fields.id) then
-                    HttpResponse.noContent
-                else
                     Abort.fail(ApiError(s"Bookmark ${req.fields.id} not found"))
+                else
+                    storeRef.updateAndGet(s => Store(s.bookmarks - req.fields.id, s.nextId))
+                        .andThen(HttpResponse.noContent)
             }
         }
 

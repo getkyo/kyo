@@ -1585,6 +1585,135 @@ class HttpServerTest extends Test:
         }
     }
 
+    "convenience method error responses" - {
+
+        case class Item(id: Int, name: String) derives Schema, CanEqual
+        case class CreateItem(name: String) derives Schema, CanEqual
+        case class ConflictError(error: String, existingId: Int) derives Schema, CanEqual
+        case class ValidationError(error: String, field: String) derives Schema, CanEqual
+
+        "postJson receives 409 typed error — error body should be accessible" in run {
+            val route = HttpRoute
+                .postRaw("items")
+                .request(_.bodyJson[CreateItem])
+                .response(
+                    _.bodyJson[Item]
+                        .status(HttpStatus.Created)
+                        .error[ConflictError](HttpStatus.Conflict)
+                )
+            val ep = route.handler { _ =>
+                Abort.fail(ConflictError("already exists", 42))
+            }
+            withServer(ep) { port =>
+                val url = s"http://localhost:$port/items"
+                Abort.run[HttpError](
+                    HttpClient.postJson[Item, CreateItem](url, CreateItem("dup"))
+                ).map {
+                    case Result.Error(err) =>
+                        assert(
+                            err.getMessage.contains("409") || err.getMessage.contains("Conflict") ||
+                                err.getMessage.contains("already exists"),
+                            s"Error should reference 409/Conflict/error body, got: ${err.getMessage}"
+                        )
+                    case Result.Success(item) =>
+                        fail(s"Expected error for conflict, got success: $item")
+                    case Result.Panic(ex) =>
+                        fail(s"Unexpected panic: ${ex.getMessage}")
+                }
+            }
+        }
+
+        "getJson receives 404 typed error — error body should be accessible" in run {
+            val route = HttpRoute
+                .getRaw("items" / HttpPath.Capture[Int]("id"))
+                .response(
+                    _.bodyJson[Item]
+                        .error[ValidationError](HttpStatus.NotFound)
+                )
+            val ep = route.handler { _ =>
+                Abort.fail(ValidationError("not found", "id"))
+            }
+            withServer(ep) { port =>
+                val url = s"http://localhost:$port/items/999"
+                Abort.run[HttpError](
+                    HttpClient.getJson[Item](url)
+                ).map {
+                    case Result.Error(err) =>
+                        assert(
+                            err.getMessage.contains("404") || err.getMessage.contains("NotFound") ||
+                                err.getMessage.contains("not found"),
+                            s"Error should reference 404/NotFound/error body, got: ${err.getMessage}"
+                        )
+                    case Result.Success(item) =>
+                        fail(s"Expected error for not found, got success: $item")
+                    case Result.Panic(ex) =>
+                        fail(s"Unexpected panic: ${ex.getMessage}")
+                }
+            }
+        }
+
+        "raw sendWith preserves error response status and body" in run {
+            val route = HttpRoute
+                .postRaw("items")
+                .request(_.bodyJson[CreateItem])
+                .response(
+                    _.bodyText
+                        .error[ConflictError](HttpStatus.Conflict)
+                )
+            val ep = route.handler { _ =>
+                Abort.fail(ConflictError("already exists", 42))
+            }
+            withServer(ep) { port =>
+                send(
+                    port,
+                    route,
+                    HttpRequest.postRaw(HttpUrl.fromUri("/items"))
+                        .addField("body", CreateItem("dup"))
+                ).map { resp =>
+                    assert(resp.status == HttpStatus.Conflict, s"Expected 409 Conflict, got ${resp.status}")
+                    assert(
+                        resp.fields.body.contains("already exists"),
+                        s"Error body should contain error message, got: ${resp.fields.body}"
+                    )
+                    assert(
+                        resp.fields.body.contains("42"),
+                        s"Error body should contain existingId, got: ${resp.fields.body}"
+                    )
+                }
+            }
+        }
+
+        "putJson receives 400 validation error" in run {
+            val route = HttpRoute
+                .putRaw("items" / HttpPath.Capture[Int]("id"))
+                .request(_.bodyJson[Item])
+                .response(
+                    _.bodyJson[Item]
+                        .error[ValidationError](HttpStatus.BadRequest)
+                )
+            val ep = route.handler { _ =>
+                Abort.fail(ValidationError("Name cannot be blank", "name"))
+            }
+            withServer(ep) { port =>
+                val url = s"http://localhost:$port/items/1"
+                Abort.run[HttpError](
+                    HttpClient.putJson[Item, Item](url, Item(1, ""))
+                ).map {
+                    case Result.Error(err) =>
+                        assert(
+                            err.getMessage.contains("400") || err.getMessage.contains("BadRequest") ||
+                                err.getMessage.contains("cannot be blank"),
+                            s"Error should reference 400/BadRequest/error body, got: ${err.getMessage}"
+                        )
+                    case Result.Success(item) =>
+                        fail(s"Expected error for validation, got success: $item")
+                    case Result.Panic(ex) =>
+                        fail(s"Unexpected panic: ${ex.getMessage}")
+                }
+            }
+        }
+    }
+
     "client disconnect and cleanup" - {
 
         "streaming response: server stops writing after client disconnects" in run {
@@ -1804,7 +1933,6 @@ class HttpServerTest extends Test:
 
     "error response bodies" - {
 
-        // Reproduces: BUG-1 from DEMO_VALIDATION — handler exception returns 500 with empty body
         "500 response has non-empty body when handler throws" in run {
             val route = HttpRoute.getRaw("throw-test").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -1818,7 +1946,6 @@ class HttpServerTest extends Test:
             }
         }
 
-        // Reproduces: BUG-5 from DEMO_VALIDATION — missing query param returns 400 with empty body
         "400 response for missing required query param includes error detail" in run {
             val route = HttpRoute.getRaw("search-test")
                 .request(_.query[String]("q"))
@@ -1917,7 +2044,6 @@ class HttpServerTest extends Test:
     // (non-OPTIONS) responses.
     "CORS" - {
 
-        // Reproduces: BUG-2 from DEMO_VALIDATION — CORS preflight OPTIONS returns 405 instead of 200
         "CORS preflight OPTIONS returns 204 with CORS headers (server-level)" in run {
             val route = HttpRoute.getRaw("cors-resource").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.okText("ok"))
@@ -2291,7 +2417,6 @@ class HttpServerTest extends Test:
 
     "OpenAPI endpoint" - {
 
-        // Reproduces: BUG-3 from DEMO_VALIDATION — OpenAPI returns Content-Type text/plain instead of application/json
         "OpenAPI endpoint returns Content-Type application/json" in run {
             val route  = HttpRoute.getRaw("items").response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.okText("ok"))
@@ -2314,7 +2439,6 @@ class HttpServerTest extends Test:
         }
     }
 
-    // Reproduces: BUG-7/BUG-9 from DEMO_VALIDATION — SSE with delayed events never sends data
     "streaming with delayed chunks" - {
 
         "SSE JSON with infinite stream and delay" in run {
@@ -2664,11 +2788,91 @@ class HttpServerTest extends Test:
                 }
             }
         }
+
+        "unmatched Abort.fail does not leak internal class names in body" in run {
+            case class ApiError(error: String) derives Schema, CanEqual
+            case class InternalDetail(secret: String)
+            val route = HttpRoute.getRaw("leak-test")
+                .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
+            val ep = route.handler { _ =>
+                Abort.fail(InternalDetail("sensitive info")).asInstanceOf[Nothing < Any]
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/leak-test").map { resp =>
+                    assert(resp.status == HttpStatus.InternalServerError)
+                    val body = resp.fields.body
+                    assert(body.nonEmpty, "500 body should not be empty")
+                    assert(!body.contains("InternalDetail"), s"500 body should not contain error class name, got: $body")
+                    assert(!body.contains("sensitive info"), s"500 body should not contain error details, got: $body")
+                    assert(!body.contains("kyo."), s"500 body should not contain kyo package references, got: $body")
+                }
+            }
+        }
+
+        "handler exception does not leak exception message in body" in run {
+            val route = HttpRoute.getRaw("throw-leak").response(_.bodyText)
+            val ep = route.handler { _ =>
+                throw new RuntimeException("secret internal detail")
+                HttpResponse.okText("unreachable")
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/throw-leak").map { resp =>
+                    assert(resp.status == HttpStatus.InternalServerError)
+                    val body = resp.fields.body
+                    assert(body.nonEmpty, "500 body should not be empty")
+                    assert(
+                        !body.contains("secret internal detail"),
+                        s"500 body should not contain exception message, got: $body"
+                    )
+                }
+            }
+        }
+
+        "unmatched error response has Content-Type application/json" in run {
+            case class ApiError(error: String) derives Schema, CanEqual
+            case class OtherError(msg: String)
+            val route = HttpRoute.getRaw("ct-unmatched")
+                .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
+            val ep = route.handler { _ =>
+                Abort.fail(OtherError("oops")).asInstanceOf[Nothing < Any]
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/ct-unmatched").map { resp =>
+                    assert(resp.status == HttpStatus.InternalServerError)
+                    val ct = resp.headers.get("Content-Type")
+                    assert(ct.isDefined, "500 response should have Content-Type header")
+                    assert(
+                        ct.get.contains("application/json"),
+                        s"500 Content-Type should be application/json, got: ${ct.get}"
+                    )
+                }
+            }
+        }
+
+        "unmatched error response body is valid JSON" in run {
+            case class ApiError(error: String) derives Schema, CanEqual
+            case class OtherError(msg: String)
+            val route = HttpRoute.getRaw("json-unmatched")
+                .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
+            val ep = route.handler { _ =>
+                Abort.fail(OtherError("oops")).asInstanceOf[Nothing < Any]
+            }
+            withServer(ep) { port =>
+                sendRaw(port, HttpMethod.GET, "/json-unmatched").map { resp =>
+                    assert(resp.status == HttpStatus.InternalServerError)
+                    val body = resp.fields.body
+                    assert(body.nonEmpty, "500 body should not be empty")
+                    assert(
+                        body.startsWith("{") || body.startsWith("["),
+                        s"500 body should be JSON, got: $body"
+                    )
+                }
+            }
+        }
     }
 
     "HEAD request semantics" - {
 
-        // Reproduces: BUG-N3 from DEMO_VALIDATION_NATIVE — HEAD returns full body on Native
         "HEAD response has empty body" in run {
             val getRoute = HttpRoute.getRaw("head-body-test").response(_.bodyText)
             val ep       = getRoute.handler(_ => HttpResponse.okText("this should not appear in HEAD"))
@@ -2753,9 +2957,149 @@ class HttpServerTest extends Test:
         }
     }
 
+    "304 Not Modified semantics" - {
+
+        "304 response has no Content-Type header" in run {
+            val route = HttpRoute.getRaw("nm-ct")
+                .request(_.headerOpt[String]("if-none-match"))
+                .response(_.bodyText)
+            val ep = route.handler { req =>
+                req.fields.`if-none-match` match
+                    case Present(_) =>
+                        HttpResponse.halt(HttpResponse.notModified.etag("\"test-etag\""))
+                    case _ =>
+                        HttpResponse.okText("content").etag("\"test-etag\"")
+            }
+            withServer(ep) { port =>
+                val req = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/nm-ct"))
+                    .setHeader("if-none-match", "\"test-etag\"")
+                send(port, rawRoute, req).map { resp =>
+                    assert(resp.status == HttpStatus.NotModified)
+                    val ct = resp.headers.get("Content-Type")
+                    assert(
+                        ct.isEmpty || !ct.get.contains("application/json"),
+                        s"304 response should not have Content-Type: application/json, got: ${ct.getOrElse("none")}"
+                    )
+                }
+            }
+        }
+
+        "304 response has empty body" in run {
+            val route = HttpRoute.getRaw("nm-body")
+                .request(_.headerOpt[String]("if-none-match"))
+                .response(_.bodyText)
+            val ep = route.handler { req =>
+                req.fields.`if-none-match` match
+                    case Present(_) =>
+                        HttpResponse.halt(HttpResponse.notModified.etag("\"test-etag\""))
+                    case _ =>
+                        HttpResponse.okText("content").etag("\"test-etag\"")
+            }
+            withServer(ep) { port =>
+                val req = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/nm-body"))
+                    .setHeader("if-none-match", "\"test-etag\"")
+                send(port, rawRoute, req).map { resp =>
+                    assert(resp.status == HttpStatus.NotModified)
+                    assert(
+                        resp.fields.body.isEmpty,
+                        s"304 response body should be empty, got: '${resp.fields.body}'"
+                    )
+                }
+            }
+        }
+
+        "304 response preserves ETag header" in run {
+            val route = HttpRoute.getRaw("nm-etag")
+                .request(_.headerOpt[String]("if-none-match"))
+                .response(_.bodyText)
+            val ep = route.handler { req =>
+                req.fields.`if-none-match` match
+                    case Present(_) =>
+                        HttpResponse.halt(HttpResponse.notModified.etag("\"my-etag-123\""))
+                    case _ =>
+                        HttpResponse.okText("content").etag("\"my-etag-123\"")
+            }
+            withServer(ep) { port =>
+                val req = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/nm-etag"))
+                    .setHeader("if-none-match", "\"my-etag-123\"")
+                send(port, rawRoute, req).map { resp =>
+                    assert(resp.status == HttpStatus.NotModified)
+                    val etag = resp.headers.get("ETag")
+                    assert(etag.isDefined, "304 response should include ETag header")
+                    assert(
+                        etag.get.contains("my-etag-123"),
+                        s"304 ETag should contain the value set by handler, got: ${etag.get}"
+                    )
+                }
+            }
+        }
+
+        "304 on route with error mapping does not leak error Content-Type" in run {
+            case class ApiError(error: String) derives Schema, CanEqual
+            val route = HttpRoute.getRaw("nm-err")
+                .request(_.headerOpt[String]("if-none-match"))
+                .response(_.bodyText.error[ApiError](HttpStatus.NotFound))
+            val ep = route.handler { req =>
+                req.fields.`if-none-match` match
+                    case Present(_) =>
+                        HttpResponse.halt(HttpResponse.notModified.etag("\"test\""))
+                    case _ =>
+                        HttpResponse.okText("content").etag("\"test\"")
+            }
+            withServer(ep) { port =>
+                val req = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/nm-err"))
+                    .setHeader("if-none-match", "\"test\"")
+                send(port, rawRoute, req).map { resp =>
+                    assert(resp.status == HttpStatus.NotModified)
+                    val ct = resp.headers.get("Content-Type")
+                    assert(
+                        ct.isEmpty || !ct.get.contains("application/json"),
+                        s"304 on text route with error mapping should not have Content-Type: application/json, got: ${ct.getOrElse("none")}"
+                    )
+                    assert(
+                        resp.fields.body.isEmpty,
+                        s"304 body should be empty, got: '${resp.fields.body}'"
+                    )
+                }
+            }
+        }
+
+        // Coverage expansion: 304 preserves Cache-Control
+        "304 response preserves Cache-Control header" in run {
+            val route = HttpRoute.getRaw("nm-cc")
+                .request(_.headerOpt[String]("if-none-match"))
+                .response(_.bodyText)
+            val ep = route.handler { req =>
+                req.fields.`if-none-match` match
+                    case Present(_) =>
+                        HttpResponse.halt(
+                            HttpResponse.notModified
+                                .etag("\"test\"")
+                                .cacheControl("public, max-age=3600")
+                        )
+                    case _ =>
+                        HttpResponse.okText("content")
+                            .etag("\"test\"")
+                            .cacheControl("public, max-age=3600")
+            }
+            withServer(ep) { port =>
+                val req = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/nm-cc"))
+                    .setHeader("if-none-match", "\"test\"")
+                send(port, rawRoute, req).map { resp =>
+                    assert(resp.status == HttpStatus.NotModified)
+                    val cc = resp.headers.get("Cache-Control")
+                    assert(cc.isDefined, "304 response should include Cache-Control header")
+                    assert(
+                        cc.get.contains("max-age=3600"),
+                        s"304 Cache-Control should preserve value, got: ${cc.get}"
+                    )
+                }
+            }
+        }
+    }
+
     "streaming response headers" - {
 
-        // Reproduces: BUG-N2 from DEMO_VALIDATION_NATIVE — streaming headers corrupted on Native
         "SSE response has Content-Type text/event-stream" in run {
             val route = HttpRoute.getRaw("sse-ct").response(_.bodySseText)
             val ep = route.handler { _ =>

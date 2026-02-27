@@ -30,10 +30,6 @@ class HttpClientContentionBench
         Seq.fill(concurrency)(catsClient.expect[String](catsUrl)).parSequence
     end catsBench
 
-    lazy val kyoClient =
-        import kyo.*
-        HttpPlatformBackend.client
-
     val kyoUrl =
         import sttp.client3.*
         uri"$url"
@@ -50,21 +46,10 @@ class HttpClientContentionBench
         import AllowUnsafe.embrace.danger
         Sync.Unsafe.evalOrThrow(
             Fiber.initUnscoped(
-                Async.fill(concurrency, concurrency)(HttpClient.send(HttpRequest.getRaw(url)).map(_.bodyText))
+                Async.fill(concurrency, concurrency)(HttpClient.getText(url))
             ).flatMap(_.block(Duration.Infinity))
         ).getOrThrow
     end forkKyoHttp
-
-    @Benchmark
-    def forkKyoHttp2(warmup: WarmupJITProfile.KyoForkWarmup): kyo.Chunk[String] =
-        import kyo.*
-        import AllowUnsafe.embrace.danger
-        Sync.Unsafe.evalOrThrow(
-            Fiber.initUnscoped(
-                Async.fill(concurrency, concurrency)(http2.HttpClient.getText(url))
-            ).flatMap(_.block(Duration.Infinity))
-        ).getOrThrow
-    end forkKyoHttp2
 
     val zioUrl =
         import zio.http.*

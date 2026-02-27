@@ -458,9 +458,7 @@ private[kyo] object H2oServerBackend:
                             case Present((status, headers, body)) =>
                                 enqueueBuffered(ss, req, status.code, headers, if isHead then Span.empty[Byte] else body)
                             case Absent =>
-                                val handlerError = HttpError.HandlerError(error)
-                                val body         = Span.fromUnsafe(handlerError.getMessage.getBytes("UTF-8"))
-                                enqueueBuffered(ss, req, 500, HttpHeaders.empty, body)
+                                enqueueError(ss, req, 500, HttpHeaders.empty)
                     case Result.Panic(_) =>
                         enqueueError(ss, req, 500, HttpHeaders.empty)
                 }

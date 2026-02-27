@@ -201,4 +201,27 @@ class HttpStatusTest extends Test:
         }
     }
 
+    // HttpStatus has no `reason` field currently — reason phrases are set by the backend
+    // (Netty uses HttpResponseStatus.valueOf with correct phrases; h2o Native does not).
+    // This test validates all standard codes resolve to named enum values, not Custom.
+    "reason phrases" - {
+        "all standard status codes resolve to named enum values" in {
+            val standardCodes = Seq(
+                200, 201, 202, 204,
+                301, 304,
+                400, 401, 403, 404, 405, 409, 415, 422, 429,
+                500, 502, 503
+            )
+            standardCodes.foreach { code =>
+                val status = HttpStatus(code)
+                assert(status.code == code, s"HttpStatus($code) should resolve to code $code")
+                assert(
+                    !status.isInstanceOf[HttpStatus.Custom],
+                    s"HttpStatus($code) should be a named enum value, not Custom"
+                )
+            }
+            succeed
+        }
+    }
+
 end HttpStatusTest

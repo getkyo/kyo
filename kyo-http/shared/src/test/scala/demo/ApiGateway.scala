@@ -82,7 +82,10 @@ object ApiGateway extends KyoApp:
         .response(_.bodyJson[WeatherInfo].error[ApiError](HttpStatus.NotFound))
         .metadata(_.summary("Current weather for a city").tag("weather"))
         .handler { req =>
-            fetchWeather(req.fields.city).map(HttpResponse.okJson(_))
+            if !cities.contains(req.fields.city.toLowerCase) then
+                Abort.fail(ApiError("Unknown city", s"City '${req.fields.city}' not found. Try: ${cities.keys.mkString(", ")}"))
+            else
+                fetchWeather(req.fields.city).map(HttpResponse.okJson(_))
         }
 
     val ratesRoute = HttpRoute
