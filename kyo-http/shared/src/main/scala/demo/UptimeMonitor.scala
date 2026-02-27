@@ -42,11 +42,10 @@ object UptimeMonitor extends KyoApp:
         yield CheckRound(now.toString, checks)
 
     val statusStream = HttpHandler.getSseJson[CheckRound]("status") { _ =>
-        Stream.repeatPresent[HttpEvent[CheckRound], Async] {
-            for
-                _     <- Async.delay(30.seconds)(())
-                round <- checkAll
-            yield Maybe.Present(Seq(HttpEvent(data = round)))
+        Stream.init(1 to 10000, chunkSize = 1).mapChunk { _ =>
+            Async.delay(30.seconds) {
+                checkAll.map(round => Chunk(HttpEvent(data = round)))
+            }
         }
     }
 

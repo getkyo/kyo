@@ -30,21 +30,22 @@ object GithubFeed extends KyoApp:
     def pollStream(url: String): Stream[HttpEvent[FeedEvent], Async] < Async =
         for
             seenRef <- AtomicRef.init(Set.empty[String])
-        yield Stream.repeatPresent[HttpEvent[FeedEvent], Async] {
-            for
-                _           <- Async.delay(10.seconds)(())
-                fetchResult <- Abort.run[HttpError](fetchEvents(url))
-                events = fetchResult.getOrElse(Seq.empty)
-                seen <- seenRef.get
-                newEvents = events.filterNot(e => seen.contains(e.id))
-                _ <- seenRef.set(seen ++ newEvents.map(_.id))
-            yield Maybe.Present(newEvents.map { e =>
-                HttpEvent(
-                    data = toFeed(e),
-                    event = Present(e.`type`),
-                    id = Present(e.id)
-                )
-            })
+        yield Stream.init(1 to 10000, chunkSize = 1).mapChunk { _ =>
+            Async.delay(10.seconds) {
+                for
+                    fetchResult <- Abort.run[HttpError](fetchEvents(url))
+                    events = fetchResult.getOrElse(Seq.empty)
+                    seen <- seenRef.get
+                    newEvents = events.filterNot(e => seen.contains(e.id))
+                    _ <- seenRef.set(seen ++ newEvents.map(_.id))
+                yield Chunk.from(newEvents.map { e =>
+                    HttpEvent(
+                        data = toFeed(e),
+                        event = Present(e.`type`),
+                        id = Present(e.id)
+                    )
+                })
+            }
         }
 
     // SSE handler for public events
