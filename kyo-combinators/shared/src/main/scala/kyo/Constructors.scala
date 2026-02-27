@@ -183,7 +183,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles the Future to Async.
       */
-    def fromFuture[A](future: => Future[A])(using Frame): A < (Async & Abort[Throwable]) =
+    def fromFuture[A](future: => Future[A])(using Frame): A < Async =
         Async.fromFuture(future)
 
     /** Creates an effect from a Promise[A] and handles the Promise to Async.
@@ -193,7 +193,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles the Promise to Async.
       */
-    def fromPromiseScala[A](promise: => scala.concurrent.Promise[A])(using Frame): A < (Async & Abort[Throwable]) =
+    def fromPromiseScala[A](promise: => scala.concurrent.Promise[A])(using Frame): A < Async =
         fromFuture(promise.future)
 
     /** Creates an effect from a sequence and handles the sequence to Choice.

@@ -59,7 +59,7 @@ object Memory:
       */
     def initWith[A: Layout as l](size: Int)[B, S](f: Memory[A] => B < S)(using Frame): B < (Arena & S) =
         Arena.use { arena =>
-            Sync.Unsafe(f(arena.allocate(l.size * size)))
+            Sync.Unsafe.defer(f(arena.allocate(l.size * size)))
         }
 
     extension [A: Layout as l](self: Memory[A])
@@ -72,7 +72,7 @@ object Memory:
           *   The element at the specified index
           */
         inline def get(index: Int)(using inline frame: Frame): A < Arena =
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 // TODO inference issue without the val
                 val x = Unsafe.get(self)(index)
                 x
@@ -87,7 +87,7 @@ object Memory:
           *   The value to write
           */
         inline def set(index: Int, value: A)(using inline frame: Frame): Unit < Arena =
-            Sync.Unsafe(Unsafe.set(self)(index, value))
+            Sync.Unsafe.defer(Unsafe.set(self)(index, value))
 
         /** Fills the entire memory segment with the specified value.
           *
@@ -95,7 +95,7 @@ object Memory:
           *   The value to fill with
           */
         inline def fill(value: A)(using inline frame: Frame): Unit < Arena =
-            Sync.Unsafe(Unsafe.fill(self)(value))
+            Sync.Unsafe.defer(Unsafe.fill(self)(value))
 
         /** Folds over all elements in the memory segment.
           *
@@ -107,7 +107,7 @@ object Memory:
           *   The final accumulated value
           */
         inline def fold[B](zero: B)(f: (B, A) => B)(using inline frame: Frame): B < Arena =
-            Sync.Unsafe(Unsafe.fold(self)(zero)(f))
+            Sync.Unsafe.defer(Unsafe.fold(self)(zero)(f))
 
         /** Finds the index of the first element satisfying the predicate.
           *
@@ -117,7 +117,7 @@ object Memory:
           *   The index wrapped in Maybe, or Absent if not found
           */
         inline def findIndex(p: A => Boolean)(using inline frame: Frame): Maybe[Int] < Arena =
-            Sync.Unsafe(Unsafe.findIndex(self)(p))
+            Sync.Unsafe.defer(Unsafe.findIndex(self)(p))
 
         /** Checks if any element satisfies the predicate.
           *
@@ -127,7 +127,7 @@ object Memory:
           *   true if any element satisfies the predicate
           */
         inline def exists(p: A => Boolean)(using inline frame: Frame): Boolean < Arena =
-            Sync.Unsafe(Unsafe.exists(self)(p))
+            Sync.Unsafe.defer(Unsafe.exists(self)(p))
 
         /** Creates a view of a portion of this memory segment.
           *
@@ -139,7 +139,7 @@ object Memory:
           *   A new Memory instance viewing the specified range
           */
         def view(from: Int, len: Int)(using Frame): Memory[A] < Arena =
-            Sync.Unsafe(Unsafe.view(self)(from, len))
+            Sync.Unsafe.defer(Unsafe.view(self)(from, len))
 
         /** Creates a copy of a portion of this memory segment.
           *
@@ -151,7 +151,7 @@ object Memory:
           *   A new Memory instance containing the copied data
           */
         def copy(from: Int, len: Int)(using Frame): Memory[A] < Arena =
-            Sync.Unsafe(Unsafe.copy(self)(from, len))
+            Sync.Unsafe.defer(Unsafe.copy(self)(from, len))
 
         /** Copies elements from this memory segment to another.
           *
@@ -165,7 +165,7 @@ object Memory:
           *   Number of elements to copy
           */
         def copyTo(target: Memory[A], srcPos: Int, targetPos: Int, len: Int)(using Frame): Unit < Arena =
-            Sync.Unsafe(Unsafe.copyTo(self)(target, srcPos, targetPos, len))
+            Sync.Unsafe.defer(Unsafe.copyTo(self)(target, srcPos, targetPos, len))
 
         /** Returns the number of elements this memory segment can hold. */
         def size: Long = self.byteSize / l.size

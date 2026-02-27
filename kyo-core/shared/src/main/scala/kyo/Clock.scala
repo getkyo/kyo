@@ -64,7 +64,7 @@ final case class Clock(unsafe: Clock.Unsafe):
       * @see
       *   [[nowMonotonic]] for measuring elapsed time between events
       */
-    def now(using Frame): Instant < Sync = Sync.Unsafe(unsafe.now())
+    def now(using Frame): Instant < Sync = Sync.Unsafe.defer(unsafe.now())
 
     /** Gets the current monotonic time as a Duration.
       *
@@ -86,14 +86,14 @@ final case class Clock(unsafe: Clock.Unsafe):
       * @see
       *   [[now]] for calendar time/date operations
       */
-    def nowMonotonic(using Frame): Duration < Sync = Sync.Unsafe(unsafe.nowMonotonic())
+    def nowMonotonic(using Frame): Duration < Sync = Sync.Unsafe.defer(unsafe.nowMonotonic())
 
     /** Creates a new stopwatch.
       *
       * @return
       *   A new Stopwatch instance
       */
-    def stopwatch(using Frame): Clock.Stopwatch < Sync = Sync.Unsafe(unsafe.stopwatch().safe)
+    def stopwatch(using Frame): Clock.Stopwatch < Sync = Sync.Unsafe.defer(unsafe.stopwatch().safe)
 
     /** Creates a new deadline with the specified duration.
       *
@@ -102,12 +102,12 @@ final case class Clock(unsafe: Clock.Unsafe):
       * @return
       *   A new Deadline instance
       */
-    def deadline(duration: Duration)(using Frame): Clock.Deadline < Sync = Sync.Unsafe(unsafe.deadline(duration).safe)
+    def deadline(duration: Duration)(using Frame): Clock.Deadline < Sync = Sync.Unsafe.defer(unsafe.deadline(duration).safe)
 
     private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Unit, Any] < Sync =
         if duration == Duration.Zero then Fiber.unit
         else if !duration.isFinite then Fiber.never
-        else Sync.Unsafe(unsafe.sleep(duration).safe)
+        else Sync.Unsafe.defer(unsafe.sleep(duration).safe)
 end Clock
 
 /** Companion object for creating and managing Clock instances. */
@@ -126,7 +126,7 @@ object Clock:
           * @return
           *   The elapsed time as a Duration
           */
-        def elapsed(using Frame): Duration < Sync = Sync.Unsafe(unsafe.elapsed())
+        def elapsed(using Frame): Duration < Sync = Sync.Unsafe.defer(unsafe.elapsed())
     end Stopwatch
 
     object Stopwatch:
@@ -149,14 +149,14 @@ object Clock:
           * @return
           *   The remaining time as a Duration
           */
-        def timeLeft(using Frame): Duration < Sync = Sync.Unsafe(unsafe.timeLeft())
+        def timeLeft(using Frame): Duration < Sync = Sync.Unsafe.defer(unsafe.timeLeft())
 
         /** Checks if the deadline is overdue.
           *
           * @return
           *   A boolean indicating if the deadline is overdue
           */
-        def isOverdue(using Frame): Boolean < Sync = Sync.Unsafe(unsafe.isOverdue())
+        def isOverdue(using Frame): Boolean < Sync = Sync.Unsafe.defer(unsafe.isOverdue())
     end Deadline
 
     object Deadline:
@@ -311,7 +311,7 @@ object Clock:
       *   The result of running the effect with controlled time
       */
     def withTimeControl[A, S](f: TimeControl => A < S)(using Frame): A < (Sync & S) =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             val controlled =
                 new Unsafe with TimeControl:
                     @volatile var current = Instant.Epoch

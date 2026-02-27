@@ -22,48 +22,48 @@ final case class Console(unsafe: Console.Unsafe):
       * @return
       *   A String representing the line read from the console.
       */
-    def readLine(using Frame): String < (Sync & Abort[IOException]) = Sync.Unsafe(Abort.get(unsafe.readLine()))
+    def readLine(using Frame): String < (Sync & Abort[IOException]) = Sync.Unsafe.defer(Abort.get(unsafe.readLine()))
 
     /** Prints a string to the console without a newline.
       *
       * @param s
       *   The string to print.
       */
-    def print(s: Text)(using Frame): Unit < Sync = Sync.Unsafe(unsafe.print(s.show))
+    def print(s: Text)(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.print(s.show))
 
     /** Prints a string to the console's error stream without a newline.
       *
       * @param s
       *   The string to print to the error stream.
       */
-    def printErr(s: Text)(using Frame): Unit < Sync = Sync.Unsafe(unsafe.printErr(s.show))
+    def printErr(s: Text)(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.printErr(s.show))
 
     /** Prints a string to the console followed by a newline.
       *
       * @param s
       *   The string to print.
       */
-    def println(s: Text)(using Frame): Unit < Sync = Sync.Unsafe(unsafe.printLine(s.show))
+    def println(s: Text)(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.printLine(s.show))
 
     /** Prints a string to the console's error stream followed by a newline.
       *
       * @param s
       *   The string to print to the error stream.
       */
-    def printLineErr(s: Text)(using Frame): Unit < Sync = Sync.Unsafe(unsafe.printLineErr(s.show))
+    def printLineErr(s: Text)(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.printLineErr(s.show))
 
     /** Checks if an error occurred in the console output or error streams.
       *
       * @return
       *   True if an error occurred, false otherwise.
       */
-    def checkErrors(using Frame): Boolean < Sync = Sync.Unsafe(unsafe.checkErrors)
+    def checkErrors(using Frame): Boolean < Sync = Sync.Unsafe.defer(unsafe.checkErrors)
 
     /** Flushes the console output streams.
       *
       * This method ensures that any buffered output is written to the console.
       */
-    def flush(using Frame): Unit < Sync = Sync.Unsafe(unsafe.flush())
+    def flush(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.flush())
 end Console
 
 /** Companion object for Console, providing utility methods and a live implementation.

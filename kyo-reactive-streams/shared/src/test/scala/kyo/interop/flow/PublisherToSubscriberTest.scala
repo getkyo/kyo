@@ -213,7 +213,7 @@ abstract private class PublisherToSubscriberTest extends Test:
             for
                 promise    <- Fiber.Promise.init[Unit, Abort[Throwable]]
                 subscriber <- streamSubscriber
-                subscription <- Sync.Unsafe {
+                subscription <- Sync.Unsafe.defer {
                     StreamSubscription.Unsafe.subscribe(
                         stream,
                         subscriber

@@ -9,7 +9,7 @@ private[kyo] class AsyncPlatformSpecific:
         fromCompletionStage(cs)
 
     def fromCompletionStage[A](cs: CompletionStage[A])(using Frame): A < Async =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             val p = Promise.Unsafe.init[A, Any]()
             cs.whenComplete { (success, error) =>
                 if error == null then p.completeDiscard(Result.succeed(success))

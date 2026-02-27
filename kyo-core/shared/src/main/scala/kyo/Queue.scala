@@ -54,21 +54,21 @@ object Queue:
           * @return
           *   the current size of the queue
           */
-        def size(using Frame): Int < (Sync & Abort[Closed]) = Sync.Unsafe(Abort.get(self.size()))
+        def size(using Frame): Int < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.size()))
 
         /** Checks if the queue is empty.
           *
           * @return
           *   true if the queue is empty, false otherwise
           */
-        def empty(using Frame): Boolean < (Sync & Abort[Closed]) = Sync.Unsafe(Abort.get(self.empty()))
+        def empty(using Frame): Boolean < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.empty()))
 
         /** Checks if the queue is full.
           *
           * @return
           *   true if the queue is full, false otherwise
           */
-        def full(using Frame): Boolean < (Sync & Abort[Closed]) = Sync.Unsafe(Abort.get(self.full()))
+        def full(using Frame): Boolean < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.full()))
 
         /** Offers an element to the queue.
           *
@@ -77,49 +77,49 @@ object Queue:
           * @return
           *   true if the element was added, false if the queue is full or closed
           */
-        def offer(v: A)(using Frame): Boolean < (Sync & Abort[Closed]) = Sync.Unsafe(Abort.get(self.offer(v)))
+        def offer(v: A)(using Frame): Boolean < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.offer(v)))
 
         /** Offers an element to the queue and discards the result
           *
           * @param v
           *   the element to offer
           */
-        def offerDiscard(v: A)(using Frame): Unit < (Sync & Abort[Closed]) = Sync.Unsafe(Abort.get(self.offer(v).unit))
+        def offerDiscard(v: A)(using Frame): Unit < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.offer(v).unit))
 
         /** Polls an element from the queue.
           *
           * @return
           *   Maybe containing the polled element, or empty if the queue is empty
           */
-        def poll(using Frame): Maybe[A] < (Sync & Abort[Closed]) = Sync.Unsafe(Abort.get(self.poll()))
+        def poll(using Frame): Maybe[A] < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.poll()))
 
         /** Peeks at the first element in the queue without removing it.
           *
           * @return
           *   Maybe containing the first element, or empty if the queue is empty
           */
-        def peek(using Frame): Maybe[A] < (Sync & Abort[Closed]) = Sync.Unsafe(Abort.get(self.peek()))
+        def peek(using Frame): Maybe[A] < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.peek()))
 
         /** Drains all elements from the queue.
           *
           * @return
           *   a sequence of all elements in the queue
           */
-        def drain(using Frame): Chunk[A] < (Sync & Abort[Closed]) = Sync.Unsafe(Abort.get(self.drain()))
+        def drain(using Frame): Chunk[A] < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.drain()))
 
         /** Takes up to [[max]] elements from the queue.
           *
           * @return
           *   a sequence of up to [[max]] elements from the queue.
           */
-        def drainUpTo(max: Int)(using Frame): Chunk[A] < (Sync & Abort[Closed]) = Sync.Unsafe(Abort.get(self.drainUpTo(max)))
+        def drainUpTo(max: Int)(using Frame): Chunk[A] < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.drainUpTo(max)))
 
         /** Closes the queue and returns any remaining elements.
           *
           * @return
           *   a sequence of remaining elements
           */
-        def close(using Frame): Maybe[Seq[A]] < Sync = Sync.Unsafe(self.close())
+        def close(using Frame): Maybe[Seq[A]] < Sync = Sync.Unsafe.defer(self.close())
 
         /** Closes the queue and asynchronously waits until it's empty.
           *
@@ -131,14 +131,14 @@ object Queue:
           *   true if the queue was successfully closed and emptied, false if it was already closed or another closeAwaitEmpty is already
           *   running.
           */
-        def closeAwaitEmpty(using Frame): Boolean < Async = Sync.Unsafe(self.closeAwaitEmpty().safe.get)
+        def closeAwaitEmpty(using Frame): Boolean < Async = Sync.Unsafe.defer(self.closeAwaitEmpty().safe.get)
 
         /** Checks if the queue is closed.
           *
           * @return
           *   true if the queue is closed, false otherwise
           */
-        def closed(using Frame): Boolean < Sync = Sync.Unsafe(self.closed())
+        def closed(using Frame): Boolean < Sync = Sync.Unsafe.defer(self.closed())
 
         /** Returns the unsafe version of the queue.
           *
@@ -230,7 +230,7 @@ object Queue:
     inline def initUnscopedWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](inline f: Queue[A] => B < S)(
         using inline frame: Frame
     ): B < (Sync & S) =
-        Sync.Unsafe(f(Unsafe.init(capacity, access)))
+        Sync.Unsafe.defer(f(Unsafe.init(capacity, access)))
 
     /** An unbounded queue that can grow indefinitely.
       *
@@ -246,7 +246,7 @@ object Queue:
               * @param value
               *   the element to add
               */
-            def add(value: A)(using Frame): Unit < Sync = Sync.Unsafe(Unsafe.add(self)(value))
+            def add(value: A)(using Frame): Unit < Sync = Sync.Unsafe.defer(Unsafe.add(self)(value))
 
             def unsafe: Unsafe[A] = self
         end extension
@@ -323,7 +323,7 @@ object Queue:
         )[B, S](inline f: Unbounded[A] => B < S)(
             using inline frame: Frame
         ): B < (Sync & S) =
-            Sync.Unsafe(f(Unsafe.init(access, chunkSize)))
+            Sync.Unsafe.defer(f(Unsafe.init(access, chunkSize)))
 
         /** Initializes a new dropping queue with the specified capacity and access pattern.
           *
@@ -382,7 +382,7 @@ object Queue:
         def initDroppingUnscoped[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(
             using Frame
         ): Unbounded[A] < Sync =
-            Sync.Unsafe(Unsafe.initDropping(capacity, access))
+            Sync.Unsafe.defer(Unsafe.initDropping(capacity, access))
 
         /** Initializes a new sliding queue with the specified capacity and access pattern.
           *
@@ -440,7 +440,7 @@ object Queue:
         def initSlidingUnscoped[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(
             using Frame
         ): Unbounded[A] < Sync =
-            Sync.Unsafe(Unsafe.initSliding(capacity, access))
+            Sync.Unsafe.defer(Unsafe.initSliding(capacity, access))
 
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
         opaque type Unsafe[A] <: Queue.Unsafe[A] = Queue[A]
