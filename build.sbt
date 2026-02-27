@@ -413,13 +413,18 @@ lazy val `kyo-ui` =
         .jvmSettings(mimaCheck(false))
         .jvmSettings(run / connectInput := true)
         .jvmSettings(Compile / unmanagedClasspath += (`kyo-playwright`.jvm / Compile / packageBin).value)
+        .jvmSettings(
+            libraryDependencies += "org.openjfx" % "javafx-base"     % "21.0.7",
+            libraryDependencies += "org.openjfx" % "javafx-controls" % "21.0.7",
+            libraryDependencies += "org.openjfx" % "javafx-graphics" % "21.0.7"
+        )
         .jvmConfigure(_.dependsOn(`kyo-playwright`.jvm))
         .nativeSettings(`native-settings`)
         .jsSettings(
             `js-settings`,
             libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
             scalaJSUseMainModuleInitializer := true,
-            Compile / mainClass := Some("demo.SpreadsheetApp"),
+            Compile / mainClass := Some("demo.DemoApp"),
             Test / jsEnv := new org.scalajs.jsenv.jsdomnodejs.JSDOMNodeJSEnv()
         )
 
