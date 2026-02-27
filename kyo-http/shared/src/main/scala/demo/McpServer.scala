@@ -144,18 +144,20 @@ object McpServer extends KyoApp:
 
     // GET /mcp - SSE stream for server-initiated messages (heartbeat)
     val mcpGet = HttpHandler.getSseJson[JsonRpcResponse]("mcp") { _ =>
-        // Send periodic heartbeat notifications
-        Stream.init(Chunk.from(1 to 60)).map { i =>
+        // Send periodic heartbeat notifications — one heartbeat every 5 seconds
+        Stream.init(1 to 60, chunkSize = 1).mapChunk { chunk =>
             Async.delay(5.seconds) {
-                HttpEvent(
-                    data = JsonRpcResponse(
-                        "2.0",
-                        None,
-                        Some(RpcResult(None, None, None, None, Some(List(Content("text", s"heartbeat $i"))))),
-                        None
-                    ),
-                    event = Present("message")
-                )
+                chunk.map { i =>
+                    HttpEvent(
+                        data = JsonRpcResponse(
+                            "2.0",
+                            None,
+                            Some(RpcResult(None, None, None, None, Some(List(Content("text", s"heartbeat $i"))))),
+                            None
+                        ),
+                        event = Present("message")
+                    )
+                }
             }
         }
     }

@@ -1804,6 +1804,7 @@ class HttpServerTest extends Test:
 
     "error response bodies" - {
 
+        // Reproduces: BUG-1 from DEMO_VALIDATION — handler exception returns 500 with empty body
         "500 response has non-empty body when handler throws" in run {
             val route = HttpRoute.getRaw("throw-test").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -1817,6 +1818,7 @@ class HttpServerTest extends Test:
             }
         }
 
+        // Reproduces: BUG-5 from DEMO_VALIDATION — missing query param returns 400 with empty body
         "400 response for missing required query param includes error detail" in run {
             val route = HttpRoute.getRaw("search-test")
                 .request(_.query[String]("q"))
@@ -1883,6 +1885,7 @@ class HttpServerTest extends Test:
             }
         }
 
+        // Extends existing "malformed JSON returns 400" — verifies body contains parse error info
         "400 response for malformed JSON includes error detail" in run {
             val route = HttpRoute.postRaw("json-test")
                 .request(_.bodyJson[User])
@@ -1914,6 +1917,7 @@ class HttpServerTest extends Test:
     // (non-OPTIONS) responses.
     "CORS" - {
 
+        // Reproduces: BUG-2 from DEMO_VALIDATION — CORS preflight OPTIONS returns 405 instead of 200
         "CORS preflight OPTIONS returns 204 with CORS headers (server-level)" in run {
             val route = HttpRoute.getRaw("cors-resource").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.okText("ok"))
@@ -2287,6 +2291,7 @@ class HttpServerTest extends Test:
 
     "OpenAPI endpoint" - {
 
+        // Reproduces: BUG-3 from DEMO_VALIDATION — OpenAPI returns Content-Type text/plain instead of application/json
         "OpenAPI endpoint returns Content-Type application/json" in run {
             val route  = HttpRoute.getRaw("items").response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.okText("ok"))
@@ -2309,6 +2314,7 @@ class HttpServerTest extends Test:
         }
     }
 
+    // Reproduces: BUG-7/BUG-9 from DEMO_VALIDATION — SSE with delayed events never sends data
     "streaming with delayed chunks" - {
 
         "SSE JSON with infinite stream and delay" in run {
@@ -2503,6 +2509,7 @@ class HttpServerTest extends Test:
             }.andThen(assert(called))
         }
 
+        // Tests the .map pattern (used in McpServer — BUG-9) vs .mapChunk pattern (used in EventBus — works)
         "delayed stream via map pattern" in run {
             val route = HttpRoute.getRaw("sse-map-delay").response(_.bodySseText)
             val ep = route.handler { _ =>
@@ -2661,6 +2668,7 @@ class HttpServerTest extends Test:
 
     "HEAD request semantics" - {
 
+        // Reproduces: BUG-N3 from DEMO_VALIDATION_NATIVE — HEAD returns full body on Native
         "HEAD response has empty body" in run {
             val getRoute = HttpRoute.getRaw("head-body-test").response(_.bodyText)
             val ep       = getRoute.handler(_ => HttpResponse.okText("this should not appear in HEAD"))
@@ -2747,6 +2755,7 @@ class HttpServerTest extends Test:
 
     "streaming response headers" - {
 
+        // Reproduces: BUG-N2 from DEMO_VALIDATION_NATIVE — streaming headers corrupted on Native
         "SSE response has Content-Type text/event-stream" in run {
             val route = HttpRoute.getRaw("sse-ct").response(_.bodySseText)
             val ep = route.handler { _ =>
