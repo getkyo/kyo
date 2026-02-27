@@ -23,5 +23,6 @@ addSbtPlugin("ch.epfl.scala" % "sbt-scalafix" % "0.14.5")
 // addSbtPlugin("com.github.sbt" % "sbt-jacoco" % "3.4.0")
 
 libraryDependencies ++= Seq(
-    "org.typelevel" %% "scalac-options" % "0.1.8"
+    "org.typelevel" %% "scalac-options"           % "0.1.8",
+    "org.scala-js"  %% "scalajs-env-jsdom-nodejs" % "1.1.1"
 )

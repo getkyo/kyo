@@ -125,7 +125,8 @@ lazy val kyoJVM = project
         `kyo-combinators`.jvm,
         `kyo-playwright`.jvm,
         `kyo-examples`.jvm,
-        `kyo-actor`.jvm
+        `kyo-actor`.jvm,
+        `kyo-ui`.jvm
     )
 
 lazy val kyoJS = project
@@ -150,7 +151,8 @@ lazy val kyoJS = project
         `kyo-zio`.js,
         `kyo-cats`.js,
         `kyo-combinators`.js,
-        `kyo-actor`.js
+        `kyo-actor`.js,
+        `kyo-ui`.js
     )
 
 lazy val kyoNative = project
@@ -172,7 +174,8 @@ lazy val kyoNative = project
         `kyo-direct`.native,
         `kyo-combinators`.native,
         `kyo-sttp`.native,
-        `kyo-actor`.native
+        `kyo-actor`.native,
+        `kyo-ui`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -399,6 +402,24 @@ lazy val `kyo-actor` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
+
+lazy val `kyo-ui` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-ui"))
+        .dependsOn(`kyo-core`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .jvmSettings(Compile / unmanagedClasspath += (`kyo-playwright`.jvm / Compile / packageBin).value)
+        .jvmConfigure(_.dependsOn(`kyo-playwright`.jvm))
+        .nativeSettings(`native-settings`)
+        .jsSettings(
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSUseMainModuleInitializer := true,
+            Test / jsEnv := new org.scalajs.jsenv.jsdomnodejs.JSDOMNodeJSEnv()
+        )
 
 lazy val `kyo-logging-jpl` =
     crossProject(JVMPlatform)
