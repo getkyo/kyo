@@ -162,16 +162,7 @@ object Channel:
           *   The taken element
           */
         def take(using Frame): A < (Abort[Closed] & Async) =
-            Sync.Unsafe.defer {
-                self.poll().foldError(
-                    {
-                        case Present(value) => value
-                        case Absent         => self.takeFiber().safe.get
-                    },
-                    Abort.error
-                )
-            }
-        end take
+            takeWith(identity)
 
         /** Takes an element from the channel and applies an inline function, avoiding a `.map` closure allocation.
           *
