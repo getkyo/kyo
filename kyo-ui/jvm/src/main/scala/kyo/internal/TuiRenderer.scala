@@ -69,19 +69,21 @@ final private[kyo] class TuiRenderer(var width: Int, var height: Int):
     /** Fill a rectangular region with a background color (no character change). */
     def fillBg(fx: Int, fy: Int, fw: Int, fh: Int, color: Int): Unit =
         val bgBits = packBg(color)
-        var row    = fy
-        while row < fy + fh && row < clipY1 do
-            if row >= clipY0 then
-                var col = fx
-                while col < fx + fw && col < clipX1 do
-                    if col >= clipX0 then
-                        val idx = row * width + col
-                        curStyle(idx) = (curStyle(idx) & ~BgMask) | bgBits
-                    col += 1
-                end while
-            end if
-            row += 1
-        end while
+        val maxRow = math.min(fy + fh, clipY1)
+        val maxCol = math.min(fx + fw, clipX1)
+        @scala.annotation.tailrec
+        def loopCol(row: Int, col: Int): Unit =
+            if col < maxCol then
+                if col >= clipX0 then
+                    val idx = row * width + col
+                    curStyle(idx) = (curStyle(idx) & ~BgMask) | bgBits
+                loopCol(row, col + 1)
+        @scala.annotation.tailrec
+        def loopRow(row: Int): Unit =
+            if row < maxRow then
+                if row >= clipY0 then loopCol(row, fx)
+                loopRow(row + 1)
+        loopRow(fy)
     end fillBg
 
     /** Clear the current buffer to spaces with default style. */
@@ -104,58 +106,60 @@ final private[kyo] class TuiRenderer(var width: Int, var height: Int):
         ansiBuf.csi()
         ansiBuf.putAscii("?2026h")
 
+        // Mutable SGR/cursor tracking for diff-based emission
         var lastFg: Long    = -2L // impossible value to force first emission
         var lastBg: Long    = -2L
         var lastAttrs: Long = -2L
         var lastRow         = -1
         var lastCol         = -1
 
-        var i = 0
-        while i < size do
-            val cs = curStyle(i)
+        @scala.annotation.tailrec
+        def loop(i: Int): Unit =
+            if i < size then
+                val cs = curStyle(i)
 
-            // Skip cells marked as continuation of wide chars
-            if (cs & SkipBit) != 0 then
-                () // skip
-            else if forceFullRedraw || curChars(i) != prevChars(i) || cs != prevStyle(i) ||
-            (curChars(i) == '\u0000') != (prevChars(i) == '\u0000') // wide sym change check
-            then
-                val row = i / width
-                val col = i % width
+                // Skip cells marked as continuation of wide chars
+                if (cs & SkipBit) != 0 then
+                    () // skip
+                else if forceFullRedraw || curChars(i) != prevChars(i) || cs != prevStyle(i) ||
+                (curChars(i) == '\u0000') != (prevChars(i) == '\u0000') // wide sym change check
+                then
+                    val row = i / width
+                    val col = i % width
 
-                // Cursor positioning
-                if row != lastRow || col != lastCol then
-                    ansiBuf.moveTo(row + 1, col + 1) // ANSI is 1-based
+                    // Cursor positioning
+                    if row != lastRow || col != lastCol then
+                        ansiBuf.moveTo(row + 1, col + 1) // ANSI is 1-based
 
-                // Emit style changes
-                val fgBits   = cs & FgMask
-                val bgBits   = cs & BgMask
-                val attrBits = cs & AttrMask
+                    // Emit style changes
+                    val fgBits   = cs & FgMask
+                    val bgBits   = cs & BgMask
+                    val attrBits = cs & AttrMask
 
-                if fgBits != lastFg || bgBits != lastBg || attrBits != lastAttrs then
-                    ansiBuf.sgrReset()
-                    emitFg(fgBits, colorTier)
-                    emitBg(bgBits, colorTier)
-                    emitAttrs(attrBits)
-                    lastFg = fgBits
-                    lastBg = bgBits
-                    lastAttrs = attrBits
+                    if fgBits != lastFg || bgBits != lastBg || attrBits != lastAttrs then
+                        ansiBuf.sgrReset()
+                        emitFg(fgBits, colorTier)
+                        emitBg(bgBits, colorTier)
+                        emitAttrs(attrBits)
+                        lastFg = fgBits
+                        lastBg = bgBits
+                        lastAttrs = attrBits
+                    end if
+
+                    // Emit character
+                    val ch = curChars(i)
+                    if ch == '\u0000' then
+                        // Wide symbol
+                        Maybe(curWideSyms.get(i)).fold(ansiBuf.putChar(' '))(ansiBuf.putUtf8)
+                    else
+                        ansiBuf.putChar(ch)
+                    end if
+
+                    lastRow = row
+                    lastCol = col + 1 // cursor advances after write
                 end if
-
-                // Emit character
-                val ch = curChars(i)
-                if ch == '\u0000' then
-                    // Wide symbol
-                    Maybe(curWideSyms.get(i)).fold(ansiBuf.putChar(' '))(ansiBuf.putUtf8)
-                else
-                    ansiBuf.putChar(ch)
-                end if
-
-                lastRow = row
-                lastCol = col + 1 // cursor advances after write
-            end if
-            i += 1
-        end while
+                loop(i + 1)
+        loop(0)
 
         // SGR reset at end
         ansiBuf.sgrReset()

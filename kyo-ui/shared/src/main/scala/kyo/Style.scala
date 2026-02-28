@@ -2,7 +2,7 @@ package kyo
 
 import scala.annotation.targetName
 
-final case class Style private[kyo] (props: Chunk[Style.Prop]):
+final case class Style private[kyo] (props: Span[Style.Prop]):
 
     import Style.*
     import Style.Prop.*
@@ -213,29 +213,23 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]):
     })
 
     private[kyo] def hoverStyle: Maybe[Style] =
-        props.collectFirst { case HoverProp(s) => s } match
-            case Some(s) => Present(s)
-            case _       => Absent
+        props.find(_.isInstanceOf[HoverProp]).map(_.asInstanceOf[HoverProp].style)
 
     private[kyo] def focusStyle: Maybe[Style] =
-        props.collectFirst { case FocusProp(s) => s } match
-            case Some(s) => Present(s)
-            case _       => Absent
+        props.find(_.isInstanceOf[FocusProp]).map(_.asInstanceOf[FocusProp].style)
 
     private[kyo] def activeStyle: Maybe[Style] =
-        props.collectFirst { case ActiveProp(s) => s } match
-            case Some(s) => Present(s)
-            case _       => Absent
+        props.find(_.isInstanceOf[ActiveProp]).map(_.asInstanceOf[ActiveProp].style)
 
     // Internal
 
-    private def append(p: Prop): Style = Style(props.append(p))
+    private def append(p: Prop): Style = Style(props :+ p)
 
 end Style
 
 object Style:
 
-    val empty: Style = Style(Chunk.empty)
+    val empty: Style = Style(Span.empty[Prop])
 
     // Factory methods to start a chain
 

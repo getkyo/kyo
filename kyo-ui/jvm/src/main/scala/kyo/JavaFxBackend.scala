@@ -160,7 +160,7 @@ class JavaFxBackend(
         val (node, cls) = elem match
             case _: Div      => (new VBox(), "div")
             case _: P        => (new VBox(), "p")
-            case _: Span     => (new HBox(), "span")
+            case _: SpanNode => (new HBox(), "span")
             case _: Ul       => (new VBox(), "ul")
             case _: Ol       => (new VBox(), "ol")
             case _: Li       => (new HBox(), "li")
@@ -545,14 +545,14 @@ class JavaFxBackend(
         discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(action)))
     end runHandler
 
-    private def buildChildren(children: Chunk[UI], updates: Channel[() => Unit], rendered: SignalRef[UI])(using
+    private def buildChildren(children: Span[UI], updates: Channel[() => Unit], rendered: SignalRef[UI])(using
         Frame
     ): Chunk[Node] < (Async & Scope) =
-        Kyo.foreach(children)(build(_, updates, rendered))
+        Kyo.foreach(Chunk.from(children.toArray))(build(_, updates, rendered))
 
     private def buildChildrenWithLayout(
         pane: Pane,
-        children: Chunk[UI],
+        children: Span[UI],
         updates: Channel[() => Unit],
         rendered: SignalRef[UI]
     )(using Frame): Unit < (Async & Scope) =
@@ -578,7 +578,7 @@ class JavaFxBackend(
     end buildChildrenWithLayout
 
     // Groups children: Left = consecutive inline, Right = single block
-    private def groupByDisplay(children: Chunk[UI]): Chunk[Either[Chunk[UI], UI]] =
+    private def groupByDisplay(children: Span[UI]): Chunk[Either[Chunk[UI], UI]] =
         var result  = Chunk.empty[Either[Chunk[UI], UI]]
         var inlines = Chunk.empty[UI]
         children.foreach { child =>
@@ -608,15 +608,16 @@ class JavaFxBackend(
 
     private def buildTableGrid(
         grid: GridPane,
-        rows: Chunk[UI],
+        rows: Span[UI],
         updates: Channel[() => Unit],
         rendered: SignalRef[UI]
     )(using Frame): Unit < (Async & Scope) =
-        Kyo.foreach(rows.zipWithIndex) { (row, rowIdx) =>
+        Kyo.foreach(Chunk.from(0 until rows.size)) { rowIdx =>
+            val row = rows(rowIdx)
             row match
                 case elem: Element =>
-                    Kyo.foreach(elem.children.zipWithIndex) { (cell, colIdx) =>
-                        build(cell, updates, rendered).map { node =>
+                    Kyo.foreach(Chunk.from(0 until elem.children.size)) { colIdx =>
+                        build(elem.children(colIdx), updates, rendered).map { node =>
                             grid.add(node, colIdx, rowIdx)
                         }
                     }.unit
@@ -624,12 +625,16 @@ class JavaFxBackend(
                     build(other, updates, rendered).map { node =>
                         grid.add(node, 0, rowIdx)
                     }
+            end match
         }.unit
 
-    private def extractText(children: Chunk[UI]): String =
-        children.flatMap {
-            case Text(v) => Chunk(v)
-            case _       => Chunk.empty
-        }.toSeq.mkString
+    private def extractText(children: Span[UI]): String =
+        val sb = new StringBuilder
+        children.foreach {
+            case Text(v) => discard(sb.append(v))
+            case _       => ()
+        }
+        sb.toString
+    end extractText
 
 end JavaFxBackend

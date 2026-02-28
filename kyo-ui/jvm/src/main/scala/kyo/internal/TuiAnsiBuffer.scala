@@ -22,10 +22,12 @@ final private[kyo] class TuiAnsiBuffer(initialCapacity: Int = 65536):
     end put
 
     inline def putAscii(s: String): Unit =
-        var i = 0
-        while i < s.length do
-            put(s.charAt(i).toByte)
-            i += 1
+        @scala.annotation.tailrec
+        def loop(i: Int): Unit =
+            if i < s.length then
+                put(s.charAt(i).toByte)
+                loop(i + 1)
+        loop(0)
     end putAscii
 
     def putInt(n: Int): Unit =
@@ -45,10 +47,12 @@ final private[kyo] class TuiAnsiBuffer(initialCapacity: Int = 65536):
             put((0x80 | (ch & 0x3f)).toByte)
 
     def putUtf8(s: String): Unit =
-        var i = 0
-        while i < s.length do
-            putChar(s.charAt(i))
-            i += 1
+        @scala.annotation.tailrec
+        def loop(i: Int): Unit =
+            if i < s.length then
+                putChar(s.charAt(i))
+                loop(i + 1)
+        loop(0)
     end putUtf8
 
     def writeTo(out: FileOutputStream): Unit =

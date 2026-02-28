@@ -444,10 +444,10 @@ class DomBackend extends UIBackend:
         val _ = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(action))
     end runHandler
 
-    private def buildChildren(children: Chunk[UI], rendered: SignalRef[UI])(using Frame): Chunk[dom.Node] < (Async & Scope) =
-        Kyo.foreach(children)(build(_, rendered))
+    private def buildChildren(children: Span[UI], rendered: SignalRef[UI])(using Frame): Chunk[dom.Node] < (Async & Scope) =
+        Kyo.foreach(Chunk.from(children.toArray))(build(_, rendered))
 
-    private def buildAndAppendChildren(el: dom.Element, children: Chunk[UI], rendered: SignalRef[UI])(using
+    private def buildAndAppendChildren(el: dom.Element, children: Span[UI], rendered: SignalRef[UI])(using
         Frame
     ): Unit < (Async & Scope) =
         buildChildren(children, rendered).map { nodes =>
@@ -458,7 +458,7 @@ class DomBackend extends UIBackend:
         elem match
             case _: Div      => "div"
             case _: P        => "p"
-            case _: Span     => "span"
+            case _: SpanNode => "span"
             case _: Ul       => "ul"
             case _: Ol       => "ol"
             case _: Li       => "li"

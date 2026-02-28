@@ -121,19 +121,16 @@ private[kyo] object TuiColor:
 
     /** Convert packed 24-bit RGB to the nearest ANSI color index (0-15). */
     def to16(packed: Int): Int =
-        val rv       = r(packed); val gv = g(packed); val bv = b(packed)
-        var best     = 0
-        var bestDist = Int.MaxValue
-        var i        = 0
-        while i < 16 do
-            val ar   = r(ansi16(i)); val ag = g(ansi16(i)); val ab = b(ansi16(i))
-            val dist = sq(rv - ar) + sq(gv - ag) + sq(bv - ab)
-            if dist < bestDist then
-                bestDist = dist
-                best = i
-            i += 1
-        end while
-        best
+        val rv = r(packed); val gv = g(packed); val bv = b(packed)
+        @scala.annotation.tailrec
+        def loop(i: Int, best: Int, bestDist: Int): Int =
+            if i >= 16 then best
+            else
+                val ar   = r(ansi16(i)); val ag = g(ansi16(i)); val ab = b(ansi16(i))
+                val dist = sq(rv - ar) + sq(gv - ag) + sq(bv - ab)
+                if dist < bestDist then loop(i + 1, i, dist)
+                else loop(i + 1, best, bestDist)
+        loop(0, 0, Int.MaxValue)
     end to16
 
     private inline def sq(x: Int): Int = x * x
