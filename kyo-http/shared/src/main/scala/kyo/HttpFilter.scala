@@ -66,7 +66,7 @@ object HttpFilter:
                             .setHeader("WWW-Authenticate", "Basic")
                     )
                     request.fields.authorization match
-                        case Present(auth) if auth.startsWith("Basic ") =>
+                        case Present(auth) if auth.length > 6 && auth.substring(0, 6).equalsIgnoreCase("Basic ") =>
                             try
                                 val decoded = new String(
                                     java.util.Base64.getDecoder.decode(auth.drop(6)),
@@ -98,7 +98,7 @@ object HttpFilter:
                             .setHeader("WWW-Authenticate", "Bearer")
                     )
                     request.fields.authorization match
-                        case Present(auth) if auth.startsWith("Bearer ") =>
+                        case Present(auth) if auth.length > 7 && auth.substring(0, 7).equalsIgnoreCase("Bearer ") =>
                             validate(auth.drop(7)).map { valid =>
                                 if valid then next(request)
                                 else Abort.fail(unauthorized)

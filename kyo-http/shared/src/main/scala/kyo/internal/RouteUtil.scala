@@ -81,7 +81,12 @@ object RouteUtil:
                     case Present(rq) => s"$basePath?$rq"
                     case _           => basePath
                 (url, request.headers)
-        encodeBody(bodyField, dict, url, hdrs)(onEmpty, onBuffered, onStreaming)
+        // RFC 9110 §15.4.4: After 303 redirect, method changes to GET but the route still
+        // has a body field. Skip body encoding for GET/HEAD to avoid sending a body with these methods.
+        val effectiveBodyField =
+            if request.method == HttpMethod.GET || request.method == HttpMethod.HEAD then Absent
+            else bodyField
+        encodeBody(effectiveBodyField, dict, url, hdrs)(onEmpty, onBuffered, onStreaming)
     end encodeRequest
 
     private inline def encodeBody[A](
@@ -660,13 +665,13 @@ object RouteUtil:
                 Result.succeed(bytes)
             case json: ContentType.Json[?] =>
                 if !checkContentType(headers, "application/json") then
-                    Result.fail(HttpError.ParseError("Unsupported Content-Type: expected application/json"))
+                    Result.fail(HttpError.UnsupportedMediaTypeError("expected application/json"))
                 else
                     json.schema.decode(spanToString(bytes))
                         .mapFailure(msg => HttpError.ParseError(s"JSON decode failed: $msg"))
             case form: ContentType.Form[?] =>
                 if !checkContentType(headers, "application/x-www-form-urlencoded") then
-                    Result.fail(HttpError.ParseError("Unsupported Content-Type: expected application/x-www-form-urlencoded"))
+                    Result.fail(HttpError.UnsupportedMediaTypeError("expected application/x-www-form-urlencoded"))
                 else
                     try Result.succeed(form.codec.decode(spanToString(bytes)))
                     catch

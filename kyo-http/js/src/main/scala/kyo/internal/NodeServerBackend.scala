@@ -113,7 +113,12 @@ final class NodeServerBackend extends HttpBackend.Server:
                 discard(req.on("end", { () => writeBufferedResponse(res, HttpStatus.NoContent, headers, Span.empty[Byte]) }))
 
             case Result.Failure(HttpRouter.FindError.MethodNotAllowed(allowed)) =>
-                val allowValue = allowed.iterator.map(_.name).mkString(", ")
+                // RFC 9110: HEAD is implicitly supported when GET is, OPTIONS is always supported
+                val allMethods =
+                    allowed
+                        ++ (if allowed.contains(HttpMethod.GET) then Set(HttpMethod.HEAD) else Set.empty)
+                        + HttpMethod.OPTIONS
+                val allowValue = allMethods.iterator.map(_.name).mkString(", ")
                 discard(req.resume())
                 discard(req.on(
                     "end",
@@ -187,6 +192,8 @@ final class NodeServerBackend extends HttpBackend.Server:
                         ) match
                             case Result.Success(request) =>
                                 invokeHandler(res, endpoint, route, request, method == HttpMethod.HEAD)
+                            case Result.Failure(_: HttpError.UnsupportedMediaTypeError) =>
+                                sendErrorResponse(res, HttpStatus.UnsupportedMediaType, HttpHeaders.empty)
                             case Result.Failure(_) =>
                                 sendErrorResponse(res, HttpStatus.BadRequest, HttpHeaders.empty)
                             case Result.Panic(_) =>
@@ -279,6 +286,9 @@ final class NodeServerBackend extends HttpBackend.Server:
         ) match
             case Result.Success(request) =>
                 invokeHandler(res, endpoint, route, request, method == HttpMethod.HEAD)
+            case Result.Failure(_: HttpError.UnsupportedMediaTypeError) =>
+                discard(byteChannel.close())
+                sendErrorResponse(res, HttpStatus.UnsupportedMediaType, HttpHeaders.empty)
             case Result.Failure(_) =>
                 discard(byteChannel.close())
                 sendErrorResponse(res, HttpStatus.BadRequest, HttpHeaders.empty)
@@ -368,7 +378,9 @@ final class NodeServerBackend extends HttpBackend.Server:
         headers: HttpHeaders,
         body: Span[Byte]
     )(using AllowUnsafe): Unit =
-        val jsHeaders = buildJsHeaders(headers)
+        val withDate  = if headers.get("Date").nonEmpty then headers else headers.add("Date", formatHttpDate())
+        val withCl    = if withDate.get("Content-Length").nonEmpty then withDate else withDate.add("Content-Length", body.size.toString)
+        val jsHeaders = buildJsHeaders(withCl)
         discard(res.writeHead(status.code, jsHeaders))
         if body.isEmpty then
             res.endEmpty()
@@ -383,7 +395,8 @@ final class NodeServerBackend extends HttpBackend.Server:
         headers: HttpHeaders,
         stream: Stream[Span[Byte], Async]
     )(using AllowUnsafe, Frame): Unit =
-        val jsHeaders = buildJsHeaders(headers)
+        val withDate  = if headers.get("Date").nonEmpty then headers else headers.add("Date", formatHttpDate())
+        val jsHeaders = buildJsHeaders(withDate)
         jsHeaders("Transfer-Encoding") = "chunked"
         discard(res.writeHead(status.code, jsHeaders))
 
@@ -427,7 +440,9 @@ final class NodeServerBackend extends HttpBackend.Server:
         extraHeaders: HttpHeaders
     )(using AllowUnsafe): Unit =
         val bodyBytes = RouteUtil.encodeErrorBody(status)
-        writeBufferedResponse(res, status, extraHeaders.add("Content-Type", "application/json"), bodyBytes)
+        val withCt    = extraHeaders.add("Content-Type", "application/json")
+        val withDate  = if withCt.get("Date").nonEmpty then withCt else withCt.add("Date", formatHttpDate())
+        writeBufferedResponse(res, status, withDate, bodyBytes)
     end sendErrorResponse
 
     private inline def guardResponse(res: ServerResponse)(inline body: Unit)(using AllowUnsafe): Unit =
@@ -494,5 +509,8 @@ final class NodeServerBackend extends HttpBackend.Server:
     private def bytesToUint8Array(bytes: Array[Byte]): Uint8Array =
         val int8 = js.typedarray.byteArray2Int8Array(bytes)
         new Uint8Array(int8.buffer, int8.byteOffset, int8.length)
+
+    private def formatHttpDate(): String =
+        new js.Date().toUTCString()
 
 end NodeServerBackend

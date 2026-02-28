@@ -1446,4 +1446,216 @@ class HttpClientTest extends Test:
         }
     }
 
+    "client filters" - {
+
+        // Server endpoint that echoes back the Authorization header value
+        def echoAuthEndpoint =
+            val route = HttpRoute.getRaw("echo-auth")
+                .request(_.headerOpt[String]("authorization"))
+                .response(_.bodyText)
+            route.handler { req =>
+                val auth = req.headers.get("Authorization").getOrElse("none")
+                HttpResponse.okText(s"auth=$auth")
+            }
+        end echoAuthEndpoint
+
+        // Server endpoint that echoes back the X-Custom header
+        def echoCustomHeaderEndpoint =
+            val route = HttpRoute.getRaw("echo-header")
+                .request(_.headerOpt[String]("x-custom"))
+                .response(_.bodyText)
+            route.handler { req =>
+                val value = req.headers.get("X-Custom").getOrElse("none")
+                HttpResponse.okText(s"X-Custom=$value")
+            }
+        end echoCustomHeaderEndpoint
+
+        "basicAuth adds Authorization header" in run {
+            withServer(echoAuthEndpoint) { port =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { c =>
+                        val route = HttpRoute.getRaw("echo-auth").response(_.bodyText)
+                            .filter(HttpFilter.client.basicAuth("user", "pass"))
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/echo-auth", Absent))
+                        c.sendWith(route, request) { resp =>
+                            val expected = java.util.Base64.getEncoder.encodeToString("user:pass".getBytes("UTF-8"))
+                            assert(resp.fields.body.contains(s"Basic $expected"), s"Should contain Basic auth, got: ${resp.fields.body}")
+                        }
+                    }
+                }
+            }
+        }
+
+        "basicAuth with special characters in credentials" in run {
+            withServer(echoAuthEndpoint) { port =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { c =>
+                        val route = HttpRoute.getRaw("echo-auth").response(_.bodyText)
+                            .filter(HttpFilter.client.basicAuth("user@domain.com", "p@ss:w0rd!"))
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/echo-auth", Absent))
+                        c.sendWith(route, request) { resp =>
+                            val expected = java.util.Base64.getEncoder.encodeToString("user@domain.com:p@ss:w0rd!".getBytes("UTF-8"))
+                            assert(resp.fields.body.contains(s"Basic $expected"), s"Should contain encoded creds, got: ${resp.fields.body}")
+                        }
+                    }
+                }
+            }
+        }
+
+        "bearerAuth adds Authorization header" in run {
+            withServer(echoAuthEndpoint) { port =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { c =>
+                        val route = HttpRoute.getRaw("echo-auth").response(_.bodyText)
+                            .filter(HttpFilter.client.bearerAuth("my-token-123"))
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/echo-auth", Absent))
+                        c.sendWith(route, request) { resp =>
+                            assert(
+                                resp.fields.body.contains("Bearer my-token-123"),
+                                s"Should contain Bearer token, got: ${resp.fields.body}"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        "bearerAuth with long token" in run {
+            val longToken = "x" * 500
+            withServer(echoAuthEndpoint) { port =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { c =>
+                        val route = HttpRoute.getRaw("echo-auth").response(_.bodyText)
+                            .filter(HttpFilter.client.bearerAuth(longToken))
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/echo-auth", Absent))
+                        c.sendWith(route, request) { resp =>
+                            assert(resp.fields.body.contains(s"Bearer $longToken"), s"Should contain long token, got truncated response")
+                        }
+                    }
+                }
+            }
+        }
+
+        "addHeader adds custom header" in run {
+            withServer(echoCustomHeaderEndpoint) { port =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { c =>
+                        val route = HttpRoute.getRaw("echo-header").response(_.bodyText)
+                            .filter(HttpFilter.client.addHeader("X-Custom", "custom-value"))
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/echo-header", Absent))
+                        c.sendWith(route, request) { resp =>
+                            assert(
+                                resp.fields.body.contains("custom-value"),
+                                s"Should contain custom header value, got: ${resp.fields.body}"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        "chained filters apply in order" in run {
+            val route2 = HttpRoute.getRaw("echo-auth")
+                .request(_.headerOpt[String]("authorization"))
+                .response(_.bodyText)
+            val ep = route2.handler { req =>
+                val auth   = req.headers.get("Authorization").getOrElse("none")
+                val custom = req.headers.get("X-Request-Id").getOrElse("none")
+                HttpResponse.okText(s"auth=$auth,rid=$custom")
+            }
+            withServer(ep) { port =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { c =>
+                        val route = HttpRoute.getRaw("echo-auth").response(_.bodyText)
+                            .filter(HttpFilter.client.bearerAuth("token-abc"))
+                            .filter(HttpFilter.client.addHeader("X-Request-Id", "req-42"))
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/echo-auth", Absent))
+                        c.sendWith(route, request) { resp =>
+                            assert(resp.fields.body.contains("Bearer token-abc"), s"Should have bearer, got: ${resp.fields.body}")
+                            assert(resp.fields.body.contains("req-42"), s"Should have custom header, got: ${resp.fields.body}")
+                        }
+                    }
+                }
+            }
+        }
+
+        "filter applied on multiple sequential requests" in run {
+            withServer(echoAuthEndpoint) { port =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { c =>
+                        val route = HttpRoute.getRaw("echo-auth").response(_.bodyText)
+                            .filter(HttpFilter.client.bearerAuth("persistent-token"))
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/echo-auth", Absent))
+                        c.sendWith(route, request) { resp1 =>
+                            assert(resp1.fields.body.contains("Bearer persistent-token"))
+                            c.sendWith(route, request) { resp2 =>
+                                assert(resp2.fields.body.contains("Bearer persistent-token"))
+                                c.sendWith(route, request) { resp3 =>
+                                    assert(resp3.fields.body.contains("Bearer persistent-token"))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "filter does not leak across routes without filter" in run {
+            withServer(echoAuthEndpoint) { port =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { c =>
+                        val filteredRoute = HttpRoute.getRaw("echo-auth").response(_.bodyText)
+                            .filter(HttpFilter.client.bearerAuth("secret"))
+                        val unfilteredRoute = HttpRoute.getRaw("echo-auth").response(_.bodyText)
+                        val request         = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/echo-auth", Absent))
+                        // Filtered route should have auth
+                        c.sendWith(filteredRoute, request) { resp1 =>
+                            assert(resp1.fields.body.contains("Bearer secret"))
+                            // Unfiltered route should NOT have auth
+                            c.sendWith(unfilteredRoute, request) { resp2 =>
+                                assert(
+                                    resp2.fields.body == "auth=none",
+                                    s"Unfiltered route should not have auth, got: ${resp2.fields.body}"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "noop filter has no effect" in run {
+            withServer(echoAuthEndpoint) { port =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { c =>
+                        val route = HttpRoute.getRaw("echo-auth").response(_.bodyText)
+                            .filter(HttpFilter.noop)
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/echo-auth", Absent))
+                        c.sendWith(route, request) { resp =>
+                            assert(resp.fields.body == "auth=none", s"Noop filter should not add headers, got: ${resp.fields.body}")
+                        }
+                    }
+                }
+            }
+        }
+
+        "filter works with default shared client" in run {
+            withServer(echoAuthEndpoint) { port =>
+                val route = HttpRoute.getRaw("echo-auth").response(_.bodyText)
+                    .filter(HttpFilter.client.bearerAuth("shared-token"))
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.use { c =>
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/echo-auth", Absent))
+                        c.sendWith(route, request) { resp =>
+                            assert(
+                                resp.fields.body.contains("Bearer shared-token"),
+                                s"Shared client should apply filter, got: ${resp.fields.body}"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end HttpClientTest

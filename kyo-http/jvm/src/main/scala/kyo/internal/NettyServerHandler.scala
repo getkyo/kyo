@@ -158,6 +158,11 @@ final private[kyo] class NettyServerHandler(
                     ) match
                         case Result.Success(request) =>
                             invokeHandler(ctx, endpoint, route, request, keepAlive, method == HttpMethod.HEAD)
+                        case Result.Failure(_: HttpError.UnsupportedMediaTypeError) =>
+                            streamingChannel.foreach(ch => discard(ch.close()))
+                            streamingChannel = Absent
+                            state = STATE_IDLE
+                            sendErrorResponse(ctx, HttpStatus.UnsupportedMediaType, HttpHeaders.empty, keepAlive)
                         case Result.Failure(err) =>
                             streamingChannel.foreach(ch => discard(ch.close()))
                             streamingChannel = Absent
@@ -262,6 +267,8 @@ final private[kyo] class NettyServerHandler(
                     ) match
                         case Result.Success(request) =>
                             invokeHandler(ctx, endpoint, route, request, keepAlive, isHead)
+                        case Result.Failure(_: HttpError.UnsupportedMediaTypeError) =>
+                            sendErrorResponse(ctx, HttpStatus.UnsupportedMediaType, HttpHeaders.empty, keepAlive)
                         case Result.Failure(err) =>
                             sendErrorResponse(ctx, HttpStatus.BadRequest, HttpHeaders.empty, keepAlive)
                         case Result.Panic(e) =>
@@ -428,6 +435,12 @@ final private[kyo] class NettyServerHandler(
 
         if !nettyResp.headers().contains(HttpHeaderNames.CONTENT_LENGTH) then
             discard(nettyResp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes()))
+        if !nettyResp.headers().contains(HttpHeaderNames.DATE) then
+            discard(nettyResp.headers().set(
+                HttpHeaderNames.DATE,
+                java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC))
+            ))
+        end if
 
         if keepAlive then
             discard(nettyResp.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
@@ -453,6 +466,12 @@ final private[kyo] class NettyServerHandler(
         headers.foreach((k, v) => discard(nettyResponse.headers().add(k, v)))
         if !nettyResponse.headers().contains("Content-Length") then
             discard(nettyResponse.headers().set("Transfer-Encoding", "chunked"))
+        if !nettyResponse.headers().contains(HttpHeaderNames.DATE) then
+            discard(nettyResponse.headers().set(
+                HttpHeaderNames.DATE,
+                java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC))
+            ))
+        end if
         if keepAlive then
             discard(nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
         else
@@ -503,6 +522,12 @@ final private[kyo] class NettyServerHandler(
         extraHeaders.foreach((k, v) => discard(nettyResp.headers().add(k, v)))
         discard(nettyResp.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json"))
         discard(nettyResp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, bodyBytes.length))
+        if !nettyResp.headers().contains(HttpHeaderNames.DATE) then
+            discard(nettyResp.headers().set(
+                HttpHeaderNames.DATE,
+                java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC))
+            ))
+        end if
         if keepAlive then
             discard(nettyResp.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
             discard(ctx.writeAndFlush(nettyResp))
@@ -513,9 +538,14 @@ final private[kyo] class NettyServerHandler(
     end sendErrorResponse
 
     private def buildAllowHeaderValue(allowed: Set[HttpMethod]): String =
+        // RFC 9110: HEAD is implicitly supported when GET is, OPTIONS is always supported
+        val methods =
+            allowed
+                ++ (if allowed.contains(HttpMethod.GET) then Set(HttpMethod.HEAD) else Set.empty)
+                + HttpMethod.OPTIONS
         import scala.annotation.tailrec
         val sb   = new StringBuilder
-        val iter = allowed.iterator
+        val iter = methods.iterator
         if iter.hasNext then sb.append(iter.next().name)
         @tailrec def loop(): Unit =
             if iter.hasNext then

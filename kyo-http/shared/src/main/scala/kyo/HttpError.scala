@@ -10,6 +10,9 @@ object HttpError:
     case class ParseError(message: String)(using Frame)
         extends HttpError(s"Failed to parse: $message")
 
+    case class UnsupportedMediaTypeError(message: String)(using Frame)
+        extends HttpError(s"Unsupported media type: $message")
+
     case class TimeoutError(duration: Duration)(using Frame)
         extends HttpError(s"Request timed out after ${duration.show}")
 

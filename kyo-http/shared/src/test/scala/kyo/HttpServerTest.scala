@@ -450,12 +450,12 @@ class HttpServerTest extends Test:
             }
         }
 
-        "malformed JSON returns 400" in run {
+        "wrong Content-Type returns 415" in run {
             val route = HttpRoute.postRaw("users")
                 .request(_.bodyJson[User])
                 .response(_.bodyText)
             val ep = route.handler(req => HttpResponse.okText("should not reach"))
-            // Use a text route to send malformed JSON
+            // Use a text route to send text/plain to a JSON endpoint (content-type mismatch)
             val textRoute = HttpRoute.postRaw("users")
                 .request(_.bodyText)
                 .response(_.bodyText)
@@ -466,7 +466,7 @@ class HttpServerTest extends Test:
                     HttpRequest.postRaw(HttpUrl.fromUri("/users"))
                         .addField("body", "not json")
                 ).map { resp =>
-                    assert(resp.status == HttpStatus.BadRequest)
+                    assert(resp.status == HttpStatus.UnsupportedMediaType)
                 }
             }
         }
@@ -1480,14 +1480,14 @@ class HttpServerTest extends Test:
 
     "JSON string validation" - {
 
-        "malformed JSON returns 400" in run {
+        "wrong Content-Type returns 415" in run {
             val route = HttpRoute.postRaw("echo")
                 .request(_.bodyJson[String])
                 .response(_.bodyText)
             val ep = route.handler { req =>
                 HttpResponse.okText(s"got: ${req.fields.body}")
             }
-            // Send malformed JSON via a text route
+            // Send text/plain to a JSON endpoint (content-type mismatch)
             val textRoute = HttpRoute.postRaw("echo")
                 .request(_.bodyText)
                 .response(_.bodyText)
@@ -1498,7 +1498,7 @@ class HttpServerTest extends Test:
                     HttpRequest.postRaw(HttpUrl.fromUri("/echo"))
                         .addField("body", "{broken json")
                 ).map { resp =>
-                    assert(resp.status == HttpStatus.BadRequest)
+                    assert(resp.status == HttpStatus.UnsupportedMediaType)
                 }
             }
         }
@@ -2012,8 +2012,8 @@ class HttpServerTest extends Test:
             }
         }
 
-        // Extends existing "malformed JSON returns 400" — verifies body contains parse error info
-        "400 response for malformed JSON includes error detail" in run {
+        // Extends existing "wrong Content-Type returns 415" — verifies body contains error info
+        "415 response for wrong Content-Type includes error detail" in run {
             val route = HttpRoute.postRaw("json-test")
                 .request(_.bodyJson[User])
                 .response(_.bodyText)
@@ -2028,8 +2028,8 @@ class HttpServerTest extends Test:
                     HttpRequest.postRaw(HttpUrl.fromUri("/json-test"))
                         .addField("body", "not json")
                 ).map { resp =>
-                    assert(resp.status == HttpStatus.BadRequest)
-                    assert(resp.fields.body.nonEmpty, "400 response body should include parse error details")
+                    assert(resp.status == HttpStatus.UnsupportedMediaType)
+                    assert(resp.fields.body.nonEmpty, "415 response body should include error details")
                 }
             }
         }

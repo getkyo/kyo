@@ -84,7 +84,11 @@ final class HttpClient private (
                                         val resolved =
                                             if newUrl.host.nonEmpty then newUrl
                                             else newUrl.copy(scheme = req.url.scheme, host = req.url.host, port = req.url.port)
-                                        loop(req.copy(url = resolved), count + 1)
+                                        // RFC 9110 §15.4.4: 303 See Other requires changing method to GET
+                                        val nextReq =
+                                            if res.status == HttpStatus.SeeOther then req.copy(url = resolved, method = HttpMethod.GET)
+                                            else req.copy(url = resolved)
+                                        loop(nextReq, count + 1)
                                     case Result.Failure(err) =>
                                         Abort.fail(err)
                             case Absent => f(res)
@@ -115,30 +119,45 @@ final class HttpClient private (
     )(
         f: HttpResponse[Out] => A < S
     )(using Frame): A < (S & Async & Abort[HttpError]) =
-        Sync.Unsafe.defer {
-            val key = HostKey(request.url.host, request.url.port)
-            pool.poll(key) match
-                case Present(conn) =>
-                    Sync.ensure(pool.release(key, conn)) {
-                        backend.sendWith(conn, route, request)(f)
-                    }
-                case _ =>
-                    if pool.tryReserve(key) then
-                        Sync.ensure(pool.unreserve(key)) {
-                            backend.connectWith(request.url.host, request.url.port, request.url.ssl, config.connectTimeout) { conn =>
-                                Sync.ensure(pool.release(key, conn)) {
-                                    backend.sendWith(conn, route, request)(f)
-                                }
+        // Client-side filters (e.g. basicAuth, bearerAuth) are Passthrough — they transform the request
+        // and forward next's result unchanged. We cast so that next's return type aligns with A
+        // (the result of sendWith(f)), preserving connection-holding semantics inside Sync.ensure.
+        val filter = route.filter.asInstanceOf[HttpFilter[Any, In, Out, Out, Nothing]]
+        filter[In, Out, HttpError](
+            request,
+            (filteredReq: HttpRequest[In]) =>
+                Sync.Unsafe.defer {
+                    val key = HostKey(filteredReq.url.host, filteredReq.url.port)
+                    pool.poll(key) match
+                        case Present(conn) =>
+                            Sync.ensure(pool.release(key, conn)) {
+                                backend.sendWith(conn, route, filteredReq)(f)
                             }
-                        }
-                    else
-                        Abort.fail(HttpError.ConnectionPoolExhausted(
-                            request.url.host,
-                            request.url.port,
-                            maxConnectionsPerHost
-                        ))
-            end match
-        }
+                        case _ =>
+                            if pool.tryReserve(key) then
+                                Sync.ensure(pool.unreserve(key)) {
+                                    backend.connectWith(
+                                        filteredReq.url.host,
+                                        filteredReq.url.port,
+                                        filteredReq.url.ssl,
+                                        config.connectTimeout
+                                    ) {
+                                        conn =>
+                                            Sync.ensure(pool.release(key, conn)) {
+                                                backend.sendWith(conn, route, filteredReq)(f)
+                                            }
+                                    }
+                                }
+                            else
+                                Abort.fail(HttpError.ConnectionPoolExhausted(
+                                    filteredReq.url.host,
+                                    filteredReq.url.port,
+                                    maxConnectionsPerHost
+                                ))
+                    end match
+                }.asInstanceOf[HttpResponse[Out] < (Async & Abort[HttpError | HttpResponse.Halt])]
+        ).asInstanceOf[A < (S & Async & Abort[HttpError])]
+    end poolWith
 
     def close(gracePeriod: Duration)(using Frame): Unit < Async =
         Sync.Unsafe.defer(pool.closeAll())

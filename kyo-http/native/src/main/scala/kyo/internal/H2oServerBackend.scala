@@ -362,6 +362,9 @@ private[kyo] object H2oServerBackend:
                 decoded match
                     case Result.Success(request) =>
                         launchHandlerFiber(ss, req, endpoint, route, request, isHead = method == HttpMethod.HEAD)
+                    case Result.Failure(_: HttpError.UnsupportedMediaTypeError) =>
+                        sendImmediateError(req, 415, HttpHeaders.empty)
+                        discard(ss.inFlight.decrementAndGet())
                     case Result.Failure(_) =>
                         sendImmediateError(req, 400, HttpHeaders.empty)
                         discard(ss.inFlight.decrementAndGet())
@@ -378,7 +381,12 @@ private[kyo] object H2oServerBackend:
                 discard(ss.inFlight.decrementAndGet())
 
             case Result.Failure(FindError.MethodNotAllowed(allowed)) =>
-                val allowValue = allowed.iterator.map(_.name).mkString(", ")
+                // RFC 9110: HEAD is implicitly supported when GET is, OPTIONS is always supported
+                val allMethods =
+                    allowed
+                        ++ (if allowed.contains(HttpMethod.GET) then Set(HttpMethod.HEAD) else Set.empty)
+                        + HttpMethod.OPTIONS
+                val allowValue = allMethods.iterator.map(_.name).mkString(", ")
                 sendImmediateError(req, 405, HttpHeaders.empty.add("Allow", allowValue))
                 discard(ss.inFlight.decrementAndGet())
 
@@ -456,7 +464,10 @@ private[kyo] object H2oServerBackend:
                     case Result.Failure(error) =>
                         RouteUtil.encodeError(rt, error) match
                             case Present((status, headers, body)) =>
-                                enqueueBuffered(ss, req, status.code, headers, if isHead then Span.empty[Byte] else body)
+                                val h = if isHead && headers.get("Content-Length").isEmpty then
+                                    headers.add("Content-Length", body.size.toString)
+                                else headers
+                                enqueueBuffered(ss, req, status.code, h, if isHead then Span.empty[Byte] else body)
                             case Absent =>
                                 enqueueError(ss, req, 500, HttpHeaders.empty)
                     case Result.Panic(_) =>
@@ -497,7 +508,9 @@ private[kyo] object H2oServerBackend:
                 enqueueBuffered(ss, req, status.code, headers, Span.empty[Byte]),
             onBuffered = (status, headers, contentType, body) =>
                 val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
-                enqueueBuffered(ss, req, status.code, h, if isHead then Span.empty[Byte] else body)
+                // RFC 9110 §8.6: HEAD Content-Length MUST match what GET would return
+                val h2 = if isHead && h.get("Content-Length").isEmpty then h.add("Content-Length", body.size.toString) else h
+                enqueueBuffered(ss, req, status.code, h2, if isHead then Span.empty[Byte] else body)
             ,
             onStreaming = (status, headers, contentType, stream) =>
                 val headersWithCt = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
@@ -558,11 +571,16 @@ private[kyo] object H2oServerBackend:
 
     private def sendImmediateError(req: H2oReq, status: Int, headers: HttpHeaders): Unit =
         val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(status))
-        sendBufferedNative(req, status, headers.add("Content-Type", "application/json"), bodyBytes)
+        val withCt    = headers.add("Content-Type", "application/json")
+        val withDate  = if withCt.get("Date").nonEmpty then withCt else withCt.add("Date", formatHttpDate())
+        sendBufferedNative(req, status, withDate, bodyBytes)
+    end sendImmediateError
 
     private def sendBufferedNative(req: H2oReq, status: Int, headers: HttpHeaders, body: Span[Byte]): Unit =
         Zone {
-            val (names, nameLens, values, valueLens, headerCount) = encodeHeaders(headers)
+            val withDate = if headers.get("Date").nonEmpty then headers else headers.add("Date", formatHttpDate())
+            val withCl   = if withDate.get("Content-Length").nonEmpty then withDate else withDate.add("Content-Length", body.size.toString)
+            val (names, nameLens, values, valueLens, headerCount) = encodeHeaders(withCl)
 
             val bodyBytes = if body.isEmpty then Array.emptyByteArray else body.toArrayUnsafe
             val bodyPtr =
@@ -580,7 +598,8 @@ private[kyo] object H2oServerBackend:
 
     private def startStreamingNative(ss: ServerState, ctx: StreamContext, status: Int, headers: HttpHeaders): Unit =
         Zone {
-            val (names, nameLens, values, valueLens, headerCount) = encodeHeaders(headers)
+            val withDate = if headers.get("Date").nonEmpty then headers else headers.add("Date", formatHttpDate())
+            val (names, nameLens, values, valueLens, headerCount) = encodeHeaders(withDate)
             ctx.generator = H2oBindings.startStreaming(
                 ss.server,
                 ctx.req,
@@ -612,5 +631,8 @@ private[kyo] object H2oServerBackend:
         }
         (names, nameLens, values, valueLens, headerCount)
     end encodeHeaders
+
+    private def formatHttpDate(): String =
+        java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC))
 
 end H2oServerBackend

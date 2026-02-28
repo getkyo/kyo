@@ -34,7 +34,9 @@ final case class HttpUrl(
                     case Absent     =>
                 sb.toString
 
-    def ssl: Boolean = port == HttpUrl.DefaultHttpsPort
+    def ssl: Boolean = scheme match
+        case Present(s) => s.equalsIgnoreCase("https")
+        case Absent     => port == HttpUrl.DefaultHttpsPort
 
     /** Returns the first value for the given query parameter name. */
     def query(name: String): Maybe[String] =
