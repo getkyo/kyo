@@ -14,6 +14,12 @@ class ClockTest extends Test:
             }
         }
 
+        "nowWith" in run {
+            Clock.nowWith { now =>
+                assert(now - javaNow() < 1.milli)
+            }
+        }
+
         "unsafe now" in {
             import AllowUnsafe.embrace.danger
             val now = Clock.live.unsafe.now()
