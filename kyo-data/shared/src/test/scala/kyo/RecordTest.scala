@@ -105,13 +105,6 @@ class RecordTest extends Test:
             assert(record.value == 42)
         }
 
-        "fromRow" in {
-            val row    = Row((name = "Alice", age = 30))
-            val record = Record.fromRow(row)
-            typeCheck("""val _: Record["name" ~ String & "age" ~ Int] = record""")
-            assert(record.name == "Alice")
-            assert(record.age == 30)
-        }
     }
 
     "map" in {
@@ -134,13 +127,6 @@ class RecordTest extends Test:
         val zipped = r1.zip(r2)
         assert((zipped.name: (String, Boolean)) == ("Alice", true))
         assert((zipped.age: (Int, Double)) == (30, 3.14))
-    }
-
-    "values" in {
-        val record = "name" ~ "Alice" & "age" ~ 30
-        val v      = record.values
-        typeCheck("""val _: (String, Int) = v""")
-        assert(v == ("Alice", 30))
     }
 
     "field access" - {
@@ -1022,22 +1008,6 @@ class RecordTest extends Test:
         }
     }
 
-    "values edge cases" - {
-        "single field" in {
-            val record = "name" ~ "Alice"
-            val v      = record.values
-            typeCheck("""val _: Tuple1[String] = v""")
-            assert(v == Tuple1("Alice"))
-        }
-
-        "three fields" in {
-            val record = "name" ~ "Alice" & "age" ~ 30 & "active" ~ true
-            val v      = record.values
-            typeCheck("""val _: (String, Int, Boolean) = v""")
-            assert(v == ("Alice", 30, true))
-        }
-    }
-
     "fields ordering" - {
         "returns fields in consistent order" in {
             val record = "name" ~ "Alice" & "age" ~ 30 & "city" ~ "Paris"
@@ -1074,23 +1044,6 @@ class RecordTest extends Test:
             assert((zipped.a: (Int, Double)) == (1, 10.0))
             assert((zipped.b: (String, Char)) == ("hello", 'x'))
             assert((zipped.c: (Boolean, Long)) == (true, 42L))
-        }
-    }
-
-    "fromRow edge cases" - {
-        "single field" in {
-            val row    = Row((name = "Alice"))
-            val record = Record.fromRow(row)
-            typeCheck("""val _: Record["name" ~ String] = record""")
-            assert(record.name == "Alice")
-        }
-
-        "three fields with complex types" in {
-            val row    = Row((name = "Alice", scores = List(1, 2, 3), active = true))
-            val record = Record.fromRow(row)
-            assert(record.name == "Alice")
-            assert(record.scores == List(1, 2, 3))
-            assert(record.active == true)
         }
     }
 
