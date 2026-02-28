@@ -77,8 +77,6 @@ class JavaFxBackend(
             val stage = new Stage()
             stage.setTitle(title)
             val scene = new Scene(root.asInstanceOf[javafx.scene.Parent], width, height)
-            val css   = getClass.getResource("/kyo/javafx-defaults.css")
-            if css != null then discard(scene.getStylesheets.add(css.toExternalForm))
             stage.setScene(scene)
             stage.show()
         }
@@ -218,15 +216,22 @@ class JavaFxBackend(
             _ <- c.identifier.fold(noop) { v =>
                 node.setId(v); noop
             }
-            _ <- c.style.fold(noop) {
-                case s: String =>
-                    node.setStyle(s); noop
-                case sig: Signal[?] =>
-                    subscribe(sig.asInstanceOf[Signal[String]]) { v =>
-                        runOnFx(updates)(node.setStyle(v))
-                            .andThen(rendered.set(ui).unit)
-                    }
-            }
+            _ <-
+                val uiCss =
+                    if c.uiStyle.isEmpty then ""
+                    else internal.FxCssStyleRenderer.render(c.uiStyle)
+                c.style.fold {
+                    if uiCss.nonEmpty then node.setStyle(uiCss)
+                    noop
+                } {
+                    case s: String =>
+                        node.setStyle(if uiCss.nonEmpty then s"$s $uiCss" else s); noop
+                    case sig: Signal[?] =>
+                        subscribe(sig.asInstanceOf[Signal[String]]) { v =>
+                            runOnFx(updates)(node.setStyle(if uiCss.nonEmpty then s"$v $uiCss" else v))
+                                .andThen(rendered.set(ui).unit)
+                        }
+                }
             _ <- c.hidden.fold(noop) {
                 case b: Boolean =>
                     node.setVisible(!b); node.setManaged(!b); noop

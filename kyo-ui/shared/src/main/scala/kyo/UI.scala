@@ -106,6 +106,7 @@ object UI:
             dynamicClassName: Maybe[Signal[String]] = Absent,
             identifier: Maybe[String] = Absent,
             style: Maybe[String | Signal[String]] = Absent,
+            uiStyle: Style = Style.empty,
             hidden: Maybe[Boolean | Signal[Boolean]] = Absent,
             onClick: Maybe[Unit < Async] = Absent,
             onKeyDown: Maybe[KeyEvent => Unit < Async] = Absent,
@@ -128,6 +129,7 @@ object UI:
                 withCommon(common.copy(classes = common.classes :+ (name, Present(condition))))
             def id(v: String): Self                          = withCommon(common.copy(identifier = Present(v)))
             def style(v: String | Signal[String]): Self      = withCommon(common.copy(style = Present(v)))
+            def style(v: Style): Self                        = withCommon(common.copy(uiStyle = common.uiStyle ++ v))
             def hidden(v: Boolean | Signal[Boolean]): Self   = withCommon(common.copy(hidden = Present(v)))
             def onClick(action: Unit < Async): Self          = withCommon(common.copy(onClick = Present(action)))
             def onKeyDown(f: KeyEvent => Unit < Async): Self = withCommon(common.copy(onKeyDown = Present(f)))

@@ -1,5 +1,21 @@
 package kyo
 
 trait UIScope:
+    export Style.Alignment
+    export Style.BorderStyle
+    export Style.Color
+    export Style.Cursor
+    export Style.FontStyle
+    export Style.FontWeight
+    export Style.Justification
+    export Style.Overflow
+    export Style.Size
+    export Style.TextAlign
+    export Style.TextDecoration
+    export Style.TextOverflow
+    export Style.TextTransform
+    export Style.em
+    export Style.pct
+    export Style.px
     export UI.*
 end UIScope

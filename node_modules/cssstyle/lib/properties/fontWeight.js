@@ -1,0 +1,57 @@
+"use strict";
+
+const parsers = require("../parsers");
+
+const property = "font-weight";
+const shorthand = "font";
+
+module.exports.parse = (v, opt = {}) => {
+  const { globalObject } = opt;
+  if (v === "") {
+    return v;
+  }
+  const value = parsers.parsePropertyValue(property, v, {
+    globalObject,
+    inArray: true
+  });
+  if (Array.isArray(value) && value.length === 1) {
+    const parsedValue = parsers.resolveNumericValue(value, {
+      min: 1,
+      max: 1000
+    });
+    if (!parsedValue) {
+      return;
+    }
+    return parsedValue;
+  } else if (typeof value === "string") {
+    return value;
+  }
+};
+
+module.exports.definition = {
+  set(v) {
+    v = parsers.prepareValue(v);
+    if (parsers.hasVarFunc(v)) {
+      this._setProperty(shorthand, "");
+      this._setProperty(property, v);
+    } else {
+      const val = module.exports.parse(v, {
+        globalObject: this._global
+      });
+      if (typeof val === "string") {
+        const priority =
+          !this._priorities.get(shorthand) && this._priorities.has(property)
+            ? this._priorities.get(property)
+            : "";
+        this._setProperty(property, val, priority);
+      }
+    }
+  },
+  get() {
+    return this.getPropertyValue(property);
+  },
+  enumerable: true,
+  configurable: true
+};
+
+module.exports.property = property;

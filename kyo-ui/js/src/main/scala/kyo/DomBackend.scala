@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.UI.AST.*
+import kyo.internal.DomStyleSheet
 import org.scalajs.dom
 import org.scalajs.dom.document
 import scala.annotation.tailrec
@@ -78,7 +79,7 @@ class DomBackend extends UIBackend:
             _ <- c.identifier.fold(noop)(v =>
                 el.setAttribute("id", v); noop
             )
-            _ <- c.style.fold(noop)(v => applyStringAttr(el, ui, "style", v, rendered))
+            _ <- applyStyle(el, ui, c, rendered)
             _ <- c.hidden.fold(noop)(v => applyBoolProp(el, ui, "hidden", v, rendered))
             _ <- c.onClick.fold(noop) { action =>
                 el.addEventListener("click", (_: dom.Event) => runHandler(action)); noop
@@ -109,6 +110,29 @@ class DomBackend extends UIBackend:
             _ <- applyGenericHandlers(el, c.handlers)
         yield ()
     end applyCommon
+
+    private def applyStyle(el: dom.Element, ui: UI, c: CommonAttrs, rendered: SignalRef[UI])(using Frame): Unit < (Async & Scope) =
+        val uiStyle = c.uiStyle
+        if uiStyle.isEmpty then
+            c.style.fold(noop)(v => applyStringAttr(el, ui, "style", v, rendered))
+        else
+            c.style match
+                case Present(sig: Signal[?]) =>
+                    // Dynamic string style + static Style: subscribe and merge on each emission
+                    val baseCss = internal.CssStyleRenderer.render(uiStyle.baseProps)
+                    subscribe(sig.asInstanceOf[Signal[String]]) { value =>
+                        el.setAttribute("style", value + " " + baseCss)
+                        rendered.set(ui).unit
+                    }
+                case Present(s: String) =>
+                    val _ = DomStyleSheet(el, uiStyle, Present(s))
+                    noop
+                case _ =>
+                    val _ = DomStyleSheet(el, uiStyle, Absent)
+                    noop
+            end match
+        end if
+    end applyStyle
 
     private val noop: Unit < (Async & Scope) = ()
 
