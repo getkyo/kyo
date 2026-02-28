@@ -20,7 +20,7 @@ class HttpServerTest extends Test:
     )(using Frame): A < (S & Async & Scope & Abort[HttpError]) =
         HttpServer.init(0, "localhost")(handlers*).map(server => test(server.port))
 
-    def withCorsServer[A, S](cors: CorsConfig, handlers: HttpHandler[?, ?, ?]*)(
+    def withCorsServer[A, S](cors: HttpCors, handlers: HttpHandler[?, ?, ?]*)(
         test: Int => A < (S & Async & Abort[HttpError])
     )(using Frame): A < (S & Async & Scope & Abort[HttpError]) =
         HttpServer.init(HttpServer.Config(port = 0, host = "localhost", cors = Present(cors)))(handlers*).map(server => test(server.port))
@@ -2154,7 +2154,7 @@ class HttpServerTest extends Test:
     // available for the target resource." The router is the authoritative source for which
     // methods are registered on a path, so OPTIONS is handled at the router level — not by
     // dispatching to a per-route handler/filter. CORS preflight (which rides on OPTIONS) is
-    // therefore a server-level concern configured via CorsConfig, not a per-route filter.
+    // therefore a server-level concern configured via HttpCors, not a per-route filter.
     // The per-route HttpFilter.server.cors() filter still adds CORS headers to regular
     // (non-OPTIONS) responses.
     "CORS" - {
@@ -2162,7 +2162,7 @@ class HttpServerTest extends Test:
         "CORS preflight OPTIONS returns 204 with CORS headers (server-level)" in run {
             val route = HttpRoute.getRaw("cors-resource").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.okText("ok"))
-            withCorsServer(CorsConfig.allowAll, ep) { port =>
+            withCorsServer(HttpCors.allowAll, ep) { port =>
                 sendRaw(port, HttpMethod.OPTIONS, "/cors-resource").map { resp =>
                     assert(
                         resp.status == HttpStatus.NoContent,
@@ -2201,7 +2201,7 @@ class HttpServerTest extends Test:
                 .request(_.bodyJson[User])
                 .response(_.bodyText)
             val ep = route.handler(_ => HttpResponse.okText("ok"))
-            withCorsServer(CorsConfig.allowAll, ep) { port =>
+            withCorsServer(HttpCors.allowAll, ep) { port =>
                 sendRaw(port, HttpMethod.OPTIONS, "/cors-post").map { resp =>
                     assert(
                         resp.status == HttpStatus.NoContent,
@@ -2225,7 +2225,7 @@ class HttpServerTest extends Test:
             val putEp       = putRoute.handler(_ => HttpResponse.okText("ok"))
             val patchEp     = patchRoute.handler(_ => HttpResponse.okText("ok"))
             val deleteEp    = deleteRoute.handler(_ => HttpResponse.okText("ok"))
-            withCorsServer(CorsConfig.allowAll, putEp, patchEp, deleteEp) { port =>
+            withCorsServer(HttpCors.allowAll, putEp, patchEp, deleteEp) { port =>
                 Kyo.foreach(Seq("/cors-put", "/cors-patch", "/cors-del")) { path =>
                     sendRaw(port, HttpMethod.OPTIONS, path).map { resp =>
                         assert(
@@ -2251,7 +2251,7 @@ class HttpServerTest extends Test:
                     }
                     HttpResponse.ok.addField("body", events)
                 }
-            withCorsServer(CorsConfig.allowAll, corsEp) { port =>
+            withCorsServer(HttpCors.allowAll, corsEp) { port =>
                 Async.timeout(3.seconds) {
                     sendRaw(port, HttpMethod.OPTIONS, "/cors-sse").map { resp =>
                         assert(
@@ -2270,7 +2270,7 @@ class HttpServerTest extends Test:
             val postRoute = HttpRoute.postRaw("cors-mixed").request(_.bodyJson[User]).response(_.bodyText)
             val getEp     = getRoute.handler(_ => HttpResponse.okText("get"))
             val postEp    = postRoute.handler(_ => HttpResponse.okText("post"))
-            withCorsServer(CorsConfig.allowAll, getEp, postEp) { port =>
+            withCorsServer(HttpCors.allowAll, getEp, postEp) { port =>
                 Async.timeout(3.seconds) {
                     sendRaw(port, HttpMethod.OPTIONS, "/cors-mixed").map { resp =>
                         assert(
@@ -2297,7 +2297,7 @@ class HttpServerTest extends Test:
         "CORS preflight OPTIONS returns 204 with CORS headers" in run {
             val route = HttpRoute.getRaw("cors-resource").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.okText("ok"))
-            withCorsServer(CorsConfig.allowAll, ep) { port =>
+            withCorsServer(HttpCors.allowAll, ep) { port =>
                 sendRaw(port, HttpMethod.OPTIONS, "/cors-resource").map { resp =>
                     assert(
                         resp.status == HttpStatus.NoContent,
@@ -2317,7 +2317,7 @@ class HttpServerTest extends Test:
         "CORS adds Access-Control-Allow-Origin on regular responses" in run {
             val route = HttpRoute.getRaw("cors-get").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.okText("hello"))
-            withCorsServer(CorsConfig.allowAll, ep) { port =>
+            withCorsServer(HttpCors.allowAll, ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-get"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
                     val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
@@ -2332,7 +2332,7 @@ class HttpServerTest extends Test:
                 .request(_.bodyJson[User])
                 .response(_.bodyText)
             val ep = route.handler(_ => HttpResponse.okText("ok"))
-            withCorsServer(CorsConfig.allowAll, ep) { port =>
+            withCorsServer(HttpCors.allowAll, ep) { port =>
                 sendRaw(port, HttpMethod.OPTIONS, "/cors-post2").map { resp =>
                     assert(
                         resp.status == HttpStatus.NoContent,
@@ -2351,7 +2351,7 @@ class HttpServerTest extends Test:
             val putEp       = putRoute.handler(_ => HttpResponse.okText("ok"))
             val patchEp     = patchRoute.handler(_ => HttpResponse.okText("ok"))
             val deleteEp    = deleteRoute.handler(_ => HttpResponse.okText("ok"))
-            withCorsServer(CorsConfig.allowAll, putEp, patchEp, deleteEp) { port =>
+            withCorsServer(HttpCors.allowAll, putEp, patchEp, deleteEp) { port =>
                 Kyo.foreach(Seq("/cors-put2", "/cors-patch2", "/cors-del2")) { path =>
                     sendRaw(port, HttpMethod.OPTIONS, path).map { resp =>
                         assert(
@@ -2377,7 +2377,7 @@ class HttpServerTest extends Test:
                     }
                     HttpResponse.ok.addField("body", events)
                 }
-            withCorsServer(CorsConfig.allowAll, corsEp) { port =>
+            withCorsServer(HttpCors.allowAll, corsEp) { port =>
                 Async.timeout(3.seconds) {
                     sendRaw(port, HttpMethod.OPTIONS, "/cors-sse2").map { resp =>
                         assert(
@@ -2396,7 +2396,7 @@ class HttpServerTest extends Test:
             val postRoute = HttpRoute.postRaw("cors-mixed2").request(_.bodyJson[User]).response(_.bodyText)
             val getEp     = getRoute.handler(_ => HttpResponse.okText("get"))
             val postEp    = postRoute.handler(_ => HttpResponse.okText("post"))
-            withCorsServer(CorsConfig.allowAll, getEp, postEp) { port =>
+            withCorsServer(HttpCors.allowAll, getEp, postEp) { port =>
                 Async.timeout(3.seconds) {
                     sendRaw(port, HttpMethod.OPTIONS, "/cors-mixed2").map { resp =>
                         assert(
@@ -2417,7 +2417,7 @@ class HttpServerTest extends Test:
         "CORS with custom origin" in run {
             val route = HttpRoute.getRaw("cors-custom").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.okText("ok"))
-            val cors  = CorsConfig(allowOrigin = "https://example.com")
+            val cors  = HttpCors(allowOrigin = "https://example.com")
             withCorsServer(cors, ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-custom"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -2435,7 +2435,7 @@ class HttpServerTest extends Test:
             val ep = route
                 .filter(HttpFilter.server.bearerAuth(t => t == "valid"))
                 .handler { _ => HttpResponse.okText("authorized") }
-            withCorsServer(CorsConfig.allowAll, ep) { port =>
+            withCorsServer(HttpCors.allowAll, ep) { port =>
                 sendRaw(port, HttpMethod.GET, "/cors-auth").map { noAuth =>
                     assert(noAuth.status == HttpStatus.Unauthorized, s"Missing auth should be 401, got ${noAuth.status}")
                     val allowOrigin = noAuth.headers.get("Access-Control-Allow-Origin")
@@ -2451,7 +2451,7 @@ class HttpServerTest extends Test:
                 HttpResponse.ok.addField("body", events)
             }
             var called = false
-            withCorsServer(CorsConfig.allowAll, ep) { port =>
+            withCorsServer(HttpCors.allowAll, ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
                     Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-sse-get2"))) { resp =>

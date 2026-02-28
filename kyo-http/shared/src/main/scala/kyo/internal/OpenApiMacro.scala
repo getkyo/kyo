@@ -28,16 +28,16 @@ private[kyo] object OpenApiMacro:
         generateRoutes(parseSpec(jsonStr, s" at $resolved"))
     end deriveImpl
 
-    private def parseSpec(jsonStr: String, context: String)(using Quotes): OpenApi =
+    private def parseSpec(jsonStr: String, context: String)(using Quotes): HttpOpenApi =
         import quotes.reflect.*
-        Schema[OpenApi].decode(jsonStr) match
+        Schema[HttpOpenApi].decode(jsonStr) match
             case Result.Success(v) => v
             case Result.Failure(e) => report.errorAndAbort(s"Failed to parse OpenAPI spec$context: $e")
             case Result.Panic(ex)  => report.errorAndAbort(s"Failed to parse OpenAPI spec$context: ${ex.getMessage}")
         end match
     end parseSpec
 
-    private def generateRoutes(openApi: OpenApi)(using Quotes): Expr[Any] =
+    private def generateRoutes(openApi: HttpOpenApi)(using Quotes): Expr[Any] =
         import quotes.reflect.*
 
         val operations =
@@ -70,7 +70,7 @@ private[kyo] object OpenApiMacro:
         }.asExpr
     end generateRoutes
 
-    private def buildRoute(name: String, method: String, pathTemplate: String, operation: OpenApi.Operation)(using
+    private def buildRoute(name: String, method: String, pathTemplate: String, operation: HttpOpenApi.Operation)(using
         Quotes
     ): quotes.reflect.Term =
         import quotes.reflect.*
@@ -86,7 +86,7 @@ private[kyo] object OpenApiMacro:
             case '[pathType] =>
                 val pathExpr = pathTerm.asExprOf[kyo.HttpPath[pathType]]
 
-                // Matches the 7 methods defined on OpenApi.PathItem (OpenAPI 3.x has no trace/connect)
+                // Matches the 7 methods defined on HttpOpenApi.PathItem (OpenAPI 3.x has no trace/connect)
                 val methodExpr: Expr[kyo.HttpMethod] = method match
                     case "GET"     => '{ kyo.HttpMethod.GET }
                     case "POST"    => '{ kyo.HttpMethod.POST }
@@ -114,7 +114,7 @@ private[kyo] object OpenApiMacro:
                     .getOrElse(
                         operation.responses.get("default")
                             .map(resp => (kyo.HttpStatus.Success.OK: kyo.HttpStatus, resp))
-                            .getOrElse((kyo.HttpStatus.Success.OK: kyo.HttpStatus, OpenApi.Response("", None)))
+                            .getOrElse((kyo.HttpStatus.Success.OK: kyo.HttpStatus, HttpOpenApi.Response("", None)))
                     )
                 val jsonResponseSchema =
                     for
@@ -140,7 +140,7 @@ private[kyo] object OpenApiMacro:
     /** Builds a RequestDef by constructing Field.Param instances directly. */
     private def buildRequestDef(using
         Quotes
-    )(pathTerm: quotes.reflect.Term, params: List[OpenApi.Parameter], context: String = ""): quotes.reflect.Term =
+    )(pathTerm: quotes.reflect.Term, params: List[HttpOpenApi.Parameter], context: String = ""): quotes.reflect.Term =
         import quotes.reflect.*
 
         if params.isEmpty then
@@ -230,7 +230,7 @@ private[kyo] object OpenApiMacro:
     end buildRequestDef
 
     /** Builds a ResponseDef, optionally with a JSON body field. */
-    private def buildResponseDef(jsonSchema: Option[OpenApi.SchemaObject], status: kyo.HttpStatus, context: String = "")(using
+    private def buildResponseDef(jsonSchema: Option[HttpOpenApi.SchemaObject], status: kyo.HttpStatus, context: String = "")(using
         Quotes
     ): quotes.reflect.Term =
         import quotes.reflect.*
@@ -278,7 +278,9 @@ private[kyo] object OpenApiMacro:
 
     // ==================== Path building ====================
 
-    private def buildPath(pathTemplate: String, params: List[OpenApi.Parameter], context: String = "")(using Quotes): quotes.reflect.Term =
+    private def buildPath(pathTemplate: String, params: List[HttpOpenApi.Parameter], context: String = "")(using
+        Quotes
+    ): quotes.reflect.Term =
         import quotes.reflect.*
 
         val segments = pathTemplate.split("/").filter(_.nonEmpty).toList
@@ -305,7 +307,7 @@ private[kyo] object OpenApiMacro:
         end if
     end buildPath
 
-    private def buildCapture(paramName: String, pathParams: List[OpenApi.Parameter], context: String = "")(using
+    private def buildCapture(paramName: String, pathParams: List[HttpOpenApi.Parameter], context: String = "")(using
         Quotes
     ): quotes.reflect.Term =
         import quotes.reflect.*
@@ -337,7 +339,7 @@ private[kyo] object OpenApiMacro:
     // ==================== Helpers ====================
 
     /** Resolves an OpenAPI SchemaObject to a Scala TypeRepr. */
-    private def resolveCodecType(schema: OpenApi.SchemaObject)(using Quotes): quotes.reflect.TypeRepr =
+    private def resolveCodecType(schema: HttpOpenApi.SchemaObject)(using Quotes): quotes.reflect.TypeRepr =
         import quotes.reflect.*
         (schema.`type`, schema.format) match
             case (Some("integer"), Some("int64")) => TypeRepr.of[Long]
@@ -363,7 +365,7 @@ private[kyo] object OpenApiMacro:
             case _                       => TypeRepr.of[Any]
     end innerTypeRepr
 
-    private def extractOperations(pathItem: OpenApi.PathItem): List[(String, OpenApi.Operation)] =
+    private def extractOperations(pathItem: HttpOpenApi.PathItem): List[(String, HttpOpenApi.Operation)] =
         List(
             "GET"     -> pathItem.get,
             "POST"    -> pathItem.post,

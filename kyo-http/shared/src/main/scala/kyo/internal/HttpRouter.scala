@@ -17,7 +17,7 @@ final class HttpRouter private (
     private val captureWireNames: Span[Span[String]],
     private val streamingReqFlags: Span[Boolean],
     private val streamingRespFlags: Span[Boolean],
-    private[kyo] val corsConfig: Maybe[CorsConfig] = Absent
+    private[kyo] val corsConfig: Maybe[HttpCors] = Absent
 ):
     import HttpRouter.*
 
@@ -238,14 +238,14 @@ object HttpRouter:
         end match
     end methodIndex
 
-    private def wrapWithCors(handler: HttpHandler[?, ?, ?], cors: CorsConfig): HttpHandler[?, ?, ?] =
+    private def wrapWithCors(handler: HttpHandler[?, ?, ?], cors: HttpCors): HttpHandler[?, ?, ?] =
         val headers = Seq("Access-Control-Allow-Origin" -> cors.allowOrigin) ++
             (if cors.allowCredentials then Seq("Access-Control-Allow-Credentials" -> "true") else Seq.empty) ++
             (if cors.exposeHeaders.nonEmpty then Seq("Access-Control-Expose-Headers" -> cors.exposeHeaders.mkString(", ")) else Seq.empty)
         HttpHandler.wrapHeaders(handler, headers)
     end wrapWithCors
 
-    def apply(endpointSeq: Seq[HttpHandler[?, ?, ?]], cors: Maybe[CorsConfig] = Absent): HttpRouter =
+    def apply(endpointSeq: Seq[HttpHandler[?, ?, ?]], cors: Maybe[HttpCors] = Absent): HttpRouter =
         val handlers = cors match
             case Present(c) => endpointSeq.map(wrapWithCors(_, c))
             case Absent     => endpointSeq

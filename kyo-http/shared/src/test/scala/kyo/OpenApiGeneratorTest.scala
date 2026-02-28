@@ -110,13 +110,13 @@ class OpenApiGeneratorTest extends kyo.Test:
                 .response(_.bodyJson[String])
             val h    = route.handler(_ => HttpResponse.okJson("ok"))
             val spec = OpenApiGenerator.generate(Seq(h))
-            val json = OpenApi.toJson(spec)
+            val json = HttpOpenApi.toJson(spec)
             // The UpdateItem schema should have "name" in required but NOT "description"
             assert(json.contains("properties"), s"OpenAPI should contain schema properties, got: $json")
             // Find the schema — it may be inline or in components
             val schema = spec.paths("/items/{id}").put.get.requestBody.get
                 .content("application/json").schema
-            val resolvedSchema: OpenApi.SchemaObject = schema.`$ref` match
+            val resolvedSchema: HttpOpenApi.SchemaObject = schema.`$ref` match
                 case Some(ref) =>
                     val schemaName = ref.stripPrefix("#/components/schemas/")
                     spec.components.get.schemas.get.apply(schemaName)
@@ -192,7 +192,7 @@ class OpenApiGeneratorTest extends kyo.Test:
                 Seq(h),
                 OpenApiGenerator.Config(title = "Pet API", version = "1.0.0")
             )
-            val json = OpenApi.toJson(spec)
+            val json = HttpOpenApi.toJson(spec)
             assert(json.contains("getPet"))
             assert(json.contains("Pet API"))
             assert(json.contains("petId"))

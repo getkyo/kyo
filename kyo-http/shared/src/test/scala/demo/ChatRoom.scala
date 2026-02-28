@@ -64,7 +64,7 @@ object ChatRoom extends KyoApp:
             server <- HttpServer.init(
                 HttpServer.Config()
                     .port(port)
-                    .cors(CorsConfig(allowOrigin = "*", allowCredentials = false))
+                    .cors(HttpCors(allowOrigin = "*", allowCredentials = false))
                     .openApi("/openapi.json", "ChatRoom")
             )(post, list, feed, health)
             _ <- Console.printLine(s"ChatRoom running on http://localhost:${server.port}")
@@ -94,7 +94,7 @@ object ChatRoomClient extends KyoApp:
             server <- HttpServer.init(
                 HttpServer.Config()
                     .port(0)
-                    .cors(CorsConfig(allowOrigin = "*"))
+                    .cors(HttpCors(allowOrigin = "*"))
             )(post, list, feed)
             _ <- Console.printLine(s"ChatRoomClient started server on http://localhost:${server.port}")
 

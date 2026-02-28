@@ -3,40 +3,40 @@ package kyo
 import kyo.*
 import kyo.Record2.~
 
-class OpenApiTest extends kyo.Test:
+class HttpOpenApiTest extends kyo.Test:
 
-    val petStoreSpec = OpenApi(
+    val petStoreSpec = HttpOpenApi(
         openapi = "3.0.0",
-        info = OpenApi.Info(
+        info = HttpOpenApi.Info(
             title = "Petstore",
             version = "1.0.0",
             description = Some("A sample API")
         ),
         paths = Map(
-            "/pets" -> OpenApi.PathItem(
-                get = Some(OpenApi.Operation(
+            "/pets" -> HttpOpenApi.PathItem(
+                get = Some(HttpOpenApi.Operation(
                     tags = Some(List("pets")),
                     summary = Some("List all pets"),
                     description = None,
                     operationId = Some("listPets"),
                     deprecated = None,
                     parameters = Some(List(
-                        OpenApi.Parameter(
+                        HttpOpenApi.Parameter(
                             name = "limit",
                             in = "query",
                             required = Some(false),
-                            schema = OpenApi.SchemaObject.integer,
+                            schema = HttpOpenApi.SchemaObject.integer,
                             description = Some("How many items to return")
                         )
                     )),
                     requestBody = None,
                     responses = Map(
-                        "200" -> OpenApi.Response(
+                        "200" -> HttpOpenApi.Response(
                             description = "A list of pets",
                             content = Some(Map(
-                                "application/json" -> OpenApi.MediaType(
-                                    schema = OpenApi.SchemaObject.array(
-                                        OpenApi.SchemaObject(
+                                "application/json" -> HttpOpenApi.MediaType(
+                                    schema = HttpOpenApi.SchemaObject.array(
+                                        HttpOpenApi.SchemaObject(
                                             `type` = None,
                                             format = None,
                                             items = None,
@@ -54,18 +54,18 @@ class OpenApiTest extends kyo.Test:
                     ),
                     security = None
                 )),
-                post = Some(OpenApi.Operation(
+                post = Some(HttpOpenApi.Operation(
                     tags = Some(List("pets")),
                     summary = Some("Create a pet"),
                     description = None,
                     operationId = Some("createPet"),
                     deprecated = None,
                     parameters = None,
-                    requestBody = Some(OpenApi.RequestBody(
+                    requestBody = Some(HttpOpenApi.RequestBody(
                         required = Some(true),
                         content = Map(
-                            "application/json" -> OpenApi.MediaType(
-                                schema = OpenApi.SchemaObject(
+                            "application/json" -> HttpOpenApi.MediaType(
+                                schema = HttpOpenApi.SchemaObject(
                                     `type` = None,
                                     format = None,
                                     items = None,
@@ -81,7 +81,7 @@ class OpenApiTest extends kyo.Test:
                         description = None
                     )),
                     responses = Map(
-                        "201" -> OpenApi.Response(
+                        "201" -> HttpOpenApi.Response(
                             description = "Pet created",
                             content = None
                         )
@@ -94,29 +94,29 @@ class OpenApiTest extends kyo.Test:
                 head = None,
                 options = None
             ),
-            "/pets/{petId}" -> OpenApi.PathItem(
-                get = Some(OpenApi.Operation(
+            "/pets/{petId}" -> HttpOpenApi.PathItem(
+                get = Some(HttpOpenApi.Operation(
                     tags = Some(List("pets")),
                     summary = Some("Info for a specific pet"),
                     description = None,
                     operationId = Some("showPetById"),
                     deprecated = None,
                     parameters = Some(List(
-                        OpenApi.Parameter(
+                        HttpOpenApi.Parameter(
                             name = "petId",
                             in = "path",
                             required = Some(true),
-                            schema = OpenApi.SchemaObject.string,
+                            schema = HttpOpenApi.SchemaObject.string,
                             description = Some("The id of the pet to retrieve")
                         )
                     )),
                     requestBody = None,
                     responses = Map(
-                        "200" -> OpenApi.Response(
+                        "200" -> HttpOpenApi.Response(
                             description = "Expected response to a valid request",
                             content = Some(Map(
-                                "application/json" -> OpenApi.MediaType(
-                                    schema = OpenApi.SchemaObject(
+                                "application/json" -> HttpOpenApi.MediaType(
+                                    schema = HttpOpenApi.SchemaObject(
                                         `type` = None,
                                         format = None,
                                         items = None,
@@ -141,16 +141,16 @@ class OpenApiTest extends kyo.Test:
                 options = None
             )
         ),
-        components = Some(OpenApi.Components(
+        components = Some(HttpOpenApi.Components(
             schemas = Some(Map(
-                "Pet" -> OpenApi.SchemaObject(
+                "Pet" -> HttpOpenApi.SchemaObject(
                     `type` = Some("object"),
                     format = None,
                     items = None,
                     properties = Some(Map(
-                        "id"   -> OpenApi.SchemaObject.long,
-                        "name" -> OpenApi.SchemaObject.string,
-                        "tag"  -> OpenApi.SchemaObject.string
+                        "id"   -> HttpOpenApi.SchemaObject.long,
+                        "name" -> HttpOpenApi.SchemaObject.string,
+                        "tag"  -> HttpOpenApi.SchemaObject.string
                     )),
                     required = Some(List("id", "name")),
                     additionalProperties = None,
@@ -163,10 +163,10 @@ class OpenApiTest extends kyo.Test:
         ))
     )
 
-    "OpenApi" - {
+    "HttpOpenApi" - {
 
         "toJson produces valid JSON" in {
-            val json = OpenApi.toJson(petStoreSpec)
+            val json = HttpOpenApi.toJson(petStoreSpec)
             assert(json.contains("\"openapi\":\"3.0.0\"") || json.contains("\"openapi\" : \"3.0.0\""))
             assert(json.contains("Petstore"))
             assert(json.contains("listPets"))
@@ -175,8 +175,8 @@ class OpenApiTest extends kyo.Test:
         }
 
         "roundtrip toJson/decode" in {
-            val json   = OpenApi.toJson(petStoreSpec)
-            val parsed = Schema[OpenApi].decode(json)
+            val json   = HttpOpenApi.toJson(petStoreSpec)
+            val parsed = Schema[HttpOpenApi].decode(json)
             parsed match
                 case Result.Success(spec) =>
                     assert(spec.openapi == "3.0.0")
@@ -194,8 +194,8 @@ class OpenApiTest extends kyo.Test:
         }
 
         "roundtrip preserves operations" in {
-            val json   = OpenApi.toJson(petStoreSpec)
-            val parsed = Schema[OpenApi].decode(json)
+            val json   = HttpOpenApi.toJson(petStoreSpec)
+            val parsed = Schema[HttpOpenApi].decode(json)
             parsed match
                 case Result.Success(spec) =>
                     val petsPath = spec.paths("/pets")
@@ -222,8 +222,8 @@ class OpenApiTest extends kyo.Test:
         }
 
         "roundtrip preserves components" in {
-            val json   = OpenApi.toJson(petStoreSpec)
-            val parsed = Schema[OpenApi].decode(json)
+            val json   = HttpOpenApi.toJson(petStoreSpec)
+            val parsed = Schema[HttpOpenApi].decode(json)
             parsed match
                 case Result.Success(spec) =>
                     assert(spec.components.isDefined)
@@ -242,7 +242,7 @@ class OpenApiTest extends kyo.Test:
 
         "decode with minimal spec" in {
             val json   = """{"openapi":"3.0.0","info":{"title":"Min","version":"0.1"},"paths":{}}"""
-            val parsed = Schema[OpenApi].decode(json)
+            val parsed = Schema[HttpOpenApi].decode(json)
             parsed match
                 case Result.Success(spec) =>
                     assert(spec.openapi == "3.0.0")
@@ -257,29 +257,29 @@ class OpenApiTest extends kyo.Test:
         }
 
         "decode with invalid JSON fails" in {
-            val parsed = Schema[OpenApi].decode("not json")
+            val parsed = Schema[HttpOpenApi].decode("not json")
             assert(!parsed.isSuccess)
         }
 
         "SchemaObject convenience constructors" in {
-            assert(OpenApi.SchemaObject.string.`type` == Some("string"))
-            assert(OpenApi.SchemaObject.integer.`type` == Some("integer"))
-            assert(OpenApi.SchemaObject.integer.format == Some("int32"))
-            assert(OpenApi.SchemaObject.long.format == Some("int64"))
-            assert(OpenApi.SchemaObject.number.`type` == Some("number"))
-            assert(OpenApi.SchemaObject.boolean.`type` == Some("boolean"))
-            assert(OpenApi.SchemaObject.obj.`type` == Some("object"))
+            assert(HttpOpenApi.SchemaObject.string.`type` == Some("string"))
+            assert(HttpOpenApi.SchemaObject.integer.`type` == Some("integer"))
+            assert(HttpOpenApi.SchemaObject.integer.format == Some("int32"))
+            assert(HttpOpenApi.SchemaObject.long.format == Some("int64"))
+            assert(HttpOpenApi.SchemaObject.number.`type` == Some("number"))
+            assert(HttpOpenApi.SchemaObject.boolean.`type` == Some("boolean"))
+            assert(HttpOpenApi.SchemaObject.obj.`type` == Some("object"))
 
-            val arr = OpenApi.SchemaObject.array(OpenApi.SchemaObject.string)
+            val arr = HttpOpenApi.SchemaObject.array(HttpOpenApi.SchemaObject.string)
             assert(arr.`type` == Some("array"))
             assert(arr.items.get.`type` == Some("string"))
         }
     }
 
-    "OpenApi.fromJson" - {
+    "HttpOpenApi.fromJson" - {
 
         "single GET route" in {
-            val api = OpenApi.fromJson("""{
+            val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
                 "paths": {
@@ -296,7 +296,7 @@ class OpenApiTest extends kyo.Test:
         }
 
         "multiple routes" in {
-            val api = OpenApi.fromJson("""{
+            val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
                 "paths": {
@@ -319,7 +319,7 @@ class OpenApiTest extends kyo.Test:
         }
 
         "path with capture" in {
-            val api = OpenApi.fromJson("""{
+            val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
                 "paths": {
@@ -342,7 +342,7 @@ class OpenApiTest extends kyo.Test:
         }
 
         "query parameter" in {
-            val api = OpenApi.fromJson("""{
+            val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
                 "paths": {
@@ -366,7 +366,7 @@ class OpenApiTest extends kyo.Test:
         }
 
         "optional query parameter" in {
-            val api = OpenApi.fromJson("""{
+            val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
                 "paths": {
@@ -388,7 +388,7 @@ class OpenApiTest extends kyo.Test:
         }
 
         "header parameter" in {
-            val api = OpenApi.fromJson("""{
+            val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
                 "paths": {
@@ -411,7 +411,7 @@ class OpenApiTest extends kyo.Test:
         }
 
         "response body json" in {
-            val api = OpenApi.fromJson("""{
+            val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
                 "paths": {
@@ -437,7 +437,7 @@ class OpenApiTest extends kyo.Test:
         }
 
         "path capture + query + response body" in {
-            val api = OpenApi.fromJson("""{
+            val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
                 "paths": {
@@ -467,7 +467,7 @@ class OpenApiTest extends kyo.Test:
         }
 
         "generated operation name when no operationId" in {
-            val api = OpenApi.fromJson("""{
+            val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
                 "paths": {
@@ -482,4 +482,4 @@ class OpenApiTest extends kyo.Test:
             assert(route.method == HttpMethod.GET)
         }
     }
-end OpenApiTest
+end HttpOpenApiTest

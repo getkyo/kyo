@@ -2,14 +2,14 @@ package kyo
 
 import kyo.*
 
-case class OpenApi(
+case class HttpOpenApi(
     openapi: String,
-    info: OpenApi.Info,
-    paths: Map[String, OpenApi.PathItem],
-    components: Option[OpenApi.Components]
+    info: HttpOpenApi.Info,
+    paths: Map[String, HttpOpenApi.PathItem],
+    components: Option[HttpOpenApi.Components]
 ) derives Schema, CanEqual
 
-object OpenApi:
+object HttpOpenApi:
 
     transparent inline def fromJson(inline json: String): Any =
         ${ kyo.internal.OpenApiMacro.deriveFromStringImpl('json) }
@@ -17,10 +17,10 @@ object OpenApi:
     transparent inline def fromFile(inline path: String): Any =
         ${ kyo.internal.OpenApiMacro.deriveImpl('path) }
 
-    def toJson(openApi: OpenApi): String =
-        Schema[OpenApi].encode(openApi)
+    def toJson(openApi: HttpOpenApi): String =
+        Schema[HttpOpenApi].encode(openApi)
 
-    def toFile(openApi: OpenApi, path: String): Unit =
+    def toFile(openApi: HttpOpenApi, path: String): Unit =
         val json = toJson(openApi)
         java.nio.file.Files.writeString(java.nio.file.Path.of(path), json): Unit
 
@@ -111,4 +111,4 @@ object OpenApi:
         in: Option[String]
     ) derives Schema, CanEqual
 
-end OpenApi
+end HttpOpenApi

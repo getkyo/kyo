@@ -1,6 +1,6 @@
 package kyo
 
-case class CorsConfig(
+case class HttpCors(
     allowOrigin: String = "*",
     allowHeaders: Seq[String] = Seq("Content-Type", "Authorization"),
     exposeHeaders: Seq[String] = Seq.empty,
@@ -8,6 +8,6 @@ case class CorsConfig(
     allowCredentials: Boolean = false
 ) derives CanEqual
 
-object CorsConfig:
-    val allowAll: CorsConfig = CorsConfig()
-end CorsConfig
+object HttpCors:
+    val allowAll: HttpCors = HttpCors()
+end HttpCors
