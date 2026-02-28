@@ -73,11 +73,12 @@ final class NettyClientBackend extends HttpBackend.Client:
     def sendWith[In, Out, A, S](
         conn: NettyConnection,
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
     )(
         f: HttpResponse[Out] => A < S
     )(using Frame): A < (S & Async & Abort[HttpError]) =
-        conn.sendWith(route, request)(f)
+        conn.sendWith(route, request, onReleaseUnsafe)(f)
 
     def isAlive(conn: NettyConnection)(using AllowUnsafe): Boolean =
         conn.isAlive

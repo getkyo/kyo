@@ -133,29 +133,29 @@ class ConnectionPoolTest extends Test:
         }
     }
 
-    "closeAll" - {
+    "close" - {
 
-        "discards all idle connections" in {
-            val (pool, discarded) = mkPoolWith()
+        "returns all idle connections" in {
+            val pool = mkPool()
             pool.release(key1, "a")
             pool.release(key1, "b")
             pool.release(key2, "c")
-            pool.closeAll()
-            assert(discarded.get() == 3)
+            val conns = pool.close()
+            assert(conns.size == 3)
         }
 
-        "pool is empty after closeAll" in {
+        "pool is empty after close" in {
             val pool = mkPool()
             pool.release(key1, "a")
-            pool.closeAll()
+            discard(pool.close())
             assert(pool.poll(key1) == Maybe.empty)
         }
 
-        "reserves reset after closeAll" in {
+        "operations are rejected after close" in {
             val pool = mkPool(max = 2)
-            assert(pool.tryReserve(key1))
-            pool.closeAll()
-            assert(pool.tryReserve(key1))
+            discard(pool.close())
+            assert(pool.poll(key1) == Maybe.empty)
+            assert(!pool.tryReserve(key1))
         }
     }
 
@@ -310,25 +310,23 @@ class ConnectionPoolTest extends Test:
         }
     }
 
-    "closeAll with inFlight" - {
+    "close with inFlight" - {
 
-        "inFlight resets after closeAll" in {
-            val pool = mkPool(max = 2)
-            assert(pool.tryReserve(key1)) // inFlight = 1
-            pool.closeAll()
-            // After closeAll, should be able to reserve again
+        "close returns tracked in-flight connections" in {
+            val pool = mkPool(max = 4)
             assert(pool.tryReserve(key1))
+            pool.track(key1, "inflight1")
+            pool.track(key1, "inflight2")
+            val conns = pool.close()
+            assert(conns.toSet == Set("inflight1", "inflight2"))
         }
 
-        "mixed idle and inFlight reset after closeAll" in {
-            val pool = mkPool(max = 2)
+        "close returns both idle and in-flight" in {
+            val pool = mkPool(max = 4)
             pool.release(key1, "idle")
-            assert(pool.tryReserve(key1)) // inFlight = 1, idle = 1, total = 2
-            assert(!pool.tryReserve(key1))
-            pool.closeAll()
-            // Both inFlight and idle should be reset
-            assert(pool.tryReserve(key1))
-            assert(pool.tryReserve(key1))
+            pool.track(key1, "inflight")
+            val conns = pool.close()
+            assert(conns.toSet == Set("idle", "inflight"))
         }
     }
 
@@ -424,23 +422,25 @@ class ConnectionPoolTest extends Test:
 
     "edge cases" - {
 
-        "release after closeAll works normally" in {
-            val pool = mkPool(max = 2)
+        "release after close discards connection" in {
+            val (pool, discarded) = mkPoolWith(max = 2)
             pool.release(key1, "before")
-            pool.closeAll()
+            discard(pool.close())
             pool.release(key1, "after")
-            assert(pool.poll(key1) == Present("after"))
+            assert(discarded.get() == 1) // "after" discarded by release on closed pool
+            assert(pool.poll(key1) == Maybe.empty)
         }
 
-        "multiple closeAll calls are idempotent" in {
-            val (pool, discarded) = mkPoolWith(max = 2)
+        "multiple close calls are idempotent" in {
+            val pool = mkPool(max = 2)
             pool.release(key1, "a")
             pool.release(key1, "b")
-            pool.closeAll()
-            pool.closeAll()
-            pool.closeAll()
-            assert(discarded.get() == 2)
-            assert(pool.poll(key1) == Maybe.empty)
+            val first  = pool.close()
+            val second = pool.close()
+            val third  = pool.close()
+            assert(first.size == 2)
+            assert(second.isEmpty)
+            assert(third.isEmpty)
         }
 
         "capacity 2 full fill-drain cycles" in {

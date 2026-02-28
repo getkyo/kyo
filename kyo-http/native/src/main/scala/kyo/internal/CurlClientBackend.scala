@@ -5,6 +5,7 @@ import kyo.<
 import kyo.Abort
 import kyo.AllowUnsafe
 import kyo.Async
+import kyo.AtomicBoolean
 import kyo.Channel
 import kyo.Chunk
 import kyo.Closed
@@ -65,92 +66,117 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
     def sendWith[In, Out, A, S](
         conn: Connection,
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
     )(
         f: HttpResponse[Out] => A < S
     )(using Frame): A < (S & Async & Abort[Http2Error]) =
         if RouteUtil.isStreamingResponse(route) then
-            sendStreaming(conn, route, request)(f)
+            sendStreaming(conn, route, request, onReleaseUnsafe)(f)
         else
-            sendBuffered(conn, route, request)(f)
+            sendBuffered(conn, route, request, onReleaseUnsafe)(f)
 
     private def sendBuffered[In, Out, A, S](
         conn: Connection,
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
     )(
         f: HttpResponse[Out] => A < S
     )(using Frame): A < (S & Async & Abort[Http2Error]) =
-        Sync.Unsafe.defer {
-            Zone {
-                val handle = curl_easy_init()
-                if handle == null then
-                    Abort.fail(Http2Error.ConnectionError(
-                        s"curl_easy_init failed for ${conn.host}:${conn.port}",
-                        new RuntimeException("curl_easy_init returned null")
-                    ))
-                else
-                    val transferId = CurlClientBackend.nextTransferId.getAndIncrement()
-                    val promise    = Promise.Unsafe.init[CurlBufferedResult, Abort[Http2Error]]()
-                    val state      = new CurlBufferedTransferState(promise, handle, conn.host, conn.port)
-                    configureHandle(handle, conn, route, request, transferId, state)
-                    eventLoop.enqueue(transferId, state)
-                    promise.safe.use { result =>
-                        Abort.get(RouteUtil.decodeBufferedResponse(
-                            route,
-                            HttpStatus(result.statusCode),
-                            result.headers,
-                            result.body
-                        )).map(f)
-                    }
-                end if
+        Sync.ensure(error => Sync.Unsafe.defer(onReleaseUnsafe(error))) {
+            Sync.Unsafe.defer {
+                Zone {
+                    val handle = curl_easy_init()
+                    if handle == null then
+                        Abort.fail(Http2Error.ConnectionError(
+                            s"curl_easy_init failed for ${conn.host}:${conn.port}",
+                            new RuntimeException("curl_easy_init returned null")
+                        ))
+                    else
+                        val transferId = CurlClientBackend.nextTransferId.getAndIncrement()
+                        val promise    = Promise.Unsafe.init[CurlBufferedResult, Abort[Http2Error]]()
+                        val state      = new CurlBufferedTransferState(promise, handle, conn.host, conn.port)
+                        configureHandle(handle, conn, route, request, transferId, state)
+                        eventLoop.enqueue(transferId, state)
+                        promise.safe.use { result =>
+                            Abort.get(RouteUtil.decodeBufferedResponse(
+                                route,
+                                HttpStatus(result.statusCode),
+                                result.headers,
+                                result.body
+                            )).map(f)
+                        }
+                    end if
+                }
             }
         }
 
     private def sendStreaming[In, Out, A, S](
         conn: Connection,
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
     )(
         f: HttpResponse[Out] => A < S
     )(using Frame): A < (S & Async & Abort[Http2Error]) =
         Sync.Unsafe.defer {
-            Zone {
-                val handle = curl_easy_init()
-                if handle == null then
-                    Abort.fail(Http2Error.ConnectionError(
-                        s"curl_easy_init failed for ${conn.host}:${conn.port}",
-                        new RuntimeException("curl_easy_init returned null")
-                    ))
-                else
-                    val transferId    = CurlClientBackend.nextTransferId.getAndIncrement()
-                    val headerPromise = Promise.Unsafe.init[CurlStreamingHeaders, Abort[Http2Error]]()
-                    val byteChannel   = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
-                    val state         = new CurlStreamingTransferState(headerPromise, byteChannel, handle, conn.host, conn.port)
-                    configureHandle(handle, conn, route, request, transferId, state)
-                    eventLoop.enqueue(transferId, state)
+            val phase2Started       = AtomicBoolean.Unsafe.init(false)
+            val streamFullyConsumed = AtomicBoolean.Unsafe.init(false)
+            Sync.ensure { error =>
+                Sync.Unsafe.defer {
+                    if !phase2Started.get() then
+                        onReleaseUnsafe(error)
+                }
+            } {
+                Zone {
+                    val handle = curl_easy_init()
+                    if handle == null then
+                        Abort.fail(Http2Error.ConnectionError(
+                            s"curl_easy_init failed for ${conn.host}:${conn.port}",
+                            new RuntimeException("curl_easy_init returned null")
+                        ))
+                    else
+                        val transferId    = CurlClientBackend.nextTransferId.getAndIncrement()
+                        val headerPromise = Promise.Unsafe.init[CurlStreamingHeaders, Abort[Http2Error]]()
+                        val byteChannel   = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
+                        val state         = new CurlStreamingTransferState(headerPromise, byteChannel, handle, conn.host, conn.port)
+                        configureHandle(handle, conn, route, request, transferId, state)
+                        eventLoop.enqueue(transferId, state)
 
-                    headerPromise.safe.use { sh =>
-                        val bodyStream = Stream[Span[Byte], Async] {
-                            Abort.run[Closed] {
-                                Loop.foreach {
-                                    byteChannel.safe.takeWith {
-                                        case Present(bytes) =>
-                                            Emit.valueWith(Chunk(bytes))(Loop.continue)
-                                        case Absent =>
-                                            Loop.done(())
+                        headerPromise.safe.use { sh =>
+                            Sync.Unsafe.defer(phase2Started.set(true)).andThen {
+                                val bodyStream = Stream[Span[Byte], Async] {
+                                    Sync.ensure { error =>
+                                        Sync.Unsafe.defer {
+                                            if !streamFullyConsumed.get() then
+                                                onReleaseUnsafe(Maybe(Result.Panic(new Exception("stream not fully consumed"))))
+                                            else
+                                                onReleaseUnsafe(error)
+                                        }
+                                    } {
+                                        Abort.run[Closed] {
+                                            Loop.foreach {
+                                                byteChannel.safe.takeWith {
+                                                    case Present(bytes) =>
+                                                        Emit.valueWith(Chunk(bytes))(Loop.continue)
+                                                    case Absent =>
+                                                        Sync.Unsafe.defer(streamFullyConsumed.set(true)).andThen(Loop.done(()))
+                                                }
+                                            }
+                                        }.unit
                                     }
                                 }
-                            }.unit
+                                Abort.get(RouteUtil.decodeStreamingResponse(
+                                    route,
+                                    HttpStatus(sh.statusCode),
+                                    sh.headers,
+                                    bodyStream
+                                )).map(f)
+                            }
                         }
-                        Abort.get(RouteUtil.decodeStreamingResponse(
-                            route,
-                            HttpStatus(sh.statusCode),
-                            sh.headers,
-                            bodyStream
-                        )).map(f)
-                    }
-                end if
+                    end if
+                }
             }
         }
 

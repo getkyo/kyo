@@ -37,11 +37,14 @@ final class FetchClientBackend extends HttpBackend.Client:
     def sendWith[In, Out, A, S](
         conn: Connection,
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
     )(
         f: HttpResponse[Out] => A < S
     )(using Frame): A < (S & Async & Abort[HttpError]) =
-        conn.send(route, request).map(f)
+        Sync.ensure(error => Sync.Unsafe.defer(onReleaseUnsafe(error))) {
+            conn.send(route, request).map(f)
+        }
 
     def isAlive(conn: Connection)(using AllowUnsafe): Boolean = false
 

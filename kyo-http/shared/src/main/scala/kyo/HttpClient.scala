@@ -128,11 +128,17 @@ final class HttpClient private (
             (filteredReq: HttpRequest[In]) =>
                 Sync.Unsafe.defer {
                     val key = HostKey(filteredReq.url.host, filteredReq.url.port)
+                    def onReleaseUnsafe(conn: backend.Connection): Maybe[Result.Error[Any]] => Unit =
+                        error =>
+                            pool.untrack(key, conn)
+                            error match
+                                case Absent => pool.release(key, conn)
+                                case _      => pool.discard(conn)
+                    end onReleaseUnsafe
                     pool.poll(key) match
                         case Present(conn) =>
-                            Sync.ensure(pool.release(key, conn)) {
-                                backend.sendWith(conn, route, filteredReq)(f)
-                            }
+                            pool.track(key, conn)
+                            backend.sendWith(conn, route, filteredReq, onReleaseUnsafe(conn))(f)
                         case _ =>
                             if pool.tryReserve(key) then
                                 Sync.ensure(pool.unreserve(key)) {
@@ -143,9 +149,8 @@ final class HttpClient private (
                                         config.connectTimeout
                                     ) {
                                         conn =>
-                                            Sync.ensure(pool.release(key, conn)) {
-                                                backend.sendWith(conn, route, filteredReq)(f)
-                                            }
+                                            pool.track(key, conn)
+                                            backend.sendWith(conn, route, filteredReq, onReleaseUnsafe(conn))(f)
                                     }
                                 }
                             else
@@ -160,7 +165,10 @@ final class HttpClient private (
     end poolWith
 
     def close(gracePeriod: Duration)(using Frame): Unit < Async =
-        Sync.Unsafe.defer(pool.closeAll())
+        Sync.Unsafe.defer {
+            val conns = pool.close()
+            Kyo.foreachDiscard(conns)(conn => backend.close(conn, gracePeriod))
+        }
     end close
     def close(using Frame): Unit < Async    = close(30.seconds)
     def closeNow(using Frame): Unit < Async = close(Duration.Zero)

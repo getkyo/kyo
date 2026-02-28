@@ -20,7 +20,8 @@ object HttpBackend:
         def sendWith[In, Out, A, S](
             conn: Connection,
             route: HttpRoute[In, Out, ?],
-            request: HttpRequest[In]
+            request: HttpRequest[In],
+            onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit = _ => ()
         )(
             f: HttpResponse[Out] => A < S
         )(using Frame): A < (S & Async & Abort[HttpError])

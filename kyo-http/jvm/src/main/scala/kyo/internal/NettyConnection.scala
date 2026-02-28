@@ -34,123 +34,153 @@ final private[kyo] class NettyConnection(
 
     def sendWith[In, Out, A, S](
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
     )(
         f: HttpResponse[Out] => A < S
     )(using Frame): A < (S & Async & Abort[HttpError]) =
         if RouteUtil.isStreamingResponse(route) then
-            sendStreamingWith(route, request)(f)
+            sendStreamingWith(route, request, onReleaseUnsafe)(f)
         else
-            sendBufferedWith(route, request)(f)
+            sendBufferedWith(route, request, onReleaseUnsafe)(f)
         end if
     end sendWith
 
     private def sendBufferedWith[In, Out, A, S](
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
     )(
         f: HttpResponse[Out] => A < S
     )(using Frame): A < (S & Async & Abort[HttpError]) =
-        Sync.Unsafe.defer {
-            encodeNettyRequest(route, request)
-            val nettyReq   = encodedNettyReq.getOrElse(throw new IllegalStateException("No encoded request"))
-            val streamBody = encodedStreamBody
-            encodedNettyReq = Absent
-            encodedStreamBody = Absent
+        Sync.ensure(error => Sync.Unsafe.defer(onReleaseUnsafe(error))) {
+            Sync.Unsafe.defer {
+                encodeNettyRequest(route, request)
+                val nettyReq   = encodedNettyReq.getOrElse(throw new IllegalStateException("No encoded request"))
+                val streamBody = encodedStreamBody
+                encodedNettyReq = Absent
+                encodedStreamBody = Absent
 
-            val pipeline = channel.pipeline()
-            if pipeline.get("aggregator") == null then
-                discard(pipeline.addLast(
-                    "aggregator",
-                    // Max aggregated response content length (~2GB). App-level limits apply separately.
-                    new HttpObjectAggregator(Int.MaxValue)
-                ))
-            end if
+                val pipeline = channel.pipeline()
+                if pipeline.get("aggregator") == null then
+                    discard(pipeline.addLast(
+                        "aggregator",
+                        new HttpObjectAggregator(Int.MaxValue)
+                    ))
+                end if
 
-            if pipeline.get("response") != null then
-                discard(pipeline.remove("response"))
-            val promise = Promise.Unsafe.init[NettyHttpResponseData, Abort[HttpError]]()
-            discard(pipeline.addLast("response", new NettyHttpResponseHandler(promise)))
+                if pipeline.get("response") != null then
+                    discard(pipeline.remove("response"))
+                val promise = Promise.Unsafe.init[NettyHttpResponseData, Abort[HttpError]]()
+                discard(pipeline.addLast("response", new NettyHttpResponseHandler(promise)))
 
-            discard(channel.writeAndFlush(nettyReq))
+                discard(channel.writeAndFlush(nettyReq))
 
-            def readResponse =
-                promise.safe.use { data =>
-                    Abort.get(RouteUtil.decodeBufferedResponse(route, data.status, data.headers, data.body)).map(f)
-                }
-
-            streamBody match
-                // Request body can be streaming while response is buffered (e.g., upload returning JSON)
-                case Present(stream) =>
-                    stream.foreach { bytes =>
-                        NettyUtil.await(channel.writeAndFlush(
-                            // Two allocations required by Netty HTTP codec: ByteBuf wrapper (zero-copy) + HttpContent
-                            new DefaultHttpContent(Unpooled.wrappedBuffer(bytes.toArrayUnsafe))
-                        ))
-                    }.andThen {
-                        NettyUtil.awaitWith(channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT))(readResponse)
+                def readResponse =
+                    promise.safe.use { data =>
+                        Abort.get(RouteUtil.decodeBufferedResponse(route, data.status, data.headers, data.body)).map(f)
                     }
-                case Absent =>
-                    readResponse
-            end match
+
+                streamBody match
+                    case Present(stream) =>
+                        stream.foreach { bytes =>
+                            NettyUtil.await(channel.writeAndFlush(
+                                new DefaultHttpContent(Unpooled.wrappedBuffer(bytes.toArrayUnsafe))
+                            ))
+                        }.andThen {
+                            NettyUtil.awaitWith(channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT))(readResponse)
+                        }
+                    case Absent =>
+                        readResponse
+                end match
+            }
         }
     end sendBufferedWith
 
     private def sendStreamingWith[In, Out, A, S](
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
     )(
         f: HttpResponse[Out] => A < S
     )(using Frame): A < (S & Async & Abort[HttpError]) =
+        // Two-phase connection lifecycle for streaming responses:
+        // Phase 1 (outer ensure): protects request upload + header fetch. If interrupted here, onReleaseUnsafe fires.
+        // Phase 2 (inner ensure in stream body): protects stream consumption. When stream ends/is abandoned/interrupted, onReleaseUnsafe fires.
+        // phase2Started flag prevents the outer ensure from releasing when f returns with an unconsumed stream.
+        // onReleaseUnsafe is idempotent (AtomicBoolean in caller), so double-fire from both phases is safe.
         Sync.Unsafe.defer {
-            encodeNettyRequest(route, request)
-            val nettyReq   = encodedNettyReq.getOrElse(throw new IllegalStateException("No encoded request"))
-            val streamBody = encodedStreamBody
-            encodedNettyReq = Absent
-            encodedStreamBody = Absent
-
-            val pipeline = channel.pipeline()
-            if pipeline.get("aggregator") != null then
-                discard(pipeline.remove("aggregator"))
-            if pipeline.get("response") != null then
-                discard(pipeline.remove("response"))
-
-            val headerPromise = Promise.Unsafe.init[NettyStreamingHeaderData, Abort[HttpError]]()
-            val byteChannel   = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
-            discard(pipeline.addLast("response", new NettyStreamingResponseHandler(headerPromise, byteChannel)))
-
-            discard(channel.writeAndFlush(nettyReq))
-
-            def readResponse =
-                headerPromise.safe.use { data =>
-                    val bodyStream = Stream[Span[Byte], Async] {
-                        Abort.run[Closed] {
-                            Loop.foreach {
-                                byteChannel.safe.takeWith {
-                                    case Present(bytes) =>
-                                        Emit.valueWith(Chunk(bytes))(Loop.continue)
-                                    case Absent =>
-                                        Loop.done(())
-                                }
-                            }
-                        }.unit
-                    }
-                    Abort.get(RouteUtil.decodeStreamingResponse(route, data.status, data.headers, bodyStream)).map(f)
+            val phase2Started       = AtomicBoolean.Unsafe.init(false)
+            val streamFullyConsumed = AtomicBoolean.Unsafe.init(false)
+            Sync.ensure { error =>
+                Sync.Unsafe.defer {
+                    if !phase2Started.get() then
+                        onReleaseUnsafe(error)
                 }
+            } {
+                Sync.Unsafe.defer {
+                    encodeNettyRequest(route, request)
+                    val nettyReq   = encodedNettyReq.getOrElse(throw new IllegalStateException("No encoded request"))
+                    val streamBody = encodedStreamBody
+                    encodedNettyReq = Absent
+                    encodedStreamBody = Absent
 
-            streamBody match
-                case Present(stream) =>
-                    stream.foreach { bytes =>
-                        NettyUtil.await(channel.writeAndFlush(
-                            // Two allocations required by Netty HTTP codec: ByteBuf wrapper (zero-copy) + HttpContent
-                            new DefaultHttpContent(Unpooled.wrappedBuffer(bytes.toArrayUnsafe))
-                        ))
-                    }.andThen {
-                        NettyUtil.awaitWith(channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT))(readResponse)
-                    }
-                case Absent => // No request body (e.g., GET to streaming endpoint)
-                    readResponse
-            end match
+                    val pipeline = channel.pipeline()
+                    if pipeline.get("aggregator") != null then
+                        discard(pipeline.remove("aggregator"))
+                    if pipeline.get("response") != null then
+                        discard(pipeline.remove("response"))
+
+                    val headerPromise = Promise.Unsafe.init[NettyStreamingHeaderData, Abort[HttpError]]()
+                    val byteChannel   = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
+                    discard(pipeline.addLast("response", new NettyStreamingResponseHandler(headerPromise, byteChannel)))
+
+                    discard(channel.writeAndFlush(nettyReq))
+
+                    def readResponse =
+                        headerPromise.safe.use { data =>
+                            Sync.Unsafe.defer(phase2Started.set(true)).andThen {
+                                val bodyStream = Stream[Span[Byte], Async] {
+                                    Sync.ensure { error =>
+                                        // Discard connection unless stream was fully consumed with no error.
+                                        // Partial consumption leaves Netty channel dirty (unconsumed chunks).
+                                        Sync.Unsafe.defer {
+                                            if !streamFullyConsumed.get() then
+                                                onReleaseUnsafe(Maybe(Result.Panic(new Exception("stream not fully consumed"))))
+                                            else
+                                                onReleaseUnsafe(error)
+                                        }
+                                    } {
+                                        Abort.run[Closed] {
+                                            Loop.foreach {
+                                                byteChannel.safe.takeWith {
+                                                    case Present(bytes) =>
+                                                        Emit.valueWith(Chunk(bytes))(Loop.continue)
+                                                    case Absent =>
+                                                        Sync.Unsafe.defer(streamFullyConsumed.set(true)).andThen(Loop.done(()))
+                                                }
+                                            }
+                                        }.unit
+                                    }
+                                }
+                                Abort.get(RouteUtil.decodeStreamingResponse(route, data.status, data.headers, bodyStream)).map(f)
+                            }
+                        }
+
+                    streamBody match
+                        case Present(stream) =>
+                            stream.foreach { bytes =>
+                                NettyUtil.await(channel.writeAndFlush(
+                                    new DefaultHttpContent(Unpooled.wrappedBuffer(bytes.toArrayUnsafe))
+                                ))
+                            }.andThen {
+                                NettyUtil.awaitWith(channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT))(readResponse)
+                            }
+                        case Absent =>
+                            readResponse
+                    end match
+                }
+            }
         }
     end sendStreamingWith
 
@@ -262,6 +292,15 @@ final private[kyo] class NettyHttpResponseHandler(
                 Span.fromUnsafe(bytes)
         discard(promise.complete(Result.succeed(NettyHttpResponseData(status, headers, body))))
     end channelRead0
+
+    override def channelInactive(ctx: ChannelHandlerContext): Unit =
+        import AllowUnsafe.embrace.danger
+        discard(promise.complete(Result.fail(HttpError.ConnectionError(
+            "Connection closed before response received",
+            new Exception("Connection closed")
+        ))))
+        super.channelInactive(ctx)
+    end channelInactive
 
     override def exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable): Unit =
         import AllowUnsafe.embrace.danger

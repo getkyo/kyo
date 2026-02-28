@@ -23,27 +23,51 @@ final private[kyo] class ConnectionPool[C](
 
     import ConnectionPool.*
 
+    @volatile private var closed = false
+
     /** Try to get a live idle connection for the given host. */
     def poll(key: HostKey)(using AllowUnsafe): Maybe[C] =
-        getPool(key).poll(idleConnectionTimeoutNanos, isAlive, discardConn)
+        if closed then Maybe.empty
+        else getPool(key).poll(idleConnectionTimeoutNanos, isAlive, discardConn)
 
     /** Return a connection to the idle pool. If the ring is full, discard it. */
     def release(key: HostKey, conn: C)(using AllowUnsafe): Unit =
-        getPool(key).release(conn, discardConn)
+        if closed then discardConn(conn)
+        else getPool(key).release(conn, discardConn)
+
+    /** Track a connection as in-flight. */
+    def track(key: HostKey, conn: C)(using AllowUnsafe): Unit =
+        if !closed then getPool(key).track(conn)
+
+    /** Untrack an in-flight connection. */
+    def untrack(key: HostKey, conn: C)(using AllowUnsafe): Unit =
+        if !closed then getPool(key).untrack(conn)
+
+    /** Discard a connection without returning it to the pool. */
+    def discard(conn: C)(using AllowUnsafe): Unit =
+        discardConn(conn)
 
     /** Try to reserve an in-flight slot. Returns true if under the per-host limit. */
     def tryReserve(key: HostKey)(using AllowUnsafe): Boolean =
-        getPool(key).tryReserve()
+        if closed then false
+        else getPool(key).tryReserve()
 
     /** Release an in-flight slot. Always call this after tryReserve, on both success and failure paths. */
     def unreserve(key: HostKey)(using AllowUnsafe): Unit =
-        getPool(key).unreserve()
+        if !closed then getPool(key).unreserve()
 
-    /** Close all pools, discarding remaining idle connections. */
-    def closeAll()(using AllowUnsafe): Unit =
-        pools.values().forEach(_.closeAll(discardConn))
-        pools.clear()
-    end closeAll
+    /** Close the pool. Returns all connections (idle + in-flight) for the caller to close. */
+    def close()(using AllowUnsafe): Chunk[C] =
+        if closed then Chunk.empty
+        else
+            closed = true
+            val builder = ChunkBuilder.init[C]
+            pools.forEach { (_, hostPool) =>
+                hostPool.close(builder)
+            }
+            pools.clear()
+            builder.result()
+    end close
 
     private def getPool(key: HostKey)(using AllowUnsafe): HostPool =
         pools.computeIfAbsent(key, _ => new HostPool(maxConnectionsPerHost))
@@ -94,6 +118,7 @@ private[kyo] object ConnectionPool:
         private val head        = new AtomicLong(0)
         private val tail        = new AtomicLong(0)
         private val inFlight    = new AtomicInteger(0)
+        private val tracked     = new ConcurrentHashMap[AnyRef, Unit]()
 
         // Initialize sequences: slot i is "ready for writing at tail position i"
         locally {
@@ -175,8 +200,17 @@ private[kyo] object ConnectionPool:
         def unreserve()(using AllowUnsafe): Unit =
             discard(inFlight.decrementAndGet())
 
-        /** Drain and discard all idle connections. */
-        def closeAll[C](discardConn: C => Unit)(using AllowUnsafe): Unit =
+        /** Track a connection as in-flight. */
+        def track[C](conn: C)(using AllowUnsafe): Unit =
+            discard(tracked.put(conn.asInstanceOf[AnyRef], ()))
+
+        /** Untrack an in-flight connection. */
+        def untrack[C](conn: C)(using AllowUnsafe): Unit =
+            discard(tracked.remove(conn.asInstanceOf[AnyRef]))
+
+        /** Close the pool. Collects all connections (idle + in-flight) for the caller to close. */
+        def close[C](into: ChunkBuilder[C])(using AllowUnsafe): Unit =
+            // Drain idle
             @tailrec def loop(): Unit =
                 val currentHead = head.get()
                 val idx         = (currentHead % capacity).toInt
@@ -186,13 +220,18 @@ private[kyo] object ConnectionPool:
                     val conn = connections(idx)
                     connections(idx) = null
                     sequences.lazySet(idx, currentHead + capacity)
-                    if conn ne null then discardConn(conn.asInstanceOf[C])
+                    if conn ne null then discard(into += conn.asInstanceOf[C])
                     loop()
                 else loop() // CAS failed, retry
                 end if
             end loop
             loop()
-        end closeAll
+            // Collect in-flight
+            tracked.forEach { (conn, _) =>
+                discard(into += conn.asInstanceOf[C])
+            }
+            tracked.clear()
+        end close
 
     end HostPool
 

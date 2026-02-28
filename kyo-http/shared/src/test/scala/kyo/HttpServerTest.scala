@@ -1111,6 +1111,121 @@ class HttpServerTest extends Test:
                 }
             }
         }
+
+        "concurrent handler isolation" in run {
+            val route = HttpRoute.postText("handler-id")
+            val ep = route.handler { req =>
+                val id    = req.fields.body
+                val delay = id.toInt % 10
+                Async.sleep(delay.millis).andThen(HttpResponse.okText(id))
+            }
+            withServer(ep) { port =>
+                val repeats = 10
+                val sizes   = Choice.eval(4, 8, 16)
+                (for
+                    size  <- sizes
+                    latch <- Latch.init(1)
+                    fibers <- Kyo.foreach(0 until size) { i =>
+                        Fiber.initUnscoped(
+                            latch.await.andThen(
+                                send(
+                                    port,
+                                    route,
+                                    HttpRequest.postRaw(
+                                        HttpUrl(Present("http"), "localhost", port, "/handler-id", Absent)
+                                    ).addField("body", i.toString)
+                                )
+                            )
+                        )
+                    }
+                    _       <- latch.release
+                    results <- Kyo.foreach(fibers)(_.get)
+                yield assert(results.zipWithIndex.forall { case (r, i) => r.fields.body == i.toString }))
+                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                    .andThen(succeed)
+            }
+        }
+
+        "slow handler does not block fast handlers" in run {
+            val slowRoute = HttpRoute.getRaw("slow-h").response(_.bodyText)
+            val fastRoute = HttpRoute.getRaw("fast-h").response(_.bodyText)
+            val slowEp    = slowRoute.handler(_ => Async.sleep(2.seconds).andThen(HttpResponse.okText("slow")))
+            val fastEp    = fastRoute.handler(_ => HttpResponse.okText("fast"))
+            withServer(slowEp, fastEp) { port =>
+                val repeats = 5
+                val sizes   = Choice.eval(2, 4, 8)
+                (for
+                    size <- sizes
+                    // Fire slow request in background
+                    slowFiber <- Fiber.initUnscoped(
+                        Abort.run[Throwable](send(port, slowRoute, HttpRequest.getRaw(HttpUrl.fromUri("/slow-h"))))
+                    )
+                    _ <- Async.sleep(10.millis)
+                    // Fast requests must complete quickly even while slow handler runs
+                    latch <- Latch.init(1)
+                    fastFibers <- Kyo.fill(size)(Fiber.initUnscoped(
+                        latch.await.andThen(
+                            send(port, fastRoute, HttpRequest.getRaw(HttpUrl.fromUri("/fast-h")))
+                        )
+                    ))
+                    _           <- latch.release
+                    fastResults <- Async.timeout(1.second)(Kyo.foreach(fastFibers)(_.get))
+                    _           <- slowFiber.interrupt
+                yield assert(fastResults.forall(_.status == HttpStatus.OK)))
+                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                    .andThen(succeed)
+            }
+        }
+
+        "concurrent streaming responses data isolation" in run {
+            val route = HttpRoute.getRaw("stream-iso").response(_.bodyStream)
+            val ep = route.handler { req =>
+                val marker = req.headers.get("X-Marker").getOrElse("x")
+                val chunks = Stream.init(Seq(
+                    Span.fromUnsafe(s"$marker-1\n".getBytes("UTF-8")),
+                    Span.fromUnsafe(s"$marker-2\n".getBytes("UTF-8")),
+                    Span.fromUnsafe(s"$marker-3\n".getBytes("UTF-8"))
+                ))
+                HttpResponse.ok.addField("body", chunks)
+            }
+            withServer(ep) { port =>
+                val repeats = 10
+                val sizes   = Choice.eval(2, 4, 8)
+                (for
+                    size  <- sizes
+                    latch <- Latch.init(1)
+                    fibers <- Kyo.foreach(0 until size) { i =>
+                        Fiber.initUnscoped(
+                            latch.await.andThen {
+                                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                                        client.sendWith(
+                                            conn,
+                                            route,
+                                            HttpRequest.getRaw(HttpUrl.fromUri("/stream-iso"))
+                                                .setHeader("X-Marker", s"m$i")
+                                        ) { resp =>
+                                            resp.fields.body.run.map { chunks =>
+                                                val text: String = chunks.foldLeft("")((acc, span) =>
+                                                    acc + new String(span.toArrayUnsafe, "UTF-8")
+                                                )
+                                                (i, text)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    }
+                    _       <- latch.release
+                    results <- Kyo.foreach(fibers)(_.get)
+                yield assert(results.forall { case (i, text) =>
+                    text.contains(s"m$i-1") && text.contains(s"m$i-2") && text.contains(s"m$i-3")
+                }))
+                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                    .andThen(succeed)
+            }
+        }
     }
 
     "server lifecycle" - {
