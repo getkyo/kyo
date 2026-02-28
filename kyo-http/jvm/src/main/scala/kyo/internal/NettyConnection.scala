@@ -53,7 +53,7 @@ final private[kyo] class NettyConnection(
     )(
         f: HttpResponse[Out] => A < S
     )(using Frame): A < (S & Async & Abort[HttpError]) =
-        Sync.ensure(error => Sync.Unsafe.defer(onReleaseUnsafe(error))) {
+        Sync.ensure(onReleaseUnsafe) {
             Sync.Unsafe.defer {
                 encodeNettyRequest(route, request)
                 val nettyReq   = encodedNettyReq.getOrElse(throw new IllegalStateException("No encoded request"))

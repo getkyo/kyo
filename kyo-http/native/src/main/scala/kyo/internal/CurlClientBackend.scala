@@ -84,7 +84,7 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
     )(
         f: HttpResponse[Out] => A < S
     )(using Frame): A < (S & Async & Abort[Http2Error]) =
-        Sync.ensure(error => Sync.Unsafe.defer(onReleaseUnsafe(error))) {
+        Sync.ensure(onReleaseUnsafe) {
             Sync.Unsafe.defer {
                 Zone {
                     val handle = curl_easy_init()

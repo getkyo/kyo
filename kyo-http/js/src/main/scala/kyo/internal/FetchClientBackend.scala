@@ -42,7 +42,7 @@ final class FetchClientBackend extends HttpBackend.Client:
     )(
         f: HttpResponse[Out] => A < S
     )(using Frame): A < (S & Async & Abort[HttpError]) =
-        Sync.ensure(error => Sync.Unsafe.defer(onReleaseUnsafe(error))) {
+        Sync.ensure(onReleaseUnsafe) {
             conn.send(route, request).map(f)
         }
 
