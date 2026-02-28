@@ -125,11 +125,12 @@ private[kyo] final class AnsiBuffer(initialCapacity: Int = 65536):
 ```
 Two fibers:
   Input fiber:  blocking read on tty → bytes into Channel (dedicated thread, never starves)
+  Blink fiber:  toggles cursorBlink SignalRef every ~530ms (for text cursor visibility)
   Main fiber:   render loop (see below)
 
 Reactive loop (main fiber in TuiBackend):
   1. Drain input:   take all available bytes from input Channel (non-blocking drain)
-  2. Parse + dispatch: bytes → KeyEvents → update focus/scroll/element handlers
+  2. Parse + dispatch: bytes → InputEvents (key + mouse) → update focus/scroll/form state/element handlers
   3. Flatten:        walk UI AST, resolve signals inline, resolve styles → TuiLayout flat arrays
   4. Measure:        bottom-up intrinsic sizing (flat array arithmetic)
   5. Arrange:        top-down position assignment (flat array arithmetic)
@@ -139,7 +140,7 @@ Reactive loop (main fiber in TuiBackend):
   9. Loop:           go to 1
 ```
 
-Steps 2-5 are the pure core — all operate on pre-allocated flat arrays with zero object allocation in steady state. The painter does a full repaint every frame, but `flush()` diffs current vs previous buffer and only emits changed cells. At 200×50 = 10,000 cells, the full pipeline (flatten + measure + arrange + paint + flush) runs in <0.5ms.
+Steps 3-6 (flatten through paint) are the pure core — all operate on pre-allocated flat arrays with zero object allocation in steady state. The painter does a full repaint every frame, but `flush()` diffs current vs previous buffer and only emits changed cells. At 200×50 = 10,000 cells, the full pipeline (flatten + measure + arrange + paint + flush) runs in <0.5ms.
 
 ### TuiLayout — flat array table
 
@@ -181,7 +182,10 @@ private[kyo] final class TuiLayout(initialCapacity: Int = 256):
     val pFlags = new Array[Int](cap)   // packed: bold|dim|italic|underline|strikethrough|borderStyle|...
     val fg     = new Array[Int](cap)   // -1 = absent
     val bg     = new Array[Int](cap)   // -1 = absent
-    val bdrClr = new Array[Int](cap)   // -1 = absent
+    val bdrClrT = new Array[Int](cap)  // -1 = absent (per-side border colors)
+    val bdrClrR = new Array[Int](cap)
+    val bdrClrB = new Array[Int](cap)
+    val bdrClrL = new Array[Int](cap)
     val opac   = new Array[Float](cap) // 1.0 = opaque
     val lineH  = new Array[Int](cap)
     val letSp  = new Array[Int](cap)
@@ -216,7 +220,8 @@ private[kyo] final class TuiLayout(initialCapacity: Int = 256):
   bit 10    = borderRight present
   bit 11    = borderBottom present
   bit 12    = borderLeft present
-  bits 13–31 = reserved
+  bit 13    = disabled
+  bits 14–31 = reserved
 ```
 
 **Paint style `pFlags` bit layout (Int, 32 bits):**
@@ -226,14 +231,17 @@ private[kyo] final class TuiLayout(initialCapacity: Int = 256):
   bit 2     = italic
   bit 3     = underline
   bit 4     = strikethrough
-  bits 5–8  = borderStyle (9 styles: solid/rounded/dashed/dotted/heavy/double/block/outerHalf/innerHalf)
-  bit 9     = borderRadius (rounded corners)
-  bits 10–11 = textAlign (0=left, 1=center, 2=right, 3=justify)
-  bits 12–13 = textDecoration (0=none, 1=underline, 2=overline, 3=lineThrough)
-  bits 14–15 = textTransform (0=none, 1=uppercase, 2=lowercase, 3=capitalize)
-  bit 16    = textOverflow (0=clip, 1=ellipsis)
-  bit 17    = wrapText
-  bits 18–31 = reserved
+  bits 5–8  = borderStyle (0=none, 1=solid, 2=dashed, 3=dotted + TUI-internal: 4=rounded, 5=heavy, 6=double, 7=block, 8=outerHalf, 9=innerHalf)
+  bit 9     = roundedTL (top-left corner rounded)
+  bit 10    = roundedTR
+  bit 11    = roundedBR
+  bit 12    = roundedBL
+  bits 13–14 = textAlign (0=left, 1=center, 2=right, 3=justify)
+  bits 15–16 = textDecoration (0=none, 1=underline, 2=strikethrough)  // matches Style.TextDecoration enum
+  bits 17–18 = textTransform (0=none, 1=uppercase, 2=lowercase, 3=capitalize)
+  bit 19    = textOverflow (0=clip, 1=ellipsis)
+  bit 20    = wrapText
+  bits 21–31 = reserved
 ```
 
 All colors use raw `Int` with `-1` sentinel — no `Maybe[Int]` boxing. Size dimensions use `-1` for auto/none. `text[i]` points directly into the UI AST's `Text.value` — no copy. `focusStyle[i]` / `activeStyle[i]` point to the original `Style` from `FocusProp`/`ActiveProp` — resolved lazily only when the element has focus.
@@ -255,6 +263,7 @@ private[kyo] object TuiFlatten:
             case Text(value) =>
                 val idx = layout.alloc()
                 linkChild(layout, parentIdx, idx)
+                TuiStyle.setDefaults(layout, idx)  // must initialize all arrays even for plain text
                 layout.text(idx) = value
 
             case elem: Element =>
@@ -268,6 +277,7 @@ private[kyo] object TuiFlatten:
                 signals.add(signal)
                 val idx = layout.alloc()
                 linkChild(layout, parentIdx, idx)
+                TuiStyle.setDefaults(layout, idx)
                 layout.text(idx) = signal.current
 
             case ReactiveNode(signal) =>
@@ -321,20 +331,24 @@ private[kyo] final class SignalCollector(initialCapacity: Int = 64):
 
 ```scala
 private[kyo] object TuiStyle:
-    def resolve(style: Style, layout: TuiLayout, idx: Int, parentW: Int, parentH: Int): Unit =
-        // set defaults
+    /** Initialize all style arrays to defaults. Called for every node (including plain Text). */
+    def setDefaults(layout: TuiLayout, idx: Int): Unit =
         layout.lFlags(idx) = 0; layout.pFlags(idx) = 0
         layout.padT(idx) = 0; layout.padR(idx) = 0; layout.padB(idx) = 0; layout.padL(idx) = 0
         layout.marT(idx) = 0; layout.marR(idx) = 0; layout.marB(idx) = 0; layout.marL(idx) = 0
         layout.gap(idx) = 0; layout.sizeW(idx) = -1; layout.sizeH(idx) = -1
         layout.minW(idx) = -1; layout.maxW(idx) = -1; layout.minH(idx) = -1; layout.maxH(idx) = -1
         layout.transX(idx) = 0; layout.transY(idx) = 0
-        layout.fg(idx) = -1; layout.bg(idx) = -1; layout.bdrClr(idx) = -1
+        layout.fg(idx) = -1; layout.bg(idx) = -1
+        layout.bdrClrT(idx) = -1; layout.bdrClrR(idx) = -1; layout.bdrClrB(idx) = -1; layout.bdrClrL(idx) = -1
         layout.opac(idx) = 1.0f; layout.shadow(idx) = -1
         layout.lineH(idx) = 0; layout.letSp(idx) = 0; layout.fontSz(idx) = 1
         layout.focusStyle(idx) = null; layout.activeStyle(idx) = null
-        layout.text(idx) = null
+        layout.text(idx) = null; layout.element(idx) = null
+        layout.nodeType(idx) = 0
 
+    def resolve(style: Style, layout: TuiLayout, idx: Int, parentW: Int, parentH: Int): Unit =
+        setDefaults(layout, idx)
         // fold over props — writes directly into arrays
         style.props.foreach:
             case BgColor(color)      => layout.bg(idx) = TuiColor.resolve(color)
@@ -393,6 +407,80 @@ Blending: `blend(src, dst, alpha) = (sr×α + dr×(1-α), sg×α + dg×(1-α), s
 
 ---
 
+## Design Philosophy — Functional Shell, Mutable Core
+
+The TUI backend uses pre-allocated mutable buffers for performance, but contains that mutation behind clean boundaries. The outer layer (TuiBackend, fiber wiring, event dispatch) is idiomatic kyo FP. The inner layer (layout arrays, framebuffer, ANSI buffer) uses controlled mutation with arena-reset semantics and single-ownership discipline.
+
+### Layer separation
+
+| Layer | Nature | Components |
+|-------|--------|------------|
+| **Pure functions** | No mutation, no IO, deterministic | TuiInput.parse, TuiColor.resolve/blend, measure, arrange |
+| **Contained mutation** | Writes into pre-allocated buffers, deterministic, no IO | TuiFlatten, TuiStyle, TuiPainter, TuiRenderer.flush |
+| **Effectful shell** | IO, signals, channels, fibers — idiomatic kyo | TuiBackend.mainLoop, TuiTerminal, inputLoop |
+
+The effectful shell is thin — just TuiBackend and TuiTerminal. Everything else is either pure or deterministically mutating pre-owned buffers.
+
+### Arena-reset semantics
+
+Mutation in this design is not shared mutable state. It's arena-style allocation — pre-allocated buffers that are logically fresh each frame via `reset()`:
+
+- `TuiLayout` — `reset()` sets `count = 0`, every slot written before read, no aliasing across frames
+- `TuiRenderer` — double buffer swapped atomically after flush, painter writes one while flush reads the other
+- `AnsiBuffer` — linear write, single `writeTo`, `reset()` sets `pos = 0`
+- `SignalCollector` — append-only during flatten, read-only during await, reset before next frame
+
+This gives the logical purity of fresh allocation with the performance of reuse. No component reads stale data from a previous frame.
+
+### Single-ownership discipline
+
+Instead of immutability preventing aliasing bugs, single ownership achieves the same guarantee structurally:
+
+- Only `TuiFlatten` writes into `TuiLayout` arrays
+- Only `TuiPainter` writes into `TuiRenderer`
+- Only `renderer.flush` reads from `TuiRenderer` and writes to `AnsiBuffer`
+- Only `inputLoop` writes to the input Channel; only `mainLoop` reads from it
+
+No two components write to the same buffer concurrently. No buffer is read while being written. Enforced by the sequential main loop, not the type system, but a clear invariant.
+
+### The main loop reads as a pipeline
+
+Despite internal mutation, the loop is a unidirectional pipeline — each step transforms state forward, no step reaches back:
+
+```
+Loop.forever:
+  bytes    <- inputCh.drain
+  events    = TuiInput.parse(bytes, remainder)
+  _         = dispatch(events, focusState, scrollState)
+  _         = TuiFlatten.flatten(ui, layout, signals, w, h)
+  _         = TuiLayout.measure(layout)
+  _         = TuiLayout.arrange(layout, w, h)
+  _         = TuiPainter.paint(layout, renderer)
+  _         = renderer.flush(ttyOut)
+  _        <- race(inputCh.take, Signal.awaitAny(signals))
+```
+
+### Testing stays pure
+
+Mutable components accept their buffers from outside — tests create fresh buffers, run a function, inspect results. No mocking, no IO:
+
+```scala
+val layout = new TuiLayout(64)
+val signals = new SignalCollector(16)
+TuiFlatten.flatten(someUI, layout, signals, 80, 24)
+assert(layout.count == 5)
+assert(layout.text(0) == "hello")
+```
+
+### Rules
+
+- No global mutable state — every buffer is owned by the `TuiBackend` instance
+- No mutation leaking across the API boundary — `UISession` is a `Fiber` + `Signal`, fully kyo-idiomatic
+- No callbacks mutating shared state — event handlers return `Unit < Async`, dispatched through kyo's effect system
+- No lazy initialization with side effects — all buffers allocated eagerly in `render()`
+
+---
+
 ## Terminal Management
 
 ### Raw mode and alternate screen
@@ -405,10 +493,10 @@ Enter:
   2. Enter raw mode via `stty raw -echo < /dev/tty`
   3. Open /dev/tty for reading (FileInputStream) and writing (FileOutputStream)
   4. Emit: \u001b[?1049h (alternate screen) + \u001b[?25l (hide cursor)
-  5. Emit: \u001b[?1000h (mouse button events) + \u001b[?1006h (SGR extended mouse format)
+  5. Emit: \u001b[?1003h (any-event mouse tracking) + \u001b[?1006h (SGR extended mouse format) + \u001b[?2004h (bracketed paste)
 
-Exit (via Scope.ensure — guaranteed even on crash):
-  1. Emit: \u001b[?1000l + \u001b[?1006l (disable mouse tracking)
+Exit (via Scope.ensure — calls idempotent cleanup()):
+  1. Emit: \u001b[?2004l (disable bracketed paste) + \u001b[?1003l + \u001b[?1006l (disable mouse tracking)
   2. Emit: \u001b[?25h (show cursor) + \u001b[?1049l (exit alternate screen)
   3. Close streams
   4. Restore saved stty settings
@@ -422,25 +510,48 @@ Terminal size is stored in a `SignalRef[(Int, Int)]` — width and height. It's 
 Initialization:
   1. Query initial size via `stty size < /dev/tty` → (rows, cols) → (width, height)
   2. Create SignalRef[(Int, Int)] with initial size
-  3. Register SIGWINCH handler via kyo's OsSignal.handle("WINCH", callback)
-  4. Callback: querySize() → sizeRef.unsafe.set(newSize)
+  3. Create SignalRef[Long] resizeEpoch = 0 (monotonic counter)
+  4. Register SIGWINCH handler via kyo's OsSignal.handle("WINCH", callback)
+  5. Callback: resizeEpoch.unsafe.set(resizeEpoch.unsafe.get + 1)
+     (increment always changes value → fires promise → wakes awaitAny)
 
 Integration:
-  - The size SignalRef is included in Signal.awaitAny alongside UI signals
-  - SIGWINCH fires → sizeRef updated → awaitAny wakes → loop re-runs
+  - resizeEpoch is included in Signal.awaitAny alongside UI signals
+  - SIGWINCH fires → epoch incremented → awaitAny wakes
+  - Main loop step 4 queries `stty size` (safe — between frames, no concurrent tty write), updates sizeRef
   - TuiRenderer.resize(newW, newH) detects dimension change, reallocates both buffers
-  - Full repaint occurs naturally — no special resize handling in the loop
+  - Full repaint occurs naturally — no special resize handling beyond step 4
 ```
 
-`OsSignal.handle` is kyo's own abstraction over `sun.misc.Signal` — uses reflection, falls back to no-op on unsupported platforms. The `sizeRef.unsafe.set()` call from the signal handler is safe because `SignalRef.Unsafe` uses lock-free atomic operations (`AtomicRef`). It requires `AllowUnsafe.embrace.danger` in scope, which is appropriate for this low-level integration point.
+The SIGWINCH handler must not call `stty size` — that spawns a process that reads `/dev/tty`, which could interleave with the main fiber's ANSI output. Instead, the handler increments a monotonic counter. The main loop queries size at a safe point between flush and the next render, when no tty writes are in progress.
+
+Note: `SignalRef.set` only fires notifications when the new value differs from the current value (`prev != value` check in `getAndSet`). A simple "poke" like `sizeRef.set(sizeRef.get)` would NOT wake awaitAny. The monotonic counter guarantees a different value each time.
+
+`OsSignal.handle` is kyo's own abstraction over `sun.misc.Signal` — uses reflection, falls back to no-op on unsupported platforms. The `unsafe.set` from the signal handler is safe because `SignalRef.Unsafe` uses lock-free atomic operations. It requires `AllowUnsafe.embrace.danger` in scope, which is appropriate for this low-level integration point.
 
 The `TuiRenderer.resize()` method checks if dimensions changed; if so, it reallocates all arrays in both buffers. The first flush after resize diffs against a blank previous buffer, producing a full redraw.
 
 ### Cleanup
 
-- `Scope.ensure` registers terminal cleanup (restore stty, exit alt screen) — runs on scope exit
-- This matches the pattern used by `JavaFxBackend` and `DomBackend`
-- JVM shutdown hooks for defense-in-depth against unclean exits
+`Scope.ensure` runs in LIFO order — last registered runs first. Registration order matters:
+
+```scala
+// In TuiBackend.render:
+_         <- Scope.ensure(cleanup(term))              // registered 1st → runs LAST (idempotent)
+_         <- Scope.ensure(ttyIn.close())             // registered 2nd → runs 3rd (unblock input fiber read)
+_         <- Fiber.init(inputLoop(...))              // input fiber (auto-interrupted by Scope)
+_         <- Fiber.init(blinkLoop(...))              // blink fiber (auto-interrupted by Scope)
+fiber     <- Fiber.init(mainLoop(...))               // main fiber (auto-interrupted by Scope)
+```
+
+**Shutdown sequence** (LIFO):
+1. `Fiber.init` fibers are interrupted by Scope (main → blink → input, reverse order)
+2. `ttyIn.close()` unblocks the input fiber's blocking `read()` (throws IOException, fiber exits)
+3. `cleanup(term)` restores terminal (idempotent via AtomicBoolean — safe if already called by signal handler)
+
+The input fiber is blocked in `Async.blocking(ttyIn.read(...))` — `Fiber.interrupt` sets a flag but cannot unblock an OS-level `read()` syscall. Closing the stream from cleanup forces the read to throw, cleanly terminating the fiber. This must happen after fiber interruption (so the fiber's interrupt flag is set) but before terminal restore (so no fiber writes ANSI after we exit alt screen).
+
+JVM shutdown hooks provide defense-in-depth against unclean exits (kill -9 cannot be caught, but normal JVM shutdown triggers hooks).
 
 ### ANSI output
 
@@ -486,7 +597,7 @@ Every signal encountered is added to the `SignalCollector`. At the end of each f
 
 ## Reactivity — The Main Loop
 
-Two fibers: an input fiber for blocking tty reads, and a main fiber for the render loop. The input fiber pushes raw bytes into a `Channel[Byte]`, ensuring no keystrokes are dropped (unlike Signal, which has latest-value semantics and skips intermediate changes). The main fiber drains the channel, processes input, re-renders, then races between the channel and signal changes to wake up.
+Two fibers: an input fiber for blocking tty reads, and a main fiber for the render loop. The input fiber pushes raw byte chunks into a `Channel[Chunk[Byte]]`, ensuring no keystrokes are dropped (unlike Signal, which has latest-value semantics and skips intermediate changes). The main fiber drains the channel, processes input, re-renders, then races between the channel and signal changes to wake up.
 
 ```scala
 class TuiBackend extends UIBackend:
@@ -494,16 +605,20 @@ class TuiBackend extends UIBackend:
         for
             rendered  <- Signal.initRef[UI](UI.empty)
             term      <- TuiTerminal.enter             // raw mode, alt screen, SIGWINCH
-            _         <- Scope.ensure(TuiTerminal.exit(term))
+            _         <- Scope.ensure(cleanup(term))              // registered 1st → runs LAST (idempotent)
+            _         <- Scope.ensure(term.ttyIn.close())       // registered 2nd → runs 3rd (unblocks input read)
             (w, h)    <- term.size.get
-            inputCh   <- Channel.init[Chunk[Byte]](64)  // bounded, backpressure if render is slow
+            inputCh   <- Channel.init[Chunk[Byte]](256) // bounded; mouse events generate high volume
             renderer   = new TuiRenderer(w, h)           // allocated once
             layout     = new TuiLayout(256)               // allocated once
             signals    = new SignalCollector(64)           // allocated once
-            focusIdx  <- Signal.initRef[Int](0)
-            scrolls   <- Signal.initRef[Map[String, Int]](Map.empty)
-            _         <- Fiber.init(inputLoop(term.ttyIn, inputCh))  // input fiber
-            fiber     <- Fiber.init(mainLoop(ui, term, inputCh, renderer, layout, signals, focusIdx, scrolls, rendered))
+            focusRef  <- Signal.initRef[Maybe[Any]](Absent)  // focused element by AST identity
+            scrolls   <- Signal.initRef[Map[Any, Int]](Map.empty)  // keyed by AST element identity
+            cursorBlink <- Signal.initRef[Boolean](true)    // cursor visibility toggle
+            _         <- Fiber.init(inputLoop(term.ttyIn, inputCh))  // input fiber (interrupted 3rd, runs last)
+            _         <- Fiber.init(blinkLoop(cursorBlink))          // blink fiber (interrupted 2nd)
+            fiber     <- Fiber.init(mainLoop(ui, term, inputCh, renderer, layout, signals,
+                            focusRef, scrolls, cursorBlink, rendered))  // main fiber (interrupted 1st)
         yield UISession(fiber, rendered)
 ```
 
@@ -519,8 +634,17 @@ inputLoop(ttyIn, channel):
 ```
 Loop.forever:
   1. Drain inputCh: take all available byte chunks (non-blocking poll until empty)
-  2. Parse bytes → KeyEvents (pure function, accumulates remainder for partial sequences)
-  3. Dispatch events: Tab/Shift-Tab → update focusIdx; others → focused element's handlers
+  2. Parse bytes → InputEvents (KeyEvent + MouseEvent, accumulates remainder for partial sequences)
+  3. Dispatch events:
+     - If Select overlay open → route to overlay (arrow/enter/escape/click/scroll wheel)
+     - Tab/Shift-Tab → update focusRef
+     - Mouse click → hit test → focus + onClick bubbling
+     - Mouse wheel → hit test → scroll nearest scrollable ancestor (does not move focus)
+     - Mouse move → hover tracking (does not move focus)
+     - Printable keys → insert into focused Input/Textarea SignalRef
+     - Enter on Input inside Form → fire Form.onSubmit (parent walk)
+     - Enter/Space on Button → fire onClick
+     - Other keys → focused element's onKeyDown/onKeyUp handlers
   4. Check terminal size → renderer.resize() if changed
   5. Flatten: walk UI AST → resolve signals + styles → TuiLayout flat arrays
   6. Measure: bottom-up intrinsic sizing (flat array arithmetic)
@@ -528,14 +652,34 @@ Loop.forever:
   8. Paint: walk TuiLayout arrays, write cells into TuiRenderer
   9. Flush: renderer.flush(term.out) → diff → ANSI → write → swap
   10. rendered.set(ui) — notify UISession observers
-  11. Async.race(inputCh.take, signalAwaitAny(signals.toChunk :+ term.size))
+  11. Async.race(inputCh.take, signalAwaitAny(signals.toChunk :+ term.size :+ cursorBlink))
       — parks fiber, zero CPU while idle
-      — wakes on: keystroke, signal change, or terminal resize
+      — wakes on: keystroke, signal change, terminal resize, or cursor blink toggle
 ```
 
 **Why Channel for input, Signal for the rest**:
 - `Signal.next()` returns the current promise — if multiple changes fire before the loop calls `next()` again, intermediate values are dropped. This is correct for UI state (you only care about the latest value) and terminal size (you only care about the current dimensions).
-- Keystrokes must not be dropped — every key press matters. `Channel` queues all values and delivers them in order. The bounded capacity (64) provides backpressure if the render loop falls behind.
+- Keystrokes must not be dropped — every key press matters. `Channel` queues all values and delivers them in order. The bounded capacity (256) provides backpressure if the render loop falls behind.
+
+### Concurrency model
+
+**Three fibers, one tty**:
+
+| Fiber | Thread | Reads | Writes | Blocks on |
+|-------|--------|-------|--------|-----------|
+| Input | Dedicated (via `Async.blocking`) | ttyIn (FileInputStream) | inputCh Channel | OS `read()` syscall |
+| Blink | Kyo scheduler | — | cursorBlink SignalRef | `Async.sleep(530.millis)` |
+| Main | Kyo scheduler | inputCh, all SignalRefs | ttyOut (FileOutputStream) | `Async.race(inputCh.take, Signal.awaitAny(...))` |
+
+Reading (input fiber) and writing (main fiber) use separate FileInputStream/FileOutputStream — no conflict. The main fiber is the only writer to the tty output stream, so no synchronization needed for ANSI output.
+
+**`Signal.awaitAny` cost**: internally calls `Async.race(signals.map(s => Async.mask(s.next)))`, which creates N short-lived fibers per wait. With ~50 signals this is 50 fibers per frame. Each fiber is lightweight (just a masked promise await), but this is the main per-frame allocation. Acceptable for TUI frame rates (<60 FPS), but worth noting.
+
+**Input fiber termination**: the input fiber is blocked in `Async.blocking(ttyIn.read(...))` — an OS-level syscall that `Fiber.interrupt` cannot unblock. Cleanup closes the tty FileInputStream, which forces the blocked `read()` to throw IOException, cleanly terminating the fiber. See Cleanup section under Terminal Management.
+
+**Event handler execution**: handlers like `onClick` return `Unit < Async`. They execute inline in the main loop's dispatch step — the main fiber runs the handler before proceeding to flatten. If a handler launches async work (e.g., HTTP request), it should fork a fiber; otherwise it blocks rendering. This matches browser semantics where event handlers are synchronous.
+
+**Form state and re-render**: when the main loop sets a SignalRef (e.g., typing into an Input), the signal's promise fires immediately. The subsequent `Signal.awaitAny` in step 11 would wake instantly for a value we just set. This is harmless — flush diffs to zero changes — but wastes one empty render cycle. Avoided because dispatch (step 2) happens before flatten (step 5): the signal change propagates naturally into the same frame's render.
 
 ---
 
@@ -543,7 +687,7 @@ Loop.forever:
 
 ### Escape sequence parser
 
-`TuiInput.parse(bytes: Chunk[Byte]): (Chunk[InputEvent], Chunk[Byte])` — pure function from raw bytes to input events plus unconsumed remainder (for partial UTF-8 or escape sequences split across reads). Returns both `KeyEvent` and `MouseEvent` in a common `InputEvent` ADT.
+`TuiInput.parse(bytes: Chunk[Byte]): (Chunk[InputEvent], Chunk[Byte])` — pure function from raw bytes to input events plus unconsumed remainder (for partial UTF-8 or escape sequences split across reads). Returns `KeyEvent`, `MouseEvent`, and `PasteEvent` in a common `InputEvent` ADT.
 
 **Keyboard sequences**:
 
@@ -563,9 +707,10 @@ Loop.forever:
 | `0x1b` alone | Escape |
 | `0x01`–`0x1a` | Ctrl+A through Ctrl+Z |
 | `\u001b` + printable | Alt+key |
+| `\u001b[200~`...`\u001b[201~` | PasteEvent(text) — bracketed paste content |
 | Printable bytes | Character key (UTF-8 decoded) |
 
-**Mouse sequences** (SGR extended format, enabled via `\u001b[?1000h` + `\u001b[?1006h`):
+**Mouse sequences** (SGR extended format, enabled via `\u001b[?1003h` + `\u001b[?1006h`):
 
 | Byte sequence | MouseEvent |
 |---|---|
@@ -582,7 +727,7 @@ Button field modifiers: `+4` = shift held, `+8` = alt held, `+16` = ctrl held. C
 
 ### Focus management
 
-`FocusState` is external to the layout tree — a `SignalRef[Int]` holding the current focus index. Focus targets are extracted from the layout tree after each render (depth-first traversal, collecting Button/Input/Textarea/Select/Anchor).
+`FocusState` tracks the focused element by identity — a `SignalRef[Maybe[Any]]` holding a reference to the focused AST Element (from `element[idx]`). Focus targets are extracted from the layout tree after each render (depth-first traversal, collecting Button/Input/Textarea/Select/Anchor into a flat list). The previously focused element is located by identity in the new list to determine its current index — this ensures focus survives tree structure changes (elements inserted/removed). If the previously focused element is no longer in the tree, focus moves to the nearest neighbor or resets to the first focusable element.
 
 - Tab / Shift+Tab cycles the focus index (wrapping)
 - Focused element gets its `FocusProp` style applied (or a default: heavy border `┏━┓┃┗━┛`)
@@ -596,8 +741,8 @@ Focus index is itself a signal, so changing focus triggers a re-render via `Sign
 
 **Terminal mouse tracking** is enabled on enter and disabled on exit:
 ```
-Enter:  \u001b[?1000h (button events) + \u001b[?1006h (SGR extended coordinates)
-Exit:   \u001b[?1000l + \u001b[?1006l
+Enter:  \u001b[?1003h (any-event tracking) + \u001b[?1006h (SGR extended coordinates) + \u001b[?2004h (bracketed paste)
+Exit:   \u001b[?2004l + \u001b[?1003l + \u001b[?1006l
 ```
 
 SGR extended format supports coordinates >223 (unlike legacy X10/UTF-8 encodings) and distinguishes press (`M`) from release (`m`).
@@ -637,7 +782,7 @@ Same pattern for all handlers. This matches HTML event bubbling — clicking a S
 |---|---|
 | Left click | `hitTest` → bubble up for `onClick` handler. Also moves focus to the clicked element (or nearest focusable ancestor). |
 | Right click | Could map to context menu; currently no UI AST support. Ignored. |
-| Scroll wheel up/down | `hitTest` → walk up `parent` chain for nearest `overflow: scroll` container → adjust its scroll offset. |
+| Scroll wheel up/down | `hitTest` → walk up `parent` chain for nearest `overflow: scroll` container → adjust its scroll offset. Does not move focus. If a Select overlay is open, scrolls the overlay option list instead. |
 | Mouse drag | Track drag start/end positions. Useful for text selection in Input/Textarea (deferred). |
 
 **Element-specific click behavior**:
@@ -652,18 +797,16 @@ Track `lastHoverIdx` (the deepest element under the mouse). On mouse move:
 ```
 newIdx = hitTest(x, y, layout)
 if newIdx != lastHoverIdx then
-  // Fire onBlur on old element (bubble up)
-  // Fire onFocus on new element (bubble up)
   // Apply HoverProp style to new element, remove from old
   lastHoverIdx = newIdx
-  // triggers re-render
+  // triggers re-render (hover style change)
 ```
 
-This enables `HoverProp(style)` support — apply the hover style to whatever element the mouse is over.
+This enables `HoverProp(style)` support — apply the hover style to whatever element the mouse is over. Note: hover enter/leave does NOT fire onFocus/onBlur — those are keyboard focus events only. The UI AST has no onMouseEnter/onMouseLeave handlers.
 
 ### Scroll state
 
-Scroll offsets for `overflow: scroll` elements are maintained as external state — a `SignalRef[Map[Int, Int]]` mapping layout node index to vertical scroll offset (Int, not String — avoids Map key allocation).
+Scroll offsets for `overflow: scroll` elements are maintained as external state — a `SignalRef[Map[Any, Int]]` mapping element identity (the UI AST Element reference from `element[idx]`) to vertical scroll offset. Keying by AST element identity rather than layout index ensures scroll position is preserved across frames even when the tree structure changes (elements inserted/removed above a scrollable container would change layout indices but the AST reference remains stable).
 
 **Data flow**:
 1. During **flatten**, elements with `overflow: scroll` in lFlags are noted
@@ -736,12 +879,304 @@ if contentHeight > viewHeight then
 - **`HoverProp(style)`**: supported via SGR mouse tracking. `lastHoverIdx` tracks the element under the cursor; hover style is applied/removed on mouse move events.
 - **`Alignment.baseline`**: no font baseline in a terminal. Treated as `start`.
 
-### Interactive elements
+### Form handling
 
-- **Input/Textarea**: printable keys append to the `SignalRef[String]` value, Backspace removes last character, cursor position tracked
-- **Button**: Enter/Space triggers `onClick` handler
-- **Select**: Enter opens overlay, arrow keys navigate options, Enter selects, Escape cancels
-- **Anchor**: Enter follows the link (OSC 8 for terminal hyperlinks)
+Forms are the primary interactive surface in TUI. Each form element renders as a recognizable terminal widget and responds to keyboard + mouse input. All form state lives in the UI AST's `SignalRef` values — the TUI backend reads and writes them, no separate form state needed.
+
+#### Input (type=text, default)
+
+**Rendering**: single-line bordered box showing the current value (or placeholder in dim style when empty).
+```
+┌──────────────────┐
+│Enter your name___│   ← placeholder, dim
+└──────────────────┘
+
+┌──────────────────┐
+│John▏_____________│   ← value with cursor (▏ = thin bar)
+└──────────────────┘
+```
+
+**Cursor state**: `cursorPos: Int` tracked per focused Input in the main loop state (not in the layout — it's transient UI state, reset when focus moves).
+
+**Keyboard**:
+- Printable chars → insert at `cursorPos` into `SignalRef[String]`, advance cursor
+- Backspace → delete char before cursor, move cursor left
+- Delete → delete char after cursor
+- Left/Right → move cursor ±1
+- Home/End → cursor to start/end
+- Ctrl+A → select all (set selection range)
+
+**Mouse click** → move cursor to click position:
+```
+contentX = layout.x(idx) + borderLeft + padLeft
+cursorPos = clamp(mouseX - contentX, 0, value.length)
+```
+Monospace grid = 1 char per cell, so `mouseX - contentX` is the exact character index. No font metrics needed.
+
+**Horizontal scroll for long values**: when `value.length > contentWidth`, display a window starting at `scrollX`. Cursor movement adjusts `scrollX` to keep cursor visible. Scroll indicators `◀▶` at edges when content overflows.
+
+**`onInput` callback**: fires after each edit with the new String value.
+
+#### Input (type=password)
+
+Same as text Input, but renders `●` (U+25CF) per character instead of actual text. Cursor positioning still works — `cursorPos` maps to the same cell offset.
+
+#### Input (type=checkbox)
+
+**Rendering**: `☐` (U+2610) unchecked, `☑` (U+2611) checked. Label text beside it.
+```
+☑ Remember me
+☐ Subscribe to newsletter
+```
+
+**Interaction**: Space/Enter toggles `checked` SignalRef. Mouse click toggles.
+
+#### Textarea
+
+**Rendering**: multi-line bordered box with text content.
+```
+┌────────────────────────┐
+│This is line one        │
+│And this is line two    │
+│▏                       │   ← cursor on empty line 3
+│                        │
+│                        │
+└────────────────────────┘
+```
+
+**Cursor state**: `(cursorLine: Int, cursorCol: Int)` — 2D cursor position.
+
+**Keyboard**:
+- Printable chars → insert at cursor, advance col
+- Enter → insert newline, move to next line col 0
+- Backspace at col 0 → join with previous line
+- Up/Down → move cursor between lines (clamp col to line length)
+- All Input keys (Home, End, Delete, etc.) apply within current line
+
+**Mouse click** → 2D cursor positioning:
+```
+contentX = layout.x(idx) + borderLeft + padLeft
+contentY = layout.y(idx) + borderTop + padTop
+cursorLine = clamp(mouseY - contentY + scrollOffset, 0, lines.length - 1)
+cursorCol  = clamp(mouseX - contentX, 0, lines(cursorLine).length)
+```
+
+**Scrolling**: when content exceeds box height, uses the scroll mechanism (scroll state section). Arrow keys at top/bottom edges auto-scroll. Mouse wheel scrolls. Scroll indicator on right edge.
+
+**Word wrap**: text wraps within available `contentWidth` when `wrapText` is enabled. Wrapped lines are visual only — the underlying String preserves original line breaks.
+
+#### Button
+
+**Rendering**: children (label text) inside a bordered box.
+```
+┌──────┐       ┏━━━━━━┓
+│ Save │       ┃ Save ┃   ← focused (heavy border)
+└──────┘       ┗━━━━━━┛
+```
+
+**Interaction**:
+- Enter/Space → triggers `onClick`, applies `ActiveProp` style for ~100ms (visual press feedback)
+- Mouse click → triggers `onClick` via hit test + bubbling
+
+**Disabled**: rendered in dim style (`\u001b[2m`), skipped in focus cycle, ignores input.
+
+#### Select (dropdown)
+
+**Closed rendering**: shows selected value with dropdown indicator.
+```
+┌─────────────┐
+│ English   ▾ │
+└─────────────┘
+```
+
+**Opening**: Enter/Space (or mouse click) opens an overlay painted on top of all other content.
+
+**Overlay rendering**: bordered box listing all `Option` children, positioned below (or above if not enough room below).
+```
+┌─────────────┐
+│ English   ▾ │
+├─────────────┤
+│ English     │   ← highlighted (reverse video)
+│ Español     │
+│ Français    │
+│ Deutsch     │
+│ 日本語      │
+└─────────────┘
+```
+
+**Overlay positioning**:
+```
+// Try below the select box
+dropdownY = selectY + selectH
+dropdownH = min(optionCount, maxVisible)  // cap at ~10
+
+// Flip above if not enough room
+if dropdownY + dropdownH > terminalHeight then
+  dropdownY = selectY - dropdownH
+
+// Width = max of select width and longest option
+dropdownW = max(selectW, longestOptionText + 2)
+```
+
+**Overlay painting**: overlays are collected during the main paint pass and painted in a second pass (after all regular elements). This ensures they render on top without z-buffer complexity. Since we do full repaint every frame, closing the overlay just means the next frame doesn't paint it — the double-buffer diff handles cleanup automatically.
+
+**Keyboard** (while open):
+- Arrow Up/Down → move highlight (wrapping)
+- Enter → select highlighted option, close, fire `onChange`
+- Escape → close without selecting
+- Type characters → jump to first option matching prefix (type-ahead)
+
+**Mouse** (while open):
+- Click on option → select and close
+- Click outside overlay → close without selecting
+- Scroll wheel → scroll options if more than `maxVisible`
+
+**State**: `openSelectIdx: Int` (-1 = none open) + `highlightedOption: Int` in the main loop. When a Select overlay is open, input dispatch routes to the overlay instead of normal focus.
+
+**Option.selected**: resolves to a Boolean indicating pre-selection. Used to set the initial highlighted option when the overlay opens. Also determines which option text to display in the closed Select box when `Select.value` is not explicitly set.
+
+**Option.value**: the String value passed to `Select.onChange` when this option is selected. If absent, the option's text content is used.
+
+#### Form
+
+**Rendering**: invisible container (like Div) — no visual border unless styled. Groups its children for Tab navigation and submit behavior.
+
+**Submit**: Enter on any Input inside a Form triggers `onSubmit`:
+```
+// Walk up parent chain from focused element
+idx = focusedIdx
+while idx != -1 do
+  layout.element(idx) match
+    case form: Form if form.onSubmit.nonEmpty =>
+      run(form.onSubmit.get)
+      return
+    case _ =>
+  idx = layout.parent(idx)
+```
+
+**Tab order**: focus cycles through form fields in document order (depth-first traversal order = layout index order). This is already handled by the focus system — Form doesn't need special Tab logic.
+
+#### Label
+
+**Rendering**: text container, no special visual. In the UI AST, Label's first child is typically text, and it's associated with a nearby Input/Select by document proximity.
+
+#### Anchor
+
+**Rendering**: text with underline style (or user-specified style). OSC 8 terminal hyperlink:
+```
+\u001b]8;;https://example.com\u001b\\link text\u001b]8;;\u001b\\
+```
+
+**Interaction**: Enter (or mouse click) opens the URL. The terminal itself may handle link activation, or we can use `ProcessBuilder("open", url)` / `xdg-open` as fallback.
+
+#### Disabled state
+
+All interactive elements (Input, Textarea, Select, Button) support `disabled`:
+- Skipped in focus cycle (Tab jumps past them)
+- Rendered in dim style (`\u001b[2m` SGR)
+- Ignore keyboard and mouse input
+- Resolved during flatten from `disabled: Maybe[Boolean | Signal[Boolean]]` → packed into `lFlags` bit 13
+
+#### Visual cursor
+
+The text cursor is rendered by the painter when the focused element is an Input or Textarea:
+- **Block cursor**: invert fg/bg at cursor position
+- **Bar cursor**: render `▏` (U+258F) at cursor position in fg color
+- **Blinking**: toggle visibility every ~530ms via a `SignalRef[Boolean]` updated by a timer fiber. Included in `Signal.awaitAny` so blink transitions trigger re-render. Alternatively, use terminal's built-in cursor blink by showing the real terminal cursor (`\u001b[?25h` + `\u001b[row;colH`) positioned at the input cursor — avoids the timer fiber entirely.
+
+#### Text selection
+
+Mouse drag sets `selectionStart` and `selectionEnd` (character offsets). Selected range is rendered with inverted/highlighted colors. Works for both Input and Textarea. Ctrl+C copies selection to clipboard (OSC 52: `\u001b]52;c;[base64]\u0007`).
+
+### Semantic HTML elements in TUI
+
+Elements that have no special interactivity but need TUI-specific rendering behavior:
+
+#### Headings (H1–H6)
+
+Rendered with decreasing emphasis. In a monospace terminal, "size" is expressed via bold + decoration:
+- **H1**: bold, full-width underline (`═══`), extra blank line after
+- **H2**: bold, full-width underline (`───`), extra blank line after
+- **H3**: bold, extra blank line after
+- **H4**: bold
+- **H5**: normal weight
+- **H6**: dim (`\u001b[2m`)
+
+These are default styles — user-specified Style props override them.
+
+#### Hr (horizontal rule)
+
+Renders as a full-width horizontal line using `─` (U+2500). Takes the element's `width` style (or parent content width if auto). Height is always 1 row. Respects `TextColor` for the line color.
+
+#### Br (line break)
+
+Inserts a line break in the text flow. During measure/arrange, Br increments the current Y position by 1 row and resets X to the content start. It's a zero-width, 1-height element.
+
+#### Ul / Ol / Li (lists)
+
+- **Ul > Li**: each Li is prefixed with `• ` (U+2022 bullet, 2 cells indent)
+- **Ol > Li**: each Li is prefixed with its 1-based index: `1. `, `2. `, etc. (dynamic width: 3+ cells indent)
+- Nested lists increase indent by 2 cells per level
+- Li is laid out as a row: `[prefix][content]`
+
+The prefix is added during paint, not during flatten — the layout allocates space for it by adding left padding to Li based on nesting depth and list type.
+
+#### Table / Tr / Td / Th
+
+Table layout uses a separate algorithm from flexbox:
+
+1. **Measure columns**: scan all rows, compute max intrinsic width for each column position
+2. **Colspan/rowspan**: Td/Th with `colspan > 1` spans multiple columns; `rowspan > 1` spans multiple rows. Space is distributed evenly across spanned columns/rows.
+3. **Arrange**: each cell gets `(x, y, w, h)` based on column offsets and row heights
+4. **Paint**: cell content is clipped to cell bounds; borders drawn using box-drawing characters with proper junction merging (e.g., `┼` where borders meet)
+
+```
+Table rendering:
+┌──────┬───────┬──────┐
+│ Name │ Email │ Role │    ← Th (bold text)
+├──────┼───────┼──────┤
+│ John │ j@... │ Admin│    ← Td
+│ Jane │ ja@.. │ User │
+└──────┴───────┴──────┘
+```
+
+Th content is rendered bold by default. Border junctions (`┬┴├┤┼`) are resolved via the box-drawing merge table.
+
+#### Pre / Code
+
+- **Pre**: preserves whitespace and line breaks as-is (no word wrap regardless of `wrapText` setting). Rendered in the same monospace font as everything else (already monospace in TUI).
+- **Code**: same as Pre when block-level. When inline (inside a Span or P), renders with a different bg color (e.g., slightly darker) to distinguish code from surrounding text.
+
+#### Label
+
+Renders as plain text container. `forId` associates the label with an Input/Select element — clicking the label moves focus to the associated element (lookup by `identifier` in the layout tree via hit test → find element where `CommonAttrs.identifier == forId` → set focusRef).
+
+#### Anchor.target
+
+Ignored in TUI — no concept of separate windows/tabs. All links open in the same context.
+
+### Web-only attributes (ignored in TUI)
+
+These CommonAttrs fields are specific to DOM/browser backends and have no effect in TUI:
+- `style: Maybe[String | Signal[String]]` — CSS string, web-only. TUI uses `uiStyle: Style` exclusively.
+- `attrs: Map[String, String | Signal[String]]` — arbitrary HTML attributes, no terminal equivalent.
+- `handlers: Map[String, Unit < Async]` — generic DOM event handlers (e.g., `"dblclick"`, `"contextmenu"`). TUI supports only the typed handlers (onClick, onKeyDown, etc.).
+- `classes` / `dynamicClassName` — CSS class names, web-only. TUI resolves styles inline.
+
+### Overflow.auto
+
+`Overflow.auto` behaves the same as `Overflow.scroll` in TUI — if content exceeds the box, scrollable; otherwise no scroll indicators shown. The difference from `scroll` is that scroll indicators are hidden when content fits (no empty track/thumb).
+
+### FontWeight numeric variants
+
+`FontWeight` has numeric variants (w100–w900). TUI maps:
+- `w100`–`w300` → dim (`\u001b[2m`)
+- `w400`–`w500` → normal
+- `w600`–`w900`, `bold` → bold (`\u001b[1m`)
+
+### BorderStyle.none
+
+`BorderStyle.none` means no border is drawn (equivalent to border width 0 on all sides). Distinct from omitting the border style — `none` explicitly removes borders even if `BorderWidthProp` is set.
 
 ---
 
@@ -796,9 +1231,11 @@ Middle characters (ML, MR, M, MT, MB) are used when adjacent borders merge at T-
 
 `BorderRadius > 0` selects rounded corners (`╭╮╰╯`) per-corner, applied on top of whatever border style is active.
 
-**Border colors**: fg color applied to border characters. `bdrClr[idx]` is a single color for all sides (per-side colors could be added later with additional array slots, but single-color covers the common case).
+**Border colors**: `BorderColorProp(top, right, bottom, left)` supports per-side colors. In TuiLayout, stored as 4 arrays: `bdrClrT`, `bdrClrR`, `bdrClrB`, `bdrClrL` (packed 24-bit RGB, -1 = absent). Applied as fg color to the respective border characters during paint. `BorderTopProp`/`BorderRightProp`/`BorderBottomProp`/`BorderLeftProp` also set both width and color for individual sides.
 
 **Border widths**: always 1 cell in a terminal. Width > 0 → present, width = 0 → absent. Enables selective borders (e.g., bottom-only).
+
+**Border radius**: `BorderRadiusProp(topLeft, topRight, bottomRight, bottomLeft)` supports per-corner values. In TUI, each corner is binary: radius > 0 → rounded (`╭╮╰╯`), radius = 0 → square (`┌┐└┘`). Stored as 4 bits in `pFlags` (bits 9-12: roundedTL, roundedTR, roundedBR, roundedBL).
 
 ### Approximated — creative terminal techniques
 
@@ -810,7 +1247,7 @@ Middle characters (ML, MR, M, MT, MB) are used when adjacent borders merge at T-
 | **Translate** | Offset (x, y) in layout by cell count; visual only, does not affect siblings |
 | **LetterSpacing** | Space characters inserted between letters (integer cells, coarser than CSS) |
 | **FontFamily** | No-op (terminal uses its configured monospace font) |
-| **BorderRadius** | Binary: radius > 0 uses rounded corners `╭╮╰╯`, radius = 0 uses square `┌┐└┘` |
+| **BorderRadius** | Per-corner binary: radius > 0 uses rounded corner (`╭╮╰╯`), radius = 0 uses square (`┌┐└┘`). Supports mixed (e.g., only top corners rounded). |
 | **Cursor** | No-op (no mouse cursor to change) |
 | **Images** (Img element) | Auto-detected protocol: Kitty Graphics → iTerm2 IIP → Sixel → sextant/quadrant/half-block character fallback. See Image Rendering section. |
 
@@ -967,15 +1404,16 @@ All data structures are pre-allocated once and reused across frames. Summary for
 | `TuiRenderer` buffers ×2 | ~200KB | Session (allocated once, swapped each frame) |
 | `TuiRenderer.wideSyms` ×2 | ~0 | Session (sparse, <100 entries) |
 | `AnsiBuffer` | ~64KB | Session (reset via `pos = 0` each frame) |
-| `TuiLayout` flat arrays (×~40 arrays, 256 capacity) | ~40KB | Session (reset via `count = 0` each frame) |
+| `TuiLayout` flat arrays (×45 arrays, 256 capacity) | ~45KB | Session (reset via `count = 0` each frame) |
 | `SignalCollector` | ~0.5KB | Session (reset each frame) |
-| **Total static** | **~305KB** | **Allocated once, never GC'd** |
+| **Total static** | **~310KB** | **Allocated once, never GC'd** |
 
 | Per-frame allocations | Count | Notes |
 |-----------------------|-------|-------|
-| `Chunk[Signal[?]]` for awaitAny | 1 | Wrapper around pre-allocated array |
-| KeyEvent objects | ~1-5 | From input parsing |
-| **Total per frame** | **~2-6 objects** | **Essentially zero-allocation** |
+| `Chunk[Signal[?]]` for awaitAny | 1 | Wrapper around SignalCollector array slice |
+| Short-lived fibers from `Signal.awaitAny` | ~N | N = number of signals (~50). Each is a masked `signal.next` race participant. Lightweight (promise await + fiber wrapper). |
+| InputEvent objects (KeyEvent + MouseEvent) | ~1-5 | From input parsing |
+| **Total per frame** | **~50-60 objects** | **Dominated by awaitAny race fibers; all short-lived** |
 
 Key design decisions:
 - **Flat arrays instead of objects**: eliminates ~300 per-frame allocations (LayoutBox + LayoutStyle + PaintStyle + Array[LayoutBox] backing)
@@ -1016,7 +1454,177 @@ TuiLayoutTest.scala                     — measure + arrange on known UI trees
 TuiFlattenTest.scala                    — UI AST → TuiLayout flat arrays (signal resolution, style resolution)
 TuiPainterTest.scala                    — TuiLayout → TuiRenderer cell contents
 TuiInputTest.scala                      — byte sequences → KeyEvents + MouseEvents
+TuiFocusTest.scala                      — focus cycling, focusable extraction, event dispatch
 TuiImageTest.scala                      — character block rendering, protocol selection
+```
+
+## Terminal Capability Detection
+
+### Color Tier
+
+Detect once at startup, store as enum:
+
+```
+Detection order (first match wins):
+NoColor    — $NO_COLOR is set (any value) → disable all color output (checked first, overrides everything)
+TrueColor  — $COLORTERM ∈ {truecolor, 24bit}, or $TERM_PROGRAM ∈ {iTerm.app, WezTerm, mintty}
+Color256   — terminfo `colors >= 256`, or $TERM contains "256color"
+Color16    — everything else (basic ANSI)
+```
+
+TuiRenderer.flush checks the tier when emitting SGR:
+- **TrueColor**: `\u001b[38;2;r;g;bm` as-is
+- **Color256**: quantize to nearest in 6×6×6 cube (indices 16-231) or 24-step grayscale (232-255) via Euclidean RGB distance → `\u001b[38;5;{idx}m`
+- **Color16**: map to nearest ANSI color (0-15) → `\u001b[{30+idx}m` / `\u001b[{90+idx}m` for bright
+- **NoColor**: emit no SGR color codes; bold/underline still allowed
+
+Quantization lives in TuiColor:
+```scala
+def to256(packed: Int): Int   // nearest 6×6×6 cube or grayscale index
+def to16(packed: Int): Int    // nearest ANSI 0-15
+```
+
+### Dark/Light Theme Detection
+
+Detect at startup to pick sensible default fg/bg colors:
+
+1. **OSC 11 query**: Write `\u001b]11;?\u001b\\` to tty, read response `\u001b]11;rgb:RRRR/GGGG/BBBB\u001b\\` with 200ms timeout
+2. Parse RGB (16-bit per channel), compute relative luminance: `L = 0.299×R + 0.587×G + 0.114×B` (normalized 0-1)
+3. `L > 0.5` → light background; else dark
+4. **Fallback**: Parse `$COLORFGBG` (format `fg;bg`, e.g. `15;0`) — bg < 8 = dark
+5. **Default**: dark (most terminals)
+
+Store as `isDarkBackground: Boolean` in TuiTerminal. Used by TuiPainter to select default text color (white on dark, black on light) and adjust border visibility.
+
+## Clipboard Integration
+
+### OSC 52 Copy/Paste
+
+```
+Copy:   \u001b]52;c;{base64-encoded-text}\u001b\\
+Paste:  \u001b]52;c;?\u001b\\  → terminal responds with \u001b]52;c;{base64}\u001b\\
+```
+
+- Paste response read from stdin with 200ms timeout (same as OSC 11)
+- Many terminals support copy but block paste read for security — fall back gracefully
+
+### Bracketed Paste Mode
+
+Enable at startup: `\u001b[?2004h` (disable on exit: `\u001b[?2004l`)
+
+Pasted text arrives wrapped: `\u001b[200~`...`\u001b[201~`
+
+TuiInput detects this wrapper and emits a single `PasteEvent(text: String)` instead of individual key events. This lets Input/Textarea handle bulk paste correctly (insert all at once, single undo step).
+
+### Platform Fallback
+
+On macOS when OSC 52 paste fails: shell out to `pbpaste` via ProcessBuilder. For copy, `pbcopy` via ProcessBuilder with text on stdin. Only used as fallback — OSC 52 preferred for terminal-native operation.
+
+### Tmux Wrapping
+
+Inside tmux (`$TMUX` set), OSC 52 must be wrapped in DCS passthrough:
+```
+\u001bPtmux;\u001b\u001b]52;c;{base64}\u001b\u001b\\\u001b\\
+```
+Requires `set -g allow-passthrough on` in tmux 3.3+.
+
+## Multiplexer Compatibility
+
+### Detection
+
+```
+Tmux:        $TMUX is set
+GNU Screen:  $TERM starts with "screen" and $TMUX is not set
+Neither:     direct terminal access
+```
+
+### Tmux
+
+- **DCS passthrough**: Escape sequences that need to reach the outer terminal must be wrapped: `\u001bPtmux;\u001b{seq}\u001b\\` (inner ESC doubled)
+- **Feature detection**: `tmux display -p '#{client_termfeatures}'` returns comma-separated list (RGB, clipboard, mouse, etc.)
+- **What breaks without passthrough**: OSC 52 clipboard read, image protocols (Kitty/iTerm2/Sixel), OSC 11 bg query
+- **allow-passthrough**: Off by default since tmux 3.3a; users must enable it for advanced features
+- Basic ANSI (colors, cursor, mouse SGR) works without passthrough
+
+### GNU Screen
+
+- No DCS passthrough support — advanced escape sequences (OSC 52, image protocols, OSC 11) will not work
+- Basic ANSI rendering works fine
+- Detect and skip unsupported features gracefully (no errors, just reduced functionality)
+
+### TuiTerminal Capability Record
+
+TuiTerminal stores detected capabilities at startup:
+
+```scala
+case class Capabilities(
+    colorTier: ColorTier,          // TrueColor | Color256 | Color16 | NoColor
+    isDarkBg: Boolean,             // dark/light background
+    hasOsc52Copy: Boolean,         // clipboard copy
+    hasOsc52Paste: Boolean,        // clipboard paste (often blocked)
+    hasBracketedPaste: Boolean,    // pasted text detection
+    multiplexer: Multiplexer,     // None | Tmux | Screen
+    imageProtocol: ImageProto,    // None | Kitty | ITerm2 | Sixel
+    cellPixelW: Int,               // cell width in pixels (from \u001b[16t query, for image scaling)
+    cellPixelH: Int,               // cell height in pixels
+)
+// Note: SGR mouse (mode 1003 + 1006) is always enabled — no capability flag needed
+```
+
+## Signal Handling & Ctrl Key Bindings
+
+### Raw Mode Key Delivery
+
+In raw mode, the kernel does not interpret control keys as signals:
+
+| Key | Byte | Normal mode | Raw mode |
+|-----|------|-------------|----------|
+| Ctrl+C | 0x03 | SIGINT | byte 0x03 delivered to read() |
+| Ctrl+Z | 0x1a | SIGTSTP | byte 0x1a delivered to read() |
+| Ctrl+\\ | 0x1c | SIGQUIT | byte 0x1c delivered to read() |
+
+### Default Bindings
+
+- **Ctrl+C**: Quit (clean exit). Overridable by the application (e.g. copy-to-clipboard)
+- **Ctrl+Z**: Suspend — exit alt screen, restore stty, send `SIGTSTP` to self. On resume: re-enter raw mode + alt screen + full repaint
+- **Ctrl+\\**: Always quit (non-overridable emergency exit)
+- **Double Ctrl+C within 500ms**: Always quit even if Ctrl+C is rebound — guaranteed escape hatch
+
+### Ctrl+Z Suspend/Resume Sequence
+
+```
+1. Exit alternate screen: \u001b[?1049l
+2. Show cursor: \u001b[?25h
+3. Disable mouse + bracketed paste: \u001b[?1003l\u001b[?1006l\u001b[?2004l
+4. Restore original stty settings
+5. Send SIGTSTP to self: Runtime.exec("kill -TSTP " + ProcessHandle.current().pid())
+   — process suspends here, shell gets control —
+6. On resume (SIGCONT): re-enter raw mode + alt screen + mouse + bracketed paste + hide cursor
+7. Query terminal size (may have changed)
+8. Full repaint (clear prev buffer to force complete redraw)
+```
+
+### External Signal Handling
+
+Even in raw mode, signals sent externally (e.g. `kill -TERM <pid>`) still arrive:
+
+- **SIGTERM/SIGHUP**: Register via `sun.misc.Signal.handle`. Run cleanup (exit alt screen, restore stty)
+- **Shutdown hook**: `Runtime.addShutdownHook` as last-resort cleanup
+- **Idempotent cleanup**: Guard with `AtomicBoolean` — safe to call from signal handler, shutdown hook, and normal exit
+- **UncaughtExceptionHandler**: Set on the main thread to ensure cleanup runs on unexpected crashes
+
+```scala
+private val cleaned = new java.util.concurrent.atomic.AtomicBoolean(false)
+private def cleanup(term: TuiTerminal): Unit =
+    if cleaned.compareAndSet(false, true) then
+        term.disableBracketedPaste()
+        term.disableMouse()
+        term.showCursor()
+        term.exitAltScreen()
+        term.restoreStty()
+// Called from: Scope.ensure (normal exit), sun.misc.Signal handlers (SIGTERM/SIGHUP),
+// shutdown hook (last resort), uncaught exception handler. AtomicBoolean ensures
+// only the first caller runs cleanup — all others no-op.
 ```
 
 ## Implementation Order
@@ -1038,7 +1646,7 @@ TuiBackend     → all of the above
 
 **Phase 1 — Leaf utilities** (no dependencies, can be built in parallel):
 1. **TuiColor** — packed RGB, hex parsing, blending. Foundation for everything.
-2. **TuiInput** — byte → KeyEvent parser. Independent of the rendering chain.
+2. **TuiInput** — byte → InputEvent (key + mouse) parser. Independent of the rendering chain.
 
 **Phase 2 — Core infrastructure** (need TuiColor, independent of each other):
 3. **TuiLayout** — flat array table + measure + arrange. The central data structure. Pure geometry, no UI AST knowledge.
@@ -1079,3 +1687,7 @@ TuiBackend     → all of the above
 - [Unicode Block Mosaics](https://unicode.org/charts/beta/nameslist/n_1FB00.html) — U+1FB00 sextant character definitions
 - [TerminalImageViewer](https://github.com/stefanhaustein/TerminalImageViewer) — Quadrant-based image rendering
 - [ANSI Escape Codes](https://en.wikipedia.org/wiki/ANSI_escape_code) — Full SGR reference
+- [NO_COLOR](https://no-color.org/) — Convention for disabling color output
+- [OSC 52 Clipboard](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Operating-System-Commands) — Xterm control sequences spec
+- [Bracketed Paste Mode](https://cirw.in/blog/bracketed-paste) — How bracketed paste works
+- [Tmux Passthrough](https://github.com/tmux/tmux/wiki/FAQ#what-is-the-passthrough-escape-sequence-and-how-do-i-use-it) — DCS passthrough documentation
