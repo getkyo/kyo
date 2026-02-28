@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Interactive UI Comparison Report</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0;padding:0;overflow:hidden}
+.topbar{background:#1e293b;padding:10px 20px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #334155;position:sticky;top:0;z-index:10;flex-wrap:wrap}
+.topbar h1{font-size:16px;color:#f8fafc;white-space:nowrap}
+.stats{display:flex;gap:6px}
+.stat{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.stat.pass{background:#166534;color:#bbf7d0}
+.stat.fail{background:#991b1b;color:#fecaca}
+.stat.warn{background:#713f12;color:#fde68a}
+.tabs{display:flex;gap:2px;overflow-x:auto;flex:1;min-width:0}
+.tab{padding:5px 10px;border-radius:6px 6px 0 0;cursor:pointer;font-size:11px;font-weight:600;background:#334155;color:#94a3b8;border:none;white-space:nowrap;transition:all .15s}
+.tab:hover{background:#475569;color:#e2e8f0}
+.tab.active{background:#0f172a;color:#f8fafc}
+.tab .dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px}
+.dot.pass{background:#22c55e}
+.dot.fail{background:#ef4444}
+.dot.warn{background:#eab308}
+.main{height:calc(100vh - 50px);display:flex;flex-direction:column}
+.panel{display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0}
+.panel.active{display:flex}
+.side-by-side{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:0;overflow:hidden;min-height:0}
+.col{display:flex;flex-direction:column;overflow:auto;border-right:1px solid #334155}
+.col:last-child{border-right:none}
+.col-label{text-align:center;padding:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#64748b;background:#1e293b;position:sticky;top:0;z-index:1}
+.col img{width:100%;max-height:calc(100vh - 180px);object-fit:contain;object-position:top;display:block}
+.bottom-bar{background:#1e293b;border-top:1px solid #334155;padding:8px 16px;flex-shrink:0}
+.annotation{font-size:13px;margin-bottom:4px;color:#e2e8f0}
+.annotation .label{font-weight:700;color:#93c5fd}
+.controls{display:flex;align-items:center;gap:8px;margin-top:4px}
+.controls button{padding:3px 10px;border:1px solid #475569;background:#334155;color:#e2e8f0;border-radius:4px;cursor:pointer;font-size:11px}
+.controls button:hover{background:#475569}
+.controls input[type=range]{flex:1;accent-color:#3b82f6}
+.step-indicator{color:#94a3b8;font-size:11px}
+.controls.hidden{display:none}
+.finding{font-size:12px;padding:4px 8px;border-radius:4px;margin-top:4px;display:inline-block}
+.finding.bug{background:#450a0a;color:#fca5a5}
+.finding.ok{background:#052e16;color:#86efac}
+.finding.diff{background:#422006;color:#fde68a}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>Interactive UI Report</h1>
+  <div class="stats">
+    <span class="stat pass">5 Pass</span>
+    <span class="stat warn">2 Minor</span>
+    <span class="stat fail">3 Bugs</span>
+  </div>
+  <div class="tabs" id="tabs"></div>
+</div>
+<div class="main" id="main"></div>
+
+<script>
+var DATA = [
+  {
+    id: "demo",
+    name: "DemoUI",
+    status: "pass",
+    frames: [
+      {jfx: "demo-initial-jfx.png", web: "demo-initial-web.png", label: "Initial state", note: "Both platforms render identically"},
+      {jfx: "demo-counter-jfx.png", web: "demo-counter-web.png", label: "Counter +1", note: "Counter incremented to 1 on both"},
+      {jfx: "demo-todo-jfx.png", web: "demo-todo-web.png", label: "Todo added", note: "JFX: 'Buy groceries', Web: 'Walk the dog' (separate state)"}
+    ],
+    finding: "ok",
+    findingText: "All interactions work on both platforms"
+  },
+  {
+    id: "interactive",
+    name: "InteractiveUI",
+    status: "warn",
+    frames: [
+      {jfx: "interactive-both-jfx.png", web: "interactive-both-web.png", label: "Initial state", note: "JFX truncates cursor labels (poi..., t..., m...)"},
+      {jfx: "interactive-disabled-jfx.png", web: "interactive-disabled-web.png", label: "Disable toggled", note: "Both show Enable button, disabled state works"}
+    ],
+    finding: "diff",
+    findingText: "JFX truncates cursor variant labels due to narrow span sizing"
+  },
+  {
+    id: "form",
+    name: "FormUI",
+    status: "fail",
+    frames: [
+      {jfx: "form-initial-jfx.png", web: "form-initial-web.png", label: "Initial state", note: "Select shows 'option1' on JFX vs 'Option 1' on web"},
+      {jfx: "form-submitted-jfx.png", web: "form-submitted-web.png", label: "After Submit", note: "BUG: JFX still shows 'Not submitted yet' — onSubmit not firing!"}
+    ],
+    finding: "bug",
+    findingText: "JFX BUG: form.onSubmit handler does not fire"
+  },
+  {
+    id: "reactive",
+    name: "ReactiveUI",
+    status: "pass",
+    frames: [
+      {jfx: "reactive-initial-jfx.png", web: "reactive-initial-web.png", label: "Initial state", note: "All sections match"},
+      {jfx: "reactive-hidden-jfx.png", web: "reactive-hidden-web.png", label: "Panel hidden", note: "UI.when() works on both — panel removed"}
+    ],
+    finding: "ok",
+    findingText: "Conditional rendering works correctly on both platforms"
+  },
+  {
+    id: "dynamic",
+    name: "DynamicStyleUI",
+    status: "pass",
+    frames: [
+      {jfx: "dynamic-initial-jfx.png", web: "dynamic-initial-web.png", label: "Initial state", note: "All sections match"},
+      {jfx: "dynamic-green-jfx.png", web: "dynamic-green-web.png", label: "Green background", note: "Both changed to #dcfce7"}
+    ],
+    finding: "ok",
+    findingText: "Dynamic styles work correctly on both platforms"
+  },
+  {
+    id: "collections",
+    name: "CollectionOpsUI",
+    status: "warn",
+    frames: [
+      {jfx: "collections-initial-jfx.png", web: "collections-initial-web.png", label: "Initial state", note: "JFX truncates button labels (Remove..., Rev..., C...)"}
+    ],
+    finding: "diff",
+    findingText: "JFX truncates button labels in tight layouts"
+  },
+  {
+    id: "tables",
+    name: "TableAdvancedUI",
+    status: "fail",
+    frames: [
+      {jfx: "tables-initial-jfx.png", web: "tables-initial-web.png", label: "Initial state", note: "BUG: JFX colspan/rowspan table missing Score and Budget columns"}
+    ],
+    finding: "bug",
+    findingText: "JFX BUG: Table colspan/rowspan renders incorrectly — columns missing"
+  },
+  {
+    id: "nested",
+    name: "NestedReactiveUI",
+    status: "fail",
+    frames: [
+      {jfx: "nested-initial-jfx.png", web: "nested-initial-web.png", label: "Initial state", note: "BUG: Web missing inner when() panel, Signal[UI] items, filtered items"}
+    ],
+    finding: "bug",
+    findingText: "Web BUG: Nested reactive content (when-in-when, Signal[UI] in collection, filtered) not rendering"
+  },
+  {
+    id: "keyboard",
+    name: "KeyboardNavUI",
+    status: "pass",
+    frames: [
+      {jfx: "keyboard-initial-jfx.png", web: "keyboard-initial-web.png", label: "Initial state", note: "All 4 sections match between platforms"}
+    ],
+    finding: "ok",
+    findingText: "Keyboard navigation UI renders correctly on both platforms"
+  }
+];
+
+var activeTab = DATA[0].id;
+
+function buildTabs() {
+  var tabsEl = document.getElementById("tabs");
+  var html = "";
+  for (var i = 0; i < DATA.length; i++) {
+    var d = DATA[i];
+    var cls = d.id === activeTab ? " active" : "";
+    var dotCls = d.status;
+    html += '<button class="tab' + cls + '" data-id="' + d.id + '" onclick="switchTab(\'' + d.id + '\')"><span class="dot ' + dotCls + '"></span>' + d.name + '</button>';
+  }
+  tabsEl.innerHTML = html;
+}
+
+function buildPanels() {
+  var mainEl = document.getElementById("main");
+  var html = "";
+  for (var i = 0; i < DATA.length; i++) {
+    var d = DATA[i];
+    var cls = d.id === activeTab ? " active" : "";
+    var frames = d.frames;
+    var f = frames[0];
+    html += '<div class="panel' + cls + '" id="panel-' + d.id + '">';
+    html += '<div class="side-by-side">';
+    html += '<div class="col"><div class="col-label">JFX</div><img id="img-jfx-' + d.id + '" src="' + f.jfx + '"></div>';
+    html += '<div class="col"><div class="col-label">Web</div><img id="img-web-' + d.id + '" src="' + f.web + '"></div>';
+    html += '</div>';
+    html += '<div class="bottom-bar">';
+    html += '<div class="annotation"><span class="label" id="label-' + d.id + '">' + f.label + ':</span> <span id="note-' + d.id + '">' + f.note + '</span></div>';
+    html += '<div class="finding ' + d.finding + '">' + d.findingText + '</div>';
+    if (frames.length > 1) {
+      html += '<div class="controls" id="controls-' + d.id + '">';
+      html += '<button onclick="stepFrame(\'' + d.id + '\', -1)">Prev</button>';
+      html += '<input type="range" min="0" max="' + (frames.length - 1) + '" value="0" oninput="setFrame(\'' + d.id + '\', parseInt(this.value))" id="slider-' + d.id + '">';
+      html += '<button onclick="stepFrame(\'' + d.id + '\', 1)">Next</button>';
+      html += '<span class="step-indicator" id="step-' + d.id + '">1/' + frames.length + '</span>';
+      html += '</div>';
+    } else {
+      html += '<div class="controls hidden"></div>';
+    }
+    html += '</div></div>';
+  }
+  mainEl.innerHTML = html;
+}
+
+var frameIndex = {};
+for (var i = 0; i < DATA.length; i++) {
+  frameIndex[DATA[i].id] = 0;
+}
+
+function switchTab(id) {
+  activeTab = id;
+  var tabs = document.querySelectorAll(".tab");
+  for (var j = 0; j < tabs.length; j++) {
+    tabs[j].classList.remove("active");
+    if (tabs[j].getAttribute("data-id") === id) tabs[j].classList.add("active");
+  }
+  var panels = document.querySelectorAll(".panel");
+  for (var j = 0; j < panels.length; j++) {
+    panels[j].classList.remove("active");
+  }
+  var p = document.getElementById("panel-" + id);
+  if (p) p.classList.add("active");
+}
+
+function setFrame(id, idx) {
+  var d = null;
+  for (var i = 0; i < DATA.length; i++) {
+    if (DATA[i].id === id) { d = DATA[i]; break; }
+  }
+  if (!d) return;
+  if (idx < 0) idx = 0;
+  if (idx >= d.frames.length) idx = d.frames.length - 1;
+  frameIndex[id] = idx;
+  var f = d.frames[idx];
+  document.getElementById("img-jfx-" + id).src = f.jfx;
+  document.getElementById("img-web-" + id).src = f.web;
+  document.getElementById("label-" + id).textContent = f.label + ":";
+  document.getElementById("note-" + id).textContent = f.note;
+  var slider = document.getElementById("slider-" + id);
+  if (slider) slider.value = idx;
+  var step = document.getElementById("step-" + id);
+  if (step) step.textContent = (idx + 1) + "/" + d.frames.length;
+}
+
+function stepFrame(id, delta) {
+  var idx = (frameIndex[id] || 0) + delta;
+  setFrame(id, idx);
+}
+
+buildTabs();
+buildPanels();
+</script>
+</body>
+</html>

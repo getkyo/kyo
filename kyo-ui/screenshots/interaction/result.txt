@@ -1,0 +1,1 @@
+OK: saved /Users/fwbrasil/workspace/kyo/.claude/worktrees/kyo-ui/kyo-ui/screenshots/interaction/test-shot-jfx.png and /Users/fwbrasil/workspace/kyo/.claude/worktrees/kyo-ui/kyo-ui/screenshots/interaction/test-shot-web.png

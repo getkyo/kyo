@@ -1,0 +1,118 @@
+ScrollPane cls=[root,scroll-pane] style="-fx-background-color: transparent;" size=1280.0x1387.0
+   cls=[viewport] size=1278.0x1385.0
+     size=1278.0x1385.0
+      StackPane size=1278.0x995.0
+        VBox cls=[div] style="-fx-max-width: 800;" size=800.0x995.0 maxW=800.0 align=TOP_LEFT fillW=true
+          VBox cls=[header] style="-fx-background-color: #475569; -fx-text-fill: #ffffff; -fx-padding: 16 32 16 32;" size=800.0x71.0 align=TOP_LEFT fillW=true
+            Label cls=[label,h1] style="-fx-font-size: 32; -fx-font-weight: bold; -fx-text-fill: #ffffff;" text="Keyboard Navigation" textFill=0xffffffff font=System/Bold/32.0 size=736.0x39.0 maxW=MAX
+              LabeledText cls=[text]
+          VBox cls=[main] style="-fx-padding: 32 32 32 32; -fx-spacing: 24;" size=800.0x924.0 align=TOP_LEFT fillW=true
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x176.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="onKeyDown vs onKeyUp" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #64748b;" text="Type in the input to see both events fir" textFill=0x64748bff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              TextField cls=[text-input,text-field,input] style="-fx-padding: 8 12 8 12; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #d1d5db #d1d5db #d1d5db #d1d5db;" size=672.0x35.0 maxW=MAX
+                Pane size=646.0x17.0
+                  Text cls=[text]
+                  Path
+                  Text cls=[text]
+                  Group
+                    Path
+              HBox cls=[div] style="-fx-spacing: 16;" size=672.0x41.0 maxW=MAX align=CENTER_LEFT
+                VBox cls=[div] size=77.0x41.0 align=TOP_LEFT fillW=true
+                  Label cls=[label,label] style="-fx-font-size: 12; -fx-text-fill: #64748b;" text="Last keyDown: " textFill=0x64748bff font=System/Regular/12.0 size=77.0x15.0 maxW=MAX
+                    LabeledText cls=[text]
+                  HBox cls=[span] style="-fx-background-color: #f1f5f9; -fx-padding: 4 10 4 10; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-font-family: 'monospace'; -fx-font-size: 13; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #d1d5db #d1d5db #d1d5db #d1d5db;" size=77.0x26.0 maxW=MAX align=TOP_LEFT
+                    Label cls=[label] text="(none)" textFill=0x333333ff font=Monospaced/Regular/13.0 size=47.0x16.0
+                      LabeledText cls=[text]
+                VBox cls=[div] size=69.0x41.0 align=TOP_LEFT fillW=true
+                  Label cls=[label,label] style="-fx-font-size: 12; -fx-text-fill: #64748b;" text="Last keyUp: " textFill=0x64748bff font=System/Regular/12.0 size=69.0x15.0 maxW=MAX
+                    LabeledText cls=[text]
+                  HBox cls=[span] style="-fx-background-color: #f1f5f9; -fx-padding: 4 10 4 10; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-font-family: 'monospace'; -fx-font-size: 13; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #d1d5db #d1d5db #d1d5db #d1d5db;" size=69.0x26.0 maxW=MAX align=TOP_LEFT
+                    Label cls=[label] text="(none)" textFill=0x333333ff font=Monospaced/Regular/13.0 size=47.0x16.0
+                      LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x192.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Modifier Keys" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #64748b;" text="Press any key combo (Ctrl/Alt/Shift/Meta" textFill=0x64748bff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              TextField cls=[text-input,text-field,input] style="-fx-padding: 8 12 8 12; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #d1d5db #d1d5db #d1d5db #d1d5db;" size=672.0x35.0 maxW=MAX
+                Pane size=646.0x17.0
+                  Text cls=[text]
+                  Path
+                  Text cls=[text]
+                  Group
+                    Path
+              VBox cls=[div] style="-fx-padding: 12 12 12 12; -fx-background-color: #f8fafc; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none;" size=672.0x57.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[p] size=648.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="Combo: " textFill=0x333333ff font=System/Regular/13.0 size=648.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                HBox cls=[span] style="-fx-font-weight: bold; -fx-font-family: 'monospace';" size=648.0x16.0 maxW=MAX align=TOP_LEFT
+                  Label cls=[label] textFill=0x333333ff font=Monospaced/Bold/13.0 size=0.0x16.0
+                    LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x211.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Key Event Log" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #64748b;" text="Keys are logged as you type:" textFill=0x64748bff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8;" size=672.0x35.0 maxW=MAX align=CENTER_LEFT
+                TextField cls=[text-input,text-field,input] style="-fx-padding: 8 12 8 12; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #d1d5db #d1d5db #d1d5db #d1d5db;" size=171.0x35.0
+                  Pane size=145.0x17.0
+                    Text cls=[text]
+                    Path
+                    Text cls=[text]
+                    Group
+                      Path
+                Button cls=[button,button] style="-fx-padding: 4 12 4 12; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="Clear" textFill=0x333333ff font=System/Regular/13.0 size=55.0x27.0
+                  LabeledText cls=[text]
+              VBox cls=[div] style="-fx-background-color: #1e293b; -fx-text-fill: #e2e8f0; -fx-padding: 12 12 12 12; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-font-family: 'monospace'; -fx-font-size: 12; -fx-min-height: 80; -fx-border-style: none;" size=672.0x80.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox size=648.0x0.0 maxW=MAX align=TOP_LEFT fillW=true
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x209.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Focus Management" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #64748b;" text="Tab between inputs to see focus tracking" textFill=0x64748bff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[div] style="-fx-spacing: 8;" size=672.0x121.0 maxW=MAX align=TOP_LEFT fillW=true
+                TextField cls=[text-input,text-field,input] style="-fx-padding: 8 12 8 12; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #d1d5db #d1d5db #d1d5db #d1d5db;" size=672.0x35.0 maxW=MAX
+                  Pane size=646.0x17.0
+                    Text cls=[text]
+                    Path
+                    Text cls=[text]
+                    Group
+                      Path
+                TextField cls=[text-input,text-field,input] style="-fx-padding: 8 12 8 12; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #d1d5db #d1d5db #d1d5db #d1d5db;" size=672.0x35.0 maxW=MAX
+                  Pane size=646.0x17.0
+                    Text cls=[text]
+                    Path
+                    Text cls=[text]
+                    Group
+                      Path
+                TextField cls=[text-input,text-field,input] style="-fx-padding: 8 12 8 12; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #d1d5db #d1d5db #d1d5db #d1d5db;" size=672.0x35.0 maxW=MAX
+                  Pane size=646.0x17.0
+                    Text cls=[text]
+                    Path
+                    Text cls=[text]
+                    Group
+                      Path
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=20.0x98.0
+     cls=[increment-button] size=20.0x11.0
+      Region cls=[increment-arrow] size=9.0x5.0
+     cls=[decrement-button] size=20.0x11.0
+      Region cls=[decrement-arrow] size=9.0x5.0
+    StackPane cls=[track] size=20.0x76.0
+     cls=[thumb] size=20.0x76.0
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=18.0x100.0
+     cls=[increment-button] size=11.0x100.0
+      Region cls=[increment-arrow] size=5.0x9.0
+     cls=[decrement-button] size=11.0x100.0
+      Region cls=[decrement-arrow] size=5.0x9.0
+    StackPane cls=[track] size=-4.0x100.0
+     cls=[thumb] size=21.0x100.0
+  StackPane cls=[corner]

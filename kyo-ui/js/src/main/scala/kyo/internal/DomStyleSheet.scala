@@ -6,7 +6,27 @@ import org.scalajs.dom.document
 
 private[kyo] object DomStyleSheet:
 
-    private var idCounter = 0
+    private var idCounter    = 0
+    private var baseInjected = false
+
+    /** Injects base CSS reset and layout defaults. Makes web layout match JavaFx's VBox/HBox behavior: block containers get flex column,
+      * inline containers get flex row.
+      */
+    def injectBase(): Unit =
+        if !baseInjected then
+            baseInjected = true
+            inject(
+                """*, *::before, *::after { box-sizing: border-box; }
+                  |body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 0; }
+                  |div, section, main, header, footer, form, article, aside, p, ul, ol { display: flex; flex-direction: column; }
+                  |nav, li, span { display: flex; flex-direction: row; align-items: center; }
+                  |ul, ol { list-style: none; padding: 0; margin: 0; }
+                  |h1, h2, h3, h4, h5, h6, p { margin: 0; }
+                  |a { color: inherit; text-decoration: none; }
+                  |table { border-collapse: collapse; width: 100%; }
+                  |""".stripMargin
+            )
+    end injectBase
 
     private lazy val styleElement: dom.html.Style =
         val el = document.createElement("style").asInstanceOf[dom.html.Style]

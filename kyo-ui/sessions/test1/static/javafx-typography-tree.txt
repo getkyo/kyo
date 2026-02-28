@@ -1,0 +1,122 @@
+ScrollPane cls=[root,scroll-pane] style="-fx-background-color: transparent;" size=1280.0x1387.0
+   cls=[viewport] size=1264.0x1385.0
+     size=1264.0x1385.0
+      StackPane size=1264.0x1394.0
+        VBox cls=[div] style="-fx-max-width: 800;" size=800.0x1394.0 maxW=800.0 align=TOP_LEFT fillW=true
+          VBox cls=[header] style="-fx-background-color: #0891b2; -fx-text-fill: #ffffff; -fx-padding: 16 32 16 32;" size=800.0x71.0 align=TOP_LEFT fillW=true
+            Label cls=[label,h1] style="-fx-font-size: 32; -fx-font-weight: bold; -fx-text-fill: #ffffff;" text="Typography Showcase" textFill=0xffffffff font=System/Bold/32.0 size=736.0x39.0 maxW=MAX
+              LabeledText cls=[text]
+          VBox cls=[main] style="-fx-padding: 32 32 32 32; -fx-spacing: 24;" size=800.0x1323.0 align=TOP_LEFT fillW=true
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x180.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Font Styles" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-style: italic;" size=672.0x16.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-font-style: italic;" text="This text is italic" textFill=0x333333ff font=Helvetica/Oblique/13.0 size=672.0x16.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-weight: bold;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="This text is bold" textFill=0x333333ff font=System/Bold/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-weight: bold; -fx-font-style: italic;" size=672.0x16.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-font-style: italic;" text="This text is bold italic" textFill=0x333333ff font=Helvetica/Bold Oblique/13.0 size=672.0x16.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-family: 'monospace';" size=672.0x16.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="This text uses monospace font" textFill=0x333333ff font=Monospaced/Regular/13.0 size=672.0x16.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 24;" size=672.0x29.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="This text is 24px" textFill=0x333333ff font=System/Regular/24.0 size=672.0x29.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 12;" size=672.0x15.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="This text is 12px" textFill=0x333333ff font=System/Regular/12.0 size=672.0x15.0 maxW=MAX
+                  LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x156.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Text Decoration" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-underline: true;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="This text is underlined" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] style="-fx-strikethrough: true;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-strikethrough: true;" text="This text has strikethrough" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              HBox cls=[span] style="-fx-underline: true;" size=672.0x17.0 maxW=MAX align=TOP_LEFT
+                Label cls=[label] text="Underlined span" textFill=0x333333ff font=System/Regular/13.0 size=90.0x17.0
+                  LabeledText cls=[text]
+              HBox cls=[span] size=672.0x17.0 maxW=MAX align=TOP_LEFT
+                Label cls=[label] text=" — " textFill=0x333333ff font=System/Regular/13.0 size=17.0x17.0
+                  LabeledText cls=[text]
+              HBox cls=[span] style="-fx-strikethrough: true;" size=672.0x17.0 maxW=MAX align=TOP_LEFT
+                Label cls=[label] style=" -fx-strikethrough: true;" text="Struck-through span" textFill=0x333333ff font=System/Regular/13.0 size=113.0x17.0
+                  LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x122.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Text Transform" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="THIS SHOULD BE UPPERCASE" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="this should be lowercase" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="This Should Be Capitalized" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x152.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Spacing" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] size=672.0x47.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="This paragraph has double line height. I" textFill=0x333333ff font=System/Regular/13.0 size=672.0x47.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="W i d e   l e t t e r   s p a c i n g" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Normal letter spacing" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x183.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Text Overflow" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[div] style="-fx-max-width: 200; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-padding: 8 8 8 8;" size=200.0x35.0 maxW=200.0 align=TOP_LEFT fillW=true
+                VBox cls=[p] style="-fx-wrap-text: false; -fx-text-overrun: ellipsis;" size=182.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="This is a very long text that should be " textFill=0x333333ff font=System/Regular/13.0 size=182.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+              VBox cls=[div] style="-fx-max-width: 200; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-padding: 8 8 8 8;" size=200.0x69.0 maxW=200.0 align=TOP_LEFT fillW=true
+                VBox cls=[p] style="-fx-wrap-text: true;" size=182.0x51.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="This text wraps normally inside a narrow" textFill=0x333333ff font=System/Regular/13.0 size=182.0x51.0 maxW=MAX
+                    LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x178.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Text Alignment" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-text-alignment: left; -fx-background-color: #f3f4f6; -fx-padding: 8 8 8 8;" size=672.0x33.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Left aligned" textFill=0x333333ff font=System/Regular/13.0 size=656.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] style="-fx-text-alignment: center; -fx-background-color: #f3f4f6; -fx-padding: 8 8 8 8;" size=672.0x33.0 maxW=MAX align=TOP_CENTER fillW=true
+                Label cls=[label] text="Center aligned" textFill=0x333333ff font=System/Regular/13.0 size=656.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] style="-fx-text-alignment: right; -fx-background-color: #f3f4f6; -fx-padding: 8 8 8 8;" size=672.0x33.0 maxW=MAX align=TOP_RIGHT fillW=true
+                Label cls=[label] text="Right aligned" textFill=0x333333ff font=System/Regular/13.0 size=656.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x144.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Effects" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 24; -fx-padding: 16 16 16 16;" size=672.0x73.0 maxW=MAX align=CENTER_LEFT
+                VBox cls=[div] style="-fx-opacity: 0.5; -fx-background-color: #2563eb; -fx-text-fill: #ffffff; -fx-padding: 12 16 12 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none;" size=101.0x41.0 align=TOP_LEFT fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="50% opacity" textFill=0xffffffff font=System/Regular/13.0 size=69.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-translate-x: 10; -fx-translate-y: 5; -fx-background-color: #7c3aed; -fx-text-fill: #ffffff; -fx-padding: 12 16 12 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none;" size=90.0x41.0 align=TOP_LEFT fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="Translated" textFill=0xffffffff font=System/Regular/13.0 size=58.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+  ScrollBar cls=[scroll-bar] size=14.0x1387.0
+    StackPane cls=[track-background] size=14.0x1385.0
+     cls=[increment-button] size=14.0x11.0
+      Region cls=[increment-arrow] size=9.0x5.0
+     cls=[decrement-button] size=14.0x11.0
+      Region cls=[decrement-arrow] size=9.0x5.0
+    StackPane cls=[track] size=14.0x1363.0
+     cls=[thumb] size=14.0x1355.0
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=18.0x100.0
+     cls=[increment-button] size=11.0x100.0
+      Region cls=[increment-arrow] size=5.0x9.0
+     cls=[decrement-button] size=11.0x100.0
+      Region cls=[decrement-arrow] size=5.0x9.0
+    StackPane cls=[track] size=-4.0x100.0
+     cls=[thumb] size=21.0x100.0
+  StackPane cls=[corner]

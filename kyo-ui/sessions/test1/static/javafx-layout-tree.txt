@@ -1,0 +1,267 @@
+ScrollPane cls=[root,scroll-pane] style="-fx-background-color: transparent;" size=1280.0x1387.0
+   cls=[viewport] size=1264.0x1385.0
+     size=1264.0x1385.0
+      StackPane size=1264.0x2026.0
+        VBox cls=[div] style="-fx-max-width: 800;" size=800.0x2026.0 maxW=800.0 align=TOP_LEFT fillW=true
+          VBox cls=[header] style="-fx-background-color: #ea580c; -fx-text-fill: #ffffff; -fx-padding: 16 32 16 32;" size=800.0x71.0 align=TOP_LEFT fillW=true
+            Label cls=[label,h1] style="-fx-font-size: 32; -fx-font-weight: bold; -fx-text-fill: #ffffff;" text="Layout Showcase" textFill=0xffffffff font=System/Bold/32.0 size=736.0x39.0 maxW=MAX
+              LabeledText cls=[text]
+          VBox cls=[main] style="-fx-padding: 32 32 32 32; -fx-spacing: 24;" size=800.0x1955.0 align=TOP_LEFT fillW=true
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x186.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Explicit Column (default)" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[div] style="-fx-spacing: 8;" size=672.0x115.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=672.0x33.0 maxW=MAX align=TOP_CENTER fillW=true
+                  Label cls=[label] text="Item 1" textFill=0x333333ff font=System/Regular/13.0 size=640.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=672.0x33.0 maxW=MAX align=TOP_CENTER fillW=true
+                  Label cls=[label] text="Item 2" textFill=0x333333ff font=System/Regular/13.0 size=640.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=672.0x33.0 maxW=MAX align=TOP_CENTER fillW=true
+                  Label cls=[label] text="Item 3" textFill=0x333333ff font=System/Regular/13.0 size=640.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x467.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Justify Content" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              Label cls=[label,label] text="justify(_.start):" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8; -fx-background-color: #f9fafb; -fx-padding: 8 8 8 8;" size=672.0x49.0 maxW=MAX align=CENTER_LEFT
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=41.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="A" textFill=0x333333ff font=System/Regular/13.0 size=9.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=40.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="B" textFill=0x333333ff font=System/Regular/13.0 size=8.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=41.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="C" textFill=0x333333ff font=System/Regular/13.0 size=9.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+              Label cls=[label,label] text="justify(_.center):" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8; -fx-background-color: #f9fafb; -fx-padding: 8 8 8 8;" size=672.0x49.0 maxW=MAX align=CENTER_LEFT
+                Region size=251.0x33.0
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=41.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="A" textFill=0x333333ff font=System/Regular/13.0 size=9.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=40.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="B" textFill=0x333333ff font=System/Regular/13.0 size=8.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=41.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="C" textFill=0x333333ff font=System/Regular/13.0 size=9.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                Region size=251.0x33.0
+              Label cls=[label,label] text="justify(_.end):" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8; -fx-background-color: #f9fafb; -fx-padding: 8 8 8 8;" size=672.0x49.0 maxW=MAX align=CENTER_LEFT
+                Region size=510.0x33.0
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=41.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="A" textFill=0x333333ff font=System/Regular/13.0 size=9.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=40.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="B" textFill=0x333333ff font=System/Regular/13.0 size=8.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=41.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="C" textFill=0x333333ff font=System/Regular/13.0 size=9.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+              Label cls=[label,label] text="justify(_.spaceBetween):" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-background-color: #f9fafb; -fx-padding: 8 8 8 8;" size=672.0x49.0 maxW=MAX align=CENTER_LEFT
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=41.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="A" textFill=0x333333ff font=System/Regular/13.0 size=9.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                Region size=267.0x33.0
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=40.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="B" textFill=0x333333ff font=System/Regular/13.0 size=8.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                Region size=267.0x33.0
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=41.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="C" textFill=0x333333ff font=System/Regular/13.0 size=9.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+              Label cls=[label,label] text="justify(_.spaceAround):" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-background-color: #f9fafb; -fx-padding: 8 8 8 8;" size=672.0x49.0 maxW=MAX align=CENTER_LEFT
+                Region size=134.0x33.0
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=41.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="A" textFill=0x333333ff font=System/Regular/13.0 size=9.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                Region size=134.0x33.0
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=40.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="B" textFill=0x333333ff font=System/Regular/13.0 size=8.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                Region size=133.0x33.0
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=41.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="C" textFill=0x333333ff font=System/Regular/13.0 size=9.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                Region size=133.0x33.0
+              Label cls=[label,label] text="justify(_.spaceEvenly):" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-background-color: #f9fafb; -fx-padding: 8 8 8 8;" size=672.0x49.0 maxW=MAX align=CENTER_LEFT
+                Region size=134.0x33.0
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=41.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="A" textFill=0x333333ff font=System/Regular/13.0 size=9.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                Region size=134.0x33.0
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=40.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="B" textFill=0x333333ff font=System/Regular/13.0 size=8.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                Region size=133.0x33.0
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=41.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="C" textFill=0x333333ff font=System/Regular/13.0 size=9.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                Region size=133.0x33.0
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x362.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Align Items" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              Label cls=[label,label] text="align(_.start):" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8; -fx-background-color: #f9fafb; -fx-padding: 8 8 8 8; -fx-min-height: 80;" size=672.0x80.0 maxW=MAX align=TOP_LEFT
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-pref-height: 30; -fx-border-style: none;" size=62.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="Short" textFill=0x333333ff font=System/Regular/13.0 size=30.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-pref-height: 60; -fx-border-style: none;" size=52.0x60.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="Tall" textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+              Label cls=[label,label] text="align(_.center):" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8; -fx-background-color: #f9fafb; -fx-padding: 8 8 8 8; -fx-min-height: 80;" size=672.0x80.0 maxW=MAX align=CENTER_LEFT
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-pref-height: 30; -fx-border-style: none;" size=62.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="Short" textFill=0x333333ff font=System/Regular/13.0 size=30.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-pref-height: 60; -fx-border-style: none;" size=52.0x60.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="Tall" textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+              Label cls=[label,label] text="align(_.end):" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8; -fx-background-color: #f9fafb; -fx-padding: 8 8 8 8; -fx-min-height: 80;" size=672.0x80.0 maxW=MAX align=BOTTOM_LEFT
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-pref-height: 30; -fx-border-style: none;" size=62.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="Short" textFill=0x333333ff font=System/Regular/13.0 size=30.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-pref-height: 60; -fx-border-style: none;" size=52.0x60.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="Tall" textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x241.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Overflow" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              Label cls=[label,label] text="overflow(_.hidden) with height(60):" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[div] style="-fx-pref-height: 60; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-padding: 8 8 8 8;" size=672.0x60.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[p] size=654.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="Line 1" textFill=0x333333ff font=System/Regular/13.0 size=654.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[p] size=654.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="Line 2" textFill=0x333333ff font=System/Regular/13.0 size=654.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[p] size=654.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="Line 3" textFill=0x333333ff font=System/Regular/13.0 size=654.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[p] size=654.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="Line 4" textFill=0x333333ff font=System/Regular/13.0 size=654.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[p] size=654.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="Line 5" textFill=0x333333ff font=System/Regular/13.0 size=654.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+              Label cls=[label,label] text="overflow(_.scroll) with height(60):" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              ScrollPane cls=[scroll-pane] size=672.0x76.0 maxW=MAX
+                 cls=[viewport] size=656.0x60.0
+                   size=656.0x60.0
+                    VBox cls=[div] style="-fx-pref-height: 60; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-padding: 8 8 8 8;" size=656.0x103.0 align=TOP_LEFT fillW=true
+                      VBox cls=[p] size=638.0x17.0 align=TOP_LEFT fillW=true
+                        Label cls=[label] text="Line 1" textFill=0x333333ff font=System/Regular/13.0 size=638.0x17.0 maxW=MAX
+                          LabeledText cls=[text]
+                      VBox cls=[p] size=638.0x17.0 align=TOP_LEFT fillW=true
+                        Label cls=[label] text="Line 2" textFill=0x333333ff font=System/Regular/13.0 size=638.0x17.0 maxW=MAX
+                          LabeledText cls=[text]
+                      VBox cls=[p] size=638.0x17.0 align=TOP_LEFT fillW=true
+                        Label cls=[label] text="Line 3" textFill=0x333333ff font=System/Regular/13.0 size=638.0x17.0 maxW=MAX
+                          LabeledText cls=[text]
+                      VBox cls=[p] size=638.0x17.0 align=TOP_LEFT fillW=true
+                        Label cls=[label] text="Line 4" textFill=0x333333ff font=System/Regular/13.0 size=638.0x17.0 maxW=MAX
+                          LabeledText cls=[text]
+                      VBox cls=[p] size=638.0x17.0 align=TOP_LEFT fillW=true
+                        Label cls=[label] text="Line 5" textFill=0x333333ff font=System/Regular/13.0 size=638.0x17.0 maxW=MAX
+                          LabeledText cls=[text]
+                ScrollBar cls=[scroll-bar] size=14.0x62.0
+                  StackPane cls=[track-background] size=14.0x60.0
+                   cls=[increment-button] size=14.0x11.0
+                    Region cls=[increment-arrow] size=9.0x5.0
+                   cls=[decrement-button] size=14.0x11.0
+                    Region cls=[decrement-arrow] size=9.0x5.0
+                  StackPane cls=[track] size=14.0x38.0
+                   cls=[thumb] size=14.0x23.0
+                ScrollBar cls=[scroll-bar] size=658.0x14.0
+                  StackPane cls=[track-background] size=656.0x14.0
+                   cls=[increment-button] size=11.0x14.0
+                    Region cls=[increment-arrow] size=5.0x9.0
+                   cls=[decrement-button] size=11.0x14.0
+                    Region cls=[decrement-arrow] size=5.0x9.0
+                  StackPane cls=[track] size=634.0x14.0
+                   cls=[thumb] size=634.0x14.0
+                StackPane cls=[corner] size=14.0x14.0
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x305.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Min/Max Sizing" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              Label cls=[label,label] text="minHeight(100) with short content:" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[div] style="-fx-min-height: 100; -fx-background-color: #f3f4f6; -fx-padding: 8 8 8 8; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none;" size=672.0x100.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[p] size=656.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="Short content" textFill=0x333333ff font=System/Regular/13.0 size=656.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+              Label cls=[label,label] text="maxHeight(50) with tall content:" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[div] style="-fx-max-height: 50; -fx-background-color: #f3f4f6; -fx-padding: 8 8 8 8; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none;" size=672.0x50.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[p] size=656.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="Line 1" textFill=0x333333ff font=System/Regular/13.0 size=656.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[p] size=656.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="Line 2" textFill=0x333333ff font=System/Regular/13.0 size=656.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[p] size=656.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="Line 3" textFill=0x333333ff font=System/Regular/13.0 size=656.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[p] size=656.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="Line 4" textFill=0x333333ff font=System/Regular/13.0 size=656.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+              Label cls=[label,label] text="minWidth(300):" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8;" size=672.0x33.0 maxW=MAX align=CENTER_LEFT
+                VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-min-width: 300; -fx-border-style: none;" size=300.0x33.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] text="minWidth=300" textFill=0x333333ff font=System/Regular/13.0 size=268.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x210.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Nested Layouts" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 16;" size=672.0x139.0 maxW=MAX align=CENTER_LEFT
+                VBox cls=[div] style="-fx-spacing: 8; -fx-background-color: #f3f4f6; -fx-padding: 12 12 12 12; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none;" size=126.0x139.0 align=TOP_LEFT fillW=true
+                  VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=102.0x33.0 maxW=MAX align=TOP_CENTER fillW=true
+                    Label cls=[label] text="Col 1 / Row 1" textFill=0x333333ff font=System/Regular/13.0 size=70.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=102.0x33.0 maxW=MAX align=TOP_CENTER fillW=true
+                    Label cls=[label] text="Col 1 / Row 2" textFill=0x333333ff font=System/Regular/13.0 size=70.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                VBox cls=[div] style="-fx-spacing: 8; -fx-background-color: #f3f4f6; -fx-padding: 12 12 12 12; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none;" size=128.0x139.0 align=TOP_LEFT fillW=true
+                  VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=104.0x33.0 maxW=MAX align=TOP_CENTER fillW=true
+                    Label cls=[label] text="Col 2 / Row 1" textFill=0x333333ff font=System/Regular/13.0 size=72.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=104.0x33.0 maxW=MAX align=TOP_CENTER fillW=true
+                    Label cls=[label] text="Col 2 / Row 2" textFill=0x333333ff font=System/Regular/13.0 size=72.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[div] style="-fx-background-color: #e0e7ff; -fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-text-alignment: center; -fx-border-style: none;" size=104.0x33.0 maxW=MAX align=TOP_CENTER fillW=true
+                    Label cls=[label] text="Col 2 / Row 3" textFill=0x333333ff font=System/Regular/13.0 size=72.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+  ScrollBar cls=[scroll-bar] size=14.0x1387.0
+    StackPane cls=[track-background] size=14.0x1385.0
+     cls=[increment-button] size=14.0x11.0
+      Region cls=[increment-arrow] size=9.0x5.0
+     cls=[decrement-button] size=14.0x11.0
+      Region cls=[decrement-arrow] size=9.0x5.0
+    StackPane cls=[track] size=14.0x1363.0
+     cls=[thumb] size=14.0x932.0
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=18.0x100.0
+     cls=[increment-button] size=11.0x100.0
+      Region cls=[increment-arrow] size=5.0x9.0
+     cls=[decrement-button] size=11.0x100.0
+      Region cls=[decrement-arrow] size=5.0x9.0
+    StackPane cls=[track] size=-4.0x100.0
+     cls=[thumb] size=21.0x100.0
+  StackPane cls=[corner]

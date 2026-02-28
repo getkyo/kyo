@@ -1,0 +1,125 @@
+ScrollPane cls=[root,scroll-pane] style="-fx-background-color: transparent;" size=1280.0x1387.0
+   cls=[viewport] size=1278.0x1385.0
+     size=1278.0x1385.0
+      StackPane size=1278.0x658.0
+        VBox cls=[div] style="-fx-max-width: 800;" size=800.0x658.0 maxW=800.0 align=TOP_LEFT fillW=true
+          VBox cls=[header] style="-fx-background-color: #0f172a; -fx-text-fill: #ffffff; -fx-padding: 20 32 20 32;" size=800.0x97.0 align=TOP_LEFT fillW=true
+            Label cls=[label,h1] style="-fx-font-size: 32; -fx-font-weight: bold; -fx-text-fill: #ffffff;" text="Animated Dashboard" textFill=0xffffffff font=System/Bold/32.0 size=736.0x39.0 maxW=MAX
+              LabeledText cls=[text]
+            VBox cls=[p] style="-fx-text-fill: #94a3b8; -fx-font-size: 14;" size=736.0x18.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label] style=" -fx-text-fill: #94a3b8;" text="Metrics populate over time" textFill=0x94a3b8ff font=System/Regular/14.0 size=736.0x18.0 maxW=MAX
+                LabeledText cls=[text]
+          VBox cls=[main] style="-fx-padding: 32 32 32 32; -fx-spacing: 24;" size=800.0x561.0 align=TOP_LEFT fillW=true
+            VBox cls=[section] size=736.0x148.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Live Metrics" textFill=0x333333ff font=System/Bold/18.0 size=736.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 16;" size=736.0x113.0 maxW=MAX align=CENTER_LEFT
+                VBox cls=[div] style="-fx-background-color: #ffffff; -fx-padding: 24 24 24 24; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.12), 8, 0, 0, 2); -fx-border-style: none;" size=112.0x113.0 align=TOP_LEFT fillW=true
+                  VBox cls=[div] style="-fx-font-size: 36; -fx-font-weight: bold; -fx-text-fill: #1e293b;" size=64.0x44.0 maxW=MAX align=TOP_LEFT fillW=true
+                    Label cls=[label] style=" -fx-text-fill: #1e293b;" text="342" textFill=0x1e293bff font=System/Bold/36.0 size=64.0x44.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[div] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=64.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                    Label cls=[label] style=" -fx-text-fill: #64748b;" text="Users" textFill=0x64748bff font=System/Regular/13.0 size=64.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #ffffff; -fx-padding: 24 24 24 24; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.12), 8, 0, 0, 2); -fx-border-style: none;" size=158.0x113.0 align=TOP_LEFT fillW=true
+                  VBox cls=[div] style="-fx-font-size: 36; -fx-font-weight: bold; -fx-text-fill: #1e293b;" size=110.0x44.0 maxW=MAX align=TOP_LEFT fillW=true
+                    Label cls=[label] style=" -fx-text-fill: #1e293b;" text="$12.4K" textFill=0x1e293bff font=System/Bold/36.0 size=110.0x44.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[div] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=110.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                    Label cls=[label] style=" -fx-text-fill: #64748b;" text="Revenue" textFill=0x64748bff font=System/Regular/13.0 size=110.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #ffffff; -fx-padding: 24 24 24 24; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.12), 8, 0, 0, 2); -fx-border-style: none;" size=119.0x113.0 align=TOP_LEFT fillW=true
+                  VBox cls=[div] style="-fx-font-size: 36; -fx-font-weight: bold; -fx-text-fill: #1e293b;" size=71.0x44.0 maxW=MAX align=TOP_LEFT fillW=true
+                    Label cls=[label] style=" -fx-text-fill: #1e293b;" text="87%" textFill=0x1e293bff font=System/Bold/36.0 size=71.0x44.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[div] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=71.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                    Label cls=[label] style=" -fx-text-fill: #64748b;" text="Uptime" textFill=0x64748bff font=System/Regular/13.0 size=71.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+            VBox cls=[section] size=736.0x53.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Status" textFill=0x333333ff font=System/Bold/18.0 size=736.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8;" size=736.0x18.0 maxW=MAX align=CENTER_LEFT
+                HBox cls=[span] size=47.0x17.0 align=TOP_LEFT
+                  Label cls=[label] text="System: " textFill=0x333333ff font=System/Regular/13.0 size=47.0x17.0
+                    LabeledText cls=[text]
+                HBox size=63.0x18.0 align=TOP_LEFT
+                  HBox cls=[span] style="-fx-padding: 2 10 2 10; -fx-background-insets: 0; -fx-background-radius: 12 12 12 12; -fx-border-radius: 12 12 12 12; -fx-font-size: 11; -fx-font-weight: bold; -fx-background-color: #dbeafe; -fx-text-fill: #1e40af; -fx-border-style: none;" size=63.0x18.0 align=TOP_LEFT
+                    Label cls=[label] style=" -fx-text-fill: #1e40af;" text="Warming" textFill=0x1e40afff font=System/Bold/11.0 size=43.0x14.0
+                      LabeledText cls=[text]
+            VBox cls=[section] size=736.0x104.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Event Log" textFill=0x333333ff font=System/Bold/18.0 size=736.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[div] style="-fx-background-color: #1e293b; -fx-text-fill: #e2e8f0; -fx-padding: 12 12 12 12; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-font-family: 'monospace'; -fx-font-size: 12; -fx-min-height: 60; -fx-border-style: none;" size=736.0x69.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox size=712.0x45.0 maxW=MAX align=TOP_LEFT fillW=true
+                  VBox cls=[p] size=712.0x15.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="[10:01] Service started" textFill=0x333333ff font=Monospaced/Regular/12.0 size=712.0x15.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[p] size=712.0x15.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="[10:02] Health check OK" textFill=0x333333ff font=Monospaced/Regular/12.0 size=712.0x15.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[p] size=712.0x15.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="[10:03] 42 requests/s" textFill=0x333333ff font=Monospaced/Regular/12.0 size=712.0x15.0 maxW=MAX
+                      LabeledText cls=[text]
+              VBox size=736.0x-0.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox size=736.0x0.0 align=TOP_LEFT fillW=true
+            VBox cls=[section] size=736.0x120.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="View Toggle" textFill=0x333333ff font=System/Bold/18.0 size=736.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=736.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #64748b;" text="Switches from cards to table after 1.5s:" textFill=0x64748bff font=System/Regular/13.0 size=736.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox size=736.0x68.0 maxW=MAX align=TOP_LEFT fillW=true
+                GridPane cls=[table] style="-fx-pref-width: 100%;" size=736.0x68.0 maxW=736.0
+                  VBox cls=[th] style="-fx-font-weight: bold;" size=245.0x17.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="Service" textFill=0x333333ff font=System/Bold/13.0 size=245.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[th] style="-fx-font-weight: bold;" size=246.0x17.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="Status" textFill=0x333333ff font=System/Bold/13.0 size=246.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[th] style="-fx-font-weight: bold;" size=245.0x17.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="Latency" textFill=0x333333ff font=System/Bold/13.0 size=245.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[td] size=245.0x17.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="Service A" textFill=0x333333ff font=System/Regular/13.0 size=245.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[td] size=246.0x17.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="OK" textFill=0x333333ff font=System/Regular/13.0 size=246.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[td] size=245.0x17.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="12ms" textFill=0x333333ff font=System/Regular/13.0 size=245.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[td] size=245.0x17.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="Service B" textFill=0x333333ff font=System/Regular/13.0 size=245.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[td] size=246.0x17.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="OK" textFill=0x333333ff font=System/Regular/13.0 size=246.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[td] size=245.0x17.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="8ms" textFill=0x333333ff font=System/Regular/13.0 size=245.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[td] size=245.0x17.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="Service C" textFill=0x333333ff font=System/Regular/13.0 size=245.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[td] size=246.0x17.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="WARN" textFill=0x333333ff font=System/Regular/13.0 size=246.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[td] size=245.0x17.0 align=TOP_LEFT fillW=true
+                    Label cls=[label] text="142ms" textFill=0x333333ff font=System/Regular/13.0 size=245.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=20.0x98.0
+     cls=[increment-button] size=20.0x11.0
+      Region cls=[increment-arrow] size=9.0x5.0
+     cls=[decrement-button] size=20.0x11.0
+      Region cls=[decrement-arrow] size=9.0x5.0
+    StackPane cls=[track] size=20.0x76.0
+     cls=[thumb] size=20.0x76.0
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=18.0x100.0
+     cls=[increment-button] size=11.0x100.0
+      Region cls=[increment-arrow] size=5.0x9.0
+     cls=[decrement-button] size=11.0x100.0
+      Region cls=[decrement-arrow] size=5.0x9.0
+    StackPane cls=[track] size=-4.0x100.0
+     cls=[thumb] size=21.0x100.0
+  StackPane cls=[corner]

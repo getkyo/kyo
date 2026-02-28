@@ -9,6 +9,7 @@ import scala.annotation.tailrec
 class DomBackend extends UIBackend:
 
     def render(ui: UI)(using Frame): UISession < (Async & Scope) =
+        DomStyleSheet.injectBase()
         for
             rendered <- Signal.initRef[UI](UI.empty)
             fiber <- Fiber.init {
@@ -20,6 +21,8 @@ class DomBackend extends UIBackend:
                 yield ()
             }
         yield UISession(fiber, rendered)
+        end for
+    end render
 
     private def build(ui: UI, rendered: SignalRef[UI])(using Frame): dom.Node < (Async & Scope) =
         ui match
@@ -35,14 +38,17 @@ class DomBackend extends UIBackend:
 
             case rn @ ReactiveNode(signal) =>
                 val container = document.createElement("span")
+                container.setAttribute("style", "display:contents")
                 subscribeUI(container, signal, rendered).map(_ => container)
 
             case fi: ForeachIndexed[?] =>
                 val container = document.createElement("span")
+                container.setAttribute("style", "display:contents")
                 subscribeForeach(container, fi, rendered).map(_ => container)
 
             case fk: ForeachKeyed[?] =>
                 val container = document.createElement("span")
+                container.setAttribute("style", "display:contents")
                 subscribeKeyed(container, fk, rendered).map(_ => container)
 
             case Fragment(children) =>

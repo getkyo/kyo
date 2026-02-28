@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>kyo-ui Validation Report — test1</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f1f5f9; color: #1e293b; }
+.header { background: #1e293b; color: white; padding: 20px 32px; }
+.header h1 { font-size: 24px; }
+.header .summary { margin-top: 8px; font-size: 14px; color: #94a3b8; }
+.tabs { display: flex; flex-wrap: wrap; background: #e2e8f0; padding: 4px 16px 0; gap: 2px; }
+.tab { padding: 8px 16px; cursor: pointer; border-radius: 6px 6px 0 0; font-size: 13px; background: #cbd5e1; color: #475569; }
+.tab.active { background: white; color: #1e293b; font-weight: 600; }
+.tab .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.dot.green { background: #22c55e; }
+.dot.yellow { background: #eab308; }
+.dot.red { background: #ef4444; }
+.content { display: none; padding: 24px; }
+.content.active { display: block; }
+.pair { display: flex; gap: 16px; margin-bottom: 16px; }
+.pair .side { flex: 1; }
+.pair .side h3 { font-size: 14px; margin-bottom: 8px; color: #64748b; }
+.pair .side img { width: 100%; max-height: calc(100vh - 180px); object-fit: contain; object-position: top; border: 1px solid #e2e8f0; border-radius: 8px; background: white; }
+.findings { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-top: 16px; }
+.findings h3 { font-size: 16px; margin-bottom: 8px; }
+.findings ul { padding-left: 20px; }
+.findings li { margin-bottom: 4px; font-size: 14px; }
+.nav-controls { text-align: center; margin-bottom: 12px; }
+.nav-controls button { padding: 6px 16px; margin: 0 4px; border: 1px solid #cbd5e1; border-radius: 4px; background: white; cursor: pointer; }
+.nav-controls button:hover { background: #f1f5f9; }
+.nav-controls .label { font-size: 13px; color: #64748b; margin: 0 8px; }
+.frame { display: none; }
+.frame.active { display: block; }
+table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; }
+th, td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; }
+th { background: #f8fafc; font-weight: 600; }
+.pass { color: #16a34a; }
+.fail { color: #dc2626; font-weight: 600; }
+.blocked { color: #d97706; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>kyo-ui Validation Report</h1>
+  <div class="summary">
+    Session: test1 | Tests: 53 | JFX Pass: 52 / Fail: 1 | Web Pass: 52 / Blocked: 1 | Bugs: 6 | Session restarts: 7+
+  </div>
+</div>
+
+<div class="tabs" id="tabs"></div>
+<div id="contents"></div>
+
+<script>
+var tabs = [
+  {
+    name: "DemoUI", status: "green",
+    frames: [
+      { label: "Static", jfx: "static/javafx-demo.png", web: "static/web-demo.png" },
+      { label: "After Tests", jfx: "demo-initial-jfx.png", web: "demo-initial-web.png" }
+    ],
+    findings: [
+      "10/10 tests pass on JFX, 9/10 on web (1 blocked by harness bug #2)",
+      "Counter signals propagate correctly on both platforms",
+      "Todo CRUD (add/delete) works identically",
+      "Theme toggle correctly adds/removes .dark class"
+    ],
+    results: [
+      ["1", "Counter +", "PASS", "PASS", ""],
+      ["2", "Counter + again", "PASS", "PASS", ""],
+      ["3", "Counter -", "PASS", "PASS", ""],
+      ["4", "Todo fill", "PASS", "PASS", "web-js workaround needed"],
+      ["5", "Todo Add", "PASS", "PASS", ""],
+      ["6", "Todo fill 2", "PASS", "PASS", ""],
+      ["7", "Todo Add 2", "PASS", "PASS", ""],
+      ["8", "Delete todo", "PASS", "PASS", ""],
+      ["9", "Theme dark", "PASS", "PASS", ""],
+      ["10", "Theme light", "PASS", "BLOCKED", "web-exists hangs on absent elements"]
+    ]
+  },
+  {
+    name: "ReactiveUI", status: "green",
+    frames: [
+      { label: "Static", jfx: "static/javafx-reactive.png", web: "static/web-reactive.png" },
+      { label: "After Tests", jfx: "demo-reactive-tested-jfx.png", web: "demo-reactive-tested-web.png" }
+    ],
+    findings: [
+      "9/9 tests pass on both platforms",
+      "Conditional rendering (when/visibility) toggles work correctly",
+      "Dynamic class assignment via signal propagates correctly",
+      "foreach add correctly appends to existing collection"
+    ],
+    results: [
+      ["11", "Hide Panel", "PASS", "PASS", ""],
+      ["12", "Show Panel", "PASS", "PASS", ""],
+      ["13", "Hide visibility", "PASS", "PASS", ""],
+      ["14", "Show visibility", "PASS", "PASS", ""],
+      ["15", "Style A", "PASS", "PASS", ""],
+      ["16", "Style B", "PASS", "PASS", ""],
+      ["17", "Fill Mango", "PASS", "PASS", ""],
+      ["18", "Add item", "PASS", "PASS", ""],
+      ["19", "View mode toggle", "PASS", "PASS", ""]
+    ]
+  },
+  {
+    name: "FormUI", status: "red",
+    frames: [
+      { label: "Static", jfx: "static/javafx-form.png", web: "static/web-form.png" },
+      { label: "After Tests", jfx: "form-tested-jfx.png", web: "form-tested-web.png" }
+    ],
+    findings: [
+      "4/5 JFX pass, 5/5 Web pass",
+      "BUG: form onSubmit not firing on JFX (High severity)",
+      "Disable/Enable toggle works correctly on both platforms",
+      "All form controls (input, textarea, select) respond to disabled state"
+    ],
+    results: [
+      ["20", "Fill name", "PASS", "PASS", ""],
+      ["21", "Fill email", "PASS", "PASS", ""],
+      ["22", "Submit", "FAIL", "PASS", "onSubmit not wired in JFX backend"],
+      ["23", "Disable All", "PASS", "PASS", ""],
+      ["24", "Enable All", "PASS", "PASS", ""]
+    ]
+  },
+  {
+    name: "CollectionOpsUI", status: "green",
+    frames: [
+      { label: "Static", jfx: "static/javafx-collections.png", web: "static/web-collections.png" },
+      { label: "After Tick", jfx: "collections-tick-jfx.png", web: "collections-tick-web.png" }
+    ],
+    findings: [
+      "8/8 tests pass on both platforms",
+      "Full CRUD lifecycle works: add, remove, reverse, clear",
+      "Batch updates (Tick) correctly update counter and all tags simultaneously",
+      "Empty state renders correctly after Clear"
+    ],
+    results: [
+      ["25", "Fill input", "PASS", "PASS", ""],
+      ["26", "Add item", "PASS", "PASS", ""],
+      ["27", "Remove Last", "PASS", "PASS", ""],
+      ["28", "Reverse", "PASS", "PASS", ""],
+      ["29", "Clear", "PASS", "PASS", ""],
+      ["30", "Tick", "PASS", "PASS", ""],
+      ["31", "Set Single", "PASS", "PASS", ""],
+      ["32", "Reset", "PASS", "PASS", ""]
+    ]
+  },
+  {
+    name: "DynamicStyleUI", status: "green",
+    frames: [
+      { label: "Static", jfx: "static/javafx-dynamic.png", web: "static/web-dynamic.png" },
+      { label: "After Tests", jfx: "dynamic-final-jfx.png", web: "dynamic-final-web.png" }
+    ],
+    findings: [
+      "8/8 tests pass on both platforms",
+      "All dynamic style toggles work correctly",
+      "Signal async updates require separate click and verify commands"
+    ],
+    results: [
+      ["33", "Green color", "PASS", "PASS", ""],
+      ["34", "A+ (16px)", "PASS", "PASS", ""],
+      ["35", "A- (14px)", "PASS", "PASS", ""],
+      ["36", "Bold ON", "PASS", "PASS", ""],
+      ["37", "Bold OFF", "PASS", "PASS", ""],
+      ["38", "Italic ON", "PASS", "PASS", ""],
+      ["39", "Underline ON", "PASS", "PASS", ""],
+      ["40", "Thicker (2px)", "PASS", "PASS", ""]
+    ]
+  },
+  {
+    name: "NestedReactiveUI", status: "green",
+    frames: [
+      { label: "Static", jfx: "static/javafx-nested.png", web: "static/web-nested.png" },
+      { label: "After Tests", jfx: "nested-final-jfx.png", web: "nested-final-jfx.png" }
+    ],
+    findings: [
+      "8/8 tests pass on both platforms",
+      "Nested conditionals (outer + inner) toggle independently",
+      "foreachKeyed selection works correctly",
+      "Collection filter correctly shows subset"
+    ],
+    results: [
+      ["41", "Hide Outer", "PASS", "PASS", ""],
+      ["42", "Show Outer", "PASS", "PASS", ""],
+      ["43", "Hide Inner", "PASS", "PASS", ""],
+      ["44", "Show Inner", "PASS", "PASS", ""],
+      ["45", "Increment All", "PASS", "PASS", ""],
+      ["46", "Click Alpha", "PASS", "PASS", ""],
+      ["47", "Switch to Tags", "PASS", "PASS", ""],
+      ["48", "Filter (A only)", "PASS", "PASS", ""]
+    ]
+  },
+  {
+    name: "TableAdvancedUI", status: "green",
+    frames: [
+      { label: "Static", jfx: "static/javafx-tables.png", web: "static/web-tables.png" }
+    ],
+    findings: [
+      "3/3 tests pass on both platforms",
+      "Dynamic table add/remove rows works correctly",
+      "New rows get default role and status values"
+    ],
+    results: [
+      ["49", "Fill Eve", "PASS", "PASS", ""],
+      ["50", "Add Row", "PASS", "PASS", ""],
+      ["51", "Remove Last", "PASS", "PASS", ""]
+    ]
+  },
+  {
+    name: "InteractiveUI", status: "green",
+    frames: [
+      { label: "Static", jfx: "static/javafx-interactive.png", web: "static/web-interactive.png" }
+    ],
+    findings: [
+      "2/2 tests pass on both platforms",
+      "Disabled state propagates correctly to button and input elements"
+    ],
+    results: [
+      ["52", "Disable toggle", "PASS", "PASS", ""],
+      ["53", "Enable toggle", "PASS", "PASS", ""]
+    ]
+  }
+];
+
+var tabsEl = document.getElementById("tabs");
+var contentsEl = document.getElementById("contents");
+
+tabs.forEach(function(t, idx) {
+  var tab = document.createElement("div");
+  tab.className = "tab" + (idx === 0 ? " active" : "");
+  tab.innerHTML = '<span class="dot ' + t.status + '"></span>' + t.name;
+  tab.onclick = function() { switchTab(idx); };
+  tabsEl.appendChild(tab);
+
+  var content = document.createElement("div");
+  content.className = "content" + (idx === 0 ? " active" : "");
+  content.id = "content-" + idx;
+
+  var hasMultiFrames = t.frames.length > 1;
+  if (hasMultiFrames) {
+    var nav = document.createElement("div");
+    nav.className = "nav-controls";
+    nav.innerHTML = '<button onclick="prevFrame(' + idx + ')">Prev</button>' +
+      '<span class="label" id="frame-label-' + idx + '">' + t.frames[0].label + '</span>' +
+      '<button onclick="nextFrame(' + idx + ')">Next</button>';
+    content.appendChild(nav);
+  }
+
+  t.frames.forEach(function(f, fi) {
+    var frame = document.createElement("div");
+    frame.className = "frame" + (fi === 0 ? " active" : "");
+    frame.id = "frame-" + idx + "-" + fi;
+    frame.innerHTML = '<div class="pair">' +
+      '<div class="side"><h3>JavaFX</h3><img src="' + f.jfx + '"></div>' +
+      '<div class="side"><h3>Web</h3><img src="' + f.web + '"></div>' +
+      '</div>';
+    content.appendChild(frame);
+  });
+
+  var table = '<table><tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>';
+  t.results.forEach(function(r) {
+    var jfxCls = r[2] === "PASS" ? "pass" : (r[2] === "FAIL" ? "fail" : "blocked");
+    var webCls = r[3] === "PASS" ? "pass" : (r[3] === "FAIL" ? "fail" : "blocked");
+    table += '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td><td class="' + jfxCls + '">' + r[2] + '</td><td class="' + webCls + '">' + r[3] + '</td><td>' + r[4] + '</td></tr>';
+  });
+  table += '</table>';
+
+  var findings = document.createElement("div");
+  findings.className = "findings";
+  findings.innerHTML = '<h3>Findings</h3>' + table + '<ul>' + t.findings.map(function(f) { return '<li>' + f + '</li>'; }).join('') + '</ul>';
+  content.appendChild(findings);
+
+  contentsEl.appendChild(content);
+});
+
+var currentFrames = {};
+tabs.forEach(function(t, i) { currentFrames[i] = 0; });
+
+function switchTab(idx) {
+  var allTabs = document.querySelectorAll(".tab");
+  var allContents = document.querySelectorAll(".content");
+  for (var i = 0; i < allTabs.length; i++) {
+    allTabs[i].className = "tab" + (i === idx ? " active" : "");
+    allContents[i].className = "content" + (i === idx ? " active" : "");
+  }
+}
+
+function showFrame(tabIdx, frameIdx) {
+  var t = tabs[tabIdx];
+  if (frameIdx < 0 || frameIdx >= t.frames.length) return;
+  currentFrames[tabIdx] = frameIdx;
+  var frames = document.querySelectorAll("#content-" + tabIdx + " .frame");
+  for (var i = 0; i < frames.length; i++) {
+    frames[i].className = "frame" + (i === frameIdx ? " active" : "");
+  }
+  var label = document.getElementById("frame-label-" + tabIdx);
+  if (label) label.textContent = t.frames[frameIdx].label;
+}
+
+function prevFrame(tabIdx) { showFrame(tabIdx, currentFrames[tabIdx] - 1); }
+function nextFrame(tabIdx) { showFrame(tabIdx, currentFrames[tabIdx] + 1); }
+</script>
+
+</body>
+</html>

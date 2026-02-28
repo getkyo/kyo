@@ -1,84 +1,48 @@
 package demo
 
 import kyo.*
-import scala.language.implicitConversions
+import scala.scalajs.js
 
-object DemoApp extends KyoApp with UIScope:
+object DemoApp extends KyoApp:
 
-    import DemoStyles.*
+    private val uis: Map[String, UI < Async] = Map(
+        "demo"        -> DemoUI.build,
+        "interactive" -> InteractiveUI.build,
+        "form"        -> FormUI.build,
+        "typography"  -> TypographyUI.build,
+        "layout"      -> LayoutUI.build,
+        "reactive"    -> ReactiveUI.build,
+        "dashboard"   -> DashboardUI.build,
+        "semantic"    -> SemanticElementsUI.build,
+        "nested"      -> NestedReactiveUI.build,
+        "pseudo"      -> MultiPseudoStateUI.build,
+        "collections" -> CollectionOpsUI.build,
+        "transforms"  -> TransformsUI.build,
+        "sizing"      -> SizingUnitsUI.build,
+        "keyboard"    -> KeyboardNavUI.build,
+        "colors"      -> ColorSystemUI.build,
+        "dynamic"     -> DynamicStyleUI.build,
+        "tables"      -> TableAdvancedUI.build,
+        "auto"        -> AutoTransitionUI.build,
+        "animated"    -> AnimatedDashboardUI.build
+    )
 
     run {
-        for
-            count    <- Signal.initRef(0)
-            todoText <- Signal.initRef("")
-            todos    <- Signal.initRef(Chunk.empty[String])
-            darkMode <- Signal.initRef(false)
-            session <- new DomBackend().render(
-                div.style(app)(
-                    header.style(headerStyle)(
-                        h1("Kyo UI Demo"),
-                        nav.style(navStyle)(
-                            a.href("#")("Home"),
-                            a.href("#")("About"),
-                            a.href("#")("Contact")
-                        )(
-                            button.style(themeToggle).onClick(darkMode.getAndUpdate(!_).unit)("Toggle Theme")
-                        )
-                    ),
-                    main.style(content)(
-                        section.style(card)(
-                            h2("Welcome to Kyo UI"),
-                            p("A pure, type-safe UI library for Scala")
-                        ),
-                        section.style(card)(
-                            h3("Counter"),
-                            div.style(counterRow)(
-                                button.style(counterBtn)("-").onClick(count.getAndUpdate(_ - 1).unit),
-                                span.style(counterValue)(count.map(_.toString)),
-                                button.style(counterBtn)("+").onClick(count.getAndUpdate(_ + 1).unit)
-                            )
-                        ),
-                        section.style(card)(
-                            h3("Todo List"),
-                            div.style(todoInput)(
-                                input.value(todoText).onInput(todoText.set(_)).placeholder("What needs to be done?"),
-                                button.style(submitBtn)("Add").onClick {
-                                    for
-                                        t <- todoText.get
-                                        _ <-
-                                            if t.nonEmpty then todos.getAndUpdate(_.append(t)).unit
-                                            else ((): Unit < Sync)
-                                        _ <- todoText.set("")
-                                    yield ()
-                                }
-                            ),
-                            ul.style(todoList)(
-                                todos.foreachIndexed((idx, todo) =>
-                                    li.style(todoItem)(
-                                        span(todo),
-                                        button.style(deleteBtn)("x").onClick(
-                                            todos.getAndUpdate(c => c.take(idx) ++ c.drop(idx + 1)).unit
-                                        )
-                                    )
-                                )
-                            )
-                        ),
-                        section.style(card)(
-                            h3("Data Table"),
-                            table(
-                                tr(th("Name"), th("Role"), th("Status")),
-                                tr(td("Alice"), td("Engineer"), td("Active")),
-                                tr(td("Bob"), td("Designer"), td("Away")),
-                                tr(td("Charlie"), td("Manager"), td("Active"))
-                            )
-                        )
-                    ),
-                    footer.style(footerStyle)(
-                        p("Built with Kyo UI")
-                    )
-                )
-            )
-            _ <- session.await
-        yield ()
+        val hash = js.Dynamic.global.window.location.hash.asInstanceOf[String].stripPrefix("#")
+        val name = if hash.nonEmpty then hash else "demo"
+        uis.get(name) match
+            case Some(buildUI) =>
+                for
+                    ui      <- buildUI
+                    session <- new DomBackend().render(ui)
+                    _       <- session.await
+                yield ()
+            case None =>
+                for
+                    ui      <- DemoUI.build
+                    session <- new DomBackend().render(ui)
+                    _       <- session.await
+                yield ()
+        end match
     }
 end DemoApp

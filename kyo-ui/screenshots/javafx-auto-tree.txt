@@ -1,0 +1,100 @@
+ScrollPane cls=[root,scroll-pane] style="-fx-background-color: transparent;" size=1280.0x1387.0
+   cls=[viewport] size=1278.0x1385.0
+     size=1278.0x1385.0
+      StackPane size=1278.0x986.0
+        VBox cls=[div] style="-fx-max-width: 800;" size=800.0x986.0 maxW=800.0 align=TOP_LEFT fillW=true
+          VBox cls=[header] style="-fx-background-color: #7c3aed; -fx-text-fill: #ffffff; -fx-padding: 16 32 16 32;" size=800.0x71.0 align=TOP_LEFT fillW=true
+            Label cls=[label,h1] style="-fx-font-size: 32; -fx-font-weight: bold; -fx-text-fill: #ffffff;" text="Auto Transitions" textFill=0xffffffff font=System/Bold/32.0 size=736.0x39.0 maxW=MAX
+              LabeledText cls=[text]
+          VBox cls=[main] style="-fx-padding: 32 32 32 32; -fx-spacing: 24;" size=800.0x915.0 align=TOP_LEFT fillW=true
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x148.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Color Cycling" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #64748b;" text="Background cycles every 500ms:" textFill=0x64748bff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[div] style="-fx-background-color: #dbeafe; -fx-padding: 20 20 20 20; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-text-alignment: center; -fx-font-size: 16; -fx-font-weight: bold;" size=672.0x60.0 maxW=MAX align=TOP_CENTER fillW=true
+                Label cls=[label] text="Phase 0" textFill=0x333333ff font=System/Bold/16.0 size=632.0x20.0 maxW=MAX
+                  LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x295.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Auto-populating List" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #64748b;" text="Items appear over time:" textFill=0x64748bff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[div] style="-fx-spacing: 4;" size=672.0x207.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox size=672.0x207.0 maxW=MAX align=TOP_LEFT fillW=true
+                  VBox cls=[div] style="-fx-padding: 8 12 8 12; -fx-background-color: #f0fdf4; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #bbf7d0 #bbf7d0 #bbf7d0 #bbf7d0;" size=672.0x69.0 align=TOP_LEFT fillW=true
+                    HBox cls=[span] style="-fx-font-weight: bold;" size=646.0x17.0 maxW=MAX align=TOP_LEFT
+                      Label cls=[label] text="Alpha" textFill=0x333333ff font=System/Bold/13.0 size=32.0x17.0
+                        LabeledText cls=[text]
+                    HBox cls=[span] size=646.0x17.0 maxW=MAX align=TOP_LEFT
+                      Label cls=[label] text=" — tick: " textFill=0x333333ff font=System/Regular/13.0 size=42.0x17.0
+                        LabeledText cls=[text]
+                    HBox cls=[span] size=646.0x17.0 maxW=MAX align=TOP_LEFT
+                      Label cls=[label] text="4" textFill=0x333333ff font=System/Regular/13.0 size=8.0x17.0
+                        LabeledText cls=[text]
+                  VBox cls=[div] style="-fx-padding: 8 12 8 12; -fx-background-color: #f0fdf4; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #bbf7d0 #bbf7d0 #bbf7d0 #bbf7d0;" size=672.0x69.0 align=TOP_LEFT fillW=true
+                    HBox cls=[span] style="-fx-font-weight: bold;" size=646.0x17.0 maxW=MAX align=TOP_LEFT
+                      Label cls=[label] text="Beta" textFill=0x333333ff font=System/Bold/13.0 size=25.0x17.0
+                        LabeledText cls=[text]
+                    HBox cls=[span] size=646.0x17.0 maxW=MAX align=TOP_LEFT
+                      Label cls=[label] text=" — tick: " textFill=0x333333ff font=System/Regular/13.0 size=42.0x17.0
+                        LabeledText cls=[text]
+                    HBox cls=[span] size=646.0x17.0 maxW=MAX align=TOP_LEFT
+                      Label cls=[label] text="4" textFill=0x333333ff font=System/Regular/13.0 size=8.0x17.0
+                        LabeledText cls=[text]
+                  VBox cls=[div] style="-fx-padding: 8 12 8 12; -fx-background-color: #f0fdf4; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #bbf7d0 #bbf7d0 #bbf7d0 #bbf7d0;" size=672.0x69.0 align=TOP_LEFT fillW=true
+                    HBox cls=[span] style="-fx-font-weight: bold;" size=646.0x17.0 maxW=MAX align=TOP_LEFT
+                      Label cls=[label] text="Gamma" textFill=0x333333ff font=System/Bold/13.0 size=44.0x17.0
+                        LabeledText cls=[text]
+                    HBox cls=[span] size=646.0x17.0 maxW=MAX align=TOP_LEFT
+                      Label cls=[label] text=" — tick: " textFill=0x333333ff font=System/Regular/13.0 size=42.0x17.0
+                        LabeledText cls=[text]
+                    HBox cls=[span] size=646.0x17.0 maxW=MAX align=TOP_LEFT
+                      Label cls=[label] text="4" textFill=0x333333ff font=System/Regular/13.0 size=8.0x17.0
+                        LabeledText cls=[text]
+              VBox size=672.0x0.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox size=672.0x0.0 align=TOP_LEFT fillW=true
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x156.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Delayed Panel" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #64748b;" text="Panel appears after ~1.5s:" textFill=0x64748bff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox size=672.0x68.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[div] style="-fx-background-color: #ede9fe; -fx-padding: 16 16 16 16; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #c4b5fd #c4b5fd #c4b5fd #c4b5fd;" size=672.0x68.0 align=TOP_LEFT fillW=true
+                  VBox cls=[p] style="-fx-font-weight: bold;" size=638.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                    Label cls=[label] text="Panel appeared!" textFill=0x333333ff font=System/Bold/13.0 size=638.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[p] size=638.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                    Label cls=[label] text="This was revealed by a scheduled signal " textFill=0x333333ff font=System/Regular/13.0 size=638.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+              VBox size=672.0x-0.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox size=672.0x0.0 align=TOP_LEFT fillW=true
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x180.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Live Counter" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #64748b;" text="Increments every 500ms:" textFill=0x64748bff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[div] style="-fx-font-size: 48; -fx-font-weight: bold; -fx-text-alignment: center; -fx-text-fill: #1e293b; -fx-padding: 16 16 16 16;" size=672.0x92.0 maxW=MAX align=TOP_CENTER fillW=true
+                Label cls=[label] style=" -fx-text-fill: #1e293b;" text="4" textFill=0x1e293bff font=System/Bold/48.0 size=640.0x60.0 maxW=MAX
+                  LabeledText cls=[text]
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=20.0x98.0
+     cls=[increment-button] size=20.0x11.0
+      Region cls=[increment-arrow] size=9.0x5.0
+     cls=[decrement-button] size=20.0x11.0
+      Region cls=[decrement-arrow] size=9.0x5.0
+    StackPane cls=[track] size=20.0x76.0
+     cls=[thumb] size=20.0x76.0
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=18.0x100.0
+     cls=[increment-button] size=11.0x100.0
+      Region cls=[increment-arrow] size=5.0x9.0
+     cls=[decrement-button] size=11.0x100.0
+      Region cls=[decrement-arrow] size=5.0x9.0
+    StackPane cls=[track] size=-4.0x100.0
+     cls=[thumb] size=21.0x100.0
+  StackPane cls=[corner]

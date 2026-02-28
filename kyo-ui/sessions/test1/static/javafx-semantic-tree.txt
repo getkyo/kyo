@@ -1,0 +1,188 @@
+ScrollPane cls=[root,scroll-pane] style="-fx-background-color: transparent;" size=1280.0x1387.0
+   cls=[viewport] size=1264.0x1385.0
+     size=1264.0x1385.0
+      StackPane size=1264.0x1816.0
+        VBox cls=[div] style="-fx-max-width: 800;" size=800.0x1816.0 maxW=800.0 align=TOP_LEFT fillW=true
+          VBox cls=[header] style="-fx-background-color: #7c3aed; -fx-text-fill: #ffffff; -fx-padding: 16 32 16 32;" size=800.0x71.0 align=TOP_LEFT fillW=true
+            Label cls=[label,h1] style="-fx-font-size: 32; -fx-font-weight: bold; -fx-text-fill: #ffffff;" text="Semantic Elements Showcase" textFill=0xffffffff font=System/Bold/32.0 size=736.0x39.0 maxW=MAX
+              LabeledText cls=[text]
+          VBox cls=[main] style="-fx-padding: 32 32 32 32; -fx-spacing: 24;" size=800.0x1745.0 align=TOP_LEFT fillW=true
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x213.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="All Heading Levels" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              Label cls=[label,h1] style="-fx-font-size: 32; -fx-font-weight: bold;" text="Heading 1 (h1)" textFill=0x333333ff font=System/Bold/32.0 size=672.0x39.0 maxW=MAX
+                LabeledText cls=[text]
+              Label cls=[label,h2] style="-fx-font-size: 24; -fx-font-weight: bold;" text="Heading 2 (h2)" textFill=0x333333ff font=System/Bold/24.0 size=672.0x29.0 maxW=MAX
+                LabeledText cls=[text]
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Heading 3 (h3)" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              Label cls=[label,h4] style="-fx-font-size: 16; -fx-font-weight: bold;" text="Heading 4 (h4)" textFill=0x333333ff font=System/Bold/16.0 size=672.0x20.0 maxW=MAX
+                LabeledText cls=[text]
+              Label cls=[label,h5] style="-fx-font-size: 13; -fx-font-weight: bold;" text="Heading 5 (h5)" textFill=0x333333ff font=System/Bold/13.0 size=672.0x17.0 maxW=MAX
+                LabeledText cls=[text]
+              Label cls=[label,h6] style="-fx-font-size: 11; -fx-font-weight: bold;" text="Heading 6 (h6)" textFill=0x333333ff font=System/Bold/11.0 size=672.0x14.0 maxW=MAX
+                LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x344.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Preformatted & Code" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Inline code-like text:" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              HBox cls=[span] style="-fx-font-family: 'monospace'; -fx-background-color: #f1f5f9; -fx-padding: 2 6 2 6; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-font-size: 13; -fx-border-style: none;" size=672.0x20.0 maxW=MAX align=TOP_LEFT
+                Label cls=[label] text="val x = 42" textFill=0x333333ff font=Monospaced/Regular/13.0 size=79.0x16.0
+                  LabeledText cls=[text]
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Code block:" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[code] style="-fx-font-family: 'monospace'; -fx-background-color: #1e293b; -fx-text-fill: #e2e8f0; -fx-padding: 16 16 16 16; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-font-size: 13; -fx-border-style: none;" size=672.0x80.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[pre] size=640.0x48.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #e2e8f0;" text="def fibonacci(n: Int): Int =
+  if n <= 1" textFill=0xe2e8f0ff font=Monospaced/Regular/13.0 size=640.0x48.0 maxW=MAX
+                    LabeledText cls=[text]
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Pre with whitespace preservation:" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[pre] style="-fx-background-color: #f8fafc; -fx-padding: 12 12 12 12; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #e2e8f0 #e2e8f0 #e2e8f0 #e2e8f0; -fx-font-family: 'monospace'; -fx-font-size: 13;" size=672.0x90.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Name        Age    Role
+Alice       30  " textFill=0x333333ff font=Monospaced/Regular/13.0 size=646.0x64.0 maxW=MAX
+                  LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x164.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Horizontal Rules" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Content above the rule" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              Separator cls=[separator,hr] size=672.0x3.0 maxW=MAX
+                Region cls=[line] size=672.0x3.0
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Content below the rule" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              Separator cls=[separator,hr] style="-fx-border-width: 2 2 2 2; -fx-border-style: solid; -fx-border-color: #2563eb #2563eb #2563eb #2563eb;" size=672.0x7.0 maxW=MAX
+                Region cls=[line] size=668.0x3.0
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="After a styled rule" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x156.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Line Breaks" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] size=672.0x85.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox size=672.0x85.0 maxW=MAX align=TOP_LEFT fillW=true
+                  HBox cls=[span] size=672.0x17.0 align=TOP_LEFT
+                    Label cls=[label] text="Line one" textFill=0x333333ff font=System/Regular/13.0 size=47.0x17.0
+                      LabeledText cls=[text]
+                  Label cls=[label,br] textFill=0x333333ff font=System/Regular/13.0 size=0.0x17.0
+                    LabeledText cls=[text]
+                  HBox cls=[span] size=672.0x17.0 align=TOP_LEFT
+                    Label cls=[label] text="Line two (after br)" textFill=0x333333ff font=System/Regular/13.0 size=96.0x17.0
+                      LabeledText cls=[text]
+                  Label cls=[label,br] textFill=0x333333ff font=System/Regular/13.0 size=0.0x17.0
+                    LabeledText cls=[text]
+                  HBox cls=[span] size=672.0x17.0 align=TOP_LEFT
+                    Label cls=[label] text="Line three (after br)" textFill=0x333333ff font=System/Regular/13.0 size=104.0x17.0
+                      LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x301.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Ordered List (ol)" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[ol] size=672.0x68.0 maxW=MAX align=TOP_LEFT fillW=true
+                HBox cls=[li] size=652.0x17.0 maxW=MAX align=TOP_LEFT
+                  Label cls=[label] text="1." textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                    LabeledText cls=[text]
+                  Label cls=[label] text="First item" textFill=0x333333ff font=System/Regular/13.0 size=50.0x17.0
+                    LabeledText cls=[text]
+                HBox cls=[li] size=652.0x17.0 maxW=MAX align=TOP_LEFT
+                  Label cls=[label] text="2." textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                    LabeledText cls=[text]
+                  Label cls=[label] text="Second item" textFill=0x333333ff font=System/Regular/13.0 size=69.0x17.0
+                    LabeledText cls=[text]
+                HBox cls=[li] size=652.0x17.0 maxW=MAX align=TOP_LEFT
+                  Label cls=[label] text="3." textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                    LabeledText cls=[text]
+                  Label cls=[label] text="Third item with longer text to show wrap" textFill=0x333333ff font=System/Regular/13.0 size=290.0x17.0
+                    LabeledText cls=[text]
+                HBox cls=[li] size=652.0x17.0 maxW=MAX align=TOP_LEFT
+                  Label cls=[label] text="4." textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                    LabeledText cls=[text]
+                  Label cls=[label] text="Fourth item" textFill=0x333333ff font=System/Regular/13.0 size=62.0x17.0
+                    LabeledText cls=[text]
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Nested Lists" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[ul] size=672.0x119.0 maxW=MAX align=TOP_LEFT fillW=true
+                HBox cls=[li] size=652.0x68.0 maxW=MAX align=TOP_LEFT
+                  Label cls=[label] text="•" textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                    LabeledText cls=[text]
+                  VBox size=82.0x68.0 align=TOP_LEFT fillW=true
+                    HBox cls=[span] size=82.0x17.0 align=TOP_LEFT
+                      Label cls=[label] text="Fruits" textFill=0x333333ff font=System/Regular/13.0 size=31.0x17.0
+                        LabeledText cls=[text]
+                    VBox cls=[ul] size=82.0x51.0 align=TOP_LEFT fillW=true
+                      HBox cls=[li] size=62.0x17.0 maxW=MAX align=TOP_LEFT
+                        Label cls=[label] text="•" textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                          LabeledText cls=[text]
+                        Label cls=[label] text="Apple" textFill=0x333333ff font=System/Regular/13.0 size=32.0x17.0
+                          LabeledText cls=[text]
+                      HBox cls=[li] size=62.0x17.0 maxW=MAX align=TOP_LEFT
+                        Label cls=[label] text="•" textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                          LabeledText cls=[text]
+                        Label cls=[label] text="Banana" textFill=0x333333ff font=System/Regular/13.0 size=42.0x17.0
+                          LabeledText cls=[text]
+                      HBox cls=[li] size=62.0x17.0 maxW=MAX align=TOP_LEFT
+                        Label cls=[label] text="•" textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                          LabeledText cls=[text]
+                        Label cls=[label] text="Cherry" textFill=0x333333ff font=System/Regular/13.0 size=37.0x17.0
+                          LabeledText cls=[text]
+                HBox cls=[li] size=652.0x51.0 maxW=MAX align=TOP_LEFT
+                  Label cls=[label] text="•" textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                    LabeledText cls=[text]
+                  VBox size=85.0x51.0 align=TOP_LEFT fillW=true
+                    HBox cls=[span] size=85.0x17.0 align=TOP_LEFT
+                      Label cls=[label] text="Vegetables" textFill=0x333333ff font=System/Regular/13.0 size=62.0x17.0
+                        LabeledText cls=[text]
+                    VBox cls=[ol] size=85.0x34.0 align=TOP_LEFT fillW=true
+                      HBox cls=[li] size=65.0x17.0 maxW=MAX align=TOP_LEFT
+                        Label cls=[label] text="1." textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                          LabeledText cls=[text]
+                        Label cls=[label] text="Carrot" textFill=0x333333ff font=System/Regular/13.0 size=35.0x17.0
+                          LabeledText cls=[text]
+                      HBox cls=[li] size=65.0x17.0 maxW=MAX align=TOP_LEFT
+                        Label cls=[label] text="2." textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                          LabeledText cls=[text]
+                        Label cls=[label] text="Broccoli" textFill=0x333333ff font=System/Regular/13.0 size=45.0x17.0
+                          LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x203.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Image Element" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Image with a data URI (1x1 blue pixel):" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              StackPane cls=[img] style="-fx-pref-width: 100; -fx-pref-height: 100; -fx-background-color: #dbeafe; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-border-style: none;" size=100.0x100.0 maxW=100.0
+                ImageView cls=[image-view]
+              VBox cls=[p] style="-fx-font-size: 12; -fx-text-fill: #94a3b8;" size=672.0x15.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #94a3b8;" text="(Scaled up from 1x1 pixel)" textFill=0x94a3b8ff font=System/Regular/12.0 size=672.0x15.0 maxW=MAX
+                  LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x156.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Anchor Variants" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[div] style="-fx-spacing: 8;" size=672.0x85.0 maxW=MAX align=TOP_LEFT fillW=true
+                Hyperlink cls=[hyperlink,a] style="-fx-text-fill: inherit; -fx-underline: false; -fx-border-color: transparent;" text="Simple link" textFill=0x000000ff font=System/Regular/13.0 size=672.0x23.0 maxW=MAX
+                  LabeledText cls=[text]
+                Hyperlink cls=[hyperlink,a] style="-fx-text-fill: inherit; -fx-underline: false; -fx-border-color: transparent;" text="Link with target=_blank" textFill=0x000000ff font=System/Regular/13.0 size=672.0x23.0 maxW=MAX
+                  LabeledText cls=[text]
+                Hyperlink cls=[hyperlink,a] style="-fx-text-fill: #dc2626; -fx-font-weight: bold;" text="Styled red link" textFill=0xdc2626ff font=System/Bold/13.0 size=672.0x23.0 maxW=MAX
+                  LabeledText cls=[text]
+  ScrollBar cls=[scroll-bar] size=14.0x1387.0
+    StackPane cls=[track-background] size=14.0x1385.0
+     cls=[increment-button] size=14.0x11.0
+      Region cls=[increment-arrow] size=9.0x5.0
+     cls=[decrement-button] size=14.0x11.0
+      Region cls=[decrement-arrow] size=9.0x5.0
+    StackPane cls=[track] size=14.0x1363.0
+     cls=[thumb] size=14.0x1040.0
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=18.0x100.0
+     cls=[increment-button] size=11.0x100.0
+      Region cls=[increment-arrow] size=5.0x9.0
+     cls=[decrement-button] size=11.0x100.0
+      Region cls=[decrement-arrow] size=5.0x9.0
+    StackPane cls=[track] size=-4.0x100.0
+     cls=[thumb] size=21.0x100.0
+  StackPane cls=[corner]

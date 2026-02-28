@@ -1,0 +1,103 @@
+ScrollPane cls=[root,scroll-pane] style="-fx-background-color: transparent;" size=1280.0x1387.0
+   cls=[viewport] size=1278.0x1385.0
+     size=1278.0x1385.0
+      StackPane size=1278.0x790.0
+        VBox cls=[div] style="-fx-max-width: 800;" size=800.0x790.0 maxW=800.0 align=TOP_LEFT fillW=true
+          VBox cls=[header] style="-fx-background-color: #7c3aed; -fx-text-fill: #ffffff; -fx-padding: 16 32 16 32;" size=800.0x71.0 align=TOP_LEFT fillW=true
+            Label cls=[label,h1] style="-fx-font-size: 32; -fx-font-weight: bold; -fx-text-fill: #ffffff;" text="Interactive Showcase" textFill=0xffffffff font=System/Bold/32.0 size=736.0x39.0 maxW=MAX
+              LabeledText cls=[text]
+          VBox cls=[main] style="-fx-padding: 32 32 32 32; -fx-spacing: 24;" size=800.0x719.0 align=TOP_LEFT fillW=true
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x108.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Hover & Active States" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 12;" size=672.0x37.0 maxW=MAX align=CENTER_LEFT
+                Button cls=[button,button] style="-fx-background-color: #2563eb; -fx-text-fill: #ffffff; -fx-padding: 10 24 10 24; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-border-style: none; -fx-cursor: pointer;" text="Hover & Click Me" textFill=0xffffffff font=System/Regular/13.0 size=143.0x37.0
+                  LabeledText cls=[text]
+                Button cls=[button,button] style="-fx-background-color: #16a34a; -fx-text-fill: #ffffff; -fx-padding: 10 24 10 24; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-border-style: none; -fx-cursor: pointer;" text="Green Hover" textFill=0xffffffff font=System/Regular/13.0 size=117.0x37.0
+                  LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x130.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Keyboard Events" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Type in the input below:" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              TextField cls=[text-input,text-field,input] size=672.0x25.0 maxW=MAX
+                Pane size=656.0x17.0
+                  Text cls=[text]
+                  Path
+                  Text cls=[text]
+                  Group
+                    Path
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="No key pressed yet" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x113.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Focus & Blur" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              TextField cls=[text-input,text-field,input] size=672.0x25.0 maxW=MAX
+                Pane size=656.0x17.0
+                  Text cls=[text]
+                  Path
+                  Text cls=[text]
+                  Group
+                    Path
+              VBox cls=[p] size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Not focused" textFill=0x333333ff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x104.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Disabled State" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 12;" size=672.0x33.0 maxW=MAX align=CENTER_LEFT
+                Button cls=[button,button] style="-fx-background-color: #2563eb; -fx-text-fill: #ffffff; -fx-padding: 8 20 8 20; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none; -fx-cursor: pointer;" text="Disable" textFill=0xffffffff font=System/Regular/13.0 size=81.0x33.0
+                  LabeledText cls=[text]
+                Button cls=[button,button] style="-fx-background-color: #6b7280; -fx-text-fill: #ffffff; -fx-padding: 8 20 8 20; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none;" text="Target Button" textFill=0xffffffff font=System/Regular/13.0 size=115.0x33.0
+                  LabeledText cls=[text]
+                TextField cls=[text-input,text-field,input] size=161.0x25.0
+                  Pane size=145.0x17.0
+                    Text cls=[text]
+                    Path
+                    Text cls=[text]
+                    Group
+                      Path
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x104.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Cursor Variants" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8;" size=672.0x33.0 maxW=MAX align=CENTER_LEFT
+                HBox cls=[span] style="-fx-padding: 8 12 8 12; -fx-background-color: #f3f4f6; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-cursor: pointer; -fx-border-style: none;" size=63.0x33.0 align=TOP_LEFT
+                  Label cls=[label] text="pointer" textFill=0x333333ff font=System/Regular/13.0 size=39.0x17.0
+                    LabeledText cls=[text]
+                HBox cls=[span] style="-fx-padding: 8 12 8 12; -fx-background-color: #f3f4f6; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-cursor: text; -fx-border-style: none;" size=45.0x33.0 align=TOP_LEFT
+                  Label cls=[label] text="text" textFill=0x333333ff font=System/Regular/13.0 size=21.0x17.0
+                    LabeledText cls=[text]
+                HBox cls=[span] style="-fx-padding: 8 12 8 12; -fx-background-color: #f3f4f6; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-cursor: move; -fx-border-style: none;" size=55.0x33.0 align=TOP_LEFT
+                  Label cls=[label] text="move" textFill=0x333333ff font=System/Regular/13.0 size=31.0x17.0
+                    LabeledText cls=[text]
+                HBox cls=[span] style="-fx-padding: 8 12 8 12; -fx-background-color: #f3f4f6; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-cursor: not-allowed; -fx-border-style: none;" size=90.0x33.0 align=TOP_LEFT
+                  Label cls=[label] text="not-allowed" textFill=0x333333ff font=System/Regular/13.0 size=66.0x17.0
+                    LabeledText cls=[text]
+                HBox cls=[span] style="-fx-padding: 8 12 8 12; -fx-background-color: #f3f4f6; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-cursor: crosshair; -fx-border-style: none;" size=74.0x33.0 align=TOP_LEFT
+                  Label cls=[label] text="crosshair" textFill=0x333333ff font=System/Regular/13.0 size=50.0x17.0
+                    LabeledText cls=[text]
+                HBox cls=[span] style="-fx-padding: 8 12 8 12; -fx-background-color: #f3f4f6; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-cursor: help; -fx-border-style: none;" size=48.0x33.0 align=TOP_LEFT
+                  Label cls=[label] text="help" textFill=0x333333ff font=System/Regular/13.0 size=24.0x17.0
+                    LabeledText cls=[text]
+                HBox cls=[span] style="-fx-padding: 8 12 8 12; -fx-background-color: #f3f4f6; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-cursor: grab; -fx-border-style: none;" size=49.0x33.0 align=TOP_LEFT
+                  Label cls=[label] text="grab" textFill=0x333333ff font=System/Regular/13.0 size=25.0x17.0
+                    LabeledText cls=[text]
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=20.0x98.0
+     cls=[increment-button] size=20.0x11.0
+      Region cls=[increment-arrow] size=9.0x5.0
+     cls=[decrement-button] size=20.0x11.0
+      Region cls=[decrement-arrow] size=9.0x5.0
+    StackPane cls=[track] size=20.0x76.0
+     cls=[thumb] size=20.0x76.0
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=18.0x100.0
+     cls=[increment-button] size=11.0x100.0
+      Region cls=[increment-arrow] size=5.0x9.0
+     cls=[decrement-button] size=11.0x100.0
+      Region cls=[decrement-arrow] size=5.0x9.0
+    StackPane cls=[track] size=-4.0x100.0
+     cls=[thumb] size=21.0x100.0
+  StackPane cls=[corner]

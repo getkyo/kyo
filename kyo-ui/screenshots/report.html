@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Kyo UI — Screenshot Comparison Report</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #1a1a1a; line-height: 1.5; }
+
+    /* Nav */
+    nav { position: sticky; top: 0; z-index: 100; background: #1e293b; padding: 10px 24px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+    nav a { color: #93c5fd; text-decoration: none; font-size: 14px; font-weight: 500; }
+    nav a:hover { color: #fff; }
+    nav .title { color: #fff; font-weight: 700; font-size: 16px; margin-right: 16px; }
+
+    /* Container */
+    .container { max-width: 1600px; margin: 0 auto; padding: 24px; }
+
+    /* Summary cards */
+    .summary { background: #fff; border-radius: 8px; padding: 24px; margin-bottom: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; gap: 24px; flex-wrap: wrap; }
+    .stat { text-align: center; padding: 16px 24px; border-radius: 8px; min-width: 120px; }
+    .stat .number { font-size: 36px; font-weight: 700; }
+    .stat .label { font-size: 13px; color: #666; margin-top: 4px; }
+    .stat.total { background: #e0e7ff; }
+    .stat.fixed { background: #d1fae5; }
+    .stat.pending { background: #fef3c7; }
+    .stat.investigating { background: #ffedd5; }
+    .stat.platform { background: #f3f4f6; }
+
+    /* UI section */
+    .ui-section { background: #fff; border-radius: 8px; padding: 24px; margin-bottom: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .ui-section h2 { font-size: 24px; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #e5e7eb; }
+
+    /* Side-by-side screenshots */
+    .screenshots { display: flex; gap: 16px; margin-bottom: 24px; }
+    .screenshot { flex: 1; min-width: 0; }
+    .screenshot h3 { font-size: 14px; color: #666; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .screenshot img { width: 100%; border: 1px solid #e5e7eb; border-radius: 4px; cursor: zoom-in; }
+    .screenshot a { display: block; }
+
+    /* Gap table */
+    .gaps h3 { font-size: 16px; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { background: #f8fafc; text-align: left; padding: 8px 12px; border-bottom: 2px solid #e5e7eb; font-weight: 600; }
+    td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+
+    /* Row status colors */
+    tr.fixed { background: #f0fdf4; }
+    tr.pending { background: #fffbeb; }
+    tr.investigating { background: #fff7ed; }
+    tr.platform { background: #f9fafb; }
+
+    /* Badges */
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .badge-fixed { background: #22c55e; color: #fff; }
+    .badge-pending { background: #eab308; color: #fff; }
+    .badge-investigating { background: #f97316; color: #fff; }
+    .badge-platform { background: #9ca3af; color: #fff; }
+
+    /* Severity badges */
+    .badge-high { background: #ef4444; color: #fff; }
+    .badge-medium { background: #f59e0b; color: #fff; }
+    .badge-low { background: #6b7280; color: #fff; }
+
+    /* Notes block */
+    .notes { margin-top: 24px; padding: 16px; background: #f8fafc; border-radius: 8px; border-left: 4px solid #3b82f6; }
+    .notes h3 { font-size: 15px; margin-bottom: 8px; }
+    .notes p { font-size: 13px; color: #4b5563; margin-bottom: 8px; }
+    .notes p:last-child { margin-bottom: 0; }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="title">Kyo UI Comparison</span>
+    <a href="#summary">Summary</a>
+    <a href="#demo">Demo</a>
+    <a href="#interactive">Interactive</a>
+    <a href="#form">Form</a>
+    <a href="#typography">Typography</a>
+    <a href="#layout">Layout</a>
+    <a href="#reactive">Reactive</a>
+    <a href="#dashboard">Dashboard</a>
+    <a href="#semantic">Semantic Elements</a>
+    <a href="#nested">Nested Reactive</a>
+    <a href="#pseudo">Multi Pseudo State</a>
+    <a href="#collections">Collection Ops</a>
+    <a href="#transforms">Transforms</a>
+    <a href="#sizing">Sizing &amp; Units</a>
+    <a href="#keyboard">Keyboard Nav</a>
+    <a href="#colors">Color System</a>
+    <a href="#dynamic">Dynamic Style</a>
+    <a href="#tables">Table Advanced</a>
+    <a href="#auto">Auto Transition</a>
+    <a href="#animated">Animated Dashboard</a>
+  </nav>
+
+  <div class="container">
+
+    <section class="summary" id="summary">
+      <div class="stat total">
+        <div class="number">40</div>
+        <div class="label">Total Gaps</div>
+      </div>
+      <div class="stat fixed">
+        <div class="number">37</div>
+        <div class="label">Fixed</div>
+      </div>
+      <div class="stat pending">
+        <div class="number">1</div>
+        <div class="label">Pending</div>
+      </div>
+      <div class="stat investigating">
+        <div class="number">0</div>
+        <div class="label">Investigating</div>
+      </div>
+      <div class="stat platform">
+        <div class="number">3</div>
+        <div class="label">Platform Difference</div>
+      </div>
+    </section>
+
+    <!-- Demo -->
+    <section class="ui-section" id="demo">
+      <h2>Demo</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-demo.png" target="_blank"><img src="web-demo.png" alt="Web Demo"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-demo.png" target="_blank"><img src="javafx-demo.png" alt="JavaFX Demo"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+          <tr class="fixed">
+            <td>1</td>
+            <td>Form Example</td>
+            <td>Layout — vertical stack</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Layout semantic gap</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>2</td>
+            <td>Footer</td>
+            <td>Text alignment — centered</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- Interactive -->
+    <section class="ui-section" id="interactive">
+      <h2>Interactive</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-interactive.png" target="_blank"><img src="web-interactive.png" alt="Web Interactive"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-interactive.png" target="_blank"><img src="javafx-interactive.png" alt="JavaFX Interactive"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+          <tr class="fixed">
+            <td>3</td>
+            <td>Keyboard Events</td>
+            <td>Sizing — full-width input</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Layout semantic gap</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>4</td>
+            <td>Focus &amp; Blur</td>
+            <td>Sizing — full-width input</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Layout semantic gap</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>5</td>
+            <td>Disabled State</td>
+            <td>Content — button text visible</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>6</td>
+            <td>Cursor Variants</td>
+            <td>Borders — no spurious border</td>
+            <td><span class="badge badge-low">Low</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- Form -->
+    <section class="ui-section" id="form">
+      <h2>Form</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-form.png" target="_blank"><img src="web-form.png" alt="Web Form"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-form.png" target="_blank"><img src="javafx-form.png" alt="JavaFX Form"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+          <tr class="fixed">
+            <td>7</td>
+            <td>Form with Submit</td>
+            <td>Layout — vertical stack</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Layout semantic gap</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>8</td>
+            <td>Form with Submit</td>
+            <td>Interactive — proper CheckBox</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>9</td>
+            <td>Form with Submit</td>
+            <td>Sizing — full-width Submit</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Layout semantic gap</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>10</td>
+            <td>Disabled Controls</td>
+            <td>Layout — vertical stack</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Layout semantic gap</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>11</td>
+            <td>Disabled Controls</td>
+            <td>Content — button text visible</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- Typography -->
+    <section class="ui-section" id="typography">
+      <h2>Typography</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-typography.png" target="_blank"><img src="web-typography.png" alt="Web Typography"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-typography.png" target="_blank"><img src="javafx-typography.png" alt="JavaFX Typography"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+          <tr class="fixed">
+            <td>12</td>
+            <td>Font Styles</td>
+            <td>Typography — italic works</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>13</td>
+            <td>Text Decoration</td>
+            <td>Typography — underline works</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>14</td>
+            <td>Text Decoration</td>
+            <td>Typography — strikethrough works</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>15</td>
+            <td>Text Transform</td>
+            <td>Typography — transforms work</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Missing mapping</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>16</td>
+            <td>Spacing</td>
+            <td>Typography — line height</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Missing mapping</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>17</td>
+            <td>Spacing</td>
+            <td>Typography — letter spacing</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Missing mapping</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>18</td>
+            <td>Text Overflow</td>
+            <td>Typography — wrapText works</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>19</td>
+            <td>Text Alignment</td>
+            <td>Text alignment — works</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>37</td>
+            <td>Spacing</td>
+            <td>Layout — lineHeight wraps</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- Layout -->
+    <section class="ui-section" id="layout">
+      <h2>Layout</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-layout.png" target="_blank"><img src="web-layout.png" alt="Web Layout"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-layout.png" target="_blank"><img src="javafx-layout.png" alt="JavaFX Layout"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+          <tr class="fixed">
+            <td>20</td>
+            <td>Explicit Column</td>
+            <td>Text alignment — centered</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>21</td>
+            <td>Justify Content</td>
+            <td>Layout — all modes work</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Missing mapping</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>22</td>
+            <td>Align Items</td>
+            <td>Layout — alignment works</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>23</td>
+            <td>Overflow</td>
+            <td>Layout — clips correctly</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- Reactive -->
+    <section class="ui-section" id="reactive">
+      <h2>Reactive</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-reactive.png" target="_blank"><img src="web-reactive.png" alt="Web Reactive"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-reactive.png" target="_blank"><img src="javafx-reactive.png" alt="JavaFX Reactive"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+          <tr class="fixed">
+            <td>24</td>
+            <td>Multiple sections</td>
+            <td>Content — button text visible</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>25</td>
+            <td>Simple foreach</td>
+            <td>Layout — horizontal row</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Layout semantic gap</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- Dashboard -->
+    <section class="ui-section" id="dashboard">
+      <h2>Dashboard</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-dashboard.png" target="_blank"><img src="web-dashboard.png" alt="Web Dashboard"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-dashboard.png" target="_blank"><img src="javafx-dashboard.png" alt="JavaFX Dashboard"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+          <tr class="fixed">
+            <td>26</td>
+            <td>Project Status</td>
+            <td>Sizing — pct width on progress bars</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>27</td>
+            <td>Explicit Widths</td>
+            <td>Sizing — px width constraining</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- Semantic Elements -->
+    <section class="ui-section" id="semantic">
+      <h2>Semantic Elements</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-semantic.png" target="_blank"><img src="web-semantic.png" alt="Web Semantic Elements"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-semantic.png" target="_blank"><img src="javafx-semantic.png" alt="JavaFX Semantic Elements"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+          <tr class="fixed">
+            <td>31</td>
+            <td>Code Block</td>
+            <td>Colors — text visible on dark bg</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="pending">
+            <td>32</td>
+            <td>Lists</td>
+            <td>Typography — list markers</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Missing mapping</td>
+            <td><span class="badge badge-pending">Pending</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>40</td>
+            <td>Image Element</td>
+            <td>Content — missing in JavaFX</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Screenshot truncation</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+        </table>
+      </div>
+      <div class="notes">
+        <h3>Notes</h3>
+        <p><strong>Gap #32 (Pending):</strong> List markers (ol/ul numbering, bullets, indentation) are not yet implemented in the JavaFX backend. The native JavaFX layout system has no direct equivalent to CSS list-style; a custom rendering approach is needed.</p>
+      </div>
+    </section>
+
+    <!-- Nested Reactive -->
+    <section class="ui-section" id="nested">
+      <h2>Nested Reactive</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-nested.png" target="_blank"><img src="web-nested.png" alt="Web Nested Reactive"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-nested.png" target="_blank"><img src="javafx-nested.png" alt="JavaFX Nested Reactive"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+        </table>
+        <p style="font-size:13px;color:#6b7280;margin-top:8px;">No gaps identified.</p>
+      </div>
+    </section>
+
+    <!-- Multi Pseudo State -->
+    <section class="ui-section" id="pseudo">
+      <h2>Multi Pseudo State</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-pseudo.png" target="_blank"><img src="web-pseudo.png" alt="Web Multi Pseudo State"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-pseudo.png" target="_blank"><img src="javafx-pseudo.png" alt="JavaFX Multi Pseudo State"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+          <tr class="fixed">
+            <td>33</td>
+            <td>Border Sides</td>
+            <td>Borders — sides combine</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- Collection Ops -->
+    <section class="ui-section" id="collections">
+      <h2>Collection Ops</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-collections.png" target="_blank"><img src="web-collections.png" alt="Web Collection Ops"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-collections.png" target="_blank"><img src="javafx-collections.png" alt="JavaFX Collection Ops"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+        </table>
+        <p style="font-size:13px;color:#6b7280;margin-top:8px;">No gaps identified.</p>
+      </div>
+    </section>
+
+    <!-- Transforms -->
+    <section class="ui-section" id="transforms">
+      <h2>Transforms</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-transforms.png" target="_blank"><img src="web-transforms.png" alt="Web Transforms"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-transforms.png" target="_blank"><img src="javafx-transforms.png" alt="JavaFX Transforms"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+        </table>
+        <p style="font-size:13px;color:#6b7280;margin-top:8px;">No gaps identified.</p>
+      </div>
+    </section>
+
+    <!-- Sizing & Units -->
+    <section class="ui-section" id="sizing">
+      <h2>Sizing &amp; Units</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-sizing.png" target="_blank"><img src="web-sizing.png" alt="Web Sizing &amp; Units"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-sizing.png" target="_blank"><img src="javafx-sizing.png" alt="JavaFX Sizing &amp; Units"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+          <tr class="fixed">
+            <td>28</td>
+            <td>Width in Pixels</td>
+            <td>Sizing — px width constraining</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>29</td>
+            <td>Width in Percent</td>
+            <td>Sizing — pct width constraining</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>30</td>
+            <td>Margin Auto Centering</td>
+            <td>Sizing — depends on width fix</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- Keyboard Nav -->
+    <section class="ui-section" id="keyboard">
+      <h2>Keyboard Nav</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-keyboard.png" target="_blank"><img src="web-keyboard.png" alt="Web Keyboard Nav"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-keyboard.png" target="_blank"><img src="javafx-keyboard.png" alt="JavaFX Keyboard Nav"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+        </table>
+        <p style="font-size:13px;color:#6b7280;margin-top:8px;">No gaps identified.</p>
+      </div>
+    </section>
+
+    <!-- Color System -->
+    <section class="ui-section" id="colors">
+      <h2>Color System</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-colors.png" target="_blank"><img src="web-colors.png" alt="Web Color System"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-colors.png" target="_blank"><img src="javafx-colors.png" alt="JavaFX Color System"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+        </table>
+        <p style="font-size:13px;color:#6b7280;margin-top:8px;">No gaps identified.</p>
+      </div>
+    </section>
+
+    <!-- Dynamic Style -->
+    <section class="ui-section" id="dynamic">
+      <h2>Dynamic Style</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-dynamic.png" target="_blank"><img src="web-dynamic.png" alt="Web Dynamic Style"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-dynamic.png" target="_blank"><img src="javafx-dynamic.png" alt="JavaFX Dynamic Style"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+          <tr class="fixed">
+            <td>36</td>
+            <td>Dynamic Background</td>
+            <td>Colors — Signal bg renders</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- Table Advanced -->
+    <section class="ui-section" id="tables">
+      <h2>Table Advanced</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-tables.png" target="_blank"><img src="web-tables.png" alt="Web Table Advanced"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-tables.png" target="_blank"><img src="javafx-tables.png" alt="JavaFX Table Advanced"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+          <tr class="fixed">
+            <td>34</td>
+            <td>Styled Table</td>
+            <td>Layout — cell text visible</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>35</td>
+            <td>Colspan &amp; Rowspan</td>
+            <td>Layout — proper merged cells</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Missing mapping</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>38</td>
+            <td>Styled Table</td>
+            <td>Layout — rows horizontal (web)</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug (web)</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          <tr class="fixed">
+            <td>39</td>
+            <td>Dynamic Table</td>
+            <td>Layout — rows horizontal (web)</td>
+            <td><span class="badge badge-high">High</span></td>
+            <td>Style bug (web)</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- Auto Transition -->
+    <section class="ui-section" id="auto">
+      <h2>Auto Transition</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-auto.png" target="_blank"><img src="web-auto.png" alt="Web Auto Transition"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-auto.png" target="_blank"><img src="javafx-auto.png" alt="JavaFX Auto Transition"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+        </table>
+        <p style="font-size:13px;color:#6b7280;margin-top:8px;">No gaps identified.</p>
+      </div>
+    </section>
+
+    <!-- Animated Dashboard -->
+    <section class="ui-section" id="animated">
+      <h2>Animated Dashboard</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-animated.png" target="_blank"><img src="web-animated.png" alt="Web Animated Dashboard"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-animated.png" target="_blank"><img src="javafx-animated.png" alt="JavaFX Animated Dashboard"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+        </table>
+        <p style="font-size:13px;color:#6b7280;margin-top:8px;">No gaps identified.</p>
+      </div>
+    </section>
+
+    <!-- Platform Differences -->
+    <div class="notes">
+      <h3>Platform Differences (Not Gaps)</h3>
+      <p>Font rendering differences (anti-aliasing, glyph widths) between browser and JavaFX.</p>
+      <p>Native JavaFX widget chrome differs from browser defaults (scrollbars, focus rings, form controls).</p>
+      <p>Minor color differences in widget states due to platform theming.</p>
+      <p>FormUI: JavaFX shows value string vs display text for Select elements.</p>
+      <p>CollectionOpsUI / NestedReactiveUI: Items render vertically vs inline (block vs inline default).</p>
+    </div>
+
+  </div>
+</body>
+</html>

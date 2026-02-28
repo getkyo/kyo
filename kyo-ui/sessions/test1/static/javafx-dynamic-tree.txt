@@ -1,0 +1,106 @@
+ScrollPane cls=[root,scroll-pane] style="-fx-background-color: transparent;" size=1280.0x1387.0
+   cls=[viewport] size=1278.0x1385.0
+     size=1278.0x1385.0
+      StackPane size=1278.0x1073.0
+        VBox cls=[div] style="-fx-max-width: 800;" size=800.0x1073.0 maxW=800.0 align=TOP_LEFT fillW=true
+          VBox cls=[header] style="-fx-background-color: #9333ea; -fx-text-fill: #ffffff; -fx-padding: 16 32 16 32;" size=800.0x71.0 align=TOP_LEFT fillW=true
+            Label cls=[label,h1] style="-fx-font-size: 32; -fx-font-weight: bold; -fx-text-fill: #ffffff;" text="Dynamic Styles Showcase" textFill=0xffffffff font=System/Bold/32.0 size=736.0x39.0 maxW=MAX
+              LabeledText cls=[text]
+          VBox cls=[main] style="-fx-padding: 32 32 32 32; -fx-spacing: 24;" size=800.0x1002.0 align=TOP_LEFT fillW=true
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x189.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Dynamic Background" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8;" size=672.0x35.0 maxW=MAX align=CENTER_LEFT
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="Blue" textFill=0x333333ff font=System/Regular/13.0 size=59.0x35.0
+                  LabeledText cls=[text]
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="Green" textFill=0x333333ff font=System/Regular/13.0 size=68.0x35.0
+                  LabeledText cls=[text]
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="Yellow" textFill=0x333333ff font=System/Regular/13.0 size=71.0x35.0
+                  LabeledText cls=[text]
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="Red" textFill=0x333333ff font=System/Regular/13.0 size=56.0x35.0
+                  LabeledText cls=[text]
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="Purple" textFill=0x333333ff font=System/Regular/13.0 size=69.0x35.0
+                  LabeledText cls=[text]
+              VBox cls=[div] style="-fx-background-color: #dbeafe; -fx-padding: 20 20 20 20; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-text-alignment: center; -fx-font-size: 16; -fx-font-weight: bold;" size=672.0x75.0 maxW=MAX align=TOP_CENTER fillW=true
+                VBox cls=[p] size=632.0x20.0 align=TOP_LEFT fillW=true
+                  Label cls=[label] text="This box changes background color" textFill=0x333333ff font=System/Bold/16.0 size=632.0x20.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[p] style="-fx-font-size: 12; -fx-text-fill: #64748b;" size=632.0x15.0 align=TOP_LEFT fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #64748b;" text="Current: #dbeafe" textFill=0x64748bff font=System/Bold/12.0 size=632.0x15.0 maxW=MAX
+                    LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x164.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Dynamic Font Size" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8;" size=672.0x35.0 maxW=MAX align=CENTER_LEFT
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="A-" textFill=0x333333ff font=System/Regular/13.0 size=48.0x35.0
+                  LabeledText cls=[text]
+                HBox cls=[span] style="-fx-min-width: 60; -fx-text-alignment: center;" size=60.0x17.0 align=TOP_LEFT
+                  Label cls=[label] text="14px" textFill=0x333333ff font=System/Regular/13.0 size=27.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="A+" textFill=0x333333ff font=System/Regular/13.0 size=51.0x35.0
+                  LabeledText cls=[text]
+              VBox cls=[div] style="-fx-font-size: 14px; -fx-padding: 16 16 16 16; -fx-background-color: #f8fafc; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8;" size=672.0x50.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[p] size=640.0x18.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="The quick brown fox jumps over the lazy " textFill=0x333333ff font=System/Regular/14.0 size=640.0x18.0 maxW=MAX
+                    LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x157.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Dynamic Padding" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8;" size=672.0x35.0 maxW=MAX align=CENTER_LEFT
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="Less" textFill=0x333333ff font=System/Regular/13.0 size=60.0x35.0
+                  LabeledText cls=[text]
+                HBox cls=[span] style="-fx-min-width: 60; -fx-text-alignment: center;" size=60.0x17.0 align=TOP_LEFT
+                  Label cls=[label] text="12px" textFill=0x333333ff font=System/Regular/13.0 size=27.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="More" textFill=0x333333ff font=System/Regular/13.0 size=63.0x35.0
+                  LabeledText cls=[text]
+              VBox cls=[div] style="-fx-padding: 12px; -fx-background-color: #e0e7ff; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #93c5fd #93c5fd #93c5fd #93c5fd;" size=672.0x43.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[p] size=646.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="Content with dynamic padding" textFill=0x333333ff font=System/Regular/13.0 size=646.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x169.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Style Toggles" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8;" size=672.0x35.0 maxW=MAX align=CENTER_LEFT
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="Bold: OFF" textFill=0x333333ff font=System/Regular/13.0 size=88.0x35.0
+                  LabeledText cls=[text]
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="Italic: OFF" textFill=0x333333ff font=System/Regular/13.0 size=88.0x35.0
+                  LabeledText cls=[text]
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="Underline: OFF" textFill=0x333333ff font=System/Regular/13.0 size=116.0x35.0
+                  LabeledText cls=[text]
+              VBox cls=[div] style="text-decoration: none; -fx-padding: 16 16 16 16; -fx-background-color: #f8fafc; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-font-size: 18;" size=672.0x55.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[p] size=640.0x23.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="This text responds to style toggles abov" textFill=0x333333ff font=System/Regular/18.0 size=640.0x23.0 maxW=MAX
+                    LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x163.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Dynamic Border Width" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8;" size=672.0x35.0 maxW=MAX align=CENTER_LEFT
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="Thinner" textFill=0x333333ff font=System/Regular/13.0 size=76.0x35.0
+                  LabeledText cls=[text]
+                HBox cls=[span] style="-fx-min-width: 40; -fx-text-alignment: center;" size=40.0x17.0 align=TOP_LEFT
+                  Label cls=[label] text="1px" textFill=0x333333ff font=System/Regular/13.0 size=19.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                Button cls=[button,button] style="-fx-padding: 8 16 8 16; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #ccc #ccc #ccc #ccc; -fx-cursor: pointer;" text="Thicker" textFill=0x333333ff font=System/Regular/13.0 size=75.0x35.0
+                  LabeledText cls=[text]
+              VBox cls=[div] style="border: 1px solid #10b981; -fx-padding: 16 16 16 16; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-background-color: #f0fdf4;" size=672.0x49.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[p] size=640.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                  Label cls=[label] text="Box with dynamic border width" textFill=0x333333ff font=System/Regular/13.0 size=640.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=20.0x98.0
+     cls=[increment-button] size=20.0x11.0
+      Region cls=[increment-arrow] size=9.0x5.0
+     cls=[decrement-button] size=20.0x11.0
+      Region cls=[decrement-arrow] size=9.0x5.0
+    StackPane cls=[track] size=20.0x76.0
+     cls=[thumb] size=20.0x76.0
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=18.0x100.0
+     cls=[increment-button] size=11.0x100.0
+      Region cls=[increment-arrow] size=5.0x9.0
+     cls=[decrement-button] size=11.0x100.0
+      Region cls=[decrement-arrow] size=5.0x9.0
+    StackPane cls=[track] size=-4.0x100.0
+     cls=[thumb] size=21.0x100.0
+  StackPane cls=[corner]

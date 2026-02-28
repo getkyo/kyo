@@ -1,0 +1,117 @@
+ScrollPane cls=[root,scroll-pane] style="-fx-background-color: transparent;" size=1280.0x1387.0
+   cls=[viewport] size=1278.0x1385.0
+     size=1278.0x1385.0
+      StackPane size=1278.0x1346.0
+        VBox cls=[div] style="-fx-max-width: 800;" size=800.0x1346.0 maxW=800.0 align=TOP_LEFT fillW=true
+          VBox cls=[header] style="-fx-background-color: #dc2626; -fx-text-fill: #ffffff; -fx-padding: 16 32 16 32;" size=800.0x71.0 align=TOP_LEFT fillW=true
+            Label cls=[label,h1] style="-fx-font-size: 32; -fx-font-weight: bold; -fx-text-fill: #ffffff;" text="Transforms & Effects" textFill=0xffffffff font=System/Bold/32.0 size=736.0x39.0 maxW=MAX
+              LabeledText cls=[text]
+          VBox cls=[main] style="-fx-padding: 32 32 32 32; -fx-spacing: 24;" size=800.0x1275.0 align=TOP_LEFT fillW=true
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x303.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Translate" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[div] style="-fx-spacing: 12; -fx-padding: 16 16 16 16;" size=672.0x232.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[div] style="-fx-background-color: #3b82f6; -fx-text-fill: #ffffff; -fx-padding: 12 20 12 20; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-text-alignment: center; -fx-border-style: none;" size=640.0x41.0 maxW=MAX align=TOP_CENTER fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="No transform" textFill=0xffffffff font=System/Regular/13.0 size=600.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #3b82f6; -fx-text-fill: #ffffff; -fx-padding: 12 20 12 20; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-text-alignment: center; -fx-translate-x: 20; -fx-translate-y: 0; -fx-border-style: none;" size=640.0x41.0 maxW=MAX align=TOP_CENTER fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="translate(20, 0)" textFill=0xffffffff font=System/Regular/13.0 size=600.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #3b82f6; -fx-text-fill: #ffffff; -fx-padding: 12 20 12 20; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-text-alignment: center; -fx-translate-x: 40; -fx-translate-y: 10; -fx-border-style: none;" size=640.0x41.0 maxW=MAX align=TOP_CENTER fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="translate(40, 10)" textFill=0xffffffff font=System/Regular/13.0 size=600.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #3b82f6; -fx-text-fill: #ffffff; -fx-padding: 12 20 12 20; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-text-alignment: center; -fx-translate-x: 0; -fx-translate-y: 20; -fx-border-style: none;" size=640.0x41.0 maxW=MAX align=TOP_CENTER fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="translate(0, 20)" textFill=0xffffffff font=System/Regular/13.0 size=600.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x112.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Opacity Levels" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 12;" size=672.0x41.0 maxW=MAX align=CENTER_LEFT
+                VBox cls=[div] style="-fx-background-color: #3b82f6; -fx-text-fill: #ffffff; -fx-padding: 12 20 12 20; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-text-alignment: center; -fx-opacity: 1; -fx-border-style: none;" size=57.0x41.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="1.0" textFill=0xffffffff font=System/Regular/13.0 size=17.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #3b82f6; -fx-text-fill: #ffffff; -fx-padding: 12 20 12 20; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-text-alignment: center; -fx-opacity: 0.8; -fx-border-style: none;" size=59.0x41.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="0.8" textFill=0xffffffff font=System/Regular/13.0 size=19.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #3b82f6; -fx-text-fill: #ffffff; -fx-padding: 12 20 12 20; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-text-alignment: center; -fx-opacity: 0.6; -fx-border-style: none;" size=59.0x41.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="0.6" textFill=0xffffffff font=System/Regular/13.0 size=19.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #3b82f6; -fx-text-fill: #ffffff; -fx-padding: 12 20 12 20; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-text-alignment: center; -fx-opacity: 0.4; -fx-border-style: none;" size=59.0x41.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="0.4" textFill=0xffffffff font=System/Regular/13.0 size=19.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #3b82f6; -fx-text-fill: #ffffff; -fx-padding: 12 20 12 20; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-text-alignment: center; -fx-opacity: 0.2; -fx-border-style: none;" size=59.0x41.0 align=TOP_CENTER fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="0.2" textFill=0xffffffff font=System/Regular/13.0 size=19.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x242.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Combined: Translate + Opacity" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[div] style="-fx-spacing: 8; -fx-padding: 16 16 16 16;" size=672.0x171.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[div] style="-fx-background-color: #3b82f6; -fx-text-fill: #ffffff; -fx-padding: 12 20 12 20; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-text-alignment: center; -fx-translate-x: 0; -fx-translate-y: 0; -fx-opacity: 1; -fx-border-style: none;" size=640.0x41.0 maxW=MAX align=TOP_CENTER fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="origin, opacity=1.0" textFill=0xffffffff font=System/Regular/13.0 size=600.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #3b82f6; -fx-text-fill: #ffffff; -fx-padding: 12 20 12 20; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-text-alignment: center; -fx-translate-x: 30; -fx-translate-y: 0; -fx-opacity: 0.7; -fx-border-style: none;" size=640.0x41.0 maxW=MAX align=TOP_CENTER fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="translate(30,0), opacity=0.7" textFill=0xffffffff font=System/Regular/13.0 size=600.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #3b82f6; -fx-text-fill: #ffffff; -fx-padding: 12 20 12 20; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-text-alignment: center; -fx-translate-x: 60; -fx-translate-y: 0; -fx-opacity: 0.4; -fx-border-style: none;" size=640.0x41.0 maxW=MAX align=TOP_CENTER fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="translate(60,0), opacity=0.4" textFill=0xffffffff font=System/Regular/13.0 size=600.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x151.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Opacity on Text Elements" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-opacity: 1; -fx-font-size: 16;" size=672.0x20.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Full opacity text (1.0)" textFill=0x333333ff font=System/Regular/16.0 size=672.0x20.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] style="-fx-opacity: 0.7; -fx-font-size: 16;" size=672.0x20.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Reduced opacity text (0.7)" textFill=0x333333ff font=System/Regular/16.0 size=672.0x20.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] style="-fx-opacity: 0.4; -fx-font-size: 16;" size=672.0x20.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Faded opacity text (0.4)" textFill=0x333333ff font=System/Regular/16.0 size=672.0x20.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[p] style="-fx-opacity: 0.15; -fx-font-size: 16;" size=672.0x20.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Nearly invisible text (0.15)" textFill=0x333333ff font=System/Regular/16.0 size=672.0x20.0 maxW=MAX
+                  LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x148.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Translate + Overflow Hidden" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #64748b;" text="Translated element inside a clipped cont" textFill=0x64748bff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              VBox cls=[div] style="-fx-pref-height: 60; -fx-border-width: 1 1 1 1; -fx-border-style: solid; -fx-border-color: #e2e8f0 #e2e8f0 #e2e8f0 #e2e8f0; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-padding: 8 8 8 8;" size=672.0x60.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox cls=[div] style="-fx-background-color: #3b82f6; -fx-text-fill: #ffffff; -fx-padding: 12 20 12 20; -fx-background-insets: 0; -fx-background-radius: 6 6 6 6; -fx-border-radius: 6 6 6 6; -fx-text-alignment: center; -fx-translate-x: 10; -fx-translate-y: 30; -fx-border-style: none;" size=654.0x41.0 maxW=MAX align=TOP_CENTER fillW=true
+                  Label cls=[label] style=" -fx-text-fill: #ffffff;" text="I'm shifted down and partially clipped" textFill=0xffffffff font=System/Regular/13.0 size=614.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+            VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x135.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Shadow + Opacity" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 16;" size=672.0x64.0 maxW=MAX align=CENTER_LEFT
+                VBox cls=[div] style="-fx-background-color: #ffffff; -fx-padding: 16 16 16 16; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.2), 12, 0, 0, 4); -fx-opacity: 1; -fx-border-style: none;" size=97.0x64.0 align=TOP_LEFT fillW=true
+                  VBox cls=[p] size=65.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                    Label cls=[label] text="opacity=1.0" textFill=0x333333ff font=System/Regular/13.0 size=65.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[p] style="-fx-font-size: 12; -fx-text-fill: #94a3b8;" size=65.0x15.0 maxW=MAX align=TOP_LEFT fillW=true
+                    Label cls=[label] style=" -fx-text-fill: #94a3b8;" text="Full shadow" textFill=0x94a3b8ff font=System/Regular/12.0 size=65.0x15.0 maxW=MAX
+                      LabeledText cls=[text]
+                VBox cls=[div] style="-fx-background-color: #ffffff; -fx-padding: 16 16 16 16; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.2), 12, 0, 0, 4); -fx-opacity: 0.5; -fx-border-style: none;" size=106.0x64.0 align=TOP_LEFT fillW=true
+                  VBox cls=[p] size=74.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                    Label cls=[label] text="opacity=0.5" textFill=0x333333ff font=System/Regular/13.0 size=74.0x17.0 maxW=MAX
+                      LabeledText cls=[text]
+                  VBox cls=[p] style="-fx-font-size: 12; -fx-text-fill: #94a3b8;" size=74.0x15.0 maxW=MAX align=TOP_LEFT fillW=true
+                    Label cls=[label] style=" -fx-text-fill: #94a3b8;" text="Faded shadow" textFill=0x94a3b8ff font=System/Regular/12.0 size=74.0x15.0 maxW=MAX
+                      LabeledText cls=[text]
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=20.0x98.0
+     cls=[increment-button] size=20.0x11.0
+      Region cls=[increment-arrow] size=9.0x5.0
+     cls=[decrement-button] size=20.0x11.0
+      Region cls=[decrement-arrow] size=9.0x5.0
+    StackPane cls=[track] size=20.0x76.0
+     cls=[thumb] size=20.0x76.0
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=18.0x100.0
+     cls=[increment-button] size=11.0x100.0
+      Region cls=[increment-arrow] size=5.0x9.0
+     cls=[decrement-button] size=11.0x100.0
+      Region cls=[decrement-arrow] size=5.0x9.0
+    StackPane cls=[track] size=-4.0x100.0
+     cls=[thumb] size=21.0x100.0
+  StackPane cls=[corner]

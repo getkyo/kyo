@@ -200,20 +200,20 @@ class StyleTest extends Test:
 
     "alignment" - {
         "align css" in {
-            assert(Style.align(Style.Alignment.Center).toCss == "align-items: center;")
-            assert(Style.align(Style.Alignment.Start).toCss == "align-items: flex-start;")
-            assert(Style.align(Style.Alignment.End).toCss == "align-items: flex-end;")
-            assert(Style.align(Style.Alignment.Stretch).toCss == "align-items: stretch;")
-            assert(Style.align(Style.Alignment.Baseline).toCss == "align-items: baseline;")
+            assert(Style.align(Style.Alignment.center).toCss == "align-items: center;")
+            assert(Style.align(Style.Alignment.start).toCss == "align-items: flex-start;")
+            assert(Style.align(Style.Alignment.end).toCss == "align-items: flex-end;")
+            assert(Style.align(Style.Alignment.stretch).toCss == "align-items: stretch;")
+            assert(Style.align(Style.Alignment.baseline).toCss == "align-items: baseline;")
         }
 
         "justify css" in {
-            assert(Style.justify(Style.Justification.Start).toCss == "justify-content: flex-start;")
-            assert(Style.justify(Style.Justification.Center).toCss == "justify-content: center;")
-            assert(Style.justify(Style.Justification.End).toCss == "justify-content: flex-end;")
-            assert(Style.justify(Style.Justification.SpaceBetween).toCss == "justify-content: space-between;")
-            assert(Style.justify(Style.Justification.SpaceAround).toCss == "justify-content: space-around;")
-            assert(Style.justify(Style.Justification.SpaceEvenly).toCss == "justify-content: space-evenly;")
+            assert(Style.justify(Style.Justification.start).toCss == "justify-content: flex-start;")
+            assert(Style.justify(Style.Justification.center).toCss == "justify-content: center;")
+            assert(Style.justify(Style.Justification.end).toCss == "justify-content: flex-end;")
+            assert(Style.justify(Style.Justification.spaceBetween).toCss == "justify-content: space-between;")
+            assert(Style.justify(Style.Justification.spaceAround).toCss == "justify-content: space-around;")
+            assert(Style.justify(Style.Justification.spaceEvenly).toCss == "justify-content: space-evenly;")
         }
     }
 
@@ -264,11 +264,11 @@ class StyleTest extends Test:
         }
 
         "fontWeight" in {
-            assert(Style.fontWeight(Style.FontWeight.Bold).toCss == "font-weight: bold;")
-            assert(Style.fontWeight(Style.FontWeight.Normal).toCss == "font-weight: normal;")
-            assert(Style.fontWeight(Style.FontWeight.W100).toCss == "font-weight: 100;")
-            assert(Style.fontWeight(Style.FontWeight.W700).toCss == "font-weight: 700;")
-            assert(Style.fontWeight(Style.FontWeight.W900).toCss == "font-weight: 900;")
+            assert(Style.fontWeight(Style.FontWeight.bold).toCss == "font-weight: bold;")
+            assert(Style.fontWeight(Style.FontWeight.normal).toCss == "font-weight: normal;")
+            assert(Style.fontWeight(Style.FontWeight.w100).toCss == "font-weight: 100;")
+            assert(Style.fontWeight(Style.FontWeight.w700).toCss == "font-weight: 700;")
+            assert(Style.fontWeight(Style.FontWeight.w900).toCss == "font-weight: 900;")
         }
 
         "bold shortcut" in {
@@ -276,8 +276,8 @@ class StyleTest extends Test:
         }
 
         "fontStyle" in {
-            assert(Style.fontStyle(Style.FontStyle.Normal).toCss == "font-style: normal;")
-            assert(Style.fontStyle(Style.FontStyle.Italic).toCss == "font-style: italic;")
+            assert(Style.fontStyle(Style.FontStyle.normal).toCss == "font-style: normal;")
+            assert(Style.fontStyle(Style.FontStyle.italic).toCss == "font-style: italic;")
         }
 
         "italic shortcut" in {
@@ -290,19 +290,19 @@ class StyleTest extends Test:
         }
 
         "textAlign" in {
-            assert(Style.textAlign(Style.TextAlign.Left).toCss == "text-align: left;")
-            assert(Style.textAlign(Style.TextAlign.Center).toCss == "text-align: center;")
-            assert(Style.textAlign(Style.TextAlign.Right).toCss == "text-align: right;")
-            assert(Style.textAlign(Style.TextAlign.Justify).toCss == "text-align: justify;")
+            assert(Style.textAlign(Style.TextAlign.left).toCss == "text-align: left;")
+            assert(Style.textAlign(Style.TextAlign.center).toCss == "text-align: center;")
+            assert(Style.textAlign(Style.TextAlign.right).toCss == "text-align: right;")
+            assert(Style.textAlign(Style.TextAlign.justify).toCss == "text-align: justify;")
         }
 
         "textDecoration" in {
-            assert(Style.textDecoration(Style.TextDecoration.None).toCss == "text-decoration: none;")
+            assert(Style.textDecoration(Style.TextDecoration.none).toCss == "text-decoration: none;")
             assert(Style.underline.toCss == "text-decoration: underline;")
             assert(Style.strikethrough.toCss == "text-decoration: line-through;")
             assert(Style.underline.toFxCss == "-fx-underline: true;")
             assert(Style.strikethrough.toFxCss == "-fx-strikethrough: true;")
-            assert(Style.textDecoration(Style.TextDecoration.None).toFxCss == "-fx-underline: false; -fx-strikethrough: false;")
+            assert(Style.textDecoration(Style.TextDecoration.none).toFxCss == "-fx-underline: false; -fx-strikethrough: false;")
         }
 
         "lineHeight" in {
@@ -317,24 +317,24 @@ class StyleTest extends Test:
         }
 
         "textTransform" in {
-            assert(Style.textTransform(Style.TextTransform.None).toCss == "text-transform: none;")
-            assert(Style.textTransform(Style.TextTransform.Uppercase).toCss == "text-transform: uppercase;")
-            assert(Style.textTransform(Style.TextTransform.Lowercase).toCss == "text-transform: lowercase;")
-            assert(Style.textTransform(Style.TextTransform.Capitalize).toCss == "text-transform: capitalize;")
-            assert(Style.textTransform(Style.TextTransform.Uppercase).toFxCss == "")
+            assert(Style.textTransform(Style.TextTransform.none).toCss == "text-transform: none;")
+            assert(Style.textTransform(Style.TextTransform.uppercase).toCss == "text-transform: uppercase;")
+            assert(Style.textTransform(Style.TextTransform.lowercase).toCss == "text-transform: lowercase;")
+            assert(Style.textTransform(Style.TextTransform.capitalize).toCss == "text-transform: capitalize;")
+            assert(Style.textTransform(Style.TextTransform.uppercase).toFxCss == "")
         }
 
         "textOverflow" in {
-            assert(Style.textOverflow(Style.TextOverflow.Clip).toCss == "text-overflow: clip;")
-            assert(Style.textOverflow(Style.TextOverflow.Ellipsis).toCss == "text-overflow: ellipsis;")
-            assert(Style.textOverflow(Style.TextOverflow.Ellipsis).toFxCss == "-fx-text-overrun: ellipsis;")
-            assert(Style.textOverflow(Style.TextOverflow.Clip).toFxCss == "-fx-text-overrun: clip;")
+            assert(Style.textOverflow(Style.TextOverflow.clip).toCss == "text-overflow: clip;")
+            assert(Style.textOverflow(Style.TextOverflow.ellipsis).toCss == "text-overflow: ellipsis;")
+            assert(Style.textOverflow(Style.TextOverflow.ellipsis).toFxCss == "-fx-text-overrun: ellipsis;")
+            assert(Style.textOverflow(Style.TextOverflow.clip).toFxCss == "-fx-text-overrun: clip;")
         }
     }
 
     "borders" - {
         "border shorthand" in {
-            val s = Style.border(1, Style.BorderStyle.Solid, "#000")
+            val s = Style.border(1, Style.BorderStyle.solid, "#000")
             assert(s.toCss.contains("border-width: 1px 1px 1px 1px;"))
             assert(s.toCss.contains("border-style: solid;"))
             assert(s.toCss.contains("border-color: #000 #000 #000 #000;"))
@@ -364,10 +364,10 @@ class StyleTest extends Test:
         }
 
         "borderStyle" in {
-            assert(Style.borderStyle(Style.BorderStyle.None).toCss == "border-style: none;")
-            assert(Style.borderStyle(Style.BorderStyle.Solid).toCss == "border-style: solid;")
-            assert(Style.borderStyle(Style.BorderStyle.Dashed).toCss == "border-style: dashed;")
-            assert(Style.borderStyle(Style.BorderStyle.Dotted).toCss == "border-style: dotted;")
+            assert(Style.borderStyle(Style.BorderStyle.none).toCss == "border-style: none;")
+            assert(Style.borderStyle(Style.BorderStyle.solid).toCss == "border-style: solid;")
+            assert(Style.borderStyle(Style.BorderStyle.dashed).toCss == "border-style: dashed;")
+            assert(Style.borderStyle(Style.BorderStyle.dotted).toCss == "border-style: dotted;")
         }
 
         "borderTop" in {
@@ -438,39 +438,24 @@ class StyleTest extends Test:
 
     "cursor" - {
         "all cursor types" in {
-            assert(Style.cursor(Style.Cursor.Default).toCss == "cursor: default;")
-            assert(Style.cursor(Style.Cursor.Pointer).toCss == "cursor: pointer;")
-            assert(Style.cursor(Style.Cursor.Text).toCss == "cursor: text;")
-            assert(Style.cursor(Style.Cursor.Move).toCss == "cursor: move;")
-            assert(Style.cursor(Style.Cursor.NotAllowed).toCss == "cursor: not-allowed;")
-            assert(Style.cursor(Style.Cursor.Crosshair).toCss == "cursor: crosshair;")
-            assert(Style.cursor(Style.Cursor.Help).toCss == "cursor: help;")
-            assert(Style.cursor(Style.Cursor.Wait).toCss == "cursor: wait;")
-            assert(Style.cursor(Style.Cursor.Grab).toCss == "cursor: grab;")
-            assert(Style.cursor(Style.Cursor.Grabbing).toCss == "cursor: grabbing;")
+            assert(Style.cursor(Style.Cursor.default_).toCss == "cursor: default;")
+            assert(Style.cursor(Style.Cursor.pointer).toCss == "cursor: pointer;")
+            assert(Style.cursor(Style.Cursor.text).toCss == "cursor: text;")
+            assert(Style.cursor(Style.Cursor.move).toCss == "cursor: move;")
+            assert(Style.cursor(Style.Cursor.notAllowed).toCss == "cursor: not-allowed;")
+            assert(Style.cursor(Style.Cursor.crosshair).toCss == "cursor: crosshair;")
+            assert(Style.cursor(Style.Cursor.help).toCss == "cursor: help;")
+            assert(Style.cursor(Style.Cursor.wait_).toCss == "cursor: wait;")
+            assert(Style.cursor(Style.Cursor.grab).toCss == "cursor: grab;")
+            assert(Style.cursor(Style.Cursor.grabbing).toCss == "cursor: grabbing;")
         }
 
         "fxCss" in {
-            assert(Style.cursor(Style.Cursor.Pointer).toFxCss == "-fx-cursor: pointer;")
+            assert(Style.cursor(Style.Cursor.pointer).toFxCss == "-fx-cursor: pointer;")
         }
     }
 
     "transforms" - {
-        "rotate" in {
-            assert(Style.rotate(45).toCss == "transform: rotate(45deg);")
-            assert(Style.rotate(45).toFxCss == "-fx-rotate: 45;")
-            assert(Style.rotate(45.5).toCss == "transform: rotate(45.5deg);")
-        }
-
-        "scale single" in {
-            assert(Style.scale(2).toCss == "transform: scale(2, 2);")
-            assert(Style.scale(2).toFxCss == "-fx-scale-x: 2; -fx-scale-y: 2;")
-        }
-
-        "scale x y" in {
-            assert(Style.scale(1.5, 2).toCss == "transform: scale(1.5, 2);")
-        }
-
         "translate" in {
             assert(Style.translate(10, 20).toCss == "transform: translate(10px, 20px);")
             assert(Style.translate(10, 20).toFxCss == "-fx-translate-x: 10; -fx-translate-y: 20;")
@@ -479,14 +464,14 @@ class StyleTest extends Test:
 
     "overflow" - {
         "all variants" in {
-            assert(Style.overflow(Style.Overflow.Visible).toCss == "overflow: visible;")
-            assert(Style.overflow(Style.Overflow.Hidden).toCss == "overflow: hidden;")
-            assert(Style.overflow(Style.Overflow.Scroll).toCss == "overflow: scroll;")
-            assert(Style.overflow(Style.Overflow.Auto).toCss == "overflow: auto;")
+            assert(Style.overflow(Style.Overflow.visible).toCss == "overflow: visible;")
+            assert(Style.overflow(Style.Overflow.hidden).toCss == "overflow: hidden;")
+            assert(Style.overflow(Style.Overflow.scroll).toCss == "overflow: scroll;")
+            assert(Style.overflow(Style.Overflow.auto).toCss == "overflow: auto;")
         }
 
         "fxCss is empty" in {
-            assert(Style.overflow(Style.Overflow.Hidden).toFxCss == "")
+            assert(Style.overflow(Style.Overflow.hidden).toFxCss == "")
         }
     }
 

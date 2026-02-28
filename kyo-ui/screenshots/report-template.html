@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Kyo UI — Screenshot Comparison Report</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #1a1a1a; line-height: 1.5; }
+
+    /* Nav */
+    nav { position: sticky; top: 0; z-index: 100; background: #1e293b; padding: 10px 24px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+    nav a { color: #93c5fd; text-decoration: none; font-size: 14px; font-weight: 500; }
+    nav a:hover { color: #fff; }
+    nav .title { color: #fff; font-weight: 700; font-size: 16px; margin-right: 16px; }
+
+    /* Container */
+    .container { max-width: 1600px; margin: 0 auto; padding: 24px; }
+
+    /* Summary cards */
+    .summary { background: #fff; border-radius: 8px; padding: 24px; margin-bottom: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; gap: 24px; flex-wrap: wrap; }
+    .stat { text-align: center; padding: 16px 24px; border-radius: 8px; min-width: 120px; }
+    .stat .number { font-size: 36px; font-weight: 700; }
+    .stat .label { font-size: 13px; color: #666; margin-top: 4px; }
+    .stat.total { background: #e0e7ff; }
+    .stat.fixed { background: #d1fae5; }
+    .stat.pending { background: #fef3c7; }
+    .stat.investigating { background: #ffedd5; }
+    .stat.platform { background: #f3f4f6; }
+
+    /* UI section */
+    .ui-section { background: #fff; border-radius: 8px; padding: 24px; margin-bottom: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .ui-section h2 { font-size: 24px; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #e5e7eb; }
+
+    /* Side-by-side screenshots */
+    .screenshots { display: flex; gap: 16px; margin-bottom: 24px; }
+    .screenshot { flex: 1; min-width: 0; }
+    .screenshot h3 { font-size: 14px; color: #666; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .screenshot img { width: 100%; border: 1px solid #e5e7eb; border-radius: 4px; cursor: zoom-in; }
+    .screenshot a { display: block; }
+
+    /* Gap table */
+    .gaps h3 { font-size: 16px; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { background: #f8fafc; text-align: left; padding: 8px 12px; border-bottom: 2px solid #e5e7eb; font-weight: 600; }
+    td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+
+    /* Row status colors */
+    tr.fixed { background: #f0fdf4; }
+    tr.pending { background: #fffbeb; }
+    tr.investigating { background: #fff7ed; }
+    tr.platform { background: #f9fafb; }
+
+    /* Badges */
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .badge-fixed { background: #22c55e; color: #fff; }
+    .badge-pending { background: #eab308; color: #fff; }
+    .badge-investigating { background: #f97316; color: #fff; }
+    .badge-platform { background: #9ca3af; color: #fff; }
+
+    /* Severity badges */
+    .badge-high { background: #ef4444; color: #fff; }
+    .badge-medium { background: #f59e0b; color: #fff; }
+    .badge-low { background: #6b7280; color: #fff; }
+
+    /* Notes block */
+    .notes { margin-top: 24px; padding: 16px; background: #f8fafc; border-radius: 8px; border-left: 4px solid #3b82f6; }
+    .notes h3 { font-size: 15px; margin-bottom: 8px; }
+    .notes p { font-size: 13px; color: #4b5563; margin-bottom: 8px; }
+    .notes p:last-child { margin-bottom: 0; }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="title">Kyo UI Comparison</span>
+    <a href="#summary">Summary</a>
+    <!-- NAV LINKS: one <a href="#ui-name">Label</a> per UI -->
+  </nav>
+
+  <div class="container">
+
+    <!-- SUMMARY: update the numbers -->
+    <section class="summary" id="summary">
+      <div class="stat total">
+        <div class="number">0</div>
+        <div class="label">Total Gaps</div>
+      </div>
+      <div class="stat fixed">
+        <div class="number">0</div>
+        <div class="label">Fixed</div>
+      </div>
+      <div class="stat pending">
+        <div class="number">0</div>
+        <div class="label">Pending</div>
+      </div>
+      <div class="stat investigating">
+        <div class="number">0</div>
+        <div class="label">Investigating</div>
+      </div>
+      <div class="stat platform">
+        <div class="number">0</div>
+        <div class="label">Platform Difference</div>
+      </div>
+    </section>
+
+    <!-- REPEAT FOR EACH UI: copy this block, replace UI_ID, UI_LABEL, ui_name -->
+    <!--
+    <section class="ui-section" id="UI_ID">
+      <h2>UI_LABEL</h2>
+      <div class="screenshots">
+        <div class="screenshot">
+          <h3>Web (Reference)</h3>
+          <a href="web-ui_name.png" target="_blank"><img src="web-ui_name.png" alt="Web UI_LABEL"></a>
+        </div>
+        <div class="screenshot">
+          <h3>JavaFX (Actual)</h3>
+          <a href="javafx-ui_name.png" target="_blank"><img src="javafx-ui_name.png" alt="JavaFX UI_LABEL"></a>
+        </div>
+      </div>
+      <div class="gaps">
+        <h3>Gaps</h3>
+        <table>
+          <tr><th>#</th><th>Section</th><th>Dimension</th><th>Web (reference)</th><th>JavaFX (actual)</th><th>Severity</th><th>Classification</th><th>Status</th></tr>
+          ~~ GAP ROWS: one <tr> per gap. Use class="fixed|pending|investigating|platform" on the <tr> ~~
+          ~~ Example:
+          <tr class="fixed">
+            <td>1</td>
+            <td>Footer</td>
+            <td>Text alignment</td>
+            <td>Centered text</td>
+            <td>Now centered via VBox alignment</td>
+            <td><span class="badge badge-medium">Medium</span></td>
+            <td>Style bug</td>
+            <td><span class="badge badge-fixed">Fixed</span></td>
+          </tr>
+          ~~
+        </table>
+      </div>
+      ~~ OPTIONAL: notes block for investigation details ~~
+      <div class="notes">
+        <h3>Notes</h3>
+        <p>Details about what was tried, what's blocking, etc.</p>
+      </div>
+    </section>
+    -->
+
+  </div>
+</body>
+</html>
