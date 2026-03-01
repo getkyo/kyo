@@ -160,4 +160,61 @@ object Fields:
             ${ internal.FieldsMacros.sameNamesImpl[A, B] }
     end SameNames
 
+    /** Prevents Scala from merging field names when chaining field definitions.
+      *
+      * Because `~` is contravariant in its name parameter, Scala normalizes intersections like `"name" ~ Int & "age" ~ Int` into
+      * `("name" | "age") ~ Int`, collapsing distinct fields into a single union. Requiring `using Pin[N]` pins each field name during
+      * inference, keeping them as separate intersection members. The runtime value is just `()` — this is purely a compile-time mechanism.
+      *
+      * {{{
+      * // Without Pin — chaining merges names: "name" ~ A & "age" ~ B becomes ("name" | "age") ~ (A & B)
+      * def field[N <: String & Singleton](name: N): Def[In & N ~ Int]
+      *
+      * // With Pin — each field name is preserved: "name" ~ A & "age" ~ B stays separate
+      * def field[N <: String & Singleton](name: N)(using Pin[N]): Def[In & N ~ Int]
+      * }}}
+      *
+      * Note: both `Pin` and `Exact` can be replaced by `Precise` (from `scala.language.experimental.modularity`) once it becomes stable.
+      * `Precise` prevents type widening directly on the type parameter:
+      * {{{
+      * def field[N <: String & Singleton : Precise](name: N): Def[In & N ~ Int]
+      * }}}
+      */
+    private object Pin:
+        opaque type Pin[+N <: String] = Unit
+        given [N <: String]: Pin[N] = ()
+    end Pin
+    export Pin.*
+
+    /** Decomposes a function's return type into a type constructor and its field types, preserving field information that Scala would
+      * otherwise widen.
+      *
+      * With a direct approach like `def modify[A >: Fields](f: Def[Fields] => Def[A])`, Scala widens `A` to the lower bound through the
+      * lambda, losing field types. `Exact` avoids this by first inferring `R` as the full return type (with no bound forcing widening),
+      * then extracting the field types.
+      *
+      * {{{
+      * // Without Exact — A is widened to Any, field types are lost
+      * def modify[A >: Fields](f: Def[Fields] => Def[A]): Record[A]
+      *
+      * // With Exact — R preserves the full type, field types are extracted as s.Out
+      * def modify[R](f: Def[Fields] => R)(using s: Exact[Def, R]): Record[s.Out]
+      * }}}
+      *
+      * Note: both `Pin` and `Exact` can be replaced by `Precise` (from `scala.language.experimental.modularity`) once it becomes stable.
+      * `Precise` prevents the widening directly, removing the need to decompose `R`:
+      * {{{
+      * def modify[A : Precise](f: Def[Fields] => Def[A]): Record[A]
+      * }}}
+      */
+    sealed trait Exact[F[_], R]:
+        type Out
+        def apply(r: R): F[Out]
+
+    object Exact:
+        given [F[_], A]: Exact[F, F[A]] with
+            type Out = A
+            def apply(r: F[A]): F[A] = r
+    end Exact
+
 end Fields

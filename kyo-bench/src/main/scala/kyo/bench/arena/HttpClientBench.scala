@@ -27,14 +27,10 @@ class HttpClientBench extends ArenaBench.ForkOnly("pong"):
         catsClient.expect[String](catsUrl)
     end catsBench
 
-    val kyoUrl =
-        import sttp.client3.*
-        uri"$url"
-
     override def kyoBenchFiber() =
         import kyo.*
 
-        Requests(_.get(kyoUrl))
+        HttpClient.getText(url)
     end kyoBenchFiber
 
     val zioUrl =

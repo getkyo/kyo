@@ -29,18 +29,10 @@ class HttpClientContentionBench
         Seq.fill(concurrency)(catsClient.expect[String](catsUrl)).parSequence
     end catsBench
 
-    lazy val kyoClient =
-        import kyo.*
-        PlatformBackend.default
-
-    val kyoUrl =
-        import sttp.client3.*
-        uri"$url"
-
     override def kyoBenchFiber() =
         import kyo.*
 
-        Async.fill(concurrency, concurrency)(Requests(_.get(kyoUrl)))
+        Async.fill(concurrency, concurrency)(HttpClient.getText(url))
     end kyoBenchFiber
 
     val zioUrl =
