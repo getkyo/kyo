@@ -1,0 +1,42 @@
+package kyo
+
+import kyo.*
+
+sealed abstract class HttpError(message: Text, cause: Text | Throwable = "")(using Frame)
+    extends KyoException(message, cause)
+
+object HttpError:
+
+    case class ParseError(message: String)(using Frame)
+        extends HttpError(s"Failed to parse: $message")
+
+    case class UnsupportedMediaTypeError(message: String)(using Frame)
+        extends HttpError(s"Unsupported media type: $message")
+
+    case class TimeoutError(duration: Duration)(using Frame)
+        extends HttpError(s"Request timed out after ${duration.show}")
+
+    case class TooManyRedirects(count: Int)(using Frame)
+        extends HttpError(s"Too many redirects: $count")
+
+    case class ConnectionPoolExhausted(host: String, port: Int, maxConnections: Int)(using Frame)
+        extends HttpError(s"Connection pool exhausted for $host:$port (max $maxConnections)")
+
+    case class ConnectionError(message: String, cause: Throwable)(using Frame)
+        extends HttpError(message, cause)
+
+    case class HandlerError(error: Any)(using Frame)
+        extends HttpError(
+            s"Handler failed: $error",
+            error match
+                case e: Throwable => e
+                case other        => String.valueOf(other)
+        )
+
+    case class StatusError(status: HttpStatus, body: String)(using Frame)
+        extends HttpError(s"HTTP ${status.code}: $body")
+
+    case class BindError(host: String, port: Int, cause: Throwable)(using Frame)
+        extends HttpError(s"Server bind failed on $host:$port: ${cause.getMessage}", cause)
+
+end HttpError
