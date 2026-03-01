@@ -122,26 +122,26 @@ object HttpHandler:
     ): HttpHandler[Any, "body" ~ A, Nothing] =
         HttpRoute.getJson[A](path).handler(req => f(req).map(HttpResponse.okJson(_)))
 
-    def postJson[A: Schema, B: Schema](path: String)(using
+    def postJson[A: Schema](path: String)(using
         Frame
-    )(
-        f: (HttpRequest["body" ~ B], B) => A < (Async & Abort[HttpResponse.Halt])
-    ): HttpHandler["body" ~ B, "body" ~ A, Nothing] =
-        HttpRoute.postJson[A, B](path).handler(req => f(req, req.fields.body).map(HttpResponse.okJson(_)))
+    )[B: Schema](
+        f: (HttpRequest["body" ~ A], A) => B < (Async & Abort[HttpResponse.Halt])
+    ): HttpHandler["body" ~ A, "body" ~ B, Nothing] =
+        HttpRoute.postJson[B, A](path).handler(req => f(req, req.fields.body).map(HttpResponse.okJson(_)))
 
-    def putJson[A: Schema, B: Schema](path: String)(using
+    def putJson[A: Schema](path: String)(using
         Frame
-    )(
-        f: (HttpRequest["body" ~ B], B) => A < (Async & Abort[HttpResponse.Halt])
-    ): HttpHandler["body" ~ B, "body" ~ A, Nothing] =
-        HttpRoute.putJson[A, B](path).handler(req => f(req, req.fields.body).map(HttpResponse.okJson(_)))
+    )[B: Schema](
+        f: (HttpRequest["body" ~ A], A) => B < (Async & Abort[HttpResponse.Halt])
+    ): HttpHandler["body" ~ A, "body" ~ B, Nothing] =
+        HttpRoute.putJson[B, A](path).handler(req => f(req, req.fields.body).map(HttpResponse.okJson(_)))
 
-    def patchJson[A: Schema, B: Schema](path: String)(using
+    def patchJson[A: Schema](path: String)(using
         Frame
-    )(
-        f: (HttpRequest["body" ~ B], B) => A < (Async & Abort[HttpResponse.Halt])
-    ): HttpHandler["body" ~ B, "body" ~ A, Nothing] =
-        HttpRoute.patchJson[A, B](path).handler(req => f(req, req.fields.body).map(HttpResponse.okJson(_)))
+    )[B: Schema](
+        f: (HttpRequest["body" ~ A], A) => B < (Async & Abort[HttpResponse.Halt])
+    ): HttpHandler["body" ~ A, "body" ~ B, Nothing] =
+        HttpRoute.patchJson[B, A](path).handler(req => f(req, req.fields.body).map(HttpResponse.okJson(_)))
 
     def deleteJson[A: Schema](path: String)(using
         Frame

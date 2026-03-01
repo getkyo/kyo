@@ -183,14 +183,14 @@ object NotePadClient extends KyoApp:
             _ <- HttpClient.withConfig(_.baseUrl(s"http://localhost:${server.port}").timeout(5.seconds)) {
                 for
                     _  <- Console.printLine("\n=== Creating notes ===")
-                    n1 <- HttpClient.postJson[Note, CreateNote]("/notes", CreateNote("Shopping", "Milk, eggs, bread"))
+                    n1 <- HttpClient.postJson[Note]("/notes", CreateNote("Shopping", "Milk, eggs, bread"))
                     _  <- Console.printLine(s"  Created: ${n1.title} (id=${n1.id})")
 
-                    n2 <- HttpClient.postJson[Note, CreateNote]("/notes", CreateNote("Ideas", "Learn Kyo effects"))
+                    n2 <- HttpClient.postJson[Note]("/notes", CreateNote("Ideas", "Learn Kyo effects"))
                     _  <- Console.printLine(s"  Created: ${n2.title} (id=${n2.id})")
 
                     _       <- Console.printLine("\n=== Patching note ===")
-                    patched <- HttpClient.patchJson[Note, PatchNote]("/notes/1", PatchNote(None, Some("Milk, eggs, bread, butter")))
+                    patched <- HttpClient.patchJson[Note]("/notes/1", PatchNote(None, Some("Milk, eggs, bread, butter")))
                     _       <- Console.printLine(s"  Patched: ${patched.title} -> ${patched.content}")
 
                     _   <- Console.printLine("\n=== Final list ===")
@@ -199,10 +199,9 @@ object NotePadClient extends KyoApp:
                         Console.printLine(s"  [${n.id}] ${n.title}: ${n.content}")
                     }
 
-                    _      <- Console.printLine("\n=== Consuming SSE changes ===")
-                    stream <- HttpClient.getSseJson[NoteChange](s"http://localhost:${server.port}/notes/changes")
+                    _ <- Console.printLine("\n=== Consuming SSE changes ===")
                     // Changes were already recorded, SSE will deliver them on first poll
-                    _ <- stream.take(3).foreachChunk { chunk =>
+                    _ <- HttpClient.getSseJson[NoteChange](s"http://localhost:${server.port}/notes/changes").take(3).foreachChunk { chunk =>
                         Kyo.foreach(chunk.toSeq) { event =>
                             Console.printLine(s"  [SSE] ${event.data.kind}: ${event.data.note.title}")
                         }

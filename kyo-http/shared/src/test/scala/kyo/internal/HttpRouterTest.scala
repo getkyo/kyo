@@ -194,6 +194,23 @@ class HttpRouterTest extends kyo.Test:
                 case other => fail(s"expected match, got $other")
             end match
         }
+        "rejects Rest in non-terminal position" in {
+            val route = HttpRoute.getRaw("api" / HttpPath.Rest("mid") / "suffix")
+            val ex = intercept[IllegalArgumentException] {
+                HttpRouter(Seq(mkEndpoint(route)))
+            }
+            assert(ex.getMessage.contains("Rest capture must be the last segment"))
+        }
+
+        "allows Rest as the only segment" in {
+            val route  = HttpRoute.getRaw(HttpPath.Rest("path"))
+            val router = HttpRouter(Seq(mkEndpoint(route)))
+            router.find(HttpMethod.GET, "/anything/here") match
+                case Result.Success(m) =>
+                    assert(m.pathCaptures("path") == "anything/here")
+                case other => fail(s"expected match, got $other")
+            end match
+        }
     }
 
     // ==================== Multiple routes ====================

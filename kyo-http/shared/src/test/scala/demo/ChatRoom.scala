@@ -114,9 +114,8 @@ object ChatRoomClient extends KyoApp:
                         Console.printLine(s"  [${m.id}] ${m.user}: ${m.text}")
                     }
 
-                    _      <- Console.printLine("\n=== Consuming SSE text feed ===")
-                    stream <- HttpClient.getSseText(s"http://localhost:${server.port}/messages/feed")
-                    _ <- stream.take(3).foreachChunk { chunk =>
+                    _ <- Console.printLine("\n=== Consuming SSE text feed ===")
+                    _ <- HttpClient.getSseText(s"http://localhost:${server.port}/messages/feed").take(3).foreachChunk { chunk =>
                         Kyo.foreach(chunk.toSeq) { event =>
                             Console.printLine(s"  [SSE] ${event.data}")
                         }

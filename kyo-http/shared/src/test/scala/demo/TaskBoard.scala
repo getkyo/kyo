@@ -161,13 +161,13 @@ object TaskBoardClient extends KyoApp:
             _ <- HttpClient.withConfig(_.baseUrl(baseUrl).timeout(5.seconds)) {
                 for
                     _  <- Console.printLine("\n=== Creating tasks ===")
-                    t1 <- HttpClient.postJson[Task, CreateTask]("/tasks", CreateTask("Design API", Some("todo"), Some("Alice")))
+                    t1 <- HttpClient.postJson[Task]("/tasks", CreateTask("Design API", Some("todo"), Some("Alice")))
                     _  <- Console.printLine(s"  Created: [${t1.id}] ${t1.title} (${t1.column}, ${t1.assignee.getOrElse("unassigned")})")
-                    t2 <- HttpClient.postJson[Task, CreateTask]("/tasks", CreateTask("Write tests", None, None))
+                    t2 <- HttpClient.postJson[Task]("/tasks", CreateTask("Write tests", None, None))
                     _  <- Console.printLine(s"  Created: [${t2.id}] ${t2.title} (${t2.column}, ${t2.assignee.getOrElse("unassigned")})")
 
                     _       <- Console.printLine("\n=== Updating task (move to doing) ===")
-                    updated <- HttpClient.putJson[Task, UpdateTask]("/tasks/1", UpdateTask("Design API", "doing", Some("Alice")))
+                    updated <- HttpClient.putJson[Task]("/tasks/1", UpdateTask("Design API", "doing", Some("Alice")))
                     _       <- Console.printLine(s"  Updated: [${updated.id}] ${updated.title} -> ${updated.column}")
 
                     _     <- Console.printLine("\n=== Listing all tasks ===")
@@ -183,7 +183,7 @@ object TaskBoardClient extends KyoApp:
                 for
                     _ <- Console.printLine("\n=== Error handling: duplicate title ===")
                     dupResult <- Abort.run[HttpError](
-                        HttpClient.postJson[Task, CreateTask]("/tasks", CreateTask("Design API", None, None))
+                        HttpClient.postJson[Task]("/tasks", CreateTask("Design API", None, None))
                     )
                     _ <- dupResult match
                         case Result.Success(t)  => Console.printLine(s"  Unexpected success: $t")
@@ -192,7 +192,7 @@ object TaskBoardClient extends KyoApp:
 
                     _ <- Console.printLine("\n=== Error handling: invalid column ===")
                     badCol <- Abort.run[HttpError](
-                        HttpClient.putJson[Task, UpdateTask]("/tasks/1", UpdateTask("Design API", "invalid", None))
+                        HttpClient.putJson[Task]("/tasks/1", UpdateTask("Design API", "invalid", None))
                     )
                     _ <- badCol match
                         case Result.Success(t)  => Console.printLine(s"  Unexpected success: $t")

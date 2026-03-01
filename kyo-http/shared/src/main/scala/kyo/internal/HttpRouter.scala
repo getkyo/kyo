@@ -256,6 +256,12 @@ object HttpRouter:
             val root = new MutableNode()
             handlers.foreach { ep =>
                 val segments = pathToSegments(ep.route.request.path)
+                val restIdx  = segments.indexOf(Segment.Rest)
+                if restIdx >= 0 && restIdx < segments.size - 1 then
+                    throw new IllegalArgumentException(
+                        s"Rest capture must be the last segment in a path, but found trailing segments in route: ${ep.route.method} ${ep.route.request.path}"
+                    )
+                end if
                 insert(root, segments, ep.route.method, ep)
             }
 

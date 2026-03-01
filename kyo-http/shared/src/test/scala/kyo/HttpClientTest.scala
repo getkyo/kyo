@@ -2232,7 +2232,7 @@ class HttpClientTest extends Test:
             }
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
-                    HttpClient.postJson[User, User](s"http://localhost:$port/users", User(1, "alice")).map { user =>
+                    HttpClient.postJson[User](s"http://localhost:$port/users", User(1, "alice")).map { user =>
                         assert(user == User(2, "ALICE"))
                     }
                 }
@@ -2310,7 +2310,7 @@ class HttpClientTest extends Test:
             }
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
-                    HttpClient.putJson[User, User](s"http://localhost:$port/user", User(5, "old")).map { user =>
+                    HttpClient.putJson[User](s"http://localhost:$port/user", User(5, "old")).map { user =>
                         assert(user == User(5, "updated"))
                     }
                 }
@@ -2324,7 +2324,7 @@ class HttpClientTest extends Test:
             }
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
-                    HttpClient.patchJson[User, User](s"http://localhost:$port/user", User(3, "old")).map { user =>
+                    HttpClient.patchJson[User](s"http://localhost:$port/user", User(3, "old")).map { user =>
                         assert(user == User(3, "patched"))
                     }
                 }
@@ -2422,13 +2422,11 @@ class HttpClientTest extends Test:
             }
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
-                    HttpClient.getSseText(s"http://localhost:$port/events").map { stream =>
-                        stream.take(2).run.map { chunks =>
-                            val events = chunks.toSeq
-                            assert(events.size == 2)
-                            assert(events(0).data == "hello")
-                            assert(events(1).data == "world")
-                        }
+                    HttpClient.getSseText(s"http://localhost:$port/events").take(2).run.map { chunks =>
+                        val events = chunks.toSeq
+                        assert(events.size == 2)
+                        assert(events(0).data == "hello")
+                        assert(events(1).data == "world")
                     }
                 }
             }
@@ -2447,13 +2445,11 @@ class HttpClientTest extends Test:
             }
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
-                    HttpClient.getSseJson[User](s"http://localhost:$port/events").map { stream =>
-                        stream.take(2).run.map { chunks =>
-                            val events = chunks.toSeq
-                            assert(events.size == 2)
-                            assert(events(0).data == User(1, "alice"))
-                            assert(events(1).data == User(2, "bob"))
-                        }
+                    HttpClient.getSseJson[User](s"http://localhost:$port/events").take(2).run.map { chunks =>
+                        val events = chunks.toSeq
+                        assert(events.size == 2)
+                        assert(events(0).data == User(1, "alice"))
+                        assert(events(1).data == User(2, "bob"))
                     }
                 }
             }
@@ -2472,13 +2468,11 @@ class HttpClientTest extends Test:
             }
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
-                    HttpClient.getNdJson[User](s"http://localhost:$port/data").map { stream =>
-                        stream.take(2).run.map { chunks =>
-                            val items = chunks.toSeq
-                            assert(items.size == 2)
-                            assert(items(0) == User(1, "alice"))
-                            assert(items(1) == User(2, "bob"))
-                        }
+                    HttpClient.getNdJson[User](s"http://localhost:$port/data").take(2).run.map { chunks =>
+                        val items = chunks.toSeq
+                        assert(items.size == 2)
+                        assert(items(0) == User(1, "alice"))
+                        assert(items(1) == User(2, "bob"))
                     }
                 }
             }

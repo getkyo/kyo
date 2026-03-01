@@ -90,19 +90,17 @@ object CryptoTickerClient extends KyoApp:
             _ <- Console.printLine("Connecting to NDJSON stream at http://localhost:3013/stream...")
 
             // Consume NDJSON stream using client-side convenience method
-            stream <- HttpClient.withConfig(
+            // Process first 9 ticks (3 rounds of 3 coins)
+            _ <- HttpClient.withConfig(
                 _.timeout(120.seconds)
                     .connectTimeout(5.seconds)
             ) {
-                HttpClient.getNdJson[Tick]("http://localhost:3013/stream")
-            }
-
-            // Process first 9 ticks (3 rounds of 3 coins)
-            _ <- stream.take(9).foreachChunk { chunk =>
-                Kyo.foreach(chunk.toSeq) { tick =>
-                    Console.printLine(
-                        s"  ${tick.coin}: $$${tick.usd} USD / €${tick.eur} EUR / £${tick.gbp} GBP  [${tick.timestamp}]"
-                    )
+                HttpClient.getNdJson[Tick]("http://localhost:3013/stream").take(9).foreachChunk { chunk =>
+                    Kyo.foreach(chunk.toSeq) { tick =>
+                        Console.printLine(
+                            s"  ${tick.coin}: $$${tick.usd} USD / €${tick.eur} EUR / £${tick.gbp} GBP  [${tick.timestamp}]"
+                        )
+                    }
                 }
             }
             _ <- Console.printLine("Done — received 9 ticks.")

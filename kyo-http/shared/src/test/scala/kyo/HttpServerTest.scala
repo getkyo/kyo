@@ -184,6 +184,39 @@ class HttpServerTest extends Test:
             }
         }
 
+        "rest capture must be last segment" in run {
+            val route = HttpRoute.getRaw("api" / Rest("mid") / "suffix").response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.okText("unreachable"))
+            Abort.run[Throwable] {
+                withServer(ep) { _ => () }
+            }.map { result =>
+                result match
+                    case Result.Error(ex: IllegalArgumentException) =>
+                        assert(ex.getMessage.contains("Rest capture must be the last segment"))
+                    case other =>
+                        fail(s"Expected IllegalArgumentException, got $other")
+            }
+        }
+
+        "rest capture with preceding literal and capture" in run {
+            val route = HttpRoute.getRaw("api" / Capture[Int]("version") / Rest("path")).response(_.bodyText)
+            val ep = route.handler { req =>
+                HttpResponse.okText(s"v${req.fields.version}:${req.fields.path}")
+            }
+            withServer(ep) { port =>
+                send(
+                    port,
+                    route,
+                    HttpRequest.getRaw(HttpUrl.fromUri("/api/2/some/deep/path"))
+                        .addField("version", 2)
+                        .addField("path", "some/deep/path")
+                ).map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                    assert(resp.fields.body == "v2:some/deep/path")
+                }
+            }
+        }
+
         "empty router returns 404" in run {
             withServer() { port =>
                 val route = HttpRoute.getRaw("anything").response(_.bodyText)
@@ -1665,11 +1698,11 @@ class HttpServerTest extends Test:
                 HttpClient.getJson[User](s"$base/users/1").map { user =>
                     assert(user == User(1, "alice"))
                 }.andThen {
-                    HttpClient.postJson[User, User](s"$base/users", User(0, "bob")).map { user =>
+                    HttpClient.postJson[User](s"$base/users", User(0, "bob")).map { user =>
                         assert(user == User(99, "bob"))
                     }
                 }.andThen {
-                    HttpClient.putJson[User, User](s"$base/users/5", User(5, "carol")).map { user =>
+                    HttpClient.putJson[User](s"$base/users/5", User(5, "carol")).map { user =>
                         assert(user == User(5, "carol-updated"))
                     }
                 }.andThen {
@@ -1688,13 +1721,11 @@ class HttpServerTest extends Test:
                 ))
             }
             withServer(ep) { port =>
-                HttpClient.getSseJson[User](s"http://localhost:$port/events-conv").map { stream =>
-                    stream.take(2).run.map { chunks =>
-                        val events = chunks.toSeq
-                        assert(events.size == 2)
-                        assert(events(0).data == User(1, "alice"))
-                        assert(events(1).data == User(2, "bob"))
-                    }
+                HttpClient.getSseJson[User](s"http://localhost:$port/events-conv").take(2).run.map { chunks =>
+                    val events = chunks.toSeq
+                    assert(events.size == 2)
+                    assert(events(0).data == User(1, "alice"))
+                    assert(events(1).data == User(2, "bob"))
                 }
             }
         }
@@ -1722,7 +1753,7 @@ class HttpServerTest extends Test:
             withServer(ep) { port =>
                 val url = s"http://localhost:$port/items"
                 Abort.run[HttpError](
-                    HttpClient.postJson[Item, CreateItem](url, CreateItem("dup"))
+                    HttpClient.postJson[Item](url, CreateItem("dup"))
                 ).map {
                     case Result.Error(err) =>
                         assert(
@@ -1812,7 +1843,7 @@ class HttpServerTest extends Test:
             withServer(ep) { port =>
                 val url = s"http://localhost:$port/items/1"
                 Abort.run[HttpError](
-                    HttpClient.putJson[Item, Item](url, Item(1, ""))
+                    HttpClient.putJson[Item](url, Item(1, ""))
                 ).map {
                     case Result.Error(err) =>
                         assert(
