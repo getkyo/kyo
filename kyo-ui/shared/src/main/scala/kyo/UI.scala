@@ -30,10 +30,10 @@ object UI:
 
     import AST.*
 
-    val empty: UI          = Fragment(Chunk.empty)
+    val empty: UI          = Fragment(Span.empty[UI])
     val div: Div           = Div()
     val p: P               = P()
-    val span: Span         = Span()
+    val span: SpanNode     = SpanNode()
     val ul: Ul             = Ul()
     val ol: Ol             = Ol()
     val li: Li             = Li()
@@ -67,7 +67,7 @@ object UI:
 
     def img(src: String, alt: String): Img = Img(src = src, alt = alt)
 
-    def fragment(cs: UI*): UI = AST.Fragment(Chunk.from(cs))
+    def fragment(cs: UI*): UI = AST.Fragment(Span.from(cs))
 
     inline def when(condition: Signal[Boolean])(ui: => UI)(using Frame): UI =
         AST.ReactiveNode(condition.map(v => if v then ui else UI.empty))
@@ -89,7 +89,7 @@ object UI:
 
         case class ForeachKeyed[A](signal: Signal[Chunk[A]], key: A => String, render: (Int, A) => UI) extends UI
 
-        case class Fragment(children: Chunk[UI]) extends UI
+        case class Fragment(children: Span[UI]) extends UI
 
         // Key event data — universal across web and terminal backends.
 
@@ -121,7 +121,7 @@ object UI:
             type Self <: Element
             private[kyo] def common: CommonAttrs
             private[kyo] def withCommon(c: CommonAttrs): Self
-            def children: Chunk[UI] = Chunk.empty
+            def children: Span[UI] = Span.empty[UI]
 
             def cls(v: String): Self         = withCommon(common.copy(classes = common.classes :+ (v, Absent)))
             def cls(v: Signal[String]): Self = withCommon(common.copy(dynamicClassName = Present(v)))
@@ -148,206 +148,207 @@ object UI:
 
         final case class Div(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty
+            override val children: Span[UI] = Span.empty[UI]
         ) extends Element:
             type Self = Div
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Div                     = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Div                     = copy(children = children ++ Span.from(cs))
         end Div
 
         final case class P(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty
+            override val children: Span[UI] = Span.empty[UI]
         ) extends Element:
             type Self = P
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): P                       = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): P                       = copy(children = children ++ Span.from(cs))
         end P
 
-        final case class Span(
+        final case class SpanNode(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty
+            override val children: Span[UI] = Span.empty[UI]
         ) extends Element:
-            type Self = Span
+            type Self = SpanNode
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Span                    = copy(children = children ++ Chunk.from(cs))
-        end Span
+            def apply(cs: UI*): SpanNode                = copy(children = children ++ Span.from(cs))
+        end SpanNode
 
         final case class Ul(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty
+            override val children: Span[UI] = Span.empty[UI]
         ) extends Element:
             type Self = Ul
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Ul                      = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Ul                      = copy(children = children ++ Span.from(cs))
         end Ul
 
         final case class Li(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty
+            override val children: Span[UI] = Span.empty[UI]
         ) extends Element:
             type Self = Li
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Li                      = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Li                      = copy(children = children ++ Span.from(cs))
         end Li
 
         final case class Nav(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty
+            override val children: Span[UI] = Span.empty[UI]
         ) extends Element:
             type Self = Nav
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Nav                     = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Nav                     = copy(children = children ++ Span.from(cs))
         end Nav
 
         final case class Header(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty
+            override val children: Span[UI] = Span.empty[UI]
         ) extends Element:
             type Self = Header
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Header                  = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Header                  = copy(children = children ++ Span.from(cs))
         end Header
 
         final case class Footer(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty
+            override val children: Span[UI] = Span.empty[UI]
         ) extends Element:
             type Self = Footer
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Footer                  = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Footer                  = copy(children = children ++ Span.from(cs))
         end Footer
 
         final case class Section(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty
+            override val children: Span[UI] = Span.empty[UI]
         ) extends Element:
             type Self = Section
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Section                 = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Section                 = copy(children = children ++ Span.from(cs))
         end Section
 
         final case class Main(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty
+            override val children: Span[UI] = Span.empty[UI]
         ) extends Element:
             type Self = Main
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Main                    = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Main                    = copy(children = children ++ Span.from(cs))
         end Main
 
         final case class Label(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty,
+            override val children: Span[UI] = Span.empty[UI],
             forId: Maybe[String] = Absent
         ) extends Element:
             type Self = Label
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Label                   = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Label                   = copy(children = children ++ Span.from(cs))
             def forId(v: String): Label                 = copy(forId = Present(v))
             def `for`(v: String): Label                 = forId(v)
         end Label
 
         final case class Table(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty
+            override val children: Span[UI] = Span.empty[UI]
         ) extends Element:
             type Self = Table
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Table                   = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Table                   = copy(children = children ++ Span.from(cs))
         end Table
 
         final case class Tr(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty
+            override val children: Span[UI] = Span.empty[UI]
         ) extends Element:
             type Self = Tr
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Tr                      = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Tr                      = copy(children = children ++ Span.from(cs))
         end Tr
 
         final case class Td(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty,
+            override val children: Span[UI] = Span.empty[UI],
             colspan: Maybe[Int] = Absent,
             rowspan: Maybe[Int] = Absent
         ) extends Element:
             type Self = Td
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Td                      = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Td                      = copy(children = children ++ Span.from(cs))
             def colspan(v: Int): Td                     = copy(colspan = Present(v))
             def rowspan(v: Int): Td                     = copy(rowspan = Present(v))
         end Td
 
         final case class Th(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty,
+            override val children: Span[UI] = Span.empty[UI],
             colspan: Maybe[Int] = Absent,
             rowspan: Maybe[Int] = Absent
         ) extends Element:
             type Self = Th
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Th                      = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Th                      = copy(children = children ++ Span.from(cs))
             def colspan(v: Int): Th                     = copy(colspan = Present(v))
             def rowspan(v: Int): Th                     = copy(rowspan = Present(v))
         end Th
 
         // Heading elements
 
-        final case class H1(common: CommonAttrs = CommonAttrs(), override val children: Chunk[UI] = Chunk.empty) extends Element:
+        final case class H1(common: CommonAttrs = CommonAttrs(), override val children: Span[UI] = Span.empty[UI]) extends Element:
             type Self = H1
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): H1                      = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): H1                      = copy(children = children ++ Span.from(cs))
         end H1
 
-        final case class H2(common: CommonAttrs = CommonAttrs(), override val children: Chunk[UI] = Chunk.empty) extends Element:
+        final case class H2(common: CommonAttrs = CommonAttrs(), override val children: Span[UI] = Span.empty[UI]) extends Element:
             type Self = H2
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): H2                      = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): H2                      = copy(children = children ++ Span.from(cs))
         end H2
 
-        final case class H3(common: CommonAttrs = CommonAttrs(), override val children: Chunk[UI] = Chunk.empty) extends Element:
+        final case class H3(common: CommonAttrs = CommonAttrs(), override val children: Span[UI] = Span.empty[UI]) extends Element:
             type Self = H3
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): H3                      = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): H3                      = copy(children = children ++ Span.from(cs))
         end H3
 
-        final case class H4(common: CommonAttrs = CommonAttrs(), override val children: Chunk[UI] = Chunk.empty) extends Element:
+        final case class H4(common: CommonAttrs = CommonAttrs(), override val children: Span[UI] = Span.empty[UI]) extends Element:
             type Self = H4
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): H4                      = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): H4                      = copy(children = children ++ Span.from(cs))
         end H4
 
-        final case class H5(common: CommonAttrs = CommonAttrs(), override val children: Chunk[UI] = Chunk.empty) extends Element:
+        final case class H5(common: CommonAttrs = CommonAttrs(), override val children: Span[UI] = Span.empty[UI]) extends Element:
             type Self = H5
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): H5                      = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): H5                      = copy(children = children ++ Span.from(cs))
         end H5
 
-        final case class H6(common: CommonAttrs = CommonAttrs(), override val children: Chunk[UI] = Chunk.empty) extends Element:
+        final case class H6(common: CommonAttrs = CommonAttrs(), override val children: Span[UI] = Span.empty[UI]) extends Element:
             type Self = H6
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): H6                      = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): H6                      = copy(children = children ++ Span.from(cs))
         end H6
 
         // Additional container elements
 
-        final case class Pre(common: CommonAttrs = CommonAttrs(), override val children: Chunk[UI] = Chunk.empty) extends Element:
+        final case class Pre(common: CommonAttrs = CommonAttrs(), override val children: Span[UI] = Span.empty[UI]) extends Element:
             type Self = Pre
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Pre                     = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Pre                     = copy(children = children ++ Span.from(cs))
         end Pre
 
-        final case class Code(common: CommonAttrs = CommonAttrs(), override val children: Chunk[UI] = Chunk.empty) extends Element:
+        final case class Code(common: CommonAttrs = CommonAttrs(), override val children: Span[UI] = Span.empty[UI])
+            extends Element:
             type Self = Code
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Code                    = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Code                    = copy(children = children ++ Span.from(cs))
         end Code
 
-        final case class Ol(common: CommonAttrs = CommonAttrs(), override val children: Chunk[UI] = Chunk.empty) extends Element:
+        final case class Ol(common: CommonAttrs = CommonAttrs(), override val children: Span[UI] = Span.empty[UI]) extends Element:
             type Self = Ol
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Ol                      = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Ol                      = copy(children = children ++ Span.from(cs))
         end Ol
 
         // Void elements without attributes
@@ -366,49 +367,49 @@ object UI:
 
         final case class Button(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty,
+            override val children: Span[UI] = Span.empty[UI],
             disabled: Maybe[Boolean | Signal[Boolean]] = Absent
         ) extends Element:
             type Self = Button
             private[kyo] def withCommon(c: CommonAttrs)        = copy(common = c)
-            def apply(cs: UI*): Button                         = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Button                         = copy(children = children ++ Span.from(cs))
             def disabled(v: Boolean | Signal[Boolean]): Button = copy(disabled = Present(v))
         end Button
 
         final case class Anchor(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty,
+            override val children: Span[UI] = Span.empty[UI],
             href: Maybe[String | Signal[String]] = Absent,
             target: Maybe[String] = Absent
         ) extends Element:
             type Self = Anchor
             private[kyo] def withCommon(c: CommonAttrs)  = copy(common = c)
-            def apply(cs: UI*): Anchor                   = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Anchor                   = copy(children = children ++ Span.from(cs))
             def href(v: String | Signal[String]): Anchor = copy(href = Present(v))
             def target(v: String): Anchor                = copy(target = Present(v))
         end Anchor
 
         final case class Form(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty,
+            override val children: Span[UI] = Span.empty[UI],
             onSubmit: Maybe[Unit < Async] = Absent
         ) extends Element:
             type Self = Form
             private[kyo] def withCommon(c: CommonAttrs) = copy(common = c)
-            def apply(cs: UI*): Form                    = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Form                    = copy(children = children ++ Span.from(cs))
             def onSubmit(action: Unit < Async): Form    = copy(onSubmit = Present(action))
         end Form
 
         final case class Select(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty,
+            override val children: Span[UI] = Span.empty[UI],
             value: Maybe[String | SignalRef[String]] = Absent,
             disabled: Maybe[Boolean | Signal[Boolean]] = Absent,
             onChange: Maybe[(String => Unit < Async)] = Absent
         ) extends Element:
             type Self = Select
             private[kyo] def withCommon(c: CommonAttrs)        = copy(common = c)
-            def apply(cs: UI*): Select                         = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Select                         = copy(children = children ++ Span.from(cs))
             def value(v: String | SignalRef[String]): Select   = copy(value = Present(v))
             def disabled(v: Boolean | Signal[Boolean]): Select = copy(disabled = Present(v))
             def onChange(f: String => Unit < Async): Select    = copy(onChange = Present(f))
@@ -416,13 +417,13 @@ object UI:
 
         final case class Option(
             common: CommonAttrs = CommonAttrs(),
-            override val children: Chunk[UI] = Chunk.empty,
+            override val children: Span[UI] = Span.empty[UI],
             value: Maybe[String] = Absent,
             selected: Maybe[Boolean | Signal[Boolean]] = Absent
         ) extends Element:
             type Self = Option
             private[kyo] def withCommon(c: CommonAttrs)        = copy(common = c)
-            def apply(cs: UI*): Option                         = copy(children = children ++ Chunk.from(cs))
+            def apply(cs: UI*): Option                         = copy(children = children ++ Span.from(cs))
             def value(v: String): Option                       = copy(value = Present(v))
             def selected(v: Boolean | Signal[Boolean]): Option = copy(selected = Present(v))
         end Option

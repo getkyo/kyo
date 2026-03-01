@@ -247,32 +247,32 @@ class JavaFxBackend(
 
     private def createNode(elem: Element): Node =
         val (node, cls) = elem match
-            case _: Div     => (new VBox(), "div")
-            case _: P       => (new VBox(), "p")
-            case _: Span    => (new HBox(), "span")
-            case _: Ul      => (new VBox(), "ul")
-            case _: Ol      => (new VBox(), "ol")
-            case _: Li      => (new HBox(), "li")
-            case _: Nav     => (new HBox(), "nav")
-            case _: Header  => (new VBox(), "header")
-            case _: Footer  => (new VBox(), "footer")
-            case _: Section => (new VBox(), "section")
-            case _: Main    => (new VBox(), "main")
-            case _: Pre     => (new VBox(), "pre")
-            case _: Code    => (new VBox(), "code")
-            case _: Table   => (new GridPane(), "table")
-            case _: Tr      => (new HBox(), "tr")
-            case _: Td      => (new VBox(), "td")
-            case _: Th      => val v = new VBox(); v.setStyle("-fx-font-weight: bold;"); (v, "th")
-            case _: H1      => val l = new JLabel(); l.setStyle("-fx-font-size: 32; -fx-font-weight: bold;"); (l, "h1")
-            case _: H2      => val l = new JLabel(); l.setStyle("-fx-font-size: 24; -fx-font-weight: bold;"); (l, "h2")
-            case _: H3      => val l = new JLabel(); l.setStyle("-fx-font-size: 18; -fx-font-weight: bold;"); (l, "h3")
-            case _: H4      => val l = new JLabel(); l.setStyle("-fx-font-size: 16; -fx-font-weight: bold;"); (l, "h4")
-            case _: H5      => val l = new JLabel(); l.setStyle("-fx-font-size: 13; -fx-font-weight: bold;"); (l, "h5")
-            case _: H6      => val l = new JLabel(); l.setStyle("-fx-font-size: 11; -fx-font-weight: bold;"); (l, "h6")
-            case _: Hr      => (new Separator(), "hr")
-            case _: Br      => (new JLabel(""), "br")
-            case _: Button  => (new JButton(), "button")
+            case _: Div      => (new VBox(), "div")
+            case _: P        => (new VBox(), "p")
+            case _: SpanNode => (new HBox(), "span")
+            case _: Ul       => (new VBox(), "ul")
+            case _: Ol       => (new VBox(), "ol")
+            case _: Li       => (new HBox(), "li")
+            case _: Nav      => (new HBox(), "nav")
+            case _: Header   => (new VBox(), "header")
+            case _: Footer   => (new VBox(), "footer")
+            case _: Section  => (new VBox(), "section")
+            case _: Main     => (new VBox(), "main")
+            case _: Pre      => (new VBox(), "pre")
+            case _: Code     => (new VBox(), "code")
+            case _: Table    => (new GridPane(), "table")
+            case _: Tr       => (new HBox(), "tr")
+            case _: Td       => (new VBox(), "td")
+            case _: Th       => val v = new VBox(); v.setStyle("-fx-font-weight: bold;"); (v, "th")
+            case _: H1       => val l = new JLabel(); l.setStyle("-fx-font-size: 32; -fx-font-weight: bold;"); (l, "h1")
+            case _: H2       => val l = new JLabel(); l.setStyle("-fx-font-size: 24; -fx-font-weight: bold;"); (l, "h2")
+            case _: H3       => val l = new JLabel(); l.setStyle("-fx-font-size: 18; -fx-font-weight: bold;"); (l, "h3")
+            case _: H4       => val l = new JLabel(); l.setStyle("-fx-font-size: 16; -fx-font-weight: bold;"); (l, "h4")
+            case _: H5       => val l = new JLabel(); l.setStyle("-fx-font-size: 13; -fx-font-weight: bold;"); (l, "h5")
+            case _: H6       => val l = new JLabel(); l.setStyle("-fx-font-size: 11; -fx-font-weight: bold;"); (l, "h6")
+            case _: Hr       => (new Separator(), "hr")
+            case _: Br       => (new JLabel(""), "br")
+            case _: Button   => (new JButton(), "button")
             case _: Anchor =>
                 val l = new Hyperlink(); l.setStyle("-fx-text-fill: inherit; -fx-underline: false; -fx-border-color: transparent;");
                 (l, "a")
@@ -683,18 +683,18 @@ class JavaFxBackend(
     end runHandler
 
     private def buildChildren(
-        children: Chunk[UI],
+        children: Span[UI],
         updates: Channel[() => Unit],
         rendered: SignalRef[UI],
         parentIsRow: Boolean = false
     )(using
         Frame
     ): Chunk[Node] < (Async & Scope) =
-        Kyo.foreach(children)(build(_, updates, rendered, parentIsRow))
+        Kyo.foreach(Chunk.from(children.toArray))(build(_, updates, rendered, parentIsRow))
 
     private def buildChildrenWithLayout(
         pane: Pane,
-        children: Chunk[UI],
+        children: Span[UI],
         updates: Channel[() => Unit],
         rendered: SignalRef[UI]
     )(using Frame): Unit < (Async & Scope) =
@@ -714,7 +714,7 @@ class JavaFxBackend(
         rendered: SignalRef[UI]
     )(using Frame): Chunk[(Node, Int, Int)] < (Async & Scope) =
         var colIdx = 0
-        Kyo.foreach(elem.children) { cell =>
+        Kyo.foreach(Chunk.from(elem.children.toArray)) { cell =>
             val currentCol = colIdx
             val span = cell match
                 case td: Td => td.colspan.getOrElse(1)
@@ -739,15 +739,16 @@ class JavaFxBackend(
 
     private def buildTableGrid(
         grid: GridPane,
-        rows: Chunk[UI],
+        rows: Span[UI],
         updates: Channel[() => Unit],
         rendered: SignalRef[UI]
     )(using Frame): Unit < (Async & Scope) =
+        val rowsChunk = Chunk.from(rows.toArray)
         // Check if any child is a ForeachIndexed (reactive table rows)
         val hasForeach = rows.exists(_.isInstanceOf[ForeachIndexed[?]])
         if !hasForeach then
             // Static-only: build all cells then place on FX thread
-            Kyo.foreach(rows.zipWithIndex) { (row, rowIdx) =>
+            Kyo.foreach(rowsChunk.zipWithIndex) { (row, rowIdx) =>
                 row match
                     case elem: Element => buildTableRowCells(elem, rowIdx, updates, rendered)
                     case other =>
@@ -755,7 +756,7 @@ class JavaFxBackend(
             }.map(chunks => placeTableCells(grid, chunks.flatten, updates))
         else
             // Has ForeachIndexed children: subscribe and rebuild grid on changes.
-            val foreaches = rows.collect { case fi: ForeachIndexed[?] => fi }
+            val foreaches = rowsChunk.collect { case fi: ForeachIndexed[?] => fi }
             val fi        = foreaches.head
             val signal    = fi.signal.asInstanceOf[Signal[Chunk[Any]]]
             val renderFn  = fi.render.asInstanceOf[(Int, Any) => UI]
@@ -763,7 +764,7 @@ class JavaFxBackend(
                 ref <- AtomicRef.init[Maybe[Fiber[Unit, Scope]]](Absent)
                 _ <- subscribe(signal) { items =>
                     // Expand: replace ForeachIndexed with rendered row elements
-                    val expandedRows: Chunk[UI] = rows.flatMap {
+                    val expandedRows: Chunk[UI] = rowsChunk.flatMap {
                         case _: ForeachIndexed[?] =>
                             items.zipWithIndex.map((item, idx) => renderFn(idx, item))
                         case other => Chunk(other)
@@ -801,10 +802,10 @@ class JavaFxBackend(
       * `<table style="width:100%">` distributes space across columns. Column count is from the first tr's children in the UI tree
       * (synchronous, no async dependency).
       */
-    private def applyTableColumnGrow(grid: GridPane, rows: Chunk[UI]): Unit =
+    private def applyTableColumnGrow(grid: GridPane, rows: Span[UI]): Unit =
         import javafx.scene.layout.ColumnConstraints
         // Count columns from the first Element row's children
-        val numCols = rows.collectFirst { case elem: Element => elem.children.size }.getOrElse(0)
+        val numCols = rows.collectFirst { case elem: Element => elem.children.size }.getOrElse(0: Int)
         if numCols > 0 then
             val pct = 100.0 / numCols
             for _ <- 0 until numCols do
@@ -815,20 +816,23 @@ class JavaFxBackend(
         end if
     end applyTableColumnGrow
 
-    private def extractText(children: Chunk[UI]): String =
-        children.flatMap {
-            case Text(v) => Chunk(v)
-            case _       => Chunk.empty
-        }.toSeq.mkString
+    private def extractText(children: Span[UI]): String =
+        val sb = new StringBuilder
+        children.foreach {
+            case Text(v) => discard(sb.append(v))
+            case _       => ()
+        }
+        sb.toString
+    end extractText
 
     private def subscribeReactiveText[N <: Node](
         node: N,
-        children: Chunk[UI],
+        children: Span[UI],
         updates: Channel[() => Unit],
         rendered: SignalRef[UI],
         setText: (N, String) => Unit
     )(using Frame): Unit < (Async & Scope) =
-        val reactiveTexts = children.collect { case rt: ReactiveText => rt }
+        val reactiveTexts = Chunk.from(children.toArray).collect { case rt: ReactiveText => rt }
         if reactiveTexts.isEmpty then ()
         else
             Kyo.foreach(reactiveTexts) { rt =>

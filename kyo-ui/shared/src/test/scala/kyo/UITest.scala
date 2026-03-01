@@ -25,7 +25,7 @@ class UITest extends Test:
         }
 
         "Fragment" in {
-            val node = Fragment(Chunk(Text("a"), Text("b")))
+            val node = Fragment(Span(Text("a"), Text("b")))
             assert(node.children.size == 2)
         }
 
