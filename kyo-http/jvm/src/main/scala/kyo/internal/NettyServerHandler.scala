@@ -131,16 +131,14 @@ final private[kyo] class NettyServerHandler(
                     val byteChannel = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
                     streamingChannel = Present(byteChannel)
                     val bodyStream = Stream[Span[Byte], Async] {
-                        Abort.run[Closed] {
-                            Loop.foreach {
-                                byteChannel.safe.takeWith {
-                                    case Present(bytes) =>
-                                        Emit.valueWith(Chunk(bytes))(Loop.continue)
-                                    case Absent =>
-                                        Loop.done(())
-                                }
+                        Loop.foreach {
+                            byteChannel.safe.takeWith {
+                                case Present(bytes) =>
+                                    Emit.valueWith(Chunk(bytes))(Loop.continue)
+                                case Absent =>
+                                    Loop.done(())
                             }
-                        }.unit
+                        }.handle(Abort.run[Closed]).unit
                     }
 
                     val queryFn  = makeQueryParam(uri, pathEnd)
@@ -361,7 +359,7 @@ final private[kyo] class NettyServerHandler(
 
         try
             val fiber = NettyUtil.launchFiber {
-                Abort.run[Any](h(req)).map {
+                h(req).handle(Abort.run[Any]).map {
                     case Result.Success(response) =>
                         RouteUtil.encodeResponse(rt, response)(
                             onEmpty = (status, headers) =>
@@ -480,7 +478,7 @@ final private[kyo] class NettyServerHandler(
         discard(ctx.writeAndFlush(nettyResponse))
 
         val fiber = NettyUtil.launchFiber {
-            Abort.run[Throwable](Abort.catching[Throwable] {
+            Abort.catching[Throwable] {
                 stream.foreach { bytes =>
                     NettyUtil.await(
                         ctx.writeAndFlush(new DefaultHttpContent(
@@ -490,7 +488,7 @@ final private[kyo] class NettyServerHandler(
                 }.andThen {
                     NettyUtil.await(ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT))
                 }
-            }).map {
+            }.handle(Abort.run[Throwable]).map {
                 case Result.Success(_) =>
                     if !keepAlive && ctx.channel().isActive then
                         discard(ctx.close())

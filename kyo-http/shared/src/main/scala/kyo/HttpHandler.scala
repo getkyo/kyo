@@ -35,7 +35,7 @@ object HttpHandler:
             end applyHeaders
 
             def apply(request: HttpRequest[In])(using Frame) =
-                Abort.run[HttpResponse.Halt](h(request)).map {
+                h(request).handle(Abort.run[HttpResponse.Halt]).map {
                     case kyo.Result.Success(response) =>
                         applyHeaders(response)
                     case kyo.Result.Failure(halt) =>

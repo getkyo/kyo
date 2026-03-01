@@ -151,16 +151,14 @@ final private[kyo] class NettyConnection(
                                                 onReleaseUnsafe(error)
                                         }
                                     } {
-                                        Abort.run[Closed] {
-                                            Loop.foreach {
-                                                byteChannel.safe.takeWith {
-                                                    case Present(bytes) =>
-                                                        Emit.valueWith(Chunk(bytes))(Loop.continue)
-                                                    case Absent =>
-                                                        Sync.Unsafe.defer(streamFullyConsumed.set(true)).andThen(Loop.done(()))
-                                                }
+                                        Loop.foreach {
+                                            byteChannel.safe.takeWith {
+                                                case Present(bytes) =>
+                                                    Emit.valueWith(Chunk(bytes))(Loop.continue)
+                                                case Absent =>
+                                                    Sync.Unsafe.defer(streamFullyConsumed.set(true)).andThen(Loop.done(()))
                                             }
-                                        }.unit
+                                        }.handle(Abort.run[Closed]).unit
                                     }
                                 }
                                 Abort.get(RouteUtil.decodeStreamingResponse(route, data.status, data.headers, bodyStream)).map(f)

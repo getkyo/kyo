@@ -1,5 +1,5 @@
 package java.lang.invoke
 
 object VarHandle:
-    def loadLoadFence(): Unit   = ()
-    def storeStoreFence(): Unit = ()
+    def loadLoadFence(): Void   = null
+    def storeStoreFence(): Void = null

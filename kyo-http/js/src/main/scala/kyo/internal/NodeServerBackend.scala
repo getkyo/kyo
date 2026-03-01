@@ -219,16 +219,14 @@ final class NodeServerBackend extends HttpBackend.Server:
         val byteChannel = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
 
         val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
-            Abort.run[Closed] {
-                Loop.foreach {
-                    byteChannel.safe.takeWith {
-                        case Present(bytes) =>
-                            Emit.valueWith(Chunk(bytes))(Loop.continue)
-                        case Absent =>
-                            Loop.done(())
-                    }
+            Loop.foreach {
+                byteChannel.safe.takeWith {
+                    case Present(bytes) =>
+                        Emit.valueWith(Chunk(bytes))(Loop.continue)
+                    case Absent =>
+                        Loop.done(())
                 }
-            }.unit
+            }.handle(Abort.run[Closed]).unit
         }
 
         discard(req.onData(
@@ -311,7 +309,7 @@ final class NodeServerBackend extends HttpBackend.Server:
 
         try
             val fiber = launchFiber {
-                Abort.run[Any](h(req)).map {
+                h(req).handle(Abort.run[Any]).map {
                     case Result.Success(response) =>
                         RouteUtil.encodeResponse(rt, response)(
                             onEmpty = (status, headers) =>
@@ -401,7 +399,7 @@ final class NodeServerBackend extends HttpBackend.Server:
         discard(res.writeHead(status.code, jsHeaders))
 
         val writeFiber = launchFiber {
-            Abort.run[Throwable](Abort.catching[Throwable] {
+            Abort.catching[Throwable] {
                 stream.foreach { bytes =>
                     val chunk    = bytesToUint8Array(bytes.toArrayUnsafe)
                     val canWrite = res.write(chunk)
@@ -419,7 +417,7 @@ final class NodeServerBackend extends HttpBackend.Server:
                     else ()
                     end if
                 }
-            }).map { _ =>
+            }.handle(Abort.run[Throwable]).map { _ =>
                 res.endEmpty()
             }
         }

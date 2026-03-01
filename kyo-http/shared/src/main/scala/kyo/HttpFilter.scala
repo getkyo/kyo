@@ -119,7 +119,7 @@ object HttpFilter:
                     request: HttpRequest[In],
                     next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
                 )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
-                    Abort.run[Closed](meter.tryRun(next(request))).map {
+                    meter.tryRun(next(request)).handle(Abort.run[Closed]).map {
                         case Result.Success(Present(res)) => res
                         case _                            => Abort.fail(tooMany)
                     }

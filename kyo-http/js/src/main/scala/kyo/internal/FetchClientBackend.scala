@@ -190,20 +190,20 @@ object FetchClientBackend:
                         // Abort the fetch when the stream finalizes (consumer done or fiber interrupted).
                         // Without this, interrupted fibers would leak the in-flight HTTP connection.
                         Sync.ensure(controller.abort())(Loop.foreach {
-                            Abort.recover[Throwable](
+                            Async.fromFuture(reader.read().toFuture).map { chunk =>
+                                if chunk.done then
+                                    Loop.done[Unit, Unit](())
+                                else
+                                    val uint8 = chunk.value
+                                    val bytes = Span.fromUnsafe(new Int8Array(uint8.buffer, uint8.byteOffset, uint8.length).toArray)
+                                    Emit.valueWith(Chunk(bytes))(Loop.continue[Unit])
+                            }.handle(
                                 // Network error mid-stream — propagate as Panic so the stream consumer sees the failure
-                                e => throw classifyError(e),
-                                e => throw classifyError(e)
-                            ) {
-                                Async.fromFuture(reader.read().toFuture).map { chunk =>
-                                    if chunk.done then
-                                        Loop.done[Unit, Unit](())
-                                    else
-                                        val uint8 = chunk.value
-                                        val bytes = Span.fromUnsafe(new Int8Array(uint8.buffer, uint8.byteOffset, uint8.length).toArray)
-                                        Emit.valueWith(Chunk(bytes))(Loop.continue[Unit])
-                                }
-                            }
+                                Abort.recover[Throwable](
+                                    e => throw classifyError(e),
+                                    e => throw classifyError(e)
+                                )
+                            )
                         })
                     }
 
@@ -218,9 +218,9 @@ object FetchClientBackend:
 
         /** Catches any Throwable (from Future rejection, network errors, etc.) and converts to typed HttpError via classifyError. */
         private def handleErrors[A, S](v: => A < (S & Abort[HttpError]))(using Frame): A < (S & Abort[HttpError]) =
-            Abort.recoverError[Throwable](e => Abort.fail(classifyError(e.failureOrPanic.asInstanceOf[Throwable])))(
-                v.asInstanceOf[A < (S & Abort[HttpError | Throwable])]
-            ).asInstanceOf[A < (S & Abort[HttpError])]
+            v.asInstanceOf[A < (S & Abort[HttpError | Throwable])]
+                .handle(Abort.recoverError[Throwable](e => Abort.fail(classifyError(e.failureOrPanic.asInstanceOf[Throwable]))))
+                .asInstanceOf[A < (S & Abort[HttpError])]
 
         private def encodeRequest[In, Out](
             route: HttpRoute[In, Out, ?],

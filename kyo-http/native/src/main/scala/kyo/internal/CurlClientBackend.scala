@@ -155,16 +155,14 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
                                                 onReleaseUnsafe(error)
                                         }
                                     } {
-                                        Abort.run[Closed] {
-                                            Loop.foreach {
-                                                byteChannel.safe.takeWith {
-                                                    case Present(bytes) =>
-                                                        Emit.valueWith(Chunk(bytes))(Loop.continue)
-                                                    case Absent =>
-                                                        Sync.Unsafe.defer(streamFullyConsumed.set(true)).andThen(Loop.done(()))
-                                                }
+                                        Loop.foreach {
+                                            byteChannel.safe.takeWith {
+                                                case Present(bytes) =>
+                                                    Emit.valueWith(Chunk(bytes))(Loop.continue)
+                                                case Absent =>
+                                                    Sync.Unsafe.defer(streamFullyConsumed.set(true)).andThen(Loop.done(()))
                                             }
-                                        }.unit
+                                        }.handle(Abort.run[Closed]).unit
                                     }
                                 }
                                 Abort.get(RouteUtil.decodeStreamingResponse(
@@ -232,13 +230,11 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
 
                 // Launch fiber to drain stream into channel
                 discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
-                    Abort.run[Closed] {
-                        stream.foreach { span =>
-                            readChannel.safe.put(Present(span)).andThen(Sync.defer(eventLoop.wakeUp()))
-                        }.andThen {
-                            readChannel.safe.put(Absent).andThen(Sync.defer(eventLoop.wakeUp()))
-                        }
-                    }.unit
+                    stream.foreach { span =>
+                        readChannel.safe.put(Present(span)).andThen(Sync.defer(eventLoop.wakeUp()))
+                    }.andThen {
+                        readChannel.safe.put(Absent).andThen(Sync.defer(eventLoop.wakeUp()))
+                    }.handle(Abort.run[Closed]).unit
                 }))
         )
     end configureHandle

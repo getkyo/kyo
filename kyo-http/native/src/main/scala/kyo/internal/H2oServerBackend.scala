@@ -453,7 +453,7 @@ private[kyo] object H2oServerBackend:
 
         try
             val fiber = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
-                Abort.run[Any](h(r)).map {
+                h(r).handle(Abort.run[Any]).map {
                     case Result.Success(response) =>
                         val resp = response.asInstanceOf[HttpResponse[Any]]
                         encodeAndEnqueue(ss, req, rt, resp, isHead)
@@ -524,31 +524,27 @@ private[kyo] object H2oServerBackend:
                     H2oBindings.wake(ss.server)
 
                     discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
-                        Scope.run {
-                            Abort.run[Any] {
-                                stream.foreach { span =>
-                                    Sync.defer {
-                                        if !ctx.stopped then
-                                            ctx.enqueueChunk(span.toArrayUnsafe, isFinal = false)
-                                            discard(ss.responseQueue.add(new StreamChunkNotify(ctx)))
-                                            H2oBindings.wake(ss.server)
-                                    }
-                                }.andThen {
-                                    Sync.defer {
-                                        ctx.enqueueChunk(Array.emptyByteArray, isFinal = true)
-                                        discard(ss.responseQueue.add(new StreamChunkNotify(ctx)))
-                                        H2oBindings.wake(ss.server)
-                                    }
-                                }
-                            }.map {
-                                case Result.Failure(_) | Result.Panic(_) =>
-                                    if !ctx.stopped then
-                                        ctx.enqueueChunk(Array.emptyByteArray, isFinal = true)
-                                        discard(ss.responseQueue.add(new StreamChunkNotify(ctx)))
-                                        H2oBindings.wake(ss.server)
-                                    end if
-                                case _ => ()
+                        stream.foreach { span =>
+                            Sync.defer {
+                                if !ctx.stopped then
+                                    ctx.enqueueChunk(span.toArrayUnsafe, isFinal = false)
+                                    discard(ss.responseQueue.add(new StreamChunkNotify(ctx)))
+                                    H2oBindings.wake(ss.server)
                             }
+                        }.andThen {
+                            Sync.defer {
+                                ctx.enqueueChunk(Array.emptyByteArray, isFinal = true)
+                                discard(ss.responseQueue.add(new StreamChunkNotify(ctx)))
+                                H2oBindings.wake(ss.server)
+                            }
+                        }.handle(Abort.run[Any]).handle(Scope.run).map {
+                            case Result.Failure(_) | Result.Panic(_) =>
+                                if !ctx.stopped then
+                                    ctx.enqueueChunk(Array.emptyByteArray, isFinal = true)
+                                    discard(ss.responseQueue.add(new StreamChunkNotify(ctx)))
+                                    H2oBindings.wake(ss.server)
+                                end if
+                            case _ => ()
                         }
                     }))
                 end if
