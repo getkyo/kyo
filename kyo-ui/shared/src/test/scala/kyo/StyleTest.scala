@@ -533,7 +533,7 @@ class StyleTest extends Test:
         "style(String) and style(Style) coexist" in {
             val el  = UI.div.style("display: flex").style(Style.bg("#fff"))("hello")
             val ast = el.asInstanceOf[UI.AST.Div]
-            assert(ast.common.style.nonEmpty)
+            assert(ast.common.styles.nonEmpty)
             assert(ast.common.uiStyle.nonEmpty)
         }
     }

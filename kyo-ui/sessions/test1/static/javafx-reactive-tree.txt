@@ -71,14 +71,14 @@ ScrollPane cls=[root,scroll-pane] style="-fx-background-color: transparent;" siz
               Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Keyed List (foreachKeyed)" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
                 LabeledText cls=[text]
               VBox cls=[ul] size=672.0x75.0 maxW=MAX align=TOP_LEFT fillW=true
-                VBox size=672.0x75.0 maxW=MAX align=TOP_LEFT fillW=true
-                  HBox cls=[li] style="-fx-padding: 4 0 4 0;" size=672.0x25.0 align=TOP_LEFT
+                VBox size=652.0x75.0 maxW=MAX align=TOP_LEFT fillW=true
+                  HBox cls=[li] style="-fx-padding: 4 0 4 0;" size=652.0x25.0 align=TOP_LEFT
                     Label cls=[label] text="Apple" textFill=0x333333ff font=System/Regular/13.0 size=32.0x17.0
                       LabeledText cls=[text]
-                  HBox cls=[li] style="-fx-padding: 4 0 4 0;" size=672.0x25.0 align=TOP_LEFT
+                  HBox cls=[li] style="-fx-padding: 4 0 4 0;" size=652.0x25.0 align=TOP_LEFT
                     Label cls=[label] text="Banana" textFill=0x333333ff font=System/Regular/13.0 size=42.0x17.0
                       LabeledText cls=[text]
-                  HBox cls=[li] style="-fx-padding: 4 0 4 0;" size=672.0x25.0 align=TOP_LEFT
+                  HBox cls=[li] style="-fx-padding: 4 0 4 0;" size=652.0x25.0 align=TOP_LEFT
                     Label cls=[label] text="Cherry" textFill=0x333333ff font=System/Regular/13.0 size=37.0x17.0
                       LabeledText cls=[text]
             VBox cls=[section] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x155.0 maxW=MAX align=TOP_LEFT fillW=true
@@ -88,13 +88,19 @@ ScrollPane cls=[root,scroll-pane] style="-fx-background-color: transparent;" siz
                 LabeledText cls=[text]
               VBox size=672.0x51.0 maxW=MAX align=TOP_LEFT fillW=true
                 VBox cls=[ul] size=672.0x51.0 align=TOP_LEFT fillW=true
-                  HBox cls=[li] size=672.0x17.0 maxW=MAX align=TOP_LEFT
+                  HBox cls=[li] size=652.0x17.0 maxW=MAX align=TOP_LEFT
+                    Label cls=[label] text="•" textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                      LabeledText cls=[text]
                     Label cls=[label] text="Item Alpha" textFill=0x333333ff font=System/Regular/13.0 size=59.0x17.0
                       LabeledText cls=[text]
-                  HBox cls=[li] size=672.0x17.0 maxW=MAX align=TOP_LEFT
+                  HBox cls=[li] size=652.0x17.0 maxW=MAX align=TOP_LEFT
+                    Label cls=[label] text="•" textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                      LabeledText cls=[text]
                     Label cls=[label] text="Item Beta" textFill=0x333333ff font=System/Regular/13.0 size=52.0x17.0
                       LabeledText cls=[text]
-                  HBox cls=[li] size=672.0x17.0 maxW=MAX align=TOP_LEFT
+                  HBox cls=[li] size=652.0x17.0 maxW=MAX align=TOP_LEFT
+                    Label cls=[label] text="•" textFill=0x333333ff font=System/Regular/13.0 size=20.0x17.0
+                      LabeledText cls=[text]
                     Label cls=[label] text="Item Gamma" textFill=0x333333ff font=System/Regular/13.0 size=70.0x17.0
                       LabeledText cls=[text]
   ScrollBar cls=[scroll-bar] size=20.0x100.0

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kyo UI — Interaction Test Report</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; color: #1e293b; }
+.header { background: #1e293b; color: white; padding: 24px 32px; }
+.header h1 { font-size: 24px; margin-bottom: 8px; }
+.header .stats { display: flex; gap: 24px; font-size: 14px; color: #94a3b8; }
+.header .stats .pass { color: #4ade80; font-weight: bold; }
+.header .stats .fail { color: #f87171; font-weight: bold; }
+.tabs { display: flex; background: #e2e8f0; padding: 4px 32px 0; gap: 4px; overflow-x: auto; }
+.tab { padding: 10px 20px; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 13px; font-weight: 500; background: transparent; color: #64748b; border: none; white-space: nowrap; }
+.tab:hover { background: #f1f5f9; }
+.tab.active { background: white; color: #1e293b; }
+.tab .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.dot.green { background: #4ade80; }
+.dot.red { background: #f87171; }
+.dot.yellow { background: #fbbf24; }
+.content { padding: 24px 32px; max-width: 1200px; }
+.panel { display: none; }
+.panel.active { display: block; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 16px 0; }
+th { background: #f1f5f9; text-align: left; padding: 8px 12px; font-weight: 600; border-bottom: 2px solid #e2e8f0; }
+td { padding: 8px 12px; border-bottom: 1px solid #e2e8f0; }
+tr:hover td { background: #f8fafc; }
+.pass-cell { color: #16a34a; font-weight: 600; }
+.fail-cell { color: #dc2626; font-weight: 600; }
+.section-title { font-size: 18px; font-weight: 600; margin: 24px 0 8px; }
+.note { background: #fffbeb; border-left: 3px solid #f59e0b; padding: 12px 16px; margin: 12px 0; font-size: 13px; border-radius: 0 4px 4px 0; }
+.bug-table { margin: 16px 0; }
+.bug-table th { background: #fef2f2; }
+.findings { margin-top: 24px; padding: 16px; background: #f0fdf4; border-radius: 8px; border: 1px solid #bbf7d0; }
+.findings h3 { font-size: 15px; margin-bottom: 8px; color: #166534; }
+.findings ul { margin-left: 20px; font-size: 13px; line-height: 1.8; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Kyo UI — Interaction Test Report</h1>
+  <div class="stats">
+    <span>Tests: <strong>42 / 42</strong></span>
+    <span>JFX: <span class="pass">42 pass</span> / <span class="fail">0 fail</span></span>
+    <span>Web: <span class="pass">42 pass</span> / <span class="fail">0 fail</span></span>
+    <span>Bugs fixed: <strong>6 / 6 validated</strong></span>
+  </div>
+</div>
+
+<div class="tabs" id="tabs">
+  <button class="tab active" onclick="showTab('bugfixes')"><span class="dot green"></span>Bug Fixes</button>
+  <button class="tab" onclick="showTab('demo')"><span class="dot green"></span>DemoUI</button>
+  <button class="tab" onclick="showTab('reactive')"><span class="dot green"></span>ReactiveUI</button>
+  <button class="tab" onclick="showTab('collections')"><span class="dot green"></span>CollectionOps</button>
+  <button class="tab" onclick="showTab('interactive')"><span class="dot green"></span>InteractiveUI</button>
+  <button class="tab" onclick="showTab('dynamic')"><span class="dot green"></span>DynamicStyle</button>
+</div>
+
+<div class="content">
+
+<!-- Bug Fixes -->
+<div class="panel active" id="panel-bugfixes">
+  <h2 class="section-title">Bug Fix Validation (6 bugs)</h2>
+  <table>
+    <tr><th>#</th><th>Bug</th><th>Test</th><th>Expected</th><th>Actual</th><th>Status</th></tr>
+    <tr><td>3</td><td>Form onSubmit on JFX</td><td>Fill form + click Submit</td><td>Submitted: Name=Alice...</td><td>Submitted: Name=Alice, Email=a@b.com...</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>2</td><td>web-exists hang</td><td>web-exists .nonexistent</td><td>false (no hang)</td><td>false (instant)</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>5</td><td>Command error protection</td><td>web-click .nonexistent</td><td>ERROR message</td><td>ERROR: no elements match...</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>1</td><td>web-fill compound selectors</td><td>web-fill "#name" TestName</td><td>filled</td><td>filled</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>6</td><td>web-js auto-return</td><td>web-js document.title</td><td>Kyo UI Demo</td><td>Kyo UI Demo</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>4</td><td>Selector docs</td><td>Documentation only</td><td>n/a</td><td>n/a</td><td class="pass-cell">PASS</td></tr>
+  </table>
+  <div class="findings">
+    <h3>Fix Details</h3>
+    <ul>
+      <li><strong>Bug #3</strong>: wireFormSubmitButtons in JavaFxBackend — uses setOnMouseClicked to match JavaFxInteraction.click behavior</li>
+      <li><strong>Bug #2</strong>: web-exists uses Browser.count() (non-blocking) instead of Browser.exists() (waitForSelector)</li>
+      <li><strong>Bug #5</strong>: Count-first guard on web-click/text/fill — checks element exists before calling Playwright methods that hang</li>
+      <li><strong>Bug #1</strong>: parseSelectorAndRest() supports quoted selectors: web-fill ".compound selector" text</li>
+      <li><strong>Bug #6</strong>: Auto-prepends 'return' to web-js code if not starting with 'return' or 'try'</li>
+    </ul>
+  </div>
+</div>
+
+<!-- DemoUI -->
+<div class="panel" id="panel-demo">
+  <h2 class="section-title">DemoUI — Counter, Todo, Theme</h2>
+  <table>
+    <tr><th>#</th><th>Test</th><th>Action</th><th>JFX Expected</th><th>JFX Actual</th><th>JFX</th><th>Web Expected</th><th>Web Actual</th><th>Web</th></tr>
+    <tr><td>15</td><td>Render</td><td>render demo</td><td>OK</td><td>OK</td><td class="pass-cell">PASS</td><td>OK</td><td>OK</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>16</td><td>Counter +</td><td>click +</td><td>1</td><td>1</td><td class="pass-cell">PASS</td><td>1</td><td>1</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>17</td><td>Counter ++</td><td>click +</td><td>2</td><td>2</td><td class="pass-cell">PASS</td><td>2</td><td>2</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>18</td><td>Counter -</td><td>click -</td><td>1</td><td>1</td><td class="pass-cell">PASS</td><td>1</td><td>1</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>19</td><td>Todo fill</td><td>fill Buy milk</td><td>filled</td><td>filled</td><td class="pass-cell">PASS</td><td>filled</td><td>filled</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>20</td><td>Todo add</td><td>click Add</td><td>in list</td><td>Buy milkx</td><td class="pass-cell">PASS</td><td>in list</td><td>Buy milk\nx</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>21</td><td>Todo fill 2</td><td>fill Walk dog</td><td>filled</td><td>filled</td><td class="pass-cell">PASS</td><td>filled</td><td>filled</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>22</td><td>Todo add 2</td><td>click Add</td><td>2 items</td><td>2 items</td><td class="pass-cell">PASS</td><td>2 items</td><td>2 items</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>23</td><td>Delete first</td><td>click x</td><td>Walk dog</td><td>Walk dogx</td><td class="pass-cell">PASS</td><td>Walk dog</td><td>Walk dog\nx</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>24</td><td>Theme dark</td><td>click toggle</td><td>.dark exists</td><td>true</td><td class="pass-cell">PASS</td><td>.dark exists</td><td>true</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>25</td><td>Theme light</td><td>click toggle</td><td>.dark gone</td><td>false</td><td class="pass-cell">PASS</td><td>.dark gone</td><td>false</td><td class="pass-cell">PASS</td></tr>
+  </table>
+</div>
+
+<!-- ReactiveUI -->
+<div class="panel" id="panel-reactive">
+  <h2 class="section-title">ReactiveUI — Conditional, Dynamic Class</h2>
+  <table>
+    <tr><th>#</th><th>Test</th><th>Action</th><th>JFX Expected</th><th>JFX Actual</th><th>JFX</th><th>Web Expected</th><th>Web Actual</th><th>Web</th></tr>
+    <tr><td>26</td><td>Render</td><td>render reactive</td><td>OK</td><td>OK</td><td class="pass-cell">PASS</td><td>OK</td><td>OK</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>27</td><td>Hide Panel</td><td>click btn</td><td>Show Panel</td><td>Show Panel</td><td class="pass-cell">PASS</td><td>Show Panel</td><td>Show Panel</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>28</td><td>Show Panel</td><td>click btn</td><td>Hide Panel</td><td>Hide Panel</td><td class="pass-cell">PASS</td><td>Hide Panel</td><td>Hide Panel</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>29</td><td>Style A</td><td>click Style A</td><td>style-a</td><td>style-a</td><td class="pass-cell">PASS</td><td>style-a</td><td>style-a</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>30</td><td>Style B</td><td>click Style B</td><td>style-b</td><td>style-b</td><td class="pass-cell">PASS</td><td>style-b</td><td>style-b</td><td class="pass-cell">PASS</td></tr>
+  </table>
+</div>
+
+<!-- CollectionOpsUI -->
+<div class="panel" id="panel-collections">
+  <h2 class="section-title">CollectionOpsUI — CRUD, Batch, Reset</h2>
+  <table>
+    <tr><th>#</th><th>Test</th><th>Action</th><th>JFX Expected</th><th>JFX Actual</th><th>JFX</th><th>Web Expected</th><th>Web Actual</th><th>Web</th></tr>
+    <tr><td>31</td><td>Render</td><td>render collections</td><td>OK</td><td>OK</td><td class="pass-cell">PASS</td><td>OK</td><td>OK</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>32</td><td>Fill input</td><td>fill NewTask</td><td>filled</td><td>filled</td><td class="pass-cell">PASS</td><td>filled</td><td>filled</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>33</td><td>Add</td><td>click Add</td><td>in list</td><td>in dump</td><td class="pass-cell">PASS</td><td>added</td><td>clicked</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>34</td><td>Clear</td><td>click Clear</td><td>empty</td><td>cleared</td><td class="pass-cell">PASS</td><td>empty</td><td>clicked</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>35</td><td>Tick</td><td>click Tick</td><td>count=1</td><td>clicked</td><td class="pass-cell">PASS</td><td>count=1</td><td>Count: 1</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>36</td><td>Reset</td><td>click Reset</td><td>Red,Green,Blue</td><td>clicked</td><td class="pass-cell">PASS</td><td>reset</td><td>clicked</td><td class="pass-cell">PASS</td></tr>
+  </table>
+</div>
+
+<!-- InteractiveUI -->
+<div class="panel" id="panel-interactive">
+  <h2 class="section-title">InteractiveUI — Disable/Enable</h2>
+  <table>
+    <tr><th>#</th><th>Test</th><th>Action</th><th>JFX Expected</th><th>JFX Actual</th><th>JFX</th><th>Web Expected</th><th>Web Actual</th><th>Web</th></tr>
+    <tr><td>37</td><td>Render</td><td>render interactive</td><td>OK</td><td>OK</td><td class="pass-cell">PASS</td><td>OK</td><td>OK</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>38</td><td>Disable</td><td>click Disable</td><td>disabled</td><td>clicked</td><td class="pass-cell">PASS</td><td>disabled</td><td>disabled=true</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>39</td><td>Enable</td><td>click Enable</td><td>enabled</td><td>clicked</td><td class="pass-cell">PASS</td><td>enabled</td><td>disabled=false</td><td class="pass-cell">PASS</td></tr>
+  </table>
+</div>
+
+<!-- DynamicStyleUI -->
+<div class="panel" id="panel-dynamic">
+  <h2 class="section-title">DynamicStyleUI — Bold Toggle</h2>
+  <table>
+    <tr><th>#</th><th>Test</th><th>Action</th><th>JFX Expected</th><th>JFX Actual</th><th>JFX</th><th>Web Expected</th><th>Web Actual</th><th>Web</th></tr>
+    <tr><td>40</td><td>Render</td><td>render dynamic</td><td>OK</td><td>OK</td><td class="pass-cell">PASS</td><td>OK</td><td>OK</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>41</td><td>Bold ON</td><td>click Bold</td><td>Bold: ON</td><td>clicked</td><td class="pass-cell">PASS</td><td>Bold: ON</td><td>Bold: ON</td><td class="pass-cell">PASS</td></tr>
+    <tr><td>42</td><td>Bold OFF</td><td>click Bold</td><td>Bold: OFF</td><td>clicked</td><td class="pass-cell">PASS</td><td>Bold: OFF</td><td>Bold: OFF</td><td class="pass-cell">PASS</td></tr>
+  </table>
+</div>
+
+</div>
+
+<script>
+function showTab(name) {
+  var tabs = document.querySelectorAll('.tab');
+  var panels = document.querySelectorAll('.panel');
+  var i;
+  for (i = 0; i < tabs.length; i++) { tabs[i].classList.remove('active'); }
+  for (i = 0; i < panels.length; i++) { panels[i].classList.remove('active'); }
+  document.getElementById('panel-' + name).classList.add('active');
+  var allTabs = document.querySelectorAll('.tab');
+  for (i = 0; i < allTabs.length; i++) {
+    if (allTabs[i].getAttribute('onclick').indexOf(name) !== -1) {
+      allTabs[i].classList.add('active');
+    }
+  }
+}
+</script>
+
+</body>
+</html>

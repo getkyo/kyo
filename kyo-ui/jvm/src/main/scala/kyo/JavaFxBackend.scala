@@ -137,7 +137,7 @@ class JavaFxBackend(
 
             case rt @ ReactiveText(signal) =>
                 val label = new JLabel("")
-                subscribe(signal) { v =>
+                subscribe(signal, label) { v =>
                     runOnFx(updates)(label.setText(v))
                         .andThen(rendered.set(rt).unit)
                 }.map(_ => label: Node)
@@ -174,6 +174,13 @@ class JavaFxBackend(
             _ <- applyCommon(node, elem, elem.common, updates, rendered)
             _ <- applySpecific(node, elem, updates, rendered)
             _ <- addChildren(node, elem, updates, rendered)
+            _ <- elem match
+                case f: Form =>
+                    f.onSubmit.fold(noop) { action =>
+                        wireFormSubmitButtons(node.asInstanceOf[Pane], action, updates)
+                        noop
+                    }
+                case _ => noop
         yield
             val styled = applyStyleProps(node, elem.common.uiStyle)
             applyLayoutDefaults(styled)
@@ -320,7 +327,7 @@ class JavaFxBackend(
         for
             _ <- applyClasses(node, c.classes, updates, rendered, ui)
             _ <- c.dynamicClassName.fold(noop)(sig =>
-                subscribe(sig) { v =>
+                subscribe(sig, node) { v =>
                     runOnFx(updates) {
                         node.getStyleClass.clear()
                         v.split("\\s+").foreach(cls => node.getStyleClass.add(cls))
@@ -334,25 +341,38 @@ class JavaFxBackend(
                 val uiCss =
                     if c.uiStyle.isEmpty then ""
                     else internal.FxCssStyleRenderer.render(c.uiStyle)
-                c.style.fold {
-                    if uiCss.nonEmpty then node.setStyle(uiCss)
+                val styles      = c.styles
+                val statics     = styles.collect { case s: String => s }
+                val signals     = styles.collect { case s: Signal[?] => s.asInstanceOf[Signal[String]] }
+                val staticFxCss = statics.toSeq.map(webCssToFxCss).mkString(" ")
+
+                if signals.isEmpty then
+                    val combined = if staticFxCss.nonEmpty && uiCss.nonEmpty then s"$staticFxCss $uiCss"
+                    else if staticFxCss.nonEmpty then staticFxCss
+                    else uiCss
+                    if combined.nonEmpty then node.setStyle(combined)
                     noop
-                } {
-                    case s: String =>
-                        val fxCss = webCssToFxCss(s)
-                        node.setStyle(if uiCss.nonEmpty then s"$fxCss $uiCss" else fxCss); noop
-                    case sig: Signal[?] =>
-                        subscribe(sig.asInstanceOf[Signal[String]]) { v =>
-                            val fxCss = webCssToFxCss(v)
-                            runOnFx(updates)(node.setStyle(if uiCss.nonEmpty then s"$fxCss $uiCss" else fxCss))
+                else
+                    val baseCss =
+                        if staticFxCss.nonEmpty && uiCss.nonEmpty then s"$staticFxCss $uiCss"
+                        else if staticFxCss.nonEmpty then staticFxCss
+                        else uiCss
+                    val latestValues = new Array[String](signals.length)
+                    java.util.Arrays.fill(latestValues.asInstanceOf[Array[Object]], "")
+                    Kyo.foreach(signals.toSeq.zipWithIndex) { case (sig, idx) =>
+                        subscribe(sig, node) { v =>
+                            latestValues(idx) = webCssToFxCss(v)
+                            val combined = latestValues.mkString(" ") + (if baseCss.nonEmpty then " " + baseCss else "")
+                            runOnFx(updates)(node.setStyle(combined))
                                 .andThen(rendered.set(ui).unit)
                         }
-                }
+                    }.unit
+                end if
             _ <- c.hidden.fold(noop) {
                 case b: Boolean =>
                     node.setVisible(!b); node.setManaged(!b); noop
                 case sig: Signal[?] =>
-                    subscribe(sig.asInstanceOf[Signal[Boolean]]) { v =>
+                    subscribe(sig.asInstanceOf[Signal[Boolean]], node) { v =>
                         runOnFx(updates) { node.setVisible(!v); node.setManaged(!v) }
                             .andThen(rendered.set(ui).unit)
                     }
@@ -397,7 +417,7 @@ class JavaFxBackend(
                 case Absent =>
                     node.getStyleClass.add(name); noop
                 case Present(sig) =>
-                    subscribe(sig) { v =>
+                    subscribe(sig, node) { v =>
                         runOnFx(updates) {
                             if v then
                                 if !node.getStyleClass.contains(name) then
@@ -424,7 +444,7 @@ class JavaFxBackend(
                                 case b: Boolean => cb.setSelected(b); noop
                                 case sig: Signal[?] =>
                                     val typedSig = sig.asInstanceOf[Signal[Boolean]]
-                                    subscribe(typedSig) { v =>
+                                    subscribe(typedSig, cb) { v =>
                                         runOnFx(updates)(cb.setSelected(v))
                                             .andThen(rendered.set(elem).unit)
                                     }
@@ -443,7 +463,7 @@ class JavaFxBackend(
                                 case s: String => tf.setText(s); noop
                                 case ref: SignalRef[?] =>
                                     val typedRef = ref.asInstanceOf[SignalRef[String]]
-                                    for _ <- subscribe(typedRef) { v =>
+                                    for _ <- subscribe(typedRef, tf) { v =>
                                             runOnFx(updates)(tf.setText(v))
                                                 .andThen(rendered.set(elem).unit)
                                         }
@@ -470,7 +490,7 @@ class JavaFxBackend(
                         case s: String => ta.setText(s); noop
                         case ref: SignalRef[?] =>
                             val typedRef = ref.asInstanceOf[SignalRef[String]]
-                            for _ <- subscribe(typedRef) { v =>
+                            for _ <- subscribe(typedRef, ta) { v =>
                                     runOnFx(updates)(ta.setText(v))
                                         .andThen(rendered.set(elem).unit)
                                 }
@@ -495,7 +515,7 @@ class JavaFxBackend(
                 anchor.href.fold(noop) {
                     case s: String => link.setUserData(s); noop
                     case sig: Signal[?] =>
-                        subscribe(sig.asInstanceOf[Signal[String]]) { v =>
+                        subscribe(sig.asInstanceOf[Signal[String]], link) { v =>
                             runOnFx(updates)(link.setUserData(v))
                                 .andThen(rendered.set(elem).unit)
                         }
@@ -517,7 +537,7 @@ class JavaFxBackend(
                         case str: String => cb.setValue(str); noop
                         case ref: SignalRef[?] =>
                             val typedRef = ref.asInstanceOf[SignalRef[String]]
-                            for _ <- subscribe(typedRef) { v =>
+                            for _ <- subscribe(typedRef, cb) { v =>
                                     runOnFx(updates)(cb.setValue(v))
                                         .andThen(rendered.set(elem).unit)
                                 }
@@ -571,10 +591,13 @@ class JavaFxBackend(
             case b: Boolean =>
                 node.setDisable(b); noop
             case sig: Signal[?] =>
-                subscribe(sig.asInstanceOf[Signal[Boolean]]) { value =>
+                subscribe(sig.asInstanceOf[Signal[Boolean]], node) { value =>
                     runOnFx(updates)(node.setDisable(value))
                         .andThen(rendered.set(ui).unit)
                 }
+
+    private def isInScene(node: Node): Boolean =
+        node.getScene != null
 
     private def subscribeUI(
         container: Pane,
@@ -584,19 +607,23 @@ class JavaFxBackend(
     )(using Frame): Unit < (Async & Scope) =
         for
             ref <- AtomicRef.init[Maybe[Fiber[Unit, Scope]]](Absent)
-            _ <- subscribe(signal) { ui =>
-                for
-                    _ <- interruptPrev(ref)
-                    fiber <- Fiber.initUnscoped {
-                        for node <- build(ui, updates, rendered)
-                        yield runOnFx(updates) {
-                            container.getChildren.clear()
-                            discard(container.getChildren.add(node))
+            _ <- subscribe(signal, container) { ui =>
+                if !isInScene(container) then ((): Unit < (Async & Scope))
+                else
+                    for
+                        _ <- interruptPrev(ref)
+                        fiber <- Fiber.initUnscoped {
+                            for node <- build(ui, updates, rendered)
+                            yield
+                                if isInScene(container) then
+                                    runOnFx(updates) {
+                                        container.getChildren.clear()
+                                        discard(container.getChildren.add(node))
+                                    }: Unit
                         }
-                    }
-                    _ <- ref.set(Present(fiber))
-                    _ <- rendered.set(ui)
-                yield ()
+                        _ <- ref.set(Present(fiber))
+                        _ <- rendered.set(ui)
+                    yield ()
             }
         yield ()
 
@@ -608,23 +635,26 @@ class JavaFxBackend(
     )(using Frame): Unit < (Async & Scope) =
         for
             ref <- AtomicRef.init[Maybe[Fiber[Unit, Scope]]](Absent)
-            _ <- subscribe(fi.signal.asInstanceOf[Signal[Chunk[Any]]]) { items =>
-                for
-                    _ <- interruptPrev(ref)
-                    fiber <- Fiber.initUnscoped {
-                        val render = fi.render.asInstanceOf[(Int, Any) => UI]
-                        Kyo.foreach(items.zipWithIndex) { (item, idx) =>
-                            build(render(idx, item), updates, rendered)
-                        }.map { nodes =>
-                            runOnFx(updates) {
-                                container.getChildren.clear()
-                                discard(container.getChildren.addAll(nodes.toSeq.asJava))
+            _ <- subscribe(fi.signal.asInstanceOf[Signal[Chunk[Any]]], container) { items =>
+                if !isInScene(container) then ((): Unit < (Async & Scope))
+                else
+                    for
+                        _ <- interruptPrev(ref)
+                        fiber <- Fiber.initUnscoped {
+                            val render = fi.render.asInstanceOf[(Int, Any) => UI]
+                            Kyo.foreach(items.zipWithIndex) { (item, idx) =>
+                                build(render(idx, item), updates, rendered)
+                            }.map { nodes =>
+                                if isInScene(container) then
+                                    runOnFx(updates) {
+                                        container.getChildren.clear()
+                                        discard(container.getChildren.addAll(nodes.toSeq.asJava))
+                                    }: Unit
                             }
                         }
-                    }
-                    _ <- ref.set(Present(fiber))
-                    _ <- rendered.set(fi)
-                yield ()
+                        _ <- ref.set(Present(fiber))
+                        _ <- rendered.set(fi)
+                    yield ()
             }
         yield ()
 
@@ -639,27 +669,29 @@ class JavaFxBackend(
         val render = fk.render.asInstanceOf[(Int, Any) => UI]
         for
             nodeMap <- AtomicRef.init(Map.empty[String, Node])
-            _ <- subscribe(signal) { items =>
-                for
-                    oldMap <- nodeMap.get
-                    result <- Kyo.foreach(items.zipWithIndex) { (item, idx) =>
-                        val k = key(item)
-                        oldMap.get(k) match
-                            case scala.Some(existing) =>
-                                (k, existing): (String, Node) < (Async & Scope)
-                            case scala.None =>
-                                for node <- build(render(idx, item), updates, rendered)
-                                yield (k, node)
-                        end match
-                    }
-                    newMap = result.toSeq.toMap
-                    _ <- runOnFx(updates) {
-                        container.getChildren.clear()
-                        result.foreach((_, node) => container.getChildren.add(node))
-                    }
-                    _ <- nodeMap.set(newMap)
-                    _ <- rendered.set(fk)
-                yield ()
+            _ <- subscribe(signal, container) { items =>
+                if !isInScene(container) then ((): Unit < (Async & Scope))
+                else
+                    for
+                        oldMap <- nodeMap.get
+                        result <- Kyo.foreach(items.zipWithIndex) { (item, idx) =>
+                            val k = key(item)
+                            oldMap.get(k) match
+                                case scala.Some(existing) =>
+                                    (k, existing): (String, Node) < (Async & Scope)
+                                case scala.None =>
+                                    for node <- build(render(idx, item), updates, rendered)
+                                    yield (k, node)
+                            end match
+                        }
+                        newMap = result.toSeq.toMap
+                        _ <- runOnFx(updates) {
+                            container.getChildren.clear()
+                            result.foreach((_, node) => container.getChildren.add(node))
+                        }
+                        _ <- nodeMap.set(newMap)
+                        _ <- rendered.set(fk)
+                    yield ()
             }
         yield ()
         end for
@@ -671,11 +703,38 @@ class JavaFxBackend(
             case Absent     => ()
         }
 
-    private def subscribe[A](signal: Signal[A])(f: A => Unit < (Async & Scope))(using Frame, Tag[Emit[Chunk[A]]]): Unit < (Async & Scope) =
+    private def subscribe[A](signal: Signal[A], owner: Node)(f: A => Unit < (Async & Scope))(using
+        Frame,
+        Tag[Emit[Chunk[A]]]
+    ): Unit < (Async & Scope) =
+        var initialized = false
         for
-            fiber <- Fiber.initUnscoped(signal.streamChanges.foreach(f))
-            _     <- Scope.ensure(fiber.interrupt.unit)
+            fiber <- Fiber.initUnscoped(signal.streamChanges.takeWhile { _ =>
+                if !initialized then
+                    initialized = true
+                    true
+                else
+                    isInScene(owner)
+            }.foreach(f))
+            _ <- Scope.ensure(fiber.interrupt.unit)
         yield ()
+        end for
+    end subscribe
+
+    /** Recursively find all JButton instances within a Pane and wire their click to trigger the form's onSubmit. */
+    private def wireFormSubmitButtons(pane: Pane, action: Unit < Async, updates: Channel[() => Unit])(using Frame): Unit =
+        pane.getChildren.forEach { child =>
+            child match
+                case btn: JButton =>
+                    btn.setOnMouseClicked { _ =>
+                        runHandler(action, updates)
+                    }
+                case p: Pane =>
+                    wireFormSubmitButtons(p, action, updates)
+                case _ => ()
+            end match
+        }
+    end wireFormSubmitButtons
 
     private def runHandler(action: Unit < Async, updates: Channel[() => Unit])(using Frame): Unit =
         import AllowUnsafe.embrace.danger
@@ -762,7 +821,7 @@ class JavaFxBackend(
             val renderFn  = fi.render.asInstanceOf[(Int, Any) => UI]
             for
                 ref <- AtomicRef.init[Maybe[Fiber[Unit, Scope]]](Absent)
-                _ <- subscribe(signal) { items =>
+                _ <- subscribe(signal, grid) { items =>
                     // Expand: replace ForeachIndexed with rendered row elements
                     val expandedRows: Chunk[UI] = rowsChunk.flatMap {
                         case _: ForeachIndexed[?] =>
@@ -836,7 +895,7 @@ class JavaFxBackend(
         if reactiveTexts.isEmpty then ()
         else
             Kyo.foreach(reactiveTexts) { rt =>
-                subscribe(rt.signal) { v =>
+                subscribe(rt.signal, node) { v =>
                     runOnFx(updates)(setText(node, v))
                         .andThen(rendered.set(rt).unit)
                 }

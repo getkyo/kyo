@@ -18,4 +18,5 @@ if [ "$REMAINING" -gt 0 ]; then
   exit 1
 fi
 
+rm -f "$(dirname "$0")/sessions/.current"
 echo "Session '$CURRENT' stopped."

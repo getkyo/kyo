@@ -31,7 +31,7 @@ class DomBackend extends UIBackend:
 
             case rt @ ReactiveText(signal) =>
                 val node = document.createTextNode("")
-                subscribe(signal) { v =>
+                subscribe(signal, node) { v =>
                     node.textContent = v
                     rendered.set(rt).unit
                 }.map(_ => node)
@@ -77,7 +77,7 @@ class DomBackend extends UIBackend:
         for
             _ <- applyClasses(el, ui, c.classes, rendered)
             _ <- c.dynamicClassName.fold(noop)(sig =>
-                subscribe(sig) { v =>
+                subscribe(sig, el) { v =>
                     el.setAttribute("class", v)
                     rendered.set(ui).unit
                 }
@@ -118,25 +118,37 @@ class DomBackend extends UIBackend:
     end applyCommon
 
     private def applyStyle(el: dom.Element, ui: UI, c: CommonAttrs, rendered: SignalRef[UI])(using Frame): Unit < (Async & Scope) =
-        val uiStyle = c.uiStyle
-        if uiStyle.isEmpty then
-            c.style.fold(noop)(v => applyStringAttr(el, ui, "style", v, rendered))
+        val uiStyle  = c.uiStyle
+        val styles   = c.styles
+        val statics  = styles.collect { case s: String => s }
+        val signals  = styles.collect { case s: Signal[?] => s.asInstanceOf[Signal[String]] }
+        val staticCs = statics.toSeq.mkString(" ")
+        if signals.isEmpty then
+            // No reactive styles — purely static
+            if uiStyle.isEmpty then
+                if staticCs.nonEmpty then el.setAttribute("style", staticCs)
+                noop
+            else
+                val _ = DomStyleSheet(el, uiStyle, if staticCs.nonEmpty then Present(staticCs) else Absent)
+                noop
         else
-            c.style match
-                case Present(sig: Signal[?]) =>
-                    // Dynamic string style + static Style: subscribe and merge on each emission
-                    val baseCss = internal.CssStyleRenderer.render(uiStyle.baseProps)
-                    subscribe(sig.asInstanceOf[Signal[String]]) { value =>
-                        el.setAttribute("style", value + " " + baseCss)
-                        rendered.set(ui).unit
-                    }
-                case Present(s: String) =>
-                    val _ = DomStyleSheet(el, uiStyle, Present(s))
-                    noop
-                case _ =>
-                    val _ = DomStyleSheet(el, uiStyle, Absent)
-                    noop
-            end match
+            // Has reactive signal(s) — subscribe to all and concatenate
+            val baseCss =
+                if uiStyle.isEmpty then staticCs
+                else
+                    val rendered = internal.CssStyleRenderer.render(uiStyle.baseProps)
+                    if staticCs.nonEmpty then s"$staticCs $rendered" else rendered
+            // Subscribe to each signal and rebuild combined style on any change
+            val latestValues = new Array[String](signals.length)
+            java.util.Arrays.fill(latestValues.asInstanceOf[Array[Object]], "")
+            Kyo.foreach(signals.toSeq.zipWithIndex) { case (sig, idx) =>
+                subscribe(sig, el) { value =>
+                    latestValues(idx) = value
+                    val combined = latestValues.mkString(" ") + (if baseCss.nonEmpty then " " + baseCss else "")
+                    el.setAttribute("style", combined)
+                    rendered.set(ui).unit
+                }
+            }.unit
         end if
     end applyStyle
 
@@ -151,7 +163,7 @@ class DomBackend extends UIBackend:
                     val _ = el.classList.add(name)
                     noop
                 case Present(sig) =>
-                    subscribe(sig) { v =>
+                    subscribe(sig, el) { v =>
                         val _ = el.classList.toggle(name, v)
                         rendered.set(ui).unit
                     }
@@ -183,7 +195,7 @@ class DomBackend extends UIBackend:
             case s: String =>
                 el.setAttribute(name, s)
             case sig: Signal[?] =>
-                subscribe(sig.asInstanceOf[Signal[String]]) { value =>
+                subscribe(sig.asInstanceOf[Signal[String]], el) { value =>
                     el.setAttribute(name, value)
                     rendered.set(ui).unit
                 }
@@ -195,7 +207,7 @@ class DomBackend extends UIBackend:
             case b: Boolean =>
                 el.asInstanceOf[scalajs.js.Dynamic].updateDynamic(name)(b)
             case sig: Signal[?] =>
-                subscribe(sig.asInstanceOf[Signal[Boolean]]) { value =>
+                subscribe(sig.asInstanceOf[Signal[Boolean]], el) { value =>
                     el.asInstanceOf[scalajs.js.Dynamic].updateDynamic(name)(value)
                     rendered.set(ui).unit
                 }
@@ -320,7 +332,7 @@ class DomBackend extends UIBackend:
                 el.asInstanceOf[scalajs.js.Dynamic].updateDynamic("value")(s)
             case ref: SignalRef[?] =>
                 val typedRef = ref.asInstanceOf[SignalRef[String]]
-                for _ <- subscribe(typedRef) { value =>
+                for _ <- subscribe(typedRef, el) { value =>
                         el.asInstanceOf[scalajs.js.Dynamic].updateDynamic("value")(value)
                         rendered.set(ui).unit
                     }
@@ -341,23 +353,26 @@ class DomBackend extends UIBackend:
     private def subscribeUI(container: dom.Element, signal: Signal[UI], rendered: SignalRef[UI])(using Frame): Unit < (Async & Scope) =
         for
             ref <- AtomicRef.init[Maybe[Fiber[Unit, Scope]]](Absent)
-            _ <- subscribe(signal) { ui =>
-                for
-                    _ <- interruptPrev(ref)
-                    fiber <- Fiber.initUnscoped {
-                        for node <- build(ui, rendered)
-                        yield
-                            val oldHtml = container.innerHTML
-                            val tmp     = document.createElement("span")
-                            val _       = tmp.appendChild(node)
-                            val newHtml = tmp.innerHTML
-                            if oldHtml != newHtml then
-                                clearChildren(container)
-                                val _ = container.appendChild(node)
-                    }
-                    _ <- ref.set(Present(fiber))
-                    _ <- rendered.set(ui)
-                yield ()
+            _ <- subscribe(signal, container) { ui =>
+                if !container.isConnected then ((): Unit < (Async & Scope))
+                else
+                    for
+                        _ <- interruptPrev(ref)
+                        fiber <- Fiber.initUnscoped {
+                            for node <- build(ui, rendered)
+                            yield
+                                if container.isConnected then
+                                    val oldHtml = container.innerHTML
+                                    val tmp     = document.createElement("span")
+                                    val _       = tmp.appendChild(node)
+                                    val newHtml = tmp.innerHTML
+                                    if oldHtml != newHtml then
+                                        clearChildren(container)
+                                        val _ = container.appendChild(node)
+                        }
+                        _ <- ref.set(Present(fiber))
+                        _ <- rendered.set(ui)
+                    yield ()
             }
         yield ()
     end subscribeUI
@@ -386,20 +401,23 @@ class DomBackend extends UIBackend:
         ui: UI,
         rendered: SignalRef[UI]
     )(using Frame): Unit < (Async & Scope) =
-        subscribe(signal) { items =>
-            for
-                _ <- interruptPrev(ref)
-                fiber <- Fiber.initUnscoped {
-                    clearChildren(container)
-                    Kyo.foreach(items.zipWithIndex) { (item, idx) =>
-                        for node <- build(render(idx, item), rendered)
-                        yield
-                            val _ = container.appendChild(node)
-                    }.unit
-                }
-                _ <- ref.set(Present(fiber))
-                _ <- rendered.set(ui)
-            yield ()
+        subscribe(signal, container) { items =>
+            if !container.isConnected then ((): Unit < (Async & Scope))
+            else
+                for
+                    _ <- interruptPrev(ref)
+                    fiber <- Fiber.initUnscoped {
+                        clearChildren(container)
+                        Kyo.foreach(items.zipWithIndex) { (item, idx) =>
+                            for node <- build(render(idx, item), rendered)
+                            yield
+                                if container.isConnected then
+                                    val _ = container.appendChild(node)
+                        }.unit
+                    }
+                    _ <- ref.set(Present(fiber))
+                    _ <- rendered.set(ui)
+                yield ()
         }
 
     private def subscribeKeyed(container: dom.Element, fk: ForeachKeyed[?], rendered: SignalRef[UI])(using
@@ -410,40 +428,56 @@ class DomBackend extends UIBackend:
         val render = fk.render.asInstanceOf[(Int, Any) => UI]
         for
             nodeMap <- AtomicRef.init(Map.empty[String, dom.Node])
-            _ <- subscribe(signal) { items =>
-                for
-                    oldMap <- nodeMap.get
-                    result <- Kyo.foreach(items.zipWithIndex) { (item, idx) =>
-                        val k = key(item)
-                        oldMap.get(k) match
-                            case scala.Some(existing) =>
-                                val _ = container.appendChild(existing)
-                                (k, existing): (String, dom.Node) < (Async & Scope)
-                            case scala.None =>
-                                for node <- build(render(idx, item), rendered)
-                                yield
-                                    val _ = container.appendChild(node)
-                                    (k, node)
-                        end match
-                    }
-                    newMap = result.toSeq.toMap
-                    _ = oldMap.foreach { (k, node) =>
-                        if !newMap.contains(k) then
-                            val _ = container.removeChild(node)
-                    }
-                    _ <- nodeMap.set(newMap)
-                    _ <- rendered.set(fk)
-                yield ()
+            _ <- subscribe(signal, container) { items =>
+                if !container.isConnected then ((): Unit < (Async & Scope))
+                else
+                    for
+                        oldMap <- nodeMap.get
+                        result <- Kyo.foreach(items.zipWithIndex) { (item, idx) =>
+                            val k = key(item)
+                            oldMap.get(k) match
+                                case scala.Some(existing) =>
+                                    if container.isConnected then
+                                        val _ = container.appendChild(existing)
+                                    (k, existing): (String, dom.Node) < (Async & Scope)
+                                case scala.None =>
+                                    for node <- build(render(idx, item), rendered)
+                                    yield
+                                        if container.isConnected then
+                                            val _ = container.appendChild(node)
+                                        (k, node)
+                            end match
+                        }
+                        newMap = result.toSeq.toMap
+                        _ = oldMap.foreach { (k, node) =>
+                            if !newMap.contains(k) && (node.parentNode eq container) then
+                                val _ = container.removeChild(node)
+                        }
+                        _ <- nodeMap.set(newMap)
+                        _ <- rendered.set(fk)
+                    yield ()
             }
         yield ()
         end for
     end subscribeKeyed
 
-    private def subscribe[A](signal: Signal[A])(f: A => Unit < (Async & Scope))(using Frame, Tag[Emit[Chunk[A]]]): Unit < (Async & Scope) =
+    private def subscribe[A](signal: Signal[A], owner: dom.Node)(f: A => Unit < (Async & Scope))(using
+        Frame,
+        Tag[Emit[Chunk[A]]]
+    ): Unit < (Async & Scope) =
+        var initialized = false
         for
-            fiber <- Fiber.initUnscoped(signal.streamChanges.foreach(f))
-            _     <- Scope.ensure(fiber.interrupt.unit)
+            fiber <- Fiber.initUnscoped(signal.streamChanges.takeWhile { _ =>
+                if !initialized then
+                    initialized = true
+                    true
+                else
+                    owner.isConnected
+            }.foreach(f))
+            _ <- Scope.ensure(fiber.interrupt.unit)
         yield ()
+        end for
+    end subscribe
 
     private def runHandler(action: Unit < Async)(using Frame): Unit =
         import AllowUnsafe.embrace.danger

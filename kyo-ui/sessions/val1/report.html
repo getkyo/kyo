@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>UI Validation Report - val1</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; color: #1e293b; }
+.header { background: #0f172a; color: white; padding: 20px 32px; }
+.header h1 { font-size: 24px; margin-bottom: 4px; }
+.header p { color: #94a3b8; font-size: 14px; }
+.tabs { display: flex; gap: 0; background: #1e293b; padding: 0 32px; overflow-x: auto; }
+.tab { padding: 12px 20px; color: #94a3b8; cursor: pointer; border-bottom: 3px solid transparent; font-size: 14px; white-space: nowrap; }
+.tab.active { color: white; border-bottom-color: #3b82f6; }
+.tab:hover { color: #e2e8f0; }
+.content { padding: 24px 32px; max-width: 1400px; margin: 0 auto; }
+.panel { display: none; }
+.panel.active { display: block; }
+.summary-bar { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+.stat { background: white; padding: 16px 24px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.stat-value { font-size: 28px; font-weight: bold; }
+.stat-label { font-size: 12px; color: #64748b; margin-top: 2px; }
+.screenshots { display: flex; gap: 16px; margin-bottom: 24px; }
+.screenshot-box { flex: 1; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.screenshot-box h3 { padding: 12px 16px; background: #f1f5f9; font-size: 14px; border-bottom: 1px solid #e2e8f0; }
+.screenshot-box img { width: 100%; max-height: calc(100vh - 180px); object-fit: contain; object-position: top; }
+table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; }
+th { background: #f1f5f9; padding: 10px 12px; text-align: left; font-size: 13px; color: #475569; border-bottom: 1px solid #e2e8f0; }
+td { padding: 10px 12px; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
+.pass { color: #16a34a; font-weight: bold; }
+.fail { color: #dc2626; font-weight: bold; }
+.skip { color: #d97706; font-weight: bold; }
+.crash { color: #7c3aed; font-weight: bold; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+.dot-pass { background: #22c55e; }
+.dot-fail { background: #ef4444; }
+.dot-skip { background: #f59e0b; }
+.dot-crash { background: #8b5cf6; }
+.findings { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; }
+.findings h3 { margin-bottom: 12px; font-size: 16px; }
+.findings li { margin: 8px 0; font-size: 14px; line-height: 1.5; }
+.bug { background: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; border-radius: 0 8px 8px 0; margin-bottom: 12px; }
+.bug-title { font-weight: bold; color: #991b1b; }
+</style>
+</head>
+<body>
+
+<div class="header">
+<h1>UI Validation Report</h1>
+<p>Session: val1 | Date: 2026-03-01 | Tests: 57/71 executed</p>
+</div>
+
+<div class="tabs" id="tabs">
+<div class="tab active" onclick="showTab('overview')">Overview</div>
+<div class="tab" onclick="showTab('demo')">DemoUI</div>
+<div class="tab" onclick="showTab('form')">FormUI</div>
+<div class="tab" onclick="showTab('reactive')">ReactiveUI</div>
+<div class="tab" onclick="showTab('nested')">NestedReactiveUI</div>
+<div class="tab" onclick="showTab('collections')">CollectionOpsUI</div>
+<div class="tab" onclick="showTab('dynamic')">DynamicStyleUI</div>
+<div class="tab" onclick="showTab('interactive')">InteractiveUI</div>
+<div class="tab" onclick="showTab('keyboard')">KeyboardNavUI</div>
+</div>
+
+<div class="content">
+
+<!-- Overview -->
+<div class="panel active" id="panel-overview">
+<div class="summary-bar">
+<div class="stat"><div class="stat-value">57</div><div class="stat-label">Tests Executed</div></div>
+<div class="stat"><div class="stat-value" style="color:#16a34a">45</div><div class="stat-label">JFX Pass</div></div>
+<div class="stat"><div class="stat-value" style="color:#dc2626">1</div><div class="stat-label">JFX Fail</div></div>
+<div class="stat"><div class="stat-value" style="color:#16a34a">45</div><div class="stat-label">Web Pass</div></div>
+<div class="stat"><div class="stat-value" style="color:#dc2626">0</div><div class="stat-label">Web Fail</div></div>
+<div class="stat"><div class="stat-value" style="color:#7c3aed">18</div><div class="stat-label">Crash/Skip</div></div>
+</div>
+
+<div class="findings">
+<h3>Bugs Found</h3>
+<div class="bug">
+<div class="bug-title">Bug #1: FormUI — JFX Checkbox onInput not firing (Medium)</div>
+<p>Clicking a CheckBox in JFX does not trigger the onInput signal handler. The checkbox visually toggles but the signal value remains unchanged. Repro: render form, click checkbox, submit — Check=false.</p>
+</div>
+<div class="bug">
+<div class="bug-title">Bug #2: NestedReactiveUI — Session crash on web render (High)</div>
+<p>After rendering NestedReactiveUI, all web commands (web-count, web-js, web-click) hang indefinitely, causing session timeout. JFX also eventually crashes after ~4 interactions. The UI's combination of nested UI.when, foreachKeyed, and Signal[UI] appears to overwhelm the session.</p>
+</div>
+</div>
+
+<div class="findings">
+<h3>Test Infrastructure Issues</h3>
+<ul>
+<li>web-fill hangs on compound CSS selectors — must use web-js with nativeInputValueSetter</li>
+<li>No jfx-fill-nth command — cannot fill inputs beyond the first match</li>
+<li>No JFX ComboBox programmatic API in test harness</li>
+<li>Session required 5+ restarts during testing</li>
+</ul>
+</div>
+</div>
+
+<!-- DemoUI -->
+<div class="panel" id="panel-demo">
+<h2 style="margin-bottom:16px"><span class="dot dot-pass"></span>DemoUI — 12/12 Pass</h2>
+<div class="screenshots">
+<div class="screenshot-box"><h3>JFX (after tests)</h3><img src="demo-after-jfx.png"></div>
+<div class="screenshot-box"><h3>Web (after tests)</h3><img src="demo-after-web.png"></div>
+</div>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>1</td><td>Counter + click</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>2</td><td>Counter + again</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>3</td><td>Counter - click</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>4</td><td>Counter to zero</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>5</td><td>Counter negative</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>6</td><td>Todo fill</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>7</td><td>Todo add</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>8</td><td>Todo empty add</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>9</td><td>Todo second</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>10</td><td>Todo delete</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>11</td><td>Theme on</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>12</td><td>Theme off</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+</table>
+</div>
+
+<!-- FormUI -->
+<div class="panel" id="panel-form">
+<h2 style="margin-bottom:16px"><span class="dot dot-fail"></span>FormUI — 1 Fail (JFX checkbox)</h2>
+<div class="screenshots">
+<div class="screenshot-box"><h3>JFX (after tests)</h3><img src="form-after-jfx.png"></div>
+<div class="screenshot-box"><h3>Web (after tests)</h3><img src="form-after-web.png"></div>
+</div>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>13</td><td>Fill name</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>14</td><td>Fill email</td><td class="skip">SKIP</td><td class="pass">PASS</td><td>No jfx-fill-nth</td></tr>
+<tr><td>15</td><td>Fill textarea</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>16</td><td>Select option2</td><td class="skip">SKIP</td><td class="pass">PASS</td><td>No JFX ComboBox API</td></tr>
+<tr><td>17</td><td>Checkbox</td><td class="fail">FAIL</td><td class="pass">PASS</td><td>JFX onInput not fired</td></tr>
+<tr><td>18</td><td>Submit</td><td class="skip">PARTIAL</td><td class="pass">PASS</td><td>JFX partial due to upstream</td></tr>
+<tr><td>19</td><td>Disable All</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>20</td><td>Enable All</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+</table>
+</div>
+
+<!-- ReactiveUI -->
+<div class="panel" id="panel-reactive">
+<h2 style="margin-bottom:16px"><span class="dot dot-pass"></span>ReactiveUI — All Pass</h2>
+<div class="screenshots">
+<div class="screenshot-box"><h3>JFX (after tests)</h3><img src="reactive-after-jfx.png"></div>
+<div class="screenshot-box"><h3>Web (after tests)</h3><img src="reactive-after-web.png"></div>
+</div>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>21</td><td>Hide Panel</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>22</td><td>Show Panel</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>23</td><td>Hide visibility</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>24</td><td>Show visibility</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>25</td><td>Style A</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>26</td><td>Style B</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>27</td><td>Style C</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>28</td><td>Fill foreach</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>29</td><td>Add item</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>31</td><td>Grid mode</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>32</td><td>List mode</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+</table>
+</div>
+
+<!-- NestedReactiveUI -->
+<div class="panel" id="panel-nested">
+<h2 style="margin-bottom:16px"><span class="dot dot-crash"></span>NestedReactiveUI — Session Crashes</h2>
+<div class="findings">
+<h3>Critical Issue</h3>
+<p>NestedReactiveUI consistently crashes the interactive session. Web rendering becomes completely unresponsive after render — even basic commands like web-count hang indefinitely. JFX partially works (3 tests pass) but eventually crashes too.</p>
+<p style="margin-top:8px"><strong>Root cause hypothesis:</strong> The combination of nested UI.when, foreachKeyed with Signal children, Signal[UI] inside collection, and filtered collection creates too many concurrent signal subscriptions or causes an infinite update loop.</p>
+</div>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>33</td><td>Hide Outer</td><td class="pass">PASS</td><td class="crash">CRASH</td><td></td></tr>
+<tr><td>34</td><td>Show Outer</td><td class="pass">PASS</td><td class="crash">CRASH</td><td></td></tr>
+<tr><td>35</td><td>Hide Inner</td><td class="pass">PASS</td><td class="crash">CRASH</td><td></td></tr>
+<tr><td>36-44</td><td>Remaining</td><td class="crash">CRASH</td><td class="crash">CRASH</td><td>Session dies</td></tr>
+</table>
+</div>
+
+<!-- CollectionOpsUI -->
+<div class="panel" id="panel-collections">
+<h2 style="margin-bottom:16px"><span class="dot dot-pass"></span>CollectionOpsUI — All Pass</h2>
+<div class="screenshots">
+<div class="screenshot-box"><h3>JFX (after tests)</h3><img src="collections-after-jfx.png"></div>
+<div class="screenshot-box"><h3>Web (after tests)</h3><img src="collections-after-web.png"></div>
+</div>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>45</td><td>Fill input</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>46</td><td>Add item</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>47</td><td>Remove Last</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>48</td><td>Reverse</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>49</td><td>Clear</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>50</td><td>Add after clear</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>51</td><td>Tick counter</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>53</td><td>Set Single</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>54</td><td>Reset</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+</table>
+</div>
+
+<!-- DynamicStyleUI -->
+<div class="panel" id="panel-dynamic">
+<h2 style="margin-bottom:16px"><span class="dot dot-pass"></span>DynamicStyleUI — All Pass</h2>
+<div class="screenshots">
+<div class="screenshot-box"><h3>JFX (after tests)</h3><img src="dynamic-after-jfx.png"></div>
+<div class="screenshot-box"><h3>Web (after tests)</h3><img src="dynamic-after-web.png"></div>
+</div>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>55</td><td>Green bg</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>57</td><td>A+ font</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>61</td><td>Bold ON</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>65</td><td>Thicker border</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+</table>
+</div>
+
+<!-- InteractiveUI -->
+<div class="panel" id="panel-interactive">
+<h2 style="margin-bottom:16px"><span class="dot dot-pass"></span>InteractiveUI — Pass (limited)</h2>
+<div class="screenshots">
+<div class="screenshot-box"><h3>JFX (after tests)</h3><img src="interactive-after-jfx.png"></div>
+<div class="screenshot-box"><h3>Web (after tests)</h3><img src="interactive-after-web.png"></div>
+</div>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>67</td><td>Disable toggle</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>68</td><td>Enable toggle</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>69</td><td>Focus input</td><td class="skip">SKIP</td><td class="skip">SKIP</td><td>Selector limitation</td></tr>
+<tr><td>70</td><td>Blur input</td><td class="skip">SKIP</td><td class="skip">SKIP</td><td>Selector limitation</td></tr>
+</table>
+</div>
+
+<!-- KeyboardNavUI -->
+<div class="panel" id="panel-keyboard">
+<h2 style="margin-bottom:16px"><span class="dot dot-pass"></span>KeyboardNavUI — Limited (1 test)</h2>
+<div class="screenshots">
+<div class="screenshot-box"><h3>JFX (after tests)</h3><img src="keyboard-after-jfx.png"></div>
+<div class="screenshot-box"><h3>Web (after tests)</h3><img src="keyboard-after-web.png"></div>
+</div>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>71</td><td>Clear log</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+</table>
+<div class="findings">
+<h3>Note</h3>
+<p>Most KeyboardNavUI tests require keyboard event simulation which is not available through the test harness. Only the Clear button was testable.</p>
+</div>
+</div>
+
+</div>
+
+<script>
+function showTab(name) {
+    var panels = document.querySelectorAll('.panel');
+    var tabs = document.querySelectorAll('.tab');
+    for (var i = 0; i < panels.length; i++) {
+        panels[i].className = 'panel';
+    }
+    for (var i = 0; i < tabs.length; i++) {
+        tabs[i].className = 'tab';
+    }
+    document.getElementById('panel-' + name).className = 'panel active';
+    var tabNames = ['overview','demo','form','reactive','nested','collections','dynamic','interactive','keyboard'];
+    for (var i = 0; i < tabNames.length; i++) {
+        if (tabNames[i] === name) {
+            tabs[i].className = 'tab active';
+        }
+    }
+}
+</script>
+
+</body>
+</html>

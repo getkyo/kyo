@@ -54,32 +54,14 @@ object JavaFxInteraction:
             root.lookupAll(selector).asScala.toList
         }
 
-    /** Click a node by firing a MouseEvent (matches setOnMouseClicked handler). */
+    /** Click a node. For CheckBox/ToggleButton, uses .fire() to properly toggle state. For other nodes, fires a MouseEvent (matches
+      * setOnMouseClicked handler).
+      */
     def click(selector: String): Unit =
         runOnFxSync {
             val node = root.lookup(selector)
             if node == null then throw new RuntimeException(s"Node not found: $selector")
-            val event = new MouseEvent(
-                MouseEvent.MOUSE_CLICKED,
-                0,
-                0,
-                0,
-                0,
-                MouseButton.PRIMARY,
-                1,
-                false,
-                false,
-                false,
-                false,
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                null
-            )
-            node.fireEvent(event)
+            fireClick(node)
         }
 
     /** Click the Nth node matching a selector (0-indexed). */
@@ -89,28 +71,38 @@ object JavaFxInteraction:
             val nodes = root.lookupAll(selector).asScala.toList
             if index >= nodes.size then
                 throw new RuntimeException(s"Index $index out of range, only ${nodes.size} nodes match $selector")
-            val event = new MouseEvent(
-                MouseEvent.MOUSE_CLICKED,
-                0,
-                0,
-                0,
-                0,
-                MouseButton.PRIMARY,
-                1,
-                false,
-                false,
-                false,
-                false,
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                null
-            )
-            nodes(index).fireEvent(event)
+            fireClick(nodes(index))
         }
+
+    /** Fire a click on a node. Uses .fire() for CheckBox and ToggleButton to properly toggle state. Regular buttons and other nodes use
+      * MouseEvent (needed for setOnMouseClicked handlers like form submit).
+      */
+    private def fireClick(node: Node): Unit =
+        node match
+            case cb: javafx.scene.control.CheckBox     => cb.fire()
+            case tb: javafx.scene.control.ToggleButton => tb.fire()
+            case _ =>
+                val event = new MouseEvent(
+                    MouseEvent.MOUSE_CLICKED,
+                    0,
+                    0,
+                    0,
+                    0,
+                    MouseButton.PRIMARY,
+                    1,
+                    false,
+                    false,
+                    false,
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    null
+                )
+                node.fireEvent(event)
 
     /** Type text into a TextField or TextArea found by CSS selector. */
     def fillText(selector: String, text: String): Unit =
@@ -121,6 +113,20 @@ object JavaFxInteraction:
                 case tf: TextField => tf.setText(text)
                 case ta: TextArea  => ta.setText(text)
                 case other         => throw new RuntimeException(s"Node $selector is not a text control: ${other.getClass}")
+            end match
+        }
+
+    /** Type text into the Nth TextField or TextArea matching a selector (0-indexed). */
+    def fillTextNth(selector: String, index: Int, text: String): Unit =
+        runOnFxSync {
+            import scala.jdk.CollectionConverters.*
+            val nodes = root.lookupAll(selector).asScala.toList
+            if index >= nodes.size then
+                throw new RuntimeException(s"Index $index out of range, only ${nodes.size} nodes match $selector")
+            nodes(index) match
+                case tf: TextField => tf.setText(text)
+                case ta: TextArea  => ta.setText(text)
+                case other         => throw new RuntimeException(s"Node $selector[$index] is not a text control: ${other.getClass}")
             end match
         }
 

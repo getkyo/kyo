@@ -273,7 +273,7 @@ class UITest extends Test:
 
         "style attribute" in {
             val node = div.style("color: red")("styled")
-            assert(hasValue(node.common.style, "color: red"))
+            assert(node.common.styles.contains("color: red"))
         }
 
         "textarea with attributes" in {
@@ -368,7 +368,7 @@ class UITest extends Test:
             for sig <- Signal.initRef("color: blue")
             yield
                 val node = span.style(sig)
-                assert(node.common.style.isDefined)
+                assert(node.common.styles.nonEmpty)
                 assertionSuccess
         }
 

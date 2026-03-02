@@ -105,7 +105,7 @@ object UI:
             classes: Chunk[(String, Maybe[Signal[Boolean]])] = Chunk.empty,
             dynamicClassName: Maybe[Signal[String]] = Absent,
             identifier: Maybe[String] = Absent,
-            style: Maybe[String | Signal[String]] = Absent,
+            styles: Chunk[String | Signal[String]] = Chunk.empty,
             uiStyle: Style = Style.empty,
             hidden: Maybe[Boolean | Signal[Boolean]] = Absent,
             onClick: Maybe[Unit < Async] = Absent,
@@ -128,7 +128,7 @@ object UI:
             def clsWhen(name: String, condition: Signal[Boolean]): Self =
                 withCommon(common.copy(classes = common.classes :+ (name, Present(condition))))
             def id(v: String): Self                          = withCommon(common.copy(identifier = Present(v)))
-            def style(v: String | Signal[String]): Self      = withCommon(common.copy(style = Present(v)))
+            def style(v: String | Signal[String]): Self      = withCommon(common.copy(styles = common.styles :+ v))
             def style(v: Style): Self                        = withCommon(common.copy(uiStyle = common.uiStyle ++ v))
             def hidden(v: Boolean | Signal[Boolean]): Self   = withCommon(common.copy(hidden = Present(v)))
             def onClick(action: Unit < Async): Self          = withCommon(common.copy(onClick = Present(action)))

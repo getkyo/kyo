@@ -8,17 +8,32 @@ import kyo.*
   *
   * Start: sbt 'kyo-ui/runMain demo.InteractiveSession'
   *
-  * Then write commands to screenshots/interaction/cmd.txt: echo "render demo" > kyo-ui/screenshots/interaction/cmd.txt
+  * Then write commands to sessions/<name>/cmd.txt
   *
-  * Results appear in screenshots/interaction/result.txt
+  * Results appear in sessions/<name>/result.txt
   *
-  * Commands: render <name> — render a UI on both JFX and Browser jfx-click <selector> — click a JFX node jfx-click-nth <sel> <n> — click
-  * Nth matching JFX node jfx-text <selector> — get text from JFX node jfx-fill <sel> <text> — fill text in JFX input jfx-count <selector> —
-  * count matching JFX nodes jfx-exists <selector> — check if JFX node exists jfx-screenshot <path> — take JFX screenshot jfx-dump — dump
-  * JFX scene tree web-click <selector> — click web element web-text <selector> — get innerText from web web-fill <sel> <text> — fill web
-  * input web-count <selector> — count web elements web-exists <selector> — check if web element exists web-screenshot <path> — take web
-  * screenshot web-js <code> — run JS in browser screenshot <path> — take both JFX + web screenshots (appends -jfx.png / -web.png) stop —
-  * shut down
+  * Commands:
+  *   - render <name> — render a UI on both JFX and Browser
+  *   - jfx-click <selector> — click a JFX node (CSS selector, e.g. .button)
+  *   - jfx-click-nth <sel> <n> — click Nth matching JFX node
+  *   - jfx-text <selector> — get text from JFX node
+  *   - jfx-fill <sel> <text> — fill text in JFX input (supports quoted selectors: "sel with spaces")
+  *   - jfx-count <selector> — count matching JFX nodes
+  *   - jfx-exists <selector> — check if JFX node exists
+  *   - jfx-screenshot <path> — take JFX screenshot
+  *   - jfx-dump — dump JFX scene tree
+  *   - web-click <selector> — click web element (CSS selector, e.g. button)
+  *   - web-text <selector> — get innerText from web
+  *   - web-fill <sel> <text> — fill web input (supports quoted selectors)
+  *   - web-count <selector> — count web elements
+  *   - web-exists <selector> — check if web element exists (non-blocking)
+  *   - web-screenshot <path> — take web screenshot
+  *   - web-js <code> — run JS in browser (auto-prepends 'return' if needed)
+  *   - screenshot <path> — take both JFX + web screenshots
+  *   - stop — shut down
+  *
+  * NOTE: JFX uses CSS class selectors (.button, .input) while web uses HTML tag selectors (button, input). For compound selectors with
+  * spaces, use quotes: web-fill ".todo-input input" some text
   */
 object InteractiveSession extends KyoApp:
 
@@ -88,18 +103,43 @@ object InteractiveSession extends KyoApp:
                             if cmd.isEmpty then Sync.defer(())
                             else
                                 for
-                                    _ <- Sync.defer(Files.writeString(cmdFile, ""))
-                                    result <- Abort.run[Throwable](processCommand(cmd)).map {
-                                        case Result.Success(r) => r
-                                        case Result.Error(e)   => s"ERROR: ${e.getMessage}"
-                                        case Result.Panic(e)   => s"ERROR: ${e.getMessage}"
-                                    }
-                                    _ <- Sync.defer(Files.writeString(resFile, result + "\n"))
-                                    _ <- Sync.defer(java.lang.System.err.println(s"[cmd] $cmd -> ${result.take(100)}"))
+                                    _      <- Sync.defer(Files.writeString(cmdFile, ""))
+                                    result <- executeWithTimeout(cmd)
+                                    _      <- Sync.defer(Files.writeString(resFile, result + "\n"))
+                                    _      <- Sync.defer(java.lang.System.err.println(s"[cmd] $cmd -> ${result.take(100)}"))
                                 yield ()
                         _ <- pollLoop
                     yield ()
         yield ()
+
+    /** Execute a command with error protection so failures don't kill the session. */
+    private def executeWithTimeout(cmd: String)(using kyo.Frame): String < (Browser & Sync & Async & Scope) =
+        Abort.run[Throwable](processCommand(cmd)).map {
+            case Result.Success(r) => r
+            case Result.Error(e)   => s"ERROR: ${e.getMessage}"
+            case Result.Panic(e)   => s"ERROR: ${e.getMessage}"
+        }
+
+    /** Parse a selector that may be quoted (for compound selectors with spaces). Examples:
+      *   - parseSelectorAndRest(".button Submit") => (".button", "Submit")
+      *   - parseSelectorAndRest("\"form input\" text") => ("form input", "text")
+      */
+    private def parseSelectorAndRest(s: String): (String, String) =
+        if s.startsWith("\"") then
+            val endQuote = s.indexOf('"', 1)
+            if endQuote > 0 then
+                (s.substring(1, endQuote), s.substring(endQuote + 1).trim)
+            else
+                // No closing quote, treat entire string as selector
+                (s.substring(1), "")
+            end if
+        else
+            val spaceIdx = s.indexOf(' ')
+            if spaceIdx > 0 then
+                (s.substring(0, spaceIdx), s.substring(spaceIdx + 1))
+            else
+                (s, "")
+            end if
 
     private def processCommand(cmd: String)(using kyo.Frame): String < (Browser & Sync & Async & Scope) =
         val parts = cmd.split("\\s+", 3).toList
@@ -145,9 +185,29 @@ object InteractiveSession extends KyoApp:
                 val selector = rest.mkString(" ")
                 Sync.defer { s"OK: ${JFx.getText(selector)}" }
 
-            case "jfx-fill" :: selector :: rest =>
-                val text = rest.mkString(" ")
+            case "jfx-fill-nth" :: rest =>
+                val afterCmd          = cmd.stripPrefix("jfx-fill-nth").trim
+                val (selector, rest2) = parseSelectorAndRest(afterCmd)
+                val spaceIdx          = rest2.indexOf(' ')
+                if spaceIdx < 0 then Sync.defer("ERROR: usage: jfx-fill-nth <selector> <index> <text>")
+                else
+                    val index = rest2.substring(0, spaceIdx).trim.toInt
+                    val text  = rest2.substring(spaceIdx + 1)
+                    Sync.defer { JFx.fillTextNth(selector, index, text); JFx.waitForUpdates(); "OK: filled nth" }
+                end if
+
+            case "jfx-fill" :: rest =>
+                val afterCmd         = cmd.stripPrefix("jfx-fill").trim
+                val (selector, text) = parseSelectorAndRest(afterCmd)
                 Sync.defer { JFx.fillText(selector, text); JFx.waitForUpdates(); "OK: filled" }
+
+            case "jfx-check" :: selector :: value :: _ =>
+                Sync.defer { JFx.setChecked(selector, value.trim.toBoolean); JFx.waitForUpdates(); "OK: checked" }
+
+            case "jfx-select" :: rest =>
+                val afterCmd          = cmd.stripPrefix("jfx-select").trim
+                val (selector, value) = parseSelectorAndRest(afterCmd)
+                Sync.defer { JFx.selectOption(selector, value); JFx.waitForUpdates(); "OK: selected" }
 
             case "jfx-count" :: selector :: _ =>
                 Sync.defer { s"OK: ${JFx.count(selector)}" }
@@ -164,28 +224,50 @@ object InteractiveSession extends KyoApp:
 
             case "web-click" :: rest =>
                 val selector = rest.mkString(" ")
-                for _ <- Browser.click(selector)
-                yield "OK: clicked"
+                val escaped  = selector.replace("'", "\\'")
+                for
+                    r <- Browser.runJavaScript(
+                        s"var el = document.querySelector('$escaped'); if (!el) return 'ERROR: no elements match'; el.click(); return 'OK: clicked'"
+                    )
+                yield r
 
             case "web-text" :: rest =>
                 val selector = rest.mkString(" ")
-                for t <- Browser.innerText(selector)
-                yield s"OK: $t"
+                for
+                    c <- Browser.count(selector)
+                    r <-
+                        if c == 0 then Sync.defer(s"ERROR: no elements match '$selector'")
+                        else
+                            for t <- Browser.innerText(selector)
+                            yield s"OK: $t"
+                yield r
+                end for
 
-            case "web-fill" :: selector :: rest =>
-                val text = rest.mkString(" ")
-                for _ <- Browser.fill(selector, text)
-                yield "OK: filled"
+            case "web-fill" :: rest =>
+                val afterCmd         = cmd.stripPrefix("web-fill").trim
+                val (selector, text) = parseSelectorAndRest(afterCmd)
+                val escaped          = selector.replace("'", "\\'")
+                val escapedText      = text.replace("\\", "\\\\").replace("'", "\\'")
+                for
+                    r <- Browser.runJavaScript(
+                        s"var el = document.querySelector('$escaped'); if (!el) return 'ERROR: no elements match'; " +
+                            s"var proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; " +
+                            s"var setter = Object.getOwnPropertyDescriptor(proto, 'value'); " +
+                            s"if (setter && setter.set) { setter.set.call(el, '$escapedText'); } else { el.value = '$escapedText'; } " +
+                            s"el.dispatchEvent(new Event('input', {bubbles: true})); return 'OK: filled'"
+                    )
+                yield r
 
             case "web-count" :: rest =>
                 val selector = rest.mkString(" ")
                 for c <- Browser.count(selector)
                 yield s"OK: $c"
 
+            // Bug #2 fix: use count() instead of exists() to avoid waitForSelector hang
             case "web-exists" :: rest =>
                 val selector = rest.mkString(" ")
-                for e <- Browser.exists(selector)
-                yield s"OK: $e"
+                for c <- Browser.count(selector)
+                yield s"OK: ${c > 0}"
 
             case "web-screenshot" :: path :: _ =>
                 val resolved = sessionDir.resolve(path).toString
@@ -195,8 +277,12 @@ object InteractiveSession extends KyoApp:
                 yield s"OK: saved $resolved"
                 end for
 
+            // Bug #6 fix: auto-prepend 'return' if missing
             case "web-js" :: rest =>
-                val code = rest.mkString(" ")
+                val rawCode = rest.mkString(" ")
+                val code =
+                    if rawCode.trim.startsWith("return ") || rawCode.trim.startsWith("try ") then rawCode
+                    else s"return $rawCode"
                 for r <- Browser.runJavaScript(code)
                 yield s"OK: $r"
 

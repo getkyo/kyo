@@ -96,22 +96,22 @@ ScrollPane cls=[root,scroll-pane] style="-fx-background-color: transparent;" siz
                 Label cls=[label] style=" -fx-text-fill: #64748b;" text="Simple indexed iteration:" textFill=0x64748bff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
                   LabeledText cls=[text]
               VBox cls=[ol] size=672.0x75.0 maxW=MAX align=TOP_LEFT fillW=true
-                VBox size=672.0x75.0 maxW=MAX align=TOP_LEFT fillW=true
-                  HBox cls=[li] style="-fx-padding: 4 0 4 0;" size=672.0x25.0 align=TOP_LEFT
+                VBox size=652.0x75.0 maxW=MAX align=TOP_LEFT fillW=true
+                  HBox cls=[li] style="-fx-padding: 4 0 4 0;" size=652.0x25.0 align=TOP_LEFT
                     HBox cls=[span] size=19.0x17.0 align=TOP_LEFT
                       Label cls=[label] text="[0] " textFill=0x333333ff font=System/Regular/13.0 size=19.0x17.0
                         LabeledText cls=[text]
                     HBox cls=[span] style="-fx-font-weight: bold;" size=22.0x17.0 align=TOP_LEFT
                       Label cls=[label] text="Red" textFill=0x333333ff font=System/Bold/13.0 size=22.0x17.0
                         LabeledText cls=[text]
-                  HBox cls=[li] style="-fx-padding: 4 0 4 0;" size=672.0x25.0 align=TOP_LEFT
+                  HBox cls=[li] style="-fx-padding: 4 0 4 0;" size=652.0x25.0 align=TOP_LEFT
                     HBox cls=[span] size=17.0x17.0 align=TOP_LEFT
                       Label cls=[label] text="[1] " textFill=0x333333ff font=System/Regular/13.0 size=17.0x17.0
                         LabeledText cls=[text]
                     HBox cls=[span] style="-fx-font-weight: bold;" size=34.0x17.0 align=TOP_LEFT
                       Label cls=[label] text="Green" textFill=0x333333ff font=System/Bold/13.0 size=34.0x17.0
                         LabeledText cls=[text]
-                  HBox cls=[li] style="-fx-padding: 4 0 4 0;" size=672.0x25.0 align=TOP_LEFT
+                  HBox cls=[li] style="-fx-padding: 4 0 4 0;" size=652.0x25.0 align=TOP_LEFT
                     HBox cls=[span] size=19.0x17.0 align=TOP_LEFT
                       Label cls=[label] text="[2] " textFill=0x333333ff font=System/Regular/13.0 size=19.0x17.0
                         LabeledText cls=[text]
