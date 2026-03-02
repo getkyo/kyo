@@ -470,6 +470,7 @@ class JavaFxBackend(
                                     yield tf.textProperty().addListener((_, _, newVal) =>
                                         runHandler(typedRef.set(newVal), updates)
                                     )
+                                    end for
                             }
                             _ <- i.onInput.fold(noop) { f =>
                                 tf.textProperty().addListener((_, _, newVal) =>
@@ -613,13 +614,16 @@ class JavaFxBackend(
                     for
                         _ <- interruptPrev(ref)
                         fiber <- Fiber.initUnscoped {
-                            for node <- build(ui, updates, rendered)
-                            yield
-                                if isInScene(container) then
-                                    runOnFx(updates) {
-                                        container.getChildren.clear()
-                                        discard(container.getChildren.add(node))
-                                    }: Unit
+                            for
+                                node <- build(ui, updates, rendered)
+                                _ <-
+                                    if isInScene(container) then
+                                        runOnFx(updates) {
+                                            container.getChildren.clear()
+                                            discard(container.getChildren.add(node))
+                                        }
+                                    else ((): Unit < Async)
+                            yield ()
                         }
                         _ <- ref.set(Present(fiber))
                         _ <- rendered.set(ui)
@@ -636,25 +640,33 @@ class JavaFxBackend(
         for
             ref <- AtomicRef.init[Maybe[Fiber[Unit, Scope]]](Absent)
             _ <- subscribe(fi.signal.asInstanceOf[Signal[Chunk[Any]]], container) { items =>
+                java.lang.System.err.println(
+                    s"[DEBUG] foreachIndexed subscribe fired, items=${items.size}, inScene=${isInScene(container)}"
+                )
                 if !isInScene(container) then ((): Unit < (Async & Scope))
                 else
                     for
                         _ <- interruptPrev(ref)
                         fiber <- Fiber.initUnscoped {
                             val render = fi.render.asInstanceOf[(Int, Any) => UI]
-                            Kyo.foreach(items.zipWithIndex) { (item, idx) =>
-                                build(render(idx, item), updates, rendered)
-                            }.map { nodes =>
-                                if isInScene(container) then
-                                    runOnFx(updates) {
-                                        container.getChildren.clear()
-                                        discard(container.getChildren.addAll(nodes.toSeq.asJava))
-                                    }: Unit
-                            }
+                            for
+                                nodes <- Kyo.foreach(items.zipWithIndex) { (item, idx) =>
+                                    build(render(idx, item), updates, rendered)
+                                }
+                                _ <-
+                                    if isInScene(container) then
+                                        runOnFx(updates) {
+                                            container.getChildren.clear()
+                                            discard(container.getChildren.addAll(nodes.toSeq.asJava))
+                                        }
+                                    else ((): Unit < Async)
+                            yield ()
+                            end for
                         }
                         _ <- ref.set(Present(fiber))
                         _ <- rendered.set(fi)
                     yield ()
+                end if
             }
         yield ()
 
@@ -707,14 +719,13 @@ class JavaFxBackend(
         Frame,
         Tag[Emit[Chunk[A]]]
     ): Unit < (Async & Scope) =
-        var initialized = false
+        var wasInScene = false
         for
             fiber <- Fiber.initUnscoped(signal.streamChanges.takeWhile { _ =>
-                if !initialized then
-                    initialized = true
-                    true
-                else
-                    isInScene(owner)
+                val inScene = isInScene(owner)
+                if inScene then wasInScene = true
+                // only terminate if the node WAS in the scene and has been removed
+                !wasInScene || inScene
             }.foreach(f))
             _ <- Scope.ensure(fiber.interrupt.unit)
         yield ()
@@ -831,13 +842,14 @@ class JavaFxBackend(
                     for
                         _ <- interruptPrev(ref)
                         fiber <- Fiber.initUnscoped {
-                            Kyo.foreach(expandedRows.zipWithIndex) { (row, rowIdx) =>
-                                row match
-                                    case elem: Element => buildTableRowCells(elem, rowIdx, updates, rendered)
-                                    case other =>
-                                        build(other, updates, rendered).map(node => Chunk((node, 0, rowIdx)))
-                            }.map { chunks =>
-                                runOnFx(updates) {
+                            for
+                                chunks <- Kyo.foreach(expandedRows.zipWithIndex) { (row, rowIdx) =>
+                                    row match
+                                        case elem: Element => buildTableRowCells(elem, rowIdx, updates, rendered)
+                                        case other =>
+                                            build(other, updates, rendered).map(node => Chunk((node, 0, rowIdx)))
+                                }
+                                _ <- runOnFx(updates) {
                                     grid.getChildren.clear()
                                     chunks.flatten.foreach { (node, col, row) =>
                                         grid.add(node, col, row)
@@ -845,7 +857,7 @@ class JavaFxBackend(
                                             GridPane.setHalignment(node, javafx.geometry.HPos.CENTER)
                                     }
                                 }
-                            }
+                            yield ()
                         }
                         _ <- ref.set(Present(fiber))
                         _ <- rendered.set(fi)

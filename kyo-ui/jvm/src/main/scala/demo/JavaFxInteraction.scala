@@ -115,6 +115,8 @@ object JavaFxInteraction:
                 case other         => throw new RuntimeException(s"Node $selector is not a text control: ${other.getClass}")
             end match
         }
+        Thread.sleep(200) // let signal propagation complete
+    end fillText
 
     /** Type text into the Nth TextField or TextArea matching a selector (0-indexed). */
     def fillTextNth(selector: String, index: Int, text: String): Unit =
@@ -129,6 +131,8 @@ object JavaFxInteraction:
                 case other         => throw new RuntimeException(s"Node $selector[$index] is not a text control: ${other.getClass}")
             end match
         }
+        Thread.sleep(200) // let signal propagation complete
+    end fillTextNth
 
     /** Set checkbox checked state. */
     def setChecked(selector: String, checked: Boolean): Unit =

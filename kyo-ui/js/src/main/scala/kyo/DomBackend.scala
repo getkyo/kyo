@@ -465,14 +465,13 @@ class DomBackend extends UIBackend:
         Frame,
         Tag[Emit[Chunk[A]]]
     ): Unit < (Async & Scope) =
-        var initialized = false
+        var wasConnected = false
         for
             fiber <- Fiber.initUnscoped(signal.streamChanges.takeWhile { _ =>
-                if !initialized then
-                    initialized = true
-                    true
-                else
-                    owner.isConnected
+                val connected = owner.isConnected
+                if connected then wasConnected = true
+                // only terminate if the node WAS connected and has been removed
+                !wasConnected || connected
             }.foreach(f))
             _ <- Scope.ensure(fiber.interrupt.unit)
         yield ()
