@@ -24,7 +24,19 @@ object DemoApp extends KyoApp:
         "dynamic"     -> DynamicStyleUI.build,
         "tables"      -> TableAdvancedUI.build,
         "auto"        -> AutoTransitionUI.build,
-        "animated"    -> AnimatedDashboardUI.build
+        "animated"    -> AnimatedDashboardUI.build,
+        "signals"     -> SignalCombinatorUI.build,
+        "rapid"       -> RapidMutationUI.build,
+        "deepnest"    -> DeepNestingUI.build,
+        "swap"        -> SignalSwapUI.build,
+        "attrs"       -> GenericAttrUI.build,
+        "rechref"     -> ReactiveHrefUI.build,
+        "formreset"   -> FormResetUI.build,
+        "formval"     -> FormValidationUI.build,
+        "navigation"  -> NavigationUI.build,
+        "datagrid"    -> DataGridUI.build,
+        "a11y"        -> AccessibilityUI.build,
+        "cards"       -> ResponsiveCardUI.build
     )
 
     run {

@@ -25,7 +25,14 @@ object JavaFxScreenshot extends KyoApp:
         "dynamic"     -> DynamicStyleUI.build,
         "tables"      -> TableAdvancedUI.build,
         "auto"        -> AutoTransitionUI.build,
-        "animated"    -> AnimatedDashboardUI.build
+        "animated"    -> AnimatedDashboardUI.build,
+        "signals"     -> SignalCombinatorUI.build,
+        "rapid"       -> RapidMutationUI.build,
+        "deepnest"    -> DeepNestingUI.build,
+        "swap"        -> SignalSwapUI.build,
+        "attrs"       -> GenericAttrUI.build,
+        "rechref"     -> ReactiveHrefUI.build,
+        "formreset"   -> FormResetUI.build
     )
 
     run {

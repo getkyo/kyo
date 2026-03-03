@@ -1,0 +1,124 @@
+ScrollPane cls=[root,scroll-pane] style="-fx-background-color: transparent;" size=1280.0x1387.0
+   cls=[viewport] size=1278.0x1385.0
+     size=1278.0x1385.0
+      StackPane size=1278.0x858.0
+        VBox cls=[div] style="-fx-max-width: 800;" size=800.0x858.0 maxW=800.0 align=TOP_LEFT fillW=true
+          VBox cls=[header] style="-fx-background-color: #0891b2; -fx-text-fill: #ffffff; -fx-padding: 16 32 16 32;" size=800.0x71.0 align=TOP_LEFT fillW=true
+            Label cls=[label,h1] style="-fx-font-size: 32; -fx-font-weight: bold; -fx-text-fill: #ffffff;" text="Signal Combinator Tests" textFill=0xffffffff font=System/Bold/32.0 size=736.0x39.0 maxW=MAX
+              LabeledText cls=[text]
+          VBox cls=[main] style="-fx-padding: 32 32 32 32; -fx-spacing: 24;" size=800.0x787.0 align=TOP_LEFT fillW=true
+            VBox cls=[section,combined-name] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x176.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Combined Signals: Name" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #64748b;" text="Two inputs drive one derived display:" textFill=0x64748bff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 8;" size=672.0x25.0 maxW=MAX align=CENTER_LEFT
+                TextField cls=[text-input,text-field,input,first-name] size=161.0x25.0
+                  Pane size=145.0x17.0
+                    Text cls=[text]
+                    Path
+                    Text cls=[text]
+                    Group
+                      Path
+                TextField cls=[text-input,text-field,input,last-name] size=161.0x25.0
+                  Pane size=145.0x17.0
+                    Text cls=[text]
+                    Path
+                    Text cls=[text]
+                    Group
+                      Path
+              VBox cls=[div,full-name] style="-fx-padding: 12 12 12 12; -fx-background-color: #f0fdf4; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-font-weight: bold; -fx-font-size: 18; -fx-border-style: none;" size=672.0x47.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox size=648.0x23.0 maxW=MAX align=TOP_LEFT fillW=true
+                  HBox cls=[span] size=648.0x23.0 align=TOP_LEFT
+                    Label cls=[label] text="Enter a name..." textFill=0x333333ff font=System/Bold/18.0 size=110.0x23.0
+                      LabeledText cls=[text]
+            VBox cls=[section,computed] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x191.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Computed Value: Quantity × Price" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 16;" size=672.0x54.0 maxW=MAX align=CENTER_LEFT
+                VBox cls=[div] style="-fx-spacing: 4;" size=140.0x54.0 align=TOP_LEFT fillW=true
+                  Label cls=[label,label] text="Quantity:" textFill=0x333333ff font=System/Regular/13.0 size=140.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                  HBox cls=[div] style="-fx-spacing: 8;" size=140.0x33.0 maxW=MAX align=CENTER_LEFT
+                    Button cls=[button,button,qty-minus] style="-fx-background-color: #2563eb; -fx-text-fill: #ffffff; -fx-padding: 8 20 8 20; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none; -fx-cursor: pointer;" text="-" textFill=0xffffffff font=System/Regular/13.0 size=46.0x33.0
+                      LabeledText cls=[text]
+                    HBox cls=[span,qty-value] style="-fx-font-weight: bold; -fx-font-size: 18; -fx-min-width: 30; -fx-text-alignment: center;" size=30.0x23.0 align=TOP_LEFT
+                      Label cls=[label] text="1" textFill=0x333333ff font=System/Bold/18.0 size=8.0x23.0 maxW=MAX
+                        LabeledText cls=[text]
+                    Button cls=[button,button,qty-plus] style="-fx-background-color: #2563eb; -fx-text-fill: #ffffff; -fx-padding: 8 20 8 20; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none; -fx-cursor: pointer;" text="+" textFill=0xffffffff font=System/Regular/13.0 size=48.0x33.0
+                      LabeledText cls=[text]
+                VBox cls=[div] style="-fx-spacing: 4;" size=166.0x54.0 align=TOP_LEFT fillW=true
+                  Label cls=[label,label] text="Price:" textFill=0x333333ff font=System/Regular/13.0 size=166.0x17.0 maxW=MAX
+                    LabeledText cls=[text]
+                  HBox cls=[div] style="-fx-spacing: 8;" size=166.0x33.0 maxW=MAX align=CENTER_LEFT
+                    Button cls=[button,button,price-minus] style="-fx-background-color: #2563eb; -fx-text-fill: #ffffff; -fx-padding: 8 20 8 20; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none; -fx-cursor: pointer;" text="-5" textFill=0xffffffff font=System/Regular/13.0 size=54.0x33.0
+                      LabeledText cls=[text]
+                    HBox cls=[span,price-value] style="-fx-font-weight: bold; -fx-font-size: 18; -fx-min-width: 40; -fx-text-alignment: center;" size=40.0x23.0 align=TOP_LEFT
+                      Label cls=[label] text="$10" textFill=0x333333ff font=System/Bold/18.0 size=30.0x23.0 maxW=MAX
+                        LabeledText cls=[text]
+                    Button cls=[button,button,price-plus] style="-fx-background-color: #2563eb; -fx-text-fill: #ffffff; -fx-padding: 8 20 8 20; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none; -fx-cursor: pointer;" text="+5" textFill=0xffffffff font=System/Regular/13.0 size=56.0x33.0
+                      LabeledText cls=[text]
+              VBox cls=[div,total] style="-fx-padding: 12 12 12 12; -fx-background-color: #fef3c7; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-font-weight: bold; -fx-font-size: 20; -fx-border-style: none;" size=672.0x50.0 maxW=MAX align=TOP_LEFT fillW=true
+                VBox size=648.0x26.0 maxW=MAX align=TOP_LEFT fillW=true
+                  HBox cls=[span] size=648.0x26.0 align=TOP_LEFT
+                    Label cls=[label] text="Total: $10" textFill=0x333333ff font=System/Bold/20.0 size=84.0x26.0
+                      LabeledText cls=[text]
+            VBox cls=[section,filters] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x122.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Combined Filters" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #64748b;" text="Two toggles filter the same list:" textFill=0x64748bff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              HBox cls=[div] style="-fx-spacing: 16;" size=672.0x18.0 maxW=MAX align=CENTER_LEFT
+                HBox cls=[div] style="-fx-spacing: 4;" size=200.0x18.0 align=CENTER_LEFT
+                  CheckBox cls=[check-box,input,filter-a] textFill=0x333333ff font=System/Regular/13.0 size=18.0x18.0
+                    LabeledText cls=[text]
+                    StackPane cls=[box] size=18.0x18.0
+                      StackPane cls=[mark] size=13.0x13.0
+                  Label cls=[label,label] text="Show A-C (Alpha, Beta, Gamma)" textFill=0x333333ff font=System/Regular/13.0 size=178.0x17.0
+                    LabeledText cls=[text]
+                HBox cls=[div] style="-fx-spacing: 4;" size=112.0x18.0 align=CENTER_LEFT
+                  CheckBox cls=[check-box,input,filter-b] textFill=0x333333ff font=System/Regular/13.0 size=18.0x18.0
+                    LabeledText cls=[text]
+                    StackPane cls=[box] size=18.0x18.0
+                      StackPane cls=[mark] size=13.0x13.0
+                  Label cls=[label,label] text="Show D+ (Delta)" textFill=0x333333ff font=System/Regular/13.0 size=90.0x17.0
+                    LabeledText cls=[text]
+              HBox cls=[div,filter-results] style="-fx-spacing: 4;" size=672.0x-0.0 maxW=MAX align=CENTER_LEFT
+                HBox align=TOP_LEFT
+                  VBox align=TOP_LEFT fillW=true
+                    VBox align=TOP_LEFT fillW=true
+                  VBox align=TOP_LEFT fillW=true
+                    VBox align=TOP_LEFT fillW=true
+                  VBox align=TOP_LEFT fillW=true
+                    VBox align=TOP_LEFT fillW=true
+                  VBox align=TOP_LEFT fillW=true
+            VBox cls=[section,rapid] style="-fx-background-color: #ffffff; -fx-padding: 24 32 24 32; -fx-background-insets: 0; -fx-background-radius: 8 8 8 8; -fx-border-radius: 8 8 8 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 3, 0, 0, 1); -fx-border-style: none;" size=736.0x162.0 maxW=MAX align=TOP_LEFT fillW=true
+              Label cls=[label,h3] style="-fx-font-size: 18; -fx-font-weight: bold;" text="Rapid Sequential Updates" textFill=0x333333ff font=System/Bold/18.0 size=672.0x23.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[p] style="-fx-font-size: 13; -fx-text-fill: #64748b;" size=672.0x17.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] style=" -fx-text-fill: #64748b;" text="Click sets quantity to 0 then increments" textFill=0x64748bff font=System/Regular/13.0 size=672.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+              Button cls=[button,button,rapid-btn] style="-fx-background-color: #2563eb; -fx-text-fill: #ffffff; -fx-padding: 8 20 8 20; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none; -fx-cursor: pointer;" text="Reset & Add 5" textFill=0xffffffff font=System/Regular/13.0 size=672.0x33.0 maxW=MAX
+                LabeledText cls=[text]
+              VBox cls=[div,rapid-result] style="-fx-padding: 8 8 8 8; -fx-background-color: #f0f9ff; -fx-background-insets: 0; -fx-background-radius: 4 4 4 4; -fx-border-radius: 4 4 4 4; -fx-border-style: none;" size=672.0x33.0 maxW=MAX align=TOP_LEFT fillW=true
+                Label cls=[label] text="Quantity after rapid updates: 1" textFill=0x333333ff font=System/Regular/13.0 size=656.0x17.0 maxW=MAX
+                  LabeledText cls=[text]
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=20.0x98.0
+     cls=[increment-button] size=20.0x11.0
+      Region cls=[increment-arrow] size=9.0x5.0
+     cls=[decrement-button] size=20.0x11.0
+      Region cls=[decrement-arrow] size=9.0x5.0
+    StackPane cls=[track] size=20.0x76.0
+     cls=[thumb] size=20.0x76.0
+  ScrollBar cls=[scroll-bar] size=20.0x100.0
+    StackPane cls=[track-background] size=18.0x100.0
+     cls=[increment-button] size=11.0x100.0
+      Region cls=[increment-arrow] size=5.0x9.0
+     cls=[decrement-button] size=11.0x100.0
+      Region cls=[decrement-arrow] size=5.0x9.0
+    StackPane cls=[track] size=-4.0x100.0
+     cls=[thumb] size=21.0x100.0
+  StackPane cls=[corner]

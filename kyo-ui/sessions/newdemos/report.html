@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UI Validation Report — New Demos</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+.header { background: #1e293b; color: white; padding: 20px 32px; }
+.header h1 { font-size: 24px; }
+.header p { color: #94a3b8; font-size: 14px; margin-top: 4px; }
+.tabs { display: flex; gap: 0; background: #334155; padding: 0 32px; overflow-x: auto; }
+.tab { padding: 12px 20px; color: #94a3b8; cursor: pointer; border-bottom: 3px solid transparent; font-size: 14px; white-space: nowrap; }
+.tab:hover { color: white; }
+.tab.active { color: white; border-bottom-color: #3b82f6; }
+.content { max-width: 1400px; margin: 0 auto; padding: 24px; }
+.panel { display: none; }
+.panel.active { display: block; }
+.screenshots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+.screenshot-box { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.screenshot-box h3 { padding: 12px 16px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 14px; }
+.screenshot-box img { width: 100%; max-height: calc(100vh - 180px); object-fit: contain; object-position: top; }
+.findings { background: white; border-radius: 8px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.findings h3 { margin-bottom: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 16px; }
+th, td { padding: 8px 12px; border: 1px solid #e2e8f0; text-align: left; }
+th { background: #f8fafc; font-weight: 600; }
+.pass { color: #16a34a; font-weight: bold; }
+.fail { color: #dc2626; font-weight: bold; }
+.skip { color: #94a3b8; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+.dot-pass { background: #16a34a; }
+.dot-fail { background: #dc2626; }
+.dot-warn { background: #f59e0b; }
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.summary-card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.summary-card h4 { font-size: 12px; color: #64748b; text-transform: uppercase; }
+.summary-card .value { font-size: 28px; font-weight: bold; margin-top: 4px; }
+.bug-list { list-style: none; }
+.bug-list li { padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
+.bug-list li:last-child { border-bottom: none; }
+.severity-critical { color: #dc2626; font-weight: bold; }
+.severity-high { color: #f59e0b; font-weight: bold; }
+.severity-medium { color: #3b82f6; }
+</style>
+</head>
+<body>
+<div class="header">
+<h1>UI Validation Report — New Demos</h1>
+<p>Session: newdemos | Date: 2026-03-02 | 7 UIs, 52 tests planned, 33 executed</p>
+</div>
+<div class="tabs" id="tabs">
+<div class="tab active" onclick="showTab('summary')">Summary</div>
+<div class="tab" onclick="showTab('attrs')">attrs</div>
+<div class="tab" onclick="showTab('formreset')">formreset</div>
+<div class="tab" onclick="showTab('signals')">signals</div>
+<div class="tab" onclick="showTab('rapid')">rapid</div>
+<div class="tab" onclick="showTab('deepnest')">deepnest</div>
+<div class="tab" onclick="showTab('swap')">swap</div>
+<div class="tab" onclick="showTab('rechref')">rechref</div>
+</div>
+<div class="content">
+
+<!-- Summary -->
+<div class="panel active" id="panel-summary">
+<div class="summary-grid">
+<div class="summary-card"><h4>Tests Executed</h4><div class="value">33 / 52</div></div>
+<div class="summary-card"><h4>JFX Pass</h4><div class="value" style="color:#16a34a">19</div></div>
+<div class="summary-card"><h4>JFX Fail</h4><div class="value" style="color:#dc2626">5</div></div>
+<div class="summary-card"><h4>Web Pass</h4><div class="value" style="color:#16a34a">6</div></div>
+<div class="summary-card"><h4>Web Fail</h4><div class="value" style="color:#dc2626">7</div></div>
+<div class="summary-card"><h4>Bugs Found</h4><div class="value" style="color:#dc2626">6</div></div>
+</div>
+<div class="findings">
+<h3>Critical Bugs</h3>
+<ul class="bug-list">
+<li><span class="severity-critical">CRITICAL</span> — <strong>Signal[UI] doesn't render on Web</strong>: All `signal.map { ... : UI }` content renders empty in interactive mode. Affects: signals (name, total), swap (view content), deepnest (all sections). Static screenshots work due to timing.</li>
+<li><span class="severity-critical">CRITICAL</span> — <strong>Mutating foreach inside Signal[UI] crashes JFX</strong>: Adding items to a foreachIndexed/foreachKeyed nested inside Signal[UI] causes session hang/crash. Affects: deepnest (Add Fruit), swap (Add item).</li>
+<li><span class="severity-high">HIGH</span> — <strong>items.map() reactive text stale</strong>: `items.map(c => ...)` derived signal doesn't update when items changes, even though foreachKeyed re-renders. Affects: rapid (item count).</li>
+<li><span class="severity-high">HIGH</span> — <strong>UI.when inside foreach not rendering on JFX</strong>: Per-item conditional rendering via UI.when inside foreach callback doesn't show. Affects: signals (filter tags).</li>
+<li><span class="severity-medium">MEDIUM</span> — <strong>.on() event handler not implemented on JFX</strong>: Generic `.on("click", ...)` doesn't fire. Affects: attrs.</li>
+<li><span class="severity-medium">MEDIUM</span> — <strong>Programmatic reset doesn't update JFX preview</strong>: `signal.set("")` doesn't propagate to reactive text. Affects: formreset (Clear All).</li>
+</ul>
+</div>
+</div>
+
+<!-- attrs -->
+<div class="panel" id="panel-attrs">
+<div class="screenshots">
+<div class="screenshot-box"><h3><span class="dot dot-pass"></span>JavaFX</h3><img src="static/javafx-attrs.png"></div>
+<div class="screenshot-box"><h3><span class="dot dot-pass"></span>Web</h3><img src="static/web-attrs.png"></div>
+</div>
+<div class="findings">
+<h3>Test Results</h3>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>1</td><td>Cycle attribute value</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>2</td><td>Cycle again</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>3</td><td>Title input</td><td class="skip">N/A</td><td class="pass">PASS</td><td>JFX title attr not verifiable</td></tr>
+<tr><td>4</td><td>.on('click') handler</td><td class="fail">FAIL</td><td class="pass">PASS</td><td>.on() not implemented on JFX</td></tr>
+</table>
+</div>
+</div>
+
+<!-- formreset -->
+<div class="panel" id="panel-formreset">
+<div class="screenshots">
+<div class="screenshot-box"><h3><span class="dot dot-pass"></span>JavaFX</h3><img src="static/javafx-formreset.png"></div>
+<div class="screenshot-box"><h3><span class="dot dot-pass"></span>Web</h3><img src="static/web-formreset.png"></div>
+</div>
+<div class="findings">
+<h3>Test Results</h3>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>6</td><td>Fill name</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>7</td><td>Fill email</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>9</td><td>Submit</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>10</td><td>Clear All</td><td class="fail">FAIL</td><td class="pass">PASS</td><td>JFX programmatic reset doesn't clear</td></tr>
+<tr><td>12</td><td>Save Settings</td><td class="skip">SKIP</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>13</td><td>Reset Defaults</td><td class="skip">SKIP</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>14</td><td>Clear History</td><td class="skip">SKIP</td><td class="pass">PASS</td><td></td></tr>
+</table>
+</div>
+</div>
+
+<!-- signals -->
+<div class="panel" id="panel-signals">
+<div class="screenshots">
+<div class="screenshot-box"><h3><span class="dot dot-pass"></span>JavaFX</h3><img src="static/javafx-signals.png"></div>
+<div class="screenshot-box"><h3><span class="dot dot-warn"></span>Web</h3><img src="static/web-signals.png"></div>
+</div>
+<div class="findings">
+<h3>Test Results</h3>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>15</td><td>Fill first name</td><td class="pass">PASS</td><td class="fail">FAIL</td><td>Web Signal[UI] empty</td></tr>
+<tr><td>16</td><td>Fill last name</td><td class="pass">PASS</td><td class="fail">FAIL</td><td></td></tr>
+<tr><td>17</td><td>Qty +</td><td class="pass">PASS</td><td class="pass">PASS</td><td>Web needs async delay</td></tr>
+<tr><td>19</td><td>Price +5</td><td class="pass">PASS</td><td class="fail">FAIL</td><td>Web total empty (Signal[UI])</td></tr>
+<tr><td>21</td><td>Rapid update</td><td class="pass">PASS</td><td class="skip">SKIP</td><td></td></tr>
+<tr><td>22</td><td>Filter tags</td><td class="fail">FAIL</td><td class="pass">PASS</td><td>JFX UI.when in foreach</td></tr>
+</table>
+</div>
+</div>
+
+<!-- rapid -->
+<div class="panel" id="panel-rapid">
+<div class="screenshots">
+<div class="screenshot-box"><h3><span class="dot dot-pass"></span>JavaFX</h3><img src="static/javafx-rapid.png"></div>
+<div class="screenshot-box"><h3><span class="dot dot-warn"></span>Web</h3><img src="static/web-rapid.png"></div>
+</div>
+<div class="findings">
+<h3>Test Results</h3>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>23</td><td>Initial items</td><td class="pass">PASS</td><td class="pass">PASS</td><td></td></tr>
+<tr><td>24</td><td>Add item</td><td class="fail">FAIL</td><td class="fail">FAIL</td><td>Count stale; web crashes</td></tr>
+<tr><td>25</td><td>Remove First</td><td class="pass">PASS</td><td class="skip">SKIP</td><td></td></tr>
+<tr><td>27</td><td>Clear All</td><td class="pass">PASS</td><td class="skip">SKIP</td><td></td></tr>
+<tr><td>28</td><td>Burst Add 5</td><td class="fail">FAIL</td><td class="skip">SKIP</td><td>Items render but count stale</td></tr>
+</table>
+</div>
+</div>
+
+<!-- deepnest -->
+<div class="panel" id="panel-deepnest">
+<div class="screenshots">
+<div class="screenshot-box"><h3><span class="dot dot-pass"></span>JavaFX</h3><img src="static/javafx-deepnest.png"></div>
+<div class="screenshot-box"><h3><span class="dot dot-warn"></span>Web</h3><img src="static/web-deepnest.png"></div>
+</div>
+<div class="findings">
+<h3>Test Results</h3>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>32</td><td>Initial categories</td><td class="pass">PASS</td><td class="fail">FAIL</td><td>Web Signal[UI]+foreach empty</td></tr>
+<tr><td>33</td><td>Switch to Grid</td><td class="pass">PASS</td><td class="skip">SKIP</td><td></td></tr>
+<tr><td>34</td><td>Switch to List</td><td class="pass">PASS</td><td class="skip">SKIP</td><td></td></tr>
+<tr><td>35</td><td>Add Fruit</td><td class="fail">FAIL</td><td class="skip">SKIP</td><td>JFX CRASH</td></tr>
+</table>
+</div>
+</div>
+
+<!-- swap -->
+<div class="panel" id="panel-swap">
+<div class="screenshots">
+<div class="screenshot-box"><h3><span class="dot dot-pass"></span>JavaFX</h3><img src="static/javafx-swap.png"></div>
+<div class="screenshot-box"><h3><span class="dot dot-warn"></span>Web</h3><img src="static/web-swap.png"></div>
+</div>
+<div class="findings">
+<h3>Test Results</h3>
+<table>
+<tr><th>#</th><th>Test</th><th>JFX</th><th>Web</th><th>Notes</th></tr>
+<tr><td>42</td><td>Initial Tasks</td><td class="pass">PASS</td><td class="fail">FAIL</td><td>Web Signal[UI] empty</td></tr>
+<tr><td>43</td><td>Notes view</td><td class="pass">PASS</td><td class="skip">SKIP</td><td></td></tr>
+<tr><td>44</td><td>Tags view</td><td class="pass">PASS</td><td class="skip">SKIP</td><td></td></tr>
+<tr><td>45</td><td>Back to Tasks</td><td class="pass">PASS</td><td class="skip">SKIP</td><td></td></tr>
+<tr><td>46</td><td>Add item</td><td class="fail">FAIL</td><td class="skip">SKIP</td><td>JFX CRASH</td></tr>
+</table>
+</div>
+</div>
+
+<!-- rechref -->
+<div class="panel" id="panel-rechref">
+<div class="screenshots">
+<div class="screenshot-box"><h3><span class="dot dot-warn"></span>JavaFX</h3><img src="static/javafx-rechref.png"></div>
+<div class="screenshot-box"><h3><span class="dot dot-pass"></span>Web</h3><img src="static/web-rechref.png"></div>
+</div>
+<div class="findings">
+<h3>Not tested interactively</h3>
+<p>Skipped due to session crashes consuming test budget. Static screenshots show JFX has foreach rendering issues in sections 2 and 3.</p>
+</div>
+</div>
+
+</div>
+
+<script>
+function showTab(name) {
+  var tabs = document.querySelectorAll('.tab');
+  var panels = document.querySelectorAll('.panel');
+  var i;
+  for (i = 0; i < tabs.length; i++) { tabs[i].className = 'tab'; }
+  for (i = 0; i < panels.length; i++) { panels[i].className = 'panel'; }
+  var tabEls = document.querySelectorAll('.tab');
+  for (i = 0; i < tabEls.length; i++) {
+    if (tabEls[i].textContent.trim() === name || (name === 'summary' && tabEls[i].textContent.trim() === 'Summary')) {
+      tabEls[i].className = 'tab active';
+    }
+  }
+  var panel = document.getElementById('panel-' + name);
+  if (panel) { panel.className = 'panel active'; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+jfx-text .qty-value

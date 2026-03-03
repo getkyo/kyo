@@ -104,6 +104,20 @@ kyo-ui/sessions/<session-name>/
 
 The `JavaFxScreenshot` and `DemoApp` both have a registry of UIs. When adding a new UI, register it in **both** files plus `InteractiveSession.scala`.
 
+### UIs Under Test (this session)
+
+**Only test these 7 new UIs** — do NOT test the original demos (demo, form, reactive, nested, collections, etc.). Those have been validated in prior sessions.
+
+| Name | Key | What it tests |
+|------|-----|---------------|
+| SignalCombinatorUI | `signals` | Multiple signals combined into one display, computed values, combined filters, rapid sequential updates |
+| RapidMutationUI | `rapid` | Rapid add/remove on foreachKeyed, burst adds, toggle visibility while mutating, operation log |
+| DeepNestingUI | `deepnest` | foreach inside foreach inside Signal[UI], UI.when inside foreach, repeated toggle cycles for fiber cleanup |
+| SignalSwapUI | `swap` | Signal[UI] switching between different foreachIndexed views with different signals, rapid view cycling |
+| GenericAttrUI | `attrs` | Generic .attr() (static + reactive), .on() event handler, data-* attributes, reactive title |
+| ReactiveHrefUI | `rechref` | Reactive a.href(Signal), UI.fragment in static/foreach/Signal[UI] contexts, fragment + mutation |
+| FormResetUI | `formreset` | Form fill/submit/clear round-trips, mixed input types (text/select/checkbox), programmatic reset to defaults |
+
 ## Task Tracking
 
 At the start of this procedure, create a task list using `TaskCreate` to track progress. Mark tasks `in_progress` when starting, `completed` when done. This ensures no phase is skipped.

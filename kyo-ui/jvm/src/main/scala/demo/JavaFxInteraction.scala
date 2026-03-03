@@ -82,8 +82,9 @@ object JavaFxInteraction:
             case cb: javafx.scene.control.CheckBox     => cb.fire()
             case tb: javafx.scene.control.ToggleButton => tb.fire()
             case _ =>
-                val event = new MouseEvent(
-                    MouseEvent.MOUSE_CLICKED,
+                val pickResult = new javafx.scene.input.PickResult(node, new javafx.geometry.Point3D(0, 0, 0), 0)
+                def mkEvent(eventType: javafx.event.EventType[? <: MouseEvent]) = new MouseEvent(
+                    eventType,
                     0,
                     0,
                     0,
@@ -100,9 +101,11 @@ object JavaFxInteraction:
                     false,
                     false,
                     false,
-                    null
+                    pickResult
                 )
-                node.fireEvent(event)
+                node.fireEvent(mkEvent(MouseEvent.MOUSE_PRESSED))
+                node.fireEvent(mkEvent(MouseEvent.MOUSE_RELEASED))
+                node.fireEvent(mkEvent(MouseEvent.MOUSE_CLICKED))
 
     /** Type text into a TextField or TextArea found by CSS selector. */
     def fillText(selector: String, text: String): Unit =

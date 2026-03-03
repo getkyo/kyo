@@ -137,10 +137,15 @@ class JavaFxBackend(
 
             case rt @ ReactiveText(signal) =>
                 val label = new JLabel("")
-                subscribe(signal, label) { v =>
-                    runOnFx(updates)(label.setText(v))
-                        .andThen(rendered.set(rt).unit)
-                }.map(_ => label: Node)
+                for
+                    initial <- signal.currentWith(a => a)
+                    _ = label.setText(initial)
+                    _ <- subscribe(signal, label) { v =>
+                        runOnFx(updates)(label.setText(v))
+                            .andThen(rendered.set(rt).unit)
+                    }
+                yield label: Node
+                end for
 
             case ReactiveNode(signal) =>
                 val container = makeContainer()
@@ -400,6 +405,16 @@ class JavaFxBackend(
                     if !focused then runHandler(action, updates)
                 ); noop
             }
+            _ <- Kyo.foreach(c.handlers.toSeq) { (name, action) =>
+                name match
+                    case "click" =>
+                        node.setOnMouseClicked(_ => runHandler(action, updates)); noop
+                    case "mouseenter" =>
+                        node.setOnMouseEntered(_ => runHandler(action, updates)); noop
+                    case "mouseleave" =>
+                        node.setOnMouseExited(_ => runHandler(action, updates)); noop
+                    case _ => noop
+            }.unit
         yield ()
     end applyCommon
 
@@ -607,27 +622,28 @@ class JavaFxBackend(
         rendered: SignalRef[UI]
     )(using Frame): Unit < (Async & Scope) =
         for
-            ref <- AtomicRef.init[Maybe[Fiber[Unit, Scope]]](Absent)
-            _ <- subscribe(signal, container) { ui =>
-                if !isInScene(container) then ((): Unit < (Async & Scope))
-                else
-                    for
-                        _ <- interruptPrev(ref)
-                        fiber <- Fiber.initUnscoped {
-                            for
-                                node <- build(ui, updates, rendered)
-                                _ <-
-                                    if isInScene(container) then
-                                        runOnFx(updates) {
-                                            container.getChildren.clear()
-                                            discard(container.getChildren.add(node))
-                                        }
-                                    else ((): Unit < Async)
-                            yield ()
-                        }
-                        _ <- ref.set(Present(fiber))
-                        _ <- rendered.set(ui)
-                    yield ()
+            // Render initial value synchronously
+            initial <- signal.currentWith(a => a)
+            node    <- build(initial, updates, rendered)
+            _       <- addChildren(container, Chunk(node), updates)
+            _       <- rendered.set(initial)
+            // Track previous build fiber to interrupt on re-render
+            buildRef <- AtomicRef.init[Maybe[Fiber[Unit, Scope]]](Absent)
+            // Subscribe for subsequent changes — build asynchronously to avoid deadlock
+            // during signal notification (build creates nested subscriptions that can deadlock
+            // if run synchronously inside a signal's change callback)
+            _ <- subscribeChanges(signal, container) { ui =>
+                for
+                    _ <- interruptPrev(buildRef)
+                    fiber <- Fiber.initUnscoped {
+                        for
+                            node <- build(ui, updates, rendered)
+                            _    <- addChildren(container, Chunk(node), updates)
+                            _    <- rendered.set(ui)
+                        yield ()
+                    }
+                    _ <- buildRef.set(Present(fiber))
+                yield ()
             }
         yield ()
 
@@ -637,38 +653,29 @@ class JavaFxBackend(
         updates: Channel[() => Unit],
         rendered: SignalRef[UI]
     )(using Frame): Unit < (Async & Scope) =
+        val render = fi.render.asInstanceOf[(Int, Any) => UI]
+        val signal = fi.signal.asInstanceOf[Signal[Chunk[Any]]]
         for
-            ref <- AtomicRef.init[Maybe[Fiber[Unit, Scope]]](Absent)
-            _ <- subscribe(fi.signal.asInstanceOf[Signal[Chunk[Any]]], container) { items =>
-                java.lang.System.err.println(
-                    s"[DEBUG] foreachIndexed subscribe fired, items=${items.size}, inScene=${isInScene(container)}"
-                )
-                if !isInScene(container) then ((): Unit < (Async & Scope))
-                else
-                    for
-                        _ <- interruptPrev(ref)
-                        fiber <- Fiber.initUnscoped {
-                            val render = fi.render.asInstanceOf[(Int, Any) => UI]
-                            for
-                                nodes <- Kyo.foreach(items.zipWithIndex) { (item, idx) =>
-                                    build(render(idx, item), updates, rendered)
-                                }
-                                _ <-
-                                    if isInScene(container) then
-                                        runOnFx(updates) {
-                                            container.getChildren.clear()
-                                            discard(container.getChildren.addAll(nodes.toSeq.asJava))
-                                        }
-                                    else ((): Unit < Async)
-                            yield ()
-                            end for
-                        }
-                        _ <- ref.set(Present(fiber))
-                        _ <- rendered.set(fi)
-                    yield ()
-                end if
+            // Render initial value synchronously
+            initial <- signal.currentWith(a => a)
+            nodes <- Kyo.foreach(initial.zipWithIndex) { (item, idx) =>
+                build(render(idx, item), updates, rendered)
+            }
+            _ <- addChildren(container, nodes, updates)
+            _ <- rendered.set(fi)
+            // Subscribe for subsequent changes asynchronously
+            _ <- subscribeChanges(signal, container) { items =>
+                for
+                    nodes <- Kyo.foreach(items.zipWithIndex) { (item, idx) =>
+                        build(render(idx, item), updates, rendered)
+                    }
+                    _ <- addChildren(container, nodes, updates)
+                    _ <- rendered.set(fi)
+                yield ()
             }
         yield ()
+        end for
+    end subscribeForeach
 
     private def subscribeKeyed(
         container: Pane,
@@ -681,33 +688,53 @@ class JavaFxBackend(
         val render = fk.render.asInstanceOf[(Int, Any) => UI]
         for
             nodeMap <- AtomicRef.init(Map.empty[String, Node])
-            _ <- subscribe(signal, container) { items =>
-                if !isInScene(container) then ((): Unit < (Async & Scope))
-                else
-                    for
-                        oldMap <- nodeMap.get
-                        result <- Kyo.foreach(items.zipWithIndex) { (item, idx) =>
-                            val k = key(item)
-                            oldMap.get(k) match
-                                case scala.Some(existing) =>
-                                    (k, existing): (String, Node) < (Async & Scope)
-                                case scala.None =>
-                                    for node <- build(render(idx, item), updates, rendered)
-                                    yield (k, node)
-                            end match
-                        }
-                        newMap = result.toSeq.toMap
-                        _ <- runOnFx(updates) {
-                            container.getChildren.clear()
-                            result.foreach((_, node) => container.getChildren.add(node))
-                        }
-                        _ <- nodeMap.set(newMap)
-                        _ <- rendered.set(fk)
-                    yield ()
+            // Render initial value synchronously
+            initial <- signal.currentWith(a => a)
+            initialResult <- Kyo.foreach(initial.zipWithIndex) { (item, idx) =>
+                val k = key(item)
+                for node <- build(render(idx, item), updates, rendered)
+                yield (k, node)
+            }
+            initialMap = initialResult.toSeq.toMap
+            _ <- addChildren(container, initialResult.map(_._2), updates)
+            _ <- nodeMap.set(initialMap)
+            _ <- rendered.set(fk)
+            // Subscribe for subsequent changes asynchronously
+            _ <- subscribeChanges(signal, container) { items =>
+                for
+                    oldMap <- nodeMap.get
+                    result <- Kyo.foreach(items.zipWithIndex) { (item, idx) =>
+                        val k = key(item)
+                        oldMap.get(k) match
+                            case scala.Some(existing) =>
+                                (k, existing): (String, Node) < (Async & Scope)
+                            case scala.None =>
+                                for node <- build(render(idx, item), updates, rendered)
+                                yield (k, node)
+                        end match
+                    }
+                    newMap = result.toSeq.toMap
+                    _ <- addChildren(container, result.map(_._2), updates)
+                    _ <- nodeMap.set(newMap)
+                    _ <- rendered.set(fk)
+                yield ()
             }
         yield ()
         end for
     end subscribeKeyed
+
+    /** Add children to container, using runOnFx if in scene, or directly if still being built. */
+    private def addChildren(container: Pane, nodes: Chunk[Node], updates: Channel[() => Unit])(using Frame): Unit < Async =
+        if isInScene(container) then
+            runOnFx(updates) {
+                container.getChildren.clear()
+                discard(container.getChildren.addAll(nodes.toSeq.asJava))
+            }
+        else
+            import AllowUnsafe.embrace.danger
+            container.getChildren.clear()
+            discard(container.getChildren.addAll(nodes.toSeq.asJava))
+            ((): Unit < Async)
 
     private def interruptPrev(ref: AtomicRef[Maybe[Fiber[Unit, Scope]]])(using Frame): Unit < (Async & Scope) =
         ref.get.map {
@@ -719,24 +746,36 @@ class JavaFxBackend(
         Frame,
         Tag[Emit[Chunk[A]]]
     ): Unit < (Async & Scope) =
+        subscribeStream(signal.streamChanges, owner)(f)
+
+    /** Subscribe to changes only (drop initial value). Use when initial value is handled synchronously by caller. */
+    private def subscribeChanges[A](signal: Signal[A], owner: Node)(f: A => Unit < (Async & Scope))(using
+        Frame,
+        Tag[Emit[Chunk[A]]]
+    ): Unit < (Async & Scope) =
+        subscribeStream(signal.streamChanges.drop(1), owner)(f)
+
+    private def subscribeStream[A](stream: Stream[A, Async & Scope], owner: Node)(f: A => Unit < (Async & Scope))(using
+        Frame,
+        Tag[Emit[Chunk[A]]]
+    ): Unit < (Async & Scope) =
         var wasInScene = false
         for
-            fiber <- Fiber.initUnscoped(signal.streamChanges.takeWhile { _ =>
+            fiber <- Fiber.initUnscoped(stream.takeWhile { _ =>
                 val inScene = isInScene(owner)
                 if inScene then wasInScene = true
-                // only terminate if the node WAS in the scene and has been removed
                 !wasInScene || inScene
             }.foreach(f))
             _ <- Scope.ensure(fiber.interrupt.unit)
         yield ()
         end for
-    end subscribe
+    end subscribeStream
 
     /** Recursively find all JButton instances within a Pane and wire their click to trigger the form's onSubmit. */
     private def wireFormSubmitButtons(pane: Pane, action: Unit < Async, updates: Channel[() => Unit])(using Frame): Unit =
         pane.getChildren.forEach { child =>
             child match
-                case btn: JButton =>
+                case btn: JButton if btn.getOnMouseClicked == null =>
                     btn.setOnMouseClicked { _ =>
                         runHandler(action, updates)
                     }
