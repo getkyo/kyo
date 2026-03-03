@@ -2,8 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-// Backend implementations wired in the Netty backend commit
 private[kyo] object HttpPlatformBackend:
-    lazy val client: HttpBackend.Client = ???
-    lazy val server: HttpBackend.Server = ???
+    lazy val client: HttpBackend.Client = new NettyClientBackend
+    lazy val server: HttpBackend.Server = new NettyServerBackend
 end HttpPlatformBackend
