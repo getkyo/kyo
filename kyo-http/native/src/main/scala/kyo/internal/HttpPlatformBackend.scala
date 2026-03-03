@@ -2,8 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-// Backend implementations wired in the libcurl/H2O backend commit
 private[kyo] object HttpPlatformBackend:
-    lazy val client: HttpBackend.Client = ???
-    lazy val server: HttpBackend.Server = ???
+    lazy val client: HttpBackend.Client = new CurlClientBackend(daemon = true)
+    lazy val server: HttpBackend.Server = new H2oServerBackend
 end HttpPlatformBackend
