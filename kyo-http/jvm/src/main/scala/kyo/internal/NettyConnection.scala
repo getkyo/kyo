@@ -1,0 +1,406 @@
+package kyo.internal
+
+import io.netty.buffer.Unpooled
+import io.netty.channel.{Channel as NettyChannel, *}
+import io.netty.handler.codec.http.DefaultFullHttpRequest
+import io.netty.handler.codec.http.DefaultHttpContent
+import io.netty.handler.codec.http.DefaultHttpRequest
+import io.netty.handler.codec.http.FullHttpResponse
+import io.netty.handler.codec.http.HttpContent
+import io.netty.handler.codec.http.HttpMethod as NettyHttpMethod
+import io.netty.handler.codec.http.HttpObject
+import io.netty.handler.codec.http.HttpObjectAggregator
+import io.netty.handler.codec.http.HttpResponse as NettyHttpResponse
+import io.netty.handler.codec.http.HttpVersion
+import io.netty.handler.codec.http.LastHttpContent
+import kyo.*
+
+final private[kyo] class NettyConnection(
+    val channel: NettyChannel,
+    val host: String,
+    val port: Int
+):
+
+    // Pre-computed host header value to avoid per-request string interpolation
+    private val hostHeaderValue: String =
+        if port == 80 || port == 443 then host
+        else s"$host:$port"
+
+    // Cached headers for outgoing requests — safe because connection pool ensures sequential access.
+    private val cachedHeaders  = new FlatNettyHttpHeaders(new Array[String](32))
+    private val cachedTrailers = new FlatNettyHttpHeaders(new Array[String](4))
+
+    // cachedHeaders/cachedTrailers are reused across requests — connection pool ensures sequential access.
+
+    def sendWith[In, Out, A](
+        route: HttpRoute[In, Out, ?],
+        request: HttpRequest[In],
+        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
+    )(
+        f: HttpResponse[Out] => A < (Async & Abort[HttpException])
+    )(using Frame): A < (Async & Abort[HttpException]) =
+        if RouteUtil.isStreamingResponse(route) then
+            sendStreamingWith(route, request, onReleaseUnsafe)(f)
+        else
+            sendBufferedWith(route, request, onReleaseUnsafe)(f)
+        end if
+    end sendWith
+
+    private def sendBufferedWith[In, Out, A](
+        route: HttpRoute[In, Out, ?],
+        request: HttpRequest[In],
+        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
+    )(
+        f: HttpResponse[Out] => A < (Async & Abort[HttpException])
+    )(using Frame): A < (Async & Abort[HttpException]) =
+        Sync.ensure(onReleaseUnsafe) {
+            Sync.Unsafe.defer {
+                encodeNettyRequestWith(route, request) { (nettyReq, streamBody) =>
+                    val pipeline = channel.pipeline()
+                    if pipeline.get("aggregator") == null then
+                        discard(pipeline.addLast(
+                            "aggregator",
+                            new HttpObjectAggregator(Int.MaxValue)
+                        ))
+                    end if
+
+                    if pipeline.get("response") != null then
+                        discard(pipeline.remove("response"))
+                    val promise = Promise.Unsafe.init[NettyHttpResponseData, Abort[HttpException]]()
+                    discard(pipeline.addLast("response", new NettyHttpResponseHandler(promise, host, port)))
+
+                    discard(channel.writeAndFlush(nettyReq))
+
+                    def readResponse =
+                        promise.safe.use { data =>
+                            RouteUtil.decodeBufferedResponseWith(
+                                route,
+                                data.status,
+                                data.headers,
+                                data.body,
+                                route.method.name,
+                                request.url.toString
+                            )(f)
+                        }
+
+                    streamBody match
+                        case Present(stream) =>
+                            stream.foreach { bytes =>
+                                NettyUtil.await(channel.writeAndFlush(
+                                    new DefaultHttpContent(Unpooled.wrappedBuffer(bytes.toArrayUnsafe))
+                                ))
+                            }.andThen {
+                                NettyUtil.awaitWith(channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT))(readResponse)
+                            }
+                        case Absent =>
+                            readResponse
+                    end match
+                }
+            }
+        }
+    end sendBufferedWith
+
+    private def sendStreamingWith[In, Out, A](
+        route: HttpRoute[In, Out, ?],
+        request: HttpRequest[In],
+        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
+    )(
+        f: HttpResponse[Out] => A < (Async & Abort[HttpException])
+    )(using Frame): A < (Async & Abort[HttpException]) =
+        // Two-phase connection lifecycle for streaming responses:
+        // Phase 1 (outer ensure): protects request upload + header fetch. If interrupted here, onReleaseUnsafe fires.
+        // Phase 2 (inner ensure in stream body): protects stream consumption. When stream ends/is abandoned/interrupted, onReleaseUnsafe fires.
+        // phase2Started flag prevents the outer ensure from releasing when f returns with an unconsumed stream.
+        // onReleaseUnsafe is idempotent (AtomicBoolean in caller), so double-fire from both phases is safe.
+        Sync.Unsafe.defer {
+            val phase2Started       = AtomicBoolean.Unsafe.init(false)
+            val streamFullyConsumed = AtomicBoolean.Unsafe.init(false)
+            Sync.ensure { error =>
+                Sync.Unsafe.defer {
+                    if !phase2Started.get() then
+                        onReleaseUnsafe(error)
+                }
+            } {
+                Sync.Unsafe.defer {
+                    encodeNettyRequestWith(route, request) { (nettyReq, streamBody) =>
+                        val pipeline = channel.pipeline()
+                        if pipeline.get("aggregator") != null then
+                            discard(pipeline.remove("aggregator"))
+                        if pipeline.get("response") != null then
+                            discard(pipeline.remove("response"))
+
+                        val headerPromise = Promise.Unsafe.init[NettyStreamingHeaderData, Abort[HttpException]]()
+                        val byteChannel   = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
+                        discard(pipeline.addLast("response", new NettyStreamingResponseHandler(headerPromise, byteChannel, host, port)))
+
+                        discard(channel.writeAndFlush(nettyReq))
+
+                        def readResponse =
+                            headerPromise.safe.use { data =>
+                                Sync.Unsafe.defer(phase2Started.set(true)).andThen {
+                                    val bodyStream = Stream[Span[Byte], Async] {
+                                        Sync.ensure { error =>
+                                            // Discard connection unless stream was fully consumed with no error.
+                                            // Partial consumption leaves Netty channel dirty (unconsumed chunks).
+                                            Sync.Unsafe.defer {
+                                                if !streamFullyConsumed.get() then
+                                                    onReleaseUnsafe(Maybe(Result.Panic(new Exception("stream not fully consumed"))))
+                                                else
+                                                    onReleaseUnsafe(error)
+                                            }
+                                        } {
+                                            Loop.foreach {
+                                                byteChannel.safe.takeWith {
+                                                    case Present(bytes) =>
+                                                        Emit.valueWith(Chunk(bytes))(Loop.continue)
+                                                    case Absent =>
+                                                        Sync.Unsafe.defer(streamFullyConsumed.set(true)).andThen(Loop.done(()))
+                                                }
+                                            }.handle(Abort.run[Closed]).unit
+                                        }
+                                    }
+                                    RouteUtil.decodeStreamingResponseWith(
+                                        route,
+                                        data.status,
+                                        data.headers,
+                                        bodyStream,
+                                        route.method.name,
+                                        request.url.toString
+                                    )(f)
+                                }
+                            }
+
+                        streamBody match
+                            case Present(stream) =>
+                                stream.foreach { bytes =>
+                                    NettyUtil.await(channel.writeAndFlush(
+                                        new DefaultHttpContent(Unpooled.wrappedBuffer(bytes.toArrayUnsafe))
+                                    ))
+                                }.andThen {
+                                    NettyUtil.awaitWith(channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT))(readResponse)
+                                }
+                            case Absent =>
+                                readResponse
+                        end match
+                    }
+                }
+            }
+        }
+    end sendStreamingWith
+
+    private inline def encodeNettyRequestWith[In, Out, A](
+        route: HttpRoute[In, Out, ?],
+        request: HttpRequest[In]
+    )(
+        f: (HttpObject, Maybe[Stream[Span[Byte], Async]]) => A
+    )(using AllowUnsafe, Frame): A =
+        RouteUtil.encodeRequest(route, request)(
+            onEmpty = (url, headers) =>
+                discard(cachedHeaders.clear())
+                discard(cachedTrailers.clear())
+                val nettyReq =
+                    new DefaultFullHttpRequest(
+                        HttpVersion.HTTP_1_1,
+                        NettyHttpMethod.valueOf(request.method.name),
+                        url,
+                        Unpooled.EMPTY_BUFFER,
+                        cachedHeaders,
+                        cachedTrailers
+                    )
+                val flatHeaders = cachedHeaders
+                applyHeaders(nettyReq, headers, request)
+                if !flatHeaders.contains("Content-Length") then
+                    discard(flatHeaders.setInt("Content-Length", 0))
+                f(nettyReq, Absent)
+            ,
+            onBuffered = (url, headers, contentType, body) =>
+                discard(cachedHeaders.clear())
+                discard(cachedTrailers.clear())
+                val content = Unpooled.wrappedBuffer(body.toArrayUnsafe)
+                val nettyReq = new DefaultFullHttpRequest(
+                    HttpVersion.HTTP_1_1,
+                    NettyHttpMethod.valueOf(request.method.name),
+                    url,
+                    content,
+                    cachedHeaders,
+                    cachedTrailers
+                )
+                val flatHeaders = cachedHeaders
+                applyHeaders(nettyReq, headers, request)
+                discard(flatHeaders.set("Content-Type", contentType))
+                if !flatHeaders.contains("Content-Length") then
+                    discard(flatHeaders.setInt("Content-Length", content.readableBytes()))
+                f(nettyReq, Absent)
+            ,
+            onStreaming = (url, headers, contentType, stream) =>
+                discard(cachedHeaders.clear())
+                val flatHeaders = cachedHeaders
+                val nettyReq = new DefaultHttpRequest(HttpVersion.HTTP_1_1, NettyHttpMethod.valueOf(request.method.name), url, flatHeaders)
+                applyHeaders(nettyReq, headers, request)
+                discard(flatHeaders.set("Content-Type", contentType))
+                if !flatHeaders.contains("Transfer-Encoding") then
+                    discard(flatHeaders.set("Transfer-Encoding", "chunked"))
+                f(nettyReq, Present(stream))
+        )
+    end encodeNettyRequestWith
+
+    private def applyHeaders[In](
+        nettyReq: io.netty.handler.codec.http.HttpRequest,
+        headers: HttpHeaders,
+        request: HttpRequest[In]
+    )(using AllowUnsafe): Unit =
+        request.headers.foreach((k, v) => discard(nettyReq.headers().add(k, v)))
+        headers.foreach((k, v) => discard(nettyReq.headers().add(k, v)))
+        if !nettyReq.headers().contains("Host") then
+            discard(nettyReq.headers().set("Host", hostHeaderValue))
+        end if
+    end applyHeaders
+
+    def isAlive(using AllowUnsafe): Boolean = channel.isActive()
+
+    // gracePeriod is unused — single connection close is immediate
+    def close(gracePeriod: Duration)(using Frame): Unit < Async =
+        NettyUtil.await(channel.close())
+
+    def closeNowUnsafe()(using AllowUnsafe): Unit =
+        discard(channel.close())
+
+end NettyConnection
+
+private[kyo] case class NettyHttpResponseData(
+    status: HttpStatus,
+    headers: HttpHeaders,
+    body: Span[Byte]
+)
+
+private[kyo] case class NettyStreamingHeaderData(
+    status: HttpStatus,
+    headers: HttpHeaders
+)
+
+final private[kyo] class NettyHttpResponseHandler(
+    promise: Promise.Unsafe[NettyHttpResponseData, Abort[HttpException]],
+    host: String,
+    port: Int
+)(using Frame) extends SimpleChannelInboundHandler[FullHttpResponse]:
+
+    override def channelRead0(ctx: ChannelHandlerContext, msg: FullHttpResponse): Unit =
+        import AllowUnsafe.embrace.danger
+        val status  = HttpStatus(msg.status().code())
+        val headers = msg.headers().asInstanceOf[FlatNettyHttpHeaders].toKyoHeaders
+        msg.trailingHeaders() match
+            case flat: FlatNettyHttpHeaders => flat.release() // return pooled instance, no HttpHeaders allocation
+            case _                          =>                // aggregator uses EmptyHttpHeaders
+        val buf = msg.content()
+        val body =
+            if buf.readableBytes() == 0 then Span.empty[Byte]
+            else
+                val bytes = new Array[Byte](buf.readableBytes())
+                buf.readBytes(bytes)
+                Span.fromUnsafe(bytes)
+        discard(promise.complete(Result.succeed(NettyHttpResponseData(status, headers, body))))
+    end channelRead0
+
+    override def channelInactive(ctx: ChannelHandlerContext): Unit =
+        import AllowUnsafe.embrace.danger
+        discard(promise.complete(Result.fail(HttpConnectException(
+            host,
+            port,
+            new Exception("Connection closed before response received")
+        ))))
+        super.channelInactive(ctx)
+    end channelInactive
+
+    override def exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable): Unit =
+        import AllowUnsafe.embrace.danger
+        discard(promise.complete(Result.fail(HttpConnectException(
+            host,
+            port,
+            cause
+        ))))
+    end exceptionCaught
+
+end NettyHttpResponseHandler
+
+final private[kyo] class NettyStreamingResponseHandler(
+    headerPromise: Promise.Unsafe[NettyStreamingHeaderData, Abort[HttpException]],
+    byteChannel: Channel.Unsafe[Maybe[Span[Byte]]],
+    host: String,
+    port: Int
+)(using frame: Frame) extends ChannelInboundHandlerAdapter:
+
+    // Guards against double-completing headerPromise in channelInactive/exceptionCaught.
+    // Single-threaded (Netty guarantee, non-@Sharable). Single-use (new instance per request).
+    private var headersReceived = false
+
+    override def channelRead(ctx: ChannelHandlerContext, msg: AnyRef): Unit =
+        import AllowUnsafe.embrace.danger
+        msg match
+            case resp: NettyHttpResponse if !headersReceived =>
+                headersReceived = true
+                val status  = HttpStatus(resp.status().code())
+                val headers = resp.headers().asInstanceOf[FlatNettyHttpHeaders].toKyoHeaders
+                discard(headerPromise.complete(Result.succeed(NettyStreamingHeaderData(status, headers))))
+                msg match
+                    // FullHttpResponse extends both HttpResponse and LastHttpContent
+                    case content: HttpContent =>
+                        deliverContent(ctx, content)
+                    case _ => // DefaultHttpResponse (headers only), body follows as separate chunks
+                end match
+            case content: HttpContent =>
+                deliverContent(ctx, content)
+            case _ =>
+                discard(io.netty.util.ReferenceCountUtil.release(msg))
+        end match
+    end channelRead
+
+    private def deliverContent(ctx: ChannelHandlerContext, content: HttpContent)(using AllowUnsafe): Unit =
+        val buf = content.content()
+        if buf.readableBytes() > 0 then
+            val bytes = new Array[Byte](buf.readableBytes())
+            buf.readBytes(bytes)
+            val value = Present(Span.fromUnsafe(bytes))
+            byteChannel.offer(value) match
+                case Result.Success(true) =>
+                case Result.Success(false) =>
+                    ctx.channel().config().setAutoRead(false)
+                    val fiber = byteChannel.putFiber(value)
+                    fiber.onComplete { _ =>
+                        ctx.channel().config().setAutoRead(true)
+                        discard(ctx.read())
+                    }
+                case _ => // Channel closed — stop reading
+                    discard(ctx.channel().config().setAutoRead(false))
+            end match
+        end if
+        if content.isInstanceOf[LastHttpContent] then
+            discard(byteChannel.putFiber(Absent))
+        // Safe: data already copied to byte array above
+        discard(io.netty.util.ReferenceCountUtil.release(content))
+    end deliverContent
+
+    override def channelInactive(ctx: ChannelHandlerContext): Unit =
+        import AllowUnsafe.embrace.danger
+        if !headersReceived then
+            discard(headerPromise.complete(Result.fail(HttpConnectException(
+                host,
+                port,
+                new Exception("Connection closed before headers received")
+            ))))
+        end if
+        discard(byteChannel.close())
+        super.channelInactive(ctx)
+    end channelInactive
+
+    override def exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable): Unit =
+        import AllowUnsafe.embrace.danger
+        if !headersReceived then
+            discard(headerPromise.complete(Result.fail(HttpConnectException(
+                host,
+                port,
+                cause
+            ))))
+        end if
+        discard(byteChannel.close())
+    end exceptionCaught
+end NettyStreamingResponseHandler
