@@ -27,11 +27,11 @@ jobs:
         jvm: corretto:24
         apps: sbt
 
-    # - name: Build JVM
-    #   run: sbt '+kyoJVM/test'
+    - name: Build JVM
+      run: sbt '+kyoJVM/test'
 
-    # - name: Build JS
-    #   run: sbt '+kyoJS/test'
+    - name: Build JS
+      run: sbt '+kyoJS/test'
 
     - name: Build Native
       run: sbt '+kyoNative/test'
