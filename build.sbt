@@ -580,14 +580,13 @@ lazy val `kyo-caliban` =
         .crossType(CrossType.Pure)
         .in(file("kyo-caliban"))
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-tapir`)
+        .dependsOn(`kyo-http`)
         .dependsOn(`kyo-zio`)
         .dependsOn(`kyo-zio-test`)
-        .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "3.0.0",
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "3.0.0"
+            libraryDependencies += "com.github.ghostdogpr" %% "caliban" % "3.0.0",
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.28.2" % "provided"
         )
         .jvmSettings(mimaCheck(false))
 
