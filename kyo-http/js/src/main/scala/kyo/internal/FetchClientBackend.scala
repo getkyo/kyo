@@ -217,16 +217,16 @@ object FetchClientBackend:
                     encodedStreamBody =
                         Absent
                 ,
-                onBuffered = (url, headers, contentType, bytes) =>
+                onBuffered = (url, headers, bytes) =>
                     encodedUrl = urlPrefix + url
-                    encodedHeaders = headers.add("Content-Type", contentType)
+                    encodedHeaders = headers
                     encodedBody = Maybe(bytesToUint8Array(bytes.toArrayUnsafe))
                     encodedStreamBody =
                         Absent
                 ,
-                onStreaming = (url, headers, contentType, stream) =>
+                onStreaming = (url, headers, stream) =>
                     encodedUrl = urlPrefix + url
-                    encodedHeaders = headers.add("Content-Type", contentType)
+                    encodedHeaders = headers
                     encodedBody = Absent
                     encodedStreamBody = Maybe(stream)
             )

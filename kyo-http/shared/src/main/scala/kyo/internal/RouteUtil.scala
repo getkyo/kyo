@@ -35,8 +35,8 @@ object RouteUtil:
         request: HttpRequest[In]
     )(
         inline onEmpty: ( /* url */ String, HttpHeaders) => A,
-        inline onBuffered: ( /* url */ String, HttpHeaders, /* contentType */ String, Span[Byte]) => A,
-        inline onStreaming: ( /* url */ String, HttpHeaders, /* contentType */ String, Stream[Span[Byte], Async]) => A
+        inline onBuffered: ( /* url */ String, HttpHeaders, Span[Byte]) => A,
+        inline onStreaming: ( /* url */ String, HttpHeaders, Stream[Span[Byte], Async]) => A
     )(using Frame): A =
         val fields    = route.request.fields
         val dict      = request.fields.dict
@@ -89,20 +89,23 @@ object RouteUtil:
         headers: HttpHeaders
     )(
         inline onEmpty: (String, HttpHeaders) => A,
-        inline onBuffered: (String, HttpHeaders, String, Span[Byte]) => A,
-        inline onStreaming: (String, HttpHeaders, String, Stream[Span[Byte], Async]) => A
+        inline onBuffered: (String, HttpHeaders, Span[Byte]) => A,
+        inline onStreaming: (String, HttpHeaders, Stream[Span[Byte], Async]) => A
     )(using Frame): A =
         bodyField match
             case Absent => onEmpty(url, headers)
             case Present(body) =>
                 val value = dict(body.fieldName)
+                val hasCt = headers.get("Content-Type").isDefined
                 if isStreamingContentType(body.contentType) then
                     encodeStreamBodyValueWith(body.contentType, value) { (ct, stream) =>
-                        onStreaming(url, headers, ct, stream)
+                        val hdrs = if hasCt then headers else headers.add("Content-Type", ct)
+                        onStreaming(url, hdrs, stream)
                     }
                 else
                     encodeBufferedBodyValueWith(body.contentType, value) { (ct, bytes) =>
-                        onBuffered(url, headers, ct, bytes)
+                        val hdrs = if hasCt then headers else headers.add("Content-Type", ct)
+                        onBuffered(url, hdrs, bytes)
                     }
                 end if
 
@@ -278,8 +281,8 @@ object RouteUtil:
         response: HttpResponse[Out]
     )(
         onEmpty: (HttpStatus, HttpHeaders) => A,
-        onBuffered: (HttpStatus, HttpHeaders, /* contentType */ String, Span[Byte]) => A,
-        onStreaming: (HttpStatus, HttpHeaders, /* contentType */ String, Stream[Span[Byte], Async]) => A
+        onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A,
+        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A
     )(using Frame): A =
         val fields      = route.response.fields
         val routeStatus = route.response.status
@@ -308,20 +311,23 @@ object RouteUtil:
         headers: HttpHeaders
     )(
         onEmpty: (HttpStatus, HttpHeaders) => A,
-        onBuffered: (HttpStatus, HttpHeaders, String, Span[Byte]) => A,
-        onStreaming: (HttpStatus, HttpHeaders, String, Stream[Span[Byte], Async]) => A
+        onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A,
+        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A
     )(using Frame): A =
         bodyField match
             case Absent => onEmpty(status, headers)
             case Present(body) =>
                 val value = dict(body.fieldName)
+                val hasCt = headers.get("Content-Type").isDefined
                 if isStreamingContentType(body.contentType) then
                     encodeStreamBodyValueWith(body.contentType, value) { (ct, stream) =>
-                        onStreaming(status, headers, ct, stream)
+                        val hdrs = if hasCt then headers else headers.add("Content-Type", ct)
+                        onStreaming(status, hdrs, stream)
                     }
                 else
                     encodeBufferedBodyValueWith(body.contentType, value) { (ct, bytes) =>
-                        onBuffered(status, headers, ct, bytes)
+                        val hdrs = if hasCt then headers else headers.add("Content-Type", ct)
+                        onBuffered(status, hdrs, bytes)
                     }
                 end if
 

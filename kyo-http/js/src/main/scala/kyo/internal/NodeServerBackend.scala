@@ -312,18 +312,16 @@ final class NodeServerBackend extends HttpBackend.Server:
                         RouteUtil.encodeResponse(rt, response)(
                             onEmpty = (status, headers) =>
                                 writeBufferedResponse(res, status, headers, Span.empty[Byte]),
-                            onBuffered = (status, headers, contentType, body) =>
-                                val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                            onBuffered = (status, headers, body) =>
                                 if isHead then
-                                    val hh = h.add("Content-Length", body.size.toString)
+                                    val hh = headers.add("Content-Length", body.size.toString)
                                     writeBufferedResponse(res, status, hh, Span.empty[Byte])
-                                else writeBufferedResponse(res, status, h, body)
+                                else writeBufferedResponse(res, status, headers, body)
                                 end if
                             ,
-                            onStreaming = (status, headers, contentType, stream) =>
-                                val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
-                                if isHead then writeBufferedResponse(res, status, h, Span.empty[Byte])
-                                else writeStreamingResponse(res, status, h, stream)
+                            onStreaming = (status, headers, stream) =>
+                                if isHead then writeBufferedResponse(res, status, headers, Span.empty[Byte])
+                                else writeStreamingResponse(res, status, headers, stream)
                         )
                     case Result.Failure(halt: HttpResponse.Halt) =>
                         RouteUtil.encodeHalt(halt)((status, headers, body) =>

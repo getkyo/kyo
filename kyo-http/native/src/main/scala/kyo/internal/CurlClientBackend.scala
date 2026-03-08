@@ -165,14 +165,8 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
         RouteUtil.encodeRequest(route, request)(
             onEmpty = (url, headers) =>
                 configureCommon(handle, conn, route, url, headers, request.headers, transferId, state, request.method),
-            onBuffered = (url, headers, contentType, body) =>
+            onBuffered = (url, headers, body) =>
                 configureCommon(handle, conn, route, url, headers, request.headers, transferId, state, request.method)
-                // Set content type
-                var headerList = state.headerList
-                headerList = curl_slist_append(headerList, toCString(s"Content-Type: $contentType"))
-                state.setHeaderList(headerList)
-                if headerList != null then
-                    discard(curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headerList))
                 // Set body
                 if !body.isEmpty then
                     val bodyArr = body.toArrayUnsafe
@@ -186,10 +180,9 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
                     discard(curl_easy_setopt(handle, CURLOPT_COPYPOSTFIELDS, bodyPtr))
                 end if
             ,
-            onStreaming = (url, headers, contentType, stream) =>
+            onStreaming = (url, headers, stream) =>
                 configureCommon(handle, conn, route, url, headers, request.headers, transferId, state, request.method)
                 var headerList = state.headerList
-                headerList = curl_slist_append(headerList, toCString(s"Content-Type: $contentType"))
                 headerList = curl_slist_append(headerList, toCString("Expect:")) // suppress 100-continue
                 state.setHeaderList(headerList)
                 if headerList != null then
