@@ -172,7 +172,9 @@ lazy val kyoNative = project
         `kyo-direct`.native,
         `kyo-combinators`.native,
         `kyo-sttp`.native,
-        `kyo-actor`.native
+        `kyo-actor`.native,
+        `kyo-zio`.native,
+        `kyo-zio-test`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -548,7 +550,7 @@ lazy val `kyo-caliban` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-zio-test` =
-    crossProject(JVMPlatform, JSPlatform)
+    crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-zio-test"))
@@ -563,10 +565,13 @@ lazy val `kyo-zio-test` =
         .jsSettings(
             `js-settings`
         )
+        .nativeSettings(
+            `native-settings`
+        )
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-zio` =
-    crossProject(JVMPlatform, JSPlatform)
+    crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-zio"))
@@ -578,6 +583,9 @@ lazy val `kyo-zio` =
         )
         .jsSettings(
             `js-settings`
+        )
+        .nativeSettings(
+            `native-settings`
         )
         .jvmSettings(mimaCheck(false))
 
@@ -743,10 +751,11 @@ lazy val readme =
         )
 
 lazy val `native-settings` = Seq(
-    fork                                        := false,
-    bspEnabled                                  := false,
-    Test / testForkedParallel                   := false,
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
+    fork                                              := false,
+    bspEnabled                                        := false,
+    Test / testForkedParallel                         := false,
+    Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "8388608",
+    libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.6.0"
 )
 
 lazy val `js-settings` = Seq(
