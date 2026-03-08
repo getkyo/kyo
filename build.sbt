@@ -173,6 +173,7 @@ lazy val kyoNative = project
         `kyo-combinators`.native,
         `kyo-sttp`.native,
         `kyo-actor`.native,
+        `kyo-scheduler-zio`.native,
         `kyo-zio`.native,
         `kyo-zio-test`.native
     )
@@ -199,7 +200,7 @@ lazy val `kyo-scheduler` =
             libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1"
         )
 
-lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio", file("kyo-scheduler-zio"))(JVMPlatform)
+lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio", file("kyo-scheduler-zio"))(JVMPlatform, NativePlatform)
     .withoutSuffixFor(JVMPlatform)
     .crossType(CrossType.Full)
     .dependsOn(`kyo-scheduler`)
@@ -208,6 +209,10 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         libraryDependencies += "dev.zio" %%% "zio" % zioVersion
     )
     .jvmSettings(mimaCheck(false))
+    .nativeSettings(
+        `native-settings`,
+        crossScalaVersions := List(scala3LTSVersion)
+    )
     .settings(
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
         crossScalaVersions := List(scala3LTSVersion, scala213Version)
