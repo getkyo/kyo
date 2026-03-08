@@ -175,7 +175,7 @@ lazy val kyoNative = project
         `kyo-actor`.native,
         `kyo-scheduler-zio`.native,
         `kyo-zio`.native,
-        `kyo-zio-test`.native
+        `kyo-zio-test`.native,
         `kyo-stm`.native
     )
 
