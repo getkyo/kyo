@@ -65,8 +65,8 @@ class RouteUtilTest extends kyo.Test:
             var result: (String, HttpHeaders) = null
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (url, headers) => result = (url, headers),
-                onBuffered = (_, _, _, _) => fail("expected empty"),
-                onStreaming = (_, _, _, _) => fail("expected empty")
+                onBuffered = (_, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _) => fail("expected empty")
             )
             assert(result._1 == "/users")
         }
@@ -76,17 +76,17 @@ class RouteUtilTest extends kyo.Test:
             val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/users").getOrThrow)
                 .addField("body", User("Alice", 30))
 
-            var contentType = ""
-            var body        = Span.empty[Byte]
+            var headers = HttpHeaders.empty
+            var body    = Span.empty[Byte]
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, _) => fail("expected buffered"),
-                onBuffered = (url, headers, ct, bytes) =>
-                    contentType = ct
+                onBuffered = (url, hdrs, bytes) =>
+                    headers = hdrs
                     body = bytes
                 ,
-                onStreaming = (_, _, _, _) => fail("expected buffered")
+                onStreaming = (_, _, _) => fail("expected buffered")
             )
-            assert(contentType == "application/json")
+            assert(headers.get("Content-Type").contains("application/json"))
             val bodyStr = new String(body.toArrayUnsafe.asInstanceOf[Array[Byte]], "UTF-8")
             assert(bodyStr.contains("Alice"))
             assert(bodyStr.contains("30"))
@@ -97,17 +97,17 @@ class RouteUtilTest extends kyo.Test:
             val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/echo").getOrThrow)
                 .addField("body", "hello world")
 
-            var contentType = ""
-            var bodyStr     = ""
+            var headers = HttpHeaders.empty
+            var bodyStr = ""
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, _) => fail("expected buffered"),
-                onBuffered = (url, headers, ct, bytes) =>
-                    contentType = ct
+                onBuffered = (url, hdrs, bytes) =>
+                    headers = hdrs
                     bodyStr = new String(bytes.toArrayUnsafe.asInstanceOf[Array[Byte]], "UTF-8")
                 ,
-                onStreaming = (_, _, _, _) => fail("expected buffered")
+                onStreaming = (_, _, _) => fail("expected buffered")
             )
-            assert(contentType == "text/plain; charset=utf-8")
+            assert(headers.get("Content-Type").contains("text/plain; charset=utf-8"))
             assert(bodyStr == "hello world")
         }
 
@@ -123,8 +123,8 @@ class RouteUtilTest extends kyo.Test:
             var url = ""
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (u, _) => url = u,
-                onBuffered = (_, _, _, _) => fail("expected empty"),
-                onStreaming = (_, _, _, _) => fail("expected empty")
+                onBuffered = (_, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _) => fail("expected empty")
             )
             assert(url == "/users/42/posts")
         }
@@ -141,8 +141,8 @@ class RouteUtilTest extends kyo.Test:
             var url = ""
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (u, _) => url = u,
-                onBuffered = (_, _, _, _) => fail("expected empty"),
-                onStreaming = (_, _, _, _) => fail("expected empty")
+                onBuffered = (_, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _) => fail("expected empty")
             )
             assert(url.contains("page=2"))
             assert(url.contains("sort=name"))
@@ -160,8 +160,8 @@ class RouteUtilTest extends kyo.Test:
             var headers = HttpHeaders.empty
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, h) => headers = h,
-                onBuffered = (_, _, _, _) => fail("expected empty"),
-                onStreaming = (_, _, _, _) => fail("expected empty")
+                onBuffered = (_, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _) => fail("expected empty")
             )
             assert(headers.get("X-Api-Key") == Present("secret123"))
         }
@@ -178,8 +178,8 @@ class RouteUtilTest extends kyo.Test:
             var headers = HttpHeaders.empty
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, h) => headers = h,
-                onBuffered = (_, _, _, _) => fail("expected empty"),
-                onStreaming = (_, _, _, _) => fail("expected empty")
+                onBuffered = (_, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _) => fail("expected empty")
             )
             assert(headers.get("Cookie") == Present("session=abc123"))
         }
@@ -196,8 +196,8 @@ class RouteUtilTest extends kyo.Test:
             var url = ""
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (u, _) => url = u,
-                onBuffered = (_, _, _, _) => fail("expected empty"),
-                onStreaming = (_, _, _, _) => fail("expected empty")
+                onBuffered = (_, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _) => fail("expected empty")
             )
             assert(url.contains("page=5"))
         }
@@ -214,8 +214,8 @@ class RouteUtilTest extends kyo.Test:
             var url = ""
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (u, _) => url = u,
-                onBuffered = (_, _, _, _) => fail("expected empty"),
-                onStreaming = (_, _, _, _) => fail("expected empty")
+                onBuffered = (_, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _) => fail("expected empty")
             )
             assert(!url.contains("page"))
         }
@@ -369,17 +369,17 @@ class RouteUtilTest extends kyo.Test:
             val route    = HttpRoute.getRaw("users").response(_.bodyJson[User])
             val response = HttpResponse.ok.addField("body", User("Bob", 25))
 
-            var contentType = ""
-            var bodyStr     = ""
+            var headers = HttpHeaders.empty
+            var bodyStr = ""
             RouteUtil.encodeResponse(route, response)(
                 onEmpty = (_, _) => fail("expected buffered"),
-                onBuffered = (status, headers, ct, bytes) =>
-                    contentType = ct
+                onBuffered = (status, hdrs, bytes) =>
+                    headers = hdrs
                     bodyStr = new String(bytes.toArrayUnsafe.asInstanceOf[Array[Byte]], "UTF-8")
                 ,
-                onStreaming = (_, _, _, _) => fail("expected buffered")
+                onStreaming = (_, _, _) => fail("expected buffered")
             )
-            assert(contentType == "application/json")
+            assert(headers.get("Content-Type").contains("application/json"))
             assert(bodyStr.contains("Bob"))
         }
 
@@ -390,8 +390,8 @@ class RouteUtilTest extends kyo.Test:
             var status: HttpStatus = null
             RouteUtil.encodeResponse(route, response)(
                 onEmpty = (s, _) => status = s,
-                onBuffered = (_, _, _, _) => fail("expected empty"),
-                onStreaming = (_, _, _, _) => fail("expected empty")
+                onBuffered = (_, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _) => fail("expected empty")
             )
             assert(status == HttpStatus.OK)
         }
@@ -405,8 +405,8 @@ class RouteUtilTest extends kyo.Test:
             var headers = HttpHeaders.empty
             RouteUtil.encodeResponse(route, response)(
                 onEmpty = (_, _) => fail("expected buffered"),
-                onBuffered = (_, h, _, _) => headers = h,
-                onStreaming = (_, _, _, _) => fail("expected buffered")
+                onBuffered = (_, h, _) => headers = h,
+                onStreaming = (_, _, _) => fail("expected buffered")
             )
             assert(headers.get("X-Request-Id") == Present("req-456"))
         }
@@ -427,14 +427,14 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, _) => fail("expected buffered"),
-                onBuffered = (url, headers, ct, bytes) =>
+                onBuffered = (url, headers, bytes) =>
                     assert(url.contains("page=1"))
                     assert(headers.get("Authorization") == Present("Bearer tok"))
-                    assert(ct == "application/json")
+                    assert(headers.get("Content-Type").contains("application/json"))
                     val bodyStr = new String(bytes.toArrayUnsafe.asInstanceOf[Array[Byte]], "UTF-8")
                     assert(bodyStr.contains("X"))
                 ,
-                onStreaming = (_, _, _, _) => fail("expected buffered")
+                onStreaming = (_, _, _) => fail("expected buffered")
             )
         }
 
@@ -451,8 +451,8 @@ class RouteUtilTest extends kyo.Test:
             var headers = HttpHeaders.empty
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, h) => headers = h,
-                onBuffered = (_, _, _, _) => fail("expected empty"),
-                onStreaming = (_, _, _, _) => fail("expected empty")
+                onBuffered = (_, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _) => fail("expected empty")
             )
             val cookie = headers.get("Cookie")
             assert(cookie.isDefined)
@@ -474,8 +474,8 @@ class RouteUtilTest extends kyo.Test:
             var url = ""
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (u, _) => url = u,
-                onBuffered = (_, _, _, _) => fail("expected empty"),
-                onStreaming = (_, _, _, _) => fail("expected empty")
+                onBuffered = (_, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _) => fail("expected empty")
             )
             assert(!url.contains(" "))
             assert(url.contains("q="))
@@ -496,8 +496,8 @@ class RouteUtilTest extends kyo.Test:
             var url = ""
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (u, _) => url = u,
-                onBuffered = (_, _, _, _) => fail("expected empty"),
-                onStreaming = (_, _, _, _) => fail("expected empty")
+                onBuffered = (_, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _) => fail("expected empty")
             )
             assert(!url.contains(" "))
             assert(url.startsWith("/users/"))
@@ -516,8 +516,8 @@ class RouteUtilTest extends kyo.Test:
             var headers = HttpHeaders.empty
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, h) => headers = h,
-                onBuffered = (_, _, _, _) => fail("expected empty"),
-                onStreaming = (_, _, _, _) => fail("expected empty")
+                onBuffered = (_, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _) => fail("expected empty")
             )
             assert(headers.get("X-Existing") == Present("keep-me"))
             assert(headers.get("X-Extra") == Present("new-val"))
@@ -535,8 +535,8 @@ class RouteUtilTest extends kyo.Test:
             var headers = HttpHeaders.empty
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, h) => headers = h,
-                onBuffered = (_, _, _, _) => fail("expected empty"),
-                onStreaming = (_, _, _, _) => fail("expected empty")
+                onBuffered = (_, _, _) => fail("expected empty"),
+                onStreaming = (_, _, _) => fail("expected empty")
             )
             assert(!headers.contains("Authorization"))
         }
@@ -553,11 +553,11 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, _) => fail("expected buffered"),
-                onBuffered = (_, _, ct, bytes) =>
-                    assert(ct == "application/octet-stream")
+                onBuffered = (_, headers, bytes) =>
+                    assert(headers.get("Content-Type").contains("application/octet-stream"))
                     assert(bytes.toArrayUnsafe.asInstanceOf[Array[Byte]].toSeq == Seq[Byte](1, 2, 3, 4))
                 ,
-                onStreaming = (_, _, _, _) => fail("expected buffered")
+                onStreaming = (_, _, _) => fail("expected buffered")
             )
         }
 
@@ -572,14 +572,51 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, _) => fail("expected buffered"),
-                onBuffered = (_, _, ct, bytes) =>
-                    assert(ct == "application/x-www-form-urlencoded")
+                onBuffered = (_, headers, bytes) =>
+                    assert(headers.get("Content-Type").contains("application/x-www-form-urlencoded"))
                     val bodyStr = new String(bytes.toArrayUnsafe.asInstanceOf[Array[Byte]], "UTF-8")
                     assert(bodyStr.contains("username=alice"))
                     assert(bodyStr.contains("password=secret"))
                 ,
-                onStreaming = (_, _, _, _) => fail("expected buffered")
+                onStreaming = (_, _, _) => fail("expected buffered")
             )
+        }
+
+        "user-set Content-Type preserved for buffered request" in {
+            val route = HttpRoute.postRaw("api").request(_.bodyBinary)
+            val data  = Span.fromUnsafe("{ k1 }".getBytes("UTF-8"))
+            val request = HttpRequest(
+                HttpMethod.POST,
+                HttpUrl.parse("http://localhost/api").getOrThrow,
+                HttpHeaders.empty.add("Content-Type", "application/graphql"),
+                Record.empty
+            ).addField("body", data)
+
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (_, _) => fail("expected buffered"),
+                onBuffered = (_, headers, _) =>
+                    assert(headers.get("Content-Type").contains("application/graphql")),
+                onStreaming = (_, _, _) => fail("expected buffered")
+            )
+        }
+
+        "user-set Content-Type preserved for streaming request" in run {
+            val route  = HttpRoute.postRaw("api").request(_.bodyStream)
+            val stream = kyo.Stream.init[Span[Byte], kyo.Async](Seq(Span.fromUnsafe("data".getBytes("UTF-8"))))
+            val request = HttpRequest(
+                HttpMethod.POST,
+                HttpUrl.parse("http://localhost/api").getOrThrow,
+                HttpHeaders.empty.add("Content-Type", "text/xml"),
+                Record.empty
+            ).addField("body", stream)
+
+            var headers = HttpHeaders.empty
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (_, _) => fail("expected streaming"),
+                onBuffered = (_, _, _) => fail("expected streaming"),
+                onStreaming = (_, hdrs, _) => headers = hdrs
+            )
+            assert(headers.get("Content-Type").contains("text/xml"))
         }
     }
 
@@ -785,8 +822,8 @@ class RouteUtilTest extends kyo.Test:
             var status: HttpStatus = HttpStatus.OK
             RouteUtil.encodeResponse(route, response)(
                 onEmpty = (_, _) => fail("expected buffered"),
-                onBuffered = (s, _, _, _) => status = s,
-                onStreaming = (_, _, _, _) => fail("expected buffered")
+                onBuffered = (s, _, _) => status = s,
+                onStreaming = (_, _, _) => fail("expected buffered")
             )
             assert(status == HttpStatus.Created)
         }
@@ -800,8 +837,8 @@ class RouteUtilTest extends kyo.Test:
             var headers = HttpHeaders.empty
             RouteUtil.encodeResponse(route, response)(
                 onEmpty = (_, h) => headers = h,
-                onBuffered = (_, h, _, _) => headers = h,
-                onStreaming = (_, _, _, _) => fail("expected empty or buffered")
+                onBuffered = (_, h, _) => headers = h,
+                onStreaming = (_, _, _) => fail("expected empty or buffered")
             )
             val setCookie = headers.get("Set-Cookie")
             assert(setCookie.isDefined)
@@ -817,13 +854,41 @@ class RouteUtilTest extends kyo.Test:
             var bodyStr = ""
             RouteUtil.encodeResponse(route, response)(
                 onEmpty = (_, _) => fail("expected buffered"),
-                onBuffered = (_, _, ct, bytes) =>
-                    assert(ct == "text/plain; charset=utf-8")
+                onBuffered = (_, headers, bytes) =>
+                    assert(headers.get("Content-Type").contains("text/plain; charset=utf-8"))
                     bodyStr = new String(bytes.toArrayUnsafe.asInstanceOf[Array[Byte]], "UTF-8")
                 ,
-                onStreaming = (_, _, _, _) => fail("expected buffered")
+                onStreaming = (_, _, _) => fail("expected buffered")
             )
             assert(bodyStr == "hello")
+        }
+
+        "user-set Content-Type preserved for buffered response" in {
+            val route = HttpRoute.getRaw("data").response(_.bodyBinary)
+            val response = HttpResponse.ok.addField("body", Span.fromUnsafe("hello".getBytes("UTF-8")))
+                .setHeader("Content-Type", "application/graphql-response+json")
+
+            RouteUtil.encodeResponse(route, response)(
+                onEmpty = (_, _) => fail("expected buffered"),
+                onBuffered = (_, headers, _) =>
+                    assert(headers.get("Content-Type").contains("application/graphql-response+json")),
+                onStreaming = (_, _, _) => fail("expected buffered")
+            )
+        }
+
+        "user-set Content-Type preserved for streaming response" in run {
+            val route  = HttpRoute.getRaw("events").response(_.bodyStream)
+            val stream = kyo.Stream.init[Span[Byte], kyo.Async](Seq(Span.fromUnsafe("data".getBytes("UTF-8"))))
+            val response = HttpResponse.ok.addField("body", stream)
+                .setHeader("Content-Type", "multipart/mixed; boundary=abc")
+
+            var headers = HttpHeaders.empty
+            RouteUtil.encodeResponse(route, response)(
+                onEmpty = (_, _) => fail("expected streaming"),
+                onBuffered = (_, _, _) => fail("expected streaming"),
+                onStreaming = (_, hdrs, _) => headers = hdrs
+            )
+            assert(headers.get("Content-Type").contains("multipart/mixed; boundary=abc"))
         }
     }
 
@@ -848,7 +913,7 @@ class RouteUtilTest extends kyo.Test:
             // Encode
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, _) => fail("expected buffered"),
-                onBuffered = (url, headers, ct, bytes) =>
+                onBuffered = (url, headers, bytes) =>
                     // Verify encoded URL contains query
                     assert(url.contains("action=create"))
 
@@ -872,7 +937,7 @@ class RouteUtilTest extends kyo.Test:
                         case p: Result.Panic     => throw p.exception
                     end match
                 ,
-                onStreaming = (_, _, _, _) => fail("expected buffered")
+                onStreaming = (_, _, _) => fail("expected buffered")
             )
         }
 
@@ -887,7 +952,7 @@ class RouteUtilTest extends kyo.Test:
             // Encode as server
             RouteUtil.encodeResponse(route, response)(
                 onEmpty = (_, _) => fail("expected buffered"),
-                onBuffered = (status, headers, ct, bytes) =>
+                onBuffered = (status, headers, bytes) =>
                     // Decode as client
                     RouteUtil.decodeBufferedResponse(route, status, headers, bytes, route.method.name, "test") match
                         case Result.Success(decoded) =>
@@ -897,7 +962,7 @@ class RouteUtilTest extends kyo.Test:
                         case Result.Failure(err) => fail(s"decode failed: $err")
                         case p: Result.Panic     => throw p.exception
                 ,
-                onStreaming = (_, _, _, _) => fail("expected buffered")
+                onStreaming = (_, _, _) => fail("expected buffered")
             )
         }
 
@@ -913,14 +978,14 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, _) => fail("expected buffered"),
-                onBuffered = (_, _, _, bytes) =>
+                onBuffered = (_, _, bytes) =>
                     RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, HttpHeaders.empty, bytes) match
                         case Result.Success(decoded) =>
                             assert(decoded.fields.dict("body") == form)
                         case Result.Failure(err) => fail(s"decode failed: $err")
                         case p: Result.Panic     => throw p.exception
                 ,
-                onStreaming = (_, _, _, _) => fail("expected buffered")
+                onStreaming = (_, _, _) => fail("expected buffered")
             )
         }
     }
@@ -938,16 +1003,16 @@ class RouteUtilTest extends kyo.Test:
             val response = HttpResponse.ok
                 .addField("body", events)
 
-            var contentType                               = ""
+            var headers: HttpHeaders                      = HttpHeaders.empty
             var stream: kyo.Stream[Span[Byte], kyo.Async] = null
             RouteUtil.encodeResponse(route, response)(
                 onEmpty = (_, _) => fail("expected streaming"),
-                onBuffered = (_, _, _, _) => fail("expected streaming"),
-                onStreaming = (_, _, ct, s) =>
-                    contentType = ct
+                onBuffered = (_, _, _) => fail("expected streaming"),
+                onStreaming = (_, hdrs, s) =>
+                    headers = hdrs
                     stream = s
             )
-            assert(contentType == "text/event-stream")
+            assert(headers.get("Content-Type").contains("text/event-stream"))
             stream.run.map { chunks =>
                 val frames = chunks.toSeq.map(span => new String(span.toArrayUnsafe, "UTF-8"))
                 // First event: just data
@@ -1091,8 +1156,8 @@ class RouteUtilTest extends kyo.Test:
             var stream: kyo.Stream[Span[Byte], kyo.Async] = null
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, _) => fail("expected streaming"),
-                onBuffered = (_, _, _, _) => fail("expected streaming"),
-                onStreaming = (_, _, _, s) => stream = s
+                onBuffered = (_, _, _) => fail("expected streaming"),
+                onStreaming = (_, _, s) => stream = s
             )
             stream.run.map { chunks =>
                 val all = chunks.toSeq.map(span => new String(span.toArrayUnsafe, "UTF-8")).mkString

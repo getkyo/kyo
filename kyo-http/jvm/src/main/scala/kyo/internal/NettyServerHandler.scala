@@ -369,18 +369,16 @@ final private[kyo] class NettyServerHandler(
                         RouteUtil.encodeResponse(rt, response)(
                             onEmpty = (status, headers) =>
                                 sendBufferedResponse(ctx, status, headers, Span.empty[Byte], keepAlive),
-                            onBuffered = (status, headers, contentType, body) =>
-                                val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+                            onBuffered = (status, headers, body) =>
                                 if isHead then
-                                    val hh = h.add("Content-Length", body.size.toString)
+                                    val hh = headers.add("Content-Length", body.size.toString)
                                     sendBufferedResponse(ctx, status, hh, Span.empty[Byte], keepAlive)
-                                else sendBufferedResponse(ctx, status, h, body, keepAlive)
+                                else sendBufferedResponse(ctx, status, headers, body, keepAlive)
                                 end if
                             ,
-                            onStreaming = (status, headers, contentType, stream) =>
-                                val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
-                                if isHead then sendBufferedResponse(ctx, status, h, Span.empty[Byte], keepAlive)
-                                else sendStreamingResponse(ctx, status, h, stream, keepAlive)
+                            onStreaming = (status, headers, stream) =>
+                                if isHead then sendBufferedResponse(ctx, status, headers, Span.empty[Byte], keepAlive)
+                                else sendStreamingResponse(ctx, status, headers, stream, keepAlive)
                         )
                     case Result.Failure(halt: HttpResponse.Halt) =>
                         RouteUtil.encodeHalt(halt)((status, headers, body) =>

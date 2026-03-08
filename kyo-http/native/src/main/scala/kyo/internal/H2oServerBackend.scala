@@ -487,21 +487,19 @@ private[kyo] object H2oServerBackend:
         RouteUtil.encodeResponse(route, response)(
             onEmpty = (status, headers) =>
                 enqueueBuffered(ss, req, status.code, headers, Span.empty[Byte]),
-            onBuffered = (status, headers, contentType, body) =>
-                val h = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+            onBuffered = (status, headers, body) =>
                 // RFC 9110 §8.6: HEAD Content-Length MUST match what GET would return
-                val h2 = if isHead && h.get("Content-Length").isEmpty then h.add("Content-Length", body.size.toString) else h
-                enqueueBuffered(ss, req, status.code, h2, if isHead then Span.empty[Byte] else body)
+                val h = if isHead && headers.get("Content-Length").isEmpty then headers.add("Content-Length", body.size.toString) else headers
+                enqueueBuffered(ss, req, status.code, h, if isHead then Span.empty[Byte] else body)
             ,
-            onStreaming = (status, headers, contentType, stream) =>
-                val headersWithCt = if headers.get("Content-Type").nonEmpty then headers else headers.add("Content-Type", contentType)
+            onStreaming = (status, headers, stream) =>
                 if isHead then
-                    enqueueBuffered(ss, req, status.code, headersWithCt, Span.empty[Byte])
+                    enqueueBuffered(ss, req, status.code, headers, Span.empty[Byte])
                 else
                     val streamId = nextStreamId.getAndIncrement()
                     val ctx      = new StreamContext(ss, req, streamId, null)
                     discard(ss.streams.put(streamId, ctx))
-                    discard(ss.responseQueue.add(new StreamStartResponse(ctx, status.code, headersWithCt)))
+                    discard(ss.responseQueue.add(new StreamStartResponse(ctx, status.code, headers)))
                     H2oBindings.wake(ss.server)
 
                     discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {

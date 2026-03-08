@@ -211,7 +211,7 @@ final private[kyo] class NettyConnection(
                     discard(flatHeaders.setInt("Content-Length", 0))
                 f(nettyReq, Absent)
             ,
-            onBuffered = (url, headers, contentType, body) =>
+            onBuffered = (url, headers, body) =>
                 discard(cachedHeaders.clear())
                 discard(cachedTrailers.clear())
                 val content = Unpooled.wrappedBuffer(body.toArrayUnsafe)
@@ -225,17 +225,15 @@ final private[kyo] class NettyConnection(
                 )
                 val flatHeaders = cachedHeaders
                 applyHeaders(nettyReq, headers, request)
-                discard(flatHeaders.set("Content-Type", contentType))
                 if !flatHeaders.contains("Content-Length") then
                     discard(flatHeaders.setInt("Content-Length", content.readableBytes()))
                 f(nettyReq, Absent)
             ,
-            onStreaming = (url, headers, contentType, stream) =>
+            onStreaming = (url, headers, stream) =>
                 discard(cachedHeaders.clear())
                 val flatHeaders = cachedHeaders
                 val nettyReq = new DefaultHttpRequest(HttpVersion.HTTP_1_1, NettyHttpMethod.valueOf(request.method.name), url, flatHeaders)
                 applyHeaders(nettyReq, headers, request)
-                discard(flatHeaders.set("Content-Type", contentType))
                 if !flatHeaders.contains("Transfer-Encoding") then
                     discard(flatHeaders.set("Transfer-Encoding", "chunked"))
                 f(nettyReq, Present(stream))
