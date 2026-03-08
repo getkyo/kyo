@@ -329,7 +329,7 @@ private[kyo] object TuiLayout:
 
     /** Whether this node type uses row (inline) direction by default. */
     inline def isInlineNode(nt: Int): Boolean =
-        nt == NodeSpan || nt == NodeNav || nt == NodeLi
+        nt == NodeSpan || nt == NodeNav || nt == NodeLi || nt == NodeTr
 
     /** Whether this node type is focusable. */
     inline def isFocusable(nt: Int): Boolean =
@@ -498,8 +498,10 @@ private[kyo] object TuiLayout:
                 else if isHidden(layout.lFlags(c)) then
                     loop(layout.nextSibling(c), mainSum, crossMax, childCount)
                 else
-                    val cw = layout.intrW(c)
-                    val ch = layout.intrH(c)
+                    val cMarW = layout.marL(c) + layout.marR(c)
+                    val cMarH = layout.marT(c) + layout.marB(c)
+                    val cw    = layout.intrW(c) + cMarW
+                    val ch    = layout.intrH(c) + cMarH
                     if row then loop(layout.nextSibling(c), mainSum + cw, math.max(crossMax, ch), childCount + 1)
                     else loop(layout.nextSibling(c), mainSum + ch, math.max(crossMax, cw), childCount + 1)
             loop(firstChild, 0, 0, 0)
@@ -565,7 +567,9 @@ private[kyo] object TuiLayout:
                     else if isHidden(layout.lFlags(c)) then
                         loop(layout.nextSibling(c), totalMain, childCount)
                     else
-                        val cMain = if row then layout.intrW(c) else layout.intrH(c)
+                        val cMain =
+                            if row then layout.intrW(c) + layout.marL(c) + layout.marR(c)
+                            else layout.intrH(c) + layout.marT(c) + layout.marB(c)
                         loop(layout.nextSibling(c), totalMain + cMain, childCount + 1)
                 loop(firstChild, 0, 0)
             end countChildrenLoop
@@ -601,39 +605,52 @@ private[kyo] object TuiLayout:
                             childIdx
                         )
                     else
-                        val cMainSize  = if row then layout.intrW(c) else layout.intrH(c)
-                        val cCrossSize = if row then layout.intrH(c) else layout.intrW(c)
-                        val crossSpace = if row then contentH else contentW
+                        val cMarL = layout.marL(c)
+                        val cMarR = layout.marR(c)
+                        val cMarT = layout.marT(c)
+                        val cMarB = layout.marB(c)
+
+                        val cMainSize    = if row then layout.intrW(c) else layout.intrH(c)
+                        val cCrossSize   = if row then layout.intrH(c) else layout.intrW(c)
+                        val cMainMargin  = if row then cMarL + cMarR else cMarT + cMarB
+                        val cCrossMargin = if row then cMarT + cMarB else cMarL + cMarR
+                        val crossSpace   = if row then contentH else contentW
 
                         val crossOffset = alignMode match
                             case AlignStart   => 0
-                            case AlignCenter  => (crossSpace - cCrossSize) / 2
-                            case AlignEnd     => crossSpace - cCrossSize
+                            case AlignCenter  => (crossSpace - cCrossSize - cCrossMargin) / 2
+                            case AlignEnd     => crossSpace - cCrossSize - cCrossMargin
                             case AlignStretch => 0
                             case _            => 0
 
-                        val childW = if row then cMainSize else (if alignMode == AlignStretch then crossSpace else cCrossSize)
-                        val childH = if row then (if alignMode == AlignStretch then crossSpace else cCrossSize) else cMainSize
+                        val availCrossForChild = math.max(0, crossSpace - cCrossMargin)
+                        val childW = if row then cMainSize
+                        else if alignMode == AlignStretch then math.max(0, crossSpace - cMarL - cMarR)
+                        else math.min(cCrossSize, availCrossForChild)
+                        val childH = if row then
+                            if alignMode == AlignStretch then math.max(0, crossSpace - cMarT - cMarB)
+                            else math.min(cCrossSize, availCrossForChild)
+                        else cMainSize
 
                         if row then
-                            layout.x(c) = contentX + pos + layout.transX(c)
-                            layout.y(c) = contentY + crossOffset + layout.transY(c)
+                            layout.x(c) = contentX + pos + cMarL + layout.transX(c)
+                            layout.y(c) = contentY + crossOffset + cMarT + layout.transY(c)
                         else
-                            layout.x(c) = contentX + crossOffset + layout.transX(c)
-                            layout.y(c) = contentY + pos + layout.transY(c)
+                            layout.x(c) = contentX + crossOffset + cMarL + layout.transX(c)
+                            layout.y(c) = contentY + pos + cMarT + layout.transY(c)
                         end if
 
                         layout.w(c) = childW
                         layout.h(c) = childH
 
-                        // Re-wrap text node if wrapping is enabled and width is now known
-                        if layout.text(c).isDefined && shouldWrapText(layout.pFlags(c)) && childW > 0 then
+                        // Re-wrap text node when width is known and text overflows
+                        if layout.text(c).isDefined && childW > 0 && layout.intrW(c) > childW then
                             val lines = wrapLineCount(layout.text(c).get, childW)
                             layout.intrH(c) = lines
                             layout.h(c) = lines
                         end if
 
-                        val nextPos = pos + (if row then layout.w(c) else layout.h(c)) +
+                        val nextPos = pos + (if row then layout.w(c) + cMarL + cMarR else layout.h(c) + cMarT + cMarB) +
                             (if childIdx < childCount - 1 then betweenGap else 0)
                         positionChildren(
                             layout,
@@ -661,12 +678,12 @@ private[kyo] object TuiLayout:
                         val bR       = if hasBorderR(flags) then 1 else 0
                         val bB       = if hasBorderB(flags) then 1 else 0
                         val bL       = if hasBorderL(flags) then 1 else 0
-                        val contentX = layout.x(i) + bL + layout.padL(i) + layout.marL(i)
-                        val contentY = layout.y(i) + bT + layout.padT(i) + layout.marT(i)
+                        val contentX = layout.x(i) + bL + layout.padL(i)
+                        val contentY = layout.y(i) + bT + layout.padT(i)
                         val contentW =
-                            math.max(0, layout.w(i) - bL - bR - layout.padL(i) - layout.padR(i) - layout.marL(i) - layout.marR(i))
+                            math.max(0, layout.w(i) - bL - bR - layout.padL(i) - layout.padR(i))
                         val contentH =
-                            math.max(0, layout.h(i) - bT - bB - layout.padT(i) - layout.padB(i) - layout.marT(i) - layout.marB(i))
+                            math.max(0, layout.h(i) - bT - bB - layout.padT(i) - layout.padB(i))
 
                         countChildrenLoop(layout, layout.firstChild(i), row) { (totalMain, childCount) =>
                             val gapSize     = layout.gap(i)

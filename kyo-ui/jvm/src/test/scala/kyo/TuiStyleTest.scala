@@ -42,7 +42,7 @@ class TuiStyleTest extends Test:
 
         "padding" in {
             val (l, idx) = layout()
-            TuiStyle.resolve(Style.padding(1, 2, 3, 4), l, idx, 80, 24)
+            TuiStyle.resolve(Style.padding(8, 16, 24, 32), l, idx, 80, 24)
             assert(l.padT(idx) == 1)
             assert(l.padR(idx) == 2)
             assert(l.padB(idx) == 3)
@@ -51,7 +51,7 @@ class TuiStyleTest extends Test:
 
         "margin" in {
             val (l, idx) = layout()
-            TuiStyle.resolve(Style.margin(5, 10, 15, 20), l, idx, 80, 24)
+            TuiStyle.resolve(Style.margin(40, 80, 120, 160), l, idx, 80, 24)
             assert(l.marT(idx) == 5)
             assert(l.marR(idx) == 10)
             assert(l.marB(idx) == 15)
@@ -60,7 +60,7 @@ class TuiStyleTest extends Test:
 
         "width and height" in {
             val (l, idx) = layout()
-            TuiStyle.resolve(Style.width(30).height(10), l, idx, 80, 24)
+            TuiStyle.resolve(Style.width(240).height(80), l, idx, 80, 24)
             assert(l.sizeW(idx) == 30)
             assert(l.sizeH(idx) == 10)
         }
@@ -79,7 +79,7 @@ class TuiStyleTest extends Test:
 
         "min/max constraints" in {
             val (l, idx) = layout()
-            TuiStyle.resolve(Style.minWidth(10).maxWidth(50).minHeight(5).maxHeight(20), l, idx, 80, 24)
+            TuiStyle.resolve(Style.minWidth(80).maxWidth(400).minHeight(40).maxHeight(160), l, idx, 80, 24)
             assert(l.minW(idx) == 10)
             assert(l.maxW(idx) == 50)
             assert(l.minH(idx) == 5)
@@ -88,7 +88,7 @@ class TuiStyleTest extends Test:
 
         "gap" in {
             val (l, idx) = layout()
-            TuiStyle.resolve(Style.gap(3), l, idx, 80, 24)
+            TuiStyle.resolve(Style.gap(24), l, idx, 80, 24)
             assert(l.gap(idx) == 3)
         }
 
@@ -181,7 +181,7 @@ class TuiStyleTest extends Test:
 
         "translate" in {
             val (l, idx) = layout()
-            TuiStyle.resolve(Style.translate(3.px, 5.px), l, idx, 80, 24)
+            TuiStyle.resolve(Style.translate(24.px, 40.px), l, idx, 80, 24)
             assert(l.transX(idx) == 3)
             assert(l.transY(idx) == 5)
         }
@@ -200,7 +200,7 @@ class TuiStyleTest extends Test:
 
         "combined style" in {
             val (l, idx) = layout()
-            TuiStyle.resolve(Style.bg("#ff0000").color("#00ff00").bold.padding(1).width(40), l, idx, 80, 24)
+            TuiStyle.resolve(Style.bg("#ff0000").color("#00ff00").bold.padding(8).width(320), l, idx, 80, 24)
             assert(l.bg(idx) == TuiColor.pack(255, 0, 0))
             assert(l.fg(idx) == TuiColor.pack(0, 255, 0))
             assert(TuiLayout.isBold(l.pFlags(idx)))
@@ -212,6 +212,26 @@ class TuiStyleTest extends Test:
             val (l, idx) = layout()
             TuiStyle.resolve(Style.fontFamily("monospace").cursor(Style.Cursor.pointer), l, idx, 80, 24)
             succeed
+        }
+    }
+
+    "WrapTextBit" - {
+        "overflow hidden should enable text wrapping" in {
+            // When overflow is hidden, text should wrap within the container
+            // rather than overflowing. WrapTextBit should be set.
+            val (l, idx) = layout()
+            TuiStyle.resolve(Style.overflow(Style.Overflow.hidden), l, idx, 80, 24)
+            // Currently WrapTextBit is NEVER set by TuiStyle.resolve
+            assert(TuiLayout.shouldWrapText(l.pFlags(idx)))
+        }
+
+        "default style should enable text wrapping" in {
+            // Text should wrap by default in TUI (terminals always have fixed width).
+            // Without wrapping, text overflows and overlaps adjacent elements.
+            val (l, idx) = layout()
+            TuiStyle.resolve(Style.empty, l, idx, 80, 24)
+            // This documents the current (broken) behavior: WrapTextBit is never set
+            assert(TuiLayout.shouldWrapText(l.pFlags(idx)))
         }
     }
 

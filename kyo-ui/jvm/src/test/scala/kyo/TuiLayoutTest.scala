@@ -3,7 +3,7 @@ package kyo
 import kyo.Maybe.*
 import kyo.internal.TuiLayout
 
-class TuiLayoutTest extends Test:
+class TuiLayoutTest extends Test with UIScope:
 
     /** Helper: initialize a node with defaults. */
     private def initNode(layout: TuiLayout, idx: Int): Unit =
@@ -462,42 +462,35 @@ class TuiLayoutTest extends Test:
         }
     }
 
-    "arrange with bottom margin" - {
-        "bottom margin subtracts from content height" in {
-            // Bug: line 427 uses marR instead of marB
+    "arrange with child margin" - {
+        "child margin offsets child position" in {
+            // Margin is on the CHILD, not the parent. Child is offset by its own margin.
             val layout = new TuiLayout(8)
             val p      = allocNode(layout); TuiLayout.linkChild(layout, -1, p)
-            layout.marT(p) = 1; layout.marB(p) = 2; layout.marR(p) = 0
-            val c = allocNode(layout); TuiLayout.linkChild(layout, p, c)
+            val c      = allocNode(layout); TuiLayout.linkChild(layout, p, c)
+            layout.marT(c) = 3; layout.marL(c) = 5
             layout.text(c) = Present("hi")
             TuiLayout.measure(layout)
             TuiLayout.arrange(layout, 80, 24)
-            // contentH should be 24 - 1(marT) - 2(marB) = 21
-            // With the bug, marR(0) is used instead of marB(2), giving wrong result
-            val flags    = layout.lFlags(p)
-            val bT       = if TuiLayout.hasBorderT(flags) then 1 else 0
-            val bB       = if TuiLayout.hasBorderB(flags) then 1 else 0
-            val contentH = layout.h(p) - bT - bB - layout.padT(p) - layout.padB(p) - layout.marT(p) - layout.marB(p)
-            // Child positioned by justify=start → y should be marT(1) offset
-            assert(layout.y(c) == 1)
-            // With freeSpace based on correct contentH=21: justify start → y=marT=1
-            // The main check: if marB is different from marR, the content area height matters
-            // for justify-end positioning
+            // Child positioned at parent content origin + its own margin
+            assert(layout.x(c) == 5) // marL
+            assert(layout.y(c) == 3) // marT
             succeed
         }
-        "justify end with bottom margin uses marB not marR" in {
-            // This directly exposes the marR/marB bug
+        "justify end with child bottom margin" in {
             val layout = new TuiLayout(8)
             val p      = allocNode(layout); TuiLayout.linkChild(layout, -1, p)
             layout.lFlags(p) = TuiLayout.JustEnd << TuiLayout.JustShift
-            layout.marT(p) = 0; layout.marB(p) = 5; layout.marR(p) = 0
             val c = allocNode(layout); TuiLayout.linkChild(layout, p, c)
+            layout.marT(c) = 2; layout.marB(c) = 3
             layout.text(c) = Present("hi") // height=1
             TuiLayout.measure(layout)
             TuiLayout.arrange(layout, 80, 24)
-            // contentH = 24 - 0 - 5(marB) = 19
-            // justify end: y = marT + freeSpace = 0 + (19-1) = 18
-            assert(layout.y(c) == 18)
+            // contentH = 24 (no parent padding/border)
+            // child total height = 1 + 2(marT) + 3(marB) = 6
+            // freeSpace = 24 - 6 = 18
+            // justify end: pos = 18, then y = 0 + 18 + marT(2) = 20
+            assert(layout.y(c) == 20)
             succeed
         }
     }
@@ -785,6 +778,245 @@ class TuiLayoutTest extends Test:
                 assert(Set(tl, tr, br, bl, hz, vt).size == 6) // all distinct
                 succeed
             }
+        }
+    }
+
+    // ──────────────────────── Bug: margin in content box ────────────────────────
+
+    "arrange margin should not shrink own content area" - {
+        "child in parent with margin should use full parent content area" in {
+            // Bug: arrange subtracts parent's margin from parent's own content area.
+            // Margin is OUTSIDE the border box. Only padding+border should reduce content.
+            val layout = new TuiLayout(8)
+            val p      = allocNode(layout); TuiLayout.linkChild(layout, -1, p)
+            layout.marL(p) = 5; layout.marR(p) = 5 // 10 total margin
+            val c = allocNode(layout); TuiLayout.linkChild(layout, p, c)
+            layout.text(c) = Present("hello")
+            TuiLayout.measure(layout)
+            TuiLayout.arrange(layout, 80, 24)
+            // Parent fills terminal: w=80. With margin=5 on each side,
+            // the content area should be 80 (margin is outside, handled by parent's parent).
+            // Bug: contentW = 80 - 5 - 5 = 70, so child gets positioned wrong.
+            // Expected: child x=0 (no padding/border), child width = intrinsic (5 for "hello")
+            // Current bug: child x = 0 + 0 + 0 + 5(marL) = 5
+            assert(layout.x(c) == 0) // margin should NOT offset child position
+        }
+
+        "margin should not affect content width calculation" in {
+            // A parent with margin=10 on each side should still have full content area
+            val layout = new TuiLayout(8)
+            val p      = allocNode(layout); TuiLayout.linkChild(layout, -1, p)
+            layout.marL(p) = 10; layout.marR(p) = 10
+            layout.padL(p) = 2; layout.padR(p) = 2 // 4 total padding
+            val c = allocNode(layout); TuiLayout.linkChild(layout, p, c)
+            layout.sizeW(c) = -1 // auto
+            layout.text(c) = Present("test")
+            TuiLayout.measure(layout)
+            TuiLayout.arrange(layout, 80, 24)
+            // With bug: contentW = 80 - 2 - 2 - 10 - 10 = 56
+            // Correct: contentW = 80 - 2 - 2 = 76 (margin is external)
+            // Check via child x: should be padL(2), not padL + marL (12)
+            assert(layout.x(c) == 2) // only padding offsets, not margin
+        }
+
+        "measure should include margin in intrinsic size" in {
+            // Margin contributes to how much space this node needs from its parent.
+            // Currently measure does NOT include margin in intrinsic size.
+            val layout = new TuiLayout(8)
+            val p      = allocNode(layout); TuiLayout.linkChild(layout, -1, p)
+            val c      = allocNode(layout); TuiLayout.linkChild(layout, p, c)
+            layout.marL(c) = 3; layout.marR(c) = 3
+            layout.text(c) = Present("hi") // intrinsic width = 2
+            TuiLayout.measure(layout)
+            // Child intrinsic should be 2 (text) + 3 + 3 (margin) = 8
+            // Parent intrinsic should include child's margin
+            assert(layout.intrW(p) >= 8) // parent must account for child margin
+        }
+    }
+
+    // ──────────────────────── Bug: WrapTextBit never set ────────────────────────
+
+    "text wrapping in layout" - {
+        "long text should wrap when container is narrow" in {
+            // Root fills terminal, so use root > container(sizeW=7) > text
+            val layout = new TuiLayout(8)
+            val root   = allocNode(layout); TuiLayout.linkChild(layout, -1, root)
+            val box    = allocNode(layout); TuiLayout.linkChild(layout, root, box)
+            layout.sizeW(box) = 7
+            val c = allocNode(layout); TuiLayout.linkChild(layout, box, c)
+            layout.text(c) = Present("hello world")
+            TuiLayout.measure(layout)
+            TuiLayout.arrange(layout, 80, 24)
+            // arrange should re-wrap: "hello w" fits in 7, "orld" on next line → 2 lines
+            assert(layout.h(c) >= 2)
+        }
+
+        "text wider than container wraps automatically in arrange" in {
+            val layout = new TuiLayout(8)
+            val root   = allocNode(layout); TuiLayout.linkChild(layout, -1, root)
+            val box    = allocNode(layout); TuiLayout.linkChild(layout, root, box)
+            layout.sizeW(box) = 5
+            val c = allocNode(layout); TuiLayout.linkChild(layout, box, c)
+            layout.text(c) = Present("hello world")
+            TuiLayout.measure(layout)
+            assert(layout.intrW(c) == 11)
+            assert(layout.intrH(c) == 1) // measure doesn't wrap
+            TuiLayout.arrange(layout, 80, 24)
+            // After arrange, text re-wraps to fit in 5-wide container
+            assert(layout.h(c) >= 2) // "hello" / "world" → 2 lines (word break at space)
+        }
+    }
+
+    "reactive text in span renders" - {
+        "span with plain text is visible" in {
+            val ui: UI = div(span("hello"))
+            val output = TuiBackend.renderToString(ui, 20, 5)
+            assert(output.contains("hello"), s"Should contain 'hello'. Output:\n$output")
+        }
+
+        "counter-like layout renders value" in {
+            // Simulates the counter: div containing buttons and a span with text
+            val ui: UI = div(
+                button("-"),
+                span("0"),
+                button("+")
+            )
+            val output = TuiBackend.renderToString(ui, 40, 20)
+            assert(output.contains("0"), s"Should contain '0'. Output:\n$output")
+            assert(output.contains("-"), s"Should contain '-'. Output:\n$output")
+            assert(output.contains("+"), s"Should contain '+'. Output:\n$output")
+        }
+
+        "reactive signal text renders" in run {
+            for
+                count <- Signal.initRef(42)
+            yield
+                val ui: UI = div(span(count.map(_.toString)))
+                val output = TuiBackend.renderToString(ui, 20, 5)
+                assert(output.contains("42"), s"Should contain '42'. Output:\n$output")
+        }
+
+        "full counter with signal renders all parts" in run {
+            for
+                count <- Signal.initRef(7)
+            yield
+                val ui: UI = div(
+                    button("-"),
+                    span(count.map(_.toString)),
+                    button("+")
+                )
+                val output = TuiBackend.renderToString(ui, 40, 20)
+                assert(output.contains("7"), s"Should contain '7'. Output:\n$output")
+                assert(output.contains("-"), s"Should contain '-'. Output:\n$output")
+                assert(output.contains("+"), s"Should contain '+'. Output:\n$output")
+        }
+
+        "mouse click on counter button updates signal and re-render shows new value" in run {
+            import AllowUnsafe.embrace.danger
+            for
+                count <- Signal.initRef(0)
+            yield
+                val ui: UI = div(
+                    button("+").onClick(count.getAndUpdate(_ + 1).unit),
+                    span(count.map(_.toString))
+                )
+                // Initial render
+                val output1 = TuiBackend.renderToString(ui, 30, 10)
+                assert(output1.contains("0"), s"Initial should contain '0'. Output:\n$output1")
+
+                // Find + button position via layout
+                val layout  = new kyo.internal.TuiLayout(64)
+                val signals = new kyo.internal.TuiSignalCollector(16)
+                kyo.internal.TuiFlatten.flatten(ui, layout, signals, 30, 10)
+                kyo.internal.TuiLayout.measure(layout)
+                kyo.internal.TuiLayout.arrange(layout, 30, 10)
+                val focus = new kyo.internal.TuiFocus
+                focus.scan(layout)
+                val btnIdx = focus.focusedIndex
+                assert(btnIdx >= 0, "Button should be focusable")
+                val bx = layout.x(btnIdx)
+                val by = layout.y(btnIdx)
+
+                // Click the + button
+                Sync.Unsafe.evalOrThrow(
+                    focus.dispatch(kyo.internal.InputEvent.Mouse(kyo.internal.InputEvent.MouseKind.LeftPress, bx, by), layout)
+                )
+                Thread.sleep(100) // let async onClick fiber complete
+
+                // Re-render — signal should now be 1
+                val output2 = TuiBackend.renderToString(ui, 30, 10)
+                assert(output2.contains("1"), s"After click should contain '1'. Output:\n$output2")
+                assert(!output2.contains(" 0"), s"After click should not contain '0'. Output:\n$output2")
+            end for
+        }
+    }
+
+    "table row direction" - {
+        "tr should lay out cells horizontally" in {
+            // Table rows should render cells side by side (ROW direction)
+            // Bug: Tr is not marked as ROW in TuiFlatten, so cells stack vertically
+            val ui: UI = table(
+                tr(td("Name"), td("Role"))
+            )
+            val dump     = TuiBackend.renderLayoutDump(ui, 40, 10)
+            val lines    = dump.split("\n").filter(_.contains("text="))
+            val nameLine = lines.find(_.contains("\"Name\"")).get
+            val roleLine = lines.find(_.contains("\"Role\"")).get
+            val yPattern = "y=\\s*(\\d+)".r
+            val nameY    = yPattern.findFirstMatchIn(nameLine).get.group(1).toInt
+            val roleY    = yPattern.findFirstMatchIn(roleLine).get.group(1).toInt
+            assert(nameY == roleY, s"Td cells should be on the same row (y=$nameY vs y=$roleY)")
+        }
+
+        "tr cells should not overlap horizontally" in {
+            val ui: UI = table(
+                tr(td("Alice"), td("Engineer"), td("Active"))
+            )
+            val dump      = TuiBackend.renderLayoutDump(ui, 60, 10)
+            val lines     = dump.split("\n").filter(_.contains("text="))
+            val xPattern  = "x=\\s*(\\d+)".r
+            val wPattern  = "w=\\s*(\\d+)".r
+            val aliceLine = lines.find(_.contains("\"Alice\"")).get
+            val engLine   = lines.find(_.contains("\"Engineer\"")).get
+            val aliceX    = xPattern.findFirstMatchIn(aliceLine).get.group(1).toInt
+            val aliceW    = wPattern.findFirstMatchIn(aliceLine).get.group(1).toInt
+            val engX      = xPattern.findFirstMatchIn(engLine).get.group(1).toInt
+            assert(engX >= aliceX + aliceW, s"Engineer (x=$engX) should start after Alice (x=$aliceX, w=$aliceW)")
+        }
+
+        "header and data should render in columns" in {
+            val ui: UI = table(
+                tr(th("Name"), th("Age")),
+                tr(td("Alice"), td("30"))
+            )
+            val output     = TuiBackend.renderToString(ui, 40, 10)
+            val lines      = output.split("\n")
+            val headerLine = lines.find(l => l.contains("Name") && l.contains("Age"))
+            assert(headerLine.isDefined, s"Name and Age should be on the same line. Output:\n$output")
+        }
+    }
+
+    "input element" - {
+        "should have non-zero size with placeholder" in {
+            // Bug: Input with no value/placeholder renders as 0x0
+            val ui: UI    = div(input.placeholder("Type here"))
+            val dump      = TuiBackend.renderLayoutDump(ui, 40, 10)
+            val inputLine = dump.split("\n").find(_.contains("elem=Input")).get
+            val wPattern  = "w=\\s*(\\d+)".r
+            val hPattern  = "h=\\s*(\\d+)".r
+            val w         = wPattern.findFirstMatchIn(inputLine).get.group(1).toInt
+            val h         = hPattern.findFirstMatchIn(inputLine).get.group(1).toInt
+            assert(w > 0, s"Input should have non-zero width (w=$w)")
+            assert(h > 0, s"Input should have non-zero height (h=$h)")
+        }
+
+        "empty input should still have size" in {
+            val ui: UI    = div(input)
+            val dump      = TuiBackend.renderLayoutDump(ui, 40, 10)
+            val inputLine = dump.split("\n").find(_.contains("elem=Input")).get
+            val wPattern  = "w=\\s*(\\d+)".r
+            val w         = wPattern.findFirstMatchIn(inputLine).get.group(1).toInt
+            assert(w > 0, s"Empty input should have non-zero width (w=$w)")
         }
     }
 

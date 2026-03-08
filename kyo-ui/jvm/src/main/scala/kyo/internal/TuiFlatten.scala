@@ -52,6 +52,7 @@ private[kyo] object TuiFlatten:
                 elem.children.foreach(child =>
                     flattenNode(child, layout, signals, idx, parentW, parentH)
                 )
+                resolveInputText(elem, layout, signals, idx)
 
             case rt: ReactiveText =>
                 signals.add(rt.signal)
@@ -113,6 +114,48 @@ private[kyo] object TuiFlatten:
         resolveHidden(elem.common.hidden, layout, signals, idx)
         resolveDisabledIfInteractive(elem, layout, signals, idx)
     end resolveElement
+
+    private val DefaultInputWidth = 20
+
+    private def resolveInputText(
+        elem: Element,
+        layout: TuiLayout,
+        signals: TuiSignalCollector,
+        idx: Int
+    )(using Frame, AllowUnsafe): Unit =
+        elem match
+            case inp: Input =>
+                val rawValue = inp.value match
+                    case Present(s: String)        => s
+                    case Present(sr: SignalRef[?]) => signals.add(sr); readSignal(sr.asInstanceOf[Signal[String]])
+                    case _                         => ""
+                val text  = if rawValue.nonEmpty then rawValue else inp.placeholder.getOrElse("")
+                val child = layout.alloc()
+                TuiLayout.linkChild(layout, idx, child)
+                TuiStyle.setDefaults(layout, child)
+                layout.text(child) = Present(text)
+                layout.nodeType(child) = TuiLayout.NodeText.toByte
+                if layout.sizeW(idx) < 0 then
+                    layout.sizeW(idx) = math.max(DefaultInputWidth, text.length)
+                if layout.sizeH(idx) < 0 then
+                    layout.sizeH(idx) = 1
+            case ta: Textarea =>
+                val rawValue = ta.value match
+                    case Present(s: String)        => s
+                    case Present(sr: SignalRef[?]) => signals.add(sr); readSignal(sr.asInstanceOf[Signal[String]])
+                    case _                         => ""
+                val text  = if rawValue.nonEmpty then rawValue else ta.placeholder.getOrElse("")
+                val child = layout.alloc()
+                TuiLayout.linkChild(layout, idx, child)
+                TuiStyle.setDefaults(layout, child)
+                layout.text(child) = Present(text)
+                layout.nodeType(child) = TuiLayout.NodeText.toByte
+                if layout.sizeW(idx) < 0 then
+                    layout.sizeW(idx) = math.max(DefaultInputWidth, text.length)
+                if layout.sizeH(idx) < 0 then
+                    layout.sizeH(idx) = 3
+            case _ => ()
+    end resolveInputText
 
     private def resolveHidden(
         hidden: Maybe[Boolean | Signal[Boolean]],

@@ -29,6 +29,8 @@ private[kyo] object TuiStyle:
     /** Resolve a Style into TuiLayout arrays at the given index. */
     def resolve(style: Style, layout: TuiLayout, idx: Int, parentW: Int, parentH: Int): Unit =
         setDefaults(layout, idx)
+        // Enable text wrapping by default — terminals have fixed width
+        layout.pFlags(idx) = layout.pFlags(idx) | (1 << TuiLayout.WrapTextBit)
         style.props.foreach { prop =>
             prop match
                 case BgColor(color)   => layout.bg(idx) = TuiColor.resolve(color)
@@ -191,26 +193,73 @@ private[kyo] object TuiStyle:
         }
     end resolve
 
-    /** Resolve a Size to cell count. Auto → 0. */
+    /** Overlay a Style on top of existing layout arrays — does NOT call setDefaults. Used by TuiFocus to apply focus styles without
+      * resetting existing values.
+      */
+    def overlay(style: Style, layout: TuiLayout, idx: Int): Unit =
+        val parentW = layout.w(idx)
+        val parentH = layout.h(idx)
+        style.props.foreach { prop =>
+            prop match
+                case BgColor(color)   => layout.bg(idx) = TuiColor.resolve(color)
+                case TextColor(color) => layout.fg(idx) = TuiColor.resolve(color)
+                case BorderWidthProp(t, r, b, l) =>
+                    var flags = layout.lFlags(idx)
+                    if resolveBorderWidth(t, parentW) > 0 then flags = flags | (1 << TuiLayout.BorderTBit)
+                    if resolveBorderWidth(r, parentW) > 0 then flags = flags | (1 << TuiLayout.BorderRBit)
+                    if resolveBorderWidth(b, parentW) > 0 then flags = flags | (1 << TuiLayout.BorderBBit)
+                    if resolveBorderWidth(l, parentW) > 0 then flags = flags | (1 << TuiLayout.BorderLBit)
+                    layout.lFlags(idx) = flags
+                case BorderColorProp(t, r, b, l) =>
+                    layout.bdrClrT(idx) = TuiColor.resolve(t)
+                    layout.bdrClrR(idx) = TuiColor.resolve(r)
+                    layout.bdrClrB(idx) = TuiColor.resolve(b)
+                    layout.bdrClrL(idx) = TuiColor.resolve(l)
+                case BorderStyleProp(value) =>
+                    val bits = value match
+                        case BorderStyle.none   => TuiLayout.BorderNone
+                        case BorderStyle.solid  => TuiLayout.BorderThin
+                        case BorderStyle.dashed => TuiLayout.BorderDashed
+                        case BorderStyle.dotted => TuiLayout.BorderDotted
+                    layout.pFlags(idx) = (layout.pFlags(idx) & ~(TuiLayout.BorderStyleMask << TuiLayout.BorderStyleShift)) |
+                        (bits << TuiLayout.BorderStyleShift)
+                case BorderRadiusProp(tl, tr, br, bl) =>
+                    var pf = layout.pFlags(idx)
+                    if resolveBorderWidth(tl, parentW) > 0 then pf = pf | (1 << TuiLayout.RoundedTLBit)
+                    if resolveBorderWidth(tr, parentW) > 0 then pf = pf | (1 << TuiLayout.RoundedTRBit)
+                    if resolveBorderWidth(br, parentW) > 0 then pf = pf | (1 << TuiLayout.RoundedBRBit)
+                    if resolveBorderWidth(bl, parentW) > 0 then pf = pf | (1 << TuiLayout.RoundedBLBit)
+                    layout.pFlags(idx) = pf
+                case OpacityProp(value) => layout.opac(idx) = value.toFloat
+                case _                  => () // Only visual overlay props — skip layout-affecting props
+        }
+    end overlay
+
+    /** Scale factor: 1 terminal cell ≈ 8 CSS pixels. */
+    private inline val PxPerCell = 8.0
+
+    /** Resolve a Size to cell count. Px values scaled by PxPerCell. Auto → 0. */
     private def resolveSize(size: Size, parentDim: Int): Int =
         size match
-            case Size.Px(v)  => math.max(0, v.toInt)
+            case Size.Px(v)  => math.max(0, math.round(v / PxPerCell).toInt)
             case Size.Em(v)  => math.max(0, v.toInt)
             case Size.Pct(v) => math.max(0, (v / 100.0 * parentDim).toInt)
             case Size.Auto   => 0
 
-    /** Resolve a Size to cell count. Auto → fallback. */
+    /** Resolve a Size to cell count. Px values scaled by PxPerCell. Auto → fallback. */
     private def resolveSizeOr(size: Size, parentDim: Int, fallback: Int): Int =
         size match
-            case Size.Px(v)  => math.max(0, v.toInt)
+            case Size.Px(v)  => math.max(0, math.round(v / PxPerCell).toInt)
             case Size.Em(v)  => math.max(0, v.toInt)
             case Size.Pct(v) => math.max(0, (v / 100.0 * parentDim).toInt)
             case Size.Auto   => fallback
 
-    /** Resolve border width: clamped to binary (0 or 1). */
+    /** Resolve border width: binary (any non-zero Px → 1 cell). Uses raw value, not scaled. */
     private def resolveBorderWidth(size: Size, parentDim: Int): Int =
         size match
-            case Size.Auto => 0
-            case _         => if resolveSize(size, parentDim) > 0 then 1 else 0
+            case Size.Auto   => 0
+            case Size.Px(v)  => if v > 0 then 1 else 0
+            case Size.Em(v)  => if v > 0 then 1 else 0
+            case Size.Pct(v) => if (v / 100.0 * parentDim).toInt > 0 then 1 else 0
 
 end TuiStyle
