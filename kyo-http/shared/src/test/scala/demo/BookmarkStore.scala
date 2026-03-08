@@ -83,7 +83,7 @@ object BookmarkStore extends KyoApp:
         val get = getRoute.handler { req =>
             storeRef.get.map { store =>
                 store.bookmarks.get(req.fields.id) match
-                    case Some(b) => HttpResponse.okJson(b)
+                    case Some(b) => HttpResponse.ok(b)
                     case None    => Abort.fail(ApiError(s"Bookmark ${req.fields.id} not found"))
             }
         }
@@ -94,7 +94,7 @@ object BookmarkStore extends KyoApp:
                 Store(store.bookmarks + (store.nextId -> bookmark), store.nextId + 1)
             }.map { store =>
                 val created = store.bookmarks(store.nextId - 1)
-                HttpResponse.okJson(created).addField("last-created", HttpCookie(created.id.toString))
+                HttpResponse.ok(created).addField("last-created", HttpCookie(created.id.toString))
             }
         }
 
@@ -112,7 +112,7 @@ object BookmarkStore extends KyoApp:
                     case None => store
             }.map { store =>
                 store.bookmarks.get(req.fields.id) match
-                    case Some(b) => HttpResponse.okJson(b)
+                    case Some(b) => HttpResponse.ok(b)
                     case None    => Abort.fail(ApiError(s"Bookmark ${req.fields.id} not found"))
             }
         }
@@ -136,7 +136,7 @@ object BookmarkStore extends KyoApp:
             storeRef <- AtomicRef.init(Store(Map.empty, 1))
             (list, get, create, update, delete) = handlers(storeRef)
             server <- HttpServer.init(
-                HttpServerConfig().port(port).openApi("/openapi.json", "Bookmark Store")
+                HttpServerConfig.default.port(port).openApi("/openapi.json", "Bookmark Store")
             )(list, get, create, update, delete)
             _ <- Console.printLine(s"BookmarkStore running on http://localhost:${server.port}")
             _ <- Console.printLine(s"  curl http://localhost:${server.port}/bookmarks")

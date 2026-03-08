@@ -40,10 +40,15 @@ end HttpStatus
 
 object HttpStatus:
 
-    private val byCode: Map[Int, HttpStatus] =
-        (Informational.values.iterator ++ Success.values.iterator ++
-            Redirect.values.iterator ++ ClientError.values.iterator ++
-            ServerError.values.iterator).map(s => s.code -> s).toMap
+    private val byCode: Dict[Int, HttpStatus] =
+        val b = DictBuilder.init[Int, HttpStatus]
+        Informational.values.foreach(s => discard(b.add(s.code, s)))
+        Success.values.foreach(s => discard(b.add(s.code, s)))
+        Redirect.values.foreach(s => discard(b.add(s.code, s)))
+        ClientError.values.foreach(s => discard(b.add(s.code, s)))
+        ServerError.values.foreach(s => discard(b.add(s.code, s)))
+        b.result()
+    end byCode
 
     /** Resolve an HTTP status code. Returns the known enum case if one exists, otherwise wraps in `Custom`. */
     def apply(code: Int): HttpStatus =
@@ -51,7 +56,7 @@ object HttpStatus:
         byCode.getOrElse(code, Custom(code))
 
     def resolve(code: Int): Maybe[HttpStatus] =
-        Maybe.fromOption(byCode.get(code))
+        byCode.get(code)
 
     /** Status code not covered by the standard enums. */
     final case class Custom(override val code: Int) extends HttpStatus(code)

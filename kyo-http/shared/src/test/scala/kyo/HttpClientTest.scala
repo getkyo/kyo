@@ -87,7 +87,7 @@ class HttpClientTest extends Test:
 
         "GET with text response" in run {
             val route = HttpRoute.getRaw("hello").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("world"))
+            val ep    = route.handler(_ => HttpResponse.ok("world"))
             withServer(ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/hello"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -166,7 +166,7 @@ class HttpClientTest extends Test:
         "Int" in run {
             val route = HttpRoute.getRaw("items" / Capture[Int]("id")).response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(s"item-${req.fields.id}")
+                HttpResponse.ok(s"item-${req.fields.id}")
             }
             withServer(ep) { port =>
                 val request = HttpRequest.getRaw(HttpUrl.fromUri("/items/42"))
@@ -180,7 +180,7 @@ class HttpClientTest extends Test:
         "String" in run {
             val route = HttpRoute.getRaw("users" / Capture[String]("name")).response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(s"hello ${req.fields.name}")
+                HttpResponse.ok(s"hello ${req.fields.name}")
             }
             withServer(ep) { port =>
                 val request = HttpRequest.getRaw(HttpUrl.fromUri("/users/alice"))
@@ -195,7 +195,7 @@ class HttpClientTest extends Test:
             val route = HttpRoute.getRaw("orgs" / Capture[String]("org") / "repos" / Capture[Int]("id"))
                 .response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(s"${req.fields.org}/${req.fields.id}")
+                HttpResponse.ok(s"${req.fields.org}/${req.fields.id}")
             }
             withServer(ep) { port =>
                 val request = HttpRequest.getRaw(HttpUrl.fromUri("/orgs/kyo/repos/123"))
@@ -215,7 +215,7 @@ class HttpClientTest extends Test:
                 .request(_.query[String]("q"))
                 .response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(s"results for: ${req.fields.q}")
+                HttpResponse.ok(s"results for: ${req.fields.q}")
             }
             withServer(ep) { port =>
                 val request = HttpRequest.getRaw(HttpUrl.fromUri("/search?q=kyo"))
@@ -231,7 +231,7 @@ class HttpClientTest extends Test:
                 .request(_.query[String]("q").query[Int]("page"))
                 .response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(s"${req.fields.q} page ${req.fields.page}")
+                HttpResponse.ok(s"${req.fields.q} page ${req.fields.page}")
             }
             withServer(ep) { port =>
                 val request = HttpRequest.getRaw(HttpUrl.fromUri("/search?q=test&page=3"))
@@ -251,7 +251,7 @@ class HttpClientTest extends Test:
                 val limit = req.fields.limit match
                     case Present(l) => l.toString
                     case Absent     => "default"
-                HttpResponse.okText(limit)
+                HttpResponse.ok(limit)
             }
             withServer(ep) { port =>
                 val request = HttpRequest.getRaw(HttpUrl.fromUri("/search"))
@@ -270,7 +270,7 @@ class HttpClientTest extends Test:
                 .request(_.header[String]("Authorization"))
                 .response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(req.fields.Authorization)
+                HttpResponse.ok(req.fields.Authorization)
             }
             withServer(ep) { port =>
                 val request = HttpRequest.getRaw(HttpUrl.fromUri("/auth"))
@@ -321,7 +321,7 @@ class HttpClientTest extends Test:
                 .request(_.cookie[String]("session"))
                 .response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(s"session=${req.fields.session}")
+                HttpResponse.ok(s"session=${req.fields.session}")
             }
             withServer(ep) { port =>
                 val request = HttpRequest.getRaw(HttpUrl.fromUri("/dashboard"))
@@ -356,7 +356,7 @@ class HttpClientTest extends Test:
                 .request(_.bodyText)
                 .response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(req.fields.body.toUpperCase)
+                HttpResponse.ok(req.fields.body.toUpperCase)
             }
             withServer(ep) { port =>
                 val request = HttpRequest.postRaw(HttpUrl.fromUri("/echo"))
@@ -388,7 +388,7 @@ class HttpClientTest extends Test:
                 .request(_.bodyForm[LoginForm])
                 .response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(s"welcome ${req.fields.body.username}")
+                HttpResponse.ok(s"welcome ${req.fields.body.username}")
             }
             withServer(ep) { port =>
                 val request = HttpRequest.postRaw(HttpUrl.fromUri("/login"))
@@ -412,7 +412,7 @@ class HttpClientTest extends Test:
         "large text body (100KB)" in run {
             val largeBody = "x" * (100 * 1024)
             val route     = HttpRoute.getRaw("large").response(_.bodyText)
-            val ep        = route.handler(_ => HttpResponse.okText(largeBody))
+            val ep        = route.handler(_ => HttpResponse.ok(largeBody))
             withServer(ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/large"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -459,7 +459,7 @@ class HttpClientTest extends Test:
             val ep = route.handler { req =>
                 req.fields.body.run.map { chunks =>
                     val totalBytes = chunks.foldLeft(0)(_ + _.size)
-                    HttpResponse.okText(s"received $totalBytes bytes")
+                    HttpResponse.ok(s"received $totalBytes bytes")
                 }
             }
             var called = false
@@ -522,7 +522,7 @@ class HttpClientTest extends Test:
                 val role      = req.fields.role
                 val requestId = req.fields.`X-Request-Id`
                 val user      = req.fields.body
-                HttpResponse.okText(s"$org/$role/${user.name}/$requestId")
+                HttpResponse.ok(s"$org/$role/${user.name}/$requestId")
             }
             withServer(ep) { port =>
                 val request = HttpRequest.postRaw(HttpUrl.fromUri("/orgs/kyo/users?role=admin"))
@@ -561,10 +561,10 @@ class HttpClientTest extends Test:
 
         "on same server" in run {
             val route1 = HttpRoute.getRaw("a").response(_.bodyText)
-            val ep1    = route1.handler(_ => HttpResponse.okText("endpoint-a"))
+            val ep1    = route1.handler(_ => HttpResponse.ok("endpoint-a"))
 
             val route2 = HttpRoute.getRaw("b").response(_.bodyText)
-            val ep2    = route2.handler(_ => HttpResponse.okText("endpoint-b"))
+            val ep2    = route2.handler(_ => HttpResponse.ok("endpoint-b"))
 
             withServer(ep1, ep2) { port =>
                 send(port, route1, HttpRequest.getRaw(HttpUrl.fromUri("/a"))).map { resp1 =>
@@ -581,7 +581,7 @@ class HttpClientTest extends Test:
 
         "404 for unknown path" in run {
             val route = HttpRoute.getRaw("exists").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("here"))
+            val ep    = route.handler(_ => HttpResponse.ok("here"))
 
             val unknownRoute = HttpRoute.getRaw("missing").response(_.bodyText)
             withServer(ep) { port =>
@@ -593,7 +593,7 @@ class HttpClientTest extends Test:
 
         "405 for wrong method" in run {
             val getRoute  = HttpRoute.getRaw("test").response(_.bodyText)
-            val ep        = getRoute.handler(_ => HttpResponse.okText("get"))
+            val ep        = getRoute.handler(_ => HttpResponse.ok("get"))
             val postRoute = HttpRoute.postRaw("test").response(_.bodyText)
             withServer(ep) { port =>
                 send(port, postRoute, HttpRequest.postRaw(HttpUrl.fromUri("/test"))).map { resp =>
@@ -617,7 +617,7 @@ class HttpClientTest extends Test:
 
         "via HttpClient" in run {
             val route  = HttpRoute.getRaw("ping").response(_.bodyText)
-            val ep     = route.handler(_ => HttpResponse.okText("pong"))
+            val ep     = route.handler(_ => HttpResponse.ok("pong"))
             var called = false
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
@@ -637,7 +637,7 @@ class HttpClientTest extends Test:
 
         "resolution" in run {
             val route  = HttpRoute.getRaw("api").response(_.bodyText)
-            val ep     = route.handler(_ => HttpResponse.okText("api-response"))
+            val ep     = route.handler(_ => HttpResponse.ok("api-response"))
             var called = false
             withServer(ep) { port =>
                 val config = HttpClientConfig(
@@ -657,7 +657,7 @@ class HttpClientTest extends Test:
 
         "not applied when request has scheme" in run {
             val route  = HttpRoute.getRaw("data").response(_.bodyText)
-            val ep     = route.handler(_ => HttpResponse.okText("direct"))
+            val ep     = route.handler(_ => HttpResponse.ok("direct"))
             var called = false
             withServer(ep) { port =>
                 val config = HttpClientConfig(
@@ -682,7 +682,7 @@ class HttpClientTest extends Test:
         "basic redirect" in run {
             val route       = HttpRoute.getRaw("start").response(_.bodyText)
             val targetRoute = HttpRoute.getRaw("target").response(_.bodyText)
-            val targetEp    = targetRoute.handler(_ => HttpResponse.okText("final"))
+            val targetEp    = targetRoute.handler(_ => HttpResponse.ok("final"))
             val redirectEp  = route.handler(_ => HttpResponse.redirect("/target").addField("body", "redirect"))
             var called      = false
             withServer(targetEp, redirectEp) { port =>
@@ -741,7 +741,7 @@ class HttpClientTest extends Test:
             val routeA = HttpRoute.getRaw("a").response(_.bodyText)
             val routeB = HttpRoute.getRaw("b").response(_.bodyText)
             val routeC = HttpRoute.getRaw("c").response(_.bodyText)
-            val epC    = routeC.handler(_ => HttpResponse.okText("final"))
+            val epC    = routeC.handler(_ => HttpResponse.ok("final"))
             val epB    = routeB.handler(_ => HttpResponse.redirect("/c").addField("body", "b"))
             val epA    = routeA.handler(_ => HttpResponse.redirect("/b").addField("body", "a"))
             var called = false
@@ -762,7 +762,7 @@ class HttpClientTest extends Test:
         "301 permanent redirect" in run {
             val route       = HttpRoute.getRaw("old").response(_.bodyText)
             val targetRoute = HttpRoute.getRaw("new").response(_.bodyText)
-            val targetEp    = targetRoute.handler(_ => HttpResponse.okText("moved"))
+            val targetEp    = targetRoute.handler(_ => HttpResponse.ok("moved"))
             val redirectEp  = route.handler(_ => HttpResponse.movedPermanently("/new").addField("body", "redirect"))
             var called      = false
             withServer(targetEp, redirectEp) { port =>
@@ -782,7 +782,7 @@ class HttpClientTest extends Test:
         "307 temporary redirect" in run {
             val route       = HttpRoute.getRaw("old").response(_.bodyText)
             val targetRoute = HttpRoute.getRaw("new").response(_.bodyText)
-            val targetEp    = targetRoute.handler(_ => HttpResponse.okText("temp"))
+            val targetEp    = targetRoute.handler(_ => HttpResponse.ok("temp"))
             val redirectEp = route.handler { _ =>
                 HttpResponse(HttpStatus.TemporaryRedirect)
                     .setHeader("Location", "/new")
@@ -806,7 +806,7 @@ class HttpClientTest extends Test:
         "308 permanent redirect" in run {
             val route       = HttpRoute.getRaw("old").response(_.bodyText)
             val targetRoute = HttpRoute.getRaw("new").response(_.bodyText)
-            val targetEp    = targetRoute.handler(_ => HttpResponse.okText("perm"))
+            val targetEp    = targetRoute.handler(_ => HttpResponse.ok("perm"))
             val redirectEp = route.handler { _ =>
                 HttpResponse(HttpStatus.PermanentRedirect)
                     .setHeader("Location", "/new")
@@ -830,7 +830,7 @@ class HttpClientTest extends Test:
         "preserves query parameters in Location" in run {
             val route       = HttpRoute.getRaw("start").response(_.bodyText)
             val targetRoute = HttpRoute.getRaw("target").request(_.query[String]("q")).response(_.bodyText)
-            val targetEp    = targetRoute.handler(req => HttpResponse.okText(s"q=${req.fields.q}"))
+            val targetEp    = targetRoute.handler(req => HttpResponse.ok(s"q=${req.fields.q}"))
             val redirectEp  = route.handler(_ => HttpResponse.redirect("/target?q=hello").addField("body", "redirect"))
             var called      = false
             withServer(targetEp, redirectEp) { port =>
@@ -856,7 +856,7 @@ class HttpClientTest extends Test:
             val ep = route.handler { _ =>
                 attempts += 1
                 if attempts < 3 then HttpResponse.serverError.addField("body", "error")
-                else HttpResponse.okText("recovered")
+                else HttpResponse.ok("recovered")
             }
             var called = false
             withServer(ep) { port =>
@@ -901,7 +901,7 @@ class HttpClientTest extends Test:
             val route    = HttpRoute.getRaw("ok").response(_.bodyText)
             val ep = route.handler { _ =>
                 attempts += 1
-                HttpResponse.okText("immediate")
+                HttpResponse.ok("immediate")
             }
             var called = false
             withServer(ep) { port =>
@@ -925,7 +925,7 @@ class HttpClientTest extends Test:
                 attempts += 1
                 if attempts == 1 then HttpResponse.serviceUnavailable.addField("body", "503")
                 else if attempts == 2 then HttpResponse.serverError.addField("body", "500")
-                else HttpResponse.okText("done")
+                else HttpResponse.ok("done")
             }
             var called = false
             withServer(ep) { port =>
@@ -955,7 +955,7 @@ class HttpClientTest extends Test:
                 attempts += 1
                 timestamps = timestamps :+ java.lang.System.currentTimeMillis()
                 if attempts < 3 then HttpResponse.serverError.addField("body", "wait")
-                else HttpResponse.okText("done")
+                else HttpResponse.ok("done")
             }
             var called = false
             withServer(ep) { port =>
@@ -982,7 +982,7 @@ class HttpClientTest extends Test:
             val flakyEp = flakyRoute.handler { _ =>
                 attempts += 1
                 if attempts < 3 then HttpResponse.serverError.addField("body", "error")
-                else HttpResponse.okText("recovered")
+                else HttpResponse.ok("recovered")
             }
             val redirectRoute = HttpRoute.getRaw("start").response(_.bodyText)
             val redirectEp = redirectRoute.handler { _ =>
@@ -1014,7 +1014,7 @@ class HttpClientTest extends Test:
                 else HttpResponse.redirect("/target").addField("body", "redirect")
             }
             val targetEp = targetRoute.handler { _ =>
-                HttpResponse.okText("final destination")
+                HttpResponse.ok("final destination")
             }
             var called = false
             withServer(ep, targetEp) { port =>
@@ -1074,7 +1074,7 @@ class HttpClientTest extends Test:
         "timeout error" in run {
             val route = HttpRoute.getRaw("slow").response(_.bodyText)
             val ep = route.handler { _ =>
-                Async.delay(10.seconds)(HttpResponse.okText("too late"))
+                Async.delay(10.seconds)(HttpResponse.ok("too late"))
             }
             withServer(ep) { port =>
                 HttpClient.withConfig(HttpClientConfig(timeout = Present(100.millis))) {
@@ -1096,7 +1096,7 @@ class HttpClientTest extends Test:
 
         "exhausted" in run {
             val route  = HttpRoute.getRaw("slow").response(_.bodyText)
-            val ep     = route.handler(_ => HttpResponse.okText("ok"))
+            val ep     = route.handler(_ => HttpResponse.ok("ok"))
             var called = false
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
@@ -1126,7 +1126,7 @@ class HttpClientTest extends Test:
             val ep = route.handler { _ =>
                 count += 1
                 if count <= 3 then HttpResponse.serverError.addField("body", "fail")
-                else HttpResponse.okText("recovered")
+                else HttpResponse.ok("recovered")
             }
             var called = false
             withServer(ep) { port =>
@@ -1151,7 +1151,7 @@ class HttpClientTest extends Test:
 
         "sequential requests reuse connections" in run {
             val route = HttpRoute.getRaw("ping").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("pong"))
+            val ep    = route.handler(_ => HttpResponse.ok("pong"))
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
                     withClient { c =>
@@ -1168,7 +1168,7 @@ class HttpClientTest extends Test:
 
         "connections survive across multiple batches" in run {
             val route = HttpRoute.getRaw("ping").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("pong"))
+            val ep    = route.handler(_ => HttpResponse.ok("pong"))
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
                     withClient(3) { c =>
@@ -1189,7 +1189,7 @@ class HttpClientTest extends Test:
 
         "connection reuse with varying data" in run {
             val route = HttpRoute.postText("echo-reuse")
-            val ep    = route.handler(req => HttpResponse.okText(req.fields.body))
+            val ep    = route.handler(req => HttpResponse.ok(req.fields.body))
             withServer(ep) { port =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
@@ -1225,7 +1225,7 @@ class HttpClientTest extends Test:
                 ))
                 HttpResponse.ok.addField("body", chunks)
             }
-            val textEp = textRoute.handler(_ => HttpResponse.okText("buffered"))
+            val textEp = textRoute.handler(_ => HttpResponse.ok("buffered"))
             withServer(streamEp, textEp) { port =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
@@ -1253,8 +1253,8 @@ class HttpClientTest extends Test:
         "slot returned after concurrent timeouts" in run {
             val slowRoute = HttpRoute.getRaw("slow").response(_.bodyText)
             val fastRoute = HttpRoute.getRaw("fast").response(_.bodyText)
-            val slowEp    = slowRoute.handler(_ => Async.sleep(10.seconds).andThen(HttpResponse.okText("late")))
-            val fastEp    = fastRoute.handler(_ => HttpResponse.okText("ok"))
+            val slowEp    = slowRoute.handler(_ => Async.sleep(10.seconds).andThen(HttpResponse.ok("late")))
+            val fastEp    = fastRoute.handler(_ => HttpResponse.ok("ok"))
             withServer(slowEp, fastEp) { port =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
@@ -1285,8 +1285,8 @@ class HttpClientTest extends Test:
         "slot returned after concurrent fiber cancellations" in run {
             val slowRoute = HttpRoute.getRaw("slow2").response(_.bodyText)
             val fastRoute = HttpRoute.getRaw("fast2").response(_.bodyText)
-            val slowEp    = slowRoute.handler(_ => Async.sleep(10.seconds).andThen(HttpResponse.okText("late")))
-            val fastEp    = fastRoute.handler(_ => HttpResponse.okText("ok"))
+            val slowEp    = slowRoute.handler(_ => Async.sleep(10.seconds).andThen(HttpResponse.ok("late")))
+            val fastEp    = fastRoute.handler(_ => HttpResponse.ok("ok"))
             withServer(slowEp, fastEp) { port =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
@@ -1331,7 +1331,7 @@ class HttpClientTest extends Test:
                 }
                 HttpResponse.ok.addField("body", chunks)
             }
-            val fastEp = fastRoute.handler(_ => HttpResponse.okText("ok"))
+            val fastEp = fastRoute.handler(_ => HttpResponse.ok("ok"))
             withServer(streamEp, fastEp) { port =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
@@ -1370,9 +1370,9 @@ class HttpClientTest extends Test:
                 .response(_.bodyText)
             val fastRoute = HttpRoute.getRaw("fast4").response(_.bodyText)
             val postEp = postRoute.handler { req =>
-                req.fields.body.run.map(_ => HttpResponse.okText("done"))
+                req.fields.body.run.map(_ => HttpResponse.ok("done"))
             }
-            val fastEp = fastRoute.handler(_ => HttpResponse.okText("ok"))
+            val fastEp = fastRoute.handler(_ => HttpResponse.ok("ok"))
             withServer(postEp, fastEp) { port =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
@@ -1414,7 +1414,7 @@ class HttpClientTest extends Test:
 
         "slot returned after connection error" in run {
             val fastRoute = HttpRoute.getRaw("fast5").response(_.bodyText)
-            val fastEp    = fastRoute.handler(_ => HttpResponse.okText("ok"))
+            val fastEp    = fastRoute.handler(_ => HttpResponse.ok("ok"))
             withServer(fastEp) { port =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
@@ -1457,7 +1457,7 @@ class HttpClientTest extends Test:
 
         "parallel requests to same endpoint" in run {
             val route = HttpRoute.getRaw("ping").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("pong"))
+            val ep    = route.handler(_ => HttpResponse.ok("pong"))
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
                     withClient(10) { c =>
@@ -1478,7 +1478,7 @@ class HttpClientTest extends Test:
             val route   = HttpRoute.getRaw("count").response(_.bodyText)
             val ep = route.handler { _ =>
                 val n = counter.incrementAndGet()
-                HttpResponse.okText(n.toString)
+                HttpResponse.ok(n.toString)
             }
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
@@ -1498,7 +1498,7 @@ class HttpClientTest extends Test:
 
         "sequential then parallel requests" in run {
             val route = HttpRoute.getRaw("data").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("data"))
+            val ep    = route.handler(_ => HttpResponse.ok("data"))
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
                     withClient(10) { c =>
@@ -1519,7 +1519,7 @@ class HttpClientTest extends Test:
 
         "concurrent contention with more fibers than pool slots" in run {
             val route = HttpRoute.getRaw("ping").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("pong"))
+            val ep    = route.handler(_ => HttpResponse.ok("pong"))
             withServer(ep) { port =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
@@ -1550,7 +1550,7 @@ class HttpClientTest extends Test:
 
         "concurrent burst within pool capacity" in run {
             val route = HttpRoute.getRaw("burst").response(_.bodyText)
-            val ep    = route.handler(_ => Async.sleep(10.millis).andThen(HttpResponse.okText("ok")))
+            val ep    = route.handler(_ => Async.sleep(10.millis).andThen(HttpResponse.ok("ok")))
             withServer(ep) { port =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
@@ -1576,7 +1576,7 @@ class HttpClientTest extends Test:
 
         "high concurrency stress" in run {
             val route = HttpRoute.getRaw("stress").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("ok"))
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
             withServer(ep) { port =>
                 val repeats = 5
                 val sizes   = Choice.eval(4, 8)
@@ -1608,7 +1608,7 @@ class HttpClientTest extends Test:
         "mixed buffered and streaming concurrent requests" in run {
             val textRoute   = HttpRoute.getRaw("text").response(_.bodyText)
             val streamRoute = HttpRoute.getRaw("stream-mix").response(_.bodyStream)
-            val textEp      = textRoute.handler(_ => HttpResponse.okText("hello"))
+            val textEp      = textRoute.handler(_ => HttpResponse.ok("hello"))
             val streamEp = streamRoute.handler { _ =>
                 val chunks = Stream.init(Seq(
                     Span.fromUnsafe("chunk1\n".getBytes("UTF-8")),
@@ -1666,7 +1666,7 @@ class HttpClientTest extends Test:
                     val text = chunks.foldLeft("")((acc, span) =>
                         acc + new String(span.toArrayUnsafe, "UTF-8")
                     )
-                    HttpResponse.okText(text)
+                    HttpResponse.ok(text)
                 }
             }
             withServer(postEp) { port =>
@@ -1715,8 +1715,8 @@ class HttpClientTest extends Test:
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyBinary)
                 .response(_.bodyText)
-            val ep     = route.handler(_ => HttpResponse.okText("ok"))
-            val config = HttpServerConfig(0, "localhost", maxContentLength = 1024)
+            val ep     = route.handler(_ => HttpResponse.ok("ok"))
+            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(1024)
             withServerConfig(config)(ep) { port =>
                 val body = Span.fill(512)(0.toByte) // 512 bytes, within 1024 limit
                 send(port, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -1729,8 +1729,8 @@ class HttpClientTest extends Test:
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyBinary)
                 .response(_.bodyText)
-            val ep     = route.handler(_ => HttpResponse.okText("ok"))
-            val config = HttpServerConfig(0, "localhost", maxContentLength = 64)
+            val ep     = route.handler(_ => HttpResponse.ok("ok"))
+            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(64)
             withServerConfig(config)(ep) { port =>
                 val body = Span.fill(128)(0.toByte) // 128 bytes, exceeds 64 limit
                 send(port, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -1743,8 +1743,8 @@ class HttpClientTest extends Test:
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyBinary)
                 .response(_.bodyText)
-            val ep     = route.handler(_ => HttpResponse.okText("ok"))
-            val config = HttpServerConfig(0, "localhost", maxContentLength = 100)
+            val ep     = route.handler(_ => HttpResponse.ok("ok"))
+            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(100)
             withServerConfig(config)(ep) { port =>
                 val body = Span.fill(100)(0.toByte) // exactly 100 bytes
                 send(port, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -1757,8 +1757,8 @@ class HttpClientTest extends Test:
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyBinary)
                 .response(_.bodyText)
-            val ep     = route.handler(_ => HttpResponse.okText("ok"))
-            val config = HttpServerConfig(0, "localhost", maxContentLength = 100)
+            val ep     = route.handler(_ => HttpResponse.ok("ok"))
+            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(100)
             withServerConfig(config)(ep) { port =>
                 val body = Span.fill(101)(0.toByte) // 101 bytes, over 100 limit
                 send(port, route, HttpRequest.postRaw(HttpUrl.fromUri("/data")).addField("body", body)).map { resp =>
@@ -1769,8 +1769,8 @@ class HttpClientTest extends Test:
 
         "empty body always succeeds" in run {
             val route  = HttpRoute.getRaw("data").response(_.bodyText)
-            val ep     = route.handler(_ => HttpResponse.okText("ok"))
-            val config = HttpServerConfig(0, "localhost", maxContentLength = 1)
+            val ep     = route.handler(_ => HttpResponse.ok("ok"))
+            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(1)
             withServerConfig(config)(ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/data"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -1782,8 +1782,8 @@ class HttpClientTest extends Test:
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyText)
                 .response(_.bodyText)
-            val ep     = route.handler(req => HttpResponse.okText(req.fields.body))
-            val config = HttpServerConfig(0, "localhost", maxContentLength = 64)
+            val ep     = route.handler(req => HttpResponse.ok(req.fields.body))
+            val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(64)
             withServerConfig(config)(ep) { port =>
                 // First request: too large, should get 413
                 val bigBody = "x" * 128
@@ -1805,7 +1805,7 @@ class HttpClientTest extends Test:
     "HttpServerConfig" - {
 
         "default config values" in {
-            val config = HttpServerConfig()
+            val config = HttpServerConfig.default
             assert(config.port == 0)
             assert(config.host == "0.0.0.0")
             assert(config.maxContentLength == 65536)
@@ -1817,7 +1817,7 @@ class HttpClientTest extends Test:
         }
 
         "builder methods" in {
-            val config = HttpServerConfig()
+            val config = HttpServerConfig.default
                 .maxContentLength(1024)
                 .backlog(256)
                 .keepAlive(false)
@@ -1840,7 +1840,7 @@ class HttpClientTest extends Test:
             val route = HttpRoute.getRaw("slow").response(_.bodyText)
             val ep = route.handler { _ =>
                 Async.sleep(5.seconds).andThen {
-                    HttpResponse.okText("too late")
+                    HttpResponse.ok("too late")
                 }
             }
             withServer(ep) { port =>
@@ -1933,7 +1933,7 @@ class HttpClientTest extends Test:
                     val text = chunks.foldLeft("")((acc, span) =>
                         acc + new String(span.toArrayUnsafe, "UTF-8")
                     )
-                    HttpResponse.okText(text)
+                    HttpResponse.ok(text)
                 }
             }
             withServer(ep) { port =>
@@ -1956,7 +1956,7 @@ class HttpClientTest extends Test:
 
         "client close while requests in-flight" in runJVM {
             val slowRoute = HttpRoute.getRaw("slow-close").response(_.bodyText)
-            val slowEp    = slowRoute.handler(_ => Async.sleep(5.seconds).andThen(HttpResponse.okText("late")))
+            val slowEp    = slowRoute.handler(_ => Async.sleep(5.seconds).andThen(HttpResponse.ok("late")))
             withServer(slowEp) { port =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
@@ -1994,7 +1994,7 @@ class HttpClientTest extends Test:
                 .response(_.bodyText)
             route.handler { req =>
                 val auth = req.headers.get("Authorization").getOrElse("none")
-                HttpResponse.okText(s"auth=$auth")
+                HttpResponse.ok(s"auth=$auth")
             }
         end echoAuthEndpoint
 
@@ -2005,7 +2005,7 @@ class HttpClientTest extends Test:
                 .response(_.bodyText)
             route.handler { req =>
                 val value = req.headers.get("X-Custom").getOrElse("none")
-                HttpResponse.okText(s"X-Custom=$value")
+                HttpResponse.ok(s"X-Custom=$value")
             }
         end echoCustomHeaderEndpoint
 
@@ -2100,7 +2100,7 @@ class HttpClientTest extends Test:
             val ep = route2.handler { req =>
                 val auth   = req.headers.get("Authorization").getOrElse("none")
                 val custom = req.headers.get("X-Request-Id").getOrElse("none")
-                HttpResponse.okText(s"auth=$auth,rid=$custom")
+                HttpResponse.ok(s"auth=$auth,rid=$custom")
             }
             withServer(ep) { port =>
                 HttpClient.withConfig(noTimeout) {
@@ -2489,7 +2489,7 @@ class HttpClientTest extends Test:
 
         "HttpClient.let uses provided client" in run {
             val route = HttpRoute.getRaw("ctx").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("via-let"))
+            val ep    = route.handler(_ => HttpResponse.ok("via-let"))
             withServer(ep) { port =>
                 HttpClient.initUnscoped(client).map { customClient =>
                     HttpClient.let(customClient) {
@@ -2505,7 +2505,7 @@ class HttpClientTest extends Test:
 
         "nested let scopes are isolated" in run {
             val route = HttpRoute.getRaw("ctx").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("ok"))
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
             withServer(ep) { port =>
                 HttpClient.initUnscoped(client).map { outerClient =>
                     HttpClient.initUnscoped(client).map { innerClient =>
@@ -2534,7 +2534,7 @@ class HttpClientTest extends Test:
             val ep = route.handler { _ =>
                 attempts += 1
                 if attempts < 2 then HttpResponse.serverError.addField("body", "fail")
-                else HttpResponse.okText("ok")
+                else HttpResponse.ok("ok")
             }
             withServer(ep) { port =>
                 val base = HttpUrl(Present("http"), "localhost", port, "/", Absent)

@@ -29,7 +29,7 @@ class SecureRandom extends java.util.Random(0L):
                     loop(0)
                 }
             finally
-                val _ = fclose(fp) // can't use discard() — not in kyo package
+                val _ = fclose(fp)
             end try
         end if
     end nextBytes

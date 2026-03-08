@@ -37,7 +37,7 @@ class Rfc7578Test extends Test:
         val ep = route.handler { req =>
             val parts       = req.fields.body
             val hasFilename = parts.headOption.exists(_.filename.nonEmpty)
-            HttpResponse.okText(s"filename=${parts.head.filename}")
+            HttpResponse.ok(s"filename=${parts.head.filename}")
         }
         withServer(ep) { port =>
             val part = HttpRequest.Part(
@@ -63,7 +63,7 @@ class Rfc7578Test extends Test:
             .response(_.bodyText)
         val ep = route.handler { req =>
             val parts = req.fields.body
-            HttpResponse.okText(s"filename=${parts.head.filename}")
+            HttpResponse.ok(s"filename=${parts.head.filename}")
         }
         withServer(ep) { port =>
             val part = HttpRequest.Part(
@@ -89,7 +89,7 @@ class Rfc7578Test extends Test:
             .response(_.bodyText)
         val ep = route.handler { req =>
             val parts = req.fields.body
-            HttpResponse.okText(s"ct=${parts.head.contentType}")
+            HttpResponse.ok(s"ct=${parts.head.contentType}")
         }
         withServer(ep) { port =>
             val part = HttpRequest.Part(
@@ -115,7 +115,7 @@ class Rfc7578Test extends Test:
             .response(_.bodyText)
         val ep = route.handler { req =>
             val parts = req.fields.body
-            HttpResponse.okText(s"ct=${parts.head.contentType}")
+            HttpResponse.ok(s"ct=${parts.head.contentType}")
         }
         withServer(ep) { port =>
             val part = HttpRequest.Part(
@@ -146,7 +146,7 @@ class Rfc7578Test extends Test:
             .response(_.bodyText)
         val ep = route.handler { req =>
             val parts = req.fields.body
-            HttpResponse.okText(s"size=${parts.head.data.size}")
+            HttpResponse.ok(s"size=${parts.head.data.size}")
         }
         withServer(ep) { port =>
             val part = HttpRequest.Part(
@@ -173,7 +173,7 @@ class Rfc7578Test extends Test:
         val ep = route.handler { req =>
             val parts = req.fields.body
             val names = parts.map(_.name).mkString(",")
-            HttpResponse.okText(s"count=${parts.size},names=$names")
+            HttpResponse.ok(s"count=${parts.size},names=$names")
         }
         withServer(ep) { port =>
             val parts = (1 to 15).map { i =>
@@ -206,7 +206,7 @@ class Rfc7578Test extends Test:
             req.fields.body.run.map { chunks =>
                 val parts = chunks.toSeq
                 val names = parts.map(_.name).mkString(",")
-                HttpResponse.okText(s"count=${parts.size},names=$names")
+                HttpResponse.ok(s"count=${parts.size},names=$names")
             }
         }
         val sendRoute = HttpRoute.postRaw("upload")
@@ -241,7 +241,7 @@ class Rfc7578Test extends Test:
             .response(_.bodyText)
         val ep = route.handler { req =>
             val parts = req.fields.body
-            HttpResponse.okText(s"name=${parts.head.name}")
+            HttpResponse.ok(s"name=${parts.head.name}")
         }
         withServer(ep) { port =>
             val part = HttpRequest.Part(
@@ -268,7 +268,7 @@ class Rfc7578Test extends Test:
         val ep = route.handler { req =>
             val parts = req.fields.body
             val bytes = parts.head.data.toArray
-            HttpResponse.okText(s"size=${bytes.length},first=${bytes(0)},last=${bytes(bytes.length - 1)}")
+            HttpResponse.ok(s"size=${bytes.length},first=${bytes(0)},last=${bytes(bytes.length - 1)}")
         }
         withServer(ep) { port =>
             val binaryData = Array[Byte](0, 1, 127, -128, -1)
@@ -298,7 +298,7 @@ class Rfc7578Test extends Test:
         val ep = route.handler { req =>
             val parts = req.fields.body
             val cts   = parts.map(p => s"${p.name}:${p.contentType}").mkString(";")
-            HttpResponse.okText(cts)
+            HttpResponse.ok(cts)
         }
         withServer(ep) { port =>
             val parts = Seq(
@@ -326,7 +326,7 @@ class Rfc7578Test extends Test:
         val ep = route.handler { req =>
             val parts = req.fields.body
             val text  = new String(parts.head.data.toArray, "UTF-8")
-            HttpResponse.okText(text)
+            HttpResponse.ok(text)
         }
         withServer(ep) { port =>
             val part = HttpRequest.Part(
@@ -352,7 +352,7 @@ class Rfc7578Test extends Test:
             .response(_.bodyText)
         val ep = route.handler { req =>
             val parts = req.fields.body
-            HttpResponse.okText(s"filename=${parts.head.filename}")
+            HttpResponse.ok(s"filename=${parts.head.filename}")
         }
         withServer(ep) { port =>
             val part = HttpRequest.Part(

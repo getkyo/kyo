@@ -58,7 +58,7 @@ object UrlShortener extends KyoApp:
                             }
                         yield
                             val code = toCode(store.nextId - 1)
-                            HttpResponse.okJson(ShortenResponse(code, url))
+                            HttpResponse.ok(ShortenResponse(code, url))
                     end if
                 }
 
@@ -108,13 +108,13 @@ object UrlShortener extends KyoApp:
                 .handler { req =>
                     for store <- storeRef.get
                     yield store.links.get(req.fields.code) match
-                        case Some(entry) => HttpResponse.okJson(LinkStats(req.fields.code, entry.url, entry.visits))
+                        case Some(entry) => HttpResponse.ok(LinkStats(req.fields.code, entry.url, entry.visits))
                         case None        => Abort.fail(ApiError(s"Link not found: ${req.fields.code}"))
                 }
 
             health = HttpHandler.health()
             server <- HttpServer.init(
-                HttpServerConfig().port(port).openApi("/openapi.json", "URL Shortener")
+                HttpServerConfig.default.port(port).openApi("/openapi.json", "URL Shortener")
             )(shorten, redirect, head, stats, health)
             _ <- Console.printLine(s"UrlShortener running on http://localhost:${server.port}")
             _ <- Console.printLine(

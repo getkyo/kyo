@@ -57,7 +57,7 @@ object HttpHeaders:
 
         /** Returns all values for headers matching `name` (case-insensitive). */
         def getAll(name: String): Seq[String] =
-            val builder = Seq.newBuilder[String]
+            val builder = Chunk.newBuilder[String]
             @tailrec def loop(i: Int): Seq[String] =
                 if i >= self.length then builder.result()
                 else
@@ -270,7 +270,7 @@ object HttpHeaders:
     end isValidCookieValue
 
     private[kyo] def serializeCookie[A](name: String, cookie: HttpCookie[A]): String =
-        val sb = new StringBuilder
+        val sb = new StringBuilder(name.size + 80)
         discard(sb.append(name).append('=').append(cookie.codec.encode(cookie.value)))
         cookie.maxAge match
             case Present(d) => discard(sb.append("; Max-Age=").append(d.toSeconds))

@@ -46,7 +46,7 @@ class Rfc9110Test extends Test:
 
     "Section 9.3.2 - HEAD response MUST NOT contain a message body" in run {
         val route = HttpRoute.getRaw("data").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("hello world"))
+        val ep    = route.handler(_ => HttpResponse.ok("hello world"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.headRaw(HttpUrl.fromUri("/data"))).map { resp =>
                 assert(resp.status == HttpStatus.OK)
@@ -59,7 +59,7 @@ class Rfc9110Test extends Test:
 
     "Section 9.3.2 - HEAD response Content-Type MUST match GET" in run {
         val route = HttpRoute.getRaw("typed").response(_.bodyJson[User])
-        val ep    = route.handler(_ => HttpResponse.okJson(User(1, "Alice")))
+        val ep    = route.handler(_ => HttpResponse.ok(User(1, "Alice")))
         withServer(ep) { port =>
             for
                 getResp  <- send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/typed")))
@@ -76,7 +76,7 @@ class Rfc9110Test extends Test:
 
     "Section 9.3.2 - HEAD response Content-Length MUST match GET body size" in run {
         val route = HttpRoute.getRaw("sized").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("twelve chars"))
+        val ep    = route.handler(_ => HttpResponse.ok("twelve chars"))
         withServer(ep) { port =>
             for
                 getResp  <- send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/sized")))
@@ -96,8 +96,8 @@ class Rfc9110Test extends Test:
     "Section 9.3.7 - OPTIONS MUST include Allow header" in run {
         val getRoute  = HttpRoute.getRaw("resource").response(_.bodyText)
         val postRoute = HttpRoute.postRaw("resource").request(_.bodyText).response(_.bodyText)
-        val getEp     = getRoute.handler(_ => HttpResponse.okText("get"))
-        val postEp    = postRoute.handler(req => HttpResponse.okText("post"))
+        val getEp     = getRoute.handler(_ => HttpResponse.ok("get"))
+        val postEp    = postRoute.handler(req => HttpResponse.ok("post"))
         withServer(getEp, postEp) { port =>
             send(port, rawRoute, HttpRequest.optionsRaw(HttpUrl.fromUri("/resource"))).map { resp =>
                 assert(resp.status == HttpStatus.NoContent, s"OPTIONS should return 204, got ${resp.status}")
@@ -111,7 +111,7 @@ class Rfc9110Test extends Test:
 
     "Section 9.3.7 - OPTIONS Allow lists HEAD when GET registered" in run {
         val route = HttpRoute.getRaw("resource").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("ok"))
+        val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.optionsRaw(HttpUrl.fromUri("/resource"))).map { resp =>
                 val allow = resp.headers.get("Allow").getOrElse("")
@@ -152,7 +152,7 @@ class Rfc9110Test extends Test:
 
     "Section 9.3.5 - DELETE returning 202 Accepted" in run {
         val route = HttpRoute.deleteRaw("resource").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.acceptedText("queued"))
+        val ep    = route.handler(_ => HttpResponse.accepted("queued"))
         withServer(ep) { port =>
             send(port, route, HttpRequest.deleteRaw(HttpUrl.fromUri("/resource"))).map { resp =>
                 assert(resp.status == HttpStatus.Accepted)
@@ -177,7 +177,7 @@ class Rfc9110Test extends Test:
         // RFC 9110 §9.3.5: "a 200 (OK) status code if the action has been enacted and the
         // response message includes a representation describing the status."
         val route = HttpRoute.deleteRaw("resource").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("deleted successfully"))
+        val ep    = route.handler(_ => HttpResponse.ok("deleted successfully"))
         withServer(ep) { port =>
             send(port, route, HttpRequest.deleteRaw(HttpUrl.fromUri("/resource"))).map { resp =>
                 assert(resp.status == HttpStatus.OK)
@@ -190,7 +190,7 @@ class Rfc9110Test extends Test:
 
     "Section 15.5.6 - 405 MUST include Allow header" in run {
         val getRoute = HttpRoute.getRaw("resource").response(_.bodyText)
-        val ep       = getRoute.handler(_ => HttpResponse.okText("ok"))
+        val ep       = getRoute.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.putRaw(HttpUrl.fromUri("/resource"))).map { resp =>
                 assert(resp.status == HttpStatus.MethodNotAllowed)
@@ -204,7 +204,7 @@ class Rfc9110Test extends Test:
 
     "Section 15.5.6 - 405 Allow includes HEAD when GET registered" in run {
         val route = HttpRoute.getRaw("resource").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("ok"))
+        val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.deleteRaw(HttpUrl.fromUri("/resource"))).map { resp =>
                 assert(resp.status == HttpStatus.MethodNotAllowed)
@@ -218,7 +218,7 @@ class Rfc9110Test extends Test:
 
     "Section 15.5.6 - 405 Allow includes OPTIONS" in run {
         val route = HttpRoute.getRaw("resource").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("ok"))
+        val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.deleteRaw(HttpUrl.fromUri("/resource"))).map { resp =>
                 assert(resp.status == HttpStatus.MethodNotAllowed)
@@ -302,7 +302,7 @@ class Rfc9110Test extends Test:
         val route = HttpRoute.postRaw("json-endpoint")
             .request(_.bodyJson[User])
             .response(_.bodyText)
-        val ep = route.handler(req => HttpResponse.okText(s"got: ${req.fields.body}"))
+        val ep = route.handler(req => HttpResponse.ok(s"got: ${req.fields.body}"))
         // Send with text/plain Content-Type to a JSON endpoint
         val textRoute = HttpRoute.postRaw("json-endpoint")
             .request(_.bodyText)
@@ -327,7 +327,7 @@ class Rfc9110Test extends Test:
 
     "Section 6.6.1 - Server MUST send Date header" in run {
         val route = HttpRoute.getRaw("date").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("hello"))
+        val ep    = route.handler(_ => HttpResponse.ok("hello"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/date"))).map { resp =>
                 assert(resp.status == HttpStatus.OK)
@@ -343,7 +343,7 @@ class Rfc9110Test extends Test:
 
     "Section 8.3 - Content-Type text/plain for text body" in run {
         val route = HttpRoute.getRaw("text").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("hello"))
+        val ep    = route.handler(_ => HttpResponse.ok("hello"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/text"))).map { resp =>
                 val ct = resp.headers.get("Content-Type").getOrElse("")
@@ -354,7 +354,7 @@ class Rfc9110Test extends Test:
 
     "Section 8.3 - Content-Type application/json for JSON body" in run {
         val route = HttpRoute.getRaw("json").response(_.bodyJson[User])
-        val ep    = route.handler(_ => HttpResponse.okJson(User(1, "Alice")))
+        val ep    = route.handler(_ => HttpResponse.ok(User(1, "Alice")))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/json"))).map { resp =>
                 val ct = resp.headers.get("Content-Type").getOrElse("")
@@ -367,7 +367,7 @@ class Rfc9110Test extends Test:
 
     "Section 8.6 - Content-Length present for buffered responses" in run {
         val route = HttpRoute.getRaw("sized").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("twelve chars"))
+        val ep    = route.handler(_ => HttpResponse.ok("twelve chars"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/sized"))).map { resp =>
                 val cl = resp.headers.get("Content-Length")
@@ -405,7 +405,7 @@ class Rfc9110Test extends Test:
         val postEp = postRoute.handler(_ =>
             HttpResponse.halt(HttpResponse(HttpStatus.SeeOther).setHeader("Location", "/result"))
         )
-        val getEp = getRoute.handler(_ => HttpResponse.okText("result page"))
+        val getEp = getRoute.handler(_ => HttpResponse.ok("result page"))
         withServer(postEp, getEp) { port =>
             HttpClient.withConfig(noTimeout) {
                 withClient { c =>
@@ -433,7 +433,7 @@ class Rfc9110Test extends Test:
         val ep1 = postRoute1.handler(_ =>
             HttpResponse.halt(HttpResponse(HttpStatus.TemporaryRedirect).setHeader("Location", "/new"))
         )
-        val ep2 = postRoute2.handler(req => HttpResponse.okText(s"received: ${req.fields.body}"))
+        val ep2 = postRoute2.handler(req => HttpResponse.ok(s"received: ${req.fields.body}"))
         withServer(ep1, ep2) { port =>
             HttpClient.withConfig(noTimeout) {
                 withClient { c =>
@@ -456,7 +456,7 @@ class Rfc9110Test extends Test:
         val ep1 = postRoute1.handler(_ =>
             HttpResponse.halt(HttpResponse(HttpStatus.PermanentRedirect).setHeader("Location", "/new"))
         )
-        val ep2 = postRoute2.handler(req => HttpResponse.okText(s"received: ${req.fields.body}"))
+        val ep2 = postRoute2.handler(req => HttpResponse.ok(s"received: ${req.fields.body}"))
         withServer(ep1, ep2) { port =>
             HttpClient.withConfig(noTimeout) {
                 withClient { c =>
@@ -493,7 +493,7 @@ class Rfc9110Test extends Test:
         val ep1 = route1.handler(_ =>
             HttpResponse.halt(HttpResponse(HttpStatus.Found).setHeader("Location", "/new"))
         )
-        val ep2 = route2.handler(_ => HttpResponse.okText("arrived"))
+        val ep2 = route2.handler(_ => HttpResponse.ok("arrived"))
         withServer(ep1, ep2) { port =>
             HttpClient.withConfig(noTimeout) {
                 withClient { c =>
@@ -513,9 +513,9 @@ class Rfc9110Test extends Test:
         // refusing to process a request because the request content is larger than the server is
         // willing or able to process."
         val route = HttpRoute.postRaw("upload").request(_.bodyText).response(_.bodyText)
-        val ep    = route.handler(req => HttpResponse.okText("ok"))
+        val ep    = route.handler(req => HttpResponse.ok("ok"))
         // Use small maxContentLength
-        val config = HttpServerConfig(port = 0, host = "localhost", maxContentLength = 10)
+        val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(10)
         Scope.run {
             HttpServer.init(config)(ep).map { server =>
                 val bigBody   = "x" * 100 // exceeds 10-byte limit
@@ -537,7 +537,7 @@ class Rfc9110Test extends Test:
         // RFC 9110 §9.3.1: "The GET method requests transfer of a current selected representation
         // for the target resource."
         val route = HttpRoute.getRaw("hello").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("hello world"))
+        val ep    = route.handler(_ => HttpResponse.ok("hello world"))
         withServer(ep) { port =>
             send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/hello"))).map { resp =>
                 assert(resp.status == HttpStatus.OK, s"GET should return 200, got: ${resp.status}")
@@ -550,7 +550,7 @@ class Rfc9110Test extends Test:
         val route = HttpRoute.getRaw("search")
             .request(_.query[String]("q"))
             .response(_.bodyText)
-        val ep = route.handler(req => HttpResponse.okText(s"query=${req.fields.q}"))
+        val ep = route.handler(req => HttpResponse.ok(s"query=${req.fields.q}"))
         withServer(ep) { port =>
             send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/search?q=hello")).addField("q", "hello")).map { resp =>
                 assert(resp.status == HttpStatus.OK)
@@ -563,7 +563,7 @@ class Rfc9110Test extends Test:
 
     "Section 9.3.2 - HEAD on non-existent resource returns 404" in run {
         val route = HttpRoute.getRaw("exists").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("ok"))
+        val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.headRaw(HttpUrl.fromUri("/nonexistent"))).map { resp =>
                 assert(resp.status == HttpStatus.NotFound, s"HEAD on missing path should 404, got: ${resp.status}")
@@ -577,7 +577,7 @@ class Rfc9110Test extends Test:
         val route = HttpRoute.postRaw("echo")
             .request(_.bodyJson[User])
             .response(_.bodyJson[User])
-        val ep = route.handler(req => HttpResponse.okJson(req.fields.body))
+        val ep = route.handler(req => HttpResponse.ok(req.fields.body))
         withServer(ep) { port =>
             val req = HttpRequest.postRaw(HttpUrl.fromUri("/echo"))
                 .addField("body", User(7, "Bob"))
@@ -596,7 +596,7 @@ class Rfc9110Test extends Test:
         val route = HttpRoute.putRaw("item")
             .request(_.bodyJson[User])
             .response(_.bodyJson[User])
-        val ep = route.handler(req => HttpResponse.okJson(req.fields.body))
+        val ep = route.handler(req => HttpResponse.ok(req.fields.body))
         withServer(ep) { port =>
             val req = HttpRequest.putRaw(HttpUrl.fromUri("/item"))
                 .addField("body", User(1, "Updated"))
@@ -634,10 +634,10 @@ class Rfc9110Test extends Test:
         val postRoute   = HttpRoute.postRaw("multi").request(_.bodyText).response(_.bodyText)
         val putRoute    = HttpRoute.putRaw("multi").request(_.bodyText).response(_.bodyText)
         val deleteRoute = HttpRoute.deleteRaw("multi").response(_.bodyText)
-        val getEp       = getRoute.handler(_ => HttpResponse.okText("get"))
-        val postEp      = postRoute.handler(_ => HttpResponse.okText("post"))
-        val putEp       = putRoute.handler(_ => HttpResponse.okText("put"))
-        val deleteEp    = deleteRoute.handler(_ => HttpResponse.okText("delete"))
+        val getEp       = getRoute.handler(_ => HttpResponse.ok("get"))
+        val postEp      = postRoute.handler(_ => HttpResponse.ok("post"))
+        val putEp       = putRoute.handler(_ => HttpResponse.ok("put"))
+        val deleteEp    = deleteRoute.handler(_ => HttpResponse.ok("delete"))
         withServer(getEp, postEp, putEp, deleteEp) { port =>
             send(port, rawRoute, HttpRequest.optionsRaw(HttpUrl.fromUri("/multi"))).map { resp =>
                 val allow = resp.headers.get("Allow").getOrElse("")
@@ -653,7 +653,7 @@ class Rfc9110Test extends Test:
 
     "Section 9.3.7 - OPTIONS response has no body" in run {
         val route = HttpRoute.getRaw("res").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("ok"))
+        val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.optionsRaw(HttpUrl.fromUri("/res"))).map { resp =>
                 assert(resp.status == HttpStatus.NoContent)
@@ -669,7 +669,7 @@ class Rfc9110Test extends Test:
         val route = HttpRoute.patchRaw("item")
             .request(_.bodyJson[User])
             .response(_.bodyJson[User])
-        val ep = route.handler(req => HttpResponse.okJson(req.fields.body))
+        val ep = route.handler(req => HttpResponse.ok(req.fields.body))
         withServer(ep) { port =>
             val req = HttpRequest.patchRaw(HttpUrl.fromUri("/item"))
                 .addField("body", User(1, "Patched"))
@@ -688,7 +688,7 @@ class Rfc9110Test extends Test:
         val ep1 = route1.handler(_ =>
             HttpResponse.halt(HttpResponse.movedPermanently("/new-path"))
         )
-        val ep2 = route2.handler(_ => HttpResponse.okText("new location"))
+        val ep2 = route2.handler(_ => HttpResponse.ok("new location"))
         withServer(ep1, ep2) { port =>
             HttpClient.withConfig(noTimeout) {
                 withClient { c =>
@@ -707,7 +707,7 @@ class Rfc9110Test extends Test:
         val ep1 = route1.handler(_ =>
             HttpResponse.halt(HttpResponse.redirect("/target"))
         )
-        val ep2 = route2.handler(_ => HttpResponse.okText("target reached"))
+        val ep2 = route2.handler(_ => HttpResponse.ok("target reached"))
         withServer(ep1, ep2) { port =>
             HttpClient.withConfig(noTimeout) {
                 withClient { c =>
@@ -724,7 +724,7 @@ class Rfc9110Test extends Test:
         val route1 = HttpRoute.getRaw("redir").response(_.bodyText)
         val route2 = HttpRoute.getRaw("dest").response(_.bodyText)
         val ep1    = route1.handler(_ => HttpResponse.halt(HttpResponse.redirect("/dest")))
-        val ep2    = route2.handler(_ => HttpResponse.okText("dest"))
+        val ep2    = route2.handler(_ => HttpResponse.ok("dest"))
         withServer(ep1, ep2) { port =>
             HttpClient.withConfig(noTimeout.copy(followRedirects = false)) {
                 withClient { c =>
@@ -743,7 +743,7 @@ class Rfc9110Test extends Test:
         val route1 = HttpRoute.getRaw("r").response(_.bodyText)
         val route2 = HttpRoute.getRaw("dest").response(_.bodyText)
         val ep1    = route1.handler(_ => HttpResponse.halt(HttpResponse.redirect("/dest")))
-        val ep2    = route2.handler(_ => HttpResponse.okText("dest"))
+        val ep2    = route2.handler(_ => HttpResponse.ok("dest"))
         withServer(ep1, ep2) { port =>
             HttpClient.withConfig(noTimeout.copy(maxRedirects = 0)) {
                 withClient { c =>
@@ -760,7 +760,7 @@ class Rfc9110Test extends Test:
 
     "Section 15.5.5 - 404 Not Found for unknown path" in run {
         val route = HttpRoute.getRaw("exists").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("ok"))
+        val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/nonexistent"))).map { resp =>
                 assert(resp.status == HttpStatus.NotFound, s"Unknown path should return 404, got: ${resp.status}")
@@ -773,8 +773,8 @@ class Rfc9110Test extends Test:
     "Section 15.5.6 - 405 Allow lists all registered methods for path" in run {
         val getRoute  = HttpRoute.getRaw("resource2").response(_.bodyText)
         val postRoute = HttpRoute.postRaw("resource2").request(_.bodyText).response(_.bodyText)
-        val getEp     = getRoute.handler(_ => HttpResponse.okText("get"))
-        val postEp    = postRoute.handler(_ => HttpResponse.okText("post"))
+        val getEp     = getRoute.handler(_ => HttpResponse.ok("get"))
+        val postEp    = postRoute.handler(_ => HttpResponse.ok("post"))
         withServer(getEp, postEp) { port =>
             send(port, rawRoute, HttpRequest.deleteRaw(HttpUrl.fromUri("/resource2"))).map { resp =>
                 assert(resp.status == HttpStatus.MethodNotAllowed)
@@ -791,7 +791,7 @@ class Rfc9110Test extends Test:
 
     "Section 8.3 - Content-Type application/octet-stream for binary body" in run {
         val route = HttpRoute.getRaw("bin").response(_.bodyBinary)
-        val ep    = route.handler(_ => HttpResponse.okBinary(Span.fromUnsafe(Array[Byte](1, 2, 3))))
+        val ep    = route.handler(_ => HttpResponse.ok(Span.fromUnsafe(Array[Byte](1, 2, 3))))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/bin"))).map { resp =>
                 val ct = resp.headers.get("Content-Type").getOrElse("")
@@ -803,7 +803,7 @@ class Rfc9110Test extends Test:
     "Section 8.3 - Handler-set Content-Type preserved" in run {
         val route = HttpRoute.getRaw("custom-ct").response(_.bodyText)
         val ep = route.handler(_ =>
-            HttpResponse.okText("<html>hi</html>").setHeader("Content-Type", "text/html")
+            HttpResponse.ok("<html>hi</html>").setHeader("Content-Type", "text/html")
         )
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/custom-ct"))).map { resp =>
@@ -817,7 +817,7 @@ class Rfc9110Test extends Test:
 
     "Section 6.6.1 - Date header present on error responses" in run {
         val route = HttpRoute.getRaw("exists2").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("ok"))
+        val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/no-such-path"))).map { resp =>
                 assert(resp.status == HttpStatus.NotFound)
@@ -831,7 +831,7 @@ class Rfc9110Test extends Test:
 
     "Section 8.6 - Content-Length is 0 for empty body" in run {
         val route = HttpRoute.getRaw("empty-body").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText(""))
+        val ep    = route.handler(_ => HttpResponse.ok(""))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/empty-body"))).map { resp =>
                 val cl = resp.headers.get("Content-Length")
@@ -844,7 +844,7 @@ class Rfc9110Test extends Test:
     "Section 8.6 - Content-Length matches actual bytes for UTF-8" in run {
         // "café" = 5 chars but 6 bytes in UTF-8 (é = 2 bytes)
         val route = HttpRoute.getRaw("utf8").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("café"))
+        val ep    = route.handler(_ => HttpResponse.ok("café"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/utf8"))).map { resp =>
                 val cl = resp.headers.get("Content-Length")
@@ -875,7 +875,7 @@ class Rfc9110Test extends Test:
         val route = HttpRoute.postRaw("json-ep2")
             .request(_.bodyJson[User])
             .response(_.bodyText)
-        val ep        = route.handler(req => HttpResponse.okText("ok"))
+        val ep        = route.handler(req => HttpResponse.ok("ok"))
         val textRoute = HttpRoute.postRaw("json-ep2").request(_.bodyText).response(_.bodyText)
         withServer(ep) { port =>
             send(
@@ -896,7 +896,7 @@ class Rfc9110Test extends Test:
 
     "Section 15.5.1 - 400 for malformed path param" in run {
         val route = HttpRoute.getRaw("items" / Capture[Int]("id")).response(_.bodyText)
-        val ep    = route.handler(req => HttpResponse.okText(s"id=${req.fields.id}"))
+        val ep    = route.handler(req => HttpResponse.ok(s"id=${req.fields.id}"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/items/notanumber"))).map { resp =>
                 assert(
@@ -911,7 +911,7 @@ class Rfc9110Test extends Test:
 
     "Section 15.2.1 - 200 OK response with JSON body" in run {
         val route = HttpRoute.getRaw("user").response(_.bodyJson[User])
-        val ep    = route.handler(_ => HttpResponse.okJson(User(1, "Alice")))
+        val ep    = route.handler(_ => HttpResponse.ok(User(1, "Alice")))
         withServer(ep) { port =>
             send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/user"))).map { resp =>
                 assert(resp.status == HttpStatus.OK)
@@ -946,7 +946,7 @@ class Rfc9110Test extends Test:
         val route = HttpRoute.postRaw("jobs")
             .request(_.bodyText)
             .response(_.bodyText)
-        val ep = route.handler(_ => HttpResponse.acceptedText("queued for processing"))
+        val ep = route.handler(_ => HttpResponse.accepted("queued for processing"))
         withServer(ep) { port =>
             val req = HttpRequest.postRaw(HttpUrl.fromUri("/jobs")).addField("body", "job data")
             send(port, route, req).map { resp =>
@@ -1001,7 +1001,7 @@ class Rfc9110Test extends Test:
         val deleteEp = deleteRoute.handler(_ =>
             HttpResponse.halt(HttpResponse(HttpStatus.SeeOther).setHeader("Location", "/item-status"))
         )
-        val getEp = getRoute.handler(_ => HttpResponse.okText("item deleted"))
+        val getEp = getRoute.handler(_ => HttpResponse.ok("item deleted"))
         withServer(deleteEp, getEp) { port =>
             HttpClient.withConfig(noTimeout) {
                 withClient { c =>
@@ -1023,7 +1023,7 @@ class Rfc9110Test extends Test:
     "Section 15.4 - Redirect with absolute URL in Location" in run {
         val route1 = HttpRoute.getRaw("abs-redir").response(_.bodyText)
         val route2 = HttpRoute.getRaw("abs-dest").response(_.bodyText)
-        val ep2    = route2.handler(_ => HttpResponse.okText("absolute destination"))
+        val ep2    = route2.handler(_ => HttpResponse.ok("absolute destination"))
         withServer(route1.handler(_ => HttpResponse.halt(HttpResponse(HttpStatus.Found))), ep2) { port =>
             // We need the port to construct the absolute URL, so use a different approach
             val route1b = HttpRoute.getRaw("abs-redir2").response(_.bodyText)
@@ -1048,7 +1048,7 @@ class Rfc9110Test extends Test:
     "Section 8.1 - Custom response headers preserved" in run {
         val route = HttpRoute.getRaw("custom-hdr").response(_.bodyText)
         val ep = route.handler(_ =>
-            HttpResponse.okText("ok")
+            HttpResponse.ok("ok")
                 .setHeader("X-Custom-Header", "custom-value")
                 .setHeader("X-Request-Id", "abc-123")
         )

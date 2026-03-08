@@ -1,12 +1,13 @@
 package kyo
 
 import kyo.*
+import scala.annotation.targetName
 
 /** An HTTP response carrying status, headers, and a typed `Record` of route-declared fields.
   *
-  * In route-based handlers, construct responses using the companion's factory methods (`okJson`, `badRequestText`, `redirect`, etc.) and
-  * add declared fields with `.addField("body", value)`. The `Fields` type parameter mirrors the route's `ResponseDef` — the compiler
-  * ensures you provide all declared fields.
+  * In route-based handlers, construct responses using the companion's factory methods (`ok`, `badRequest`, `redirect`, etc.) and add
+  * declared fields with `.addField("body", value)`. The `Fields` type parameter mirrors the route's `ResponseDef` — the compiler ensures
+  * you provide all declared fields.
   *
   * Use `HttpResponse.halt(response)` to short-circuit request processing from any handler or filter, aborting with the given response
   * immediately. This is the standard mechanism for early exits (e.g., authorization failures), not exception throwing.
@@ -64,15 +65,23 @@ object HttpResponse:
     def accepted: HttpResponse[Any]  = apply(HttpStatus.Accepted)
     def noContent: HttpResponse[Any] = apply(HttpStatus.NoContent)
 
-    def okText(body: String): HttpResponse["body" ~ String]                 = ok.addField("body", body)
-    def okJson[A: Json](body: A): HttpResponse["body" ~ A]                  = ok.addField("body", body)
-    def okBinary(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]]       = ok.addField("body", body)
-    def createdText(body: String): HttpResponse["body" ~ String]            = created.addField("body", body)
-    def createdJson[A: Json](body: A): HttpResponse["body" ~ A]             = created.addField("body", body)
-    def createdBinary(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]]  = created.addField("body", body)
-    def acceptedText(body: String): HttpResponse["body" ~ String]           = accepted.addField("body", body)
-    def acceptedJson[A: Json](body: A): HttpResponse["body" ~ A]            = accepted.addField("body", body)
-    def acceptedBinary(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = accepted.addField("body", body)
+    def ok(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.OK).addField("body", body)
+    @targetName("okJson")
+    def ok[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.OK).addField("body", body)
+    @targetName("okBinary")
+    def ok(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.OK).addField("body", body)
+
+    def created(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.Created).addField("body", body)
+    @targetName("createdJson")
+    def created[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Created).addField("body", body)
+    @targetName("createdBinary")
+    def created(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.Created).addField("body", body)
+
+    def accepted(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.Accepted).addField("body", body)
+    @targetName("acceptedJson")
+    def accepted[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Accepted).addField("body", body)
+    @targetName("acceptedBinary")
+    def accepted(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.Accepted).addField("body", body)
 
     // 3xx
     def redirect(url: String): HttpResponse[Any] =
@@ -90,29 +99,65 @@ object HttpResponse:
     def unprocessableEntity: HttpResponse[Any] = apply(HttpStatus.UnprocessableEntity)
     def tooManyRequests: HttpResponse[Any]     = apply(HttpStatus.TooManyRequests)
 
-    def badRequestText(body: String): HttpResponse["body" ~ String]          = badRequest.addField("body", body)
-    def badRequestJson[A: Json](body: A): HttpResponse["body" ~ A]           = badRequest.addField("body", body)
-    def unauthorizedText(body: String): HttpResponse["body" ~ String]        = unauthorized.addField("body", body)
-    def unauthorizedJson[A: Json](body: A): HttpResponse["body" ~ A]         = unauthorized.addField("body", body)
-    def forbiddenText(body: String): HttpResponse["body" ~ String]           = forbidden.addField("body", body)
-    def forbiddenJson[A: Json](body: A): HttpResponse["body" ~ A]            = forbidden.addField("body", body)
-    def notFoundText(body: String): HttpResponse["body" ~ String]            = notFound.addField("body", body)
-    def notFoundJson[A: Json](body: A): HttpResponse["body" ~ A]             = notFound.addField("body", body)
-    def conflictText(body: String): HttpResponse["body" ~ String]            = conflict.addField("body", body)
-    def conflictJson[A: Json](body: A): HttpResponse["body" ~ A]             = conflict.addField("body", body)
-    def unprocessableEntityText(body: String): HttpResponse["body" ~ String] = unprocessableEntity.addField("body", body)
-    def unprocessableEntityJson[A: Json](body: A): HttpResponse["body" ~ A]  = unprocessableEntity.addField("body", body)
-    def tooManyRequestsText(body: String): HttpResponse["body" ~ String]     = tooManyRequests.addField("body", body)
-    def tooManyRequestsJson[A: Json](body: A): HttpResponse["body" ~ A]      = tooManyRequests.addField("body", body)
+    def badRequest(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.BadRequest).addField("body", body)
+    @targetName("badRequestJson")
+    def badRequest[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.BadRequest).addField("body", body)
+    @targetName("badRequestBinary")
+    def badRequest(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.BadRequest).addField("body", body)
+
+    def unauthorized(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.Unauthorized).addField("body", body)
+    @targetName("unauthorizedJson")
+    def unauthorized[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Unauthorized).addField("body", body)
+    @targetName("unauthorizedBinary")
+    def unauthorized(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.Unauthorized).addField("body", body)
+
+    def forbidden(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.Forbidden).addField("body", body)
+    @targetName("forbiddenJson")
+    def forbidden[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Forbidden).addField("body", body)
+    @targetName("forbiddenBinary")
+    def forbidden(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.Forbidden).addField("body", body)
+
+    def notFound(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.NotFound).addField("body", body)
+    @targetName("notFoundJson")
+    def notFound[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.NotFound).addField("body", body)
+    @targetName("notFoundBinary")
+    def notFound(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.NotFound).addField("body", body)
+
+    def conflict(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.Conflict).addField("body", body)
+    @targetName("conflictJson")
+    def conflict[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Conflict).addField("body", body)
+    @targetName("conflictBinary")
+    def conflict(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.Conflict).addField("body", body)
+
+    def unprocessableEntity(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.UnprocessableEntity).addField("body", body)
+    @targetName("unprocessableEntityJson")
+    def unprocessableEntity[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.UnprocessableEntity).addField("body", body)
+    @targetName("unprocessableEntityBinary")
+    def unprocessableEntity(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] =
+        apply(HttpStatus.UnprocessableEntity).addField("body", body)
+
+    def tooManyRequests(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.TooManyRequests).addField("body", body)
+    @targetName("tooManyRequestsJson")
+    def tooManyRequests[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.TooManyRequests).addField("body", body)
+    @targetName("tooManyRequestsBinary")
+    def tooManyRequests(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.TooManyRequests).addField("body", body)
 
     // 5xx
     def serverError: HttpResponse[Any]        = apply(HttpStatus.InternalServerError)
     def serviceUnavailable: HttpResponse[Any] = apply(HttpStatus.ServiceUnavailable)
 
-    def serverErrorText(body: String): HttpResponse["body" ~ String]        = serverError.addField("body", body)
-    def serverErrorJson[A: Json](body: A): HttpResponse["body" ~ A]         = serverError.addField("body", body)
-    def serviceUnavailableText(body: String): HttpResponse["body" ~ String] = serviceUnavailable.addField("body", body)
-    def serviceUnavailableJson[A: Json](body: A): HttpResponse["body" ~ A]  = serviceUnavailable.addField("body", body)
+    def serverError(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.InternalServerError).addField("body", body)
+    @targetName("serverErrorJson")
+    def serverError[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.InternalServerError).addField("body", body)
+    @targetName("serverErrorBinary")
+    def serverError(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.InternalServerError).addField("body", body)
+
+    def serviceUnavailable(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.ServiceUnavailable).addField("body", body)
+    @targetName("serviceUnavailableJson")
+    def serviceUnavailable[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.ServiceUnavailable).addField("body", body)
+    @targetName("serviceUnavailableBinary")
+    def serviceUnavailable(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] =
+        apply(HttpStatus.ServiceUnavailable).addField("body", body)
 
     /** Short-circuit signal for filters and handlers to abort request processing and send a response immediately.
       *

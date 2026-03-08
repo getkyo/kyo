@@ -87,7 +87,7 @@ final private[kyo] class NettyServerHandler(
         val method    = HttpMethod.unsafe(nettyReq.method().name())
         val uri       = nettyReq.uri()
         val keepAlive = HttpUtil.isKeepAlive(nettyReq)
-        val headers   = nettyReq.headers().asInstanceOf[FlatNettyHttpHeaders].toKyoHeaders
+        val headers   = NettyUtil.nettyHeadersToKyo(nettyReq.headers())
 
         val pathEnd = uri.indexOf('?')
         val path    = if pathEnd >= 0 then uri.substring(0, pathEnd) else uri
@@ -540,10 +540,9 @@ final private[kyo] class NettyServerHandler(
 
     private def buildAllowHeaderValue(allowed: Set[HttpMethod]): String =
         // RFC 9110: HEAD is implicitly supported when GET is, OPTIONS is always supported
-        val methods =
-            allowed
-                ++ (if allowed.contains(HttpMethod.GET) then Set(HttpMethod.HEAD) else Set.empty)
-                + HttpMethod.OPTIONS
+        val methods = scala.collection.mutable.LinkedHashSet.from(allowed)
+        if allowed.contains(HttpMethod.GET) then discard(methods.add(HttpMethod.HEAD))
+        discard(methods.add(HttpMethod.OPTIONS))
         import scala.annotation.tailrec
         val sb   = new StringBuilder
         val iter = methods.iterator

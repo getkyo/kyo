@@ -139,7 +139,7 @@ object McpServer extends KyoApp:
         .response(_.bodyJson[JsonRpcResponse])
         .metadata(_.summary("MCP Streamable HTTP endpoint"))
         .handler { req =>
-            handleRpc(req.fields.body).map(HttpResponse.okJson(_))
+            handleRpc(req.fields.body).map(HttpResponse.ok(_))
         }
 
     // GET /mcp - SSE stream for server-initiated messages (heartbeat)
@@ -165,7 +165,7 @@ object McpServer extends KyoApp:
     run {
         val port = args.headOption.flatMap(_.toIntOption).getOrElse(0)
         HttpServer.init(
-            HttpServerConfig().port(port).openApi("/mcp/openapi.json", "MCP Demo Server")
+            HttpServerConfig.default.port(port).openApi("/mcp/openapi.json", "MCP Demo Server")
         )(mcpPost, mcpGet).map { server =>
             for
                 _ <- Console.printLine(s"MCP server running on http://localhost:${server.port}/mcp")

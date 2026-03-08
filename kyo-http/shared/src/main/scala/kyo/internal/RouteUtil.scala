@@ -576,9 +576,9 @@ object RouteUtil:
 
     private def encodeBufferedBodyValueWith[A](ct: HttpRoute.ContentType[?], value: Any)(f: (String, Span[Byte]) => A): A =
         ct match
-            case _: HttpRoute.ContentType.Text =>
+            case HttpRoute.ContentType.Text =>
                 f("text/plain; charset=utf-8", stringToSpan(value.asInstanceOf[String]))
-            case _: HttpRoute.ContentType.Binary =>
+            case HttpRoute.ContentType.Binary =>
                 f("application/octet-stream", value.asInstanceOf[Span[Byte]])
             case json: HttpRoute.ContentType.Json[?] =>
                 val str = json.json.asInstanceOf[Json[Any]].encode(value)
@@ -586,7 +586,7 @@ object RouteUtil:
             case form: HttpRoute.ContentType.Form[?] =>
                 val str = form.codec.asInstanceOf[HttpFormCodec[Any]].encode(value)
                 f("application/x-www-form-urlencoded", stringToSpan(str))
-            case _: HttpRoute.ContentType.Multipart =>
+            case HttpRoute.ContentType.Multipart =>
                 val parts    = value.asInstanceOf[Seq[HttpRequest.Part]]
                 val boundary = java.util.UUID.randomUUID().toString
                 val bytes    = encodeMultipartParts(parts, boundary)
@@ -599,7 +599,7 @@ object RouteUtil:
         f: (String, Stream[Span[Byte], Async]) => A
     )(using Frame): A =
         ct match
-            case _: HttpRoute.ContentType.ByteStream =>
+            case HttpRoute.ContentType.ByteStream =>
                 f("application/octet-stream", value.asInstanceOf[Stream[Span[Byte], Async]])
             case ndjson: HttpRoute.ContentType.Ndjson[?] =>
                 val stream = value.asInstanceOf[Stream[Any, Async]]
@@ -650,7 +650,7 @@ object RouteUtil:
                     stringToSpan(sb.toString)
                 }(using sseText.emitTag, Tag[Emit[Chunk[Span[Byte]]]])
                 f("text/event-stream", byteStream)
-            case _: HttpRoute.ContentType.MultipartStream =>
+            case HttpRoute.ContentType.MultipartStream =>
                 val stream   = value.asInstanceOf[Stream[HttpRequest.Part, Async]]
                 val boundary = java.util.UUID.randomUUID().toString
                 val byteStream = stream.mapPure { part =>
@@ -672,9 +672,9 @@ object RouteUtil:
         url: String
     )(using Frame): Result[HttpException, Any] =
         ct match
-            case _: HttpRoute.ContentType.Text =>
+            case HttpRoute.ContentType.Text =>
                 Result.succeed(spanToString(bytes))
-            case _: HttpRoute.ContentType.Binary =>
+            case HttpRoute.ContentType.Binary =>
                 Result.succeed(bytes)
             case json: HttpRoute.ContentType.Json[?] =>
                 if !checkContentType(headers, "application/json") then
@@ -693,7 +693,7 @@ object RouteUtil:
                 else
                     form.codec.decode(spanToString(bytes))
                         .mapFailure(e => HttpFormDecodeException(e.getMessage, method, url, e))
-            case _: HttpRoute.ContentType.Multipart =>
+            case HttpRoute.ContentType.Multipart =>
                 parseMultipartBody(bytes, headers, method, url)
             case _ =>
                 Result.fail(HttpStreamingDecodeException(ct.toString, method, url))
@@ -707,7 +707,7 @@ object RouteUtil:
         url: String
     )(using Frame): Any =
         ct match
-            case _: HttpRoute.ContentType.ByteStream =>
+            case HttpRoute.ContentType.ByteStream =>
                 stream
             case ndjson: HttpRoute.ContentType.Ndjson[?] =>
                 val json = ndjson.json
@@ -727,7 +727,7 @@ object RouteUtil:
                 splitLines(stream, "\n\n").mapPure { frame =>
                     parseSseFields(frame)(identity)
                 }(using Tag[Emit[Chunk[String]]], sseText.emitTag)
-            case _: HttpRoute.ContentType.MultipartStream =>
+            case HttpRoute.ContentType.MultipartStream =>
                 parseMultipartStream(stream, headers)
             case _ =>
                 throw new IllegalStateException(s"Cannot decode non-streaming ContentType as stream: $ct")
@@ -1037,8 +1037,8 @@ object RouteUtil:
 
     private def isStreamingContentType(ct: HttpRoute.ContentType[?]): Boolean =
         ct match
-            case _: HttpRoute.ContentType.ByteStream | _: HttpRoute.ContentType.Ndjson[?] |
-                _: HttpRoute.ContentType.Sse[?] | _: HttpRoute.ContentType.SseText | _: HttpRoute.ContentType.MultipartStream => true
+            case HttpRoute.ContentType.ByteStream | _: HttpRoute.ContentType.Ndjson[?] |
+                _: HttpRoute.ContentType.Sse[?] | _: HttpRoute.ContentType.SseText | HttpRoute.ContentType.MultipartStream => true
             case _ => false
 
     private def findBodyField(fields: Chunk[HttpRoute.Field[?]]): Maybe[HttpRoute.Field.Body[?, ?]] =

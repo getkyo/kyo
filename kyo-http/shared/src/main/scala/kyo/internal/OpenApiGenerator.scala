@@ -192,16 +192,16 @@ private[kyo] object OpenApiGenerator:
 
     private def contentToMediaType(content: HttpRoute.ContentType[?]): Option[(String, HttpOpenApi.SchemaObject)] =
         content match
-            case HttpRoute.ContentType.Json(json)        => Some("application/json" -> jsonToHttpOpenApi(json))
-            case HttpRoute.ContentType.Text()            => Some("text/plain" -> HttpOpenApi.SchemaObject.string)
-            case HttpRoute.ContentType.Binary()          => Some("application/octet-stream" -> HttpOpenApi.SchemaObject.string)
-            case HttpRoute.ContentType.ByteStream()      => Some("application/octet-stream" -> HttpOpenApi.SchemaObject.string)
-            case HttpRoute.ContentType.Multipart()       => Some("multipart/form-data" -> HttpOpenApi.SchemaObject.obj)
-            case HttpRoute.ContentType.MultipartStream() => Some("multipart/form-data" -> HttpOpenApi.SchemaObject.obj)
-            case HttpRoute.ContentType.Ndjson(json, _)   => Some("application/x-ndjson" -> jsonToHttpOpenApi(json))
-            case HttpRoute.ContentType.Sse(json, _)      => Some("text/event-stream" -> jsonToHttpOpenApi(json))
-            case HttpRoute.ContentType.SseText(_)        => Some("text/event-stream" -> HttpOpenApi.SchemaObject.string)
-            case HttpRoute.ContentType.Form(_)           => Some("application/x-www-form-urlencoded" -> HttpOpenApi.SchemaObject.obj)
+            case HttpRoute.ContentType.Json(json)      => Some("application/json" -> jsonToHttpOpenApi(json))
+            case HttpRoute.ContentType.Text            => Some("text/plain" -> HttpOpenApi.SchemaObject.string)
+            case HttpRoute.ContentType.Binary          => Some("application/octet-stream" -> HttpOpenApi.SchemaObject.string)
+            case HttpRoute.ContentType.ByteStream      => Some("application/octet-stream" -> HttpOpenApi.SchemaObject.string)
+            case HttpRoute.ContentType.Multipart       => Some("multipart/form-data" -> HttpOpenApi.SchemaObject.obj)
+            case HttpRoute.ContentType.MultipartStream => Some("multipart/form-data" -> HttpOpenApi.SchemaObject.obj)
+            case HttpRoute.ContentType.Ndjson(json, _) => Some("application/x-ndjson" -> jsonToHttpOpenApi(json))
+            case HttpRoute.ContentType.Sse(json, _)    => Some("text/event-stream" -> jsonToHttpOpenApi(json))
+            case HttpRoute.ContentType.SseText(_)      => Some("text/event-stream" -> HttpOpenApi.SchemaObject.string)
+            case HttpRoute.ContentType.Form(_)         => Some("application/x-www-form-urlencoded" -> HttpOpenApi.SchemaObject.obj)
 
     private def pathToHttpOpenApi(path: HttpPath[?]): String =
         path match

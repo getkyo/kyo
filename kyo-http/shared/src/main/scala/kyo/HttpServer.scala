@@ -37,7 +37,7 @@ object HttpServer:
         init(HttpServerConfig.default)(handlers*)
 
     def init(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
-        init(HttpServerConfig(port, host))(handlers*)
+        init(HttpServerConfig.default.port(port).host(host))(handlers*)
 
     def init(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
         init(HttpPlatformBackend.server, config)(handlers*)
@@ -50,7 +50,7 @@ object HttpServer:
     def init(backend: HttpBackend.Server, port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
     ): HttpServer < (Async & Scope) =
-        init(backend, HttpServerConfig(port, host))(handlers*)
+        init(backend, HttpServerConfig.default.port(port).host(host))(handlers*)
 
     def initWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using Frame): A < (S & Async & Scope) =
         init(handlers*).map(f)
@@ -74,7 +74,7 @@ object HttpServer:
         initUnscoped(HttpServerConfig.default)(handlers*)
 
     def initUnscoped(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
-        initUnscoped(HttpServerConfig(port, host))(handlers*)
+        initUnscoped(HttpServerConfig.default.port(port).host(host))(handlers*)
 
     def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
         initUnscoped(HttpPlatformBackend.server, config)(handlers*)
@@ -82,7 +82,7 @@ object HttpServer:
     def initUnscoped(backend: HttpBackend.Server, port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
     ): HttpServer < Async =
-        initUnscoped(backend, HttpServerConfig(port, host))(handlers*)
+        initUnscoped(backend, HttpServerConfig.default.port(port).host(host))(handlers*)
 
     def initUnscoped(backend: HttpBackend.Server, config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
@@ -96,7 +96,7 @@ object HttpServer:
                 val json      = HttpOpenApi.toJson(spec)
                 val jsonBytes = Span.fromUnsafe(json.getBytes("UTF-8"))
                 handlers :+ HttpHandler.init(HttpRoute.getRaw(ep.path).response(_.bodyBinary)) { _ =>
-                    HttpResponse.okBinary(jsonBytes).addHeader("Content-Type", "application/json")
+                    HttpResponse.ok(jsonBytes).addHeader("Content-Type", "application/json")
                 }
             case Absent =>
                 handlers

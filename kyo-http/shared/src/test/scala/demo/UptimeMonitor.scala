@@ -61,7 +61,7 @@ object UptimeMonitor extends KyoApp:
     run {
         val port = args.headOption.flatMap(_.toIntOption).getOrElse(0)
         HttpServer.init(
-            HttpServerConfig().port(port).openApi("/openapi.json", "Uptime Monitor")
+            HttpServerConfig.default.port(port).openApi("/openapi.json", "Uptime Monitor")
         )(statusStream, checkRoute, health).map { server =>
             for
                 _ <- Console.printLine(s"UptimeMonitor running on http://localhost:${server.port}")

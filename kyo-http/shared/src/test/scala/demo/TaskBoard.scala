@@ -60,7 +60,7 @@ object TaskBoard extends KyoApp:
                                     storeRef.updateAndGet { s =>
                                         val task = Task(s.nextId, input.title, col, input.assignee)
                                         Store(s.tasks + (s.nextId -> task), s.nextId + 1)
-                                    }.map(s => HttpResponse.okJson(s.tasks(s.nextId - 1)))
+                                    }.map(s => HttpResponse.ok(s.tasks(s.nextId - 1)))
                         }
                     end if
                 end if
@@ -91,7 +91,7 @@ object TaskBoard extends KyoApp:
                             case Some(_) =>
                                 val updated = Task(req.fields.id, input.title, input.column, input.assignee)
                                 storeRef.updateAndGet(s => Store(s.tasks + (req.fields.id -> updated), s.nextId))
-                                    .map(_ => HttpResponse.okJson(updated))
+                                    .map(_ => HttpResponse.ok(updated))
                     }
                 end if
             }
@@ -124,7 +124,7 @@ object TaskBoard extends KyoApp:
             (list, create, update, delete) = handlers(storeRef)
             health                         = HttpHandler.health()
             server <- HttpServer.init(
-                HttpServerConfig().port(port).openApi("/openapi.json", "TaskBoard")
+                HttpServerConfig.default.port(port).openApi("/openapi.json", "TaskBoard")
             )(list, create, update, delete, health)
             _ <- Console.printLine(s"TaskBoard running on http://localhost:${server.port}")
             _ <- Console.printLine(
@@ -152,7 +152,7 @@ object TaskBoardClient extends KyoApp:
         for
             storeRef <- AtomicRef.init(Store(Map.empty, 1))
             (list, create, update, delete) = handlers(storeRef)
-            server <- HttpServer.init(HttpServerConfig().port(0))(list, create, update, delete)
+            server <- HttpServer.init(HttpServerConfig.default.port(0))(list, create, update, delete)
             _      <- Console.printLine(s"TaskBoardClient started server on http://localhost:${server.port}")
 
             baseUrl = s"http://localhost:${server.port}"

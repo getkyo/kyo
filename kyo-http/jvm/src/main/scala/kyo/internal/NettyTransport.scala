@@ -61,7 +61,8 @@ private[kyo] object NettyTransport:
                     Class.forName("io.netty.channel.epoll.EpollServerSocketChannel").asInstanceOf[Class[? <: ServerSocketChannel]]
                 (factory, socketClass, serverClass)
             else
-                throw new RuntimeException("Epoll not available")
+                given Frame = Frame.internal
+                throw HttpBindException("localhost", 0, new RuntimeException("Epoll not available"))
             end if
         }
 
@@ -77,7 +78,8 @@ private[kyo] object NettyTransport:
                     Class.forName("io.netty.channel.kqueue.KQueueServerSocketChannel").asInstanceOf[Class[? <: ServerSocketChannel]]
                 (factory, socketClass, serverClass)
             else
-                throw new RuntimeException("KQueue not available")
+                given Frame = Frame.internal
+                throw HttpBindException("localhost", 0, new RuntimeException("KQueue not available"))
             end if
         }
 

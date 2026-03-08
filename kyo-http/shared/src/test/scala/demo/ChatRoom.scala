@@ -62,7 +62,7 @@ object ChatRoom extends KyoApp:
             (post, list, feed) = handlers(storeRef)
             health             = HttpHandler.health()
             server <- HttpServer.init(
-                HttpServerConfig()
+                HttpServerConfig.default
                     .port(port)
                     .cors(HttpServerConfig.Cors(allowOrigin = "*", allowCredentials = false))
                     .openApi("/openapi.json", "ChatRoom")
@@ -92,7 +92,7 @@ object ChatRoomClient extends KyoApp:
             storeRef <- AtomicRef.init(Store(List.empty, 1))
             (post, list, feed) = handlers(storeRef)
             server <- HttpServer.init(
-                HttpServerConfig()
+                HttpServerConfig.default
                     .port(0)
                     .cors(HttpServerConfig.Cors(allowOrigin = "*"))
             )(post, list, feed)

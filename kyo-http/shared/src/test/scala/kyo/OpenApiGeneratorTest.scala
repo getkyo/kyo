@@ -86,7 +86,7 @@ class OpenApiGeneratorTest extends kyo.Test:
 
         "json response body" in {
             val route = HttpRoute.getRaw("greeting").response(_.bodyJson[String])
-            val h     = route.handler(_ => HttpResponse.okJson("hello"))
+            val h     = route.handler(_ => HttpResponse.ok("hello"))
             val spec  = OpenApiGenerator.generate(Seq(h))
             val resp  = spec.paths("/greeting").get.get.responses("200")
             assert(resp.content.isDefined)
@@ -108,7 +108,7 @@ class OpenApiGeneratorTest extends kyo.Test:
             val route = HttpRoute.putRaw("items" / HttpPath.Capture[Int]("id"))
                 .request(_.bodyJson[UpdateItem])
                 .response(_.bodyJson[String])
-            val h    = route.handler(_ => HttpResponse.okJson("ok"))
+            val h    = route.handler(_ => HttpResponse.ok("ok"))
             val spec = OpenApiGenerator.generate(Seq(h))
             val json = HttpOpenApi.toJson(spec)
             // The UpdateItem schema should have "name" in required but NOT "description"
@@ -131,7 +131,7 @@ class OpenApiGeneratorTest extends kyo.Test:
 
         "text response body" in {
             val route = HttpRoute.getRaw("hello").response(_.bodyText)
-            val h     = route.handler(_ => HttpResponse.okText("hi"))
+            val h     = route.handler(_ => HttpResponse.ok("hi"))
             val spec  = OpenApiGenerator.generate(Seq(h))
             val resp  = spec.paths("/hello").get.get.responses("200")
             assert(resp.content.get.contains("text/plain"))
@@ -187,7 +187,7 @@ class OpenApiGeneratorTest extends kyo.Test:
                 .request(_.query[Boolean]("verbose"))
                 .response(_.bodyJson[String])
                 .metadata(_.operationId("getPet").summary("Get a pet"))
-            val h = route.handler(_ => HttpResponse.okJson("cat"))
+            val h = route.handler(_ => HttpResponse.ok("cat"))
             val spec = OpenApiGenerator.generate(
                 Seq(h),
                 OpenApiGenerator.Config(title = "Pet API", version = "1.0.0")

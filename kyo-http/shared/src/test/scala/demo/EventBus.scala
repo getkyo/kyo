@@ -40,7 +40,7 @@ object EventBus extends KyoApp:
                 .response(_.bodyJson[StoredEvent].status(HttpStatus.Created))
                 .metadata(_.summary("Publish event (JSON)").tag("events"))
                 .handler { req =>
-                    storeEvent(req.fields.body, eventsRef, nextIdRef).map(HttpResponse.okJson(_))
+                    storeEvent(req.fields.body, eventsRef, nextIdRef).map(HttpResponse.ok(_))
                 }
 
             // Form data route
@@ -52,7 +52,7 @@ object EventBus extends KyoApp:
                 .metadata(_.summary("Publish event (form)").tag("events"))
                 .handler { req =>
                     val event = Event(req.fields.body.source, req.fields.body.kind, req.fields.body.payload)
-                    storeEvent(event, eventsRef, nextIdRef).map(HttpResponse.okJson(_))
+                    storeEvent(event, eventsRef, nextIdRef).map(HttpResponse.ok(_))
                 }
 
             // List all events (buffered)
@@ -80,7 +80,7 @@ object EventBus extends KyoApp:
             health = HttpHandler.health()
 
             server <- HttpServer.init(
-                HttpServerConfig().port(port).openApi("/openapi.json", "Event Bus")
+                HttpServerConfig.default.port(port).openApi("/openapi.json", "Event Bus")
             )(postJsonRoute, postFormRoute, listRoute, ndjsonHandler, health)
             _ <- Console.printLine(s"EventBus running on http://localhost:${server.port}")
             _ <- Console.printLine(

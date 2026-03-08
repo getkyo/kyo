@@ -50,7 +50,7 @@ object ImageProxy extends KyoApp:
                 storeRef.updateAndGet { s =>
                     val meta = ImageMeta(s.nextId, s"image-${s.nextId}.bin", bytes.size)
                     Store(s.images + (s.nextId -> (meta, bytes)), s.nextId + 1)
-                }.map(_ => HttpResponse.okBinary(bytes).noStore)
+                }.map(_ => HttpResponse.ok(bytes).noStore)
             }
 
         val download = HttpRoute
@@ -68,7 +68,7 @@ object ImageProxy extends KyoApp:
                 storeRef.get.map { store =>
                     store.images.get(req.fields.id) match
                         case Some((meta, bytes)) =>
-                            HttpResponse.okBinary(bytes)
+                            HttpResponse.ok(bytes)
                                 .contentDisposition(meta.name)
                                 .cacheControl("public, max-age=3600")
                         case None =>
@@ -97,7 +97,7 @@ object ImageProxy extends KyoApp:
                 storeRef.get.map { store =>
                     store.images.get(req.fields.id) match
                         case Some((meta, bytes)) =>
-                            HttpResponse.okBinary(bytes)
+                            HttpResponse.ok(bytes)
                                 .noCache
                                 .contentDisposition(meta.name)
                         case None =>
@@ -115,7 +115,7 @@ object ImageProxy extends KyoApp:
             (upload, download, list, downloadLegacy) = handlers(storeRef)
             health                                   = HttpHandler.health()
             server <- HttpServer.init(
-                HttpServerConfig().port(port).openApi("/openapi.json", "ImageProxy")
+                HttpServerConfig.default.port(port).openApi("/openapi.json", "ImageProxy")
             )(upload, download, list, downloadLegacy, health)
             _ <- Console.printLine(s"ImageProxy running on http://localhost:${server.port}")
             _ <- Console.printLine(
@@ -141,7 +141,7 @@ object ImageProxyClient extends KyoApp:
         for
             storeRef <- AtomicRef.init(Store(Map.empty, 1))
             (upload, download, list, downloadLegacy) = handlers(storeRef)
-            server <- HttpServer.init(HttpServerConfig().port(0))(upload, download, list, downloadLegacy)
+            server <- HttpServer.init(HttpServerConfig.default.port(0))(upload, download, list, downloadLegacy)
             _      <- Console.printLine(s"ImageProxyClient started server on http://localhost:${server.port}")
 
             _ <- HttpClient.withConfig(_.baseUrl(s"http://localhost:${server.port}").timeout(5.seconds)) {

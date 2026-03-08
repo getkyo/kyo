@@ -32,7 +32,7 @@ class Rfc6750Test extends Test:
 
     def bearerEndpoint = bearerRoute
         .filter(HttpFilter.server.bearerAuth(token => token == "valid-token-123"))
-        .handler(_ => HttpResponse.okText("protected data"))
+        .handler(_ => HttpResponse.ok("protected data"))
 
     // ==================== Section 2.1: Authorization Request Header Field ====================
 
@@ -111,7 +111,7 @@ class Rfc6750Test extends Test:
         val specialToken = "abc-._~+/def123=="
         val ep = bearerRoute
             .filter(HttpFilter.server.bearerAuth(token => token == specialToken))
-            .handler(_ => HttpResponse.okText("protected data"))
+            .handler(_ => HttpResponse.ok("protected data"))
         withServer(ep) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/api"))
                 .setHeader("Authorization", s"Bearer $specialToken")
@@ -177,7 +177,7 @@ class Rfc6750Test extends Test:
         val longToken = "x" * 1000
         val ep = bearerRoute
             .filter(HttpFilter.server.bearerAuth(token => token == longToken))
-            .handler(_ => HttpResponse.okText("protected data"))
+            .handler(_ => HttpResponse.ok("protected data"))
         withServer(ep) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/api"))
                 .setHeader("Authorization", s"Bearer $longToken")
@@ -195,7 +195,7 @@ class Rfc6750Test extends Test:
             .response(_.bodyText)
         val ep = route.handler { req =>
             val auth = req.headers.get("Authorization").getOrElse("none")
-            HttpResponse.okText(s"auth=$auth")
+            HttpResponse.ok(s"auth=$auth")
         }
         withServer(ep) { port =>
             val clientRoute = HttpRoute.getRaw("api").response(_.bodyText)

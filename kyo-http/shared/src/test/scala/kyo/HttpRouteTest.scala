@@ -452,40 +452,40 @@ class HttpRouteTest extends Test:
         "text" in {
             val r = HttpRoute.postRaw("echo").request(_.bodyText)
             r.request.fields(0) match
-                case Field.Body(fn, ContentType.Text(), _) => assert(fn == "body")
-                case _                                     => fail("Expected Text body")
+                case Field.Body(fn, ContentType.Text, _) => assert(fn == "body")
+                case _                                   => fail("Expected Text body")
             end match
         }
 
         "binary" in {
             val r = HttpRoute.postRaw("upload").request(_.bodyBinary)
             r.request.fields(0) match
-                case Field.Body(fn, ContentType.Binary(), _) => assert(fn == "body")
-                case _                                       => fail("Expected Binary body")
+                case Field.Body(fn, ContentType.Binary, _) => assert(fn == "body")
+                case _                                     => fail("Expected Binary body")
             end match
         }
 
         "stream" in {
             val r = HttpRoute.postRaw("upload").request(_.bodyStream)
             r.request.fields(0) match
-                case Field.Body(fn, ContentType.ByteStream(), _) => assert(fn == "body")
-                case _                                           => fail("Expected ByteStream body")
+                case Field.Body(fn, ContentType.ByteStream, _) => assert(fn == "body")
+                case _                                         => fail("Expected ByteStream body")
             end match
         }
 
         "multipart" in {
             val r = HttpRoute.postRaw("upload").request(_.bodyMultipart)
             r.request.fields(0) match
-                case Field.Body(fn, ContentType.Multipart(), _) => assert(fn == "body")
-                case _                                          => fail("Expected Multipart body")
+                case Field.Body(fn, ContentType.Multipart, _) => assert(fn == "body")
+                case _                                        => fail("Expected Multipart body")
             end match
         }
 
         "multipartStream" in {
             val r = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
             r.request.fields(0) match
-                case Field.Body(fn, ContentType.MultipartStream(), _) => assert(fn == "body")
-                case _                                                => fail("Expected MultipartStream body")
+                case Field.Body(fn, ContentType.MultipartStream, _) => assert(fn == "body")
+                case _                                              => fail("Expected MultipartStream body")
             end match
         }
 
@@ -580,8 +580,8 @@ class HttpRouteTest extends Test:
         "body text" in {
             val r = HttpRoute.getRaw("health").response(_.bodyText)
             r.response.fields(0) match
-                case Field.Body(fn, ContentType.Text(), _) => assert(fn == "body")
-                case _                                     => fail("Expected Text body")
+                case Field.Body(fn, ContentType.Text, _) => assert(fn == "body")
+                case _                                   => fail("Expected Text body")
             end match
         }
 

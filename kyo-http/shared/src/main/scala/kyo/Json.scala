@@ -73,7 +73,7 @@ object Json:
     given Json[Unit] = new Json[Unit]:
         val zioSchema: zio.schema.Schema[Unit] = zio.schema.Schema[Unit]
         override def decode(json: String): Result[String, Unit] =
-            if json.isEmpty || json.trim.isEmpty || json.trim == "null" then Result.succeed(())
+            if json.isEmpty || json.trim.isEmpty || json.trim == "null" then Result.unit
             else
                 zio.schema.codec.JsonCodec.jsonDecoder(zioSchema).decodeJson(json) match
                     case Right(a)    => Result.succeed(a)

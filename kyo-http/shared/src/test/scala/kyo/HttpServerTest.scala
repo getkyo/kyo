@@ -20,7 +20,7 @@ class HttpServerTest extends Test:
     def withCorsServer[A, S](cors: HttpServerConfig.Cors, handlers: HttpHandler[?, ?, ?]*)(
         test: Int => A < (S & Async & Abort[HttpException])
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
-        HttpServer.init(HttpServerConfig(port = 0, host = "localhost", cors = Present(cors)))(handlers*).map(server => test(server.port))
+        HttpServer.init(HttpServerConfig.default.port(0).host("localhost").cors(cors))(handlers*).map(server => test(server.port))
 
     def send[In, Out](
         port: Int,
@@ -58,7 +58,7 @@ class HttpServerTest extends Test:
 
         "404 for unknown path" in run {
             val route = HttpRoute.getRaw("exists").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("found"))
+            val ep    = route.handler(_ => HttpResponse.ok("found"))
             withServer(ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/not-exists"))).map { resp =>
                     assert(resp.status == HttpStatus.NotFound)
@@ -70,8 +70,8 @@ class HttpServerTest extends Test:
             val getRoute    = HttpRoute.getRaw("resource").response(_.bodyText)
             val postRoute   = HttpRoute.postRaw("resource").response(_.bodyText)
             val deleteRoute = HttpRoute.deleteRaw("resource").response(_.bodyText)
-            val getEp       = getRoute.handler(_ => HttpResponse.okText("get"))
-            val postEp      = postRoute.handler(_ => HttpResponse.okText("post"))
+            val getEp       = getRoute.handler(_ => HttpResponse.ok("get"))
+            val postEp      = postRoute.handler(_ => HttpResponse.ok("post"))
             withServer(getEp, postEp) { port =>
                 send(port, deleteRoute, HttpRequest.deleteRaw(HttpUrl.fromUri("/resource"))).map { resp =>
                     assert(resp.status == HttpStatus.MethodNotAllowed)
@@ -86,7 +86,7 @@ class HttpServerTest extends Test:
 
         "HEAD implicit fallback to GET" in run {
             val getRoute = HttpRoute.getRaw("hello").response(_.bodyText)
-            val ep       = getRoute.handler(_ => HttpResponse.okText("world"))
+            val ep       = getRoute.handler(_ => HttpResponse.ok("world"))
             withServer(ep) { port =>
                 // HEAD should match the GET handler
                 send(port, getRoute, HttpRequest.headRaw(HttpUrl.fromUri("/hello"))).map { resp =>
@@ -112,9 +112,9 @@ class HttpServerTest extends Test:
             val getRoute    = HttpRoute.getRaw("item").response(_.bodyText)
             val postRoute   = HttpRoute.postRaw("item").request(_.bodyText).response(_.bodyText)
             val deleteRoute = HttpRoute.deleteRaw("item").response(_.bodyText)
-            val getEp       = getRoute.handler(_ => HttpResponse.okText("got"))
-            val postEp      = postRoute.handler(req => HttpResponse.okText(s"posted: ${req.fields.body}"))
-            val deleteEp    = deleteRoute.handler(_ => HttpResponse.okText("deleted"))
+            val getEp       = getRoute.handler(_ => HttpResponse.ok("got"))
+            val postEp      = postRoute.handler(req => HttpResponse.ok(s"posted: ${req.fields.body}"))
+            val deleteEp    = deleteRoute.handler(_ => HttpResponse.ok("deleted"))
             withServer(getEp, postEp, deleteEp) { port =>
                 for
                     r1 <- send(port, getRoute, HttpRequest.getRaw(HttpUrl.fromUri("/item")))
@@ -129,7 +129,7 @@ class HttpServerTest extends Test:
 
         "root path" in run {
             val route = HttpRoute.getRaw("").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("root"))
+            val ep    = route.handler(_ => HttpResponse.ok("root"))
             withServer(ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -140,7 +140,7 @@ class HttpServerTest extends Test:
 
         "trailing slash normalized" in run {
             val route = HttpRoute.getRaw("users").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("list"))
+            val ep    = route.handler(_ => HttpResponse.ok("list"))
             withServer(ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/users/"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -152,7 +152,7 @@ class HttpServerTest extends Test:
         "URL-encoded path segments" in run {
             val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(req.fields.name)
+                HttpResponse.ok(req.fields.name)
             }
             withServer(ep) { port =>
                 send(
@@ -170,7 +170,7 @@ class HttpServerTest extends Test:
         "rest capture" in run {
             val route = HttpRoute.getRaw("files" / Capture.Rest("path")).response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(req.fields.path)
+                HttpResponse.ok(req.fields.path)
             }
             withServer(ep) { port =>
                 send(
@@ -187,7 +187,7 @@ class HttpServerTest extends Test:
 
         "rest capture must be last segment" in run {
             val route = HttpRoute.getRaw("api" / Capture.Rest("mid") / "suffix").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("unreachable"))
+            val ep    = route.handler(_ => HttpResponse.ok("unreachable"))
             Abort.run[Throwable] {
                 withServer(ep) { _ => () }
             }.map { result =>
@@ -202,7 +202,7 @@ class HttpServerTest extends Test:
         "rest capture with preceding literal and capture" in run {
             val route = HttpRoute.getRaw("api" / Capture[Int]("version") / Capture.Rest("path")).response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(s"v${req.fields.version}:${req.fields.path}")
+                HttpResponse.ok(s"v${req.fields.version}:${req.fields.path}")
             }
             withServer(ep) { port =>
                 send(
@@ -229,7 +229,7 @@ class HttpServerTest extends Test:
 
         "deeply nested path" in run {
             val route = HttpRoute.getRaw("a" / "b" / "c" / "d" / "e").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("deep"))
+            val ep    = route.handler(_ => HttpResponse.ok("deep"))
             withServer(ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/a/b/c/d/e"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -240,7 +240,7 @@ class HttpServerTest extends Test:
 
         "OPTIONS returns 204 with Allow header" in run {
             val route = HttpRoute.getRaw("no-cors").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("hello"))
+            val ep    = route.handler(_ => HttpResponse.ok("hello"))
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.OPTIONS, "/no-cors").map { resp =>
                     assert(
@@ -283,8 +283,8 @@ class HttpServerTest extends Test:
         "OPTIONS on mixed GET+POST path returns Allow with all methods" in run {
             val getRoute  = HttpRoute.getRaw("mixed").response(_.bodyText)
             val postRoute = HttpRoute.postRaw("mixed").request(_.bodyJson[User]).response(_.bodyText)
-            val getEp     = getRoute.handler(_ => HttpResponse.okText("get-body"))
-            val postEp    = postRoute.handler(_ => HttpResponse.okText("post-body"))
+            val getEp     = getRoute.handler(_ => HttpResponse.ok("get-body"))
+            val postEp    = postRoute.handler(_ => HttpResponse.ok("post-body"))
             withServer(getEp, postEp) { port =>
                 Async.timeout(3.seconds) {
                     sendRaw(port, HttpMethod.OPTIONS, "/mixed").map { resp =>
@@ -314,7 +314,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("search")
                 .request(_.query[String]("q"))
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(s"query=${req.fields.q}"))
+            val ep = route.handler(req => HttpResponse.ok(s"query=${req.fields.q}"))
             withServer(ep) { port =>
                 send(
                     port,
@@ -331,7 +331,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("search")
                 .request(_.query[String]("q").query[Int]("page"))
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(s"${req.fields.q}:${req.fields.page}"))
+            val ep = route.handler(req => HttpResponse.ok(s"${req.fields.q}:${req.fields.page}"))
             withServer(ep) { port =>
                 send(
                     port,
@@ -348,7 +348,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("search")
                 .request(_.queryOpt[String]("q"))
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(s"q=${req.fields.q}"))
+            val ep = route.handler(req => HttpResponse.ok(s"q=${req.fields.q}"))
             withServer(ep) { port =>
                 send(
                     port,
@@ -365,7 +365,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("search")
                 .request(_.queryOpt[String]("q"))
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(s"q=${req.fields.q}"))
+            val ep = route.handler(req => HttpResponse.ok(s"q=${req.fields.q}"))
             withServer(ep) { port =>
                 send(
                     port,
@@ -382,7 +382,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("check")
                 .request(_.header[String]("X-Custom"))
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(req.fields.`X-Custom`))
+            val ep = route.handler(req => HttpResponse.ok(req.fields.`X-Custom`))
             withServer(ep) { port =>
                 send(
                     port,
@@ -399,7 +399,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("check")
                 .request(_.cookie[String]("session"))
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(req.fields.session))
+            val ep = route.handler(req => HttpResponse.ok(req.fields.session))
             withServer(ep) { port =>
                 send(
                     port,
@@ -435,7 +435,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.postRaw("echo")
                 .request(_.bodyText)
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(req.fields.body))
+            val ep = route.handler(req => HttpResponse.ok(req.fields.body))
             withServer(ep) { port =>
                 send(
                     port,
@@ -452,7 +452,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.postRaw("login")
                 .request(_.bodyForm[LoginForm])
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(s"${req.fields.body.username}:${req.fields.body.password}"))
+            val ep = route.handler(req => HttpResponse.ok(s"${req.fields.body.username}:${req.fields.body.password}"))
             withServer(ep) { port =>
                 send(
                     port,
@@ -470,7 +470,7 @@ class HttpServerTest extends Test:
                 .request(_.bodyBinary)
                 .response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(new String(req.fields.body.toArrayUnsafe, "UTF-8"))
+                HttpResponse.ok(new String(req.fields.body.toArrayUnsafe, "UTF-8"))
             }
             withServer(ep) { port =>
                 send(
@@ -488,7 +488,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.postRaw("users")
                 .request(_.bodyJson[User])
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText("should not reach"))
+            val ep = route.handler(req => HttpResponse.ok("should not reach"))
             // Use a text route to send text/plain to a JSON endpoint (content-type mismatch)
             val textRoute = HttpRoute.postRaw("users")
                 .request(_.bodyText)
@@ -509,7 +509,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("search")
                 .request(_.query[String]("q"))
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(req.fields.q))
+            val ep = route.handler(req => HttpResponse.ok(req.fields.q))
             // Send without the query param
             val bareRoute = HttpRoute.getRaw("search").response(_.bodyText)
             withServer(ep) { port =>
@@ -521,7 +521,7 @@ class HttpServerTest extends Test:
 
         "empty body on POST" in run {
             val route = HttpRoute.postRaw("empty").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("accepted"))
+            val ep    = route.handler(_ => HttpResponse.ok("accepted"))
             withServer(ep) { port =>
                 send(port, route, HttpRequest.postRaw(HttpUrl.fromUri("/empty"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -534,7 +534,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.postRaw("json-ct")
                 .request(_.bodyJson[User])
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(s"got: ${req.fields.body}"))
+            val ep = route.handler(req => HttpResponse.ok(s"got: ${req.fields.body}"))
             // Send with text/plain Content-Type via a text route
             val textRoute = HttpRoute.postRaw("json-ct")
                 .request(_.bodyText)
@@ -558,7 +558,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.postRaw("json-ct-edges")
                 .request(_.bodyJson[User])
                 .response(_.bodyJson[User])
-            val ep = route.handler(req => HttpResponse.okJson(req.fields.body))
+            val ep = route.handler(req => HttpResponse.ok(req.fields.body))
             withServer(ep) { port =>
                 // application/json with charset should be accepted
                 send(
@@ -577,7 +577,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.postRaw("form-ct")
                 .request(_.bodyForm[LoginForm])
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(s"${req.fields.body.username}"))
+            val ep = route.handler(req => HttpResponse.ok(s"${req.fields.body.username}"))
             // Send JSON to a form endpoint
             val textRoute = HttpRoute.postRaw("form-ct")
                 .request(_.bodyText)
@@ -613,7 +613,7 @@ class HttpServerTest extends Test:
 
         "text body" in run {
             val route = HttpRoute.getRaw("text").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("hello"))
+            val ep    = route.handler(_ => HttpResponse.ok("hello"))
             withServer(ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/text"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -734,7 +734,7 @@ class HttpServerTest extends Test:
         "large text body" in run {
             val largeText = "x" * 100000
             val route     = HttpRoute.getRaw("large").response(_.bodyText)
-            val ep        = route.handler(_ => HttpResponse.okText(largeText))
+            val ep        = route.handler(_ => HttpResponse.ok(largeText))
             withServer(ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/large"))).map { resp =>
                     assert(resp.fields.body.length == 100000)
@@ -833,7 +833,7 @@ class HttpServerTest extends Test:
                     val text = chunks.foldLeft("")((acc, span) =>
                         acc + new String(span.toArrayUnsafe, "UTF-8")
                     )
-                    HttpResponse.okText(text)
+                    HttpResponse.ok(text)
                 }
             }
             withServer(ep) { port =>
@@ -889,7 +889,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("fail").response(_.bodyText)
             val ep = route.handler { _ =>
                 throw new RuntimeException("boom")
-                HttpResponse.okText("unreachable")
+                HttpResponse.ok("unreachable")
             }
             withServer(ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/fail"))).map { resp =>
@@ -1085,7 +1085,7 @@ class HttpServerTest extends Test:
 
         "sequential requests on same connection" in run {
             val route = HttpRoute.getRaw("ping").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("pong"))
+            val ep    = route.handler(_ => HttpResponse.ok("pong"))
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
                     Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
@@ -1105,7 +1105,7 @@ class HttpServerTest extends Test:
 
         "handler wraps response" in run {
             val route = HttpRoute.getRaw("wrapped").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("inner").addHeader("X-Wrapped", "true"))
+            val ep    = route.handler(_ => HttpResponse.ok("inner").addHeader("X-Wrapped", "true"))
             withServer(ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/wrapped"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -1121,8 +1121,8 @@ class HttpServerTest extends Test:
         "parallel requests to different endpoints" in run {
             val route1 = HttpRoute.getRaw("a").response(_.bodyText)
             val route2 = HttpRoute.getRaw("b").response(_.bodyText)
-            val ep1    = route1.handler(_ => HttpResponse.okText("aaa"))
-            val ep2    = route2.handler(_ => HttpResponse.okText("bbb"))
+            val ep1    = route1.handler(_ => HttpResponse.ok("aaa"))
+            val ep2    = route2.handler(_ => HttpResponse.ok("bbb"))
             withServer(ep1, ep2) { port =>
                 Kyo.foreach(1 to 20) { i =>
                     val (route, path) = if i % 2 == 0 then (route1, "/a") else (route2, "/b")
@@ -1135,7 +1135,7 @@ class HttpServerTest extends Test:
 
         "parallel requests to same endpoint" in run {
             val route = HttpRoute.getRaw("shared").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("ok"))
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
             withServer(ep) { port =>
                 Kyo.foreach(1 to 50) { _ =>
                     send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/shared")))
@@ -1151,7 +1151,7 @@ class HttpServerTest extends Test:
             val ep = route.handler { req =>
                 val id    = req.fields.body
                 val delay = id.toInt % 10
-                Async.sleep(delay.millis).andThen(HttpResponse.okText(id))
+                Async.sleep(delay.millis).andThen(HttpResponse.ok(id))
             }
             withServer(ep) { port =>
                 val repeats = 10
@@ -1183,8 +1183,8 @@ class HttpServerTest extends Test:
         "slow handler does not block fast handlers" in run {
             val slowRoute = HttpRoute.getRaw("slow-h").response(_.bodyText)
             val fastRoute = HttpRoute.getRaw("fast-h").response(_.bodyText)
-            val slowEp    = slowRoute.handler(_ => Async.sleep(2.seconds).andThen(HttpResponse.okText("slow")))
-            val fastEp    = fastRoute.handler(_ => HttpResponse.okText("fast"))
+            val slowEp    = slowRoute.handler(_ => Async.sleep(2.seconds).andThen(HttpResponse.ok("slow")))
+            val fastEp    = fastRoute.handler(_ => HttpResponse.ok("fast"))
             withServer(slowEp, fastEp) { port =>
                 val repeats = 5
                 val sizes   = Choice.eval(2, 4, 8)
@@ -1273,7 +1273,7 @@ class HttpServerTest extends Test:
 
         "close stops accepting new connections" in run {
             val route = HttpRoute.getRaw("test").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("ok"))
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
             HttpServer.init(0, "localhost")(ep).map { server =>
                 val port = server.port
                 // First request works
@@ -1287,7 +1287,7 @@ class HttpServerTest extends Test:
     "HttpServer convenience APIs" - {
 
         val route = HttpRoute.getRaw("health").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("ok"))
+        val ep    = route.handler(_ => HttpResponse.ok("ok"))
 
         "initWith" in run {
             HttpServer.initWith(0, "localhost")(ep) { server =>
@@ -1314,7 +1314,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.postRaw("big")
                 .request(_.bodyText)
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(s"len=${req.fields.body.length}"))
+            val ep = route.handler(req => HttpResponse.ok(s"len=${req.fields.body.length}"))
             withServer(ep) { port =>
                 send(
                     port,
@@ -1331,7 +1331,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("q")
                 .request(_.query[String]("v"))
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(req.fields.v))
+            val ep = route.handler(req => HttpResponse.ok(req.fields.v))
             withServer(ep) { port =>
                 send(
                     port,
@@ -1347,7 +1347,7 @@ class HttpServerTest extends Test:
         "multiple captures in path" in run {
             val route = HttpRoute.getRaw("users" / Capture[Int]("userId") / "posts" / Capture[Int]("postId"))
                 .response(_.bodyText)
-            val ep = route.handler(req => HttpResponse.okText(s"user=${req.fields.userId},post=${req.fields.postId}"))
+            val ep = route.handler(req => HttpResponse.ok(s"user=${req.fields.userId},post=${req.fields.postId}"))
             withServer(ep) { port =>
                 send(
                     port,
@@ -1362,7 +1362,7 @@ class HttpServerTest extends Test:
 
         "path capture with special characters" in run {
             val route = HttpRoute.getRaw("items" / Capture[String]("id")).response(_.bodyText)
-            val ep    = route.handler(req => HttpResponse.okText(req.fields.id))
+            val ep    = route.handler(req => HttpResponse.ok(req.fields.id))
             withServer(ep) { port =>
                 send(
                     port,
@@ -1411,7 +1411,7 @@ class HttpServerTest extends Test:
                 .response(_.bodyText)
             val ep = route.handler { req =>
                 val parts = req.fields.body
-                HttpResponse.okText(s"parts=${parts.size},name=${parts.head.name}")
+                HttpResponse.ok(s"parts=${parts.size},name=${parts.head.name}")
             }
             withServer(ep) { port =>
                 val part = HttpRequest.Part(
@@ -1439,7 +1439,7 @@ class HttpServerTest extends Test:
             val ep = route.handler { req =>
                 req.fields.body.run.map { chunks =>
                     val parts = chunks.toSeq
-                    HttpResponse.okText(s"parts=${parts.size}")
+                    HttpResponse.ok(s"parts=${parts.size}")
                 }
             }
             withServer(ep) { port =>
@@ -1507,7 +1507,7 @@ class HttpServerTest extends Test:
                 .response(_.bodyText)
             val ep = route.handler { req =>
                 val data = req.fields.body.head.data
-                HttpResponse.okText(s"size=${data.size}")
+                HttpResponse.ok(s"size=${data.size}")
             }
             val inputBytes = Array.tabulate[Byte](5120)(i => (i % 256).toByte)
             withServer(ep) { port =>
@@ -1537,7 +1537,7 @@ class HttpServerTest extends Test:
                 val parts = req.fields.body
                 val names = parts.map(_.name).mkString(",")
                 val sizes = parts.map(_.data.size).mkString(",")
-                HttpResponse.okText(s"names=$names;sizes=$sizes")
+                HttpResponse.ok(s"names=$names;sizes=$sizes")
             }
             val textPart = HttpRequest.Part(
                 "description",
@@ -1634,7 +1634,7 @@ class HttpServerTest extends Test:
                 .request(_.bodyJson[String])
                 .response(_.bodyText)
             val ep = route.handler { req =>
-                HttpResponse.okText(s"got: ${req.fields.body}")
+                HttpResponse.ok(s"got: ${req.fields.body}")
             }
             // Send text/plain to a JSON endpoint (content-type mismatch)
             val textRoute = HttpRoute.postRaw("echo")
@@ -1657,7 +1657,7 @@ class HttpServerTest extends Test:
 
         "simple GET returns body text" in run {
             val route = HttpRoute.getRaw("ping").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("pong"))
+            val ep    = route.handler(_ => HttpResponse.ok("pong"))
             withServer(ep) { port =>
                 // First verify the direct path works
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/ping"))).map { resp =>
@@ -1675,24 +1675,24 @@ class HttpServerTest extends Test:
             val getRoute = HttpRoute.getRaw("users" / Capture[Int]("id"))
                 .response(_.bodyJson[User])
             val getEp = getRoute.handler { req =>
-                HttpResponse.okJson(User(req.fields.id, "alice"))
+                HttpResponse.ok(User(req.fields.id, "alice"))
             }
             val postRoute = HttpRoute.postRaw("users")
                 .request(_.bodyJson[User])
                 .response(_.bodyJson[User])
             val postEp = postRoute.handler { req =>
-                HttpResponse.okJson(User(99, req.fields.body.name))
+                HttpResponse.ok(User(99, req.fields.body.name))
             }
             val putRoute = HttpRoute.putRaw("users" / Capture[Int]("id"))
                 .request(_.bodyJson[User])
                 .response(_.bodyJson[User])
             val putEp = putRoute.handler { req =>
-                HttpResponse.okJson(User(req.fields.id, req.fields.body.name + "-updated"))
+                HttpResponse.ok(User(req.fields.id, req.fields.body.name + "-updated"))
             }
             val delRoute = HttpRoute.deleteRaw("users" / Capture[Int]("id"))
                 .response(_.bodyText)
             val delEp = delRoute.handler { req =>
-                HttpResponse.okText(s"deleted-${req.fields.id}")
+                HttpResponse.ok(s"deleted-${req.fields.id}")
             }
             withServer(getEp, postEp, putEp, delEp) { port =>
                 val base = s"http://localhost:$port"
@@ -1937,7 +1937,7 @@ class HttpServerTest extends Test:
                     val text = chunks.foldLeft("")((acc, span) =>
                         acc + new String(span.toArrayUnsafe, "UTF-8")
                     )
-                    HttpResponse.okText(text)
+                    HttpResponse.ok(text)
                 }
             }
             withServer(ep) { port =>
@@ -1986,7 +1986,7 @@ class HttpServerTest extends Test:
                             val text = chunks.foldLeft("")((acc, span) =>
                                 acc + new String(span.toArrayUnsafe, "UTF-8")
                             )
-                            HttpResponse.okText(text)
+                            HttpResponse.ok(text)
                         }
                     }
                 }
@@ -2083,7 +2083,7 @@ class HttpServerTest extends Test:
         "500 response has non-empty body when handler throws" in run {
             val route = HttpRoute.getRaw("throw-test").response(_.bodyText)
             val ep = route.handler { _ =>
-                throw new RuntimeException("boom"); HttpResponse.okText("unreachable")
+                throw new RuntimeException("boom"); HttpResponse.ok("unreachable")
             }
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.GET, "/throw-test").map { resp =>
@@ -2097,7 +2097,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("search-test")
                 .request(_.query[String]("q"))
                 .response(_.bodyText)
-            val ep        = route.handler(req => HttpResponse.okText(req.fields.q))
+            val ep        = route.handler(req => HttpResponse.ok(req.fields.q))
             val bareRoute = HttpRoute.getRaw("search-test").response(_.bodyText)
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.GET, "/search-test").map { resp =>
@@ -2109,7 +2109,7 @@ class HttpServerTest extends Test:
 
         "404 response has non-empty JSON body" in run {
             val route = HttpRoute.getRaw("exists").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("ok"))
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.GET, "/no-such-path").map { resp =>
                     assert(resp.status == HttpStatus.NotFound)
@@ -2120,7 +2120,7 @@ class HttpServerTest extends Test:
 
         "405 response has non-empty body and Allow header" in run {
             val route = HttpRoute.getRaw("only-get").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("ok"))
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.POST, "/only-get").map { resp =>
                     assert(resp.status == HttpStatus.MethodNotAllowed)
@@ -2133,7 +2133,7 @@ class HttpServerTest extends Test:
 
         "error bodies work for all HTTP methods" in run {
             val route = HttpRoute.getRaw("get-only").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("ok"))
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
             withServer(ep) { port =>
                 Kyo.foreach(Seq(HttpMethod.POST, HttpMethod.PUT, HttpMethod.PATCH, HttpMethod.DELETE)) { method =>
                     sendRaw(port, method, "/get-only").map { resp =>
@@ -2149,7 +2149,7 @@ class HttpServerTest extends Test:
                 .request(_.headerOpt[String]("authorization"))
                 .response(_.bodyText)
             val ep = route.filter(HttpFilter.server.bearerAuth(token => token == "secret")).handler { _ =>
-                HttpResponse.okText("authorized")
+                HttpResponse.ok("authorized")
             }
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.GET, "/protected").map { resp =>
@@ -2164,7 +2164,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.postRaw("json-test")
                 .request(_.bodyJson[User])
                 .response(_.bodyText)
-            val ep = route.handler(_ => HttpResponse.okText("should not reach"))
+            val ep = route.handler(_ => HttpResponse.ok("should not reach"))
             val textRoute = HttpRoute.postRaw("json-test")
                 .request(_.bodyText)
                 .response(_.bodyText)
@@ -2193,7 +2193,7 @@ class HttpServerTest extends Test:
 
         "CORS preflight OPTIONS returns 204 with CORS headers (server-level)" in run {
             val route = HttpRoute.getRaw("cors-resource").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("ok"))
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
             withCorsServer(HttpServerConfig.Cors.allowAll, ep) { port =>
                 sendRaw(port, HttpMethod.OPTIONS, "/cors-resource").map { resp =>
                     assert(
@@ -2217,7 +2217,7 @@ class HttpServerTest extends Test:
 
         "CORS filter adds Access-Control-Allow-Origin on regular responses" in run {
             val route = HttpRoute.getRaw("cors-get").response(_.bodyText)
-            val ep    = route.filter(HttpFilter.server.cors()).handler(_ => HttpResponse.okText("hello"))
+            val ep    = route.filter(HttpFilter.server.cors()).handler(_ => HttpResponse.ok("hello"))
             withServer(ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-get"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -2232,7 +2232,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.postRaw("cors-post")
                 .request(_.bodyJson[User])
                 .response(_.bodyText)
-            val ep = route.handler(_ => HttpResponse.okText("ok"))
+            val ep = route.handler(_ => HttpResponse.ok("ok"))
             withCorsServer(HttpServerConfig.Cors.allowAll, ep) { port =>
                 sendRaw(port, HttpMethod.OPTIONS, "/cors-post").map { resp =>
                     assert(
@@ -2254,9 +2254,9 @@ class HttpServerTest extends Test:
             val putRoute    = HttpRoute.putRaw("cors-put").request(_.bodyJson[User]).response(_.bodyText)
             val patchRoute  = HttpRoute.patchRaw("cors-patch").request(_.bodyJson[User]).response(_.bodyText)
             val deleteRoute = HttpRoute.deleteRaw("cors-del").response(_.bodyText)
-            val putEp       = putRoute.handler(_ => HttpResponse.okText("ok"))
-            val patchEp     = patchRoute.handler(_ => HttpResponse.okText("ok"))
-            val deleteEp    = deleteRoute.handler(_ => HttpResponse.okText("ok"))
+            val putEp       = putRoute.handler(_ => HttpResponse.ok("ok"))
+            val patchEp     = patchRoute.handler(_ => HttpResponse.ok("ok"))
+            val deleteEp    = deleteRoute.handler(_ => HttpResponse.ok("ok"))
             withCorsServer(HttpServerConfig.Cors.allowAll, putEp, patchEp, deleteEp) { port =>
                 Kyo.foreach(Seq("/cors-put", "/cors-patch", "/cors-del")) { path =>
                     sendRaw(port, HttpMethod.OPTIONS, path).map { resp =>
@@ -2300,8 +2300,8 @@ class HttpServerTest extends Test:
         "CORS preflight on mixed GET+POST endpoint returns 204 with all methods" in run {
             val getRoute  = HttpRoute.getRaw("cors-mixed").response(_.bodyText)
             val postRoute = HttpRoute.postRaw("cors-mixed").request(_.bodyJson[User]).response(_.bodyText)
-            val getEp     = getRoute.handler(_ => HttpResponse.okText("get"))
-            val postEp    = postRoute.handler(_ => HttpResponse.okText("post"))
+            val getEp     = getRoute.handler(_ => HttpResponse.ok("get"))
+            val postEp    = postRoute.handler(_ => HttpResponse.ok("post"))
             withCorsServer(HttpServerConfig.Cors.allowAll, getEp, postEp) { port =>
                 Async.timeout(3.seconds) {
                     sendRaw(port, HttpMethod.OPTIONS, "/cors-mixed").map { resp =>
@@ -2328,7 +2328,7 @@ class HttpServerTest extends Test:
 
         "CORS preflight OPTIONS returns 204 with CORS headers" in run {
             val route = HttpRoute.getRaw("cors-resource").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("ok"))
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
             withCorsServer(HttpServerConfig.Cors.allowAll, ep) { port =>
                 sendRaw(port, HttpMethod.OPTIONS, "/cors-resource").map { resp =>
                     assert(
@@ -2348,7 +2348,7 @@ class HttpServerTest extends Test:
 
         "CORS adds Access-Control-Allow-Origin on regular responses" in run {
             val route = HttpRoute.getRaw("cors-get").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("hello"))
+            val ep    = route.handler(_ => HttpResponse.ok("hello"))
             withCorsServer(HttpServerConfig.Cors.allowAll, ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-get"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -2363,7 +2363,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.postRaw("cors-post2")
                 .request(_.bodyJson[User])
                 .response(_.bodyText)
-            val ep = route.handler(_ => HttpResponse.okText("ok"))
+            val ep = route.handler(_ => HttpResponse.ok("ok"))
             withCorsServer(HttpServerConfig.Cors.allowAll, ep) { port =>
                 sendRaw(port, HttpMethod.OPTIONS, "/cors-post2").map { resp =>
                     assert(
@@ -2380,9 +2380,9 @@ class HttpServerTest extends Test:
             val putRoute    = HttpRoute.putRaw("cors-put2").request(_.bodyJson[User]).response(_.bodyText)
             val patchRoute  = HttpRoute.patchRaw("cors-patch2").request(_.bodyJson[User]).response(_.bodyText)
             val deleteRoute = HttpRoute.deleteRaw("cors-del2").response(_.bodyText)
-            val putEp       = putRoute.handler(_ => HttpResponse.okText("ok"))
-            val patchEp     = patchRoute.handler(_ => HttpResponse.okText("ok"))
-            val deleteEp    = deleteRoute.handler(_ => HttpResponse.okText("ok"))
+            val putEp       = putRoute.handler(_ => HttpResponse.ok("ok"))
+            val patchEp     = patchRoute.handler(_ => HttpResponse.ok("ok"))
+            val deleteEp    = deleteRoute.handler(_ => HttpResponse.ok("ok"))
             withCorsServer(HttpServerConfig.Cors.allowAll, putEp, patchEp, deleteEp) { port =>
                 Kyo.foreach(Seq("/cors-put2", "/cors-patch2", "/cors-del2")) { path =>
                     sendRaw(port, HttpMethod.OPTIONS, path).map { resp =>
@@ -2426,8 +2426,8 @@ class HttpServerTest extends Test:
         "CORS preflight on mixed GET+POST endpoint returns 204 with all methods" in run {
             val getRoute  = HttpRoute.getRaw("cors-mixed2").response(_.bodyText)
             val postRoute = HttpRoute.postRaw("cors-mixed2").request(_.bodyJson[User]).response(_.bodyText)
-            val getEp     = getRoute.handler(_ => HttpResponse.okText("get"))
-            val postEp    = postRoute.handler(_ => HttpResponse.okText("post"))
+            val getEp     = getRoute.handler(_ => HttpResponse.ok("get"))
+            val postEp    = postRoute.handler(_ => HttpResponse.ok("post"))
             withCorsServer(HttpServerConfig.Cors.allowAll, getEp, postEp) { port =>
                 Async.timeout(3.seconds) {
                     sendRaw(port, HttpMethod.OPTIONS, "/cors-mixed2").map { resp =>
@@ -2448,7 +2448,7 @@ class HttpServerTest extends Test:
 
         "CORS with custom origin" in run {
             val route = HttpRoute.getRaw("cors-custom").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("ok"))
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
             val cors  = HttpServerConfig.Cors(allowOrigin = "https://example.com")
             withCorsServer(cors, ep) { port =>
                 send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-custom"))).map { resp =>
@@ -2466,7 +2466,7 @@ class HttpServerTest extends Test:
                 .response(_.bodyText)
             val ep = route
                 .filter(HttpFilter.server.bearerAuth(t => t == "valid"))
-                .handler { _ => HttpResponse.okText("authorized") }
+                .handler { _ => HttpResponse.ok("authorized") }
             withCorsServer(HttpServerConfig.Cors.allowAll, ep) { port =>
                 sendRaw(port, HttpMethod.GET, "/cors-auth").map { noAuth =>
                     assert(noAuth.status == HttpStatus.Unauthorized, s"Missing auth should be 401, got ${noAuth.status}")
@@ -2509,7 +2509,7 @@ class HttpServerTest extends Test:
                 .request(_.headerOpt[String]("authorization"))
                 .response(_.bodyText)
             val ep = route.filter(HttpFilter.server.bearerAuth(token => token == "valid-token")).handler { _ =>
-                HttpResponse.okText("authorized")
+                HttpResponse.ok("authorized")
             }
             withServer(ep) { port =>
                 // Valid token → 200
@@ -2528,7 +2528,7 @@ class HttpServerTest extends Test:
                 .response(_.bodyText)
             val ep = route
                 .filter(HttpFilter.server.cors().andThen(HttpFilter.server.bearerAuth(t => t == "valid")))
-                .handler { _ => HttpResponse.okText("authorized") }
+                .handler { _ => HttpResponse.ok("authorized") }
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.GET, "/chained").map { noAuth =>
                     assert(noAuth.status == HttpStatus.Unauthorized, s"Missing auth should be 401, got ${noAuth.status}")
@@ -2566,8 +2566,8 @@ class HttpServerTest extends Test:
 
         "OpenAPI endpoint returns Content-Type application/json" in run {
             val route  = HttpRoute.getRaw("items").response(_.bodyText)
-            val ep     = route.handler(_ => HttpResponse.okText("ok"))
-            val config = HttpServerConfig(port = 0, host = "localhost").openApi("/openapi.json", "Test API")
+            val ep     = route.handler(_ => HttpResponse.ok("ok"))
+            val config = HttpServerConfig.default.port(0).host("localhost").openApi("/openapi.json", "Test API")
             HttpServer.init(config)(ep).map { server =>
                 val oaRoute = HttpRoute.getRaw("openapi.json").response(_.bodyText)
                 send(server.port, oaRoute, HttpRequest.getRaw(HttpUrl.fromUri("/openapi.json"))).map { resp =>
@@ -2915,7 +2915,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("fail-body").response(_.bodyText)
             val ep = route.handler { _ =>
                 throw new RuntimeException("boom")
-                HttpResponse.okText("unreachable")
+                HttpResponse.ok("unreachable")
             }
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.GET, "/fail-body").map { resp =>
@@ -2965,7 +2965,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("throw-leak").response(_.bodyText)
             val ep = route.handler { _ =>
                 throw new RuntimeException("secret internal detail")
-                HttpResponse.okText("unreachable")
+                HttpResponse.ok("unreachable")
             }
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.GET, "/throw-leak").map { resp =>
@@ -3027,7 +3027,7 @@ class HttpServerTest extends Test:
 
         "HEAD response has empty body" in run {
             val getRoute = HttpRoute.getRaw("head-body-test").response(_.bodyText)
-            val ep       = getRoute.handler(_ => HttpResponse.okText("this should not appear in HEAD"))
+            val ep       = getRoute.handler(_ => HttpResponse.ok("this should not appear in HEAD"))
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.HEAD, "/head-body-test").map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -3042,7 +3042,7 @@ class HttpServerTest extends Test:
 
         "HEAD response preserves Content-Type header from GET" in run {
             val route = HttpRoute.getRaw("head-ct-test").response(_.bodyJson[User])
-            val ep    = route.handler(_ => HttpResponse.okJson(User(1, "alice")))
+            val ep    = route.handler(_ => HttpResponse.ok(User(1, "alice")))
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.HEAD, "/head-ct-test").map { resp =>
                     assert(resp.status == HttpStatus.OK)
@@ -3055,7 +3055,7 @@ class HttpServerTest extends Test:
 
         "HEAD Content-Length matches GET body size" in run {
             val route = HttpRoute.getRaw("head-cl").response(_.bodyJson[User])
-            val ep    = route.handler(_ => HttpResponse.okJson(User(1, "alice")))
+            val ep    = route.handler(_ => HttpResponse.ok(User(1, "alice")))
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.GET, "/head-cl").map { getResp =>
                     val getBodyLen = getResp.fields.body.length
@@ -3099,7 +3099,7 @@ class HttpServerTest extends Test:
 
         "HEAD on unknown path returns 404 with empty body" in run {
             val route = HttpRoute.getRaw("something").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("ok"))
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.HEAD, "/no-such-path").map { resp =>
                     assert(resp.status == HttpStatus.NotFound)
@@ -3120,7 +3120,7 @@ class HttpServerTest extends Test:
                     case Present(_) =>
                         HttpResponse.halt(HttpResponse.notModified.etag("\"test-etag\""))
                     case _ =>
-                        HttpResponse.okText("content").etag("\"test-etag\"")
+                        HttpResponse.ok("content").etag("\"test-etag\"")
             }
             withServer(ep) { port =>
                 val req = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/nm-ct"))
@@ -3145,7 +3145,7 @@ class HttpServerTest extends Test:
                     case Present(_) =>
                         HttpResponse.halt(HttpResponse.notModified.etag("\"test-etag\""))
                     case _ =>
-                        HttpResponse.okText("content").etag("\"test-etag\"")
+                        HttpResponse.ok("content").etag("\"test-etag\"")
             }
             withServer(ep) { port =>
                 val req = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/nm-body"))
@@ -3169,7 +3169,7 @@ class HttpServerTest extends Test:
                     case Present(_) =>
                         HttpResponse.halt(HttpResponse.notModified.etag("\"my-etag-123\""))
                     case _ =>
-                        HttpResponse.okText("content").etag("\"my-etag-123\"")
+                        HttpResponse.ok("content").etag("\"my-etag-123\"")
             }
             withServer(ep) { port =>
                 val req = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/nm-etag"))
@@ -3196,7 +3196,7 @@ class HttpServerTest extends Test:
                     case Present(_) =>
                         HttpResponse.halt(HttpResponse.notModified.etag("\"test\""))
                     case _ =>
-                        HttpResponse.okText("content").etag("\"test\"")
+                        HttpResponse.ok("content").etag("\"test\"")
             }
             withServer(ep) { port =>
                 val req = HttpRequest(HttpMethod.GET, HttpUrl.fromUri("/nm-err"))
@@ -3230,7 +3230,7 @@ class HttpServerTest extends Test:
                                 .cacheControl("public, max-age=3600")
                         )
                     case _ =>
-                        HttpResponse.okText("content")
+                        HttpResponse.ok("content")
                             .etag("\"test\"")
                             .cacheControl("public, max-age=3600")
             }
@@ -3295,9 +3295,9 @@ class HttpServerTest extends Test:
 
         "multiple servers on different ports" in run {
             val route1 = HttpRoute.getRaw("s1").response(_.bodyText)
-            val ep1    = route1.handler(_ => HttpResponse.okText("server1"))
+            val ep1    = route1.handler(_ => HttpResponse.ok("server1"))
             val route2 = HttpRoute.getRaw("s2").response(_.bodyText)
-            val ep2    = route2.handler(_ => HttpResponse.okText("server2"))
+            val ep2    = route2.handler(_ => HttpResponse.ok("server2"))
             HttpServer.init(0, "localhost")(ep1).map { server1 =>
                 HttpServer.init(0, "localhost")(ep2).map { server2 =>
                     assert(server1.port != server2.port)
@@ -3370,7 +3370,7 @@ class HttpServerTest extends Test:
             val ep = route.handler { _ =>
                 Async.sleep(2.seconds).andThen {
                     throw new RuntimeException("delayed boom")
-                    HttpResponse.okText("unreachable")
+                    HttpResponse.ok("unreachable")
                 }
             }
             withServer(ep) { port =>
@@ -3390,7 +3390,7 @@ class HttpServerTest extends Test:
 
         "binding to in-use port fails with HttpBindException" in run {
             val route = HttpRoute.getRaw("test").response(_.bodyText)
-            val ep    = route.handler(_ => HttpResponse.okText("ok"))
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
             HttpServer.init(0, "localhost")(ep).map { server =>
                 val port = server.port
                 Abort.run[Throwable] {
@@ -3419,7 +3419,7 @@ class HttpServerTest extends Test:
             val ep = route.handler { _ =>
                 counter += 1
                 if counter == 1 then throw new RuntimeException("first request fails")
-                else HttpResponse.okText("recovered")
+                else HttpResponse.ok("recovered")
             }
             withServer(ep) { port =>
                 // First request -> 500
@@ -3438,7 +3438,7 @@ class HttpServerTest extends Test:
         "concurrent error responses do not hang" in run {
             val route = HttpRoute.getRaw("concurrent-err").response(_.bodyText)
             val ep = route.handler { _ =>
-                throw new RuntimeException("fail"); HttpResponse.okText("x")
+                throw new RuntimeException("fail"); HttpResponse.ok("x")
             }
             withServer(ep) { port =>
                 Async.foreach(1 to 5, 5) { _ =>

@@ -49,7 +49,7 @@ object PasteBin extends KyoApp:
                     val input = req.fields.body
                     val etag  = computeEtag(input.content)
                     for _ <- storeRef.updateAndGet(_ + (input.slug -> Paste(input.content, etag)))
-                    yield HttpResponse.okJson(PasteInfo(input.slug, input.content.length))
+                    yield HttpResponse.ok(PasteInfo(input.slug, input.content.length))
                 }
 
             // GET /p/... — retrieve paste with ETag support
@@ -72,7 +72,7 @@ object PasteBin extends KyoApp:
                                 case Present(clientEtag) if clientEtag == paste.etag =>
                                     HttpResponse.halt(HttpResponse.notModified.etag(paste.etag))
                                 case _ =>
-                                    HttpResponse.okText(paste.content)
+                                    HttpResponse.ok(paste.content)
                                         .etag(paste.etag)
                                         .cacheControl("public, max-age=3600")
                                         .contentDisposition(req.fields.slug.replace('/', '_') + ".txt")
@@ -116,7 +116,7 @@ object PasteBin extends KyoApp:
 
             health = HttpHandler.health()
             server <- HttpServer.init(
-                HttpServerConfig().port(port).openApi("/openapi.json", "Paste Bin")
+                HttpServerConfig.default.port(port).openApi("/openapi.json", "Paste Bin")
             )(create, get, head, delete, list, health)
             _ <- Console.printLine(s"PasteBin running on http://localhost:${server.port}")
             _ <- Console.printLine(

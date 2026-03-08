@@ -10,7 +10,7 @@ import kyo.*
   *
   * For simple endpoints, use the convenience methods on the companion (`getJson`, `postText`, `getSseJson`, etc.) which create a route and
   * handler in one call. These methods automatically wrap the return value in the appropriate `HttpResponse` factory (e.g.,
-  * `HttpResponse.okJson`). For full control over the response, use `HttpRoute.handler` or `HttpHandler.init(route)(handler)` directly.
+  * `HttpResponse.ok`). For full control over the response, use `HttpRoute.handler` or `HttpHandler.init(route)(handler)` directly.
   *
   * @tparam In
   *   request field types (from the route's captures, query params, headers, cookies, body)
@@ -74,7 +74,7 @@ object HttpHandler:
 
     def health(path: String)(using Frame): HttpHandler[Any, "body" ~ String, Nothing] =
         val route    = HttpRoute.getRaw(path).response(_.bodyText)
-        val response = HttpResponse.okText("healthy")
+        val response = HttpResponse.ok("healthy")
         route.handler(_ => response)
     end health
 
@@ -143,35 +143,35 @@ object HttpHandler:
     )(
         f: HttpRequest[Any] => A < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler[Any, "body" ~ A, Nothing] =
-        HttpRoute.getJson[A](path).handler(req => f(req).map(HttpResponse.okJson(_)))
+        HttpRoute.getJson[A](path).handler(req => f(req).map(HttpResponse.ok(_)))
 
     def postJson[A: Json](path: String)(using
         Frame
     )[B: Json](
         f: (HttpRequest["body" ~ A], A) => B < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler["body" ~ A, "body" ~ B, Nothing] =
-        HttpRoute.postJson[B, A](path).handler(req => f(req, req.fields.body).map(HttpResponse.okJson(_)))
+        HttpRoute.postJson[B, A](path).handler(req => f(req, req.fields.body).map(HttpResponse.ok(_)))
 
     def putJson[A: Json](path: String)(using
         Frame
     )[B: Json](
         f: (HttpRequest["body" ~ A], A) => B < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler["body" ~ A, "body" ~ B, Nothing] =
-        HttpRoute.putJson[B, A](path).handler(req => f(req, req.fields.body).map(HttpResponse.okJson(_)))
+        HttpRoute.putJson[B, A](path).handler(req => f(req, req.fields.body).map(HttpResponse.ok(_)))
 
     def patchJson[A: Json](path: String)(using
         Frame
     )[B: Json](
         f: (HttpRequest["body" ~ A], A) => B < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler["body" ~ A, "body" ~ B, Nothing] =
-        HttpRoute.patchJson[B, A](path).handler(req => f(req, req.fields.body).map(HttpResponse.okJson(_)))
+        HttpRoute.patchJson[B, A](path).handler(req => f(req, req.fields.body).map(HttpResponse.ok(_)))
 
     def deleteJson[A: Json](path: String)(using
         Frame
     )(
         f: HttpRequest[Any] => A < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler[Any, "body" ~ A, Nothing] =
-        HttpRoute.deleteJson[A](path).handler(req => f(req).map(HttpResponse.okJson(_)))
+        HttpRoute.deleteJson[A](path).handler(req => f(req).map(HttpResponse.ok(_)))
 
     // ==================== Text methods ====================
 
@@ -180,35 +180,35 @@ object HttpHandler:
     )(
         f: HttpRequest[Any] => String < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler[Any, "body" ~ String, Nothing] =
-        HttpRoute.getText(path).handler(req => f(req).map(HttpResponse.okText(_)))
+        HttpRoute.getText(path).handler(req => f(req).map(HttpResponse.ok(_)))
 
     def postText(path: String)(using
         Frame
     )(
         f: (HttpRequest["body" ~ String], String) => String < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler["body" ~ String, "body" ~ String, Nothing] =
-        HttpRoute.postText(path).handler(req => f(req, req.fields.body).map(HttpResponse.okText(_)))
+        HttpRoute.postText(path).handler(req => f(req, req.fields.body).map(HttpResponse.ok(_)))
 
     def putText(path: String)(using
         Frame
     )(
         f: (HttpRequest["body" ~ String], String) => String < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler["body" ~ String, "body" ~ String, Nothing] =
-        HttpRoute.putText(path).handler(req => f(req, req.fields.body).map(HttpResponse.okText(_)))
+        HttpRoute.putText(path).handler(req => f(req, req.fields.body).map(HttpResponse.ok(_)))
 
     def patchText(path: String)(using
         Frame
     )(
         f: (HttpRequest["body" ~ String], String) => String < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler["body" ~ String, "body" ~ String, Nothing] =
-        HttpRoute.patchText(path).handler(req => f(req, req.fields.body).map(HttpResponse.okText(_)))
+        HttpRoute.patchText(path).handler(req => f(req, req.fields.body).map(HttpResponse.ok(_)))
 
     def deleteText(path: String)(using
         Frame
     )(
         f: HttpRequest[Any] => String < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler[Any, "body" ~ String, Nothing] =
-        HttpRoute.deleteText(path).handler(req => f(req).map(HttpResponse.okText(_)))
+        HttpRoute.deleteText(path).handler(req => f(req).map(HttpResponse.ok(_)))
 
     // ==================== Binary methods ====================
 
@@ -217,35 +217,35 @@ object HttpHandler:
     )(
         f: HttpRequest[Any] => Span[Byte] < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler[Any, "body" ~ Span[Byte], Nothing] =
-        HttpRoute.getBinary(path).handler(req => f(req).map(HttpResponse.okBinary(_)))
+        HttpRoute.getBinary(path).handler(req => f(req).map(HttpResponse.ok(_)))
 
     def postBinary(path: String)(using
         Frame
     )(
         f: (HttpRequest["body" ~ Span[Byte]], Span[Byte]) => Span[Byte] < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler["body" ~ Span[Byte], "body" ~ Span[Byte], Nothing] =
-        HttpRoute.postBinary(path).handler(req => f(req, req.fields.body).map(HttpResponse.okBinary(_)))
+        HttpRoute.postBinary(path).handler(req => f(req, req.fields.body).map(HttpResponse.ok(_)))
 
     def putBinary(path: String)(using
         Frame
     )(
         f: (HttpRequest["body" ~ Span[Byte]], Span[Byte]) => Span[Byte] < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler["body" ~ Span[Byte], "body" ~ Span[Byte], Nothing] =
-        HttpRoute.putBinary(path).handler(req => f(req, req.fields.body).map(HttpResponse.okBinary(_)))
+        HttpRoute.putBinary(path).handler(req => f(req, req.fields.body).map(HttpResponse.ok(_)))
 
     def patchBinary(path: String)(using
         Frame
     )(
         f: (HttpRequest["body" ~ Span[Byte]], Span[Byte]) => Span[Byte] < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler["body" ~ Span[Byte], "body" ~ Span[Byte], Nothing] =
-        HttpRoute.patchBinary(path).handler(req => f(req, req.fields.body).map(HttpResponse.okBinary(_)))
+        HttpRoute.patchBinary(path).handler(req => f(req, req.fields.body).map(HttpResponse.ok(_)))
 
     def deleteBinary(path: String)(using
         Frame
     )(
         f: HttpRequest[Any] => Span[Byte] < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler[Any, "body" ~ Span[Byte], Nothing] =
-        HttpRoute.deleteBinary(path).handler(req => f(req).map(HttpResponse.okBinary(_)))
+        HttpRoute.deleteBinary(path).handler(req => f(req).map(HttpResponse.ok(_)))
 
     // ==================== Streaming methods ====================
 
