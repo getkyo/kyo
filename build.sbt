@@ -175,7 +175,8 @@ lazy val kyoNative = project
         `kyo-combinators`.native,
         `kyo-sttp`.native,
         `kyo-actor`.native,
-        `kyo-http`.native
+        `kyo-http`.native,
+        `kyo-stm`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -433,8 +434,7 @@ lazy val `kyo-stats-registry` =
         .settings(
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.2",
-            crossScalaVersions                       := List(scala3LTSVersion, scala213Version)
+            crossScalaVersions := List(scala3LTSVersion, scala213Version)
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
