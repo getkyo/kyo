@@ -20,8 +20,8 @@ class UnsafeHistogramTest extends AnyFreeSpec {
             h.observe(42.0)
             assert(h.summary().count == 1)
             val s = h.summary()
-            assert(s.min == 25.0)
-            assert(s.max == 50.0)
+            assert(s.min == 42.0f.toDouble)
+            assert(s.max == 42.0f.toDouble)
         }
 
         "multiple values" in {
@@ -253,36 +253,29 @@ class UnsafeHistogramTest extends AnyFreeSpec {
             assert(s.bucketCounts.length == s.boundaries.length + 1)
         }
 
-        "min inferred from lowest non-empty bucket" in {
+        "exact min/max" in {
             val h = newHistogram()
             h.observe(42.0)
             h.observe(500.0)
             val s = h.summary()
-            assert(s.min == 25.0)
+            assert(s.min == 42.0f.toDouble)
+            assert(s.max == 500.0f.toDouble)
         }
 
-        "max inferred from highest non-empty bucket" in {
-            val h = newHistogram()
-            h.observe(42.0)
-            h.observe(500.0)
-            val s = h.summary()
-            assert(s.max == 500.0)
-        }
-
-        "min/max for values in first bucket" in {
+        "min/max for negative values" in {
             val h = newHistogram()
             h.observe(-5.0)
             val s = h.summary()
-            assert(s.min == 0.0)
-            assert(s.max == 0.0)
+            assert(s.min == -5.0f.toDouble)
+            assert(s.max == -5.0f.toDouble)
         }
 
-        "min/max for values in overflow bucket" in {
+        "min/max for large values" in {
             val h = newHistogram()
             h.observe(50000.0)
             val s = h.summary()
-            assert(s.min == 10000.0)
-            assert(s.max == 10000.0)
+            assert(s.min == 50000.0f.toDouble)
+            assert(s.max == 50000.0f.toDouble)
         }
 
         "count matches total observations" in {
@@ -430,8 +423,8 @@ class UnsafeHistogramTest extends AnyFreeSpec {
             h.observe(50.0)
             h.observe(500.0)
             val s = h.summary()
-            assert(s.min == 10.0)
-            assert(s.max == 1000.0)
+            assert(s.min == 50.0f.toDouble)
+            assert(s.max == 500.0f.toDouble)
         }
 
         "wide boundaries" in {
@@ -451,8 +444,8 @@ class UnsafeHistogramTest extends AnyFreeSpec {
         val s = h.summary()
         assert(s.count == 100000)
         assert(s.bucketCounts.sum == 100000)
-        assert(s.min == 0.0)
-        assert(s.max == 10000.0)
+        assert(s.min == 0.0f.toDouble)
+        assert(s.max == 99999.0f.toDouble)
     }
 
     "defaultBoundaries" in {
