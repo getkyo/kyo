@@ -38,7 +38,7 @@ class Rfc6585Test extends Test:
         // and MAY include a Retry-After header"
         val route = HttpRoute.getRaw("limited").response(_.bodyText)
         Meter.initSemaphore(0).map { meter =>
-            val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 5)).handler(_ => HttpResponse.okText("ok"))
+            val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 5)).handler(_ => HttpResponse.ok("ok"))
             withServer(ep) { port =>
                 Abort.run(sendRaw(port, HttpMethod.GET, "/limited")).map { result =>
                     result match
@@ -56,7 +56,7 @@ class Rfc6585Test extends Test:
     "Section 4 - 429 status code returned when rate limited" in run {
         val route = HttpRoute.getRaw("limited").response(_.bodyText)
         Meter.initSemaphore(0).map { meter =>
-            val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 10)).handler(_ => HttpResponse.okText("ok"))
+            val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 10)).handler(_ => HttpResponse.ok("ok"))
             withServer(ep) { port =>
                 Abort.run(sendRaw(port, HttpMethod.GET, "/limited")).map { result =>
                     result match
@@ -73,7 +73,7 @@ class Rfc6585Test extends Test:
     "Section 4 - 429 with custom Retry-After value" in run {
         val route = HttpRoute.getRaw("limited2").response(_.bodyText)
         Meter.initSemaphore(0).map { meter =>
-            val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 120)).handler(_ => HttpResponse.okText("ok"))
+            val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 120)).handler(_ => HttpResponse.ok("ok"))
             withServer(ep) { port =>
                 Abort.run(sendRaw(port, HttpMethod.GET, "/limited2")).map { result =>
                     result match
@@ -91,7 +91,7 @@ class Rfc6585Test extends Test:
     "Section 4 - Request succeeds when not rate limited" in run {
         val route = HttpRoute.getRaw("open").response(_.bodyText)
         Meter.initSemaphore(1).map { meter =>
-            val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 1)).handler(_ => HttpResponse.okText("allowed"))
+            val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 1)).handler(_ => HttpResponse.ok("allowed"))
             withServer(ep) { port =>
                 sendRaw(port, HttpMethod.GET, "/open").map { resp =>
                     assert(resp.status == HttpStatus.OK, s"Should return 200 when not limited, got: ${resp.status}")
@@ -104,7 +104,7 @@ class Rfc6585Test extends Test:
     "Section 4 - POST request also rate limited" in run {
         val route = HttpRoute.postRaw("limited-post").response(_.bodyText)
         Meter.initSemaphore(0).map { meter =>
-            val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 3)).handler(_ => HttpResponse.okText("ok"))
+            val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 3)).handler(_ => HttpResponse.ok("ok"))
             withServer(ep) { port =>
                 Abort.run(send(port, rawRoute, HttpRequest(HttpMethod.POST, HttpUrl.fromUri("/limited-post")))).map { result =>
                     result match

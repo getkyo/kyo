@@ -49,7 +49,7 @@ object WebhookRelay extends KyoApp:
                         now <- Clock.now
                         webhook = Webhook(id, input.source, input.event, input.payload, now.toString)
                         _ <- storeRef.updateAndGet(webhook :: _)
-                    yield HttpResponse.acceptedJson(webhook).setHeader("X-Webhook-Id", id.toString)
+                    yield HttpResponse.accepted(webhook).setHeader("X-Webhook-Id", id.toString)
                     end for
                 }
 
@@ -71,7 +71,7 @@ object WebhookRelay extends KyoApp:
                         val limited = req.fields.limit match
                             case Present(n) => hooks.take(n)
                             case _          => hooks
-                        HttpResponse.okJson(limited)
+                        HttpResponse.ok(limited)
                 }
 
             // GET /hooks/stream — SSE text stream
@@ -99,7 +99,7 @@ object WebhookRelay extends KyoApp:
 
             health = HttpHandler.health()
             server <- HttpServer.init(
-                HttpServerConfig().port(port).openApi("/openapi.json", "Webhook Relay")
+                HttpServerConfig.default.port(port).openApi("/openapi.json", "Webhook Relay")
             )(receive, list, sseHandler, health)
             _ <- Console.printLine(s"WebhookRelay running on http://localhost:${server.port}")
             _ <- Console.printLine(

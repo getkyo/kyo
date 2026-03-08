@@ -85,7 +85,7 @@ object ApiGateway extends KyoApp:
             if !cities.contains(req.fields.city.toLowerCase) then
                 Abort.fail(ApiError("Unknown city", s"City '${req.fields.city}' not found. Try: ${cities.keys.mkString(", ")}"))
             else
-                fetchWeather(req.fields.city).map(HttpResponse.okJson(_))
+                fetchWeather(req.fields.city).map(HttpResponse.ok(_))
         }
 
     val ratesRoute = HttpRoute
@@ -98,7 +98,7 @@ object ApiGateway extends KyoApp:
         .response(_.bodyJson[RateInfo].error[ApiError](HttpStatus.BadRequest))
         .metadata(_.summary("Exchange rates").tag("finance"))
         .handler { req =>
-            fetchRates(req.fields.base, req.fields.to).map(HttpResponse.okJson(_))
+            fetchRates(req.fields.base, req.fields.to).map(HttpResponse.ok(_))
         }
 
     val travelRoute = HttpRoute
@@ -123,7 +123,7 @@ object ApiGateway extends KyoApp:
                 (weather, rates) = result
                 rate             = rates.rates.getOrElse(localCurrency, 1.0)
                 budgetInLocal    = in.budget * rate
-            yield HttpResponse.okJson(TravelInfo(weather, localCurrency, rate, budgetInLocal))
+            yield HttpResponse.ok(TravelInfo(weather, localCurrency, rate, budgetInLocal))
             end for
         }
 
@@ -132,7 +132,7 @@ object ApiGateway extends KyoApp:
     run {
         val port = args.headOption.flatMap(_.toIntOption).getOrElse(0)
         HttpServer.init(
-            HttpServerConfig().port(port).openApi("/openapi.json", "Travel API Gateway")
+            HttpServerConfig.default.port(port).openApi("/openapi.json", "Travel API Gateway")
         )(weatherRoute, ratesRoute, travelRoute, health).map { server =>
             for
                 _ <- Console.printLine(s"API Gateway running on http://localhost:${server.port}")

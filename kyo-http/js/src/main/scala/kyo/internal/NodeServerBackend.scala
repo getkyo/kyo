@@ -5,7 +5,6 @@ import kyo.internal.IncomingMessage
 import kyo.internal.NodeHttp
 import kyo.internal.NodeHttpServerJs
 import kyo.internal.ServerResponse
-import org.scalajs.macrotaskexecutor.MacrotaskExecutor
 import scala.scalajs.js
 import scala.scalajs.js.typedarray.Int8Array
 import scala.scalajs.js.typedarray.Uint8Array

@@ -248,7 +248,7 @@ class Rfc3986Test extends Test:
         // RFC 3986 §2.1: "A percent-encoding mechanism is used to represent a data octet
         // in a component when that octet's corresponding character is outside the allowed set"
         val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
-        val ep    = route.handler(req => HttpResponse.okText(req.fields.name))
+        val ep    = route.handler(req => HttpResponse.ok(req.fields.name))
         withServer(ep) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/items/hello%20world"))
             send(port, rawRoute, req).map { resp =>
@@ -259,7 +259,7 @@ class Rfc3986Test extends Test:
 
     "Section 2.1 - Percent-encoded UTF-8 in path" in run {
         val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
-        val ep    = route.handler(req => HttpResponse.okText(req.fields.name))
+        val ep    = route.handler(req => HttpResponse.ok(req.fields.name))
         withServer(ep) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/items/%C3%A9"))
             send(port, rawRoute, req).map { resp =>
@@ -271,7 +271,7 @@ class Rfc3986Test extends Test:
 
     "Section 2.1 - Unencoded path passthrough" in run {
         val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
-        val ep    = route.handler(req => HttpResponse.okText(req.fields.name))
+        val ep    = route.handler(req => HttpResponse.ok(req.fields.name))
         withServer(ep) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/items/simple"))
             send(port, rawRoute, req).map { resp =>
@@ -383,7 +383,7 @@ class Rfc3986Test extends Test:
 
     "Section 3.3 - Multiple path captures" in run {
         val route = HttpRoute.getRaw("a" / Capture[String]("x") / "b" / Capture[String]("y")).response(_.bodyText)
-        val ep    = route.handler(req => HttpResponse.okText(s"${req.fields.x}-${req.fields.y}"))
+        val ep    = route.handler(req => HttpResponse.ok(s"${req.fields.x}-${req.fields.y}"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/a/hello/b/world"))).map { resp =>
                 assert(resp.fields.body == "hello-world", s"Multiple captures, got: '${resp.fields.body}'")
@@ -393,7 +393,7 @@ class Rfc3986Test extends Test:
 
     "Section 3.3 - Path capture with integer" in run {
         val route = HttpRoute.getRaw("items" / Capture[Int]("id")).response(_.bodyText)
-        val ep    = route.handler(req => HttpResponse.okText(s"id=${req.fields.id}"))
+        val ep    = route.handler(req => HttpResponse.ok(s"id=${req.fields.id}"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/items/42"))).map { resp =>
                 assert(resp.fields.body == "id=42", s"Int capture, got: '${resp.fields.body}'")
@@ -403,7 +403,7 @@ class Rfc3986Test extends Test:
 
     "Section 3.3 - Static path matching exact" in run {
         val route = HttpRoute.getRaw("exact" / "path").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("matched"))
+        val ep    = route.handler(_ => HttpResponse.ok("matched"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/exact/path"))).map { resp =>
                 assert(resp.status == HttpStatus.OK)
@@ -414,7 +414,7 @@ class Rfc3986Test extends Test:
 
     "Section 2.1 - Percent-encoded special chars in path capture" in run {
         val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
-        val ep    = route.handler(req => HttpResponse.okText(req.fields.name))
+        val ep    = route.handler(req => HttpResponse.ok(req.fields.name))
         withServer(ep) { port =>
             // %21 = !
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/items/hello%21"))).map { resp =>
@@ -425,7 +425,7 @@ class Rfc3986Test extends Test:
 
     "Section 3.3 - Path not found returns 404" in run {
         val route = HttpRoute.getRaw("exists").response(_.bodyText)
-        val ep    = route.handler(_ => HttpResponse.okText("ok"))
+        val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
             send(port, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/doesnotexist"))).map { resp =>
                 assert(resp.status == HttpStatus.NotFound)
@@ -437,7 +437,7 @@ class Rfc3986Test extends Test:
         val route = HttpRoute.getRaw("search")
             .request(_.query[String]("q"))
             .response(_.bodyText)
-        val ep = route.handler(req => HttpResponse.okText(s"q=${req.fields.q}"))
+        val ep = route.handler(req => HttpResponse.ok(s"q=${req.fields.q}"))
         withServer(ep) { port =>
             send(port, route, HttpRequest.getRaw(HttpUrl.fromUri("/search?q=test")).addField("q", "test")).map { resp =>
                 assert(resp.fields.body == "q=test", s"Query param through server, got: ${resp.fields.body}")

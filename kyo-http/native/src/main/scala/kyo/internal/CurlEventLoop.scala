@@ -448,8 +448,8 @@ private[kyo] object CurlEventLoop:
     import CurlBindings.*
     import scala.scalanative.runtime.Intrinsics
 
-    private[kyo] val nextId = new AtomicLong(0)
-    private[kyo] val loops  = new ConcurrentHashMap[Long, CurlEventLoop]()
+    private val nextId = new AtomicLong(0)
+    private val loops  = new ConcurrentHashMap[Long, CurlEventLoop]()
 
     /** Map a curl result code to the appropriate HttpException. */
     private[kyo] def curlResultToError(code: Int, host: String, port: Int)(using Frame): HttpException =

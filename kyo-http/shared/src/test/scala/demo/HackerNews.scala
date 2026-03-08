@@ -91,7 +91,7 @@ object HackerNews extends KyoApp:
         .response(_.bodyJson[Seq[Story]].error[ApiError](HttpStatus.BadRequest))
         .metadata(_.summary("Top HN stories").tag("stories"))
         .handler { req =>
-            fetchTopStories(req.fields.limit).map(HttpResponse.okJson(_))
+            fetchTopStories(req.fields.limit).map(HttpResponse.ok(_))
         }
 
     val searchRoute = HttpRoute
@@ -104,7 +104,7 @@ object HackerNews extends KyoApp:
         .response(_.bodyJson[Seq[SearchStory]].error[ApiError](HttpStatus.BadRequest))
         .metadata(_.summary("Search HN stories").tag("search"))
         .handler { req =>
-            searchStories(req.fields.q, req.fields.limit).map(HttpResponse.okJson(_))
+            searchStories(req.fields.q, req.fields.limit).map(HttpResponse.ok(_))
         }
 
     val storyRoute = HttpRoute
@@ -113,7 +113,7 @@ object HackerNews extends KyoApp:
         .response(_.bodyJson[Story].error[ApiError](HttpStatus.NotFound))
         .metadata(_.summary("Get story by ID").tag("stories"))
         .handler { req =>
-            fetchStory(req.fields.id).map(HttpResponse.okJson(_))
+            fetchStory(req.fields.id).map(HttpResponse.ok(_))
         }
 
     val health = HttpHandler.health()
@@ -121,7 +121,7 @@ object HackerNews extends KyoApp:
     run {
         val port = args.headOption.flatMap(_.toIntOption).getOrElse(0)
         HttpServer.init(
-            HttpServerConfig().port(port).openApi("/openapi.json", "Hacker News API")
+            HttpServerConfig.default.port(port).openApi("/openapi.json", "Hacker News API")
         )(topRoute, searchRoute, storyRoute, health).map { server =>
             for
                 _ <- Console.printLine(s"HackerNews API running on http://localhost:${server.port}")

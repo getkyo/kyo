@@ -30,8 +30,6 @@ final private[kyo] class NettyConnection(
     private val cachedHeaders  = new FlatNettyHttpHeaders(new Array[String](32))
     private val cachedTrailers = new FlatNettyHttpHeaders(new Array[String](4))
 
-    // cachedHeaders/cachedTrailers are reused across requests — connection pool ensures sequential access.
-
     def sendWith[In, Out, A](
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
@@ -287,7 +285,7 @@ final private[kyo] class NettyHttpResponseHandler(
     override def channelRead0(ctx: ChannelHandlerContext, msg: FullHttpResponse): Unit =
         import AllowUnsafe.embrace.danger
         val status  = HttpStatus(msg.status().code())
-        val headers = msg.headers().asInstanceOf[FlatNettyHttpHeaders].toKyoHeaders
+        val headers = NettyUtil.nettyHeadersToKyo(msg.headers())
         msg.trailingHeaders() match
             case flat: FlatNettyHttpHeaders => flat.release() // return pooled instance, no HttpHeaders allocation
             case _                          =>                // aggregator uses EmptyHttpHeaders
@@ -339,7 +337,7 @@ final private[kyo] class NettyStreamingResponseHandler(
             case resp: NettyHttpResponse if !headersReceived =>
                 headersReceived = true
                 val status  = HttpStatus(resp.status().code())
-                val headers = resp.headers().asInstanceOf[FlatNettyHttpHeaders].toKyoHeaders
+                val headers = NettyUtil.nettyHeadersToKyo(resp.headers())
                 discard(headerPromise.complete(Result.succeed(NettyStreamingHeaderData(status, headers))))
                 msg match
                     // FullHttpResponse extends both HttpResponse and LastHttpContent

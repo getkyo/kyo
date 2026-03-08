@@ -5,7 +5,6 @@ import org.scalajs.dom
 import org.scalajs.dom.Headers as FetchHeaders
 import org.scalajs.dom.RequestInit
 import org.scalajs.dom.Response
-import org.scalajs.macrotaskexecutor.MacrotaskExecutor
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -70,8 +69,7 @@ object FetchClientBackend:
             else s"$scheme://$host:$port"
         end urlPrefix
 
-        // MacrotaskExecutor avoids microtask starvation and aligns with kyo-scheduler's JS usage
-        private given ExecutionContext = MacrotaskExecutor
+        private given ExecutionContext = kyo.scheduler.Scheduler.get.asExecutionContext
 
         // Mutable fields set by encodeRequest, read immediately after in the same Sync.defer block.
         // Safe: connection pool ensures sequential access (one request at a time per connection).
@@ -101,14 +99,11 @@ object FetchClientBackend:
                 val streamBody = encodedStreamBody
                 resetEncoded()
 
-                if streamBody.isDefined then
-                    // Streaming request body with buffered response — materialize first
-                    streamBody.get.run.map { chunks =>
+                streamBody.fold(doFetchBuffered(route, request.method, url, headers, body)) { stream =>
+                    stream.run.map { chunks =>
                         doFetchBuffered(route, request.method, url, headers, Maybe(bytesToUint8Array(concatSpans(chunks))))
                     }
-                else
-                    doFetchBuffered(route, request.method, url, headers, body)
-                end if
+                }
             }
 
         private def doFetchBuffered[In, Out](
@@ -134,11 +129,8 @@ object FetchClientBackend:
                             val bytes   = Span.fromUnsafe(int8.toArray)
                             val status  = HttpStatus(response.status)
                             val headers = extractHeaders(response.headers)
-                            RouteUtil.decodeBufferedResponse(route, status, headers, bytes, method.name, url) match
-                                case Result.Success(r) => r
-                                case Result.Failure(e) => Abort.fail(classifyError(e))
-                                case Result.Panic(e)   => Abort.panic(e)
-                            end match
+                            Abort.get(RouteUtil.decodeBufferedResponse(route, status, headers, bytes, method.name, url)
+                                .mapFailure(classifyError))
                         }
                     }
                 }
@@ -157,14 +149,12 @@ object FetchClientBackend:
                 val streamBody = encodedStreamBody
                 resetEncoded()
 
-                if streamBody.isDefined then
+                streamBody.fold(doFetchStreaming(route, request.method, url, headers, body)) { stream =>
                     // Materialize streaming request body — Fetch API requires body before calling fetch()
-                    streamBody.get.run.map { chunks =>
+                    stream.run.map { chunks =>
                         doFetchStreaming(route, request.method, url, headers, Maybe(bytesToUint8Array(concatSpans(chunks))))
                     }
-                else
-                    doFetchStreaming(route, request.method, url, headers, body)
-                end if
+                }
             }
 
         private def doFetchStreaming[In, Out](
@@ -205,11 +195,8 @@ object FetchClientBackend:
                         })
                     }
 
-                    RouteUtil.decodeStreamingResponse(route, status, headers, bodyStream, method.name, url) match
-                        case Result.Success(r) => r
-                        case Result.Failure(e) => Abort.fail(classifyError(e))
-                        case Result.Panic(e)   => Abort.panic(e)
-                    end match
+                    Abort.get(RouteUtil.decodeStreamingResponse(route, status, headers, bodyStream, method.name, url)
+                        .mapFailure(classifyError))
                 }
             }
         end doFetchStreaming
@@ -257,8 +244,7 @@ object FetchClientBackend:
             init.method = method.name.asInstanceOf[dom.HttpMethod]
             init.redirect = dom.RequestRedirect.manual
             init.headers = buildFetchHeaders(kyoHeaders)
-            if body.isDefined then
-                init.body = body.get.asInstanceOf[dom.BodyInit]
+            body.foreach(b => init.body = b.asInstanceOf[dom.BodyInit])
             init
         end buildInit
 

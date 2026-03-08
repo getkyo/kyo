@@ -32,7 +32,7 @@ class Rfc7617Test extends Test:
 
     def basicEndpoint = basicRoute
         .filter(HttpFilter.server.basicAuth((u, p) => u == "Aladdin" && p == "open sesame"))
-        .handler(req => HttpResponse.okText(s"hello ${req.fields.user}"))
+        .handler(req => HttpResponse.ok(s"hello ${req.fields.user}"))
 
     // ==================== Section 2: Base64 Credentials ====================
 
@@ -53,7 +53,7 @@ class Rfc7617Test extends Test:
         // Only the first colon splits user-id from password
         val ep = basicRoute
             .filter(HttpFilter.server.basicAuth((u, p) => u == "user" && p == "pass:word"))
-            .handler(req => HttpResponse.okText(s"hello ${req.fields.user}"))
+            .handler(req => HttpResponse.ok(s"hello ${req.fields.user}"))
         withServer(ep) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("user:pass:word".getBytes("UTF-8"))
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
@@ -67,7 +67,7 @@ class Rfc7617Test extends Test:
     "Section 2 - Empty password accepted" in run {
         val ep = basicRoute
             .filter(HttpFilter.server.basicAuth((u, p) => u == "user" && p == ""))
-            .handler(req => HttpResponse.okText(s"hello ${req.fields.user}"))
+            .handler(req => HttpResponse.ok(s"hello ${req.fields.user}"))
         withServer(ep) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("user:".getBytes("UTF-8"))
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
@@ -81,7 +81,7 @@ class Rfc7617Test extends Test:
     "Section 2 - Empty username accepted" in run {
         val ep = basicRoute
             .filter(HttpFilter.server.basicAuth((u, p) => u == "" && p == "password"))
-            .handler(req => HttpResponse.okText(s"hello ${req.fields.user}"))
+            .handler(req => HttpResponse.ok(s"hello ${req.fields.user}"))
         withServer(ep) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString(":password".getBytes("UTF-8"))
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
@@ -213,7 +213,7 @@ class Rfc7617Test extends Test:
         // RFC 7617 §2.1: user-id and password are encoded in UTF-8
         val ep = basicRoute
             .filter(HttpFilter.server.basicAuth((u, p) => u == "user" && p == "pässwörd"))
-            .handler(req => HttpResponse.okText(s"hello ${req.fields.user}"))
+            .handler(req => HttpResponse.ok(s"hello ${req.fields.user}"))
         withServer(ep) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("user:pässwörd".getBytes("UTF-8"))
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
@@ -244,7 +244,7 @@ class Rfc7617Test extends Test:
         val longPass = "b" * 200
         val ep = basicRoute
             .filter(HttpFilter.server.basicAuth((u, p) => u == longUser && p == longPass))
-            .handler(req => HttpResponse.okText("ok"))
+            .handler(req => HttpResponse.ok("ok"))
         withServer(ep) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString(s"$longUser:$longPass".getBytes("UTF-8"))
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
@@ -263,7 +263,7 @@ class Rfc7617Test extends Test:
             .response(_.bodyText)
         val ep = route.handler { req =>
             val auth = req.headers.get("Authorization").getOrElse("none")
-            HttpResponse.okText(s"auth=$auth")
+            HttpResponse.ok(s"auth=$auth")
         }
         withServer(ep) { port =>
             val clientRoute = HttpRoute.getRaw("secure").response(_.bodyText)

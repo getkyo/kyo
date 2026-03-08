@@ -66,7 +66,7 @@ object WikiSearch extends KyoApp:
         .response(_.bodyJson[SearchResponse].error[ApiError](HttpStatus.BadRequest))
         .metadata(_.summary("Search Wikipedia articles").tag("search"))
         .handler { req =>
-            searchWikipedia(req.fields.q, req.fields.limit).map(HttpResponse.okJson(_))
+            searchWikipedia(req.fields.q, req.fields.limit).map(HttpResponse.ok(_))
         }
 
     val summaryRoute = HttpRoute
@@ -75,7 +75,7 @@ object WikiSearch extends KyoApp:
         .response(_.bodyJson[Summary].error[ApiError](HttpStatus.NotFound))
         .metadata(_.summary("Get article summary").tag("articles"))
         .handler { req =>
-            fetchSummary(req.fields.title).map(HttpResponse.okJson(_))
+            fetchSummary(req.fields.title).map(HttpResponse.ok(_))
         }
 
     val health = HttpHandler.health()
@@ -83,7 +83,7 @@ object WikiSearch extends KyoApp:
     run {
         val port = args.headOption.flatMap(_.toIntOption).getOrElse(0)
         HttpServer.init(
-            HttpServerConfig().port(port).openApi("/openapi.json", "Wikipedia Search Proxy")
+            HttpServerConfig.default.port(port).openApi("/openapi.json", "Wikipedia Search Proxy")
         )(searchRoute, summaryRoute, health).map { server =>
             for
                 _ <- Console.printLine(s"WikiSearch running on http://localhost:${server.port}")

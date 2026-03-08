@@ -173,12 +173,12 @@ object HttpRoute:
       * buffer the entire body. Streaming types (`ByteStream`, `Ndjson`, `Sse`, `SseText`, `MultipartStream`) produce or consume a `Stream`
       * that keeps the connection open until the stream completes.
       */
-    enum ContentType[A] derives CanEqual:
-        case Text()                                                     extends ContentType[String]
-        case Binary()                                                   extends ContentType[Span[Byte]]
-        case ByteStream()                                               extends ContentType[Stream[Span[Byte], Async]]
-        case Multipart()                                                extends ContentType[Seq[HttpRequest.Part]]
-        case MultipartStream()                                          extends ContentType[Stream[HttpRequest.Part, Async]]
+    enum ContentType[A]:
+        case Text                                                       extends ContentType[String]
+        case Binary                                                     extends ContentType[Span[Byte]]
+        case ByteStream                                                 extends ContentType[Stream[Span[Byte], Async]]
+        case Multipart                                                  extends ContentType[Seq[HttpRequest.Part]]
+        case MultipartStream                                            extends ContentType[Stream[HttpRequest.Part, Async]]
         case Json[A](json: kyo.Json[A])                                 extends ContentType[A]
         case Ndjson[V](json: kyo.Json[V], emitTag: Tag[Emit[Chunk[V]]]) extends ContentType[Stream[V, Async]]
         case Sse[V](json: kyo.Json[V], emitTag: Tag[Emit[Chunk[HttpSseEvent[V]]]])
@@ -186,6 +186,9 @@ object HttpRoute:
         case SseText(emitTag: Tag[Emit[Chunk[HttpSseEvent[String]]]]) extends ContentType[Stream[HttpSseEvent[String], Async]]
         case Form[A](codec: HttpFormCodec[A])                         extends ContentType[A]
     end ContentType
+
+    object ContentType:
+        given CanEqual[ContentType[?], ContentType[?]] = CanEqual.derived
 
     // ==================== Field ====================
 
@@ -310,27 +313,27 @@ object HttpRoute:
             add(Field.Body(fieldName, ContentType.Json(json), description))
 
         def bodyText: RequestDef[In & "body" ~ String] =
-            add(Field.Body("body", ContentType.Text(), ""))
+            add(Field.Body("body", ContentType.Text, ""))
 
         def bodyText[N <: String & Singleton](fieldName: N, description: String = "")(using Fields.Pin[N]): RequestDef[In & N ~ String] =
-            add(Field.Body(fieldName, ContentType.Text(), description))
+            add(Field.Body(fieldName, ContentType.Text, description))
 
         def bodyBinary: RequestDef[In & "body" ~ Span[Byte]] =
-            add(Field.Body("body", ContentType.Binary(), ""))
+            add(Field.Body("body", ContentType.Binary, ""))
 
         def bodyBinary[N <: String & Singleton](fieldName: N, description: String = "")(using
             Fields.Pin[N]
         ): RequestDef[In & N ~ Span[Byte]] =
-            add(Field.Body(fieldName, ContentType.Binary(), description))
+            add(Field.Body(fieldName, ContentType.Binary, description))
 
         def bodyStream: RequestDef[In & "body" ~ Stream[Span[Byte], Async]] =
-            add(Field.Body("body", ContentType.ByteStream(), ""))
+            add(Field.Body("body", ContentType.ByteStream, ""))
 
         def bodyStream[N <: String & Singleton](
             fieldName: N,
             description: String = ""
         )(using Fields.Pin[N]): RequestDef[In & N ~ Stream[Span[Byte], Async]] =
-            add(Field.Body(fieldName, ContentType.ByteStream(), description))
+            add(Field.Body(fieldName, ContentType.ByteStream, description))
 
         def bodyNdjson[V](using
             json: Json[V],
@@ -356,21 +359,21 @@ object HttpRoute:
             add(Field.Body(fieldName, ContentType.Form(codec), description))
 
         def bodyMultipart: RequestDef[In & "body" ~ Seq[HttpRequest.Part]] =
-            add(Field.Body("body", ContentType.Multipart(), ""))
+            add(Field.Body("body", ContentType.Multipart, ""))
 
         def bodyMultipart[N <: String & Singleton](fieldName: N, description: String = "")(using
             Fields.Pin[N]
         ): RequestDef[In & N ~ Seq[HttpRequest.Part]] =
-            add(Field.Body(fieldName, ContentType.Multipart(), description))
+            add(Field.Body(fieldName, ContentType.Multipart, description))
 
         def bodyMultipartStream: RequestDef[In & "body" ~ Stream[HttpRequest.Part, Async]] =
-            add(Field.Body("body", ContentType.MultipartStream(), ""))
+            add(Field.Body("body", ContentType.MultipartStream, ""))
 
         def bodyMultipartStream[N <: String & Singleton](
             fieldName: N,
             description: String = ""
         )(using Fields.Pin[N]): RequestDef[In & N ~ Stream[HttpRequest.Part, Async]] =
-            add(Field.Body(fieldName, ContentType.MultipartStream(), description))
+            add(Field.Body(fieldName, ContentType.MultipartStream, description))
 
         private def add[F](field: Field[F]): RequestDef[In & F] =
             RequestDef(this.path, this.fields.append(field))
@@ -436,29 +439,29 @@ object HttpRoute:
             addField(Field.Body(fieldName, ContentType.Json(json), description))
 
         def bodyText: ResponseDef[Out & "body" ~ String] =
-            addField(Field.Body("body", ContentType.Text(), ""))
+            addField(Field.Body("body", ContentType.Text, ""))
 
         def bodyText[N <: String & Singleton](fieldName: N, description: String = "")(using
             Fields.Pin[N]
         ): ResponseDef[Out & N ~ String] =
-            addField(Field.Body(fieldName, ContentType.Text(), description))
+            addField(Field.Body(fieldName, ContentType.Text, description))
 
         def bodyBinary: ResponseDef[Out & "body" ~ Span[Byte]] =
-            addField(Field.Body("body", ContentType.Binary(), ""))
+            addField(Field.Body("body", ContentType.Binary, ""))
 
         def bodyBinary[N <: String & Singleton](fieldName: N, description: String = "")(using
             Fields.Pin[N]
         ): ResponseDef[Out & N ~ Span[Byte]] =
-            addField(Field.Body(fieldName, ContentType.Binary(), description))
+            addField(Field.Body(fieldName, ContentType.Binary, description))
 
         def bodyStream: ResponseDef[Out & "body" ~ Stream[Span[Byte], Async]] =
-            addField(Field.Body("body", ContentType.ByteStream(), ""))
+            addField(Field.Body("body", ContentType.ByteStream, ""))
 
         def bodyStream[N <: String & Singleton](
             fieldName: N,
             description: String = ""
         )(using Fields.Pin[N]): ResponseDef[Out & N ~ Stream[Span[Byte], Async]] =
-            addField(Field.Body(fieldName, ContentType.ByteStream(), description))
+            addField(Field.Body(fieldName, ContentType.ByteStream, description))
 
         def bodyNdjson[V](using
             json: Json[V],

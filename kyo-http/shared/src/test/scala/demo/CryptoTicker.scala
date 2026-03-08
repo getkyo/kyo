@@ -62,7 +62,7 @@ object CryptoTicker extends KyoApp:
     run {
         val port = args.headOption.flatMap(_.toIntOption).getOrElse(0)
         HttpServer.init(
-            HttpServerConfig().port(port).openApi("/openapi.json", "Crypto Ticker")
+            HttpServerConfig.default.port(port).openApi("/openapi.json", "Crypto Ticker")
         )(pricesRoute, streamHandler, health).map { server =>
             for
                 _ <- Console.printLine(s"CryptoTicker running on http://localhost:${server.port}")

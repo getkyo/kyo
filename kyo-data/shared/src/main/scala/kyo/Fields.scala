@@ -207,7 +207,7 @@ object Fields:
       * def modify[A : Precise](f: Def[Fields] => Def[A]): Record[A]
       * }}}
       */
-    sealed trait Exact[F[_], R]:
+    sealed abstract class Exact[F[_], R]:
         type Out
         def apply(r: R): F[Out]
 

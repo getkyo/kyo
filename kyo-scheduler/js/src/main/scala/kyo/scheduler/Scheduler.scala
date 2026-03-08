@@ -2,6 +2,7 @@ package kyo.scheduler
 
 import kyo.scheduler.util.Flag
 import org.scalajs.macrotaskexecutor.MacrotaskExecutor
+import scala.concurrent.ExecutionContext
 
 object Scheduler {
     val get = new Scheduler
@@ -18,6 +19,8 @@ class Scheduler {
             if (t.run(now, clock, now + timeSlice) == Task.Preempted)
                 schedule(t)
         }
+
+    def asExecutionContext: ExecutionContext = MacrotaskExecutor
 
     def flush(): Unit = {}
 

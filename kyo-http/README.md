@@ -193,7 +193,7 @@ To bind to a specific host and port, pass an `HttpServerConfig`:
 
 ```scala
 val server = HttpServer.init(
-  HttpServerConfig()
+  HttpServerConfig.default
     .port(8080)          // fixed port instead of OS-assigned
     .host("127.0.0.1")   // bind to localhost only (default is "0.0.0.0", all interfaces)
 )(getUsers, createUser, HttpHandler.health())
@@ -244,7 +244,7 @@ val handler =
   }
 
 val server = HttpServer.init(
-    HttpServerConfig()
+    HttpServerConfig.default
       .port(8080)
       .host("0.0.0.0")
       .maxContentLength(1024 * 1024) // 1MB
@@ -382,7 +382,7 @@ val route = HttpRoute
 val handler =
   route.handler { req =>
     authenticate(req.fields.body).map { user =>
-      HttpResponse.okJson(user)
+      HttpResponse.ok(user)
         .addField("session",
           HttpCookie("token-value")
             .maxAge(7.days)
@@ -424,7 +424,7 @@ val handler =
   route.handler { req =>
     // req.fields.id is type-safe: Int, from the path capture
     lookupUser(req.fields.id).map {
-      case Present(user) => HttpResponse.okJson(user)
+      case Present(user) => HttpResponse.ok(user)
       // Aborts with NotFound, which the route maps to HTTP 404
       case Absent => Abort.fail(NotFound(s"User ${req.fields.id} not found"))
     }
@@ -470,7 +470,7 @@ val handler =
       case true  =>
         findResource(req.fields.id).map {
           case Absent        => Abort.fail(NotFound("not found"))
-          case Present(res)  => HttpResponse.okJson(res)
+          case Present(res)  => HttpResponse.ok(res)
         }
     }
   }
@@ -540,7 +540,7 @@ For server-wide CORS that applies to all routes without individual filter setup,
 
 ```scala
 HttpServer.init(
-  HttpServerConfig()
+  HttpServerConfig.default
     .port(8080)
     .cors(HttpServerConfig.Cors(
       allowOrigin = "https://myapp.com",
@@ -581,7 +581,7 @@ val handler =
     if !isAuthorized(req) then
       HttpResponse.halt(HttpResponse.forbidden)
     else
-      HttpResponse.okJson(getData())
+      HttpResponse.ok(getData())
   }
 ```
 
@@ -609,12 +609,12 @@ HttpResponse.notFound     // 404
 HttpResponse.serverError  // 500
 
 // With bodies
-HttpResponse.okJson(user)
-HttpResponse.badRequestText("invalid input")
-HttpResponse.notFoundJson(ErrorMessage("not found"))
+HttpResponse.ok(user)
+HttpResponse.badRequest("invalid input")
+HttpResponse.notFound(ErrorMessage("not found"))
 ```
 
-Additional variants are available for other status codes (`accepted`, `conflict`, `tooManyRequests`, `serviceUnavailable`, etc.), each with `Text`, `Json`, and `Binary` body variants.
+Additional variants are available for other status codes (`accepted`, `conflict`, `tooManyRequests`, `serviceUnavailable`, etc.). Each accepts a `String`, `Span[Byte]`, or JSON-serializable body.
 
 ## OpenAPI
 
@@ -626,7 +626,7 @@ The server can generate an OpenAPI 3.x specification from the routes of all regi
 
 ```scala
 HttpServer.init(
-  HttpServerConfig()
+  HttpServerConfig.default
     .port(8080)
     .openApi("/openapi.json", "My API", "1.0.0", Some("API description"))
 )(handler1, handler2)

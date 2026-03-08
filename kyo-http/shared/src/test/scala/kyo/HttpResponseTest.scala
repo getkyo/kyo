@@ -92,6 +92,191 @@ class HttpResponseTest extends Test:
         }
     }
 
+    "body overloads" - {
+
+        case class Item(id: Int) derives Json, CanEqual
+
+        "ok" - {
+            "text" in {
+                val res = HttpResponse.ok("hello")
+                assert(res.status == HttpStatus.OK)
+                assert(res.fields.body == "hello")
+            }
+            "json" in {
+                val res = HttpResponse.ok(Item(1))
+                assert(res.status == HttpStatus.OK)
+                assert(res.fields.body == Item(1))
+            }
+            "binary" in {
+                val bytes = Span.fromUnsafe(Array[Byte](1, 2, 3))
+                val res   = HttpResponse.ok(bytes)
+                assert(res.status == HttpStatus.OK)
+                assert(res.fields.body.is(bytes))
+            }
+        }
+
+        "created" - {
+            "text" in {
+                val res = HttpResponse.created("done")
+                assert(res.status == HttpStatus.Created)
+                assert(res.fields.body == "done")
+            }
+            "json" in {
+                val res = HttpResponse.created(Item(2))
+                assert(res.status == HttpStatus.Created)
+                assert(res.fields.body == Item(2))
+            }
+            "binary" in {
+                val bytes = Span.fromUnsafe(Array[Byte](4, 5))
+                val res   = HttpResponse.created(bytes)
+                assert(res.status == HttpStatus.Created)
+                assert(res.fields.body.is(bytes))
+            }
+        }
+
+        "accepted" - {
+            "text" in {
+                val res = HttpResponse.accepted("queued")
+                assert(res.status == HttpStatus.Accepted)
+                assert(res.fields.body == "queued")
+            }
+            "json" in {
+                val res = HttpResponse.accepted(Item(3))
+                assert(res.status == HttpStatus.Accepted)
+                assert(res.fields.body == Item(3))
+            }
+            "binary" in {
+                val bytes = Span.fromUnsafe(Array[Byte](6))
+                val res   = HttpResponse.accepted(bytes)
+                assert(res.status == HttpStatus.Accepted)
+                assert(res.fields.body.is(bytes))
+            }
+        }
+
+        "badRequest" - {
+            "text" in {
+                val res = HttpResponse.badRequest("invalid")
+                assert(res.status == HttpStatus.BadRequest)
+                assert(res.fields.body == "invalid")
+            }
+            "json" in {
+                val res = HttpResponse.badRequest(Item(4))
+                assert(res.status == HttpStatus.BadRequest)
+                assert(res.fields.body == Item(4))
+            }
+            "binary" in {
+                val bytes = Span.fromUnsafe(Array[Byte](7))
+                val res   = HttpResponse.badRequest(bytes)
+                assert(res.status == HttpStatus.BadRequest)
+                assert(res.fields.body.is(bytes))
+            }
+        }
+
+        "unauthorized" - {
+            "text" in {
+                val res = HttpResponse.unauthorized("denied")
+                assert(res.status == HttpStatus.Unauthorized)
+                assert(res.fields.body == "denied")
+            }
+            "json" in {
+                val res = HttpResponse.unauthorized(Item(5))
+                assert(res.status == HttpStatus.Unauthorized)
+                assert(res.fields.body == Item(5))
+            }
+        }
+
+        "forbidden" - {
+            "text" in {
+                val res = HttpResponse.forbidden("nope")
+                assert(res.status == HttpStatus.Forbidden)
+                assert(res.fields.body == "nope")
+            }
+            "json" in {
+                val res = HttpResponse.forbidden(Item(6))
+                assert(res.status == HttpStatus.Forbidden)
+                assert(res.fields.body == Item(6))
+            }
+        }
+
+        "notFound" - {
+            "text" in {
+                val res = HttpResponse.notFound("missing")
+                assert(res.status == HttpStatus.NotFound)
+                assert(res.fields.body == "missing")
+            }
+            "json" in {
+                val res = HttpResponse.notFound(Item(7))
+                assert(res.status == HttpStatus.NotFound)
+                assert(res.fields.body == Item(7))
+            }
+        }
+
+        "conflict" - {
+            "text" in {
+                val res = HttpResponse.conflict("clash")
+                assert(res.status == HttpStatus.Conflict)
+                assert(res.fields.body == "clash")
+            }
+            "json" in {
+                val res = HttpResponse.conflict(Item(8))
+                assert(res.status == HttpStatus.Conflict)
+                assert(res.fields.body == Item(8))
+            }
+        }
+
+        "unprocessableEntity" - {
+            "text" in {
+                val res = HttpResponse.unprocessableEntity("bad")
+                assert(res.status == HttpStatus.UnprocessableEntity)
+                assert(res.fields.body == "bad")
+            }
+            "json" in {
+                val res = HttpResponse.unprocessableEntity(Item(9))
+                assert(res.status == HttpStatus.UnprocessableEntity)
+                assert(res.fields.body == Item(9))
+            }
+        }
+
+        "tooManyRequests" - {
+            "text" in {
+                val res = HttpResponse.tooManyRequests("slow down")
+                assert(res.status == HttpStatus.TooManyRequests)
+                assert(res.fields.body == "slow down")
+            }
+            "json" in {
+                val res = HttpResponse.tooManyRequests(Item(10))
+                assert(res.status == HttpStatus.TooManyRequests)
+                assert(res.fields.body == Item(10))
+            }
+        }
+
+        "serverError" - {
+            "text" in {
+                val res = HttpResponse.serverError("oops")
+                assert(res.status == HttpStatus.InternalServerError)
+                assert(res.fields.body == "oops")
+            }
+            "json" in {
+                val res = HttpResponse.serverError(Item(11))
+                assert(res.status == HttpStatus.InternalServerError)
+                assert(res.fields.body == Item(11))
+            }
+        }
+
+        "serviceUnavailable" - {
+            "text" in {
+                val res = HttpResponse.serviceUnavailable("down")
+                assert(res.status == HttpStatus.ServiceUnavailable)
+                assert(res.fields.body == "down")
+            }
+            "json" in {
+                val res = HttpResponse.serviceUnavailable(Item(12))
+                assert(res.status == HttpStatus.ServiceUnavailable)
+                assert(res.fields.body == Item(12))
+            }
+        }
+    }
+
     "addField" in {
         val res = HttpResponse.ok.addField("count", 42)
         assert(res.fields.count == 42)

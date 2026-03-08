@@ -49,7 +49,7 @@ object NotePad extends KyoApp:
                         }
                         created = store.notes(store.nextId - 1)
                         _ <- changesRef.updateAndGet(NoteChange("created", created) :: _)
-                    yield HttpResponse.okJson(created)
+                    yield HttpResponse.ok(created)
                         .addField(
                             "session",
                             HttpCookie(s"user-${created.id}")
@@ -67,7 +67,7 @@ object NotePad extends KyoApp:
             .handler { req =>
                 storeRef.get.map { store =>
                     store.notes.get(req.fields.id) match
-                        case Some(note) => HttpResponse.okJson(note)
+                        case Some(note) => HttpResponse.ok(note)
                         case None       => Abort.fail(NotFound(s"Note ${req.fields.id} not found"))
                 }
             }
@@ -99,7 +99,7 @@ object NotePad extends KyoApp:
                 yield store.notes.get(req.fields.id) match
                     case Some(note) =>
                         changesRef.updateAndGet(NoteChange("updated", note) :: _)
-                            .andThen(HttpResponse.okJson(note))
+                            .andThen(HttpResponse.ok(note))
                     case None => Abort.fail(NotFound(s"Note ${req.fields.id} not found"))
                 end for
             }
@@ -146,7 +146,7 @@ object NotePad extends KyoApp:
             (list, create, get, patch, delete, changes) = handlers(storeRef, changesRef)
             health                                      = HttpHandler.health()
             server <- HttpServer.init(
-                HttpServerConfig().port(port).openApi("/openapi.json", "NotePad")
+                HttpServerConfig.default.port(port).openApi("/openapi.json", "NotePad")
             )(list, create, get, patch, delete, changes, health)
             _ <- Console.printLine(s"NotePad running on http://localhost:${server.port}")
             _ <- Console.printLine(
@@ -177,7 +177,7 @@ object NotePadClient extends KyoApp:
             storeRef   <- AtomicRef.init(Store(Map.empty, 1))
             changesRef <- AtomicRef.init(List.empty[NoteChange])
             (list, create, get, patch, delete, changes) = handlers(storeRef, changesRef)
-            server <- HttpServer.init(HttpServerConfig().port(0))(list, create, get, patch, delete, changes)
+            server <- HttpServer.init(HttpServerConfig.default.port(0))(list, create, get, patch, delete, changes)
             _      <- Console.printLine(s"NotePadClient started server on http://localhost:${server.port}")
 
             _ <- HttpClient.withConfig(_.baseUrl(s"http://localhost:${server.port}").timeout(5.seconds)) {

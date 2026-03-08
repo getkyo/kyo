@@ -30,7 +30,7 @@ object FileLocker extends KyoApp:
                         val fileName = filePart.filename.getOrElse("upload")
                         val bytes    = filePart.data.toArrayUnsafe
                         store.updateAndGet(_.updated(fileName, bytes)).map { _ =>
-                            HttpResponse.okJson(FileInfo(fileName, bytes.length.toLong))
+                            HttpResponse.ok(FileInfo(fileName, bytes.length.toLong))
                         }
                     case None =>
                         Abort.fail(ApiError("Missing 'file' part in multipart upload"))
@@ -46,7 +46,7 @@ object FileLocker extends KyoApp:
                 store.get.map { files =>
                     files.get(req.fields.name) match
                         case Some(bytes) =>
-                            HttpResponse.okBinary(Span.fromUnsafe(bytes))
+                            HttpResponse.ok(Span.fromUnsafe(bytes))
                         case None =>
                             Abort.fail(ApiError(s"File not found: ${req.fields.name}"))
                 }
@@ -62,7 +62,7 @@ object FileLocker extends KyoApp:
                     val entries = files.toList.sortBy(_._1).map { (name, bytes) =>
                         FileInfo(name, bytes.length.toLong)
                     }
-                    HttpResponse.okJson(FileList(entries))
+                    HttpResponse.ok(FileList(entries))
                 }
             }
 
@@ -77,7 +77,7 @@ object FileLocker extends KyoApp:
             store <- AtomicRef.init(Map.empty[String, Array[Byte]])
             (uploadRoute, downloadRoute, listRoute) = routes(store)
             server <- HttpServer.init(
-                HttpServerConfig().port(port).maxContentLength(10 * 1024 * 1024)
+                HttpServerConfig.default.port(port).maxContentLength(10 * 1024 * 1024)
                     .openApi("/openapi.json", "File Locker")
             )(uploadRoute, downloadRoute, listRoute, health)
             _ <- Console.printLine(s"FileLocker running on http://localhost:${server.port}")

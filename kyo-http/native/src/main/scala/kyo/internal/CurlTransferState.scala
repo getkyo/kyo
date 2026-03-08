@@ -10,7 +10,7 @@ import scala.scalanative.unsafe.*
   * Stores raw response data (status code, header lines, body bytes) and completes promises when the transfer finishes. The backend converts
   * raw data to typed HttpResponse via RouteUtil after completion.
   */
-sealed private[kyo] trait CurlTransferState:
+sealed abstract private[kyo] class CurlTransferState:
     def easyHandle: CurlBindings.CURL
     def headerList: Ptr[Byte]
     def setHeaderList(p: Ptr[Byte]): Unit

@@ -68,7 +68,7 @@ object GithubFeed extends KyoApp:
 
     run {
         val port = args.headOption.flatMap(_.toIntOption).getOrElse(0)
-        HttpServer.init(HttpServerConfig().port(port))(publicFeed, repoFeedRoute, health).map { server =>
+        HttpServer.init(HttpServerConfig.default.port(port))(publicFeed, repoFeedRoute, health).map { server =>
             for
                 _ <- Console.printLine(s"GitHub Feed running on http://localhost:${server.port}")
                 _ <- Console.printLine(s"  curl -N http://localhost:${server.port}/events")

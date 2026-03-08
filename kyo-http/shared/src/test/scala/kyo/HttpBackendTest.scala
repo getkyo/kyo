@@ -100,7 +100,7 @@ class HttpBackendTest extends Test:
         "bind accepts handlers and returns binding" in {
             val route                          = HttpRoute.getRaw("users").response(_.bodyText)
             val handler                        = route.handler(_ => HttpResponse.ok.addField("body", "hello"))
-            val result                         = stubServer.bind(Seq(handler), HttpServerConfig(8080, "0.0.0.0"))
+            val result                         = stubServer.bind(Seq(handler), HttpServerConfig.default.port(8080).host("0.0.0.0"))
             val _: HttpBackend.Binding < Async = result
             succeed
         }
@@ -115,7 +115,7 @@ class HttpBackendTest extends Test:
             val route                                        = HttpRoute.getRaw("users").filter(filter).response(_.bodyText)
             val handler                                      = route.handler(_ => HttpResponse.ok.addField("body", "hello"))
             val _: HttpHandler[Any, "body" ~ String, String] = handler
-            val _                                            = stubServer.bind(Seq(handler), HttpServerConfig(8080, "0.0.0.0"))
+            val _ = stubServer.bind(Seq(handler), HttpServerConfig.default.port(8080).host("0.0.0.0"))
             succeed
         }
 
@@ -126,7 +126,7 @@ class HttpBackendTest extends Test:
             val route2   = HttpRoute.postRaw("users").request(_.bodyJson[User]).response(_.bodyJson[User])
             val handler2 = route2.handler(req => HttpResponse.ok.addField("body", req.fields.body))
 
-            val result                         = stubServer.bind(Seq(handler1, handler2), HttpServerConfig(8080, "0.0.0.0"))
+            val result = stubServer.bind(Seq(handler1, handler2), HttpServerConfig.default.port(8080).host("0.0.0.0"))
             val _: HttpBackend.Binding < Async = result
             succeed
         }

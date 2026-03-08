@@ -62,7 +62,7 @@ object StaticSite extends KyoApp:
                                                 HttpResponse.notModified.etag(etag).cacheControl("public, max-age=86400")
                                             )
                                         case _ =>
-                                            HttpResponse.okText(new String(bytes, "UTF-8"))
+                                            HttpResponse.ok(new String(bytes, "UTF-8"))
                                                 .etag(etag)
                                                 .cacheControl("public, max-age=86400")
                                                 .contentDisposition(fileName, isInline(fileName))
@@ -113,7 +113,7 @@ object StaticSite extends KyoApp:
                         val fileName = filePart.filename.getOrElse("upload")
                         val bytes    = filePart.data.toArrayUnsafe
                         store.updateAndGet(_.updated(fileName, bytes)).map { _ =>
-                            HttpResponse.okJson(FileInfo(fileName, bytes.length.toLong, computeEtag(bytes)))
+                            HttpResponse.ok(FileInfo(fileName, bytes.length.toLong, computeEtag(bytes)))
                         }
                     case None =>
                         Abort.fail(ApiError("Missing 'file' part in multipart upload"))
@@ -137,7 +137,7 @@ object StaticSite extends KyoApp:
             (serve, head, list, upload) = handlers(store)
             health                      = HttpHandler.health()
             server <- HttpServer.init(
-                HttpServerConfig().port(port).maxContentLength(10 * 1024 * 1024)
+                HttpServerConfig.default.port(port).maxContentLength(10 * 1024 * 1024)
                     .openApi("/openapi.json", "Static Site Server")
             )(serve, head, list, upload, health)
             _ <- Console.printLine(s"StaticSite running on http://localhost:${server.port}")
