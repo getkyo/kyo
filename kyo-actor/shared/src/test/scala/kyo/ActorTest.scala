@@ -161,13 +161,13 @@ class ActorTest extends Test:
 
             for
                 messageReceived <- Latch.init(1)
-                childCleaned    <- AtomicBoolean.init(false)
+                childCleaned    <- Latch.init(1)
                 parentActorFiber <-
                     Actor.run {
                         for
                             childActor <- Actor.run {
                                 for
-                                    _ <- Scope.ensure(childCleaned.set(true))
+                                    _ <- Scope.ensure(childCleaned.release)
                                 yield Actor.receiveAll[Int] { _ =>
                                     messageReceived.release
                                 }
@@ -178,7 +178,7 @@ class ActorTest extends Test:
                         yield "never reached"
                     }
                 result <- Abort.run(parentActorFiber.await)
-                _      <- untilTrue(childCleaned.get)
+                _      <- childCleaned.await
             yield assert(result.isFailure)
             end for
         }
