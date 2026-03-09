@@ -426,7 +426,7 @@ object Gate:
             allowUnsafe: AllowUnsafe
         ) extends Gate.Unsafe(initialParties, initFrame, allowUnsafe):
 
-            def join()(using AllowUnsafe): Unit = join(1)
+            final def join()(using AllowUnsafe): Unit = join(1)
 
             def join(n: Int)(using AllowUnsafe): Unit =
                 @tailrec def loop(): Unit =
