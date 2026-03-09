@@ -1,31 +1,8 @@
 package kyo.interop.flow
 
 import StreamSubscriber.EmitStrategy
-import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Flow.*
 import kyo.*
-
-final class JavaSubscription(subscriber: Subscriber[? >: Int], batchSize: Int, counter: java.util.concurrent.atomic.AtomicInteger)
-    extends Subscription:
-
-    private val isCanceled   = java.util.concurrent.atomic.AtomicBoolean(false)
-    private val requestCount = java.util.concurrent.atomic.AtomicInteger(0)
-
-    override def request(n: Long): Unit =
-        def loop(): Runnable =
-            new Runnable:
-                override def run(): Unit =
-                    if !isCanceled.get() && (requestCount.getAndIncrement() < n) then
-                        subscriber.onNext(counter.getAndIncrement())
-                        run()
-        requestCount.set(0)
-        discard(CompletableFuture.allOf(
-            List.fill(batchSize)(CompletableFuture.runAsync(loop()))*
-        ).get())
-    end request
-
-    override def cancel(): Unit = isCanceled.set(true)
-end JavaSubscription
 
 final class StreamSubscriberTest extends Test:
     import StreamSubscriberTest.*
@@ -36,11 +13,33 @@ final class StreamSubscriberTest extends Test:
         new Publisher[Int]:
             private val counter = java.util.concurrent.atomic.AtomicInteger(1)
             override def subscribe(subscriber: Subscriber[? >: Int]): Unit =
-                val subscription = new JavaSubscription(subscriber, batchSize, counter)
+                import AllowUnsafe.embrace.danger
+                val isCanceled = java.util.concurrent.atomic.AtomicBoolean(false)
+                val subscription = new Subscription:
+                    override def request(n: Long): Unit =
+                        val requestCount = java.util.concurrent.atomic.AtomicInteger(0)
+                        discard(Sync.Unsafe.evalOrThrow(
+                            Fiber.initUnscoped[Nothing, Unit, Any, Any](
+                                Async.fill[Nothing, Unit, Any](batchSize) {
+                                    Loop.foreach {
+                                        Sync.defer {
+                                            if !isCanceled.get() && (requestCount.getAndIncrement() < n) then
+                                                subscriber.onNext(counter.getAndIncrement())
+                                                Loop.continue
+                                            else
+                                                Loop.done
+                                            end if
+                                        }
+                                    }
+                                }.unit
+                            )
+                        ))
+                    end request
+                    override def cancel(): Unit = isCanceled.set(true)
                 subscriber.onSubscribe(subscription)
             end subscribe
 
-    "Concurrent publisher & eager subscriber" in runJVM {
+    "Concurrent publisher & eager subscriber" in run {
         val publisher = getPublisher(BatchSize)
         for
             subscriber <- StreamSubscriber[Int](BufferSize, EmitStrategy.Eager)
@@ -51,7 +50,7 @@ final class StreamSubscriberTest extends Test:
         end for
     }
 
-    "Concurrent publisher & buffer subscriber" in runJVM {
+    "Concurrent publisher & buffer subscriber" in run {
         val publisher = getPublisher(BatchSize)
         for
             subscriber <- StreamSubscriber[Int](BufferSize, EmitStrategy.Buffer)
@@ -62,7 +61,7 @@ final class StreamSubscriberTest extends Test:
         end for
     }
 
-    "Concurrent publisher & multiple subscribers" in runJVM {
+    "Concurrent publisher & multiple subscribers" in run {
         val publisher = getPublisher(BatchSize)
         for
             subscriber1 <- StreamSubscriber[Int](BufferSize, EmitStrategy.Eager)
