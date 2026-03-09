@@ -208,7 +208,7 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
     .settings(
         `kyo-settings`,
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-        crossScalaVersions := List(scala3LTSVersion, scala213Version),
+        crossScalaVersions                := List(scala3LTSVersion, scala213Version),
         libraryDependencies += "dev.zio" %%% "zio" % zioVersion
     )
     .jvmSettings(mimaCheck(false))
