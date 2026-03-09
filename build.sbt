@@ -146,6 +146,7 @@ lazy val kyoJS = project
         `kyo-direct`.js,
         `kyo-stm`.js,
         `kyo-stats-registry`.js,
+        `kyo-reactive-streams`.js,
         `kyo-sttp`.js,
         `kyo-zio-test`.js,
         `kyo-zio`.js,
@@ -173,9 +174,11 @@ lazy val kyoNative = project
         `kyo-offheap`.native,
         `kyo-direct`.native,
         `kyo-combinators`.native,
+        `kyo-reactive-streams`.native,
         `kyo-sttp`.native,
         `kyo-actor`.native,
-        `kyo-http`.native
+        `kyo-http`.native,
+        `kyo-stm`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -467,20 +470,24 @@ lazy val `kyo-cache` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-reactive-streams` =
-    crossProject(JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-reactive-streams"))
         .dependsOn(`kyo-core`)
         .settings(
-            `kyo-settings`,
+            `kyo-settings`
+        )
+        .jvmSettings(
+            mimaCheck(false),
             libraryDependencies ++= Seq(
                 "org.reactivestreams" % "reactive-streams"     % "1.0.4",
                 "org.reactivestreams" % "reactive-streams-tck" % "1.0.4"    % Test,
                 "org.scalatestplus"  %% "testng-7-5"           % "3.2.17.0" % Test
             )
         )
-        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
 
 lazy val `kyo-aeron` =
     crossProject(JVMPlatform)
