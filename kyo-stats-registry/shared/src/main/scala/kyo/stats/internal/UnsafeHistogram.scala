@@ -9,17 +9,17 @@ import scala.annotation.tailrec
 /** A fixed-bucket histogram for recording value distributions, inspired by the OTel SDK's ExplicitBucketHistogramAggregation and
   * Prometheus's fixed-bucket histogram.
   *
-  * Optimized for high-throughput observation: the hot path is a binary search followed by a single LongAdder.increment() plus an atomic
-  * CAS update for min/max. Count is derived at read time from a single-pass bucket snapshot. Sum is not provided since exact values are
-  * not retained and the OTLP histogram data model marks sum as optional. The snapshot is not fully atomic under concurrent writes but
-  * ensures internal consistency by deriving count from the same snapshotted bucket counts. Bucket semantics use inclusive upper bounds
-  * (value <= boundary), matching Prometheus and OTel conventions.
+  * Optimized for high-throughput observation: the hot path is a binary search followed by a single LongAdder.increment() plus an atomic CAS
+  * update for min/max. Count is derived at read time from a single-pass bucket snapshot. Sum is not provided since exact values are not
+  * retained and the OTLP histogram data model marks sum as optional. The snapshot is not fully atomic under concurrent writes but ensures
+  * internal consistency by deriving count from the same snapshotted bucket counts. Bucket semantics use inclusive upper bounds (value <=
+  * boundary), matching Prometheus and OTel conventions.
   *
   * Produces non-cumulative bucket counts compatible with the OTLP histogram data model (explicitBounds + bucketCounts).
   *
-  * Note: min and max are packed as two 32-bit floats in a single AtomicLong to allow a single CAS per observation. This reduces
-  * precision to ~7 significant digits (vs double's ~15), which is acceptable for observability where min/max serve as dashboard hints
-  * rather than exact values. The OTLP spec itself marks min and max as optional.
+  * Note: min and max are packed as two 32-bit floats in a single AtomicLong to allow a single CAS per observation. This reduces precision
+  * to ~7 significant digits (vs double's ~15), which is acceptable for observability where min/max serve as dashboard hints rather than
+  * exact values. The OTLP spec itself marks min and max as optional.
   *
   * @param boundaries
   *   Strictly ascending bucket boundaries. Must not contain NaN or Infinity. Creates boundaries.length + 1 buckets (the last being the
