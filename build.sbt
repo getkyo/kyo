@@ -175,6 +175,9 @@ lazy val kyoNative = project
         `kyo-reactive-streams`.native,
         `kyo-sttp`.native,
         `kyo-actor`.native,
+        `kyo-scheduler-zio`.native,
+        `kyo-zio`.native,
+        `kyo-zio-test`.native,
         `kyo-stm`.native
     )
 
@@ -200,18 +203,20 @@ lazy val `kyo-scheduler` =
             libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1"
         )
 
-lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio", file("kyo-scheduler-zio"))(JVMPlatform)
+lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio", file("kyo-scheduler-zio"))(JVMPlatform, NativePlatform)
     .withoutSuffixFor(JVMPlatform)
     .crossType(CrossType.Full)
     .dependsOn(`kyo-scheduler`)
     .settings(
         `kyo-settings`,
+        scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
+        crossScalaVersions                := List(scala3LTSVersion, scala213Version),
         libraryDependencies += "dev.zio" %%% "zio" % zioVersion
     )
     .jvmSettings(mimaCheck(false))
-    .settings(
-        scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-        crossScalaVersions := List(scala3LTSVersion, scala213Version)
+    .nativeSettings(
+        `native-settings`,
+        crossScalaVersions := List(scala3LTSVersion)
     )
 
 lazy val `kyo-scheduler-cats` =
@@ -554,7 +559,7 @@ lazy val `kyo-caliban` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-zio-test` =
-    crossProject(JVMPlatform, JSPlatform)
+    crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-zio-test"))
@@ -569,10 +574,13 @@ lazy val `kyo-zio-test` =
         .jsSettings(
             `js-settings`
         )
+        .nativeSettings(
+            `native-settings`
+        )
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-zio` =
-    crossProject(JVMPlatform, JSPlatform)
+    crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-zio"))
@@ -584,6 +592,9 @@ lazy val `kyo-zio` =
         )
         .jsSettings(
             `js-settings`
+        )
+        .nativeSettings(
+            `native-settings`
         )
         .jvmSettings(mimaCheck(false))
 
@@ -749,10 +760,11 @@ lazy val readme =
         )
 
 lazy val `native-settings` = Seq(
-    fork                                        := false,
-    bspEnabled                                  := false,
-    Test / testForkedParallel                   := false,
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
+    fork                                              := false,
+    bspEnabled                                        := false,
+    Test / testForkedParallel                         := false,
+    Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "8388608",
+    libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.6.0"
 )
 
 lazy val `js-settings` = Seq(
