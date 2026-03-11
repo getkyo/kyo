@@ -177,8 +177,8 @@ class ActorTest extends Test:
                             _ <- Abort.fail(ParentError)
                         yield "never reached"
                     }
-                result <- Abort.run(parentActorFiber.await)
                 _      <- childCleaned.await
+                result <- Abort.run(parentActorFiber.await)
             yield assert(result.isFailure)
             end for
         }
