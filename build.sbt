@@ -112,7 +112,6 @@ lazy val kyoJVM = project
         `kyo-stats-otel`.jvm,
         `kyo-logging-jpl`.jvm,
         `kyo-logging-slf4j`.jvm,
-        `kyo-cache`.jvm,
         `kyo-reactive-streams`.jvm,
         `kyo-aeron`.jvm,
         `kyo-sttp`.jvm,
@@ -452,18 +451,6 @@ lazy val `kyo-stats-otel` =
         )
         .jvmSettings(mimaCheck(false))
 
-lazy val `kyo-cache` =
-    crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-cache"))
-        .dependsOn(`kyo-core`)
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.2.3"
-        )
-        .jvmSettings(mimaCheck(false))
-
 lazy val `kyo-reactive-streams` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -733,7 +720,6 @@ lazy val readme =
         .dependsOn(
             `kyo-core`,
             `kyo-direct`,
-            `kyo-cache`,
             `kyo-sttp`,
             `kyo-tapir`,
             `kyo-bench`,
