@@ -489,7 +489,8 @@ private[kyo] object H2oServerBackend:
                 enqueueBuffered(ss, req, status.code, headers, Span.empty[Byte]),
             onBuffered = (status, headers, body) =>
                 // RFC 9110 §8.6: HEAD Content-Length MUST match what GET would return
-                val h = if isHead && headers.get("Content-Length").isEmpty then headers.add("Content-Length", body.size.toString) else headers
+                val h =
+                    if isHead && headers.get("Content-Length").isEmpty then headers.add("Content-Length", body.size.toString) else headers
                 enqueueBuffered(ss, req, status.code, h, if isHead then Span.empty[Byte] else body)
             ,
             onStreaming = (status, headers, stream) =>

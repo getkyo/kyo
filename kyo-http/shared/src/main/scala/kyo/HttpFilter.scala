@@ -80,7 +80,20 @@ object HttpFilter:
         extends HttpFilter[Any, Any, ResUse, ResAdd, E]
 
     abstract class Passthrough[+E]
-        extends HttpFilter[Any, Any, Any, Any, E]
+        extends HttpFilter[Any, Any, Any, Any, E]:
+        final def andThen[E2](that: Passthrough[E2]): Passthrough[E | E2] =
+            if this eq HttpFilter.noop then that
+            else if that eq HttpFilter.noop then this
+            else
+                val self = this
+                new Passthrough[E | E2]:
+                    def apply[In, Out, E3](
+                        request: HttpRequest[In],
+                        next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E3 | HttpResponse.Halt])
+                    )(using Frame): HttpResponse[Out] < (Async & Abort[E | E2 | E3 | HttpResponse.Halt]) =
+                        self(request, req => that(req, next))
+                end new
+    end Passthrough
 
     val noop: Passthrough[Nothing] =
         new Passthrough[Nothing]:

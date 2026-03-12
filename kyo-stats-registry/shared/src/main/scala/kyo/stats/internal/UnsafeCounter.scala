@@ -1,14 +1,15 @@
 package kyo.stats.internal
 
 import java.util.concurrent.atomic.LongAdder
+import kyo.AllowUnsafe
 
 class UnsafeCounter extends Serializable {
     private var last  = 0L
     private val adder = new LongAdder
 
-    def get(): Long        = adder.sumThenReset()
-    def inc(): Unit        = adder.increment()
-    def add(v: Long): Unit = adder.add(v)
+    def get()(using AllowUnsafe): Long        = adder.sumThenReset()
+    def inc()(using AllowUnsafe): Unit        = adder.increment()
+    def add(v: Long)(using AllowUnsafe): Unit = adder.add(v)
 
     private def addExact(a: Long, b: Long) = {
         val sum = a + b
@@ -23,7 +24,7 @@ class UnsafeCounter extends Serializable {
         (Long.MaxValue - a) + b
     }
 
-    private[kyo] def delta() = {
+    private[kyo] def delta()(using AllowUnsafe) = {
         val curr  = addExact(get(), last)
         val delta = if (curr >= last) curr - last else findDelta(last, curr)
         last = curr

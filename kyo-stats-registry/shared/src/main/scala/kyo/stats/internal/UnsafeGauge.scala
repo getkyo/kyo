@@ -1,12 +1,14 @@
 package kyo.stats.internal
 
+import kyo.AllowUnsafe
+
 class UnsafeGauge(run: () => Double) extends Serializable {
-    def collect(): Double = run()
+    def collect()(using AllowUnsafe): Double = run()
 }
 
 class UnsafeCounterGauge(run: () => Long) extends Serializable {
     private var last = 0L
-    def collect(): Long = {
+    def collect()(using AllowUnsafe): Long = {
         val value = run()
         if (value < 0) {
             (Long.MaxValue + value) + 2
@@ -19,7 +21,7 @@ class UnsafeCounterGauge(run: () => Long) extends Serializable {
         (Long.MaxValue - a) + b
     }
 
-    private[kyo] def delta() = {
+    private[kyo] def delta()(using AllowUnsafe) = {
         val curr  = collect()
         val delta = if (curr >= last) curr - last else findDelta(last, curr)
         last = curr

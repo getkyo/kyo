@@ -3,7 +3,7 @@ package kyo.stats.internal
 import kyo.*
 import kyo.stats.*
 
-class SpanTest extends Test:
+class TraceSpanTest extends Test:
 
     "end" in run {
         val unsafe = new TestSpan
@@ -46,13 +46,14 @@ class SpanTest extends Test:
         }
     }
 
-    class TestSpan extends TraceSpan.Unsafe:
+    class TestSpan extends UnsafeTraceSpan:
         var isEnded           = false
         var lastEvent: String = ""
 
-        def end() =
+        def end()(using AllowUnsafe) =
             isEnded = true
-        def event(name: String, a: Attributes) =
+        def event(name: String, a: Attributes)(using AllowUnsafe) =
             lastEvent = name
+        def setStatus(status: UnsafeTraceSpan.Status)(using AllowUnsafe) = ()
     end TestSpan
-end SpanTest
+end TraceSpanTest
