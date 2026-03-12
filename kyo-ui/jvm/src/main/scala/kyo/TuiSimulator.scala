@@ -5,7 +5,7 @@ import scala.language.implicitConversions
 
 /** Headless TUI simulator for automated interaction testing.
   *
-  * Renders UI, dispatches input events, and captures frames — no TTY needed.
+  * Renders UI, dispatches input events, and captures frames -- no TTY needed.
   */
 class TuiSimulator private (
     ui: UI,
@@ -14,18 +14,24 @@ class TuiSimulator private (
     layout: TuiLayout,
     signals: TuiSignalCollector,
     renderer: TuiRenderer,
-    focus: TuiFocus
+    focus: TuiFocus,
+    theme: TuiResolvedTheme
 )(using Frame, AllowUnsafe):
 
     private def doRender(): Unit =
         layout.reset()
         signals.reset()
-        TuiFlatten.flatten(ui, layout, signals, cols, rows)
-        TuiLayout.measure(layout)
-        TuiLayout.arrange(layout, cols, rows)
-        TuiPainter.inheritStyles(layout)
+        TuiFlatten.flatten(ui, layout, signals, cols, rows, theme)
+        TuiFlexLayout.measure(layout)
+        TuiFlexLayout.arrange(layout, cols, rows)
+        // Second pass: text wrapping during arrange may increase text heights.
+        // Re-measure propagates those heights to parents, then re-arrange positions correctly.
+        TuiFlexLayout.measure(layout)
+        TuiFlexLayout.arrange(layout, cols, rows)
         focus.scan(layout)
-        focus.applyFocusStyle(layout)
+        focus.adjustTextScroll(layout)
+        TuiStyle.inherit(layout)
+        TuiStyle.applyStates(layout, focus.focusedIndex, focus.hoverIdx, focus.activeIdx)
         renderer.clear()
         TuiPainter.paint(layout, renderer)
     end doRender
@@ -34,7 +40,7 @@ class TuiSimulator private (
     def frame: String =
         doRender()
         focus.autoFocus()
-        renderer.invalidate() // Force full output — frame parses all cells
+        renderer.invalidate() // Force full output -- frame parses all cells
         val baos = new java.io.ByteArrayOutputStream()
         renderer.flush(baos, TuiRenderer.NoColor)
         val raw  = baos.toString("UTF-8")
@@ -43,11 +49,13 @@ class TuiSimulator private (
             .replaceAll("\u001b\\[\\?[^\u001b]*", "")
         val pattern = java.util.regex.Pattern.compile("\u001b\\[(\\d+);(\\d+)H([^\u001b]*)")
         val matcher = pattern.matcher(stripped)
+        // unsafe: while for regex iteration
         while matcher.find() do
             val r    = matcher.group(1).toInt - 1
             val c    = matcher.group(2).toInt - 1
             val text = matcher.group(3)
             var i    = 0
+            // unsafe: while for character iteration
             while i < text.length do
                 val col = c + i
                 if r >= 0 && r < rows && col >= 0 && col < cols then
@@ -59,7 +67,7 @@ class TuiSimulator private (
     end frame
 
     /** Send a key press. */
-    def key(k: String, ctrl: Boolean = false, alt: Boolean = false, shift: Boolean = false): Unit =
+    def key(k: UI.Keyboard, ctrl: Boolean = false, alt: Boolean = false, shift: Boolean = false): Unit =
         doRender()
         Sync.Unsafe.evalOrThrow(
             focus.dispatch(InputEvent.Key(k, ctrl, alt, shift), layout)
@@ -67,26 +75,51 @@ class TuiSimulator private (
     end key
 
     /** Send Tab. */
-    def tab(): Unit = key("Tab")
+    def tab(): Unit = key(UI.Keyboard.Tab)
 
     /** Send Shift+Tab. */
-    def shiftTab(): Unit = key("Tab", shift = true)
+    def shiftTab(): Unit = key(UI.Keyboard.Tab, shift = true)
 
     /** Send Enter. */
-    def enter(): Unit = key("Enter")
+    def enter(): Unit = key(UI.Keyboard.Enter)
 
     /** Send Space. */
-    def space(): Unit = key(" ")
+    def space(): Unit = key(UI.Keyboard.Space)
 
     /** Type a string character by character. */
     def typeText(s: String): Unit =
         doRender()
         s.foreach { ch =>
+            val k = if ch == ' ' then UI.Keyboard.Space else UI.Keyboard.Char(ch)
             Sync.Unsafe.evalOrThrow(
-                focus.dispatch(InputEvent.Key(ch.toString), layout)
+                focus.dispatch(InputEvent.Key(k), layout)
             )
         }
     end typeText
+
+    /** Scroll up at (x, y). */
+    def scrollUp(x: Int, y: Int): Unit =
+        doRender()
+        Sync.Unsafe.evalOrThrow(
+            focus.dispatch(InputEvent.Mouse(InputEvent.MouseKind.ScrollUp, x, y), layout)
+        )
+    end scrollUp
+
+    /** Scroll down at (x, y). */
+    def scrollDown(x: Int, y: Int): Unit =
+        doRender()
+        Sync.Unsafe.evalOrThrow(
+            focus.dispatch(InputEvent.Mouse(InputEvent.MouseKind.ScrollDown, x, y), layout)
+        )
+    end scrollDown
+
+    /** Paste text into the focused element. */
+    def paste(text: String): Unit =
+        doRender()
+        Sync.Unsafe.evalOrThrow(
+            focus.dispatch(InputEvent.Paste(text), layout)
+        )
+    end paste
 
     /** Click at (x, y) with left mouse button. */
     def click(x: Int, y: Int): Unit =
@@ -102,6 +135,7 @@ class TuiSimulator private (
         val lines = f.split("\n")
         var found = false
         var r     = 0
+        // unsafe: while for line scanning
         while r < lines.length && !found do
             val idx = lines(r).indexOf(text)
             if idx >= 0 then
@@ -110,6 +144,7 @@ class TuiSimulator private (
             r += 1
         end while
         if !found then
+            // unsafe: throw for test assertion
             throw new RuntimeException(s"Text '$text' not found in frame:\n$f")
     end clickOn
 
@@ -125,7 +160,9 @@ class TuiSimulator private (
         val n  = layout.count
         val sb = new StringBuilder
         sb.append(s"Layout: $n nodes\n")
-        for i <- 0 until n do
+        var i = 0
+        // unsafe: while for array iteration
+        while i < n do
             val nt        = layout.nodeType(i)
             val x         = layout.x(i)
             val y         = layout.y(i)
@@ -146,7 +183,8 @@ class TuiSimulator private (
             sb.append(
                 f"  [$i%3d] p=$pi%3d x=$x%3d y=$y%3d w=$w%3d h=$h%3d iw=$iw%3d ih=$ih%3d nt=$nt%2d$dir$hiddenStr$border $elemName$textStr\n"
             )
-        end for
+            i += 1
+        end while
         java.lang.System.err.println(sb.toString)
     end dumpLayout
 
@@ -154,14 +192,15 @@ end TuiSimulator
 
 object TuiSimulator:
 
-    def apply(ui: UI, cols: Int = 60, rows: Int = 30)(using Frame): TuiSimulator =
+    def apply(ui: UI, cols: Int = 60, rows: Int = 30, theme: Theme = Theme.Default)(using Frame): TuiSimulator =
         import AllowUnsafe.embrace.danger
+        val resolved = TuiResolvedTheme.resolve(theme)
         val layout   = new TuiLayout(512)
         val signals  = new TuiSignalCollector(256)
         val renderer = new TuiRenderer(cols, rows)
         val focus    = new TuiFocus
         focus.disableAutoFocus()
-        new TuiSimulator(ui, cols, rows, layout, signals, renderer, focus)
+        new TuiSimulator(ui, cols, rows, layout, signals, renderer, focus, resolved)
     end apply
 
 end TuiSimulator

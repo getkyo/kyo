@@ -2,9 +2,8 @@ package kyo.internal
 
 import kyo.Maybe
 import kyo.Maybe.*
-import kyo.Span
-import kyo.discard
-import scala.annotation.tailrec
+import kyo.Style
+import kyo.UI
 
 /** Flat array table holding all layout, style, and tree structure data for one frame.
   *
@@ -21,7 +20,7 @@ final private[kyo] class TuiLayout(initialCapacity: Int = 256):
     var firstChild: Array[Int]  = new Array[Int](cap)  // -1 = leaf
     var nextSibling: Array[Int] = new Array[Int](cap)  // -1 = last
     var lastChild: Array[Int]   = new Array[Int](cap)  // for O(1) child append
-    var nodeType: Array[Byte]   = new Array[Byte](cap) // element type tag
+    var nodeType: Array[Byte]   = new Array[Byte](cap) // -1 = text, else tag.ordinal
 
     // ---- geometry (written by measure + arrange) ----
     var x: Array[Int]     = new Array[Int](cap)
@@ -52,26 +51,46 @@ final private[kyo] class TuiLayout(initialCapacity: Int = 256):
     var transY: Array[Int] = new Array[Int](cap)
 
     // ---- paint style (flat, no PaintStyle objects) ----
-    var pFlags: Array[Int]  = new Array[Int](cap)   // packed: bold|dim|italic|underline|strikethrough|borderStyle|...
-    var fg: Array[Int]      = new Array[Int](cap)   // -1 = absent
-    var bg: Array[Int]      = new Array[Int](cap)   // -1 = absent
-    var bdrClrT: Array[Int] = new Array[Int](cap)   // -1 = absent
-    var bdrClrR: Array[Int] = new Array[Int](cap)
-    var bdrClrB: Array[Int] = new Array[Int](cap)
-    var bdrClrL: Array[Int] = new Array[Int](cap)
-    var opac: Array[Float]  = new Array[Float](cap) // 1.0 = opaque
-    var lineH: Array[Int]   = new Array[Int](cap)
-    var letSp: Array[Int]   = new Array[Int](cap)
-    var fontSz: Array[Int]  = new Array[Int](cap)
-    var shadow: Array[Int]  = new Array[Int](cap)   // -1 = none
+    var pFlags: Array[Int]       = new Array[Int](cap)    // packed: bold|dim|italic|underline|strikethrough|borderStyle|...
+    var fg: Array[Int]           = new Array[Int](cap)    // -1 = absent
+    var bg: Array[Int]           = new Array[Int](cap)    // -1 = absent
+    var bdrClrT: Array[Int]      = new Array[Int](cap)    // -1 = absent
+    var bdrClrR: Array[Int]      = new Array[Int](cap)
+    var bdrClrB: Array[Int]      = new Array[Int](cap)
+    var bdrClrL: Array[Int]      = new Array[Int](cap)
+    var opac: Array[Double]      = new Array[Double](cap) // 1.0 = opaque
+    var fontSz: Array[Int]       = new Array[Int](cap)
+    var shadowClr: Array[Int]    = new Array[Int](cap)    // shadow color, -1 = none
+    var shadowX: Array[Int]      = new Array[Int](cap)
+    var shadowY: Array[Int]      = new Array[Int](cap)
+    var shadowBlur: Array[Int]   = new Array[Int](cap)
+    var shadowSpread: Array[Int] = new Array[Int](cap)
 
-    // ---- content (refs into UI AST — no copy) ----
-    var text: Array[Maybe[String]]        = Array.fill(cap)(Absent) // Absent = no text
-    var focusStyle: Array[Maybe[AnyRef]]  = Array.fill(cap)(Absent) // Absent = none (ref to UI AST Style)
-    var activeStyle: Array[Maybe[AnyRef]] = Array.fill(cap)(Absent) // Absent = none
-    var element: Array[Maybe[AnyRef]]     = Array.fill(cap)(Absent) // Absent = text/fragment
+    // ---- flex grow/shrink ----
+    var flexGrow: Array[Double]   = new Array[Double](cap) // 0.0 = no grow
+    var flexShrink: Array[Double] = new Array[Double](cap) // 1.0 = default shrink
 
-    /** O(1) reset — slots overwritten before read. */
+    // ---- filters (8 per node: brightness, contrast, grayscale, sepia, invert, saturate, hueRotate, blur) ----
+    var filterBits: Array[Int]    = new Array[Int](cap)             // bit mask: which filters are set (8 bits)
+    var filterVals: Array[Double] = Array.fill(cap * 8)(Double.NaN) // 8 doubles per node
+
+    // ---- scroll offsets ----
+    var scrollX: Array[Int] = new Array[Int](cap) // horizontal scroll offset (pixels)
+    var scrollY: Array[Int] = new Array[Int](cap) // vertical scroll offset (pixels)
+
+    // ---- table spanning ----
+    var colspan: Array[Int] = new Array[Int](cap) // 1 = normal (default), >1 = span multiple columns
+    var rowspan: Array[Int] = new Array[Int](cap) // 1 = normal (default), >1 = span multiple rows
+
+    // ---- content (refs into UI AST -- no copy) ----
+    var text: Array[Maybe[String]]         = Array.fill(cap)(Absent) // Absent = no text
+    var focusStyle: Array[Maybe[Style]]    = Array.fill(cap)(Absent) // Absent = none
+    var activeStyle: Array[Maybe[Style]]   = Array.fill(cap)(Absent) // Absent = none
+    var hoverStyle: Array[Maybe[Style]]    = Array.fill(cap)(Absent) // Absent = none
+    var disabledStyle: Array[Maybe[Style]] = Array.fill(cap)(Absent) // Absent = none
+    var element: Array[Maybe[UI.Element]]  = Array.fill(cap)(Absent) // Absent = text/fragment
+
+    /** O(1) reset -- slots overwritten before read. */
     def reset(): Unit = count = 0
 
     /** Allocate a new node, growing arrays if needed. Returns the index. */
@@ -82,6 +101,7 @@ final private[kyo] class TuiLayout(initialCapacity: Int = 256):
         idx
     end alloc
 
+    // unsafe: asInstanceOf for Maybe array creation
     private def copyMaybeArray[A <: AnyRef](src: Array[Maybe[A]], newLen: Int): Array[Maybe[A]] =
         val dst = new Array[AnyRef](newLen).asInstanceOf[Array[Maybe[A]]]
         java.lang.System.arraycopy(src, 0, dst, 0, src.length)
@@ -128,13 +148,27 @@ final private[kyo] class TuiLayout(initialCapacity: Int = 256):
         bdrClrB = java.util.Arrays.copyOf(bdrClrB, newCap)
         bdrClrL = java.util.Arrays.copyOf(bdrClrL, newCap)
         opac = java.util.Arrays.copyOf(opac, newCap)
-        lineH = java.util.Arrays.copyOf(lineH, newCap)
-        letSp = java.util.Arrays.copyOf(letSp, newCap)
         fontSz = java.util.Arrays.copyOf(fontSz, newCap)
-        shadow = java.util.Arrays.copyOf(shadow, newCap)
+        shadowClr = java.util.Arrays.copyOf(shadowClr, newCap)
+        shadowX = java.util.Arrays.copyOf(shadowX, newCap)
+        shadowY = java.util.Arrays.copyOf(shadowY, newCap)
+        shadowBlur = java.util.Arrays.copyOf(shadowBlur, newCap)
+        shadowSpread = java.util.Arrays.copyOf(shadowSpread, newCap)
+        flexGrow = java.util.Arrays.copyOf(flexGrow, newCap)
+        flexShrink = java.util.Arrays.copyOf(flexShrink, newCap)
+        filterBits = java.util.Arrays.copyOf(filterBits, newCap)
+        val newFilterVals = new Array[Double](newCap * 8)
+        java.lang.System.arraycopy(filterVals, 0, newFilterVals, 0, cap * 8)
+        filterVals = newFilterVals
+        scrollX = java.util.Arrays.copyOf(scrollX, newCap)
+        scrollY = java.util.Arrays.copyOf(scrollY, newCap)
+        colspan = java.util.Arrays.copyOf(colspan, newCap)
+        rowspan = java.util.Arrays.copyOf(rowspan, newCap)
         text = copyMaybeArray(text, newCap)
         focusStyle = copyMaybeArray(focusStyle, newCap)
         activeStyle = copyMaybeArray(activeStyle, newCap)
+        hoverStyle = copyMaybeArray(hoverStyle, newCap)
+        disabledStyle = copyMaybeArray(disabledStyle, newCap)
         element = copyMaybeArray(element, newCap)
         cap = newCap
     end grow
@@ -144,13 +178,16 @@ end TuiLayout
 /** Layout operations: linking, measuring, and arranging nodes. */
 private[kyo] object TuiLayout:
 
+    // ---- Node type sentinel for text nodes ----
+    inline val NodeText = -1
+
     // ---- lFlags bit layout ----
-    inline val DirBit        = 0 // 0=column, 1=row
-    inline val AlignShift    = 1 // 2 bits
+    inline val DirBit        = 0  // 0=column, 1=row
+    inline val AlignShift    = 1  // 2 bits
     inline val AlignMask     = 0x3
-    inline val JustShift     = 3 // 3 bits
+    inline val JustShift     = 3  // 3 bits
     inline val JustMask      = 0x7
-    inline val OverflowShift = 6 // 2 bits
+    inline val OverflowShift = 6  // 2 bits
     inline val OverflowMask  = 0x3
     inline val HiddenBit     = 8
     inline val BorderTBit    = 9
@@ -158,19 +195,28 @@ private[kyo] object TuiLayout:
     inline val BorderBBit    = 11
     inline val BorderLBit    = 12
     inline val DisabledBit   = 13
+    inline val PositionBit   = 14 // 0=flow, 1=overlay
+    inline val StretchBit    = 15 // per-child cross-axis stretch (like CSS align-self: stretch)
+    inline val TableRowBit   = 16 // row is a table row (tr inside table) — uses equal-width column layout
+    inline val NoWrapBit     = 17 // text children should scroll, not wrap (single-line input)
 
     // ---- lFlags accessors ----
-    inline def isRow(flags: Int): Boolean      = (flags & (1 << DirBit)) != 0
-    inline def isColumn(flags: Int): Boolean   = !isRow(flags)
-    inline def align(flags: Int): Int          = (flags >>> AlignShift) & AlignMask
-    inline def justify(flags: Int): Int        = (flags >>> JustShift) & JustMask
-    inline def overflow(flags: Int): Int       = (flags >>> OverflowShift) & OverflowMask
-    inline def isHidden(flags: Int): Boolean   = (flags & (1 << HiddenBit)) != 0
-    inline def hasBorderT(flags: Int): Boolean = (flags & (1 << BorderTBit)) != 0
-    inline def hasBorderR(flags: Int): Boolean = (flags & (1 << BorderRBit)) != 0
-    inline def hasBorderB(flags: Int): Boolean = (flags & (1 << BorderBBit)) != 0
-    inline def hasBorderL(flags: Int): Boolean = (flags & (1 << BorderLBit)) != 0
-    inline def isDisabled(flags: Int): Boolean = (flags & (1 << DisabledBit)) != 0
+    inline def isRow(flags: Int): Boolean        = (flags & (1 << DirBit)) != 0
+    inline def isColumn(flags: Int): Boolean     = !isRow(flags)
+    inline def align(flags: Int): Int            = (flags >>> AlignShift) & AlignMask
+    inline def justify(flags: Int): Int          = (flags >>> JustShift) & JustMask
+    inline def overflow(flags: Int): Int         = (flags >>> OverflowShift) & OverflowMask
+    inline def isHidden(flags: Int): Boolean     = (flags & (1 << HiddenBit)) != 0
+    inline def hasBorderT(flags: Int): Boolean   = (flags & (1 << BorderTBit)) != 0
+    inline def hasBorderR(flags: Int): Boolean   = (flags & (1 << BorderRBit)) != 0
+    inline def hasBorderB(flags: Int): Boolean   = (flags & (1 << BorderBBit)) != 0
+    inline def hasBorderL(flags: Int): Boolean   = (flags & (1 << BorderLBit)) != 0
+    inline def isDisabled(flags: Int): Boolean   = (flags & (1 << DisabledBit)) != 0
+    inline def isOverlay(flags: Int): Boolean    = (flags & (1 << PositionBit)) != 0
+    inline def isStretch(flags: Int): Boolean    = (flags & (1 << StretchBit)) != 0
+    inline def isScrollable(flags: Int): Boolean = overflow(flags) == 2
+    inline def isTableRow(flags: Int): Boolean   = (flags & (1 << TableRowBit)) != 0
+    inline def isNoWrap(flags: Int): Boolean     = (flags & (1 << NoWrapBit)) != 0
 
     // ---- pFlags bit layout ----
     inline val BoldBit          = 0
@@ -230,7 +276,7 @@ private[kyo] object TuiLayout:
     inline val TextAlignRight   = 2
     inline val TextAlignJustify = 3
 
-    /** Get box-drawing characters for a border style via continuation — zero allocation. Passes (TL, TR, BR, BL, Horiz, Vert) directly to
+    /** Get box-drawing characters for a border style via continuation -- zero allocation. Passes (TL, TR, BR, BL, Horiz, Vert) directly to
       * the continuation function.
       */
     inline def borderChars[A](
@@ -242,43 +288,43 @@ private[kyo] object TuiLayout:
     )(inline f: (Char, Char, Char, Char, Char, Char) => A): A =
         style match
             case BorderHeavy =>
-                f('┏', '┓', '┛', '┗', '━', '┃')
+                f('\u250f', '\u2513', '\u251b', '\u2517', '\u2501', '\u2503')
             case BorderDouble =>
-                f('╔', '╗', '╝', '╚', '═', '║')
+                f('\u2554', '\u2557', '\u255d', '\u255a', '\u2550', '\u2551')
             case BorderRounded =>
-                f('╭', '╮', '╯', '╰', '─', '│')
+                f('\u256d', '\u256e', '\u256f', '\u2570', '\u2500', '\u2502')
             case BorderDashed =>
                 f(
-                    if roundTL then '╭' else '┌',
-                    if roundTR then '╮' else '┐',
-                    if roundBR then '╯' else '┘',
-                    if roundBL then '╰' else '└',
-                    '┄',
-                    '┆'
+                    if roundTL then '\u256d' else '\u250c',
+                    if roundTR then '\u256e' else '\u2510',
+                    if roundBR then '\u256f' else '\u2518',
+                    if roundBL then '\u2570' else '\u2514',
+                    '\u2504',
+                    '\u2506'
                 )
             case BorderDotted =>
                 f(
-                    if roundTL then '╭' else '┌',
-                    if roundTR then '╮' else '┐',
-                    if roundBR then '╯' else '┘',
-                    if roundBL then '╰' else '└',
-                    '┈',
-                    '┊'
+                    if roundTL then '\u256d' else '\u250c',
+                    if roundTR then '\u256e' else '\u2510',
+                    if roundBR then '\u256f' else '\u2518',
+                    if roundBL then '\u2570' else '\u2514',
+                    '\u2508',
+                    '\u250a'
                 )
             case BorderBlock =>
-                f('█', '█', '█', '█', '█', '█')
+                f('\u2588', '\u2588', '\u2588', '\u2588', '\u2588', '\u2588')
             case BorderOuterHalf =>
-                f('▛', '▜', '▟', '▙', '▀', '▌')
+                f('\u259b', '\u259c', '\u259f', '\u2599', '\u2580', '\u258c')
             case BorderInnerHalf =>
-                f('▗', '▖', '▘', '▝', '▄', '▐')
-            case _ => // Thin or None — thin with optional per-corner rounding
+                f('\u2597', '\u2596', '\u2598', '\u259d', '\u2584', '\u2590')
+            case _ => // Thin or None -- thin with optional per-corner rounding
                 f(
-                    if roundTL then '╭' else '┌',
-                    if roundTR then '╮' else '┐',
-                    if roundBR then '╯' else '┘',
-                    if roundBL then '╰' else '└',
-                    '─',
-                    '│'
+                    if roundTL then '\u256d' else '\u250c',
+                    if roundTR then '\u256e' else '\u2510',
+                    if roundBR then '\u256f' else '\u2518',
+                    if roundBL then '\u2570' else '\u2514',
+                    '\u2500',
+                    '\u2502'
                 )
 
     // ---- Justify constants ----
@@ -289,183 +335,11 @@ private[kyo] object TuiLayout:
     inline val JustAround  = 4
     inline val JustEvenly  = 5
 
-    // ---- Node type constants (stored as Byte in nodeType array) ----
-    inline val NodeText     = 0
-    inline val NodeDiv      = 1
-    inline val NodeSpan     = 2
-    inline val NodeP        = 3
-    inline val NodeButton   = 4
-    inline val NodeInput    = 5
-    inline val NodeTextarea = 6
-    inline val NodeSelect   = 7
-    inline val NodeOption   = 8
-    inline val NodeAnchor   = 9
-    inline val NodeForm     = 10
-    inline val NodeLabel    = 11
-    inline val NodeH1       = 12
-    inline val NodeH2       = 13
-    inline val NodeH3       = 14
-    inline val NodeH4       = 15
-    inline val NodeH5       = 16
-    inline val NodeH6       = 17
-    inline val NodeUl       = 18
-    inline val NodeOl       = 19
-    inline val NodeLi       = 20
-    inline val NodeTable    = 21
-    inline val NodeTr       = 22
-    inline val NodeTd       = 23
-    inline val NodeTh       = 24
-    inline val NodeHr       = 25
-    inline val NodeBr       = 26
-    inline val NodePre      = 27
-    inline val NodeCode     = 28
-    inline val NodeNav      = 29
-    inline val NodeHeader   = 30
-    inline val NodeFooter   = 31
-    inline val NodeSection  = 32
-    inline val NodeMain     = 33
-    inline val NodeImg      = 34
-    inline val NodeFragment = 35
-
-    /** Whether this node type uses row (inline) direction by default. */
-    inline def isInlineNode(nt: Int): Boolean =
-        nt == NodeSpan || nt == NodeNav || nt == NodeLi || nt == NodeTr
-
-    /** Whether this node type is focusable. */
-    inline def isFocusable(nt: Int): Boolean =
-        nt == NodeButton || nt == NodeInput || nt == NodeTextarea ||
-            nt == NodeSelect || nt == NodeAnchor
-
     // ---- Align constants ----
     inline val AlignStart   = 0
     inline val AlignCenter  = 1
     inline val AlignEnd     = 2
     inline val AlignStretch = 3
-
-    /** Wrap text to fit within maxWidth, breaking at word boundaries when possible. */
-    def wrapText(text: String, maxWidth: Int): Span[String] =
-        if maxWidth <= 0 then Span(text)
-        else
-            val srcLines = text.split("\n", -1)
-            val result   = new java.util.ArrayList[String](srcLines.length)
-
-            @tailrec def findBreak(line: String, pos: Int, end: Int, brk: Int): Int =
-                if brk <= pos then end // no space found, hard break
-                else if line.charAt(brk) == ' ' then brk
-                else findBreak(line, pos, end, brk - 1)
-
-            @tailrec def wrapLine(line: String, pos: Int): Unit =
-                if pos < line.length then
-                    val end = math.min(pos + maxWidth, line.length)
-                    if end < line.length then
-                        val brk = findBreak(line, pos, end, end)
-                        result.add(line.substring(pos, brk))
-                        val nextPos = if line.charAt(brk) == ' ' then brk + 1 else brk
-                        wrapLine(line, nextPos)
-                    else
-                        discard(result.add(line.substring(pos, end)))
-                    end if
-
-            @tailrec def processLines(i: Int): Unit =
-                if i < srcLines.length then
-                    val line = srcLines(i)
-                    if line.length <= maxWidth then
-                        result.add(line)
-                    else
-                        wrapLine(line, 0)
-                    end if
-                    processLines(i + 1)
-
-            processLines(0)
-            Span.fromUnsafe(result.toArray(new Array[String](0)))
-        end if
-    end wrapText
-
-    /** Count wrapped lines without allocating strings — for layout only. */
-    def wrapLineCount(text: String, maxWidth: Int): Int =
-        if maxWidth <= 0 then 1
-        else
-            val textLen = text.length
-
-            @tailrec def findBreak(pos: Int, end: Int, brk: Int): Int =
-                if brk <= pos then end
-                else if text.charAt(brk) == ' ' then brk
-                else findBreak(pos, end, brk - 1)
-
-            @tailrec def countWrapped(pos: Int, lineEnd: Int, count: Int): Int =
-                if pos >= lineEnd then count
-                else
-                    val end = math.min(pos + maxWidth, lineEnd)
-                    if end < lineEnd then
-                        val brk     = findBreak(pos, end, end)
-                        val nextPos = if text.charAt(brk) == ' ' then brk + 1 else brk
-                        countWrapped(nextPos, lineEnd, count + 1)
-                    else
-                        count + 1
-                    end if
-
-            @tailrec def processChars(si: Int, lineStart: Int, count: Int): Int =
-                if si > textLen then count
-                else if si == textLen || text.charAt(si) == '\n' then
-                    val lineLen = si - lineStart
-                    val newCount =
-                        if lineLen <= maxWidth then count + 1
-                        else countWrapped(lineStart, si, count)
-                    processChars(si + 1, si + 1, newCount)
-                else
-                    processChars(si + 1, lineStart, count)
-
-            processChars(0, 0, 0)
-        end if
-    end wrapLineCount
-
-    /** Clip text lines to fit within maxWidth/maxHeight, adding ellipsis if overflow flagged. Uses a shared StringBuilder to avoid
-      * substring+concat allocations.
-      */
-    def clipText(text: String, maxWidth: Int, maxHeight: Int, ellipsis: Boolean): Span[String] =
-        if maxWidth <= 0 || maxHeight <= 0 then Span.empty[String]
-        else
-            val srcLines = text.split("\n", -1)
-            val count    = math.min(srcLines.length, maxHeight)
-            val result   = new Array[String](count)
-            val sb       = new java.lang.StringBuilder(maxWidth + 4)
-
-            def truncate(line: String): String =
-                if ellipsis && maxWidth > 1 then
-                    sb.setLength(0)
-                    sb.append(line, 0, maxWidth - 1)
-                    sb.append('…')
-                    sb.toString
-                else if ellipsis && maxWidth == 1 then "…"
-                else line.substring(0, maxWidth)
-
-            @tailrec def clipLines(i: Int): Unit =
-                if i < count then
-                    val line = srcLines(i)
-                    result(i) = if line.length > maxWidth then truncate(line) else line
-                    clipLines(i + 1)
-
-            clipLines(0)
-
-            // If there are more lines than maxHeight and ellipsis, mark the last line
-            if ellipsis && srcLines.length > maxHeight && count > 0 then
-                val last = result(count - 1)
-                result(count - 1) =
-                    if last.length >= maxWidth && maxWidth > 1 then
-                        sb.setLength(0)
-                        sb.append(last, 0, maxWidth - 1)
-                        sb.append('…')
-                        sb.toString
-                    else if last.length < maxWidth then
-                        sb.setLength(0)
-                        sb.append(last)
-                        sb.append('…')
-                        sb.toString
-                    else last
-            end if
-            Span.fromUnsafe(result)
-        end if
-    end clipText
 
     /** Link a child node to its parent. O(1) via lastChild tracking. */
     def linkChild(layout: TuiLayout, parentIdx: Int, childIdx: Int): Unit =
@@ -482,255 +356,5 @@ private[kyo] object TuiLayout:
             layout.lastChild(parentIdx) = childIdx
         end if
     end linkChild
-
-    /** Bottom-up intrinsic sizing. Reverse traversal ensures children measured before parents. */
-    def measure(layout: TuiLayout): Unit =
-
-        @tailrec def maxLineWidth(lines: Array[String], j: Int, maxW: Int): Int =
-            if j >= lines.length then maxW
-            else maxLineWidth(lines, j + 1, math.max(maxW, lines(j).length))
-
-        inline def sumChildren(layout: TuiLayout, firstChild: Int, row: Boolean)(
-            inline f: (Int, Int, Int) => Unit
-        ): Unit =
-            @tailrec def loop(c: Int, mainSum: Int, crossMax: Int, childCount: Int): Unit =
-                if c == -1 then f(mainSum, crossMax, childCount)
-                else if isHidden(layout.lFlags(c)) then
-                    loop(layout.nextSibling(c), mainSum, crossMax, childCount)
-                else
-                    val cMarW = layout.marL(c) + layout.marR(c)
-                    val cMarH = layout.marT(c) + layout.marB(c)
-                    val cw    = layout.intrW(c) + cMarW
-                    val ch    = layout.intrH(c) + cMarH
-                    if row then loop(layout.nextSibling(c), mainSum + cw, math.max(crossMax, ch), childCount + 1)
-                    else loop(layout.nextSibling(c), mainSum + ch, math.max(crossMax, cw), childCount + 1)
-            loop(firstChild, 0, 0, 0)
-        end sumChildren
-
-        @tailrec def loop(i: Int): Unit =
-            if i >= 0 then
-                if !isHidden(layout.lFlags(i)) then
-                    val maybeTxt = layout.text(i)
-                    if maybeTxt.isDefined then
-                        val lines = maybeTxt.get.split("\n", -1)
-                        layout.intrW(i) = maxLineWidth(lines, 0, 0)
-                        layout.intrH(i) = lines.length
-                    else
-                        val flags = layout.lFlags(i)
-                        val row   = isRow(flags)
-                        sumChildren(layout, layout.firstChild(i), row) { (mainSum, crossMax, childCount) =>
-                            val gapTotal = if childCount > 1 then layout.gap(i) * (childCount - 1) else 0
-                            val bT       = if hasBorderT(flags) then 1 else 0
-                            val bR       = if hasBorderR(flags) then 1 else 0
-                            val bB       = if hasBorderB(flags) then 1 else 0
-                            val bL       = if hasBorderL(flags) then 1 else 0
-                            val insetW   = layout.padL(i) + layout.padR(i) + bL + bR
-                            val insetH   = layout.padT(i) + layout.padB(i) + bT + bB
-
-                            if row then
-                                layout.intrW(i) = mainSum + gapTotal + insetW
-                                layout.intrH(i) = crossMax + insetH
-                            else
-                                layout.intrW(i) = crossMax + insetW
-                                layout.intrH(i) = mainSum + gapTotal + insetH
-                            end if
-                        }
-                    end if
-
-                    // Apply explicit size, then clamp
-                    if layout.sizeW(i) >= 0 then layout.intrW(i) = layout.sizeW(i)
-                    if layout.sizeH(i) >= 0 then layout.intrH(i) = layout.sizeH(i)
-                    if layout.minW(i) >= 0 && layout.intrW(i) < layout.minW(i) then layout.intrW(i) = layout.minW(i)
-                    if layout.maxW(i) >= 0 && layout.intrW(i) > layout.maxW(i) then layout.intrW(i) = layout.maxW(i)
-                    if layout.minH(i) >= 0 && layout.intrH(i) < layout.minH(i) then layout.intrH(i) = layout.minH(i)
-                    if layout.maxH(i) >= 0 && layout.intrH(i) > layout.maxH(i) then layout.intrH(i) = layout.maxH(i)
-                end if
-                loop(i - 1)
-
-        loop(layout.count - 1)
-    end measure
-
-    /** Top-down position assignment. Root fills terminal, children positioned by parent. */
-    def arrange(layout: TuiLayout, termW: Int, termH: Int): Unit =
-        if layout.count != 0 then
-            // Root node fills terminal
-            layout.x(0) = 0
-            layout.y(0) = 0
-            layout.w(0) = termW
-            layout.h(0) = termH
-
-            inline def countChildrenLoop(layout: TuiLayout, firstChild: Int, row: Boolean)(
-                inline f: (Int, Int) => Unit
-            ): Unit =
-                @tailrec def loop(c: Int, totalMain: Int, childCount: Int): Unit =
-                    if c == -1 then f(totalMain, childCount)
-                    else if isHidden(layout.lFlags(c)) then
-                        loop(layout.nextSibling(c), totalMain, childCount)
-                    else
-                        val cMain =
-                            if row then layout.intrW(c) + layout.marL(c) + layout.marR(c)
-                            else layout.intrH(c) + layout.marT(c) + layout.marB(c)
-                        loop(layout.nextSibling(c), totalMain + cMain, childCount + 1)
-                loop(firstChild, 0, 0)
-            end countChildrenLoop
-
-            @tailrec def positionChildren(
-                layout: TuiLayout,
-                c: Int,
-                row: Boolean,
-                contentX: Int,
-                contentY: Int,
-                contentH: Int,
-                contentW: Int,
-                alignMode: Int,
-                betweenGap: Int,
-                childCount: Int,
-                pos: Int,
-                childIdx: Int
-            ): Unit =
-                if c != -1 then
-                    if isHidden(layout.lFlags(c)) then
-                        positionChildren(
-                            layout,
-                            layout.nextSibling(c),
-                            row,
-                            contentX,
-                            contentY,
-                            contentH,
-                            contentW,
-                            alignMode,
-                            betweenGap,
-                            childCount,
-                            pos,
-                            childIdx
-                        )
-                    else
-                        val cMarL = layout.marL(c)
-                        val cMarR = layout.marR(c)
-                        val cMarT = layout.marT(c)
-                        val cMarB = layout.marB(c)
-
-                        val cMainSize    = if row then layout.intrW(c) else layout.intrH(c)
-                        val cCrossSize   = if row then layout.intrH(c) else layout.intrW(c)
-                        val cMainMargin  = if row then cMarL + cMarR else cMarT + cMarB
-                        val cCrossMargin = if row then cMarT + cMarB else cMarL + cMarR
-                        val crossSpace   = if row then contentH else contentW
-
-                        val crossOffset = alignMode match
-                            case AlignStart   => 0
-                            case AlignCenter  => (crossSpace - cCrossSize - cCrossMargin) / 2
-                            case AlignEnd     => crossSpace - cCrossSize - cCrossMargin
-                            case AlignStretch => 0
-                            case _            => 0
-
-                        val availCrossForChild = math.max(0, crossSpace - cCrossMargin)
-                        val childW = if row then cMainSize
-                        else if alignMode == AlignStretch then math.max(0, crossSpace - cMarL - cMarR)
-                        else math.min(cCrossSize, availCrossForChild)
-                        val childH = if row then
-                            if alignMode == AlignStretch then math.max(0, crossSpace - cMarT - cMarB)
-                            else math.min(cCrossSize, availCrossForChild)
-                        else cMainSize
-
-                        if row then
-                            layout.x(c) = contentX + pos + cMarL + layout.transX(c)
-                            layout.y(c) = contentY + crossOffset + cMarT + layout.transY(c)
-                        else
-                            layout.x(c) = contentX + crossOffset + cMarL + layout.transX(c)
-                            layout.y(c) = contentY + pos + cMarT + layout.transY(c)
-                        end if
-
-                        layout.w(c) = childW
-                        layout.h(c) = childH
-
-                        // Re-wrap text node when width is known and text overflows
-                        if layout.text(c).isDefined && childW > 0 && layout.intrW(c) > childW then
-                            val lines = wrapLineCount(layout.text(c).get, childW)
-                            layout.intrH(c) = lines
-                            layout.h(c) = lines
-                        end if
-
-                        val nextPos = pos + (if row then layout.w(c) + cMarL + cMarR else layout.h(c) + cMarT + cMarB) +
-                            (if childIdx < childCount - 1 then betweenGap else 0)
-                        positionChildren(
-                            layout,
-                            layout.nextSibling(c),
-                            row,
-                            contentX,
-                            contentY,
-                            contentH,
-                            contentW,
-                            alignMode,
-                            betweenGap,
-                            childCount,
-                            nextPos,
-                            childIdx + 1
-                        )
-                    end if
-
-            @tailrec def loop(i: Int): Unit =
-                if i < layout.count then
-                    if !isHidden(layout.lFlags(i)) then
-                        val flags = layout.lFlags(i)
-                        val row   = isRow(flags)
-
-                        val bT       = if hasBorderT(flags) then 1 else 0
-                        val bR       = if hasBorderR(flags) then 1 else 0
-                        val bB       = if hasBorderB(flags) then 1 else 0
-                        val bL       = if hasBorderL(flags) then 1 else 0
-                        val contentX = layout.x(i) + bL + layout.padL(i)
-                        val contentY = layout.y(i) + bT + layout.padT(i)
-                        val contentW =
-                            math.max(0, layout.w(i) - bL - bR - layout.padL(i) - layout.padR(i))
-                        val contentH =
-                            math.max(0, layout.h(i) - bT - bB - layout.padT(i) - layout.padB(i))
-
-                        countChildrenLoop(layout, layout.firstChild(i), row) { (totalMain, childCount) =>
-                            val gapSize     = layout.gap(i)
-                            val gapTotal    = if childCount > 1 then gapSize * (childCount - 1) else 0
-                            val mainSpace   = if row then contentW else contentH
-                            val freeSpace   = math.max(0, mainSpace - totalMain - gapTotal)
-                            val justifyMode = justify(flags)
-                            val alignMode   = align(flags)
-
-                            val mainOffset = justifyMode match
-                                case JustCenter => freeSpace / 2
-                                case JustEnd    => freeSpace
-                                case JustAround =>
-                                    if childCount > 0 then freeSpace / childCount / 2 else 0
-                                case JustEvenly =>
-                                    if childCount > 0 then freeSpace / (childCount + 1) else 0
-                                case _ => 0
-
-                            val betweenGap = justifyMode match
-                                case JustBetween =>
-                                    if childCount > 1 then gapSize + freeSpace / (childCount - 1) else gapSize
-                                case JustAround =>
-                                    if childCount > 0 then gapSize + freeSpace / childCount else gapSize
-                                case JustEvenly =>
-                                    if childCount > 0 then gapSize + freeSpace / (childCount + 1) else gapSize
-                                case _ => gapSize
-
-                            positionChildren(
-                                layout,
-                                layout.firstChild(i),
-                                row,
-                                contentX,
-                                contentY,
-                                contentH,
-                                contentW,
-                                alignMode,
-                                betweenGap,
-                                childCount,
-                                mainOffset,
-                                0
-                            )
-                        }
-                    end if
-                    loop(i + 1)
-
-            loop(0)
-        end if
-    end arrange
 
 end TuiLayout

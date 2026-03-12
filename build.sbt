@@ -414,9 +414,13 @@ lazy val `kyo-ui` =
         .jvmSettings(run / connectInput := true)
         .jvmSettings(Compile / unmanagedClasspath += (`kyo-playwright`.jvm / Compile / packageBin).value)
         .jvmSettings(
-            libraryDependencies += "org.openjfx" % "javafx-base"     % "21.0.7",
-            libraryDependencies += "org.openjfx" % "javafx-controls" % "21.0.7",
-            libraryDependencies += "org.openjfx" % "javafx-graphics" % "21.0.7"
+            resolvers += "JetBrains Intellij Dependencies" at "https://packages.jetbrains.team/maven/p/ij/intellij-dependencies",
+            libraryDependencies += "org.openjfx"          % "javafx-base"     % "21.0.7",
+            libraryDependencies += "org.openjfx"          % "javafx-controls" % "21.0.7",
+            libraryDependencies += "org.openjfx"          % "javafx-graphics" % "21.0.7",
+            libraryDependencies += "org.openjfx"          % "javafx-web"      % "21.0.7",
+            libraryDependencies += "org.jetbrains.jediterm" % "jediterm-core" % "3.63",
+            libraryDependencies += "org.jetbrains.jediterm" % "jediterm-ui"   % "3.63"
         )
         .jvmConfigure(_.dependsOn(`kyo-playwright`.jvm))
         .nativeSettings(`native-settings`)

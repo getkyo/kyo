@@ -1,0 +1,21 @@
+package kyo
+
+object UIDsl:
+    export Style.Alignment
+    export Style.BorderStyle
+    export Style.Color
+    export Style.Cursor
+    export Style.FontStyle
+    export Style.FontWeight
+    export Style.GradientDirection
+    export Style.Justification
+    export Style.Overflow
+    export Style.Position
+    export Style.Size
+    export Style.Size.*
+    export Style.TextAlign
+    export Style.TextDecoration
+    export Style.TextOverflow
+    export Style.TextTransform
+    export UI.*
+end UIDsl

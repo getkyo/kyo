@@ -8,9 +8,20 @@ import kyo.internal.*
   */
 object TuiBackend extends UIBackend:
 
-    def render(ui: UI)(using Frame): UISession < (Async & Scope) =
+    /** How often to poll for terminal input when none is available. */
+    private val InputPollInterval = 16.millis
+
+    /** Debounce delay after a signal change before re-rendering. */
+    private val RenderDebounce = 4.millis
+
+    /** Cursor blink interval — cursor toggles visibility at this rate. */
+    private val CursorBlinkInterval = 500.millis
+
+    def render(ui: UI, theme: Theme = Theme.Default)(using Frame): UISession < (Async & Scope) =
+        val resolved = TuiResolvedTheme.resolve(theme)
         for
-            rendered <- Signal.initRef[UI](UI.empty)
+            rendered      <- Signal.initRef[UI](UI.empty)
+            renderTrigger <- Signal.initRef[Int](0)
             terminal <- Sync.defer {
                 val t = new TuiTerminal
                 t.enter()
@@ -21,12 +32,14 @@ object TuiBackend extends UIBackend:
             signals  <- Sync.defer(new TuiSignalCollector(256))
             renderer <- Sync.defer(new TuiRenderer(terminal.cols, terminal.rows))
             focus    <- Sync.defer(new TuiFocus)
-            _        <- Sync.defer(doRender(ui, terminal, layout, signals, renderer, focus))
+            _        <- Sync.defer(doRender(ui, terminal, layout, signals, renderer, focus, resolved))
             _        <- rendered.set(ui)
-            fiber    <- Fiber.init(mainLoop(ui, terminal, layout, signals, renderer, focus, rendered))
+            fiber    <- Fiber.init(mainLoop(ui, terminal, layout, signals, renderer, focus, rendered, renderTrigger, resolved))
         yield new UISession(fiber, rendered)
+        end for
+    end render
 
-    // ──────────────────────── Main Loop ────────────────────────
+    // ---- Main Loop ----
 
     private def mainLoop(
         ui: UI,
@@ -35,41 +48,64 @@ object TuiBackend extends UIBackend:
         signals: TuiSignalCollector,
         renderer: TuiRenderer,
         focus: TuiFocus,
-        rendered: SignalRef[UI]
+        rendered: SignalRef[UI],
+        renderTrigger: SignalRef[Int],
+        theme: TuiResolvedTheme
     )(using Frame): Unit < Async =
         Async.race(
-            inputLoop(terminal, focus, layout),
-            renderLoop(ui, terminal, layout, signals, renderer, focus, rendered)
+            inputLoop(terminal, focus, layout, renderTrigger),
+            renderLoop(ui, terminal, layout, signals, renderer, focus, rendered, renderTrigger, theme)
         ).unit
 
-    // ──────────────────────── Input Loop ────────────────────────
+    // ---- Input Loop ----
 
     private def inputLoop(
         terminal: TuiTerminal,
         focus: TuiFocus,
-        layout: TuiLayout
+        layout: TuiLayout,
+        renderTrigger: SignalRef[Int]
     )(using Frame): Unit < Async =
         import AllowUnsafe.embrace.danger
         for
-            readBuf <- Sync.defer(new Array[Byte](256))
-            _ <- Loop(Chunk.empty[Byte]) { (remainder: Chunk[Byte]) =>
+            readBuf  <- Sync.defer(new Array[Byte](256))
+            accumBuf <- Sync.defer(new Array[Byte](1024)) // pre-allocated accumulation buffer
+            _ <- Loop(0) { (remainderLen: Int) =>
                 for
                     n <- Sync.defer(terminal.read(readBuf))
                     r <-
                         if n > 0 then
+                            var parsedEvents: Chunk[InputEvent] = Chunk.empty
+                            var newRemainderLen: Int            = 0
                             for
-                                parsed <- Sync.defer {
-                                    val bytes = Chunk.from(java.util.Arrays.copyOf(readBuf, n))
-                                    val all   = if remainder.isEmpty then bytes else remainder ++ bytes
-                                    TuiInput.parse(all)
+                                _ <- Sync.defer {
+                                    // Copy new bytes after remainder in accumulation buffer
+                                    val totalLen = remainderLen + n
+                                    java.lang.System.arraycopy(readBuf, 0, accumBuf, remainderLen, n)
+                                    val all = Chunk.from(java.util.Arrays.copyOfRange(accumBuf, 0, totalLen))
+                                    TuiInput.parse(all) { (events, leftover) =>
+                                        parsedEvents = events
+                                        // Copy leftover bytes to start of accumBuf for next iteration
+                                        newRemainderLen = leftover.size
+                                        if newRemainderLen > 0 then
+                                            // unsafe: while for byte copy
+                                            var i = 0
+                                            while i < newRemainderLen do
+                                                accumBuf(i) = leftover(i)
+                                                i += 1
+                                            end while
+                                        end if
+                                    }
                                 }
-                                (events, leftover) = parsed
-                                quit <- dispatchEvents(events, focus, layout, 0)
+                                quit <- dispatchEvents(parsedEvents, focus, layout, 0)
+                                // Notify render loop that visual state may have changed (focus, cursor, hover)
+                                tc <- renderTrigger.get
+                                _  <- renderTrigger.set(tc + 1)
                             yield
-                                if quit then Loop.done[Chunk[Byte], Unit](())
-                                else Loop.continue(leftover)
+                                if quit then Loop.done[Int, Unit](())
+                                else Loop.continue(newRemainderLen)
+                            end for
                         else
-                            Async.sleep(16.millis).andThen(Loop.continue(remainder))
+                            Async.sleep(InputPollInterval).andThen(Loop.continue(remainderLen))
                 yield r
             }
         yield ()
@@ -85,14 +121,14 @@ object TuiBackend extends UIBackend:
         if i >= events.size then false
         else
             events(i) match
-                case InputEvent.Key("c", true, false, false) => true
+                case InputEvent.Key(UI.Keyboard.Char('c'), true, false, false) => true
                 case e =>
                     focus.dispatch(e, layout).andThen {
                         dispatchEvents(events, focus, layout, i + 1)
                     }
     end dispatchEvents
 
-    // ──────────────────────── Render Loop ────────────────────────
+    // ---- Render Loop ----
 
     private def renderLoop(
         ui: UI,
@@ -101,20 +137,30 @@ object TuiBackend extends UIBackend:
         signals: TuiSignalCollector,
         renderer: TuiRenderer,
         focus: TuiFocus,
-        rendered: SignalRef[UI]
+        rendered: SignalRef[UI],
+        renderTrigger: SignalRef[Int],
+        theme: TuiResolvedTheme
     )(using Frame): Nothing < Async =
+        import AllowUnsafe.embrace.danger
+        var cursorOn = true
         Loop.forever {
             for
                 sigs <- Sync.defer(signals.toSpan)
-                _ <-
-                    if sigs.isEmpty then Async.sleep(100.millis)
-                    else Async.race(Seq.tabulate(sigs.size)(i => sigs(i).next.unit))
-                _ <- Async.sleep(4.millis)
+                // Race: signal/trigger changes return true; blink timeout returns false
+                contentChanged <- Async.race(Array.tabulate(sigs.size + 2)(i =>
+                    if i < sigs.size then sigs(i).next.andThen(true)
+                    else if i == sigs.size then renderTrigger.next.andThen(true)
+                    else Async.sleep(CursorBlinkInterval).andThen(false)
+                ))
+                _ <- Async.sleep(RenderDebounce)
                 _ <- Sync.defer {
+                    // Reset blink on content/focus change; toggle on blink timeout
+                    if contentChanged then cursorOn = true
+                    else cursorOn = !cursorOn
                     if terminal.pollResize() then
                         renderer.resize(terminal.cols, terminal.rows)
                         renderer.invalidate()
-                    doRender(ui, terminal, layout, signals, renderer, focus)
+                    doRender(ui, terminal, layout, signals, renderer, focus, theme, cursorOn)
                 }
                 _ <- rendered.set(ui)
             yield ()
@@ -122,7 +168,7 @@ object TuiBackend extends UIBackend:
         }
     end renderLoop
 
-    // ──────────────────────── Synchronous Pipeline ────────────────────────
+    // ---- Synchronous Pipeline ----
 
     private[kyo] def doRender(
         ui: UI,
@@ -130,34 +176,52 @@ object TuiBackend extends UIBackend:
         layout: TuiLayout,
         signals: TuiSignalCollector,
         renderer: TuiRenderer,
-        focus: TuiFocus
+        focus: TuiFocus,
+        theme: TuiResolvedTheme,
+        cursorOn: Boolean = true
     )(using Frame): Unit =
         import AllowUnsafe.embrace.danger
-        TuiFlatten.flatten(ui, layout, signals, terminal.cols, terminal.rows)
-        TuiLayout.measure(layout)
-        TuiLayout.arrange(layout, terminal.cols, terminal.rows)
-        TuiPainter.inheritStyles(layout)
+        TuiFlatten.flatten(ui, layout, signals, terminal.cols, terminal.rows, theme)
+        TuiFlexLayout.measure(layout)
+        TuiFlexLayout.arrange(layout, terminal.cols, terminal.rows)
+        // Second pass: text wrapping during arrange may increase text heights.
+        // Re-measure propagates those heights to parents, then re-arrange positions correctly.
+        TuiFlexLayout.measure(layout)
+        TuiFlexLayout.arrange(layout, terminal.cols, terminal.rows)
         focus.scan(layout)
-        focus.applyFocusStyle(layout)
+        focus.adjustTextScroll(layout)
+        TuiStyle.inherit(layout)
+        TuiStyle.applyStates(layout, focus.focusedIndex, focus.hoverIdx, focus.activeIdx)
         renderer.clear()
         TuiPainter.paint(layout, renderer)
         renderer.flush(terminal.outputStream)
+        // Show/hide cursor based on focused text input and blink state (CPS to avoid tuple allocation)
+        focus.getCursorPosition(layout) { (cx, cy) =>
+            if cursorOn && cx >= 0 && cy >= 0 && cx < terminal.cols && cy < terminal.rows then
+                terminal.showCursor(cx, cy)
+            else
+                terminal.hideCursor()
+        }
         terminal.flush()
     end doRender
 
     /** Render a single frame to a plain-text string grid. No TTY needed. For debugging. */
-    def renderToString(ui: UI, cols: Int, rows: Int)(using Frame): String =
+    def renderToString(ui: UI, cols: Int, rows: Int, theme: Theme = Theme.Default)(using Frame): String =
         import AllowUnsafe.embrace.danger
+        val resolved = TuiResolvedTheme.resolve(theme)
         val layout   = new TuiLayout(512)
         val signals  = new TuiSignalCollector(256)
         val renderer = new TuiRenderer(cols, rows)
         val focus    = new TuiFocus
-        TuiFlatten.flatten(ui, layout, signals, cols, rows)
-        TuiLayout.measure(layout)
-        TuiLayout.arrange(layout, cols, rows)
-        TuiPainter.inheritStyles(layout)
+        TuiFlatten.flatten(ui, layout, signals, cols, rows, resolved)
+        TuiFlexLayout.measure(layout)
+        TuiFlexLayout.arrange(layout, cols, rows)
+        TuiFlexLayout.measure(layout)
+        TuiFlexLayout.arrange(layout, cols, rows)
         focus.scan(layout)
-        focus.applyFocusStyle(layout)
+        focus.adjustTextScroll(layout)
+        TuiStyle.inherit(layout)
+        TuiStyle.applyStates(layout, focus.focusedIndex, focus.hoverIdx, focus.activeIdx)
         renderer.clear()
         TuiPainter.paint(layout, renderer)
         val baos = new java.io.ByteArrayOutputStream()
@@ -169,11 +233,13 @@ object TuiBackend extends UIBackend:
             .replaceAll("\u001b\\[\\?[^\u001b]*", "") // strip private modes
         val pattern  = java.util.regex.Pattern.compile("\u001b\\[(\\d+);(\\d+)H([^\u001b]*)")
         val matcher  = pattern.matcher(stripped)
+        // unsafe: while for regex iteration
         while matcher.find() do
             val r    = matcher.group(1).toInt - 1
             val c    = matcher.group(2).toInt - 1
             val text = matcher.group(3)
             var i    = 0
+            // unsafe: while for character iteration
             while i < text.length do
                 val col = c + i
                 if r >= 0 && r < rows && col >= 0 && col < cols then
@@ -185,15 +251,18 @@ object TuiBackend extends UIBackend:
     end renderToString
 
     /** Render a single frame to raw ANSI string. For debugging. */
-    def renderToRawAnsi(ui: UI, cols: Int, rows: Int)(using Frame): String =
+    def renderToRawAnsi(ui: UI, cols: Int, rows: Int, theme: Theme = Theme.Default)(using Frame): String =
         import AllowUnsafe.embrace.danger
+        val resolved = TuiResolvedTheme.resolve(theme)
         val layout   = new TuiLayout(512)
         val signals  = new TuiSignalCollector(256)
         val renderer = new TuiRenderer(cols, rows)
-        TuiFlatten.flatten(ui, layout, signals, cols, rows)
-        TuiLayout.measure(layout)
-        TuiLayout.arrange(layout, cols, rows)
-        TuiPainter.inheritStyles(layout)
+        TuiFlatten.flatten(ui, layout, signals, cols, rows, resolved)
+        TuiFlexLayout.measure(layout)
+        TuiFlexLayout.arrange(layout, cols, rows)
+        TuiFlexLayout.measure(layout)
+        TuiFlexLayout.arrange(layout, cols, rows)
+        TuiStyle.inherit(layout)
         renderer.clear()
         TuiPainter.paint(layout, renderer)
         val baos = new java.io.ByteArrayOutputStream()
@@ -202,18 +271,23 @@ object TuiBackend extends UIBackend:
     end renderToRawAnsi
 
     /** Dump layout tree for debugging. */
-    def renderLayoutDump(ui: UI, cols: Int, rows: Int)(using Frame): String =
+    def renderLayoutDump(ui: UI, cols: Int, rows: Int, theme: Theme = Theme.Default)(using Frame): String =
         import AllowUnsafe.embrace.danger
-        val layout  = new TuiLayout(512)
-        val signals = new TuiSignalCollector(256)
-        TuiFlatten.flatten(ui, layout, signals, cols, rows)
-        TuiLayout.measure(layout)
-        TuiLayout.arrange(layout, cols, rows)
+        val resolved = TuiResolvedTheme.resolve(theme)
+        val layout   = new TuiLayout(512)
+        val signals  = new TuiSignalCollector(256)
+        TuiFlatten.flatten(ui, layout, signals, cols, rows, resolved)
+        TuiFlexLayout.measure(layout)
+        TuiFlexLayout.arrange(layout, cols, rows)
+        TuiFlexLayout.measure(layout)
+        TuiFlexLayout.arrange(layout, cols, rows)
         val sb  = new StringBuilder
         var idx = 0
+        // unsafe: while for array iteration
         while idx < layout.count do
             val depth =
                 var d = 0; var p = layout.parent(idx);
+                // unsafe: while for parent chain traversal
                 while p >= 0 do
                     d += 1; p = layout.parent(p)
                 ; d

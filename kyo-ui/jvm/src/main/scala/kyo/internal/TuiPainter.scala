@@ -2,126 +2,150 @@ package kyo.internal
 
 import scala.annotation.tailrec
 
-/** Reads TuiLayout flat arrays and paints into TuiRenderer.
+/** Tree-walk renderer: reads TuiLayout arrays, calls TuiRenderer drawing methods.
   *
-  * Two phases:
-  *   - `inheritStyles`: forward pass propagating fg/bg/pFlags from parents to children
-  *   - `paint`: recursive tree walk rendering backgrounds, borders, text, and children
-  *
-  * Pure computation, no I/O. The caller is responsible for calling `renderer.clear()` before `paint`.
+  * Pure tree traversal — all drawing logic (borders, text, clipping) lives in TuiRenderer. Style inheritance and state overlays are handled
+  * by TuiStyle (called before paint).
   */
 private[kyo] object TuiPainter:
 
-    // ──────────────────────── Style Inheritance ────────────────────────
-
-    /** Forward pass O(n): propagate inherited properties from parent to child.
-      *
-      * Parents always have lower indices than children (TuiFlatten allocates depth-first). Text nodes inherit everything (fg, bg, pFlags).
-      * Element nodes inherit fg/bg only when Absent.
+    /** Paint the layout tree into the renderer with two-pass overlay support. Pass 1: flow elements (skip overlays). Pass 2: overlays in
+      * tree order. Caller must call `renderer.clear()` first.
       */
-    def inheritStyles(layout: TuiLayout): Unit =
-        val count = layout.count
-        @tailrec def loop(idx: Int): Unit =
-            if idx < count then
-                val pi = layout.parent(idx)
-                if pi >= 0 then
-                    if layout.nodeType(idx) == TuiLayout.NodeText then
-                        if layout.fg(idx) == TuiColor.Absent then
-                            layout.fg(idx) = layout.fg(pi)
-                        if layout.bg(idx) == TuiColor.Absent then
-                            layout.bg(idx) = layout.bg(pi)
-                        layout.pFlags(idx) = layout.pFlags(pi)
-                    else
-                        if layout.fg(idx) == TuiColor.Absent then
-                            layout.fg(idx) = layout.fg(pi)
-                        if layout.bg(idx) == TuiColor.Absent then
-                            layout.bg(idx) = layout.bg(pi)
-                    end if
-                    val opac = layout.opac(idx)
-                    if opac < 1.0f then
-                        val parentBg = layout.bg(pi)
-                        if parentBg != TuiColor.Absent then
-                            if layout.fg(idx) != TuiColor.Absent then
-                                layout.fg(idx) = TuiColor.blend(layout.fg(idx), parentBg, opac)
-                            if layout.bg(idx) != TuiColor.Absent then
-                                layout.bg(idx) = TuiColor.blend(layout.bg(idx), parentBg, opac)
-                        end if
-                    end if
-                end if
-                loop(idx + 1)
-        loop(1)
-    end inheritStyles
-
-    // ──────────────────────── Paint ────────────────────────
-
-    /** Paint the layout tree into the renderer. Caller must call `renderer.clear()` first. */
     def paint(layout: TuiLayout, renderer: TuiRenderer): Unit =
         if layout.count > 0 then
-            paintNode(layout, renderer, 0)
+            paintNode(layout, renderer, 0, skipOverlays = true)
+            paintOverlays(layout, renderer)
 
-    private def paintNode(layout: TuiLayout, renderer: TuiRenderer, idx: Int): Unit =
+    private def paintNode(layout: TuiLayout, renderer: TuiRenderer, idx: Int, skipOverlays: Boolean): Unit =
         if idx >= 0 && idx < layout.count then
             val lf = layout.lFlags(idx)
-            if !TuiLayout.isHidden(lf) then
-                val nx = layout.x(idx)
-                val ny = layout.y(idx)
-                val nw = layout.w(idx)
-                val nh = layout.h(idx)
+            if skipOverlays && TuiLayout.isOverlay(lf) then ()
+            else if !TuiLayout.isHidden(lf) then
+                val nx = layout.x(idx); val ny = layout.y(idx)
+                val nw = layout.w(idx); val nh = layout.h(idx)
                 if nw > 0 && nh > 0 then
+                    // Shadow (paint before bg so it appears behind)
+                    if layout.shadowClr(idx) != TuiColor.Absent then
+                        val sx     = layout.shadowX(idx); val sy = layout.shadowY(idx)
+                        val spread = layout.shadowSpread(idx)
+                        renderer.fillBg(nx + sx - spread, ny + sy - spread, nw + spread * 2, nh + spread * 2, layout.shadowClr(idx))
+                    end if
+
+                    // Background fill
                     if layout.bg(idx) != TuiColor.Absent then
                         renderer.fillBg(nx, ny, nw, nh, layout.bg(idx))
 
                     val pf = layout.pFlags(idx)
-                    val bT = TuiLayout.hasBorderT(lf)
-                    val bR = TuiLayout.hasBorderR(lf)
-                    val bB = TuiLayout.hasBorderB(lf)
-                    val bL = TuiLayout.hasBorderL(lf)
+                    val bT = TuiLayout.hasBorderT(lf); val bR = TuiLayout.hasBorderR(lf)
+                    val bB = TuiLayout.hasBorderB(lf); val bL = TuiLayout.hasBorderL(lf)
                     val bs = TuiLayout.borderStyle(pf)
 
+                    // Borders
                     if (bT || bR || bB || bL) && bs != TuiLayout.BorderNone then
-                        paintBorders(layout, renderer, idx, nx, ny, nw, nh, pf, bT, bR, bB, bL, bs)
+                        val fgFb = if layout.fg(idx) != TuiColor.Absent then layout.fg(idx)
+                        else TuiColor.pack(100, 100, 120)
+                        renderer.drawBorder(
+                            nx,
+                            ny,
+                            nw,
+                            nh,
+                            bs,
+                            bT,
+                            bR,
+                            bB,
+                            bL,
+                            TuiLayout.isRoundedTL(pf),
+                            TuiLayout.isRoundedTR(pf),
+                            TuiLayout.isRoundedBR(pf),
+                            TuiLayout.isRoundedBL(pf),
+                            if layout.bdrClrT(idx) != TuiColor.Absent then layout.bdrClrT(idx) else fgFb,
+                            if layout.bdrClrR(idx) != TuiColor.Absent then layout.bdrClrR(idx) else fgFb,
+                            if layout.bdrClrB(idx) != TuiColor.Absent then layout.bdrClrB(idx) else fgFb,
+                            if layout.bdrClrL(idx) != TuiColor.Absent then layout.bdrClrL(idx) else fgFb,
+                            layout.bg(idx)
+                        )
+                    end if
 
+                    // Text content
                     val mt = layout.text(idx)
                     if mt.isDefined then
-                        paintText(layout, renderer, idx, nx, ny, nw, nh, pf, bT, bR, bB, bL, mt.get)
-
-                    val overflow = TuiLayout.overflow(lf)
-                    if overflow == 1 then
-                        val padL = layout.padL(idx)
-                        val padR = layout.padR(idx)
-                        val padT = layout.padT(idx)
-                        val padB = layout.padB(idx)
-                        val bt   = if bT then 1 else 0
-                        val br   = if bR then 1 else 0
-                        val bb   = if bB then 1 else 0
-                        val bl   = if bL then 1 else 0
-                        val cw   = math.max(0, nw - bl - br - padL - padR)
-                        val ch   = math.max(0, nh - bt - bb - padT - padB)
+                        val bt = if bT then 1 else 0; val br        = if bR then 1 else 0
+                        val bb = if bB then 1 else 0; val bl        = if bL then 1 else 0
+                        val cx = nx + bl + layout.padL(idx); val cy = ny + bt + layout.padT(idx)
+                        val cw = math.max(0, nw - bl - br - layout.padL(idx) - layout.padR(idx))
+                        val ch = math.max(0, nh - bt - bb - layout.padT(idx) - layout.padB(idx))
                         if cw > 0 && ch > 0 then
-                            val cx = nx + bl + padL
-                            val cy = ny + bt + padT
-                            renderer.setClip(cx, cy, cx + cw, cy + ch)
-                            paintChildren(layout, renderer, idx)
-                            renderer.resetClip()
+                            renderer.drawText(
+                                mt.get,
+                                cx,
+                                cy,
+                                cw,
+                                ch,
+                                mkStyle(layout, idx),
+                                TuiLayout.textAlign(pf),
+                                TuiLayout.textTrans(pf),
+                                TuiLayout.shouldWrapText(pf),
+                                TuiLayout.hasTextOverflow(pf)
+                            )
+                        end if
+                    end if
+
+                    // Children with overflow clipping (hidden=1, scroll=2)
+                    val overflow = TuiLayout.overflow(lf)
+                    if overflow == 1 || overflow == 2 then
+                        val bt = if bT then 1 else 0; val br        = if bR then 1 else 0
+                        val bb = if bB then 1 else 0; val bl        = if bL then 1 else 0
+                        val cx = nx + bl + layout.padL(idx); val cy = ny + bt + layout.padT(idx)
+                        val cw = math.max(0, nw - bl - br - layout.padL(idx) - layout.padR(idx))
+                        val ch = math.max(0, nh - bt - bb - layout.padT(idx) - layout.padB(idx))
+                        if cw > 0 && ch > 0 then
+                            renderer.pushClip(cx, cy, cx + cw, cy + ch)
+                            paintChildren(layout, renderer, idx, skipOverlays)
+                            renderer.popClip()
+                            // Scroll indicator for scrollable containers
+                            if overflow == 2 then
+                                paintScrollIndicator(layout, renderer, idx, nx, ny, nw, nh, cx, cy, cw, ch)
                         end if
                     else
-                        paintChildren(layout, renderer, idx)
+                        paintChildren(layout, renderer, idx, skipOverlays)
                     end if
+
+                    // Apply filters as post-processing (after all children painted)
+                    val filterBits = layout.filterBits(idx)
+                    if filterBits != 0 then
+                        renderer.applyFilter(nx, ny, nw, nh, filterBits, layout.filterVals, idx * 8)
                 end if
             end if
     end paintNode
 
-    private def paintChildren(layout: TuiLayout, renderer: TuiRenderer, idx: Int): Unit =
+    private def paintChildren(layout: TuiLayout, renderer: TuiRenderer, idx: Int, skipOverlays: Boolean): Unit =
         @tailrec def loop(ch: Int): Unit =
             if ch != -1 then
-                paintNode(layout, renderer, ch)
+                paintNode(layout, renderer, ch, skipOverlays)
                 loop(layout.nextSibling(ch))
         loop(layout.firstChild(idx))
     end paintChildren
 
-    // ──────────────────────── Borders ────────────────────────
+    /** Pass 2: paint overlay elements in tree order. Overlays that appear later paint on top. Uses skipOverlays=false so the overlay node
+      * itself is painted, along with all its descendants. Nested overlays (rare) may paint twice but the result is correct (last write wins
+      * on cell buffer).
+      */
+    private def paintOverlays(layout: TuiLayout, renderer: TuiRenderer): Unit =
+        // unsafe: while for array iteration
+        var i = 0
+        while i < layout.count do
+            val lf = layout.lFlags(i)
+            if TuiLayout.isOverlay(lf) && !TuiLayout.isHidden(lf) then
+                paintNode(layout, renderer, i, skipOverlays = false)
+            i += 1
+        end while
+    end paintOverlays
 
-    private def paintBorders(
+    /** Paint a vertical scroll indicator on the right edge of a scrollable container. Shows ▲/▼ arrows at top/bottom and a █ thumb
+      * proportional to visible content.
+      */
+    private def paintScrollIndicator(
         layout: TuiLayout,
         renderer: TuiRenderer,
         idx: Int,
@@ -129,163 +153,55 @@ private[kyo] object TuiPainter:
         ny: Int,
         nw: Int,
         nh: Int,
-        pf: Int,
-        bT: Boolean,
-        bR: Boolean,
-        bB: Boolean,
-        bL: Boolean,
-        bs: Int
+        cx: Int,
+        cy: Int,
+        cw: Int,
+        ch: Int
     ): Unit =
-        val fgFallback =
-            if layout.fg(idx) != TuiColor.Absent then layout.fg(idx)
-            else TuiColor.pack(100, 100, 120)
+        // Compute total content height from children
+        val contentH = computeContentHeight(layout, idx, cy)
+        if contentH > ch && ch >= 3 then
+            val scrollY     = layout.scrollY(idx)
+            val maxScroll   = contentH - ch
+            val trackX      = nx + nw - 1 // right edge
+            val trackTop    = cy
+            val trackH      = ch
+            val scrollStyle = TuiRenderer.packStyle(fg = TuiColor.pack(120, 120, 140), bg = TuiColor.Absent)
 
-        val bcT = if layout.bdrClrT(idx) != TuiColor.Absent then layout.bdrClrT(idx) else fgFallback
-        val bcR = if layout.bdrClrR(idx) != TuiColor.Absent then layout.bdrClrR(idx) else fgFallback
-        val bcB = if layout.bdrClrB(idx) != TuiColor.Absent then layout.bdrClrB(idx) else fgFallback
-        val bcL = if layout.bdrClrL(idx) != TuiColor.Absent then layout.bdrClrL(idx) else fgFallback
+            // Up arrow
+            renderer.set(trackX, trackTop, '\u25b2', scrollStyle)
+            // Down arrow
+            renderer.set(trackX, trackTop + trackH - 1, '\u25bc', scrollStyle)
 
-        TuiLayout.borderChars(
-            bs,
-            TuiLayout.isRoundedTL(pf),
-            TuiLayout.isRoundedTR(pf),
-            TuiLayout.isRoundedBR(pf),
-            TuiLayout.isRoundedBL(pf)
-        ) { (tl, tr, br, bl, hz, vt) =>
-            val bgc = layout.bg(idx)
-
-            if bT then
-                val stT = packBorderStyle(bcT, bgc)
-                if bL then renderer.set(nx, ny, tl, packBorderStyle(bcL, bgc))
-                hline(renderer, nx + (if bL then 1 else 0), ny, nx + nw - (if bR then 1 else 0), hz, stT)
-                if bR then renderer.set(nx + nw - 1, ny, tr, packBorderStyle(bcR, bgc))
+            // Thumb position within track (excluding arrow rows)
+            val innerH = trackH - 2
+            if innerH > 0 then
+                val thumbSize = math.max(1, innerH * ch / contentH)
+                val thumbPos  = if maxScroll > 0 then (innerH - thumbSize) * scrollY / maxScroll else 0
+                // unsafe: while for thumb rendering
+                var ty = 0
+                while ty < thumbSize do
+                    val row = trackTop + 1 + thumbPos + ty
+                    if row < trackTop + trackH - 1 then
+                        renderer.set(trackX, row, '\u2588', scrollStyle)
+                    ty += 1
+                end while
             end if
-
-            if bB then
-                val stB = packBorderStyle(bcB, bgc)
-                if bL then renderer.set(nx, ny + nh - 1, bl, packBorderStyle(bcL, bgc))
-                hline(renderer, nx + (if bL then 1 else 0), ny + nh - 1, nx + nw - (if bR then 1 else 0), hz, stB)
-                if bR then renderer.set(nx + nw - 1, ny + nh - 1, br, packBorderStyle(bcR, bgc))
-            end if
-
-            if bL then
-                vline(renderer, nx, ny + (if bT then 1 else 0), ny + nh - (if bB then 1 else 0), vt, packBorderStyle(bcL, bgc))
-
-            if bR then
-                vline(renderer, nx + nw - 1, ny + (if bT then 1 else 0), ny + nh - (if bB then 1 else 0), vt, packBorderStyle(bcR, bgc))
-        }
-    end paintBorders
-
-    private inline def packBorderStyle(fg: Int, bg: Int): Long =
-        TuiRenderer.packStyle(fg = fg, bg = bg)
-
-    private def hline(renderer: TuiRenderer, x0: Int, y: Int, x1: Int, ch: Char, style: Long): Unit =
-        @tailrec def loop(x: Int): Unit =
-            if x < x1 then
-                renderer.set(x, y, ch, style)
-                loop(x + 1)
-        loop(x0)
-    end hline
-
-    private def vline(renderer: TuiRenderer, x: Int, y0: Int, y1: Int, ch: Char, style: Long): Unit =
-        @tailrec def loop(y: Int): Unit =
-            if y < y1 then
-                renderer.set(x, y, ch, style)
-                loop(y + 1)
-        loop(y0)
-    end vline
-
-    // ──────────────────────── Text ────────────────────────
-
-    private def paintText(
-        layout: TuiLayout,
-        renderer: TuiRenderer,
-        idx: Int,
-        nx: Int,
-        ny: Int,
-        nw: Int,
-        nh: Int,
-        pf: Int,
-        bT: Boolean,
-        bR: Boolean,
-        bB: Boolean,
-        bL: Boolean,
-        rawText: String
-    ): Unit =
-        val padL = layout.padL(idx)
-        val padR = layout.padR(idx)
-        val padT = layout.padT(idx)
-        val padB = layout.padB(idx)
-        val bt   = if bT then 1 else 0
-        val br   = if bR then 1 else 0
-        val bb   = if bB then 1 else 0
-        val bl   = if bL then 1 else 0
-        val cx   = nx + bl + padL
-        val cy   = ny + bt + padT
-        val cw   = math.max(0, nw - bl - br - padL - padR)
-        val ch   = math.max(0, nh - bt - bb - padT - padB)
-
-        if cw > 0 && ch > 0 then
-            val text = applyTextTransform(rawText, TuiLayout.textTrans(pf))
-
-            val lines: kyo.Span[String] =
-                if TuiLayout.shouldWrapText(pf) then
-                    TuiLayout.wrapText(text, cw)
-                else if TuiLayout.hasTextOverflow(pf) then
-                    TuiLayout.clipText(text, cw, ch, true)
-                else
-                    TuiLayout.clipText(text, cw, ch, false)
-
-            val textAlignMode = TuiLayout.textAlign(pf)
-            val st            = mkTextStyle(layout, idx)
-            val maxX          = cx + cw
-
-            @tailrec def renderLines(li: Int): Unit =
-                if li < lines.size && li < ch then
-                    val line    = lines(li)
-                    val lineLen = line.length
-                    val startX = textAlignMode match
-                        case TuiLayout.TextAlignCenter => cx + math.max(0, (cw - lineLen) / 2)
-                        case TuiLayout.TextAlignRight  => cx + math.max(0, cw - lineLen)
-                        case _                         => cx
-
-                    @tailrec def renderChars(ci: Int): Unit =
-                        if ci < lineLen && (startX + ci) < maxX then
-                            if startX + ci >= cx then
-                                renderer.set(startX + ci, cy + li, line.charAt(ci), st)
-                            renderChars(ci + 1)
-                    renderChars(0)
-                    renderLines(li + 1)
-            renderLines(0)
         end if
-    end paintText
+    end paintScrollIndicator
 
-    private def applyTextTransform(text: String, transform: Int): String =
-        transform match
-            case 1 => text.toUpperCase
-            case 2 => text.toLowerCase
-            case 3 => capitalize(text)
-            case _ => text
+    /** Compute the total content height of a container's children (max bottom edge - top of content area). */
+    private def computeContentHeight(layout: TuiLayout, parentIdx: Int, contentTop: Int): Int =
+        @tailrec def loop(c: Int, maxBottom: Int): Int =
+            if c == -1 then maxBottom - contentTop
+            else
+                // Children are already offset by scroll, undo to get natural position
+                val childBottom = layout.y(c) + layout.scrollY(parentIdx) + layout.h(c)
+                loop(layout.nextSibling(c), math.max(maxBottom, childBottom))
+        loop(layout.firstChild(parentIdx), contentTop)
+    end computeContentHeight
 
-    private def capitalize(text: String): String =
-        if text.isEmpty then text
-        else
-            val sb  = new java.lang.StringBuilder(text.length)
-            val len = text.length
-            @tailrec def loop(i: Int, afterSpace: Boolean): Unit =
-                if i < len then
-                    val c = text.charAt(i)
-                    if afterSpace && Character.isLetter(c) then
-                        sb.append(Character.toUpperCase(c))
-                        loop(i + 1, false)
-                    else
-                        sb.append(c)
-                        loop(i + 1, Character.isWhitespace(c))
-                    end if
-            loop(0, true)
-            sb.toString
-
-    private inline def mkTextStyle(layout: TuiLayout, idx: Int): Long =
+    private inline def mkStyle(layout: TuiLayout, idx: Int): Long =
         val pf = layout.pFlags(idx)
         TuiRenderer.packStyle(
             fg = layout.fg(idx),
@@ -296,6 +212,6 @@ private[kyo] object TuiPainter:
             underline = TuiLayout.isUnderline(pf),
             strikethrough = TuiLayout.isStrikethrough(pf)
         )
-    end mkTextStyle
+    end mkStyle
 
 end TuiPainter

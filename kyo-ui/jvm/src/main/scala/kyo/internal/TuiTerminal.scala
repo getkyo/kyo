@@ -9,11 +9,7 @@ import kyo.Maybe
 import kyo.Maybe.*
 import kyo.discard
 
-/** Manages terminal raw mode, /dev/tty I/O, and screen state lifecycle.
-  *
-  * Encapsulates stty manipulation, alternate screen buffer, mouse tracking, bracketed paste, and non-blocking reads. Pure I/O wrapper — no
-  * kyo effects.
-  */
+/** Manages terminal raw mode, /dev/tty I/O, and screen state lifecycle. */
 final private[kyo] class TuiTerminal:
 
     private var _rows: Int                  = 24
@@ -27,8 +23,6 @@ final private[kyo] class TuiTerminal:
     def rows: Int                  = _rows
     def cols: Int                  = _cols
     def outputStream: OutputStream = ttyOut.get
-
-    // ──────────────────────── Enter ────────────────────────
 
     def enter(): Unit =
         if !entered then
@@ -50,8 +44,6 @@ final private[kyo] class TuiTerminal:
             entered = true
     end enter
 
-    // ──────────────────────── Exit ────────────────────────
-
     def exit(): Unit =
         if entered then
             entered = false
@@ -70,8 +62,6 @@ final private[kyo] class TuiTerminal:
             shutdownHook = Absent
     end exit
 
-    // ──────────────────────── Read ────────────────────────
-
     def read(buf: Array[Byte]): Int =
         val in    = ttyIn.get
         val avail = in.available()
@@ -79,12 +69,27 @@ final private[kyo] class TuiTerminal:
         else 0
     end read
 
-    // ──────────────────────── Flush ────────────────────────
-
     def flush(): Unit =
         ttyOut.get.flush()
 
-    // ──────────────────────── Resize ────────────────────────
+    /** Show the terminal cursor at (x, y) with blinking bar shape. 1-based coordinates. */
+    def showCursor(x: Int, y: Int): Unit =
+        val out = ttyOut.get
+        // Move cursor to position (1-based)
+        out.write(s"\u001b[${y + 1};${x + 1}H".getBytes)
+        // Set cursor shape to blinking bar
+        out.write(TuiTerminal.CursorBlinkingBar)
+        // Show cursor
+        out.write(TuiTerminal.ShowCursor)
+        out.flush()
+    end showCursor
+
+    /** Hide the terminal cursor. */
+    def hideCursor(): Unit =
+        val out = ttyOut.get
+        out.write(TuiTerminal.HideCursor)
+        out.flush()
+    end hideCursor
 
     inline def querySize[A](inline f: (Int, Int) => A): A =
         TuiTerminal.parseSize(sttyRunSize(), _rows, _cols)(f)
@@ -98,8 +103,6 @@ final private[kyo] class TuiTerminal:
             else false
         }
     end pollResize
-
-    // ──────────────────────── stty helpers ────────────────────────
 
     private def sttyRunSize(): String =
         val p = new ProcessBuilder(TuiTerminal.SttySizeCmd*)
@@ -133,8 +136,6 @@ end TuiTerminal
 
 private[kyo] object TuiTerminal:
 
-    // ──────────────────────── Escape Sequences ────────────────────────
-
     private[kyo] val EnterSequenceStr: String =
         "\u001b[?1049h" +     // alternate screen
             "\u001b[?25l" +   // hide cursor
@@ -150,12 +151,13 @@ private[kyo] object TuiTerminal:
             "\u001b[?1049l" + // exit alternate screen
             "\u001b[0m"       // reset SGR
 
-    private val EnterSequence: Array[Byte] = EnterSequenceStr.getBytes
-    private val ExitSequence: Array[Byte]  = ExitSequenceStr.getBytes
-    private val SttySizeCmd: Array[String] = Array("stty", "size")
-    private val DevTty: File               = new File("/dev/tty")
-
-    // ──────────────────────── Size Parsing ────────────────────────
+    private val EnterSequence: Array[Byte]     = EnterSequenceStr.getBytes
+    private val ExitSequence: Array[Byte]      = ExitSequenceStr.getBytes
+    private val CursorBlinkingBar: Array[Byte] = "\u001b[5 q".getBytes
+    private val ShowCursor: Array[Byte]        = "\u001b[?25h".getBytes
+    private val HideCursor: Array[Byte]        = "\u001b[?25l".getBytes
+    private val SttySizeCmd: Array[String]     = Array("stty", "size")
+    private val DevTty: File                   = new File("/dev/tty")
 
     private[kyo] inline def parseSize[A](output: String, defaultRows: Int, defaultCols: Int)(inline f: (Int, Int) => A): A =
         import scala.annotation.tailrec
@@ -164,7 +166,6 @@ private[kyo] object TuiTerminal:
         @tailrec def skipWs(i: Int): Int =
             if i < len && output.charAt(i) <= ' ' then skipWs(i + 1) else i
 
-        // Returns the end index and parsed value packed into a Long to avoid tuple allocation
         @tailrec def parseNum(i: Int, acc: Int): Long =
             if i < len && output.charAt(i) >= '0' && output.charAt(i) <= '9' then
                 parseNum(i + 1, acc * 10 + (output.charAt(i) - '0'))

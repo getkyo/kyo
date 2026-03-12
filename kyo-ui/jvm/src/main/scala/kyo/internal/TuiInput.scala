@@ -9,7 +9,7 @@ sealed abstract class InputEvent derives CanEqual
 
 object InputEvent:
     final case class Key(
-        key: String,
+        key: kyo.UI.Keyboard,
         ctrl: Boolean = false,
         alt: Boolean = false,
         shift: Boolean = false
@@ -38,86 +38,81 @@ private[kyo] object TuiInput:
 
     import InputEvent.*
     import MouseKind.*
+    import kyo.UI.Keyboard as K
 
-    /** Pre-computed single-char strings for ASCII range — avoids allocation per keystroke. */
-    private val asciiStrings: Array[String] =
-        val arr = new Array[String](128)
-        @tailrec def init(i: Int): Array[String] =
-            if i >= 128 then arr
-            else
-                arr(i) = i.toChar.toString
-                init(i + 1)
-        init(0)
-    end asciiStrings
-
-    def parse(bytes: Chunk[Byte]): (Chunk[InputEvent], Chunk[Byte]) =
+    /** Parse raw bytes into events + unconsumed remainder. CPS to avoid tuple allocation. */
+    inline def parse[A](bytes: Chunk[Byte])(inline f: (Chunk[InputEvent], Chunk[Byte]) => A): A =
         val events = ChunkBuilder.init[InputEvent]
         val len    = bytes.length
 
-        @tailrec def loop(i: Int): (Chunk[InputEvent], Chunk[Byte]) =
-            if i >= len then (events.result, Chunk.empty[Byte])
+        // Loop returns the remainder start index, or -1 for "consumed all"
+        @tailrec def loop(i: Int): Int =
+            if i >= len then -1
             else
                 val b = bytes(i) & 0xff
                 if b == 0x1b then
                     if i + 1 >= len then
-                        (events.result, bytes.drop(i))
+                        i
                     else
                         val next = bytes(i + 1) & 0xff
                         if next == '['.toInt then
                             val result = parseCsi(bytes, i + 2, len, events)
-                            if result < 0 then (events.result, bytes.drop(i))
+                            if result < 0 then i
                             else loop(result)
                         else if next == 'O'.toInt then
-                            if i + 2 >= len then (events.result, bytes.drop(i))
+                            if i + 2 >= len then i
                             else
                                 val ss3 = (bytes(i + 2) & 0xff).toChar
                                 ss3 match
-                                    case 'P' => events.addOne(Key("F1")); loop(i + 3)
-                                    case 'Q' => events.addOne(Key("F2")); loop(i + 3)
-                                    case 'R' => events.addOne(Key("F3")); loop(i + 3)
-                                    case 'S' => events.addOne(Key("F4")); loop(i + 3)
-                                    case 'A' => events.addOne(Key("ArrowUp")); loop(i + 3)
-                                    case 'B' => events.addOne(Key("ArrowDown")); loop(i + 3)
-                                    case 'C' => events.addOne(Key("ArrowRight")); loop(i + 3)
-                                    case 'D' => events.addOne(Key("ArrowLeft")); loop(i + 3)
-                                    case 'H' => events.addOne(Key("Home")); loop(i + 3)
-                                    case 'F' => events.addOne(Key("End")); loop(i + 3)
-                                    case _   => events.addOne(Key("Escape")); loop(i + 1)
+                                    case 'P' => events.addOne(Key(K.F1)); loop(i + 3)
+                                    case 'Q' => events.addOne(Key(K.F2)); loop(i + 3)
+                                    case 'R' => events.addOne(Key(K.F3)); loop(i + 3)
+                                    case 'S' => events.addOne(Key(K.F4)); loop(i + 3)
+                                    case 'A' => events.addOne(Key(K.ArrowUp)); loop(i + 3)
+                                    case 'B' => events.addOne(Key(K.ArrowDown)); loop(i + 3)
+                                    case 'C' => events.addOne(Key(K.ArrowRight)); loop(i + 3)
+                                    case 'D' => events.addOne(Key(K.ArrowLeft)); loop(i + 3)
+                                    case 'H' => events.addOne(Key(K.Home)); loop(i + 3)
+                                    case 'F' => events.addOne(Key(K.End)); loop(i + 3)
+                                    case _   => events.addOne(Key(K.Escape)); loop(i + 1)
                                 end match
                         else if next == ']'.toInt then
-                            events.addOne(Key("Escape"))
+                            events.addOne(Key(K.Escape))
                             loop(i + 1)
                         else if next >= 0x20 && next < 0x7f then
-                            events.addOne(Key(asciiStrings(next), alt = true))
+                            events.addOne(Key(K.Char(next.toChar), alt = true))
                             loop(i + 2)
                         else
-                            events.addOne(Key("Escape"))
+                            events.addOne(Key(K.Escape))
                             loop(i + 1)
                         end if
                     end if
                 else if b < 0x20 then
                     b match
-                        case 0x0d => events.addOne(Key("Enter")); loop(i + 1)
-                        case 0x09 => events.addOne(Key("Tab")); loop(i + 1)
-                        case 0x08 => events.addOne(Key("Backspace")); loop(i + 1)
-                        case 0x00 => events.addOne(Key(" ", ctrl = true)); loop(i + 1)
+                        case 0x0d => events.addOne(Key(K.Enter)); loop(i + 1)
+                        case 0x09 => events.addOne(Key(K.Tab)); loop(i + 1)
+                        case 0x08 => events.addOne(Key(K.Backspace)); loop(i + 1)
+                        case 0x00 => events.addOne(Key(K.Space, ctrl = true)); loop(i + 1)
                         case _ =>
-                            events.addOne(Key(asciiStrings(b + 'a' - 1), ctrl = true))
+                            events.addOne(Key(K.Char((b + 'a' - 1).toChar), ctrl = true))
                             loop(i + 1)
                 else if b == 0x7f then
-                    events.addOne(Key("Backspace"))
+                    events.addOne(Key(K.Backspace))
                     loop(i + 1)
                 else if b < 0x80 then
-                    events.addOne(Key(asciiStrings(b)))
+                    val k = if b == 0x20 then K.Space else K.Char(b.toChar)
+                    events.addOne(Key(k))
                     loop(i + 1)
                 else
                     val result = parseUtf8(bytes, i, len, events)
-                    if result < 0 then (events.result, bytes.drop(i))
+                    if result < 0 then i
                     else loop(result)
                 end if
         end loop
 
-        loop(0)
+        val remainderStart = loop(0)
+        val leftover       = if remainderStart < 0 then Chunk.empty[Byte] else bytes.drop(remainderStart)
+        f(events.result, leftover)
     end parse
 
     /** Parse a CSI sequence starting after ESC[. Returns new index or -1 if incomplete. */
@@ -171,41 +166,41 @@ private[kyo] object TuiInput:
             else
                 val ni = i + 1
                 c match
-                    case 'A' => events.addOne(arrowKey("ArrowUp", param2)); ni
-                    case 'B' => events.addOne(arrowKey("ArrowDown", param2)); ni
-                    case 'C' => events.addOne(arrowKey("ArrowRight", param2)); ni
-                    case 'D' => events.addOne(arrowKey("ArrowLeft", param2)); ni
-                    case 'H' => events.addOne(arrowKey("Home", param2)); ni
-                    case 'F' => events.addOne(arrowKey("End", param2)); ni
-                    case 'Z' => events.addOne(Key("Tab", shift = true)); ni
+                    case 'A' => events.addOne(modKey(K.ArrowUp, param2)); ni
+                    case 'B' => events.addOne(modKey(K.ArrowDown, param2)); ni
+                    case 'C' => events.addOne(modKey(K.ArrowRight, param2)); ni
+                    case 'D' => events.addOne(modKey(K.ArrowLeft, param2)); ni
+                    case 'H' => events.addOne(modKey(K.Home, param2)); ni
+                    case 'F' => events.addOne(modKey(K.End, param2)); ni
+                    case 'Z' => events.addOne(Key(K.Tab, shift = true)); ni
                     case '~' =>
                         param1 match
-                            case 1  => events.addOne(arrowKey("Home", param2)); ni
-                            case 2  => events.addOne(arrowKey("Insert", param2)); ni
-                            case 3  => events.addOne(arrowKey("Delete", param2)); ni
-                            case 4  => events.addOne(arrowKey("End", param2)); ni
-                            case 5  => events.addOne(arrowKey("PageUp", param2)); ni
-                            case 6  => events.addOne(arrowKey("PageDown", param2)); ni
-                            case 15 => events.addOne(arrowKey("F5", param2)); ni
-                            case 17 => events.addOne(arrowKey("F6", param2)); ni
-                            case 18 => events.addOne(arrowKey("F7", param2)); ni
-                            case 19 => events.addOne(arrowKey("F8", param2)); ni
-                            case 20 => events.addOne(arrowKey("F9", param2)); ni
-                            case 21 => events.addOne(arrowKey("F10", param2)); ni
-                            case 23 => events.addOne(arrowKey("F11", param2)); ni
-                            case 24 => events.addOne(arrowKey("F12", param2)); ni
-                            case _  => events.addOne(Key("Unknown")); ni
-                    case _ => events.addOne(Key("Unknown")); ni
+                            case 1  => events.addOne(modKey(K.Home, param2)); ni
+                            case 2  => events.addOne(modKey(K.Insert, param2)); ni
+                            case 3  => events.addOne(modKey(K.Delete, param2)); ni
+                            case 4  => events.addOne(modKey(K.End, param2)); ni
+                            case 5  => events.addOne(modKey(K.PageUp, param2)); ni
+                            case 6  => events.addOne(modKey(K.PageDown, param2)); ni
+                            case 15 => events.addOne(modKey(K.F5, param2)); ni
+                            case 17 => events.addOne(modKey(K.F6, param2)); ni
+                            case 18 => events.addOne(modKey(K.F7, param2)); ni
+                            case 19 => events.addOne(modKey(K.F8, param2)); ni
+                            case 20 => events.addOne(modKey(K.F9, param2)); ni
+                            case 21 => events.addOne(modKey(K.F10, param2)); ni
+                            case 23 => events.addOne(modKey(K.F11, param2)); ni
+                            case 24 => events.addOne(modKey(K.F12, param2)); ni
+                            case _  => events.addOne(Key(K.Unknown(""))); ni
+                    case _ => events.addOne(Key(K.Unknown(""))); ni
                 end match
             end if
 
     /** Create a key event with modifiers from xterm modifier encoding (modifier = 1 + bitmask). */
-    private def arrowKey(name: String, modifier: Int): Key =
-        if modifier <= 1 then Key(name)
+    private def modKey(k: kyo.UI.Keyboard, modifier: Int): Key =
+        if modifier <= 1 then Key(k)
         else
             val mBits = modifier - 1
             Key(
-                name,
+                k,
                 shift = (mBits & 1) != 0,
                 alt = (mBits & 2) != 0,
                 ctrl = (mBits & 4) != 0
@@ -327,7 +322,9 @@ private[kyo] object TuiInput:
         else
             val arr = new Array[Byte](expected)
             copyBytes(bytes, start, arr, 0, expected)
-            events.addOne(Key(new String(arr, "UTF-8")))
+            val s = new String(arr, "UTF-8")
+            if s.length == 1 then events.addOne(Key(K.Char(s.charAt(0))))
+            else events.addOne(Key(K.Unknown(s)))
             start + expected
         end if
     end parseUtf8

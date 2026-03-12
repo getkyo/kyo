@@ -1,25 +1,37 @@
 package kyo
 
 import kyo.Style.*
+import kyo.Style.Size.*
 import kyo.internal.CssStyleRenderer
-import kyo.internal.FxCssStyleRenderer
 import scala.language.implicitConversions
 
 class StyleTest extends Test:
 
     extension (s: Style)
-        def toCss: String   = CssStyleRenderer.render(s)
-        def toFxCss: String = FxCssStyleRenderer.render(s)
+        def toCss: String = CssStyleRenderer.render(s)
 
     extension (s: Style.Size)
-        def css: String   = CssStyleRenderer.size(s)
-        def fxCss: String = FxCssStyleRenderer.size(s)
+        def css: String = CssStyleRenderer.size(s)
+
+    extension (c: Style.Color)
+        def css: String = CssStyleRenderer.color(c)
+
+    import Style.Prop.*
+
+    private def hoverOf(s: Style): Maybe[Style]    = s.find[HoverProp].map(_.style)
+    private def focusOf(s: Style): Maybe[Style]    = s.find[FocusProp].map(_.style)
+    private def activeOf(s: Style): Maybe[Style]   = s.find[ActiveProp].map(_.style)
+    private def disabledOf(s: Style): Maybe[Style] = s.find[DisabledProp].map(_.style)
+    private def basePropsOf(s: Style): Style =
+        s.filter {
+            case _: HoverProp | _: FocusProp | _: ActiveProp | _: DisabledProp => false
+            case _                                                             => true
+        }
 
     "empty" - {
         "empty style" in {
             assert(Style.empty.isEmpty)
             assert(Style.empty.toCss == "")
-            assert(Style.empty.toFxCss == "")
         }
 
         "nonEmpty" in {
@@ -68,31 +80,31 @@ class StyleTest extends Test:
 
     "Size" - {
         "px from int" in {
-            assert(Style.Size.px(10).css == "10px")
+            assert(10.px.css == "10px")
         }
 
         "px from double" in {
-            assert(Style.Size.px(10.5).css == "10.5px")
+            assert(10.5.px.css == "10.5px")
         }
 
         "px zero" in {
-            assert(Style.Size.px(0).css == "0")
+            assert(0.px.css == "0")
         }
 
         "pct" in {
-            assert(Style.Size.pct(50).css == "50%")
+            assert(50.pct.css == "50%")
         }
 
         "pct from double" in {
-            assert(Style.Size.pct(33.3).css == "33.3%")
+            assert(33.3.pct.css == "33.3%")
         }
 
         "em" in {
-            assert(Style.Size.em(1.5).css == "1.5em")
+            assert(1.5.em.css == "1.5em")
         }
 
         "em from int" in {
-            assert(Style.Size.em(2).css == "2em")
+            assert(2.em.css == "2em")
         }
 
         "auto" in {
@@ -103,20 +115,10 @@ class StyleTest extends Test:
             assert(Style.Size.zero.css == "0")
         }
 
-        "extension methods" in {
-            assert(10.px.css == "10px")
-            assert(50.pct.css == "50%")
-            assert(1.em.css == "1em")
-            assert(1.5.px.css == "1.5px")
-            assert(50.0.pct.css == "50%")
-            assert(1.5.em.css == "1.5em")
-        }
-
-        "fxCss" in {
-            assert(Style.Size.px(10).fxCss == "10")
-            assert(Style.Size.px(10.5).fxCss == "10.5")
-            assert(Style.Size.px(0).fxCss == "0")
-            assert(Style.Size.auto.fxCss == "Infinity")
+        "constructor" in {
+            assert(Style.Size.Px(10).css == "10px")
+            assert(Style.Size.Pct(50).css == "50%")
+            assert(Style.Size.Em(1.5).css == "1.5em")
         }
     }
 
@@ -131,10 +133,6 @@ class StyleTest extends Test:
             assert(s.toCss == "background-color: #abc;")
         }
 
-        "bg toFxCss" in {
-            val s = Style.bg("#abc")
-            assert(s.toFxCss == "-fx-background-color: #abc;")
-        }
     }
 
     "text color" - {
@@ -143,59 +141,44 @@ class StyleTest extends Test:
             assert(s.toCss == "color: #3b82f6;")
         }
 
-        "color toFxCss uses text-fill" in {
-            val s = Style.color("#000")
-            assert(s.toFxCss == "-fx-text-fill: #000;")
-        }
     }
 
     "padding" - {
-        "single int" in {
-            val s = Style.padding(10)
+        "single px" in {
+            val s = Style.padding(10.px)
             assert(s.toCss == "padding: 10px 10px 10px 10px;")
         }
 
         "vertical horizontal" in {
-            val s = Style.padding(10, 20)
+            val s = Style.padding(10.px, 20.px)
             assert(s.toCss == "padding: 10px 20px 10px 20px;")
         }
 
         "four sides" in {
-            val s = Style.padding(1, 2, 3, 4)
+            val s = Style.padding(1.px, 2.px, 3.px, 4.px)
             assert(s.toCss == "padding: 1px 2px 3px 4px;")
         }
 
-        "with Size" in {
-            val s = Style.padding(Style.Size.em(1))
+        "with em" in {
+            val s = Style.padding(1.em)
             assert(s.toCss == "padding: 1em 1em 1em 1em;")
         }
 
-        "toFxCss" in {
-            val s = Style.padding(10)
-            assert(s.toFxCss == "-fx-padding: 10 10 10 10;")
-        }
     }
 
     "margin" - {
-        "single int" in {
-            val s = Style.margin(10)
+        "single px" in {
+            val s = Style.margin(10.px)
             assert(s.toCss == "margin: 10px 10px 10px 10px;")
         }
 
-        "toFxCss is empty (not supported)" in {
-            val s = Style.margin(10)
-            assert(s.toFxCss == "")
-        }
     }
 
     "gap" - {
         "css" in {
-            assert(Style.gap(8).toCss == "gap: 8px;")
+            assert(Style.gap(8.px).toCss == "gap: 8px;")
         }
 
-        "fxCss uses spacing" in {
-            assert(Style.gap(8).toFxCss == "-fx-spacing: 8;")
-        }
     }
 
     "alignment" - {
@@ -219,48 +202,41 @@ class StyleTest extends Test:
 
     "sizing" - {
         "width" in {
-            assert(Style.width(100).toCss == "width: 100px;")
-            assert(Style.width(100).toFxCss == "-fx-pref-width: 100;")
+            assert(Style.width(100.px).toCss == "width: 100px;")
         }
 
         "height" in {
-            assert(Style.height(50).toCss == "height: 50px;")
-            assert(Style.height(50).toFxCss == "-fx-pref-height: 50;")
+            assert(Style.height(50.px).toCss == "height: 50px;")
         }
 
         "minWidth" in {
-            assert(Style.minWidth(100).toCss == "min-width: 100px;")
-            assert(Style.minWidth(100).toFxCss == "-fx-min-width: 100;")
+            assert(Style.minWidth(100.px).toCss == "min-width: 100px;")
         }
 
         "maxWidth" in {
-            assert(Style.maxWidth(200).toCss == "max-width: 200px;")
-            assert(Style.maxWidth(200).toFxCss == "-fx-max-width: 200;")
+            assert(Style.maxWidth(200.px).toCss == "max-width: 200px;")
         }
 
         "minHeight" in {
-            assert(Style.minHeight(50).toCss == "min-height: 50px;")
-            assert(Style.minHeight(50).toFxCss == "-fx-min-height: 50;")
+            assert(Style.minHeight(50.px).toCss == "min-height: 50px;")
         }
 
         "maxHeight" in {
-            assert(Style.maxHeight(300).toCss == "max-height: 300px;")
-            assert(Style.maxHeight(300).toFxCss == "-fx-max-height: 300;")
+            assert(Style.maxHeight(300.px).toCss == "max-height: 300px;")
         }
 
-        "with double" in {
-            assert(Style.width(10.5).toCss == "width: 10.5px;")
+        "with double px" in {
+            assert(Style.width(10.5.px).toCss == "width: 10.5px;")
         }
 
-        "with Size" in {
-            assert(Style.width(Style.Size.pct(100)).toCss == "width: 100%;")
+        "with pct" in {
+            assert(Style.width(100.pct).toCss == "width: 100%;")
         }
     }
 
     "typography" - {
         "fontSize" in {
-            assert(Style.fontSize(16).toCss == "font-size: 16px;")
-            assert(Style.fontSize(16).toFxCss == "-fx-font-size: 16;")
+            assert(Style.fontSize(16.px).toCss == "font-size: 16px;")
         }
 
         "fontWeight" in {
@@ -285,8 +261,10 @@ class StyleTest extends Test:
         }
 
         "fontFamily" in {
-            assert(Style.fontFamily("Arial").toCss == "font-family: Arial;")
-            assert(Style.fontFamily("Arial").toFxCss == "-fx-font-family: 'Arial';")
+            assert(Style.fontFamily("Arial").toCss == "font-family: \"Arial\";")
+            assert(Style.fontFamily("Courier New").toCss == "font-family: \"Courier New\";")
+            assert(Style.fontFamily("Arial, Helvetica, sans-serif").toCss == "font-family: \"Arial\", \"Helvetica\", \"sans-serif\";")
+            assert(Style.fontFamily("\"Already Quoted\"").toCss == "font-family: \"Already Quoted\";")
         }
 
         "textAlign" in {
@@ -300,20 +278,15 @@ class StyleTest extends Test:
             assert(Style.textDecoration(Style.TextDecoration.none).toCss == "text-decoration: none;")
             assert(Style.underline.toCss == "text-decoration: underline;")
             assert(Style.strikethrough.toCss == "text-decoration: line-through;")
-            assert(Style.underline.toFxCss == "-fx-underline: true;")
-            assert(Style.strikethrough.toFxCss == "-fx-strikethrough: true;")
-            assert(Style.textDecoration(Style.TextDecoration.none).toFxCss == "-fx-underline: false; -fx-strikethrough: false;")
         }
 
         "lineHeight" in {
             assert(Style.lineHeight(1.5).toCss == "line-height: 1.5;")
             assert(Style.lineHeight(2).toCss == "line-height: 2;")
-            assert(Style.lineHeight(1.5).toFxCss == "")
         }
 
         "letterSpacing" in {
-            assert(Style.letterSpacing(2).toCss == "letter-spacing: 2px;")
-            assert(Style.letterSpacing(2).toFxCss == "")
+            assert(Style.letterSpacing(2.px).toCss == "letter-spacing: 2px;")
         }
 
         "textTransform" in {
@@ -321,27 +294,24 @@ class StyleTest extends Test:
             assert(Style.textTransform(Style.TextTransform.uppercase).toCss == "text-transform: uppercase;")
             assert(Style.textTransform(Style.TextTransform.lowercase).toCss == "text-transform: lowercase;")
             assert(Style.textTransform(Style.TextTransform.capitalize).toCss == "text-transform: capitalize;")
-            assert(Style.textTransform(Style.TextTransform.uppercase).toFxCss == "")
         }
 
         "textOverflow" in {
             assert(Style.textOverflow(Style.TextOverflow.clip).toCss == "text-overflow: clip;")
             assert(Style.textOverflow(Style.TextOverflow.ellipsis).toCss == "text-overflow: ellipsis;")
-            assert(Style.textOverflow(Style.TextOverflow.ellipsis).toFxCss == "-fx-text-overrun: ellipsis;")
-            assert(Style.textOverflow(Style.TextOverflow.clip).toFxCss == "-fx-text-overrun: clip;")
         }
     }
 
     "borders" - {
         "border shorthand" in {
-            val s = Style.border(1, Style.BorderStyle.solid, "#000")
+            val s = Style.border(1.px, Style.BorderStyle.solid, "#000")
             assert(s.toCss.contains("border-width: 1px 1px 1px 1px;"))
             assert(s.toCss.contains("border-style: solid;"))
             assert(s.toCss.contains("border-color: #000 #000 #000 #000;"))
         }
 
         "border with Color" in {
-            val s = Style.border(2, Style.Color.red)
+            val s = Style.border(2.px, Style.Color.red)
             assert(s.toCss.contains("border-style: solid;"))
             assert(s.toCss.contains("border-color: #ef4444"))
         }
@@ -356,11 +326,11 @@ class StyleTest extends Test:
         }
 
         "borderWidth" in {
-            assert(Style.borderWidth(1).toCss == "border-width: 1px 1px 1px 1px;")
+            assert(Style.borderWidth(1.px).toCss == "border-width: 1px 1px 1px 1px;")
         }
 
         "borderWidth four sides" in {
-            assert(Style.borderWidth(1, 2, 3, 4).toCss == "border-width: 1px 2px 3px 4px;")
+            assert(Style.borderWidth(1.px, 2.px, 3.px, 4.px).toCss == "border-width: 1px 2px 3px 4px;")
         }
 
         "borderStyle" in {
@@ -371,68 +341,46 @@ class StyleTest extends Test:
         }
 
         "borderTop" in {
-            assert(Style.borderTop(1, "#000").toCss == "border-top: 1px solid #000;")
+            assert(Style.borderTop(1.px, "#000").toCss == "border-top: 1px solid #000;")
         }
 
         "borderRight" in {
-            assert(Style.borderRight(1, "#000").toCss == "border-right: 1px solid #000;")
+            assert(Style.borderRight(1.px, "#000").toCss == "border-right: 1px solid #000;")
         }
 
         "borderBottom" in {
-            assert(Style.borderBottom(1, "#000").toCss == "border-bottom: 1px solid #000;")
+            assert(Style.borderBottom(1.px, "#000").toCss == "border-bottom: 1px solid #000;")
         }
 
         "borderLeft" in {
-            assert(Style.borderLeft(1, "#000").toCss == "border-left: 1px solid #000;")
+            assert(Style.borderLeft(1.px, "#000").toCss == "border-left: 1px solid #000;")
         }
 
-        "borderTop toFxCss" in {
-            val s = Style.borderTop(1, "#000")
-            assert(s.toFxCss.contains("-fx-border-color: #000 transparent transparent transparent;"))
-            assert(s.toFxCss.contains("-fx-border-width: 1 0 0 0;"))
-        }
-
-        "borderBottom toFxCss" in {
-            val s = Style.borderBottom(2, "#abc")
-            assert(s.toFxCss.contains("-fx-border-color: transparent transparent #abc transparent;"))
-            assert(s.toFxCss.contains("-fx-border-width: 0 0 2 0;"))
-        }
     }
 
     "border radius" - {
         "single value" in {
-            assert(Style.rounded(8).toCss == "border-radius: 8px 8px 8px 8px;")
+            assert(Style.rounded(8.px).toCss == "border-radius: 8px 8px 8px 8px;")
         }
 
         "four values" in {
-            assert(Style.rounded(1, 2, 3, 4).toCss == "border-radius: 1px 2px 3px 4px;")
+            assert(Style.rounded(1.px, 2.px, 3.px, 4.px).toCss == "border-radius: 1px 2px 3px 4px;")
         }
 
-        "with Size" in {
-            assert(Style.rounded(Style.Size.pct(50)).toCss == "border-radius: 50% 50% 50% 50%;")
+        "with pct" in {
+            assert(Style.rounded(50.pct).toCss == "border-radius: 50% 50% 50% 50%;")
         }
 
-        "toFxCss includes both background and border radius" in {
-            val fx = Style.rounded(8).toFxCss
-            assert(fx.contains("-fx-background-radius: 8 8 8 8;"))
-            assert(fx.contains("-fx-border-radius: 8 8 8 8;"))
-        }
     }
 
     "effects" - {
         "shadow" in {
-            val s = Style.shadow(x = 0, y = 2, blur = 4)
+            val s = Style.shadow(y = 2.px, blur = 4.px)
             assert(s.toCss.contains("box-shadow: 0 2px 4px 0 "))
-        }
-
-        "shadow toFxCss" in {
-            val s = Style.shadow(y = 2, blur = 4)
-            assert(s.toFxCss.contains("-fx-effect: dropshadow(gaussian,"))
         }
 
         "opacity" in {
             assert(Style.opacity(0.5).toCss == "opacity: 0.5;")
-            assert(Style.opacity(0.5).toFxCss == "-fx-opacity: 0.5;")
         }
     }
 
@@ -450,15 +398,11 @@ class StyleTest extends Test:
             assert(Style.cursor(Style.Cursor.grabbing).toCss == "cursor: grabbing;")
         }
 
-        "fxCss" in {
-            assert(Style.cursor(Style.Cursor.pointer).toFxCss == "-fx-cursor: pointer;")
-        }
     }
 
     "transforms" - {
         "translate" in {
-            assert(Style.translate(10, 20).toCss == "transform: translate(10px, 20px);")
-            assert(Style.translate(10, 20).toFxCss == "-fx-translate-x: 10; -fx-translate-y: 20;")
+            assert(Style.translate(10.px, 20.px).toCss == "transform: translate(10px, 20px);")
         }
     }
 
@@ -470,36 +414,33 @@ class StyleTest extends Test:
             assert(Style.overflow(Style.Overflow.auto).toCss == "overflow: auto;")
         }
 
-        "fxCss is empty" in {
-            assert(Style.overflow(Style.Overflow.hidden).toFxCss == "")
-        }
     }
 
     "pseudo-states" - {
         "hover" in {
             val s = Style.bg("#fff").hover(Style.bg("#eee"))
-            assert(s.hoverStyle.nonEmpty)
-            s.hoverStyle match
+            assert(hoverOf(s).nonEmpty)
+            hoverOf(s) match
                 case Present(h) => assert(h.toCss == "background-color: #eee;")
                 case _          => fail("expected hover style")
         }
 
         "focus" in {
-            val s = Style.bg("#fff").focus(Style.border(2, "#00f"))
-            assert(s.focusStyle.nonEmpty)
+            val s = Style.bg("#fff").focus(Style.border(2.px, "#00f"))
+            assert(focusOf(s).nonEmpty)
         }
 
         "active" in {
             val s = Style.bg("#fff").active(Style.bg("#ccc"))
-            assert(s.activeStyle.nonEmpty)
+            assert(activeOf(s).nonEmpty)
         }
 
         "baseProps excludes pseudo-states" in {
             val s    = Style.bg("#fff").hover(Style.bg("#eee")).focus(Style.bg("#ddd"))
-            val base = s.baseProps
+            val base = basePropsOf(s)
             assert(base.toCss == "background-color: #fff;")
-            assert(base.hoverStyle.isEmpty)
-            assert(base.focusStyle.isEmpty)
+            assert(hoverOf(base).isEmpty)
+            assert(focusOf(base).isEmpty)
         }
 
         "pseudo-states produce empty string in toCss" in {
@@ -507,34 +448,253 @@ class StyleTest extends Test:
             assert(s.toCss == "")
         }
 
-        "pseudo-states produce empty string in toFxCss" in {
-            val s = Style.hover(Style.bg("#eee"))
-            assert(s.toFxCss == "")
+    }
+
+    "position" - {
+        "flow" in {
+            val s = Style.position(Position.flow)
+            assert(s.nonEmpty)
+            assert(s.props(0) == Style.Prop.PositionProp(Position.flow))
+        }
+
+        "overlay" in {
+            val s = Style.position(Position.overlay)
+            assert(s.props(0) == Style.Prop.PositionProp(Position.overlay))
+        }
+
+        "enum values" in {
+            assert(Position.flow != Position.overlay)
+        }
+    }
+
+    "flex grow/shrink" - {
+        "flexGrow" in {
+            val s = Style.flexGrow(2.0)
+            assert(s.props(0) == Style.Prop.FlexGrowProp(2.0))
+        }
+
+        "flexShrink" in {
+            val s = Style.flexShrink(0.5)
+            assert(s.props(0) == Style.Prop.FlexShrinkProp(0.5))
+        }
+
+        "chaining flexGrow and flexShrink" in {
+            val s = Style.flexGrow(1.0).flexShrink(0.0)
+            assert(s.props.size == 2)
+        }
+    }
+
+    "displayNone" - {
+        "displayNone sets HiddenProp" in {
+            val s = Style.displayNone
+            assert(s.props(0) == Style.Prop.HiddenProp)
+        }
+    }
+
+    "filters" - {
+        "brightness" in {
+            val s = Style.brightness(1.5)
+            assert(s.props(0) == Style.Prop.BrightnessProp(1.5))
+        }
+
+        "contrast" in {
+            val s = Style.contrast(0.8)
+            assert(s.props(0) == Style.Prop.ContrastProp(0.8))
+        }
+
+        "grayscale" in {
+            val s = Style.grayscale(1.0)
+            assert(s.props(0) == Style.Prop.GrayscaleProp(1.0))
+        }
+
+        "sepia" in {
+            val s = Style.sepia(0.5)
+            assert(s.props(0) == Style.Prop.SepiaProp(0.5))
+        }
+
+        "invert" in {
+            val s = Style.invert(1.0)
+            assert(s.props(0) == Style.Prop.InvertProp(1.0))
+        }
+
+        "saturate" in {
+            val s = Style.saturate(2.0)
+            assert(s.props(0) == Style.Prop.SaturateProp(2.0))
+        }
+
+        "hueRotate" in {
+            val s = Style.hueRotate(90.0)
+            assert(s.props(0) == Style.Prop.HueRotateProp(90.0))
+        }
+
+        "blur" in {
+            val s = Style.blur(5.px)
+            assert(s.props(0) == Style.Prop.BlurProp(Size.Px(5)))
+        }
+
+        "chaining multiple filters" in {
+            val s = Style.brightness(1.2).contrast(0.9).grayscale(0.5)
+            assert(s.props.size == 3)
+        }
+    }
+
+    "background gradient" - {
+        "basic gradient" in {
+            val s    = Style.bgGradient(GradientDirection.toRight, (Color.hex("#fff"), 0.pct), (Color.hex("#000"), 100.pct))
+            val prop = s.props(0).asInstanceOf[Style.Prop.BgGradientProp]
+            assert(prop.direction == GradientDirection.toRight)
+            assert(prop.colors.size == 2)
+            assert(prop.positions.size == 2)
+            assert(prop.colors(0) == Color.hex("#fff"))
+            assert(prop.colors(1) == Color.hex("#000"))
+            assert(prop.positions(0) == 0.0)
+            assert(prop.positions(1) == 100.0)
+        }
+
+        "three-stop gradient" in {
+            val s = Style.bgGradient(
+                GradientDirection.toBottom,
+                (Color.hex("#f00"), 0.pct),
+                (Color.hex("#0f0"), 50.pct),
+                (Color.hex("#00f"), 100.pct)
+            )
+            val prop = s.props(0).asInstanceOf[Style.Prop.BgGradientProp]
+            assert(prop.colors.size == 3)
+            assert(prop.positions.size == 3)
+            assert(prop.colors(1) == Color.hex("#0f0"))
+            assert(prop.positions(1) == 50.0)
+        }
+
+        "all gradient directions" in {
+            assert(GradientDirection.toRight != GradientDirection.toLeft)
+            assert(GradientDirection.toTop != GradientDirection.toBottom)
+            assert(GradientDirection.toTopRight != GradientDirection.toBottomLeft)
+            assert(GradientDirection.toTopLeft != GradientDirection.toBottomRight)
+        }
+
+        "parallel spans avoid tuple boxing" in {
+            val s    = Style.bgGradient(GradientDirection.toRight, (Color.hex("#fff"), 0.pct), (Color.hex("#000"), 100.pct))
+            val prop = s.props(0).asInstanceOf[Style.Prop.BgGradientProp]
+            // colors is Span[Color], positions is Span[Double] — separate arrays, no Tuple2
+            assert(prop.colors.size == prop.positions.size)
+        }
+
+        "chained with other styles" in {
+            val s = Style.bg("#ccc").bgGradient(GradientDirection.toRight, (Color.hex("#fff"), 0.pct), (Color.hex("#000"), 100.pct))
+            assert(s.props.size == 2)
+        }
+    }
+
+    "disabled pseudo-state" - {
+        "disabled builder" in {
+            val s = Style.disabled(Style.bg("#ccc").opacity(0.5))
+            assert(s.nonEmpty)
+        }
+
+        "disabled extraction" in {
+            val s = Style.bg("#fff").disabled(Style.bg("#ccc"))
+            disabledOf(s) match
+                case Present(d) => assert(d.toCss == "background-color: #ccc;")
+                case _          => fail("expected disabled style")
+        }
+
+        "disabled extraction when absent" in {
+            val s = Style.bg("#fff")
+            assert(disabledOf(s).isEmpty)
+        }
+
+        "baseProps excludes disabled" in {
+            val s    = Style.bg("#fff").disabled(Style.bg("#ccc"))
+            val base = basePropsOf(s)
+            assert(base.toCss == "background-color: #fff;")
+            assert(disabledOf(base).isEmpty)
+        }
+
+        "baseProps excludes all pseudo-states together" in {
+            val s = Style.bg("#fff")
+                .hover(Style.bg("#eee"))
+                .focus(Style.bg("#ddd"))
+                .active(Style.bg("#ccc"))
+                .disabled(Style.bg("#bbb"))
+            val base = basePropsOf(s)
+            assert(base.toCss == "background-color: #fff;")
+            assert(hoverOf(base).isEmpty)
+            assert(focusOf(base).isEmpty)
+            assert(activeOf(base).isEmpty)
+            assert(disabledOf(base).isEmpty)
+        }
+
+        "disabled with nested styles" in {
+            val inner = Style.bg("#ccc").opacity(0.5).cursor(Cursor.notAllowed)
+            val s     = Style.bg("#fff").disabled(inner)
+            disabledOf(s) match
+                case Present(d) =>
+                    assert(d.toCss.contains("background-color: #ccc;"))
+                    assert(d.toCss.contains("opacity: 0.5;"))
+                    assert(d.toCss.contains("cursor: not-allowed;"))
+                case _ => fail("expected disabled style")
+            end match
+        }
+    }
+
+    "companion factory methods for new props" - {
+        "position" in {
+            assert(Style.position(Position.flow).props(0) == Style.empty.position(Position.flow).props(0))
+        }
+
+        "flexGrow" in {
+            assert(Style.flexGrow(1.0).props(0) == Style.empty.flexGrow(1.0).props(0))
+        }
+
+        "flexShrink" in {
+            assert(Style.flexShrink(0.5).props(0) == Style.empty.flexShrink(0.5).props(0))
+        }
+
+        "displayNone" in {
+            assert(Style.displayNone.props(0) == Style.empty.displayNone.props(0))
+        }
+
+        "brightness" in {
+            assert(Style.brightness(1.0).props(0) == Style.empty.brightness(1.0).props(0))
+        }
+
+        "blur" in {
+            assert(Style.blur(5.px).props(0) == Style.empty.blur(5.px).props(0))
+        }
+
+        "bgGradient" in {
+            val a  = Style.bgGradient(GradientDirection.toRight, (Color.hex("#fff"), 0.pct), (Color.hex("#000"), 100.pct))
+            val b  = Style.empty.bgGradient(GradientDirection.toRight, (Color.hex("#fff"), 0.pct), (Color.hex("#000"), 100.pct))
+            val pa = a.props(0).asInstanceOf[Style.Prop.BgGradientProp]
+            val pb = b.props(0).asInstanceOf[Style.Prop.BgGradientProp]
+            assert(pa.direction == pb.direction)
+            assert(pa.colors.size == pb.colors.size)
+            assert(pa.positions.size == pb.positions.size)
+        }
+
+        "disabled" in {
+            val inner = Style.bg("#ccc")
+            assert(disabledOf(Style.disabled(inner)).nonEmpty)
         }
     }
 
     "UI integration" - {
-        "style(Style) adds to CommonAttrs" in {
-            val s   = Style.bg("#fff").bold
-            val el  = UI.div.style(s)("hello")
-            val ast = el.asInstanceOf[UI.AST.Div]
-            assert(ast.common.uiStyle.nonEmpty)
-            assert(ast.common.uiStyle.toCss.contains("background-color: #fff;"))
-            assert(ast.common.uiStyle.toCss.contains("font-weight: bold;"))
+        "style(Style) adds to Attrs" in {
+            val s  = Style.bg("#fff").bold
+            val el = UI.div.style(s)("hello")
+            // unsafe: asInstanceOf — test knows the static style type
+            val uiStyle = el.attrs.uiStyle.asInstanceOf[Style]
+            assert(uiStyle.nonEmpty)
+            assert(uiStyle.toCss.contains("background-color: #fff;"))
+            assert(uiStyle.toCss.contains("font-weight: bold;"))
         }
 
         "style(Style) accumulates" in {
-            val el  = UI.div.style(Style.bg("#fff")).style(Style.bold)("hello")
-            val ast = el.asInstanceOf[UI.AST.Div]
-            assert(ast.common.uiStyle.toCss.contains("background-color"))
-            assert(ast.common.uiStyle.toCss.contains("font-weight"))
-        }
-
-        "style(String) and style(Style) coexist" in {
-            val el  = UI.div.style("display: flex").style(Style.bg("#fff"))("hello")
-            val ast = el.asInstanceOf[UI.AST.Div]
-            assert(ast.common.styles.nonEmpty)
-            assert(ast.common.uiStyle.nonEmpty)
+            val el = UI.div.style(Style.bg("#fff")).style(Style.bold)("hello")
+            // unsafe: asInstanceOf — test knows the static style type
+            val uiStyle = el.attrs.uiStyle.asInstanceOf[Style]
+            assert(uiStyle.toCss.contains("background-color"))
+            assert(uiStyle.toCss.contains("font-weight"))
         }
     }
 
