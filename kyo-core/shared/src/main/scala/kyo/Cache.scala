@@ -2,6 +2,7 @@ package kyo
 
 import Cache.Unsafe.internal.*
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLongArray
 import java.util.concurrent.atomic.AtomicReferenceArray
 import kyo.Maybe.Absent
 import scala.annotation.tailrec
@@ -196,9 +197,10 @@ object Cache:
       * values, and packed timestamps) avoid per-entry object allocation. Zero allocations on the hot path.
       *
       * Thread safety relies on the `values` array (AtomicReferenceArray). All structural changes go through `values` via CAS or volatile
-      * set, and the `keys` and `states` arrays use plain access. Because `values` is volatile, any write to `keys` or `states` that happens
-      * before a `values.set` is visible to any thread that later reads that slot via `values.get`. Each slot transitions through four
-      * states:
+      * set, and the `keys` array uses plain access. Because `values` is volatile, any write to `keys` that happens before a `values.set` is
+      * visible to any thread that later reads that slot via `values.get`. The `states` array uses AtomicLongArray to ensure cross-thread
+      * visibility of access timestamps and eviction flags on all platforms (including Scala Native, where plain writes lack happens-before
+      * guarantees). Each slot transitions through four states:
       *
       *   - empty → locked (CAS)
       *     - Claims the slot for insertion. No other fields are read or written yet.
@@ -207,10 +209,10 @@ object Cache:
       *       flushes all prior writes, any thread that reads the present value is guaranteed to see the key and initial state. Readers that
       *       observe locked spin until the value is published.
       *   - present → present (no transition on `values`)
-      *     - `get` updates `states(slot)` (access time, accessed flag) and `evict` clears the accessed flag, both via plain writes. These
-      *       are intentionally not synchronized: stale reads only affect eviction quality (an entry might survive one extra sweep or be
-      *       evicted one sweep early) but never compromise the structural integrity of the cache. Expiration checks are similarly
-      *       best-effort at centisecond granularity.
+      *     - `get` updates `states(slot)` (access time, accessed flag) and `evict` clears the accessed flag, both via atomic writes on the
+      *       `states` AtomicLongArray. These are not CAS-guarded: concurrent updates may overwrite each other, but this only affects
+      *       eviction quality (an entry might survive one extra sweep or be evicted one sweep early) without compromising structural
+      *       integrity. Expiration checks are similarly best-effort at centisecond granularity.
       *   - present → locked → present (CAS + volatile set)
       *     - When `add` finds a matching key that has expired, it reclaims the slot in-place. The CAS to locked prevents concurrent access,
       *       then the new state and value are written and published. `size` is unchanged since the slot was already occupied.
@@ -277,7 +279,7 @@ object Cache:
             a.asInstanceOf[Array[Maybe[K]]]
         end keys
 
-        private val states = State.newArray(mask + 1)
+        private val states = State.AtomicArray(mask + 1)
 
         // Cold fields: accessed only on insert/eviction
 
@@ -305,7 +307,7 @@ object Cache:
                                 loop(slot, dist)
                             else if !isExpired(slot, now) then
                                 // Cache hit
-                                states(slot) = states(slot).withAccess(now)
+                                states.set(slot, states.get(slot).withAccess(now))
                                 Maybe(s.value)
                             else
                                 // Expired
@@ -356,11 +358,11 @@ object Cache:
                                 loop(slot, dist, firstTomb)
                             else if !isExpired(slot, now) then
                                 // Key exists and is valid — return existing
-                                states(slot) = states(slot).withAccess(now)
+                                states.set(slot, states.get(slot).withAccess(now))
                                 s.value
                             else if values.compareAndSet(slot, s, Slot.locked) then
                                 // Expired — reclaim in-place
-                                states(slot) = State(now)
+                                states.set(slot, State(now))
                                 values.set(slot, Slot(value))
                                 onExpire(key, s.value)
                                 value
@@ -396,11 +398,9 @@ object Cache:
                                 val s = values.get(slot)
                                 // Empty = end of chain
                                 !s.isEmpty && {
-                                    // Locked = conservatively assume duplicate
-                                    s.isLocked ||
                                     // Present + matching key = confirmed duplicate
                                     (s.isPresent && keyMatch(slot, key)) ||
-                                    // Tombstone or different key = keep probing
+                                    // Locked or tombstone or different key = keep probing
                                     isDuplicate(next(slot), dist + 1)
                                 }
                         }
@@ -412,7 +412,7 @@ object Cache:
                     else
                         // Commit the new entry
                         keys(target) = Maybe(key)
-                        states(target) = State(now)
+                        states.set(target, State(now))
                         values.set(target, Slot(value))
                         discard(size.incrementAndGet())
                         if size.get() > maxSize then evict()
@@ -535,9 +535,9 @@ object Cache:
         def safe: Cache[K, V] = this
 
         private def isExpired(slot: Int, now: Int): Boolean =
-            val s = states(slot)
-            (expireAfterWriteCentis > 0 && (now - s.writeTime) > expireAfterWriteCentis) ||
-            (expireAfterAccessCentis > 0 && (now - s.accessTime) > expireAfterAccessCentis)
+            val st = states.get(slot)
+            (expireAfterWriteCentis > 0 && (now - st.writeTime) > expireAfterWriteCentis) ||
+            (expireAfterAccessCentis > 0 && (now - st.accessTime) > expireAfterAccessCentis)
         end isExpired
 
         /** CLOCK second-chance eviction. Sweeps via a rotating hand, giving each entry one chance to survive if accessed since the last
@@ -551,10 +551,10 @@ object Cache:
                     val slot = clockHand.getAndIncrement() & mask
                     val s    = values.get(slot)
                     if s.isPresent then
-                        val st = states(slot)
+                        val st = states.get(slot)
                         if st.accessed then
                             // Recently accessed — clear flag, give second chance
-                            states(slot) = st.clearAccessed
+                            states.set(slot, st.clearAccessed)
                             loop(n + 1)
                         else
                             // Read key before CAS — after tombstoning, a concurrent add
@@ -564,15 +564,15 @@ object Cache:
                                 // Don't clear keys(slot) — same reason as remove.
                                 discard(size.decrementAndGet())
                                 k.foreach(onEvict(_, s.value))
+                            else
+                                // CAS failed — another thread modified, keep looking
+                                loop(n + 1)
                             end if
                         end if
                     else
-                        // CAS failed — another thread modified, skip
+                        // Empty, tombstone, or locked — skip
                         loop(n + 1)
                     end if
-                else
-                    // Empty, tombstone, or locked — skip
-                    loop(n + 1)
                 end if
             end loop
 
@@ -654,8 +654,6 @@ object Cache:
                 inline def apply(nowCentis: Int): State =
                     Long.MinValue | (nowCentis.toLong << 31) | (nowCentis.toLong & 0x7fffffffL)
 
-                def newArray(size: Int): Array[State] = new Array[Long](size)
-
                 extension (s: State)
                     inline def writeTime: Int       = ((s >>> 31) & 0xffffffffL).toInt
                     inline def accessTime: Int      = (s & 0x7fffffffL).toInt
@@ -664,6 +662,16 @@ object Cache:
                     inline def withAccess(nowCentis: Int): State =
                         (s & 0xffffffff80000000L) | Long.MinValue | (nowCentis.toLong & 0x7fffffffL)
                 end extension
+
+                opaque type AtomicArray = AtomicLongArray
+
+                object AtomicArray:
+                    def apply(size: Int): AtomicArray = new AtomicLongArray(size)
+                    extension (a: AtomicArray)
+                        inline def get(i: Int): State          = a.get(i)
+                        inline def set(i: Int, s: State): Unit = a.set(i, s)
+                    end extension
+                end AtomicArray
 
             end State
         end internal
