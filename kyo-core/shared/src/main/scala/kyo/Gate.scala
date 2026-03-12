@@ -276,8 +276,8 @@ object Gate:
 
     object Unsafe:
 
-        def noop(using frame: Frame, allowUnsafe: AllowUnsafe): Unsafe =
-            new Unsafe(0, frame, allowUnsafe):
+        val noop: Unsafe =
+            new Unsafe(0, Frame.internal, AllowUnsafe.embrace.danger):
                 override def pass()(using AllowUnsafe, Frame)       = Fiber.unit.unsafe
                 override def arrive()(using AllowUnsafe, Frame)     = ()
                 override def passAt(target: Int)(using AllowUnsafe) = Fiber.unit.unsafe
@@ -350,6 +350,13 @@ object Gate:
             inline def joinWith[B, S](inline f: => B < S)(using Frame): B < (S & Sync) =
                 Sync.Unsafe.defer {
                     self.join()
+                    f
+                }
+
+            /** Join the gate with n parties and apply an inline continuation, avoiding closure allocation. */
+            inline def joinWith[B, S](n: Int)(inline f: => B < S)(using Frame): B < (S & Sync) =
+                Sync.Unsafe.defer {
+                    self.join(n)
                     f
                 }
 
@@ -548,9 +555,8 @@ object Gate:
 
         object Unsafe:
 
-            def noop(using frame: Frame, allowUnsafe: AllowUnsafe): Unsafe =
-                new Unsafe(0, Maybe.empty, frame, allowUnsafe):
-                    override def join()(using AllowUnsafe)                        = ()
+            val noop: Unsafe =
+                new Unsafe(0, Maybe.empty, Frame.internal, AllowUnsafe.embrace.danger):
                     override def join(n: Int)(using AllowUnsafe)                  = ()
                     override def leave()(using AllowUnsafe, Frame)                = ()
                     override def size()(using AllowUnsafe)                        = 0
