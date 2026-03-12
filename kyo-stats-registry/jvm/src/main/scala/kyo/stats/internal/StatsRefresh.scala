@@ -4,6 +4,7 @@ import java.util.ServiceLoader
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
+import kyo.AllowUnsafe
 
 trait StatsRefresh {
     self: StatsRegistry.internal.type =>
@@ -22,7 +23,12 @@ trait StatsRefresh {
     Executors.newSingleThreadScheduledExecutor(threadFactory)
         .scheduleAtFixedRate(() => refresh(), refreshInterval, refreshInterval, TimeUnit.MILLISECONDS)
 
-    ServiceLoader.load(classOf[StatsExporter]).iterator().forEachRemaining { exporter =>
-        val _ = exporters.add(exporter)
+    {
+        given AllowUnsafe = AllowUnsafe.embrace.danger
+        ServiceLoader.load(classOf[ExporterFactory]).iterator().forEachRemaining { factory =>
+            factory.statsExporter().foreach { exporter =>
+                val _ = exporters.add(exporter)
+            }
+        }
     }
 }

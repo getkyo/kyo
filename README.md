@@ -56,7 +56,7 @@ Kyo is structured as a monorepo, published to Maven Central:
 | kyo-cats             | ✅   | ✅   | ❌      | Bidirectional Cats IO interop with support for Sync, Async and Abort |
 | kyo-cache            | ✅   | ❌   | ❌      | High-performance caching using Caffeine with memoization             |
 | kyo-stats-registry   | ✅   | ✅   | ✅      | Metrics collection with counters, histograms, and gauges             |
-| kyo-stats-otel       | ✅   | ❌   | ❌      | OpenTelemetry integration for metrics and tracing export             |
+| kyo-stats-otlp       | ✅   | ❌   | ❌      | OpenTelemetry integration for metrics and tracing export             |
 | kyo-playwright       | ✅   | ❌   | ❌      | Browser automation testing using Microsoft Playwright                |
 | kyo-reactive-streams | ✅   | ❌   | ❌      | Bidirectional Reactive Streams interop implementation                |
 | kyo-aeron            | ✅   | ❌   | ❌      | High-performance messaging using Aeron transport                     |
@@ -2036,7 +2036,7 @@ Note that like `Console`, `Log` methods accept `Text` values. This means they ca
 
 `Stat` is a pluggable implementation that provides counters, histograms, gauges, and tracing. It uses Java's [service loading](https://docs.oracle.com/javase/8/docs/api/java/util/ServiceLoader.html) to locate exporters. 
 
-The module [`kyo-stats-otel`](https://central.sonatype.com/artifact/io.getkyo/kyo-stats-otel_3) provides exporters for [OpenTelemetry](https://opentelemetry.io/).
+The module [`kyo-stats-otlp`](https://central.sonatype.com/artifact/io.getkyo/kyo-stats-otlp_3) provides exporters for [OpenTelemetry](https://opentelemetry.io/).
 
 ```scala
 import kyo.*

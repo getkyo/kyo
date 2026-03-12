@@ -39,7 +39,8 @@ object HttpHandler:
     )(
         handler: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])
     ): HttpHandler[In, Out, E] =
-        val f = route.filter.asInstanceOf[HttpFilter[Any, Any, Any, Any, E]]
+        val f = HttpFilterFactory.composedServer.andThen(route.filter)
+            .asInstanceOf[HttpFilter[Any, Any, Any, Any, E]]
         new HttpHandler[In, Out, E](route):
             def apply(request: HttpRequest[In])(using Frame) =
                 f(request, handler)
