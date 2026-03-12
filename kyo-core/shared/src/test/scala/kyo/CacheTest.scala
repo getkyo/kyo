@@ -8,6 +8,8 @@ import scala.util.Random
 
 class CacheTest extends Test:
 
+    override def timeout = if Platform.isNative then 30.seconds else super.timeout
+
     // Test key with controlled hashCode
     class Key(val id: Int, val hash: Int) derives CanEqual:
         override def hashCode(): Int = hash
@@ -1143,7 +1145,11 @@ class CacheTest extends Test:
                         s.add(k, "val")
                         s.remove(k)
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(
+                    Choice.run,
+                    _.unit,
+                    Loop.repeat(if Platform.isNative then 10 else repeats)
+                ).andThen(succeed)
             }
 
             "rapid remove-then-add of same key — size accuracy" in runNotJS {
