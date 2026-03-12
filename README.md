@@ -54,7 +54,6 @@ Kyo is structured as a monorepo, published to Maven Central:
 | kyo-zio              | ✅   | ✅   | ❌      | Bidirectional ZIO interop with support for ZIO, ZLayer, and ZStream  |
 | kyo-zio-test         | ✅   | ✅   | ❌      | ZIO Test framework integration for testing Kyo effects               |
 | kyo-cats             | ✅   | ✅   | ❌      | Bidirectional Cats IO interop with support for Sync, Async and Abort |
-| kyo-cache            | ✅   | ❌   | ❌      | High-performance caching using Caffeine with memoization             |
 | kyo-stats-registry   | ✅   | ✅   | ✅      | Metrics collection with counters, histograms, and gauges             |
 | kyo-stats-otel       | ✅   | ❌   | ❌      | OpenTelemetry integration for metrics and tracing export             |
 | kyo-playwright       | ✅   | ❌   | ❌      | Browser automation testing using Microsoft Playwright                |
@@ -3319,34 +3318,34 @@ The code highlighting feature supports basic syntax highlighting for Scala keywo
 
 ## Integrations
 
-### Cache: Memoized Functions via Caffeine
+### Cache: Lock-free Caching with Memoization
 
-Kyo provides caching through memoization. A single `Cache` instance can be reused by multiple memoized functions. This allows for flexible scoping of caches, enabling users to use the same cache for various operations.
+Kyo provides a lock-free, bounded cache with CLOCK eviction and optional time-based expiration. It can be used directly as a key-value store or to memoize functions.
 
 ```scala
 import kyo.*
 
-val a: Int < Async =
+// Direct key-value caching
+val a: String < Sync =
     for
+        cache <- Cache.init[String, String](maxSize = 100)
+        _     <- cache.add("key", "value")
+        v     <- cache.getOrElse("key", "default")
+    yield v
 
-        // The initialization takes a
-        // builder function that mirrors
-        // Caffeine's builder
-        cache <- Cache.init(_.maxSize(100))
-
-        // Create a memoized function
-        fun = cache.memo { (v: String) =>
-            // Note how the implementation
-            // can use other effects
+// Function memoization
+val b: Int < (Async & Sync) =
+    for
+        fun <- Cache.memo(maxSize = 100) { (v: String) =>
+            // The implementation can use
+            // other effects
             Sync.defer(v.toInt)
         }
-
-        // Use the function
         v <- fun("10")
     yield v
 ```
 
-Although multiple memoized functions can reuse the same `Cache`, each function operates as an isolated cache and doesn't share any values with others. Internally, cache entries include the instance of the function as part of the key to ensure this separation. Only the cache space is shared, allowing for efficient use of resources without compromising the independence of each function's cache.
+`Cache.memo` creates a self-contained cache for a function's results and deduplicates concurrent calls to the same key — only one fiber computes while others wait on the result. Expiration policies (`expireAfterAccess`, `expireAfterWrite`) can be configured independently on both `Cache.init` and `Cache.memo`.
 
 ### Requests: HTTP Client via Sttp
 
