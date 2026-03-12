@@ -5,7 +5,7 @@ import scala.concurrent.ExecutionContext
 object Platform:
     val executionContext: ExecutionContext = scala.concurrent.ExecutionContext.global
     val isJVM: Boolean                     = false
-    val isJS: Boolean                      = true
+    inline val isJS                        = true
     val isNative: Boolean                  = false
     val isDebugEnabled: Boolean            = false
     def exit(code: Int): Unit =
