@@ -6,7 +6,7 @@ object Platform:
 
     val executionContext: ExecutionContext = scala.concurrent.ExecutionContext.global
     val isJVM: Boolean                     = true
-    val isJS: Boolean                      = false
+    inline val isJS                        = false
     val isNative: Boolean                  = false
     val isDebugEnabled: Boolean =
         java.lang.management.ManagementFactory
