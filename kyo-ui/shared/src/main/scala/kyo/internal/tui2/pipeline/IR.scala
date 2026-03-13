@@ -292,7 +292,51 @@ object ComputedStyle:
         scrollLeft = 0,
         position = 0
     )
+    def fromTheme(theme: ResolvedTheme): ComputedStyle =
+        Default.copy(fg = theme.fg, bg = theme.bg)
 end ComputedStyle
+
+// ---- ResolvedTheme ----
+
+case class ResolvedTheme(
+    variant: Theme,
+    fg: Int,
+    bg: Int,
+    borderColor: Style.Color,
+    highlightBg: Style.Color,
+    highlightFg: Style.Color
+)
+
+object ResolvedTheme:
+    def resolve(theme: Theme): ResolvedTheme = theme match
+        case Theme.Default =>
+            ResolvedTheme(
+                variant = Theme.Default,
+                fg = ColorEnc.pack(255, 255, 255),
+                bg = ColorEnc.Transparent,
+                borderColor = Style.Color.rgb(128, 128, 128),
+                highlightBg = Style.Color.rgb(0, 0, 255),
+                highlightFg = Style.Color.rgb(255, 255, 255)
+            )
+        case Theme.Minimal =>
+            ResolvedTheme(
+                variant = Theme.Minimal,
+                fg = ColorEnc.pack(255, 255, 255),
+                bg = ColorEnc.Transparent,
+                borderColor = Style.Color.rgb(128, 128, 128),
+                highlightBg = Style.Color.rgb(0, 0, 255),
+                highlightFg = Style.Color.rgb(255, 255, 255)
+            )
+        case Theme.Plain =>
+            ResolvedTheme(
+                variant = Theme.Plain,
+                fg = ColorEnc.pack(255, 255, 255),
+                bg = ColorEnc.Transparent,
+                borderColor = Style.Color.rgb(128, 128, 128),
+                highlightBg = Style.Color.rgb(0, 0, 255),
+                highlightFg = Style.Color.rgb(255, 255, 255)
+            )
+end ResolvedTheme
 
 // ---- Size Encoding ----
 

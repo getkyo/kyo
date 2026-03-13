@@ -143,7 +143,7 @@ One tree walk, one IR, one responsibility: "make the UI concrete."
 
 ### Focus, hover, active, and disabled via refs and lower
 
-All interaction state lives in `FrameState` as `SignalRef.Unsafe` refs:
+All interaction state lives in `ScreenState` as `SignalRef.Unsafe` refs:
 - `focusedId: Maybe[WidgetKey]` — which element has focus
 - `hoveredId: Maybe[WidgetKey]` — which element the mouse is over
 - `activeId: Maybe[WidgetKey]` — which element is being pressed
@@ -319,7 +319,7 @@ All pipeline code in `shared/` (cross-platform). Only terminal I/O in `jvm/`.
 ```
 shared/src/main/scala/kyo/internal/tui2/pipeline/
 ├── IR.scala              # All IR types: Resolved, Styled, Laid, CellGrid, ComputedStyle, Handlers
-├── FrameState.scala      # FrameState + WidgetStateCache
+├── ScreenState.scala      # ScreenState + WidgetStateCache
 ├── Lower.scala           # UI → Resolved
 ├── Styler.scala          # Resolved → Styled
 ├── Layout.scala          # Styled → LayoutResult
@@ -595,11 +595,11 @@ object ColorEnc:
 
 ---
 
-### Phase 2: FrameState + WidgetStateCache + ResolvedTheme
+### Phase 2: ScreenState + WidgetStateCache + ResolvedTheme
 
 **Goal:** Define persistent cross-frame state and resolved theme. All reactive state as `SignalRef.Unsafe`.
 
-**File:** `pipeline/FrameState.scala`
+**File:** `pipeline/ScreenState.scala`
 
 ```scala
 /** Resolved theme values for TUI rendering. Pre-resolves colors from the Theme enum
@@ -659,7 +659,7 @@ object ComputedStyle:
   * Reactive state (SignalRef.Unsafe): changes trigger re-render.
   * Frame-local state (var): overwritten each frame, not reactive.
   */
-class FrameState(val theme: ResolvedTheme)(using AllowUnsafe):
+class ScreenState(val theme: ResolvedTheme)(using AllowUnsafe):
     // ---- Reactive: changes trigger re-render ----
     val focusedId: SignalRef.Unsafe[Maybe[WidgetKey]]  = SignalRef.Unsafe.init(Absent)
     val hoveredId: SignalRef.Unsafe[Maybe[WidgetKey]]   = SignalRef.Unsafe.init(Absent)
@@ -724,7 +724,7 @@ class WidgetStateCache:
 - `sweep` preserves entries accessed since `beginFrame`
 - `beginFrame` + `getOrCreate` + `sweep` cycle: accessed keys survive, others evicted
 - Multiple frames: entry created in frame 1, not accessed in frame 2, evicted after frame 2 sweep
-- `FrameState` refs initialize to `Absent`
+- `ScreenState` refs initialize to `Absent`
 - `focusableIds` starts empty
 - `prevLayout` and `prevGrid` start as `Absent`
 - `ResolvedTheme.resolve` produces correct values per variant
@@ -736,7 +736,7 @@ class WidgetStateCache:
 
 **Estimated size:** ~130 lines
 
-**Review checkpoint:** Phase complete when FrameState.scala compiles with all tests passing. Review focuses on the state model design and theme resolution. Present for review before starting Phase 3.
+**Review checkpoint:** ✅ Complete. All 15 tests pass (split across ScreenStateTest + WidgetStateCacheTest). `WidgetStateCache` in its own file.
 
 ---
 
@@ -748,7 +748,7 @@ class WidgetStateCache:
 
 This is the largest step. It bridges the gap between the user-facing `UI` AST and the pure pipeline. It is the **only** step that reads `SignalRef.Unsafe` values and the **only** step aware of widget types.
 
-**Purity model:** Lower is a *function* from `(UI, FrameState) → LowerResult`. It reads reactive refs (focusedId, widgetState) but never writes them. The handler closures it generates *will* write refs when executed by Dispatch — but Lower itself is read-only. It produces an immutable `Resolved` tree.
+**Purity model:** Lower is a *function* from `(UI, ScreenState) → LowerResult`. It reads reactive refs (focusedId, widgetState) but never writes them. The handler closures it generates *will* write refs when executed by Dispatch — but Lower itself is read-only. It produces an immutable `Resolved` tree.
 
 ```scala
 object Lower:
@@ -773,7 +773,7 @@ object Lower:
       *
       * Reads (via AllowUnsafe):
       *   - SignalRef values (user-bound values, reactive styles, conditional rendering)
-      *   - FrameState.focusedId/hoveredId/activeId (for pseudo-state style merging)
+      *   - ScreenState.focusedId/hoveredId/activeId (for pseudo-state style merging)
       *   - WidgetStateCache (for widget internal state: cursor pos, checked, expanded, etc.)
       *
       * Never writes any state. Handler closures capture refs for deferred writes.
@@ -782,14 +782,14 @@ object Lower:
       * own handlers with the parent chain, and threads the result to its children.
       * The leaf's handler IS the full bubbling chain — dispatch just calls it.
       */
-    def lower(ui: UI, state: FrameState)(using AllowUnsafe): LowerResult =
+    def lower(ui: UI, state: ScreenState)(using AllowUnsafe): LowerResult =
         val focusables = ChunkBuilder.init[WidgetKey]
         val tree = walk(ui, state, Chunk.empty, focusables,
                         noop, noopKeyed, noopKeyed, noopInt, noop)
         LowerResult(tree, focusables.result())
 
     private def walk(
-        ui: UI, state: FrameState, dynamicPath: Chunk[String],
+        ui: UI, state: ScreenState, dynamicPath: Chunk[String],
         focusables: ChunkBuilder[WidgetKey],
         parentOnClick: Unit < Async,
         parentOnKeyDown: UI.KeyEvent => Unit < Async,
@@ -928,9 +928,9 @@ private def themeStyle(elem: UI.Element, theme: ResolvedTheme): Style =
 - **Textarea skips onSubmit**: `form.onSubmit(submit)(textarea("x"))` → textarea's onKeyDown does NOT include Enter→submit
 - **onScroll override**: nested scroll containers → innermost handler wins, not composed
 
-**Dependencies:** Phase 1 (IR types), Phase 2 (FrameState). Also reads `UI.scala` types and `Style.scala` types.
+**Dependencies:** Phase 1 (IR types), Phase 2 (ScreenState). Also reads `UI.scala` types and `Style.scala` types.
 
-**Compile isolation:** Depends on Phase 1 (IR types) and Phase 2 (FrameState) only. Produces `Resolved` — does not import Styler, Layout, or any downstream step.
+**Compile isolation:** Depends on Phase 1 (IR types) and Phase 2 (ScreenState) only. Produces `Resolved` — does not import Styler, Layout, or any downstream step.
 
 **Estimated size:** ~800 lines
 
@@ -1026,7 +1026,7 @@ private def sizeToInt(s: Style.Size): Int = s match
 
 **Dependencies:** Phase 1 (IR types only — reads `Resolved`, produces `Styled`, uses `ComputedStyle`).
 
-**Compile isolation:** Pure function, no FrameState or SignalRef dependency. Only imports IR types from Phase 1.
+**Compile isolation:** Pure function, no ScreenState or SignalRef dependency. Only imports IR types from Phase 1.
 
 **Estimated size:** ~250 lines
 
@@ -1117,7 +1117,7 @@ object Layout:
 
 **Dependencies:** Phase 1 (IR types only — reads `Styled`, produces `Laid` and `LayoutResult`).
 
-**Compile isolation:** Pure function, no FrameState or SignalRef dependency. Only imports IR types from Phase 1.
+**Compile isolation:** Pure function, no ScreenState or SignalRef dependency. Only imports IR types from Phase 1.
 
 **Estimated size:** ~600 lines
 
@@ -1184,7 +1184,7 @@ object Painter:
 
 **Dependencies:** Phase 1 (IR types only — reads `Laid`/`LayoutResult`, produces `CellGrid`).
 
-**Compile isolation:** Pure function, no FrameState or SignalRef dependency. Only imports IR types from Phase 1.
+**Compile isolation:** Pure function, no ScreenState or SignalRef dependency. Only imports IR types from Phase 1.
 
 **Estimated size:** ~500 lines
 
@@ -1260,7 +1260,7 @@ object Differ:
 
 **Dependencies:** Phase 1 (IR types only — reads/produces `CellGrid`).
 
-**Compile isolation:** Pure functions, no FrameState or SignalRef dependency. Only imports IR types from Phase 1.
+**Compile isolation:** Pure functions, no ScreenState or SignalRef dependency. Only imports IR types from Phase 1.
 
 **Review checkpoint:** Phase complete when both Compositor.scala and Differ.scala compile with all 4+ tests passing. Small phases — review together. Present for review before starting Phase 8.
 
@@ -1307,7 +1307,7 @@ object Dispatch:
     /** Side-effecting: route event, update refs, fire handlers.
       * No tree walking for bubbling — handlers are pre-composed by Lower.
       */
-    def dispatch(event: InputEvent, layout: LayoutResult, state: FrameState)(using AllowUnsafe): Unit =
+    def dispatch(event: InputEvent, layout: LayoutResult, state: ScreenState)(using AllowUnsafe): Unit =
         event match
             // ---- Keyboard ----
             case InputEvent.Key(ke, ctrl, alt, shift) =>
@@ -1366,10 +1366,10 @@ object Dispatch:
                     node.handlers.onInput(text)
                 }
 
-    private def findFocused(layout: LayoutResult, state: FrameState)(using AllowUnsafe): Maybe[Laid.Node] =
+    private def findFocused(layout: LayoutResult, state: ScreenState)(using AllowUnsafe): Maybe[Laid.Node] =
         state.focusedId.unsafe.get().flatMap(key => findByKey(layout.base, key))
 
-    private def cycleFocus(state: FrameState, layout: LayoutResult, reverse: Boolean)(using AllowUnsafe): Unit =
+    private def cycleFocus(state: ScreenState, layout: LayoutResult, reverse: Boolean)(using AllowUnsafe): Unit =
         val ids = state.focusableIds
         if ids.isEmpty then return
         val current = state.focusedId.unsafe.get()
@@ -1389,7 +1389,7 @@ object Dispatch:
         }
         state.focusedId.unsafe.set(Maybe(newKey))
 
-    private def setFocus(node: Laid.Node, layout: LayoutResult, state: FrameState)(using AllowUnsafe): Unit =
+    private def setFocus(node: Laid.Node, layout: LayoutResult, state: ScreenState)(using AllowUnsafe): Unit =
         val oldKey = state.focusedId.unsafe.get()
         val newKey = node.handlers.widgetKey
         if oldKey != newKey then
@@ -1417,9 +1417,9 @@ object Dispatch:
 - forId: click label → focuses target element
 - Focus change: onBlur fires on old, onFocus fires on new
 
-**Dependencies:** Phase 1 (IR types), Phase 2 (FrameState). Does NOT depend on Lower, Styler, Layout, Painter, Compositor, or Differ.
+**Dependencies:** Phase 1 (IR types), Phase 2 (ScreenState). Does NOT depend on Lower, Styler, Layout, Painter, Compositor, or Differ.
 
-**Compile isolation:** Reads `Laid`/`LayoutResult` (output of Layout) and writes `FrameState` refs. Does not import any upstream pipeline step.
+**Compile isolation:** Reads `Laid`/`LayoutResult` (output of Layout) and writes `ScreenState` refs. Does not import any upstream pipeline step.
 
 **Estimated size:** ~200 lines (significantly smaller than 350 — no tree walking for bubbling, no form-finding, no scroll container fallback)
 
@@ -1445,7 +1445,7 @@ object Pipeline:
       *   - state.prevLayout / state.prevGrid (frame-local, overwritten each frame)
       *   - CellGrid.cells arrays (freshly allocated, not shared)
       */
-    def renderFrame(ui: UI, state: FrameState, viewport: Rect)(using AllowUnsafe): Array[Byte] =
+    def renderFrame(ui: UI, state: ScreenState, viewport: Rect)(using AllowUnsafe): Array[Byte] =
         state.widgetState.beginFrame()
         val LowerResult(resolved, focusableIds) = Lower.lower(ui, state)
         state.focusableIds = focusableIds
@@ -1465,7 +1465,7 @@ object Pipeline:
       * Fires handler closures that write SignalRef.Unsafe values,
       * triggering re-render.
       */
-    def dispatchEvent(event: InputEvent, state: FrameState)(using AllowUnsafe): Unit =
+    def dispatchEvent(event: InputEvent, state: ScreenState)(using AllowUnsafe): Unit =
         state.prevLayout.foreach { layout =>
             Dispatch.dispatch(event, layout, state)
         }
@@ -1502,13 +1502,13 @@ object Tui2Backend extends UIBackend:
             renderTrigger <- Signal.initRef[Int](0)
             terminal <- Sync.defer { val t = new Terminal; t.enter(); t }
             _ <- Scope.ensure(terminal.exit())
-            state    = new FrameState(resolved)
+            state    = new ScreenState(resolved)
             signals  = new SignalCollector(256)
             _     <- Sync.defer(doRender(ui, terminal, state))
             fiber <- Fiber.init(mainLoop(ui, terminal, state, signals, renderTrigger))
         yield new UISession(fiber, ...)
 
-    private def doRender(ui: UI, terminal: Terminal, state: FrameState, cursorOn: Boolean = true)(using Frame): Unit =
+    private def doRender(ui: UI, terminal: Terminal, state: ScreenState, cursorOn: Boolean = true)(using Frame): Unit =
         import AllowUnsafe.embrace.danger
         val viewport = Rect(0, 0, terminal.cols, terminal.rows)
         val ansi = Pipeline.renderFrame(ui, state, viewport)
@@ -1525,7 +1525,7 @@ Input loop calls `Pipeline.dispatchEvent`. Render loop calls `doRender` on signa
 Headless testing harness:
 
 ```scala
-class TerminalEmulator(ui: UI, cols: Int, rows: Int, state: FrameState):
+class TerminalEmulator(ui: UI, cols: Int, rows: Int, state: ScreenState):
     def doRender(): Unit =
         import AllowUnsafe.embrace.danger
         Pipeline.renderFrame(ui, state, Rect(0, 0, cols, rows))
@@ -1557,7 +1557,7 @@ Direct CellGrid → String for text frame extraction.
 ```scala
 def renderToString(ui: UI, cols: Int, rows: Int, theme: Theme = Theme.Default)(using Frame): String =
     import AllowUnsafe.embrace.danger
-    val state = new FrameState(ResolvedTheme.resolve(theme))
+    val state = new ScreenState(ResolvedTheme.resolve(theme))
     Pipeline.renderFrame(ui, state, Rect(0, 0, cols, rows))
     // Read directly from CellGrid — no ANSI parsing
     state.prevGrid.map(gridToString).getOrElse("")
@@ -1588,7 +1588,7 @@ Phase 0 (Signal.asRef) ───────────────────
                                                       │
 Phase 1 (IR Types) ───────┬──────────────────────────┤
                            │                           │
-Phase 2 (FrameState) ─────┤ depends on Phase 0        │
+Phase 2 (ScreenState) ─────┤ depends on Phase 0        │
                            │                           │
                     ┌──────┼──────────────┐            │
                     │      │              │            │
@@ -1609,7 +1609,7 @@ Phase 9 (Pipeline) ────────┤ depends on ALL above      │
 Phase 10 (Integration) ────┘ depends on Phase 9        │
 ```
 
-Phases 3–8 all depend only on Phase 1 (IR types) and optionally Phase 2 (FrameState). They can proceed in parallel.
+Phases 3–8 all depend only on Phase 1 (IR types) and optionally Phase 2 (ScreenState). They can proceed in parallel.
 
 ---
 
@@ -1619,7 +1619,7 @@ Phases 3–8 all depend only on Phase 1 (IR types) and optionally Phase 2 (Frame
 |-------|---------|------------|
 | 0 | Signal.asRef | 15 |
 | 1 | IR.scala | 350 |
-| 2 | FrameState.scala | 80 |
+| 2 | ScreenState.scala | 80 |
 | 3 | Lower.scala | 800 |
 | 4 | Styler.scala | 250 |
 | 5 | Layout.scala | 600 |
@@ -1633,7 +1633,7 @@ Phases 3–8 all depend only on Phase 1 (IR types) and optionally Phase 2 (Frame
 Architecture properties:
 - 10 focused files with single responsibilities
 - Each pipeline step independently testable with constructed inputs
-- No god object — FrameState holds only reactive refs + frame-local cache
+- No god object — ScreenState holds only reactive refs + frame-local cache
 - No widget-type awareness outside Lower
 - No implicit ordering dependencies between steps
 - Purity: steps 1–6 are pure functions. Step 7 (Dispatch) is the only one that writes SignalRefs.
@@ -1645,7 +1645,7 @@ Architecture properties:
 ## Recommended Execution Order
 
 ```
-Batch 1:  Phase 0 (Signal.asRef) + Phase 1 (IR types) + Phase 2 (FrameState)
+Batch 1:  Phase 0 (Signal.asRef) + Phase 1 (IR types) + Phase 2 (ScreenState)
 Batch 2:  Phase 4 (Styler) + Phase 7 (Compositor + Differ)
 Batch 3:  Phase 5 (Layout)
 Batch 4:  Phase 6 (Painter)
@@ -1668,7 +1668,7 @@ The core is a recursive pattern match over the `UI` sealed type. Every branch pr
 
 ```scala
 private def walk(
-    ui: UI, state: FrameState, dynamicPath: Chunk[String],
+    ui: UI, state: ScreenState, dynamicPath: Chunk[String],
     focusables: ChunkBuilder[WidgetKey],
     parentOnClick: Unit < Async,
     parentOnKeyDown: UI.KeyEvent => Unit < Async,
@@ -1715,7 +1715,7 @@ private def walk(
 
 ```scala
 private def lowerElement(
-    elem: UI.Element, state: FrameState, dynamicPath: Chunk[String],
+    elem: UI.Element, state: ScreenState, dynamicPath: Chunk[String],
     focusables: ChunkBuilder[WidgetKey],
     parentOnClick: Unit < Async,
     parentOnKeyDown: UI.KeyEvent => Unit < Async,
@@ -1899,7 +1899,7 @@ private def buildHandlers(elem: UI.Element, key: WidgetKey, disabled: Boolean): 
     )
 
 private def lowerChildren(
-    children: kyo.Span[UI], state: FrameState, dynamicPath: Chunk[String],
+    children: kyo.Span[UI], state: ScreenState, dynamicPath: Chunk[String],
     focusables: ChunkBuilder[WidgetKey],
     parentOnClick: Unit < Async,
     parentOnKeyDown: UI.KeyEvent => Unit < Async,
@@ -1932,7 +1932,7 @@ private def lowerChildren(
   */
 private def lowerTextInput(
     elem: UI.TextInput, style: Style, baseHandlers: Handlers, key: WidgetKey,
-    state: FrameState, parentOnSubmit: Unit < Async
+    state: ScreenState, parentOnSubmit: Unit < Async
 )(using AllowUnsafe): Resolved =
     // Read current value
     val currentValue: String = elem.value match
@@ -2027,7 +2027,7 @@ private def lowerTextInput(
   */
 private def lowerSelect(
     elem: UI.Select, style: Style, baseHandlers: Handlers, key: WidgetKey,
-    state: FrameState, dynamicPath: Chunk[String], focusables: ChunkBuilder[WidgetKey],
+    state: ScreenState, dynamicPath: Chunk[String], focusables: ChunkBuilder[WidgetKey],
     parentOnClick: Unit < Async,
     parentOnKeyDown: UI.KeyEvent => Unit < Async,
     parentOnKeyUp: UI.KeyEvent => Unit < Async,
@@ -3325,7 +3325,7 @@ object Dispatch:
 
     /** Route event: find target, call pre-composed handler. No tree walking for bubbling. */
     def dispatch(
-        event: InputEvent, layout: LayoutResult, state: FrameState
+        event: InputEvent, layout: LayoutResult, state: ScreenState
     )(using AllowUnsafe): Unit =
         event match
             case InputEvent.Key(key, ctrl, shift, alt) =>
@@ -3392,11 +3392,11 @@ object Dispatch:
 
             case _ => ()
 
-    private def findFocused(layout: LayoutResult, state: FrameState)(using AllowUnsafe): Maybe[Laid.Node] =
+    private def findFocused(layout: LayoutResult, state: ScreenState)(using AllowUnsafe): Maybe[Laid.Node] =
         state.focusedId.unsafe.get().flatMap(key => findByKey(layout.base, key))
 
     private def setFocus(
-        state: FrameState, node: Laid.Node, layout: LayoutResult
+        state: ScreenState, node: Laid.Node, layout: LayoutResult
     )(using AllowUnsafe): Unit =
         val oldKey = state.focusedId.unsafe.get()
         val newKey = node.handlers.widgetKey
@@ -3409,7 +3409,7 @@ object Dispatch:
             // Fire onFocus on new
             Sync.Unsafe.evalOrThrow(node.handlers.onFocus)
 
-    private def cycleFocus(state: FrameState, layout: LayoutResult, reverse: Boolean)(using AllowUnsafe): Unit =
+    private def cycleFocus(state: ScreenState, layout: LayoutResult, reverse: Boolean)(using AllowUnsafe): Unit =
         val keys = state.focusableIds
         if keys.isEmpty then return
         val current = state.focusedId.unsafe.get()
@@ -3505,7 +3505,7 @@ This section documents the kyo-data and kyo-core primitives used throughout the 
 - Use `Absent` (not `Maybe.Absent` or `None`) for the empty case
 - Pattern matching uses `Maybe.Present(v)`, not `Some(v)`
 
-**Used in:** All `Maybe` fields on `Handlers` (widgetKey, id, forId, tabIndex, onClick, etc.), `FrameState` reactive refs (`Maybe[WidgetKey]`), `WidgetStateCache.get` return type, `prevLayout`/`prevGrid`.
+**Used in:** All `Maybe` fields on `Handlers` (widgetKey, id, forId, tabIndex, onClick, etc.), `ScreenState` reactive refs (`Maybe[WidgetKey]`), `WidgetStateCache.get` return type, `prevLayout`/`prevGrid`.
 
 ### Frame
 
@@ -3551,7 +3551,7 @@ This section documents the kyo-data and kyo-core primitives used throughout the 
 - Change detection via `CanEqual` — only notifies if new value != old value
 - `.next` returns a `Promise` that completes when the value changes — this is how `SignalCollector` detects changes for re-render
 
-**Used in:** `FrameState.focusedId/hoveredId/activeId`, all widget state in `WidgetStateCache` (cursor position, scroll offset, checkbox checked, select expanded/selected/highlight, range value), user-bound `value` refs on inputs. Lower reads via `.unsafe.get()`, Dispatch writes via `.unsafe.set()`.
+**Used in:** `ScreenState.focusedId/hoveredId/activeId`, all widget state in `WidgetStateCache` (cursor position, scroll offset, checkbox checked, select expanded/selected/highlight, range value), user-bound `value` refs on inputs. Lower reads via `.unsafe.get()`, Dispatch writes via `.unsafe.set()`.
 
 ### Span[A]
 
