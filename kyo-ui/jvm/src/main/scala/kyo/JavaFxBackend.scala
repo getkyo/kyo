@@ -1,5 +1,9 @@
 package kyo
 
+// Commented out: TuiSignalCollector was deleted with old tui2 code.
+// This backend will be replaced by Tui2Backend in Phase 10.
+
+/*
 import javafx.application.Platform
 import javafx.scene.Scene
 import javafx.scene.web.WebView
@@ -7,11 +11,6 @@ import javafx.stage.Stage
 import kyo.internal.CssStyleRenderer
 import scala.annotation.tailrec
 
-/** JavaFX backend that renders UI into a WebView using CssStyleRenderer.
-  *
-  * Replaces the old 1,468-line native JavaFX scene graph backend. The WebView renders the same HTML/CSS that the DomBackend produces,
-  * eliminating the need for a separate FxCssStyleRenderer.
-  */
 object JavaFxBackend extends UIBackend:
 
     private var platformStarted = false
@@ -248,3 +247,4 @@ object JavaFxBackend extends UIBackend:
     end appendEscaped
 
 end JavaFxBackend
+ */

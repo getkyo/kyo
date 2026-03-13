@@ -229,14 +229,14 @@ items.foreachKeyed(_.toString) { ... }   // escape hatch if no natural key
 
 Text carries a `value: String`. Cursor carries nothing (just a position after layout). Neither has Style, Handlers, or children. Separate enum variants let each IR carry exactly the data relevant at that stage — no wasted fields.
 
-### Tag.Table and table layout
+### ElemTag.Table and table layout
 
-Table layout is fundamentally different from flex: column widths are globally constrained across all rows. Colspan and rowspan require cross-row/cross-column occupancy tracking. This cannot be reduced to flex. Lower preserves table structure as `Tag.Table` with row/cell children. Layout dispatches on `Tag.Table` and runs a dedicated algorithm. After layout, cells are `Laid.Node` — paint treats them identically.
+Table layout is fundamentally different from flex: column widths are globally constrained across all rows. Colspan and rowspan require cross-row/cross-column occupancy tracking. This cannot be reduced to flex. Lower preserves table structure as `ElemTag.Table` with row/cell children. Layout dispatches on `ElemTag.Table` and runs a dedicated algorithm. After layout, cells are `Laid.Node` — paint treats them identically.
 
 ### Overlay vs Popup positioning
 
 - **`position: overlay`** (ComputedStyle.position = 1): escapes flex flow but stays in the parent's clip context. Analogous to CSS `position: absolute`.
-- **`Tag.Popup`**: extracted to a separate cell grid. Not clipped by any parent. Used for dropdowns/tooltips that must escape scroll containers.
+- **`ElemTag.Popup`**: extracted to a separate cell grid. Not clipped by any parent. Used for dropdowns/tooltips that must escape scroll containers.
 
 ### Scroll containers
 
@@ -289,20 +289,20 @@ For stable derived signals read frequently, `Signal.asRef` materializes them int
 | UI node type | Lower action |
 |---|---|
 | `Div`, `Span` | Pass through: theme defaults, pseudo-state styles, recurse |
-| `H1`..`H6`, `P`, `Nav`, `Section`, `Main`, `Header`, `Footer`, `Pre`, `Code` | → `Tag.Div` with tag-specific theme style |
-| `Button`, `Label`, `Li`, `Anchor` | → `Tag.Span`/`Tag.Div` with theme style. Label preserves `forId`. |
-| `Hr` | → `Tag.Div` with border-bottom |
+| `H1`..`H6`, `P`, `Nav`, `Section`, `Main`, `Header`, `Footer`, `Pre`, `Code` | → `ElemTag.Div` with tag-specific theme style |
+| `Button`, `Label`, `Li`, `Anchor` | → `ElemTag.Span`/`ElemTag.Div` with theme style. Label preserves `forId`. |
+| `Hr` | → `ElemTag.Div` with border-bottom |
 | `Br` | → `Resolved.Text("\n")` |
-| `Table` | → `Tag.Table`. Tr → `Tag.Div` (row), Td/Th → `Tag.Div` (cell). Colspan/rowspan on Handlers. |
-| `Ul`, `Ol` | → `Tag.Div`. Li children get list marker prepended. |
-| `Form` | → `Tag.Div`. Preserves `onSubmit` on Handlers. |
+| `Table` | → `ElemTag.Table`. Tr → `ElemTag.Div` (row), Td/Th → `ElemTag.Div` (cell). Colspan/rowspan on Handlers. |
+| `Ul`, `Ol` | → `ElemTag.Div`. Li children get list marker prepended. |
+| `Form` | → `ElemTag.Div`. Preserves `onSubmit` on Handlers. |
 | `Select` | Expand to Div + Popup. State: expanded, selectedIndex, highlightIndex. |
 | `Input` variants | Expand to Div + Text + Cursor. State: cursorPos, selection, scrollX. |
 | `Textarea` | Like TextInput but multi-line. State adds scrollY. |
 | `Checkbox` | Expand to Span with `[x]`/`[ ]`. State: checked. |
 | `Radio` | Like Checkbox with group exclusion via `name`. |
 | `RangeInput` | Expand to Div with track. State: value. |
-| `Img` | → `Tag.Div` with ImageData on Handlers. |
+| `Img` | → `ElemTag.Div` with ImageData on Handlers. |
 | `Reactive(signal)` | Evaluate signal → recurse |
 | `Foreach(signal, key, f)` | Evaluate signal → map with f → recurse. Key function determines WidgetKey path. |
 | `Fragment(children)` | Flatten: splice children into parent |
@@ -352,7 +352,7 @@ jvm/src/test/scala/kyo/
 
 ## Implementation Phases
 
-### Phase 0: Signal.asRef (kyo-core prerequisite)
+### Phase 0: Signal.asRef (kyo-core prerequisite) ✅
 
 **Goal:** Add `Signal.asRef` method to kyo-core. Materializes any `Signal[A]` into a `SignalRef[A]` via a piping fiber.
 
@@ -363,11 +363,22 @@ def asRef(using Frame): SignalRef[A] < (Async & Scope) =
     for
         curr <- self.current
         ref  <- Signal.initRef(curr)
-        _    <- Fiber.init(Loop.forever {
-                    self.nextWith { value => ref.set(value) }
-                })
+        _ <- Fiber.init {
+            Loop(curr) { last =>
+                self.currentWith { curr =>
+                    if last != curr then
+                        ref.set(curr).andThen(Loop.continue(curr))
+                    else
+                        self.nextWith { value =>
+                            ref.set(value).andThen(Loop.continue(value))
+                        }
+                }
+            }
+        }
     yield ref
 ```
+
+> **Divergence from original plan:** Uses `streamChanges`-style pattern (poll `current`, then block on `nextWith`) instead of bare `Loop.forever { nextWith }`. This eliminates a race where `set` happens between `Fiber.init` and the first `nextWith` call — the fiber would miss the change and block forever on a fresh promise.
 
 Key properties:
 - `Signal` stays resource-free. `asRef` creates a piping fiber — the resource. Returns `< (Async & Scope)`.
@@ -378,47 +389,44 @@ Key properties:
 - `asRef` returns ref with current value
 - Source signal update propagates to ref
 - Scope closure cancels piping fiber
-- Works with derived signals (`map`, `flatMap`)
+- Works with derived signals (`map`)
 
 **Dependencies:** None.
 
 **Compile isolation:** Self-contained change to `kyo-core`. No kyo-ui dependency.
 
-**Review checkpoint:** Phase complete when `Signal.asRef` compiles with all 4 tests passing. Present for review before starting Phase 1.
+**Review checkpoint:** ✅ Complete. All 4 tests pass.
 
 ---
 
-### Phase 1: IR Types
+### Phase 1: IR Types ✅
 
 **Goal:** Define all intermediate representation types as immutable data.
 
-**File:** `pipeline/IR.scala`
+**File:** `shared/src/main/scala/kyo/internal/tui2/pipeline/IR.scala`
 
 Everything in this file is immutable. No `var`, no mutable collections, no side effects.
 
 **Contents:**
 
 ```scala
-enum Tag:
+enum ElemTag:
     case Div, Span, Popup, Table
 
 case class Rect(x: Int, y: Int, w: Int, h: Int)
-
-case class KeyEvent(key: UI.Keyboard, ctrl: Boolean, shift: Boolean, alt: Boolean, meta: Boolean)
 
 case class ImageData(bytes: IArray[Byte], width: Int, height: Int, alt: String)
 
 /** Stable widget identity for cross-frame state preservation.
   * Composed of Frame (source position, compile-time) + dynamic Foreach path (runtime).
   * See "Widget identity: Frame + dynamic path" in Design Decisions above.
+  * Uses UI.KeyEvent directly — no separate KeyEvent type needed.
   */
-opaque type WidgetKey = String
+case class WidgetKey(frame: Frame, dynamicPath: Chunk[String]) derives CanEqual
+
 object WidgetKey:
-    def apply(frame: Frame, dynamicPath: Chunk[String]): WidgetKey =
-        if dynamicPath.isEmpty then frame.position.show
-        else frame.position.show + "#" + dynamicPath.mkString("/")
     def child(parent: WidgetKey, segment: String): WidgetKey =
-        parent + "/" + segment
+        WidgetKey(parent.frame, parent.dynamicPath.append(segment))
 ```
 
 **Handlers** — carried through every IR. Event dispatch operates on the final `Laid` tree, so handlers must survive all transformations. Widget-specific behavior is encoded as closures generated by Lower — dispatch fires them generically.
@@ -432,10 +440,10 @@ case class Handlers(
     forId: Maybe[String],                   // Label.forId target (user-level string, resolved at dispatch)
     tabIndex: Maybe[Int],
     disabled: Boolean,
-    onClick: Unit < Async,                  // pre-composed bubbling chain (inner→outer)
-    onClickSelf: Unit < Async,             // target-only, not composed into children
-    onKeyDown: KeyEvent => Unit < Async,   // pre-composed bubbling chain (inner→outer)
-    onKeyUp: KeyEvent => Unit < Async,     // pre-composed bubbling chain (inner→outer)
+    onClick: Unit < Async,                       // pre-composed bubbling chain (inner→outer)
+    onClickSelf: Unit < Async,                  // target-only, not composed into children
+    onKeyDown: UI.UI.KeyEvent => Unit < Async,     // pre-composed bubbling chain (inner→outer)
+    onKeyUp: UI.UI.KeyEvent => Unit < Async,       // pre-composed bubbling chain (inner→outer)
     onInput: String => Unit < Async,       // widget-specific, not composed
     onChange: Any => Unit < Async,          // type-erased, Lower ensures correctness
     onSubmit: Unit < Async,                // form-specific (woven into descendants' onKeyDown by Lower)
@@ -464,19 +472,19 @@ object Handlers:
 ```scala
 // After lower: concrete tree, all signals evaluated, widgets expanded
 enum Resolved:
-    case Node(tag: Tag, style: Style, handlers: Handlers, children: Chunk[Resolved])
+    case Node(tag: ElemTag, style: Style, handlers: Handlers, children: Chunk[Resolved])
     case Text(value: String)
     case Cursor(charOffset: Int)
 
 // After style: each node has computed visual properties
 enum Styled:
-    case Node(tag: Tag, computed: ComputedStyle, handlers: Handlers, children: Chunk[Styled])
+    case Node(tag: ElemTag, computed: ComputedStyle, handlers: Handlers, children: Chunk[Styled])
     case Text(value: String, computed: ComputedStyle)
     case Cursor(charOffset: Int)
 
 // After layout: each node has position and bounds
 enum Laid:
-    case Node(tag: Tag, computed: ComputedStyle, handlers: Handlers,
+    case Node(tag: ElemTag, computed: ComputedStyle, handlers: Handlers,
               bounds: Rect, content: Rect, clip: Rect, children: Chunk[Laid])
     case Text(value: String, computed: ComputedStyle, bounds: Rect, clip: Rect)
     case Cursor(pos: Rect)
@@ -573,8 +581,8 @@ object ColorEnc:
 - `CellGrid.empty` produces correct dimensions with `Cell.Empty` cells
 - `SizeEnc` round-trips: `pct(50.0)` → `resolve(_, 100)` = 50
 - `ColorEnc` round-trips: `pack(r, g, b)` → `r(c), g(c), b(c)` correct
-- `ComputedStyle.fromTheme` produces sensible defaults
-- `WidgetKey.apply` and `WidgetKey.child` produce expected strings
+- `ComputedStyle.Default` produces sensible defaults
+- `WidgetKey` construction and `WidgetKey.child` produce correct frame/path values
 - All three IR enum variants (`Resolved`, `Styled`, `Laid`) constructible with correct fields
 
 **Dependencies:** None (only kyo-data types: `Chunk`, `Maybe`, `Frame`).
@@ -583,7 +591,7 @@ object ColorEnc:
 
 **Estimated size:** ~350 lines
 
-**Review checkpoint:** Phase complete when IR.scala compiles with all tests passing. This phase defines the vocabulary for all subsequent phases — review the type choices carefully before proceeding. Present for review before starting Phase 2.
+**Review checkpoint:** ✅ Complete. All 34 tests pass.
 
 ---
 
@@ -693,7 +701,7 @@ object Lower:
     case class LowerResult(tree: Resolved, focusableIds: Chunk[WidgetKey])
 
     private val noop: Unit < Async = ()
-    private val noopKeyed: KeyEvent => Unit < Async = _ => noop
+    private val noopKey: UI.KeyEvent => Unit < Async = _ => noop
     private val noopInt: Int => Unit < Async = _ => noop
 
     /** Compose two Unit < Async handlers: child fires first, then parent. */
@@ -702,9 +710,9 @@ object Lower:
 
     /** Compose two keyed handlers: child fires first, then parent (same event). */
     private def composeKeyed(
-        child: KeyEvent => Unit < Async,
-        parent: KeyEvent => Unit < Async
-    ): KeyEvent => Unit < Async =
+        child: UI.KeyEvent => Unit < Async,
+        parent: UI.KeyEvent => Unit < Async
+    ): UI.KeyEvent => Unit < Async =
         e => child(e).andThen(parent(e))
 
     /** Walk the UI tree, producing a concrete primitive tree.
@@ -730,8 +738,8 @@ object Lower:
         ui: UI, state: FrameState, dynamicPath: Chunk[String],
         focusables: ChunkBuilder[WidgetKey],
         parentOnClick: Unit < Async,
-        parentOnKeyDown: KeyEvent => Unit < Async,
-        parentOnKeyUp: KeyEvent => Unit < Async,
+        parentOnKeyDown: UI.KeyEvent => Unit < Async,
+        parentOnKeyUp: UI.KeyEvent => Unit < Async,
         parentOnScroll: Int => Unit < Async,
         parentOnSubmit: Unit < Async                // threaded separately for selective weaving
     )(using AllowUnsafe): Resolved = ...
@@ -741,14 +749,14 @@ object Lower:
 
 #### 3a: Passthrough elements
 Elements that map directly to `Resolved.Node` with theme defaults:
-- `Div`, `Span` → `Tag.Div` / `Tag.Span`
-- `H1`–`H6`, `P`, `Nav`, `Section`, `Main`, `Header`, `Footer`, `Pre`, `Code` → `Tag.Div` + theme style
+- `Div`, `Span` → `ElemTag.Div` / `ElemTag.Span`
+- `H1`–`H6`, `P`, `Nav`, `Section`, `Main`, `Header`, `Footer`, `Pre`, `Code` → `ElemTag.Div` + theme style
 - `Button`, `Label`, `Li`, `Anchor` → theme style. `Label` preserves `forId`.
-- `Hr` → `Tag.Div` + border-bottom
+- `Hr` → `ElemTag.Div` + border-bottom
 - `Br` → `Resolved.Text("\n")`
-- `Form` → `Tag.Div`, preserves `onSubmit`
-- `Ul`, `Ol` → `Tag.Div`, Li children get markers
-- `Table` → `Tag.Table`, Tr/Td/Th mapped with colspan/rowspan on Handlers
+- `Form` → `ElemTag.Div`, preserves `onSubmit`
+- `Ul`, `Ol` → `ElemTag.Div`, Li children get markers
+- `Table` → `ElemTag.Table`, Tr/Td/Th mapped with colspan/rowspan on Handlers
 
 For each element:
 1. Generate ID (user-provided or `path + "/" + tag + index`)
@@ -792,7 +800,7 @@ Read current value:
 
 Expand to:
 ```
-Resolved.Node(Tag.Div, inputStyle, inputHandlers, Chunk(
+Resolved.Node(ElemTag.Div, inputStyle, inputHandlers, Chunk(
     Resolved.Text(displayText),
     Resolved.Cursor(cursorOffset),
     Resolved.Text(textAfterCursor)
@@ -802,25 +810,25 @@ Resolved.Node(Tag.Div, inputStyle, inputHandlers, Chunk(
 `Password`: mask with `•`. Generated `onKeyDown` closure captures `cursorPos`, `scrollX`, value ref and implements: insert, delete, cursor movement, selection. Generated `onInput`/`onChange` fire user callbacks. Widget `onKeyDown` is composed on top of the already-composed chain (user handler + parent chain) via `composeKeyed`. Form `onSubmit` is woven into the chain as an Enter-key handler. Textarea does NOT get `onSubmit` weaving — Enter inserts a newline there.
 
 #### 3d: Widget expansion — Checkbox / Radio
-- `Checkbox`: state = `SignalRef.Unsafe[Boolean]` (checked). Expand to `Node(Tag.Span, ..., Chunk(Text("[x]" or "[ ]")))`. onClick toggles ref, fires `onChange`. Widget onClick is composed on top of the already-composed parent chain.
+- `Checkbox`: state = `SignalRef.Unsafe[Boolean]` (checked). Expand to `Node(ElemTag.Span, ..., Chunk(Text("[x]" or "[ ]")))`. onClick toggles ref, fires `onChange`. Widget onClick is composed on top of the already-composed parent chain.
 - `Radio`: state keyed by group `name` = `SignalRef.Unsafe[Maybe[String]]` (selected value). onClick sets group value.
 
 #### 3e: Widget expansion — Select (dropdown)
 State: `expanded: SignalRef.Unsafe[Boolean]`, `selectedIndex: SignalRef.Unsafe[Int]`, `highlightIndex: SignalRef.Unsafe[Int]`
 
-Collapsed: `Node(Tag.Div, ..., Chunk(Text(selectedOption.text), Text("▼")))`
-Expanded: same + `Node(Tag.Popup, ..., Chunk(optionNodes...))`
+Collapsed: `Node(ElemTag.Div, ..., Chunk(Text(selectedOption.text), Text("▼")))`
+Expanded: same + `Node(ElemTag.Popup, ..., Chunk(optionNodes...))`
 
 Toggle uses `onClickSelf` (target-only — clicking an option does NOT re-toggle the dropdown). Widget onKeyDown (ArrowUp/Down, Enter, Escape) is composed on top of the already-composed chain. Option onClick is composed with the Select's parent onClick chain (NOT the toggle).
 
 #### 3f: Widget expansion — RangeInput
-State: `value: SignalRef.Unsafe[Double]`. Expand to `Node(Tag.Div, trackStyle, handlers, Chunk(Text(trackVisualization)))`. onKeyDown adjusts value by step within min/max.
+State: `value: SignalRef.Unsafe[Double]`. Expand to `Node(ElemTag.Div, trackStyle, handlers, Chunk(Text(trackVisualization)))`. onKeyDown adjusts value by step within min/max.
 
 #### 3g: Widget expansion — Other inputs
 - `DateInput`, `TimeInput`, `ColorInput`: text display + specialized onKeyDown
 - `FileInput`: text display + onClick triggers file dialog
 - `HiddenInput`: filtered out entirely
-- `Img`: expand to `Tag.Div` Node with `ImageData` on Handlers, alt text as fallback `Text` child
+- `Img`: expand to `ElemTag.Div` Node with `ImageData` on Handlers, alt text as fallback `Text` child
 
 #### 3h: Theme application
 ```scala
@@ -996,8 +1004,8 @@ object Layout:
    ```
 
 3. **Special tags:**
-   - `Tag.Popup`: extract to `popups`, position below parent. Not in parent's flow.
-   - `Tag.Table`: delegate to `layoutTable()`.
+   - `ElemTag.Popup`: extract to `popups`, position below parent. Not in parent's flow.
+   - `ElemTag.Table`: delegate to `layoutTable()`.
    - Overlay (`position=1`): skip during flex, position at `content + translate`.
 
 4. **Flex layout:**
@@ -1247,7 +1255,7 @@ object Dispatch:
                         findFocused(layout, state).foreach { node =>
                             if !node.handlers.disabled then
                                 // Pre-composed: fires widget → user → parent → ... chain
-                                val keyEvent = KeyEvent(ke, ctrl, shift, alt, meta = false)
+                                val keyEvent = UI.KeyEvent(ke, ctrl, shift, alt, meta = false)
                                 node.handlers.onKeyDown(keyEvent)
                         }
 
@@ -1600,8 +1608,8 @@ private def walk(
     ui: UI, state: FrameState, dynamicPath: Chunk[String],
     focusables: ChunkBuilder[WidgetKey],
     parentOnClick: Unit < Async,
-    parentOnKeyDown: KeyEvent => Unit < Async,
-    parentOnKeyUp: KeyEvent => Unit < Async,
+    parentOnKeyDown: UI.KeyEvent => Unit < Async,
+    parentOnKeyUp: UI.KeyEvent => Unit < Async,
     parentOnScroll: Int => Unit < Async,
     parentOnSubmit: Unit < Async
 )(using AllowUnsafe): Resolved =
@@ -1627,14 +1635,14 @@ private def walk(
                      parentOnClick, parentOnKeyDown, parentOnKeyUp, parentOnScroll, parentOnSubmit)
             })
             if children.size == 1 then children.head
-            else Resolved.Node(Tag.Div, Style.empty, Handlers.empty, children)
+            else Resolved.Node(ElemTag.Div, Style.empty, Handlers.empty, children)
 
         // ---- Fragment ----
         case UI.Fragment(span) =>
             val children = lowerChildren(span, state, dynamicPath, focusables,
                 parentOnClick, parentOnKeyDown, parentOnKeyUp, parentOnScroll, parentOnSubmit)
             if children.size == 1 then children.head
-            else Resolved.Node(Tag.Div, Style.empty, Handlers.empty, children)
+            else Resolved.Node(ElemTag.Div, Style.empty, Handlers.empty, children)
 
         // ---- Elements ----
         case elem: UI.Element =>
@@ -1647,8 +1655,8 @@ private def lowerElement(
     elem: UI.Element, state: FrameState, dynamicPath: Chunk[String],
     focusables: ChunkBuilder[WidgetKey],
     parentOnClick: Unit < Async,
-    parentOnKeyDown: KeyEvent => Unit < Async,
-    parentOnKeyUp: KeyEvent => Unit < Async,
+    parentOnKeyDown: UI.KeyEvent => Unit < Async,
+    parentOnKeyUp: UI.KeyEvent => Unit < Async,
     parentOnScroll: Int => Unit < Async,
     parentOnSubmit: Unit < Async
 )(using AllowUnsafe): Resolved =
@@ -1703,7 +1711,7 @@ private def lowerElement(
         case _: UI.Form => baseHandlers.onSubmit
         case _          => noop
     val childOnSubmit = if formOnSubmit != noop then formOnSubmit else parentOnSubmit
-    val submitAsKeyDown: KeyEvent => Unit < Async = (ke: KeyEvent) =>
+    val submitAsKeyDown: UI.KeyEvent => Unit < Async = (ke: UI.KeyEvent) =>
         if ke.key == UI.Keyboard.Enter then childOnSubmit else noop
     val composedOnKeyDown = composeKeyed(
         baseHandlers.onKeyDown,
@@ -1765,7 +1773,7 @@ private def lowerElement(
         case _: UI.HiddenInput =>
             Resolved.Text("")  // not rendered
         case _: UI.Hr =>
-            Resolved.Node(Tag.Div, finalStyle, handlers, Chunk.empty)
+            Resolved.Node(ElemTag.Div, finalStyle, handlers, Chunk.empty)
         case _: UI.Br =>
             Resolved.Text("\n")
         case _: UI.Table =>
@@ -1773,7 +1781,7 @@ private def lowerElement(
                 composedOnClick, composedOnKeyDown, composedOnKeyUp, composedOnScroll, childOnSubmit)
         case _ =>
             // Passthrough: Div, Span, H1-H6, P, Nav, Section, Form, Button, etc.
-            val tag = if isInlineElement(elem) then Tag.Span else Tag.Div
+            val tag = if isInlineElement(elem) then ElemTag.Span else ElemTag.Div
             val children = lowerChildren(elem.children, state, dynamicPath, focusables,
                 composedOnClick, composedOnKeyDown, composedOnKeyUp, composedOnScroll, childOnSubmit)
             Resolved.Node(tag, finalStyle, handlers, children)
@@ -1831,8 +1839,8 @@ private def lowerChildren(
     children: kyo.Span[UI], state: FrameState, dynamicPath: Chunk[String],
     focusables: ChunkBuilder[WidgetKey],
     parentOnClick: Unit < Async,
-    parentOnKeyDown: KeyEvent => Unit < Async,
-    parentOnKeyUp: KeyEvent => Unit < Async,
+    parentOnKeyDown: UI.KeyEvent => Unit < Async,
+    parentOnKeyUp: UI.KeyEvent => Unit < Async,
     parentOnScroll: Int => Unit < Async,
     parentOnSubmit: Unit < Async
 )(using AllowUnsafe): Chunk[Resolved] =
@@ -1892,7 +1900,7 @@ private def lowerTextInput(
     val userOnInput  = elem.onInput
     val userOnChange = elem.onChange
 
-    val widgetOnKeyDown: KeyEvent => Unit < Async = { (ke: KeyEvent) =>
+    val widgetOnKeyDown: UI.KeyEvent => Unit < Async = { (ke: UI.KeyEvent) =>
         import AllowUnsafe.embrace.danger
         val currentVal = valueRef.map(_.unsafe.get()).getOrElse(currentValue)
         val pos = math.min(cursorPos.unsafe.get(), currentVal.length)
@@ -1924,7 +1932,7 @@ private def lowerTextInput(
     }
 
     // Weave parentOnSubmit as Enter-key handler into onKeyDown chain
-    val submitOnKeyDown: KeyEvent => Unit < Async = (ke: KeyEvent) =>
+    val submitOnKeyDown: UI.KeyEvent => Unit < Async = (ke: UI.KeyEvent) =>
         if ke.key == UI.Keyboard.Enter then parentOnSubmit else noop
 
     // Compose: widget → submit → already-composed chain (user + parents)
@@ -1938,7 +1946,7 @@ private def lowerTextInput(
         onChange = userOnChange.map(f => (v: Any) => f(v.asInstanceOf[String])).getOrElse(_ => noop)
     )
 
-    Resolved.Node(Tag.Div, style, handlers, Chunk(
+    Resolved.Node(ElemTag.Div, style, handlers, Chunk(
         Resolved.Text(beforeCursor),
         Resolved.Cursor(cursor),
         Resolved.Text(afterCursor)
@@ -1958,8 +1966,8 @@ private def lowerSelect(
     elem: UI.Select, style: Style, baseHandlers: Handlers, key: WidgetKey,
     state: FrameState, dynamicPath: Chunk[String], focusables: ChunkBuilder[WidgetKey],
     parentOnClick: Unit < Async,
-    parentOnKeyDown: KeyEvent => Unit < Async,
-    parentOnKeyUp: KeyEvent => Unit < Async,
+    parentOnKeyDown: UI.KeyEvent => Unit < Async,
+    parentOnKeyUp: UI.KeyEvent => Unit < Async,
     parentOnScroll: Int => Unit < Async,
     parentOnSubmit: Unit < Async
 )(using AllowUnsafe): Resolved =
@@ -1989,7 +1997,7 @@ private def lowerSelect(
     }
 
     // Widget onKeyDown: navigate when expanded
-    val widgetOnKeyDown: KeyEvent => Unit < Async = { (ke: KeyEvent) =>
+    val widgetOnKeyDown: UI.KeyEvent => Unit < Async = { (ke: UI.KeyEvent) =>
         import AllowUnsafe.embrace.danger
         if expanded.unsafe.get() then
             ke.key match
@@ -2023,7 +2031,7 @@ private def lowerSelect(
     )
 
     if !isExpanded then
-        Resolved.Node(Tag.Div, style, handlers, displayChildren)
+        Resolved.Node(ElemTag.Div, style, handlers, displayChildren)
     else
         // Build popup with option list
         // Option onClick is composed with the Select's PARENT onClick chain
@@ -2040,12 +2048,12 @@ private def lowerSelect(
             }
             // Compose option's onClick with Select's parent chain (bubbling)
             val optionOnClick = compose(pickHandler, parentOnClick)
-            Resolved.Node(Tag.Div, optStyle, Handlers.empty.copy(
+            Resolved.Node(ElemTag.Div, optStyle, Handlers.empty.copy(
                 onClick = optionOnClick
             ), Chunk(Resolved.Text(options(i))))
         })
-        val popup = Resolved.Node(Tag.Popup, Style.border(1.px, Color.gray), Handlers.empty, optionNodes)
-        Resolved.Node(Tag.Div, style, handlers, displayChildren.append(popup))
+        val popup = Resolved.Node(ElemTag.Popup, Style.border(1.px, Color.gray), Handlers.empty, optionNodes)
+        Resolved.Node(ElemTag.Div, style, handlers, displayChildren.append(popup))
 
 private def collectOptions(children: kyo.Span[UI]): Chunk[String] =
     import scala.annotation.tailrec
@@ -2364,7 +2372,7 @@ object Layout:
             ): (Chunk[Styled], Chunk[Styled]) =
                 if i >= children.size then (flow, overlays)
                 else children(i) match
-                    case n: Styled.Node if n.tag == Tag.Popup =>
+                    case n: Styled.Node if n.tag == ElemTag.Popup =>
                         val popupRect = Rect(outerX, outerY + math.max(outerH, 0) + 1,
                             available.w, available.h)
                         popups.add(arrange(n, popupRect, Rect(0, 0, available.w, available.h), popups))
@@ -2377,7 +2385,7 @@ object Layout:
             val (flow, overlays) = categorize(0, Chunk.empty, Chunk.empty)
 
             // 4. Flex layout for flow children
-            val laidChildren = if tag == Tag.Table then
+            val laidChildren = if tag == ElemTag.Table then
                 layoutTable(flow, contentX, contentY, contentW, clip, popups)
             else
                 layoutFlex(flow, cs, contentX, contentY, contentW,
@@ -2612,7 +2620,7 @@ object Layout:
                             layoutCells(j + 1, col + colspan, cellX + cellW,
                                 math.max(rowHeight, cellH), cells.append(laid))
                     val (cellLaid, rowHeight) = layoutCells(0, 0, cx, 0, Chunk.empty)
-                    val rowNode = Laid.Node(Tag.Div, row.computed, row.handlers,
+                    val rowNode = Laid.Node(ElemTag.Div, row.computed, row.handlers,
                         Rect(cx, rowY, cw, rowHeight),
                         Rect(cx, rowY, cw, rowHeight),
                         clip, cellLaid)
@@ -3263,7 +3271,7 @@ object Dispatch:
                 else
                     findFocused(layout, state).foreach { target =>
                         if !target.handlers.disabled then
-                            val ke = KeyEvent(key, ctrl, shift, alt, false)
+                            val ke = UI.KeyEvent(key, ctrl, shift, alt, false)
                             // Pre-composed: fires widget → user → parent → ... chain
                             // Includes form onSubmit on Enter (woven by Lower for TextInputs)
                             Sync.Unsafe.evalOrThrow(target.handlers.onKeyDown(ke))
