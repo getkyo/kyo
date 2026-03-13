@@ -285,7 +285,8 @@ abstract private class Worker(
                 case null =>
                     ("", "")
                 case mount: Thread =>
-                    (mount.getName(), mount.getStackTrace().head.toString())
+                    val trace = mount.getStackTrace()
+                    (mount.getName(), if (trace.nonEmpty) trace.head.toString() else "")
             }
         WorkerStatus(
             id,

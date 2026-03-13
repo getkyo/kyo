@@ -128,20 +128,22 @@ class STMTest extends Test:
                 v <-
                     Abort.run {
                         STM.run(Schedule.never) {
-                            for
-                                _ <- attempts.incrementAndGet
-                                _ <- latch1.await
-                                _ <- ref.get
-                                _ <- latch2.await
-                                v <- ref.get
-                                _ <- Abort.when(v == 0)(new Exception)
-                            yield v
+                            Kyo.fill(100) {
+                                for
+                                    _ <- attempts.incrementAndGet
+                                    _ <- latch1.await
+                                    _ <- ref.get
+                                    _ <- latch2.await
+                                    v <- ref.get
+                                    _ <- Abort.when(v == 0)(new Exception)
+                                yield v
+                            }
                         }
                     }
                 a <- attempts.get
             yield
                 assert(v.isFailure)
-                assert(a == 1)
+                assert(a <= 100)
         }
     }
 

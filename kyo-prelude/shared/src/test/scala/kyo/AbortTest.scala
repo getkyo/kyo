@@ -965,7 +965,7 @@ class AbortTest extends Test:
 
     "Abort.run with parametrized type" in pendingUntilFixed {
         class Test[A]
-        typeCheck("Abort.run(Abort.fail(new Test[Int]))")
+        discard(typeCheck("Abort.run(Abort.fail(new Test[Int]))"))
     }
 
     "Abort.run with type unions" - {

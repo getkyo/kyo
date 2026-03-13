@@ -18,6 +18,7 @@ import kyo.scheduler.top.Reporter
 import kyo.scheduler.top.Status
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
+import kyo.scheduler.util.Sleep
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
 import scala.annotation.nowarn
@@ -116,7 +117,7 @@ final class Scheduler(
         new Admission(() => loadAvg(), schedule, () => System.currentTimeMillis, timer)
 
     private val concurrencyRegulator =
-        new Concurrency(() => loadAvg(), updateWorkers, Thread.sleep(_), () => System.nanoTime, timer)
+        new Concurrency(() => loadAvg(), updateWorkers, Sleep(_), () => System.nanoTime, timer)
 
     private val top = new Reporter(status, enableTopJMX, enableTopConsoleMs, timer)
 

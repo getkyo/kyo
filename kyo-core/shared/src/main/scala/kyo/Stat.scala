@@ -44,20 +44,6 @@ abstract class Histogram extends Serializable:
       *   The value to observe
       */
     def observe(v: Double)(using Frame): Unit < Sync
-
-    /** Get the total count of observations.
-      * @return
-      *   The count as a Long, wrapped in Sync
-      */
-    def count(using Frame): Long < Sync
-
-    /** Get the value at a specific percentile.
-      * @param v
-      *   The percentile (0.0 to 100.0)
-      * @return
-      *   The value at the given percentile, wrapped in Sync
-      */
-    def valueAtPercentile(v: Double)(using Frame): Double < Sync
 end Histogram
 
 /** A gauge for measuring a specific value that can go up and down.
@@ -125,14 +111,13 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
       */
     def initHistogram(
         name: String,
-        description: String = "empty"
+        description: String = "empty",
+        boundaries: Array[Double] = UnsafeHistogram.defaultBoundaries
     ): Histogram =
         new Histogram:
-            val unsafe                                    = registryScope.histogram(name, description)
-            def observe(v: Double)(using Frame)           = Sync.defer(unsafe.observe(v))
-            def observe(v: Long)(using Frame)             = Sync.defer(unsafe.observe(v))
-            def count(using Frame)                        = Sync.defer(unsafe.count())
-            def valueAtPercentile(v: Double)(using Frame) = Sync.defer(unsafe.valueAtPercentile(v))
+            val unsafe                          = registryScope.histogram(name, description, boundaries)
+            def observe(v: Double)(using Frame) = Sync.defer(unsafe.observe(v))
+            def observe(v: Long)(using Frame)   = Sync.defer(unsafe.observe(v))
 
     /** Initialize a new Gauge.
       * @param name
