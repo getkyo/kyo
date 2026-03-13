@@ -354,7 +354,7 @@ object Gate:
                 }
 
             /** Join the gate with n parties and apply an inline continuation, avoiding closure allocation. */
-            inline def joinWith[B, S](n: Int)(inline f: => B < S)(using Frame): B < (S & Sync) =
+            inline def joinWithN[B, S](n: Int)(inline f: => B < S)(using Frame): B < (S & Sync) =
                 Sync.Unsafe.defer {
                     self.join(n)
                     f
