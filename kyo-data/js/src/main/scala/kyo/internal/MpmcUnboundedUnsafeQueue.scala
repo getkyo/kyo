@@ -5,8 +5,8 @@ import scala.collection.mutable.ArrayDeque
 
 /** Unbounded MPMC queue — JS single-threaded simplification of JCTools MpmcUnboundedXaddArrayQueue.
   *
-  * Uses ArrayDeque instead of XADD-allocated linked chunks with pooling. No atomics or chunk pooling needed on JS.
-  * The maxPooledChunks parameter is accepted for API compatibility but ignored.
+  * Uses ArrayDeque instead of XADD-allocated linked chunks with pooling. No atomics or chunk pooling needed on JS. The maxPooledChunks
+  * parameter is accepted for API compatibility but ignored.
   */
 final private[kyo] class MpmcUnboundedUnsafeQueue[A](chunkSize: Int, maxPooledChunks: Int = 2) extends UnsafeQueue[A]:
 
