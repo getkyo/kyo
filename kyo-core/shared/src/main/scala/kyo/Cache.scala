@@ -398,9 +398,11 @@ object Cache:
                                 val s = values.get(slot)
                                 // Empty = end of chain
                                 !s.isEmpty && {
+                                    // Locked = conservatively assume duplicate
+                                    s.isLocked ||
                                     // Present + matching key = confirmed duplicate
                                     (s.isPresent && keyMatch(slot, key)) ||
-                                    // Locked or tombstone or different key = keep probing
+                                    // Tombstone or different key = keep probing
                                     isDuplicate(next(slot), dist + 1)
                                 }
                         }
