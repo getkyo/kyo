@@ -306,7 +306,6 @@ lazy val `kyo-kernel` =
         .in(file("kyo-kernel"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.jctools"   % "jctools-core" % "4.0.6",
             libraryDependencies += "org.javassist" % "javassist"    % "3.30.2-GA" % Test,
             Test / sourceGenerators += TestVariant.generate.taskValue
         )

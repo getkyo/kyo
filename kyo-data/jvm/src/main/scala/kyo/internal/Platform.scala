@@ -5,9 +5,9 @@ import scala.concurrent.ExecutionContext
 object Platform:
 
     val executionContext: ExecutionContext = scala.concurrent.ExecutionContext.global
-    val isJVM: Boolean                     = true
-    inline val isJS                        = false
-    val isNative: Boolean                  = false
+    inline def isJVM: Boolean              = true
+    inline def isJS                        = false
+    inline def isNative: Boolean           = false
     val isDebugEnabled: Boolean =
         java.lang.management.ManagementFactory
             .getRuntimeMXBean()
