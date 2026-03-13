@@ -1,12 +1,14 @@
 # Pure Lowering Pipeline: Implementation Plan
 
-New backend from scratch — no dependency on any existing tui2 backend code. UI and Style APIs stay unchanged.
+New backend from scratch. UI and Style APIs stay unchanged.
+
+> **Important:** The old tui2 backend code (RenderCtx, EventDispatch, WidgetRegistry, Terminal.scala, InputParser.scala, InputEvent, SignalCollector.scala, ColorUtils.scala, ResolvedTheme.scala, and all old backend/renderer files) has been **deleted**. Do not search for or reference any of these files — they no longer exist in the codebase. The motivation section below describes the old architecture's problems for context only.
 
 ---
 
 ## Motivation
 
-The existing tui2 renderer accumulated architectural problems across multiple sessions. Every bug fix followed the same pattern: state added to `RenderCtx` (a god object visible to all widgets), special cases added to `EventDispatch` (a central switch statement), fixes applied to whichever file was open rather than where responsibility belongs.
+The previous tui2 renderer (now deleted) accumulated architectural problems across multiple sessions. Every bug fix followed the same pattern: state added to `RenderCtx` (a god object visible to all widgets), special cases added to `EventDispatch` (a central switch statement), fixes applied to whichever file was open rather than where responsibility belongs.
 
 **The pattern:** Select dropdown required 9 mutable fields on RenderCtx, code in 6 files, 11 separate code locations. A developer touching any of them must understand all 11 to avoid breaking the dropdown.
 
@@ -117,15 +119,15 @@ Two pieces of state are **not** `SignalRef` because they're frame-local outputs,
 |-------|------|-------------|
 | `WidgetStateCache` | `HashMap[String, Any]` | Stores `SignalRef.Unsafe` values keyed by element identity. The *refs themselves* are reactive (SignalRef), but the *cache* mapping identity → ref is a plain HashMap because: (1) it's written during Lower and swept after, (2) reads are by key, (3) making the cache itself a Signal would mean every widget state creation triggers a re-render, which is circular. Uses mark-and-sweep: `getOrCreate` marks accessed keys, sweep after the frame removes entries for widgets no longer in the tree. This prevents unbounded growth from Foreach items that disappear. Hidden widgets survive because Lower runs widget expansion (calling `getOrCreate`) even for hidden elements, discarding the result afterward. |
 
-### What stays unchanged
+### What exists (retained from old codebase)
 - `UI.scala` — user-facing AST
 - `Style.scala` — user-facing style DSL
-- `Theme.scala`, `ResolvedTheme.scala` — theme system
+- `Theme.scala` — theme definitions
 - `UIDsl.scala` — DSL helpers
-- `Terminal.scala` — raw terminal I/O (JVM-only)
-- `InputParser.scala`, `InputEvent` — input parsing
-- `SignalCollector.scala` — signal change detection for re-render
-- `ColorUtils.scala` — RGB↔ANSI conversion
+- `UIBackend.scala` — backend trait
+- `UISession.scala` — session type
+
+> **Note:** All old tui2 internal code has been deleted (RenderCtx, EventDispatch, WidgetRegistry, Terminal.scala, InputParser.scala, InputEvent, SignalCollector.scala, ColorUtils.scala, ResolvedTheme.scala). These must be rebuilt as part of this plan or replaced by new pipeline equivalents. Do not search for them.
 
 ---
 
@@ -855,7 +857,7 @@ private def themeStyle(elem: UI.Element, theme: ResolvedTheme): Style =
 - **Textarea skips onSubmit**: `form.onSubmit(submit)(textarea("x"))` → textarea's onKeyDown does NOT include Enter→submit
 - **onScroll override**: nested scroll containers → innermost handler wins, not composed
 
-**Dependencies:** Phase 1 (IR types), Phase 2 (FrameState). Also reads `UI.scala` types and `Style.scala` types (existing, unchanged).
+**Dependencies:** Phase 1 (IR types), Phase 2 (FrameState). Also reads `UI.scala` types and `Style.scala` types.
 
 **Compile isolation:** Depends on Phase 1 (IR types) and Phase 2 (FrameState) only. Produces `Resolved` — does not import Styler, Layout, or any downstream step.
 
@@ -1445,7 +1447,7 @@ object Tui2Backend extends UIBackend:
         terminal.flush()
 ```
 
-Input loop calls `Pipeline.dispatchEvent`. Render loop calls `doRender` on signal change. Structure identical to current mainLoop/inputLoop/renderLoop pattern but using Pipeline instead of tree-walk rendering.
+Input loop calls `Pipeline.dispatchEvent`. Render loop calls `doRender` on signal change.
 
 #### 10b: TerminalEmulator (`jvm/src/main/scala/kyo/TerminalEmulator.scala`)
 
@@ -1477,7 +1479,7 @@ class TerminalEmulator(ui: UI, cols: Int, rows: Int, state: FrameState):
         doRender()
 ```
 
-No JediTerm dependency for text frame extraction. Direct CellGrid → String.
+Direct CellGrid → String for text frame extraction.
 
 #### 10c: renderToString
 
@@ -1498,7 +1500,7 @@ def renderToString(ui: UI, cols: Int, rows: Int, theme: Theme = Theme.Default)(u
 - Scroll: scroll, verify content shifts
 - Reactive: update signal, re-render, verify
 
-**Dependencies:** All previous phases + `Terminal.scala` (existing, unchanged).
+**Dependencies:** All previous phases. Terminal I/O must be implemented as part of this phase.
 
 **Compile isolation:** JVM-only. Depends on Pipeline (Phase 9) + Terminal I/O. All pipeline logic is in shared/.
 

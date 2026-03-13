@@ -176,6 +176,32 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
         )
     end streamChanges
 
+    /** Materializes this signal into a mutable `SignalRef` that tracks the signal's value via a background piping fiber.
+      *
+      * The returned ref is initialized with the signal's current value. A background fiber continuously pipes value changes from this
+      * signal into the ref. The fiber's lifetime is tied to the caller's `Scope` — when the scope closes, the piping fiber is canceled.
+      *
+      * @return
+      *   A `SignalRef` that mirrors this signal's value
+      */
+    final def asRef(using Frame): SignalRef[A] < (Async & Scope) =
+        for
+            curr <- self.current
+            ref  <- Signal.initRef(curr)
+            _ <- Fiber.init {
+                Loop(curr) { last =>
+                    self.currentWith { curr =>
+                        if last != curr then
+                            ref.set(curr).andThen(Loop.continue(curr))
+                        else
+                            self.nextWith { value =>
+                                ref.set(value).andThen(Loop.continue(value))
+                            }
+                    }
+                }
+            }
+        yield ref
+
 end Signal
 
 export Signal.SignalRef

@@ -589,4 +589,51 @@ class SignalTest extends Test:
 
     }
 
+    "asRef" - {
+        "returns ref with current value" in run {
+            for
+                source <- Signal.initRef(42)
+                ref    <- source.asRef
+                v      <- ref.get
+            yield assert(v == 42)
+        }
+
+        "source update propagates to ref" in run {
+            for
+                source <- Signal.initRef(1)
+                ref    <- source.asRef
+                _      <- source.set(2)
+                _      <- untilTrue(ref.get.map(_ == 2))
+            yield succeed
+        }
+
+        "scope closure cancels piping fiber" in run {
+            for
+                source <- Signal.initRef(1)
+                ref <- Scope.run {
+                    for
+                        r <- source.asRef
+                        _ <- source.set(2)
+                        _ <- untilTrue(r.get.map(_ == 2))
+                    yield r
+                }
+                // Scope closed — piping fiber should be canceled
+                _ <- source.set(99)
+                _ <- Async.sleep(50.millis)
+                v <- ref.get
+            yield assert(v == 2)
+        }
+
+        "works with derived signals (map)" in run {
+            for
+                source <- Signal.initRef(5)
+                mapped = source.map(_ * 10)
+                ref <- mapped.asRef
+                v1  <- ref.get
+                _   <- source.set(7)
+                _   <- untilTrue(ref.get.map(_ == 70))
+            yield assert(v1 == 50)
+        }
+    }
+
 end SignalTest
