@@ -21,13 +21,12 @@ object StatsRegistry {
         def histogram(
             name: String,
             description: String = "empty",
-            numberOfSignificantValueDigits: Int = 4,
-            highestToLowestValueRatio: Long = 2
+            boundaries: Array[Double] = UnsafeHistogram.defaultBoundaries
         ): UnsafeHistogram =
             internal.histograms.get(
                 name :: reversePath,
                 description,
-                new UnsafeHistogram(numberOfSignificantValueDigits, highestToLowestValueRatio)
+                new UnsafeHistogram(boundaries)
             )
 
         def gauge(name: String, description: String = "empty")(run: => Double): UnsafeGauge =
