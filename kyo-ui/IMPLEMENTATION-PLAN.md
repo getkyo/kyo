@@ -595,11 +595,63 @@ object ColorEnc:
 
 ---
 
-### Phase 2: FrameState + WidgetStateCache
+### Phase 2: FrameState + WidgetStateCache + ResolvedTheme
 
-**Goal:** Define persistent cross-frame state. All reactive state as `SignalRef.Unsafe`.
+**Goal:** Define persistent cross-frame state and resolved theme. All reactive state as `SignalRef.Unsafe`.
 
 **File:** `pipeline/FrameState.scala`
+
+```scala
+/** Resolved theme values for TUI rendering. Pre-resolves colors from the Theme enum
+  * so Lower and Pipeline don't need to pattern-match on Theme variants repeatedly.
+  *
+  * - `variant` controls which elements get themed (Default=rich, Minimal=moderate, Plain=none)
+  * - Color fields provide the resolved values for how to style them
+  */
+case class ResolvedTheme(
+    variant: Theme,
+    fg: Int,                    // root fg color (packed RGB) — inherited by entire tree
+    bg: Int,                    // root bg color (packed RGB or Transparent)
+    borderColor: Style.Color,   // borders: buttons, inputs, hr, popups
+    highlightBg: Style.Color,   // select dropdown highlight background
+    highlightFg: Style.Color    // select dropdown highlight foreground
+)
+
+object ResolvedTheme:
+    def resolve(theme: Theme): ResolvedTheme = theme match
+        case Theme.Default =>
+            ResolvedTheme(
+                variant = Theme.Default,
+                fg = ColorEnc.pack(255, 255, 255),
+                bg = ColorEnc.Transparent,
+                borderColor = Style.Color.rgb(128, 128, 128),
+                highlightBg = Style.Color.rgb(0, 0, 255),
+                highlightFg = Style.Color.rgb(255, 255, 255)
+            )
+        case Theme.Minimal =>
+            ResolvedTheme(
+                variant = Theme.Minimal,
+                fg = ColorEnc.pack(255, 255, 255),
+                bg = ColorEnc.Transparent,
+                borderColor = Style.Color.rgb(128, 128, 128),
+                highlightBg = Style.Color.rgb(0, 0, 255),
+                highlightFg = Style.Color.rgb(255, 255, 255)
+            )
+        case Theme.Plain =>
+            ResolvedTheme(
+                variant = Theme.Plain,
+                fg = ColorEnc.pack(255, 255, 255),
+                bg = ColorEnc.Transparent,
+                borderColor = Style.Color.rgb(128, 128, 128),
+                highlightBg = Style.Color.rgb(0, 0, 255),
+                highlightFg = Style.Color.rgb(255, 255, 255)
+            )
+
+/** Produce root ComputedStyle from resolved theme. Sets inherited fg/bg for the tree. */
+object ComputedStyle:
+    def fromTheme(theme: ResolvedTheme): ComputedStyle =
+        Default.copy(fg = theme.fg, bg = theme.bg)
+```
 
 ```scala
 /** All persistent state across frames. Owned by the backend session.
@@ -607,7 +659,7 @@ object ColorEnc:
   * Reactive state (SignalRef.Unsafe): changes trigger re-render.
   * Frame-local state (var): overwritten each frame, not reactive.
   */
-class FrameState(val theme: ResolvedTheme):
+class FrameState(val theme: ResolvedTheme)(using AllowUnsafe):
     // ---- Reactive: changes trigger re-render ----
     val focusedId: SignalRef.Unsafe[Maybe[WidgetKey]]  = SignalRef.Unsafe.init(Absent)
     val hoveredId: SignalRef.Unsafe[Maybe[WidgetKey]]   = SignalRef.Unsafe.init(Absent)
@@ -675,14 +727,16 @@ class WidgetStateCache:
 - `FrameState` refs initialize to `Absent`
 - `focusableIds` starts empty
 - `prevLayout` and `prevGrid` start as `Absent`
+- `ResolvedTheme.resolve` produces correct values per variant
+- `ComputedStyle.fromTheme` sets fg/bg from theme
 
-**Dependencies:** Phase 0 (SignalRef.Unsafe), Phase 1 (IR types for `WidgetKey`, `LayoutResult`, `CellGrid`).
+**Dependencies:** Phase 0 (SignalRef.Unsafe), Phase 1 (IR types for `WidgetKey`, `LayoutResult`, `CellGrid`, `ComputedStyle`, `ColorEnc`).
 
 **Compile isolation:** Only depends on types from Phase 1 and `SignalRef.Unsafe` from kyo-core. No pipeline logic.
 
-**Estimated size:** ~80 lines
+**Estimated size:** ~130 lines
 
-**Review checkpoint:** Phase complete when FrameState.scala compiles with all tests passing. Small phase — review focuses on the state model design. Present for review before starting Phase 3.
+**Review checkpoint:** Phase complete when FrameState.scala compiles with all tests passing. Review focuses on the state model design and theme resolution. Present for review before starting Phase 3.
 
 ---
 
@@ -833,12 +887,21 @@ State: `value: SignalRef.Unsafe[Double]`. Expand to `Node(ElemTag.Div, trackStyl
 #### 3h: Theme application
 ```scala
 private def themeStyle(elem: UI.Element, theme: ResolvedTheme): Style =
-    elem match
-        case _: UI.H1      => Style.bold.padding(1.px, 0.px)
-        case _: UI.H2      => Style.bold
-        case _: UI.Button   => Style.border(1.px, Color.gray).padding(0.px, 1.px)
-        case _: UI.Hr       => Style.borderBottom(1.px, theme.borderColor).width(100.pct)
-        case _              => Style.empty
+    theme.variant match
+        case Theme.Plain => Style.empty
+        case Theme.Minimal =>
+            elem match
+                case _: UI.H1  => Style.bold.padding(1.px, 0.px)
+                case _: UI.H2  => Style.bold
+                case _: UI.Hr  => Style.borderBottom(1.px, theme.borderColor).width(100.pct)
+                case _         => Style.empty
+        case Theme.Default =>
+            elem match
+                case _: UI.H1      => Style.bold.padding(1.px, 0.px)
+                case _: UI.H2      => Style.bold
+                case _: UI.Button   => Style.border(1.px, theme.borderColor).padding(0.px, 1.px)
+                case _: UI.Hr       => Style.borderBottom(1.px, theme.borderColor).width(100.pct)
+                case _              => Style.empty
 ```
 
 **Tests (LowerTest.scala):**
@@ -2038,7 +2101,7 @@ private def lowerSelect(
         // (NOT the Select's toggle — toggle is onClickSelf, not in parentOnClick)
         val optionNodes = Chunk.from((0 until options.size).map { i =>
             val optStyle = if i == hiIdx then
-                Style.bg(Color.blue).color(Color.white)
+                Style.bg(state.theme.highlightBg).color(state.theme.highlightFg)
             else Style.empty
             val pickHandler: Unit < Async = {
                 import AllowUnsafe.embrace.danger
@@ -2052,7 +2115,7 @@ private def lowerSelect(
                 onClick = optionOnClick
             ), Chunk(Resolved.Text(options(i))))
         })
-        val popup = Resolved.Node(ElemTag.Popup, Style.border(1.px, Color.gray), Handlers.empty, optionNodes)
+        val popup = Resolved.Node(ElemTag.Popup, Style.border(1.px, state.theme.borderColor), Handlers.empty, optionNodes)
         Resolved.Node(ElemTag.Div, style, handlers, displayChildren.append(popup))
 
 private def collectOptions(children: kyo.Span[UI]): Chunk[String] =
