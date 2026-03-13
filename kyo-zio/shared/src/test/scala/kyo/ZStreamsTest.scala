@@ -83,27 +83,23 @@ class ZStreamsTest extends Test:
             }
         }
         "interruption propagates to zio stream" in runKyo {
-            import java.util.concurrent.atomic.AtomicBoolean
+            Latch.init(1).map { started =>
+                Latch.init(1).map { finalized =>
+                    import AllowUnsafe.embrace.danger
 
-            // State flag that should be set when ZIO stream is interrupted/completed
-            val streamFinalized = new AtomicBoolean(false)
+                    val zioStream = ZStream.unfoldZIO(0) { n =>
+                        ZIO.succeed(started.unsafe.release()) *>
+                            ZIO.sleep(5.millis.toJava) *> ZIO.succeed(Some((n, n + 1)))
+                    }.ensuring(ZIO.succeed(finalized.unsafe.release()))
 
-            val zioStream = ZStream.unfoldZIO(0) { n =>
-                ZIO.sleep(5.millis.toJava) *> ZIO.succeed(Some((n, n + 1)))
-            }.ensuring(ZIO.succeed(streamFinalized.set(true)))
+                    val kyoStream = ZStreams.get(zioStream)
 
-            val kyoStream = ZStreams.get(zioStream)
-
-            // Verify initial state is false
-            assert(!streamFinalized.get())
-
-            Scope.run {
-                Fiber.init(kyoStream.take(5).run).map { fiber =>
-                    Async.sleep(15.millis).andThen {
-                        Abort.run[Interrupted](fiber.interrupt).map { _ =>
-                            Async.sleep(50.millis).andThen {
-                                // Verify interruption was received
-                                assert(streamFinalized.get())
+                    Scope.run {
+                        Fiber.init(kyoStream.take(5).run).map { fiber =>
+                            started.await.andThen {
+                                Abort.run[Interrupted](fiber.interrupt).map { _ =>
+                                    finalized.await.andThen(succeed)
+                                }
                             }
                         }
                     }
