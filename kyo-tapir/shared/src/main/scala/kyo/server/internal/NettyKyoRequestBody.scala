@@ -3,13 +3,17 @@ package sttp.tapir.server.netty.internal
 import io.netty.handler.codec.http.HttpContent
 import kyo.*
 import kyo.internal.KyoSttpMonad
+import org.playframework.netty.http.StreamedHttpRequest
 import org.reactivestreams.Publisher
 import scala.concurrent.ExecutionContext
 import sttp.capabilities
 import sttp.monad.MonadError
+import sttp.tapir.RawBodyType
+import sttp.tapir.RawPart
 import sttp.tapir.TapirFile
 import sttp.tapir.capabilities.NoStreams
 import sttp.tapir.model.ServerRequest
+import sttp.tapir.server.interpreter.RawValue
 import sttp.tapir.server.netty.internal.reactivestreams.SimpleSubscriber
 
 private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoSttpMonad.M[TapirFile])
@@ -37,6 +41,20 @@ private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoStt
         file: TapirFile,
         maxBytes: Option[Long]
     ): KyoSttpMonad.M[Unit] =
+        throw new UnsupportedOperationException()
+
+    override def writeBytesToFile(
+        bytes: Array[Byte],
+        file: TapirFile
+    ): KyoSttpMonad.M[Unit] =
+        throw new UnsupportedOperationException()
+
+    override def publisherToMultipart(
+        nettyRequest: StreamedHttpRequest,
+        serverRequest: ServerRequest,
+        m: RawBodyType.MultipartBody,
+        maxBytes: Option[Long]
+    ): KyoSttpMonad.M[RawValue[Seq[RawPart]]] =
         throw new UnsupportedOperationException()
 
     override def toStream(
