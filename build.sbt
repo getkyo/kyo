@@ -117,6 +117,7 @@ lazy val kyoJVM = project
         `kyo-aeron`.jvm,
         `kyo-sttp`.jvm,
         `kyo-tapir`.jvm,
+        `kyo-http`.jvm,
         `kyo-caliban`.jvm,
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
@@ -151,7 +152,8 @@ lazy val kyoJS = project
         `kyo-zio`.js,
         `kyo-cats`.js,
         `kyo-combinators`.js,
-        `kyo-actor`.js
+        `kyo-actor`.js,
+        `kyo-http`.js
     )
 
 lazy val kyoNative = project
@@ -175,6 +177,7 @@ lazy val kyoNative = project
         `kyo-reactive-streams`.native,
         `kyo-sttp`.native,
         `kyo-actor`.native,
+        `kyo-http`.native,
         `kyo-scheduler-zio`.native,
         `kyo-zio`.native,
         `kyo-zio-test`.native,
@@ -541,6 +544,49 @@ lazy val `kyo-tapir` =
         )
         .jvmSettings(mimaCheck(false))
 
+lazy val `kyo-http` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-http"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "dev.zio" %%% "zio-schema"            % "1.6.4",
+            libraryDependencies += "dev.zio" %%% "zio-schema-json"       % "1.6.4",
+            libraryDependencies += "dev.zio" %%% "zio-schema-derivation" % "1.6.4"
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            libraryDependencies += "io.netty" % "netty-codec-http"              % "4.2.1.Final",
+            libraryDependencies += "io.netty" % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-x86_64",
+            libraryDependencies += "io.netty" % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-aarch_64",
+            libraryDependencies += "io.netty" % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-x86_64",
+            libraryDependencies += "io.netty" % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-aarch_64"
+        )
+        .jsSettings(
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            nativeConfig ~= { c =>
+                import scala.sys.process.*
+                val h2oCompileFlags =
+                    try "pkg-config --cflags libh2o-evloop".!!.trim.split("\\s+").toSeq
+                    catch { case _: Exception => Seq.empty }
+                val h2oLinkFlags =
+                    try "pkg-config --libs libh2o-evloop".!!.trim.split("\\s+").toSeq
+                    catch { case _: Exception => Seq("-lh2o-evloop") }
+                val curlLinkFlags =
+                    try "pkg-config --libs libcurl".!!.trim.split("\\s+").toSeq
+                    catch { case _: Exception => Seq("-lcurl") }
+                c.withCompileOptions(c.compileOptions ++ Seq("-DH2O_USE_LIBUV=0") ++ h2oCompileFlags)
+                    .withLinkingOptions(c.linkingOptions ++ curlLinkFlags ++ h2oLinkFlags)
+            }
+        )
+
 lazy val `kyo-caliban` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -668,6 +714,8 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-parse`)
         .dependsOn(`kyo-sttp`)
+        .dependsOn(`kyo-tapir`)
+        .dependsOn(`kyo-http`)
         .dependsOn(`kyo-stm`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-scheduler-zio`)
@@ -714,6 +762,7 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC46",
             libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.13.0",
             libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "1.0.0-M46",
+            libraryDependencies += "org.http4s"           %% "http4s-ember-server" % "1.0.0-M46",          
             libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "1.0.0-M46",
             libraryDependencies += "dev.zio"              %% "zio-http"            % "3.10.0",
             libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.8",
