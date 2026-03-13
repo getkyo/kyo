@@ -1,1 +1,0 @@
-web-js return document.querySelectorAll("section").length.toString()
