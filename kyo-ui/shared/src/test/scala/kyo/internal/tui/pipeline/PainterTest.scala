@@ -239,7 +239,7 @@ class PainterTest extends Test:
             val cs   = defaultStyle.copy(bg = RGB.Transparent)
             val grid = paintSingle(boxNode(cs, bounds = Rect(0, 0, 3, 2)))
             // Transparent bg should NOT overwrite cells
-            assert(grid.cells(0).bg == RGB(0, 0, 0)) // stays at Cell.Empty bg
+            assert(grid.cells(0).bg == RGB.Transparent) // stays at Cell.Empty bg (terminal default)
         }
     }
 

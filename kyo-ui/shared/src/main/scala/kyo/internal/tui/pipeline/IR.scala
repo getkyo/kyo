@@ -231,7 +231,7 @@ case class LayoutResult(base: Laid, popups: Chunk[Laid])
 enum MouseKind derives CanEqual:
     case LeftPress, LeftRelease, Move, ScrollUp, ScrollDown
 
-enum InputEvent:
+enum InputEvent derives CanEqual:
     case Key(key: UI.Keyboard, ctrl: Boolean, alt: Boolean, shift: Boolean)
     case Mouse(kind: MouseKind, x: Int, y: Int)
     case Paste(text: String)
@@ -251,7 +251,7 @@ case class Cell(
 ) derives CanEqual
 
 object Cell:
-    val Empty: Cell = Cell('\u0000', RGB(0, 0, 0), RGB(0, 0, 0), false, false, false, false, false)
+    val Empty: Cell = Cell('\u0000', RGB.Transparent, RGB.Transparent, false, false, false, false, false)
 
 case class CellGrid(
     width: Int,
@@ -348,7 +348,7 @@ case class FlatStyle(
 
 object FlatStyle:
     val Default: FlatStyle = FlatStyle(
-        fg = RGB(255, 255, 255),
+        fg = RGB.Transparent,
         bg = RGB.Transparent,
         bold = false,
         italic = false,
@@ -438,7 +438,7 @@ object ResolvedTheme:
         case Theme.Default =>
             ResolvedTheme(
                 variant = Theme.Default,
-                fg = RGB(255, 255, 255),
+                fg = RGB.Transparent,
                 bg = RGB.Transparent,
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
@@ -447,7 +447,7 @@ object ResolvedTheme:
         case Theme.Minimal =>
             ResolvedTheme(
                 variant = Theme.Minimal,
-                fg = RGB(255, 255, 255),
+                fg = RGB.Transparent,
                 bg = RGB.Transparent,
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
@@ -456,7 +456,7 @@ object ResolvedTheme:
         case Theme.Plain =>
             ResolvedTheme(
                 variant = Theme.Plain,
-                fg = RGB(255, 255, 255),
+                fg = RGB.Transparent,
                 bg = RGB.Transparent,
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),

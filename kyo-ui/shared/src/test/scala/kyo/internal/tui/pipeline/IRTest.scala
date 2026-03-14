@@ -95,7 +95,7 @@ class IRTest extends Test:
             node match
                 case Styled.Node(tag, cs, _, _) =>
                     assert(tag == ElemTag.Span)
-                    assert(cs.fg == RGB(255, 255, 255))
+                    assert(cs.fg == RGB.Transparent)
                 case _ => fail("expected Node")
             end match
         }
@@ -175,8 +175,8 @@ class IRTest extends Test:
         "Empty cell" in {
             val c = Cell.Empty
             assert(c.char == '\u0000')
-            assert(c.fg == RGB(0, 0, 0))
-            assert(c.bg == RGB(0, 0, 0))
+            assert(c.fg == RGB.Transparent)
+            assert(c.bg == RGB.Transparent)
             assert(!c.bold && !c.italic && !c.underline && !c.strikethrough && !c.dimmed)
         }
     }
@@ -195,7 +195,7 @@ class IRTest extends Test:
     "FlatStyle.Default" - {
         "sensible defaults" in {
             val cs = FlatStyle.Default
-            assert(cs.fg == RGB(255, 255, 255))
+            assert(cs.fg == RGB.Transparent)
             assert(cs.bg == RGB.Transparent)
             assert(!cs.bold)
             assert(cs.opacity == 1.0)

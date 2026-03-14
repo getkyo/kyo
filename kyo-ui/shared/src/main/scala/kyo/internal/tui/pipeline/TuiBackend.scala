@@ -2,16 +2,14 @@ package kyo.internal.tui.pipeline
 
 import kyo.*
 
-/** TUI backend: wires Pipeline with terminal I/O. Shared code — platform-specific TerminalIO
-  * implementations live in jvm/js/native.
+/** TUI backend: wires Pipeline with terminal I/O. Shared code — platform-specific TerminalIO implementations live in jvm/js/native.
   *
-  * The render loop is pure computation composition (Rule 3). Terminal I/O methods return
-  * computations. No AllowUnsafe in the loop body.
+  * The render loop is pure computation composition (Rule 3). Terminal I/O methods return computations. No AllowUnsafe in the loop body.
   */
 object TuiBackend:
 
-    /** Start a TUI session. Sets up terminal, renders initial frame, runs the render loop.
-      * Returns a UISession that can be awaited or stopped.
+    /** Start a TUI session. Sets up terminal, renders initial frame, runs the render loop. Returns a UISession that can be awaited or
+      * stopped.
       */
     def render(terminal: TerminalIO, ui: UI, theme: Theme = Theme.Default)(using Frame): UISession < (Async & Scope) =
         for
@@ -23,13 +21,18 @@ object TuiBackend:
 
             // Terminal setup — each step is a computation, Scope.ensure registers cleanup
             _ <- terminal.enterRawMode
-            _ <- Scope.ensure(terminal.exitRawMode)
             _ <- terminal.enterAlternateScreen
-            _ <- Scope.ensure(terminal.exitAlternateScreen)
             _ <- terminal.enableMouseTracking
-            _ <- Scope.ensure(terminal.disableMouseTracking)
             _ <- terminal.hideCursor
-            _ <- Scope.ensure(terminal.showCursor)
+
+            // Register cleanup for both scope exit AND process termination
+            _ <- Scope.ensure {
+                terminal.showCursor
+                    .andThen(terminal.disableMouseTracking)
+                    .andThen(terminal.exitAlternateScreen)
+                    .andThen(terminal.exitRawMode)
+            }
+            _ <- terminal.registerShutdownHook
 
             // Initial render
             _ <- renderFrame(terminal, ui, state)

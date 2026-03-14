@@ -69,6 +69,28 @@ class Screen(ui: UI, val cols: Int, val rows: Int)(using AllowUnsafe, Frame):
 
     def arrowRight: String < (Async & Scope) =
         key(UI.Keyboard.ArrowRight)
+
+    /** Assert all marker strings are present in the current frame. Fails with context on first missing marker. */
+    def assertAllPresent(markers: String*): org.scalatest.Assertion =
+        val f       = frame
+        val missing = markers.filter(m => !f.contains(m))
+        if missing.nonEmpty then
+            fail(s"Missing: ${missing.mkString(", ")}\nFrame:\n${f.linesIterator.zipWithIndex.map((l, i) => f"$i%2d|$l|").mkString("\n")}")
+        else succeed
+    end assertAllPresent
+
+    /** Assert no marker string appears in the current frame. */
+    def assertNonePresent(markers: String*): org.scalatest.Assertion =
+        val f     = frame
+        val found = markers.filter(m => f.contains(m))
+        if found.nonEmpty then
+            fail(
+                s"Should be absent but found: ${found.mkString(", ")}\nFrame:\n${f.linesIterator.zipWithIndex.map((l, i) => f"$i%2d|$l|").mkString("\n")}"
+            )
+        else succeed
+        end if
+    end assertNonePresent
+
     def focusableCount: Int             = state.focusableIds.size
     def focusableKeys: Chunk[WidgetKey] = state.focusableIds
     def focusedKey: Maybe[WidgetKey]    = state.focusedId.get()
