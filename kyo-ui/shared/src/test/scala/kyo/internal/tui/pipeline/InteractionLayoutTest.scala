@@ -373,4 +373,124 @@ class InteractionLayoutTest extends Test:
         }
     }
 
+    "cross-axis containment" - {
+        "child node does not overflow parent width in column layout" in run {
+            val s = screen(
+                UI.div.style(Style.width(10.px))(
+                    UI.div("this text is much wider than ten characters")
+                ),
+                20,
+                3
+            )
+            s.render.andThen {
+                val f     = s.frame
+                val lines = f.linesIterator.toVector
+                assert(lines.forall(line => line.substring(10).trim.isEmpty), s"content overflowed past col 10: $f")
+            }
+        }
+
+        "nested bordered box stays within parent" in run {
+            val s = screen(
+                UI.div.style(Style.border(1.px, Style.Color.rgb(128, 128, 128)).width(15.px).height(5.px))(
+                    UI.div.style(Style.border(1.px, Style.Color.rgb(128, 128, 128)))(
+                        "inner content that is long"
+                    )
+                ),
+                20,
+                5
+            )
+            s.render.andThen {
+                val f     = s.frame
+                val lines = f.linesIterator.toVector
+                assert(lines.forall(line => line.substring(15).trim.isEmpty), s"nested box overflowed past col 15: $f")
+            }
+        }
+
+        "percentage width child respects parent" in run {
+            val s = screen(
+                UI.div.style(Style.width(20.px))(
+                    UI.div.style(Style.width(50.pct))("half")
+                ),
+                20,
+                1
+            )
+            s.render.andThen {
+                val f = s.frame
+                assert(f.contains("half"))
+                // "half" should be within first 10 cols (50% of 20)
+                val pos = f.indexOf("half")
+                assert(pos < 10, s"'half' at $pos, should be within first 10 cols")
+            }
+        }
+
+        "text in bordered box does not overflow border" in run {
+            val s = screen(
+                UI.div.style(
+                    Style.border(1.px, Style.Color.rgb(128, 128, 128))
+                        .width(12.px).height(3.px)
+                )("a very long string that should be contained"),
+                20,
+                3
+            )
+            s.render.andThen {
+                val f     = s.frame
+                val lines = f.linesIterator.toVector
+                assert(lines.forall(line => line.substring(12).trim.isEmpty), s"text overflowed border: $f")
+            }
+        }
+
+        "deeply nested content stays within outermost container" in run {
+            val s = screen(
+                UI.div.style(Style.width(15.px))(
+                    UI.div(
+                        UI.div(
+                            UI.div("deep content that is very wide")
+                        )
+                    )
+                ),
+                25,
+                3
+            )
+            s.render.andThen {
+                val f     = s.frame
+                val lines = f.linesIterator.toVector
+                assert(lines.forall(line => line.substring(15).trim.isEmpty), s"deep content overflowed past col 15: $f")
+            }
+        }
+
+        "multiple children in column all respect parent width" in run {
+            val s = screen(
+                UI.div.style(Style.width(8.px))(
+                    UI.span("first line is long"),
+                    UI.span("second line is also long")
+                ),
+                20,
+                3
+            )
+            s.render.andThen {
+                val f     = s.frame
+                val lines = f.linesIterator.toVector
+                assert(lines.forall(line => line.substring(8).trim.isEmpty), s"child overflowed past col 8: $f")
+            }
+        }
+
+        "row children do not overflow parent height" in run {
+            val s = screen(
+                UI.div.style(Style.row.width(20.px).height(1.px))(
+                    UI.span("A"),
+                    UI.span("B")
+                ),
+                20,
+                3
+            )
+            s.render.andThen {
+                val f     = s.frame
+                val lines = f.linesIterator.toVector
+                // Only first row should have content
+                assert(lines(0).trim.nonEmpty, "first row should have content")
+                assert(lines.size <= 1 || lines(1).trim.isEmpty, s"content overflowed to row 2")
+            }
+        }
+    }
+
 end InteractionLayoutTest

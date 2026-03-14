@@ -109,7 +109,7 @@ class LayoutTest extends Test:
 
     "column layout" - {
         "children stacked vertically" in {
-            val cs     = defaultStyle.copy(direction = Style.FlexDirection.column)
+            val cs     = defaultStyle.copy(direction = Maybe(Style.FlexDirection.column))
             val child1 = styledDiv(withHeight(3))
             val child2 = styledDiv(withHeight(5))
             val result = Layout.layout(styledDiv(cs, Chunk(child1, child2)), viewport)
@@ -126,7 +126,7 @@ class LayoutTest extends Test:
         }
 
         "gap between children" in {
-            val cs     = defaultStyle.copy(direction = Style.FlexDirection.column, gap = 2.px)
+            val cs     = defaultStyle.copy(direction = Maybe(Style.FlexDirection.column), gap = 2.px)
             val child1 = styledDiv(withHeight(3))
             val child2 = styledDiv(withHeight(4))
             val result = Layout.layout(styledDiv(cs, Chunk(child1, child2)), viewport)
@@ -141,7 +141,7 @@ class LayoutTest extends Test:
 
     "row layout" - {
         "children side by side" in {
-            val cs     = defaultStyle.copy(direction = Style.FlexDirection.row)
+            val cs     = defaultStyle.copy(direction = Maybe(Style.FlexDirection.row))
             val child1 = styledDiv(withSize(10, 5))
             val child2 = styledDiv(withSize(20, 5))
             val result = Layout.layout(styledDiv(cs, Chunk(child1, child2)), viewport)
@@ -160,7 +160,7 @@ class LayoutTest extends Test:
 
     "flexGrow" - {
         "fills remaining space" in {
-            val cs      = defaultStyle.copy(direction = Style.FlexDirection.row, width = 100.px)
+            val cs      = defaultStyle.copy(direction = Maybe(Style.FlexDirection.row), width = 100.px)
             val fixed   = styledDiv(withSize(30, 5))
             val growing = styledDiv(defaultStyle.copy(width = 10.px, height = 5.px, flexGrow = 1.0))
             val result  = Layout.layout(styledDiv(cs, Chunk(fixed, growing)), viewport)
@@ -175,7 +175,7 @@ class LayoutTest extends Test:
 
     "flexShrink" - {
         "shrink reduces measured size" in {
-            val cs     = defaultStyle.copy(direction = Style.FlexDirection.row, width = 50.px)
+            val cs     = defaultStyle.copy(direction = Maybe(Style.FlexDirection.row), width = 50.px)
             val child1 = styledDiv(defaultStyle.copy(height = 5.px, flexShrink = 1.0))
             val child2 = styledDiv(defaultStyle.copy(height = 5.px, flexShrink = 1.0))
             val result = Layout.layout(styledDiv(cs, Chunk(child1, child2)), viewport)
@@ -192,7 +192,7 @@ class LayoutTest extends Test:
 
     "justify" - {
         "center" in {
-            val cs     = defaultStyle.copy(direction = Style.FlexDirection.row, width = 100.px, justify = Style.Justification.center)
+            val cs     = defaultStyle.copy(direction = Maybe(Style.FlexDirection.row), width = 100.px, justify = Style.Justification.center)
             val child  = styledDiv(withSize(20, 5))
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match
@@ -204,7 +204,7 @@ class LayoutTest extends Test:
         }
 
         "end" in {
-            val cs     = defaultStyle.copy(direction = Style.FlexDirection.row, width = 100.px, justify = Style.Justification.end)
+            val cs     = defaultStyle.copy(direction = Maybe(Style.FlexDirection.row), width = 100.px, justify = Style.Justification.end)
             val child  = styledDiv(withSize(20, 5))
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match
@@ -218,7 +218,8 @@ class LayoutTest extends Test:
 
     "align" - {
         "center" in {
-            val cs = defaultStyle.copy(direction = Style.FlexDirection.row, width = 80.px, height = 20.px, align = Style.Alignment.center)
+            val cs =
+                defaultStyle.copy(direction = Maybe(Style.FlexDirection.row), width = 80.px, height = 20.px, align = Style.Alignment.center)
             val child  = styledDiv(withSize(10, 5))
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match
@@ -231,7 +232,12 @@ class LayoutTest extends Test:
         }
 
         "stretch" in {
-            val cs = defaultStyle.copy(direction = Style.FlexDirection.row, width = 80.px, height = 20.px, align = Style.Alignment.stretch)
+            val cs = defaultStyle.copy(
+                direction = Maybe(Style.FlexDirection.row),
+                width = 80.px,
+                height = 20.px,
+                align = Style.Alignment.stretch
+            )
             val child  = styledDiv(withSize(10, 5))
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match
@@ -259,7 +265,7 @@ class LayoutTest extends Test:
 
     "scroll offset" - {
         "children shifted" in {
-            val cs     = defaultStyle.copy(direction = Style.FlexDirection.column, height = 20.px, scrollTop = 5)
+            val cs     = defaultStyle.copy(direction = Maybe(Style.FlexDirection.column), height = 20.px, scrollTop = 5)
             val child  = styledDiv(withHeight(10))
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match
@@ -346,7 +352,7 @@ class LayoutTest extends Test:
 
     "auto width" - {
         "fills available space in column" in {
-            val cs     = defaultStyle.copy(width = 60.px, direction = Style.FlexDirection.column)
+            val cs     = defaultStyle.copy(width = 60.px, direction = Maybe(Style.FlexDirection.column))
             val child  = styledDiv(defaultStyle) // auto width
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match

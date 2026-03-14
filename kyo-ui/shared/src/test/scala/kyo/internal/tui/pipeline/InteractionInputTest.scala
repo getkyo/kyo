@@ -81,6 +81,53 @@ class InteractionInputTest extends Test:
         }
     }
 
+    "cursor navigation" - {
+        "Home moves cursor to start" in run {
+            val ref = SignalRef.Unsafe.init("")
+            val s   = Screen(UI.input.value(ref.safe), 15, 1)
+            for
+                _ <- s.render
+                _ <- s.click(0, 0)
+                _ <- s.typeChar('A')
+                _ <- s.typeChar('B')
+                _ <- s.typeChar('C')
+                _ <- s.key(UI.Keyboard.Home)
+                _ <- s.typeChar('X')
+            yield assert(ref.get() == "XABC", s"expected 'XABC', got '${ref.get()}'")
+            end for
+        }
+
+        "End moves cursor to end" in run {
+            val ref = SignalRef.Unsafe.init("")
+            val s   = Screen(UI.input.value(ref.safe), 15, 1)
+            for
+                _ <- s.render
+                _ <- s.click(0, 0)
+                _ <- s.typeChar('A')
+                _ <- s.typeChar('B')
+                _ <- s.key(UI.Keyboard.Home)
+                _ <- s.key(UI.Keyboard.End)
+                _ <- s.typeChar('C')
+            yield assert(ref.get() == "ABC", s"expected 'ABC', got '${ref.get()}'")
+            end for
+        }
+
+        "Delete key removes character after cursor" in run {
+            val ref = SignalRef.Unsafe.init("")
+            val s   = Screen(UI.input.value(ref.safe), 15, 1)
+            for
+                _ <- s.render
+                _ <- s.click(0, 0)
+                _ <- s.typeChar('A')
+                _ <- s.typeChar('B')
+                _ <- s.typeChar('C')
+                _ <- s.key(UI.Keyboard.Home)
+                _ <- s.key(UI.Keyboard.Delete)
+            yield assert(ref.get() == "BC", s"expected 'BC', got '${ref.get()}'")
+            end for
+        }
+    }
+
     "input with plain string value" - {
         "renders string value without SignalRef" in run {
             val s = Screen(UI.input.value("static"), 10, 1)

@@ -35,70 +35,176 @@ case class WidgetKey(frame: Frame, dynamicPath: Chunk[String]) derives CanEqual:
 
 // ---- Handlers ----
 
-case class Handlers(
-    widgetKey: Maybe[WidgetKey],
-    id: Maybe[String],
-    forId: Maybe[String],
-    tabIndex: Maybe[Int],
-    disabled: Boolean,
-    onClick: Unit < Async,
-    onClickSelf: Unit < Async,
-    onKeyDown: UI.KeyEvent => Unit < Async,
-    onKeyUp: UI.KeyEvent => Unit < Async,
-    onInput: String => Unit < Async,
-    onChange: Any => Unit < Async,
-    onSubmit: Unit < Async,
-    onFocus: Unit < Async,
-    onBlur: Unit < Async,
-    onScroll: Int => Unit < Async,
-    colspan: Int,
-    rowspan: Int,
-    imageData: Maybe[ImageData]
-)
+/** Pre-composed event handlers carried through the IR. Nullary handlers are stored as thunks to guarantee deferred evaluation — they cannot
+  * execute at construction time.
+  *
+  * Use `Handlers.empty` to start, then builder methods to set fields. Composition methods (`composeOnClick`, `composeOnKeyDown`,
+  * `composeOnKeyUp`) chain child→parent for bubbling. Non-bubbling handlers (`onFocus`, `onBlur`, `onScroll`, `onClickSelf`) are set
+  * directly.
+  */
+final class Handlers private (
+    val widgetKey: Maybe[WidgetKey],
+    val id: Maybe[String],
+    val forId: Maybe[String],
+    val tabIndex: Maybe[Int],
+    val disabled: Boolean,
+    val colspan: Int,
+    val rowspan: Int,
+    val imageData: Maybe[ImageData],
+    private val _onClick: () => Unit < Async,
+    private val _onClickSelf: () => Unit < Async,
+    private val _onKeyDown: UI.KeyEvent => Unit < Async,
+    private val _onKeyUp: UI.KeyEvent => Unit < Async,
+    private val _onInput: String => Unit < Async,
+    private val _onChange: Any => Unit < Async,
+    private val _onSubmit: () => Unit < Async,
+    private val _onFocus: () => Unit < Async,
+    private val _onBlur: () => Unit < Async,
+    private val _onScroll: Int => Unit < Async
+):
+    // ---- Fire handlers (Dispatch calls these) ----
+
+    def onClick: Unit < Async                   = _onClick()
+    def onClickSelf: Unit < Async               = _onClickSelf()
+    def onKeyDown(e: UI.KeyEvent): Unit < Async = _onKeyDown(e)
+    def onKeyUp(e: UI.KeyEvent): Unit < Async   = _onKeyUp(e)
+    def onInput(s: String): Unit < Async        = _onInput(s)
+    def onChange(v: Any): Unit < Async          = _onChange(v)
+    def onSubmit: Unit < Async                  = _onSubmit()
+    def onFocus: Unit < Async                   = _onFocus()
+    def onBlur: Unit < Async                    = _onBlur()
+    def onScroll(delta: Int): Unit < Async      = _onScroll(delta)
+
+    // ---- Builders (Lower calls these to set individual fields) ----
+
+    def withWidgetKey(k: WidgetKey): Handlers        = copy(_widgetKey = Maybe(k))
+    def withId(v: Maybe[String]): Handlers           = copy(_id = v)
+    def withForId(v: Maybe[String]): Handlers        = copy(_forId = v)
+    def withTabIndex(v: Maybe[Int]): Handlers        = copy(_tabIndex = v)
+    def withDisabled(v: Boolean): Handlers           = copy(_disabled = v)
+    def withColspan(v: Int): Handlers                = copy(_colspan = v)
+    def withRowspan(v: Int): Handlers                = copy(_rowspan = v)
+    def withImageData(v: Maybe[ImageData]): Handlers = copy(_imageData = v)
+
+    def withOnClick(action: => Unit < Async): Handlers          = copy(__onClick = () => action)
+    def withOnClickSelf(action: => Unit < Async): Handlers      = copy(__onClickSelf = () => action)
+    def withOnKeyDown(f: UI.KeyEvent => Unit < Async): Handlers = copy(__onKeyDown = f)
+    def withOnKeyUp(f: UI.KeyEvent => Unit < Async): Handlers   = copy(__onKeyUp = f)
+    def withOnInput(f: String => Unit < Async): Handlers        = copy(__onInput = f)
+    def withOnChange(f: Any => Unit < Async): Handlers          = copy(__onChange = f)
+    def withOnSubmit(action: => Unit < Async): Handlers         = copy(__onSubmit = () => action)
+    def withOnFocus(action: => Unit < Async): Handlers          = copy(__onFocus = () => action)
+    def withOnBlur(action: => Unit < Async): Handlers           = copy(__onBlur = () => action)
+    def withOnScroll(f: Int => Unit < Async): Handlers          = copy(__onScroll = f)
+
+    // ---- Composition (Lower calls these for event bubbling) ----
+
+    /** Compose onClick: child fires first, then parent (bubbling). */
+    def composeOnClick(child: => Unit < Async)(using Frame): Handlers =
+        val parent = _onClick
+        copy(__onClick = () => child.andThen(parent()))
+
+    /** Compose onKeyDown: child fires first, then parent (bubbling). */
+    def composeOnKeyDown(child: UI.KeyEvent => Unit < Async)(using Frame): Handlers =
+        val parent = _onKeyDown
+        copy(__onKeyDown = e => child(e).andThen(parent(e)))
+
+    /** Compose onKeyUp: child fires first, then parent (bubbling). */
+    def composeOnKeyUp(child: UI.KeyEvent => Unit < Async)(using Frame): Handlers =
+        val parent = _onKeyUp
+        copy(__onKeyUp = e => child(e).andThen(parent(e)))
+
+    // ---- Private copy ----
+
+    private def copy(
+        _widgetKey: Maybe[WidgetKey] = this.widgetKey,
+        _id: Maybe[String] = this.id,
+        _forId: Maybe[String] = this.forId,
+        _tabIndex: Maybe[Int] = this.tabIndex,
+        _disabled: Boolean = this.disabled,
+        _colspan: Int = this.colspan,
+        _rowspan: Int = this.rowspan,
+        _imageData: Maybe[ImageData] = this.imageData,
+        __onClick: () => Unit < Async = this._onClick,
+        __onClickSelf: () => Unit < Async = this._onClickSelf,
+        __onKeyDown: UI.KeyEvent => Unit < Async = this._onKeyDown,
+        __onKeyUp: UI.KeyEvent => Unit < Async = this._onKeyUp,
+        __onInput: String => Unit < Async = this._onInput,
+        __onChange: Any => Unit < Async = this._onChange,
+        __onSubmit: () => Unit < Async = this._onSubmit,
+        __onFocus: () => Unit < Async = this._onFocus,
+        __onBlur: () => Unit < Async = this._onBlur,
+        __onScroll: Int => Unit < Async = this._onScroll
+    ): Handlers = new Handlers(
+        _widgetKey,
+        _id,
+        _forId,
+        _tabIndex,
+        _disabled,
+        _colspan,
+        _rowspan,
+        _imageData,
+        __onClick,
+        __onClickSelf,
+        __onKeyDown,
+        __onKeyUp,
+        __onInput,
+        __onChange,
+        __onSubmit,
+        __onFocus,
+        __onBlur,
+        __onScroll
+    )
+
+end Handlers
 
 object Handlers:
-    private val noop: Unit < Async                   = ()
-    private val noopKey: UI.KeyEvent => Unit < Async = _ => noop
-    private val noopStr: String => Unit < Async      = _ => noop
-    private val noopAny: Any => Unit < Async         = _ => noop
-    private val noopInt: Int => Unit < Async         = _ => noop
+    private val noopThunk: () => Unit < Async        = () => ()
+    private val noopKey: UI.KeyEvent => Unit < Async = _ => ()
+    private val noopStr: String => Unit < Async      = _ => ()
+    private val noopAny: Any => Unit < Async         = _ => ()
+    private val noopInt: Int => Unit < Async         = _ => ()
 
-    val empty: Handlers = Handlers(
-        widgetKey = Absent,
-        id = Absent,
-        forId = Absent,
-        tabIndex = Absent,
-        disabled = false,
-        onClick = noop,
-        onClickSelf = noop,
-        onKeyDown = noopKey,
-        onKeyUp = noopKey,
-        onInput = noopStr,
-        onChange = noopAny,
-        onSubmit = noop,
-        onFocus = noop,
-        onBlur = noop,
-        onScroll = noopInt,
-        colspan = 1,
-        rowspan = 1,
-        imageData = Absent
+    val empty: Handlers = new Handlers(
+        Absent,
+        Absent,
+        Absent,
+        Absent,
+        false,
+        1,
+        1,
+        Absent,
+        noopThunk,
+        noopThunk,
+        noopKey,
+        noopKey,
+        noopStr,
+        noopAny,
+        noopThunk,
+        noopThunk,
+        noopThunk,
+        noopInt
     )
 end Handlers
 
 // ---- IR: Resolved (after Lower) ----
 
-enum Resolved:
+enum Resolved derives CanEqual:
     case Node(tag: ElemTag, style: Style, handlers: Handlers, children: Chunk[Resolved])
     case Text(value: String)
     case Cursor(charOffset: Int)
+    case Break              // line break — layout advances to next line
+    case Rule(style: Style) // horizontal rule — full-width separator line
 end Resolved
 
 // ---- IR: Styled (after Styler) ----
 
-enum Styled:
+enum Styled derives CanEqual:
     case Node(tag: ElemTag, style: FlatStyle, handlers: Handlers, children: Chunk[Styled])
     case Text(value: String, style: FlatStyle)
     case Cursor(charOffset: Int)
+    case Break
+    case Rule(style: FlatStyle)
 end Styled
 
 // ---- IR: Laid (after Layout) ----
@@ -115,6 +221,7 @@ enum Laid:
     )
     case Text(value: String, style: FlatStyle, bounds: Rect, clip: Rect)
     case Cursor(pos: Rect)
+    case Rule(style: FlatStyle, bounds: Rect, clip: Rect)
 end Laid
 
 case class LayoutResult(base: Laid, popups: Chunk[Laid])
@@ -220,7 +327,7 @@ case class FlatStyle(
     roundBR: Boolean,
     roundBL: Boolean,
     // Layout (non-inheritable)
-    direction: Style.FlexDirection,
+    direction: Maybe[Style.FlexDirection],
     justify: Style.Justification,
     align: Style.Alignment,
     gap: Length,
@@ -293,7 +400,7 @@ object FlatStyle:
         roundTR = false,
         roundBR = false,
         roundBL = false,
-        direction = Style.FlexDirection.row,
+        direction = Absent,
         justify = Style.Justification.start,
         align = Style.Alignment.start,
         gap = Length.zero,

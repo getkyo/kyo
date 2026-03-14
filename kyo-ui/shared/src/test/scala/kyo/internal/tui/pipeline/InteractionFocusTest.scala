@@ -282,8 +282,8 @@ class InteractionFocusTest extends Test:
             )
             for
                 _ <- s.render
-                _ <- s.click(2, 1)  // click left button content
-                _ <- s.click(12, 1) // click right button content
+                _ <- s.click(2, 1) // click left button content (border=1, pad=1, content at x=2)
+                _ <- s.click(7, 1) // click right button content (second button starts at x=5)
             yield assert(focused == "right", s"expected right focused, got: $focused")
             end for
         }

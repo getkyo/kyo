@@ -31,7 +31,7 @@ class InteractionTextTest extends Test:
 
         "multiple spans render inline" in run {
             val s = screen(
-                UI.div(UI.span("A"), UI.span("B")),
+                UI.div.style(Style.row)(UI.span("A"), UI.span("B")),
                 10,
                 1
             )
@@ -345,6 +345,110 @@ class InteractionTextTest extends Test:
             val s = screen(UI.main(UI.span("main")), 10, 1)
             s.render.andThen {
                 assert(s.frame.contains("main"), "main content missing")
+            }
+        }
+    }
+
+    "block direction defaults" - {
+        "div stacks children vertically" in run {
+            val s = screen(
+                UI.div(
+                    UI.span("row1"),
+                    UI.span("row2")
+                ),
+                10,
+                3
+            )
+            s.render.andThen {
+                val f     = s.frame
+                val lines = f.linesIterator.toVector
+                val r1    = lines.indexWhere(_.contains("row1"))
+                val r2    = lines.indexWhere(_.contains("row2"))
+                assert(r1 >= 0, s"row1 not found: $f")
+                assert(r2 > r1, s"row2 should be below row1: $f")
+            }
+        }
+
+        "div with Style.row flows horizontally" in run {
+            val s = screen(
+                UI.div.style(Style.row)(
+                    UI.span("A"),
+                    UI.span("B")
+                ),
+                10,
+                1
+            )
+            s.render.andThen {
+                val f = s.frame
+                assert(f.contains("A"), "A missing")
+                assert(f.contains("B"), "B missing")
+                assert(f.indexOf("A") < f.indexOf("B"), s"A should precede B: $f")
+            }
+        }
+
+        "form stacks children vertically" in run {
+            val s = screen(
+                UI.form(
+                    UI.span("field1"),
+                    UI.span("field2")
+                ),
+                15,
+                3
+            )
+            s.render.andThen {
+                val f     = s.frame
+                val lines = f.linesIterator.toVector
+                val f1    = lines.indexWhere(_.contains("field1"))
+                val f2    = lines.indexWhere(_.contains("field2"))
+                assert(f1 >= 0, s"field1 not found: $f")
+                assert(f2 > f1, s"field2 should be below field1: $f")
+            }
+        }
+    }
+
+    "text alignment in block container" - {
+        "center aligns within parent width" in run {
+            val s = screen(
+                UI.div.style(Style.width(10.px).textAlign(Style.TextAlign.center))("hi"),
+                10,
+                1
+            )
+            s.render.andThen {
+                val pos = s.frame.indexOf("hi")
+                assert(pos >= 3 && pos <= 5, s"'hi' at $pos, expected centered ~4")
+            }
+        }
+
+        "right aligns within parent width" in run {
+            val s = screen(
+                UI.div.style(Style.width(10.px).textAlign(Style.TextAlign.right))("hi"),
+                10,
+                1
+            )
+            s.render.andThen {
+                val pos = s.frame.indexOf("hi")
+                assert(pos >= 7, s"'hi' at $pos, expected right-aligned ~8")
+            }
+        }
+    }
+
+    "handler thunk deferral" - {
+        "onClick not evaluated at construction" in run {
+            var fired = false
+            val s = screen(
+                UI.button.onClick { fired = true }("test"),
+                10,
+                3
+            )
+            s.render.andThen {
+                assert(!fired, "onClick should not fire during render")
+            }
+        }
+
+        "checkbox toggle deferred until click" in run {
+            val s = screen(UI.checkbox.checked(false), 5, 1)
+            s.render.andThen {
+                assert(s.frame.contains("[ ]"), "checkbox should render unchecked before any click")
             }
         }
     }

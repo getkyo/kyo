@@ -38,6 +38,7 @@ object Painter:
         case n: Laid.Node   => paintBox(n, canvas)
         case t: Laid.Text   => paintText(t, canvas)
         case c: Laid.Cursor => paintCursor(c, canvas)
+        case r: Laid.Rule   => paintRule(r, canvas)
 
     // ---- Box painting ----
 
@@ -175,9 +176,11 @@ object Painter:
             case Style.TextTransform.none       => t.value
 
         val maxChars = t.bounds.w / math.max(1, 1 + spacing)
-        // When ellipsis is active, don't wrap — truncate with ellipsis instead
+        // Ellipsis can come from either textOverflow or textWrap
+        val shouldEllipsis = cs.textOverflow == Style.TextOverflow.ellipsis ||
+            cs.textWrap == Style.TextWrap.ellipsis
         val effectiveWrap =
-            if cs.textOverflow == Style.TextOverflow.ellipsis then Style.TextWrap.noWrap
+            if shouldEllipsis then Style.TextWrap.noWrap
             else cs.textWrap
         val lines = Layout.splitLines(text, maxChars, effectiveWrap)
 
@@ -185,12 +188,12 @@ object Painter:
             if lineIdx < lines.size then
                 val line = lines(lineIdx)
 
-                val displayLine = cs.textOverflow match
-                    case Style.TextOverflow.ellipsis if line.length > maxChars && maxChars > 3 =>
+                val displayLine =
+                    if shouldEllipsis && line.length > maxChars && maxChars > 3 then
                         line.substring(0, maxChars - 1) + "…"
-                    case _ if line.length > maxChars && maxChars > 0 =>
+                    else if line.length > maxChars && maxChars > 0 then
                         line.substring(0, maxChars)
-                    case _ => line
+                    else line
 
                 val lineWidth = displayLine.length * (1 + spacing)
                 val startX = cs.textAlign match
@@ -244,6 +247,18 @@ object Painter:
             )
         end if
     end paintCursor
+
+    // ---- Rule painting (horizontal line) ----
+
+    private def paintRule(r: Laid.Rule, canvas: Canvas): Unit =
+        val fg = r.style.fg
+        val bg = r.style.bg
+        @tailrec def drawLine(x: Int): Unit =
+            if x < r.bounds.x + r.bounds.w then
+                setCell(canvas, x, r.bounds.y, '─', fg, bg, r.clip)
+                drawLine(x + 1)
+        drawLine(r.bounds.x)
+    end paintRule
 
     // ---- Gradient painting ----
 

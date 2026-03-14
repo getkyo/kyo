@@ -10,6 +10,14 @@ import scala.annotation.tailrec
   */
 object Layout:
 
+    /** Resolve effective direction: user-specified takes precedence, otherwise tag determines default. Div/Table/Popup → column (block
+      * flow). Span → row (inline flow).
+      */
+    private def effectiveDirection(tag: ElemTag, direction: Maybe[Style.FlexDirection]): Style.FlexDirection =
+        direction.getOrElse(tag match
+            case ElemTag.Div | ElemTag.Table | ElemTag.Popup => Style.FlexDirection.column
+            case ElemTag.Span                                => Style.FlexDirection.row)
+
     // ---- Public entry point ----
 
     def layout(styled: Styled, viewport: Rect): LayoutResult =
@@ -35,25 +43,28 @@ object Layout:
 
     /** Measure intrinsic width of a node without layout context. Percentages and Auto return 0. */
     private def measureWidth(node: Styled): Int = node match
-        case Styled.Node(_, cs, _, children) =>
+        case Styled.Node(tag, cs, _, children) =>
             Length.resolveOrAuto(cs.width, 0) match
                 case Present(w) if w > 0 => w
                 case _ =>
                     val chrome = Length.resolve(cs.padLeft, 0) + Length.resolve(cs.padRight, 0) +
                         cs.borderLeft.value.toInt + cs.borderRight.value.toInt +
                         Length.resolve(cs.marLeft, 0) + Length.resolve(cs.marRight, 0)
+                    val dir = effectiveDirection(tag, cs.direction)
                     val childrenSize =
-                        if cs.direction == Style.FlexDirection.column then maxChildWidth(children, 0, 0)
+                        if dir == Style.FlexDirection.column then maxChildWidth(children, 0, 0)
                         else sumChildWidths(children, Length.resolve(cs.gap, 0), 0, 0)
                     chrome + childrenSize
         case Styled.Text(value, cs) =>
             val lines = splitLines(value, Int.MaxValue, cs.textWrap)
             maxLineWidth(lines, Length.resolve(cs.letterSpacing, 0), 0, 0)
+        case Styled.Break     => 0
+        case _: Styled.Rule   => 0 // rule fills parent width, intrinsic is 0
         case Styled.Cursor(_) => 1
 
     /** Measure intrinsic height of a node given a constrained width. Percentages and Auto return 0. */
     private def measureHeight(node: Styled, availWidth: Int): Int = node match
-        case Styled.Node(_, cs, _, children) =>
+        case Styled.Node(tag, cs, _, children) =>
             Length.resolveOrAuto(cs.height, 0) match
                 case Present(h) if h > 0 => h
                 case _ =>
@@ -61,8 +72,9 @@ object Layout:
                         cs.borderTop.value.toInt + cs.borderBottom.value.toInt +
                         Length.resolve(cs.marTop, 0) + Length.resolve(cs.marBottom, 0)
                     val contentW = availWidth - chrome
+                    val dir      = effectiveDirection(tag, cs.direction)
                     val childrenSize =
-                        if cs.direction == Style.FlexDirection.column then
+                        if dir == Style.FlexDirection.column then
                             sumChildHeights(children, Length.resolve(cs.gap, 0), contentW, 0, 0)
                         else maxChildHeight(children, contentW, 0, 0)
                     chrome + childrenSize
@@ -72,6 +84,8 @@ object Layout:
             val lines        = splitLines(value, charsPerLine, cs.textWrap)
             lines.size * cs.lineHeight
         case Styled.Cursor(_) => 1
+        case Styled.Break     => 0
+        case _: Styled.Rule   => 1
 
     // Measurement helpers
 
@@ -107,19 +121,25 @@ object Layout:
         popups: ChunkBuilder[Laid]
     ): Laid = node match
         case Styled.Text(value, cs) =>
-            val w = math.min(measureWidth(node), available.w)
+            // available.w is authoritative — parent already determined text width
             val h = measureHeight(node, available.w)
-            Laid.Text(value, cs, Rect(available.x, available.y, w, h), clip)
+            Laid.Text(value, cs, Rect(available.x, available.y, available.w, h), clip)
 
         case Styled.Cursor(charOffset) =>
             Laid.Cursor(Rect(available.x + charOffset, available.y, 1, 1))
+
+        case Styled.Break =>
+            // Zero-height, consumed by layout positioning (no visual output)
+            Laid.Cursor(Rect(available.x, available.y, 0, 0))
+
+        case Styled.Rule(cs) =>
+            Laid.Rule(cs, Rect(available.x, available.y, available.w, 1), clip)
 
         case Styled.Node(tag, cs, handlers, children) =>
             val marL = Length.resolve(cs.marLeft, available.w)
             val marR = Length.resolve(cs.marRight, available.w)
             val marT = Length.resolve(cs.marTop, available.h)
 
-            // available.w is authoritative (set by parent flex/table/viewport)
             val outerX = available.x + marL
             val outerY = available.y + marT
             val outerW = available.w - marL - marR
@@ -137,7 +157,6 @@ object Layout:
             val contentY = outerY + brdT + padT
             val contentW = outerW - brdL - brdR - padL - padR
 
-            // Height: use available.h (set by parent/flex), Auto means content-determined
             val marB = Length.resolve(cs.marBottom, available.h)
             val explicitH = cs.height match
                 case Length.Auto => Absent
@@ -155,6 +174,7 @@ object Layout:
                 else
                     layoutFlex(
                         flow,
+                        tag,
                         cs,
                         contentX,
                         contentY,
@@ -230,6 +250,7 @@ object Layout:
                 case n: Laid.Node   => n.bounds.y + n.bounds.h
                 case t: Laid.Text   => t.bounds.y + t.bounds.h
                 case c: Laid.Cursor => c.pos.y + c.pos.h
+                case r: Laid.Rule   => r.bounds.y + r.bounds.h
             findMaxBottom(children, contentY, i + 1, math.max(maxY, bottom))
 
     // ---- Overlay layout ----
@@ -263,6 +284,7 @@ object Layout:
 
     private def layoutFlex(
         children: Chunk[Styled],
+        tag: ElemTag,
         cs: FlatStyle,
         cx: Int,
         cy: Int,
@@ -275,7 +297,7 @@ object Layout:
     ): Chunk[Laid] =
         if children.isEmpty then Chunk.empty
         else
-            val isColumn  = cs.direction == Style.FlexDirection.column
+            val isColumn  = effectiveDirection(tag, cs.direction) == Style.FlexDirection.column
             val mainSize  = if isColumn then ch else cw
             val crossSize = if isColumn then cw else ch
             val n         = children.size
@@ -315,7 +337,6 @@ object Layout:
                 case Style.Justification.spaceBetween => 0
                 case Style.Justification.spaceAround  => if n > 0 then remaining / (n * 2) else 0
                 case Style.Justification.spaceEvenly  => if n > 0 then remaining / (n + 1) else 0
-                case _                                => 0
 
             val extraGap = cs.justify match
                 case Style.Justification.spaceBetween => if n > 1 then remaining / (n - 1) else 0
@@ -372,7 +393,8 @@ object Layout:
                     crossSizes(i) = crossLen match
                         case Length.Auto =>
                             val intrinsic = if isColumn then measureWidth(nd) else measureHeight(nd, cw)
-                            if intrinsic > 0 then intrinsic else crossParent // auto fills cross axis
+                            // Cap at parent cross size — children cannot exceed their container
+                            if intrinsic > 0 then math.min(intrinsic, crossParent) else crossParent
                         case explicit => Length.resolve(explicit, crossParent)
                     grow(i) = nd.style.flexGrow
                     shrink(i) = nd.style.flexShrink
@@ -384,6 +406,13 @@ object Layout:
                 case _: Styled.Cursor =>
                     mainSizes(i) = 1
                     crossSizes(i) = 1
+                case Styled.Break =>
+                    mainSizes(i) = 0
+                    crossSizes(i) = 0
+                case _: Styled.Rule =>
+                    // Rule fills parent width and is 1 row tall
+                    mainSizes(i) = if isColumn then 1 else cw
+                    crossSizes(i) = if isColumn then cw else 1
             end match
             measureFlexChildren(
                 children,
@@ -453,14 +482,18 @@ object Layout:
             val childMain  = mainSizes(i)
             val childCross = crossSizes(i)
 
+            // Alignment offset — uses measured cross size for positioning within parent
             val crossPos = align match
                 case Style.Alignment.start   => 0
                 case Style.Alignment.center  => (crossSize - childCross) / 2
                 case Style.Alignment.end     => crossSize - childCross
                 case Style.Alignment.stretch => 0
-                case _                       => 0
 
-            val childCrossActual = if align == Style.Alignment.stretch then crossSize else childCross
+            // Text fills cross axis for text-align. All other children use measured cross size
+            // (already capped at crossParent during measurement).
+            val childCrossActual = children(i) match
+                case _: Styled.Text => crossSize
+                case _              => if align == Style.Alignment.stretch then crossSize else childCross
 
             val (childX, childY, childW, childH) =
                 if isColumn then (cx + crossPos - scrollLeft, cy + mainPos - scrollTop, childCrossActual, childMain)

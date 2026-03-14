@@ -24,13 +24,14 @@ class DispatchTest extends Test:
         disabled: Boolean = false,
         children: Chunk[Laid] = Chunk.empty
     ): Laid.Node =
-        val handlers = Handlers.empty.copy(
-            widgetKey = key,
-            id = id,
-            forId = forId,
-            tabIndex = tabIndex,
-            disabled = disabled
-        )
+        val base = Handlers.empty
+            .withId(id)
+            .withForId(forId)
+            .withTabIndex(tabIndex)
+            .withDisabled(disabled)
+        val handlers = key match
+            case Present(k) => base.withWidgetKey(k)
+            case _          => base
         val bounds = Rect(x, y, w, h)
         Laid.Node(ElemTag.Div, defaultStyle, handlers, bounds, bounds, viewport, children)
     end node
@@ -147,14 +148,13 @@ class DispatchTest extends Test:
         }
 
         "disabled node does not fire onClick" in run {
-            var fired                     = false
-            val k                         = mkKey("btn")
-            val target                    = node(0, 0, 10, 10, key = Maybe(k), tabIndex = Maybe(0), disabled = true)
-            val clickEffect: Unit < Async = Sync.Unsafe.defer { fired = true }
-            val handlers                  = target.handlers.copy(onClick = clickEffect)
-            val disabledNode              = target.copy(handlers = handlers)
-            val layout                    = LayoutResult(disabledNode, Chunk.empty)
-            val state                     = new ScreenState(ResolvedTheme.resolve(Theme.Default))
+            var fired        = false
+            val k            = mkKey("btn")
+            val target       = node(0, 0, 10, 10, key = Maybe(k), tabIndex = Maybe(0), disabled = true)
+            val withClick    = target.handlers.withOnClick(Sync.Unsafe.defer { fired = true })
+            val disabledNode = target.copy(handlers = withClick)
+            val layout       = LayoutResult(disabledNode, Chunk.empty)
+            val state        = new ScreenState(ResolvedTheme.resolve(Theme.Default))
             state.focusedId.set(Maybe(k))
             Dispatch.dispatch(InputEvent.Mouse(MouseKind.LeftPress, 5, 5), layout, state).andThen {
                 assert(!fired)

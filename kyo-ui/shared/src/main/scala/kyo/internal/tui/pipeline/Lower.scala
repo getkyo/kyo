@@ -13,32 +13,29 @@ object Lower:
 
     case class LowerResult(tree: Resolved, focusableIds: Chunk[WidgetKey])
 
-    /** Context threaded through the recursive walk. Handler fields are updated when recursing into children — each child sees its parent's
-      * composed handler chain. `state` and `focusables` are shared (not copied per-node).
+    /** Context threaded through the recursive walk. `parentHandlers` carries the accumulated parent handler chain for bubbling.
+      * `parentOnSubmit` stays separate because it's woven specially into TextInput onKeyDown (not composed via the normal bubbling
+      * pattern). `state` and `focusables` are shared (not copied per-node).
       */
     private case class Ctx(
         state: ScreenState,
         focusables: ChunkBuilder[WidgetKey],
-        parentOnClick: Unit < Async,
-        parentOnKeyDown: UI.KeyEvent => Unit < Async,
-        parentOnKeyUp: UI.KeyEvent => Unit < Async,
-        parentOnScroll: Int => Unit < Async,
-        parentOnSubmit: Unit < Async
+        parentHandlers: Handlers,
+        parentOnSubmit: () => Unit < Async
     )
 
-    private val noop: Unit < Async                   = ()
-    private val noopKey: UI.KeyEvent => Unit < Async = _ => noop
-    private val noopInt: Int => Unit < Async         = _ => noop
+    private val noopSubmit: () => Unit < Async = () => ()
 
-    def lower(ui: UI, state: ScreenState)(using AllowUnsafe, Frame): LowerResult < (Async & Scope) =
+    def lower(ui: UI, state: ScreenState)(using Frame): LowerResult < (Async & Scope) =
         // Phase 1: materialize all Signals into cached SignalRef.Unsafe (creates piping fibers)
         materialize(ui, state, Chunk.empty).andThen {
             // Phase 2: side-effectful lowering under AllowUnsafe
-            // Reads cached SignalRef.Unsafe.get(), mutates ChunkBuilder
-            val focusables = ChunkBuilder.init[WidgetKey]
-            val ctx        = Ctx(state, focusables, noop, noopKey, noopKey, noopInt, noop)
-            val tree       = walk(ui, Chunk.empty, ctx)
-            LowerResult(tree, focusables.result())
+            Sync.Unsafe.defer {
+                val focusables = ChunkBuilder.init[WidgetKey]
+                val ctx        = Ctx(state, focusables, Handlers.empty, noopSubmit)
+                val tree       = walk(ui, Chunk.empty, ctx)
+                LowerResult(tree, focusables.result())
+            }
         }
 
     // ---- Phase 1: Signal materialization ----
@@ -150,8 +147,6 @@ object Lower:
                         val cacheKey = key.child(suffix)
                         discard(state.widgetState.getOrCreate(cacheKey, ref.unsafe))
                     }
-                case sig: Signal[?] =>
-                    materializeSignal[String](sig.asInstanceOf[Signal[String]], key, suffix, state).unit
 
     private def materializeMaybeDoubleSignal(
         value: Maybe[Double | SignalRef[Double]],
@@ -168,8 +163,6 @@ object Lower:
                         val cacheKey = key.child(suffix)
                         discard(state.widgetState.getOrCreate(cacheKey, ref.unsafe))
                     }
-                case sig: Signal[?] =>
-                    materializeSignal[Double](sig.asInstanceOf[Signal[Double]], key, suffix, state).unit
 
     // ---- Phase 2: Core recursive walk (side-effectful under AllowUnsafe, no Async & Scope) ----
 
@@ -235,7 +228,8 @@ object Lower:
                 case sel: UI.Select      => lowerSelect(sel, key, dynamicPath, ctx)
                 case ri: UI.RangeInput   => lowerRangeInput(ri, key, dynamicPath, ctx)
                 case _: UI.HiddenInput   => Resolved.Text("")
-                case _: UI.Br            => Resolved.Text("\n")
+                case _: UI.Br            => Resolved.Break
+                case hr: UI.Hr           => Resolved.Rule(resolveStyle(hr, key, ctx.state))
                 case img: UI.Img         => lowerImg(img, key, dynamicPath, ctx)
                 case _                   => lowerPassthrough(elem, key, dynamicPath, ctx)
         end if
@@ -256,11 +250,9 @@ object Lower:
 
         // Recurse children with this node's composed handlers
         val childCtx = ctx.copy(
-            parentOnClick = handlers.onClick,
-            parentOnKeyDown = handlers.onKeyDown,
-            parentOnKeyUp = handlers.onKeyUp,
+            parentHandlers = handlers,
             parentOnSubmit = elem match
-                case form: UI.Form => form.onSubmit.getOrElse(ctx.parentOnSubmit)
+                case form: UI.Form => () => form.onSubmit.getOrElse(())
                 case _             => ctx.parentOnSubmit
         )
 
@@ -292,92 +284,110 @@ object Lower:
 
         val isTextarea = ti.isInstanceOf[UI.Textarea]
 
+        // Safe refs captured at construction time (Rule 2 context) for handler computation chains
+        val cursorRef = cursorPos.safe
+        val valueRef: Maybe[SignalRef[String]] = ti.value match
+            case Present(_: SignalRef[?]) =>
+                ctx.state.widgetState.get[SignalRef.Unsafe[String]](key.child("value")).map(_.safe)
+            case _ => Absent
+        val disabledRef: Maybe[SignalRef[Boolean]] = ti.disabled match
+            case Present(_: Signal[?]) =>
+                ctx.state.widgetState.get[SignalRef.Unsafe[Boolean]](key.child("disabled")).map(_.safe)
+            case _ => Absent
+
+        // Handler: pure computation code — no Sync.Unsafe.defer, only safe refs
         val widgetOnKeyDown: UI.KeyEvent => Unit < Async = ke =>
-            Sync.Unsafe.defer {
-                // Re-read fresh state at dispatch time
-                val curValue = readStringOrRef(ti.value, key, ctx.state, "")
-                val dis      = readBooleanOrSignal(ti.disabled, key, "disabled", ctx.state)
-                val ro       = ti.readOnly.getOrElse(false)
+            // Read disabled state (safe API returns < IO)
+            val disabledCheck = disabledRef match
+                case Present(ref) => ref.get
+                case _            => Kyo.lift(ti.disabled.map { case b: Boolean => b; case _ => false }.getOrElse(false))
+            disabledCheck.map { dis =>
+                val ro = ti.readOnly.getOrElse(false)
                 if !ro && !dis then
-                    def insert(ch: String): Unit < Async =
-                        val pos    = cursorPos.get()
-                        val newVal = curValue.substring(0, pos) + ch + curValue.substring(pos)
-                        writeStringRef(ti.value, key, ctx.state, newVal)
-                            .andThen(cursorPos.set(pos + 1))
-                            .andThen(fireStringCallback(ti.onInput, newVal))
-                            .andThen(fireStringCallback(ti.onChange, newVal))
-                    end insert
-                    ke.key match
-                        case UI.Keyboard.Char(c) => insert(c.toString)
-                        case UI.Keyboard.Space   => insert(" ")
-                        case UI.Keyboard.Backspace =>
-                            val pos = cursorPos.get()
-                            if pos > 0 then
-                                val newVal = curValue.substring(0, pos - 1) + curValue.substring(pos)
-                                writeStringRef(ti.value, key, ctx.state, newVal)
-                                    .andThen(cursorPos.set(pos - 1))
+                    // Read current value (safe API)
+                    val valueRead = valueRef match
+                        case Present(ref) => ref.get
+                        case _            => Kyo.lift(ti.value.map { case s: String => s; case _ => "" }.getOrElse(""))
+                    valueRead.map { curValue =>
+                        def writeValue(newVal: String): Unit < Async =
+                            valueRef match
+                                case Present(ref) => ref.set(newVal)
+                                case _            => ()
+                        def insert(ch: String): Unit < Async =
+                            cursorRef.get.map { pos =>
+                                val newVal = curValue.substring(0, pos) + ch + curValue.substring(pos)
+                                writeValue(newVal)
+                                    .andThen(cursorRef.set(pos + 1))
                                     .andThen(fireStringCallback(ti.onInput, newVal))
                                     .andThen(fireStringCallback(ti.onChange, newVal))
-                            else noop
-                            end if
-                        case UI.Keyboard.Delete =>
-                            val pos = cursorPos.get()
-                            if pos < curValue.length then
-                                val newVal = curValue.substring(0, pos) + curValue.substring(pos + 1)
-                                writeStringRef(ti.value, key, ctx.state, newVal)
-                                    .andThen(fireStringCallback(ti.onInput, newVal))
-                                    .andThen(fireStringCallback(ti.onChange, newVal))
-                            else noop
-                            end if
-                        case UI.Keyboard.ArrowLeft =>
-                            val pos = cursorPos.get()
-                            if pos > 0 then cursorPos.set(pos - 1) else noop
-                        case UI.Keyboard.ArrowRight =>
-                            val pos = cursorPos.get()
-                            if pos < curValue.length then cursorPos.set(pos + 1) else noop
-                        case UI.Keyboard.Home => cursorPos.set(0)
-                        case UI.Keyboard.End  => cursorPos.set(curValue.length)
-                        case UI.Keyboard.Enter =>
-                            if isTextarea then insert("\n")
-                            else ctx.parentOnSubmit
-                        case _ => noop
-                    end match
-                else noop
+                            }
+                        ke.key match
+                            case UI.Keyboard.Char(c) => insert(c.toString)
+                            case UI.Keyboard.Space   => insert(" ")
+                            case UI.Keyboard.Backspace =>
+                                cursorRef.get.map { pos =>
+                                    if pos > 0 then
+                                        val newVal = curValue.substring(0, pos - 1) + curValue.substring(pos)
+                                        writeValue(newVal)
+                                            .andThen(cursorRef.set(pos - 1))
+                                            .andThen(fireStringCallback(ti.onInput, newVal))
+                                            .andThen(fireStringCallback(ti.onChange, newVal))
+                                    else ()
+                                }
+                            case UI.Keyboard.Delete =>
+                                cursorRef.get.map { pos =>
+                                    if pos < curValue.length then
+                                        val newVal = curValue.substring(0, pos) + curValue.substring(pos + 1)
+                                        writeValue(newVal)
+                                            .andThen(fireStringCallback(ti.onInput, newVal))
+                                            .andThen(fireStringCallback(ti.onChange, newVal))
+                                    else ()
+                                }
+                            case UI.Keyboard.ArrowLeft =>
+                                cursorRef.get.map { pos =>
+                                    if pos > 0 then cursorRef.set(pos - 1) else ()
+                                }
+                            case UI.Keyboard.ArrowRight =>
+                                cursorRef.get.map { pos =>
+                                    if pos < curValue.length then cursorRef.set(pos + 1) else ()
+                                }
+                            case UI.Keyboard.Home => cursorRef.set(0)
+                            case UI.Keyboard.End  => cursorRef.set(curValue.length)
+                            case UI.Keyboard.Enter =>
+                                if isTextarea then insert("\n")
+                                else ctx.parentOnSubmit()
+                            case _ => ()
+                        end match
+                    }
+                else ()
                 end if
             }
 
-        val style    = resolveStyle(ti, key, ctx.state)
-        val userOnKD = ti.attrs.onKeyDown.getOrElse(noopKey)
+        val style = resolveStyle(ti, key, ctx.state)
 
-        // Compose: widget → user → parent
-        val composedOnKeyDown = composeKeyed(widgetOnKeyDown, composeKeyed(userOnKD, ctx.parentOnKeyDown))
-
-        val handlers = Handlers(
-            widgetKey = Maybe(key),
-            id = ti.attrs.identifier,
-            forId = Absent,
-            tabIndex = ti.attrs.tabIndex,
-            disabled = disabled,
-            onClick = composeUnit(ti.attrs.onClick.getOrElse(noop), ctx.parentOnClick),
-            onClickSelf = ti.attrs.onClickSelf.getOrElse(noop),
-            onKeyDown = composedOnKeyDown,
-            onKeyUp = composeKeyed(ti.attrs.onKeyUp.getOrElse(noopKey), ctx.parentOnKeyUp),
-            onInput = ti.onInput.getOrElse(_ => noop),
-            onChange = ti.onChange.map(f => (v: Any) => f(v.asInstanceOf[String])).getOrElse(_ => noop),
-            onSubmit = noop,
-            onFocus = ti.attrs.onFocus.getOrElse(noop),
-            onBlur = ti.attrs.onBlur.getOrElse(noop),
-            onScroll = ctx.parentOnScroll,
-            colspan = 1,
-            rowspan = 1,
-            imageData = Absent
-        )
+        // Build handlers: start from parentHandlers (carries parent bubbling chain),
+        // then compose widget's own onKeyDown, user's onKeyDown, and other handlers
+        val handlers = ctx.parentHandlers
+            .withWidgetKey(key)
+            .withId(ti.attrs.identifier)
+            .withTabIndex(ti.attrs.tabIndex)
+            .withDisabled(disabled)
+            .composeOnClick(ti.attrs.onClick.getOrElse(()))
+            .withOnClickSelf(ti.attrs.onClickSelf.getOrElse(()))
+            .composeOnKeyDown(widgetOnKeyDown)
+            .composeOnKeyDown(ti.attrs.onKeyDown.getOrElse(_ => ()))
+            .composeOnKeyUp(ti.attrs.onKeyUp.getOrElse(_ => ()))
+            .withOnInput(ti.onInput.getOrElse(_ => ()))
+            .withOnChange(ti.onChange.map(f => (v: Any) => f(v.asInstanceOf[String])).getOrElse(_ => ()))
+            .withOnFocus(ti.attrs.onFocus.getOrElse(()))
+            .withOnBlur(ti.attrs.onBlur.getOrElse(()))
 
         registerFocusable(ti, key, disabled, ctx)
 
+        // Text input children (before, cursor, after) flow horizontally
         Resolved.Node(
             ElemTag.Div,
-            style,
+            style ++ Style.row,
             handlers,
             Chunk(
                 Resolved.Text(before),
@@ -410,39 +420,30 @@ object Lower:
         val display = bi match
             case _: UI.Checkbox => if checked then "[x]" else "[ ]"
             case _: UI.Radio    => if checked then "(•)" else "( )"
-            case _              => ""
 
+        val checkedSafe = checkedRef.safe
         val widgetOnClick: Unit < Async =
-            if !disabled then
-                Sync.Unsafe.defer {
-                    val newVal = !checkedRef.get()
-                    checkedRef.set(newVal)
+            checkedSafe.get.map { curr =>
+                val newVal = !curr
+                checkedSafe.set(newVal).andThen(
                     bi.onChange match
                         case Present(f) => f(newVal)
-                        case Absent     => noop
-                }
-            else noop
+                        case Absent     => ()
+                )
+            }
 
-        val handlers = Handlers(
-            widgetKey = Maybe(key),
-            id = bi.attrs.identifier,
-            forId = Absent,
-            tabIndex = bi.attrs.tabIndex,
-            disabled = disabled,
-            onClick = composeUnit(widgetOnClick, composeUnit(bi.attrs.onClick.getOrElse(noop), ctx.parentOnClick)),
-            onClickSelf = bi.attrs.onClickSelf.getOrElse(noop),
-            onKeyDown = composeKeyed(bi.attrs.onKeyDown.getOrElse(noopKey), ctx.parentOnKeyDown),
-            onKeyUp = composeKeyed(bi.attrs.onKeyUp.getOrElse(noopKey), ctx.parentOnKeyUp),
-            onInput = _ => noop,
-            onChange = _ => noop,
-            onSubmit = noop,
-            onFocus = bi.attrs.onFocus.getOrElse(noop),
-            onBlur = bi.attrs.onBlur.getOrElse(noop),
-            onScroll = ctx.parentOnScroll,
-            colspan = 1,
-            rowspan = 1,
-            imageData = Absent
-        )
+        val handlers = ctx.parentHandlers
+            .withWidgetKey(key)
+            .withId(bi.attrs.identifier)
+            .withTabIndex(bi.attrs.tabIndex)
+            .withDisabled(disabled)
+            .composeOnClick(widgetOnClick)
+            .composeOnClick(bi.attrs.onClick.getOrElse(()))
+            .withOnClickSelf(bi.attrs.onClickSelf.getOrElse(()))
+            .composeOnKeyDown(bi.attrs.onKeyDown.getOrElse(_ => ()))
+            .composeOnKeyUp(bi.attrs.onKeyUp.getOrElse(_ => ()))
+            .withOnFocus(bi.attrs.onFocus.getOrElse(()))
+            .withOnBlur(bi.attrs.onBlur.getOrElse(()))
 
         if !disabled then
             registerFocusable(bi, key, disabled, ctx)
@@ -466,46 +467,66 @@ object Lower:
 
         val selectedText = options.find(_._1 == currentValue).map(_._2).getOrElse(currentValue)
 
-        // Toggle on self-click — deferred to read fresh state at dispatch time
-        val toggleClick: Unit < Async =
-            Sync.Unsafe.defer {
-                val dis = readBooleanOrSignal(sel.disabled, key, "disabled", ctx.state)
-                if !dis then expanded.set(!expanded.get())
-                else noop
-            }
+        // Safe refs for handler computations
+        val expandedRef  = expanded.safe
+        val highlightRef = highlight.safe
+        val selectValueRef: Maybe[SignalRef[String]] = sel.value match
+            case Present(_: SignalRef[?]) =>
+                ctx.state.widgetState.get[SignalRef.Unsafe[String]](key.child("value")).map(_.safe)
+            case _ => Absent
 
-        val handlers = Handlers(
-            widgetKey = Maybe(key),
-            id = sel.attrs.identifier,
-            forId = Absent,
-            tabIndex = sel.attrs.tabIndex,
-            disabled = disabled,
-            onClick = composeUnit(sel.attrs.onClick.getOrElse(noop), ctx.parentOnClick),
-            onClickSelf = toggleClick,
-            onKeyDown = composeKeyed(sel.attrs.onKeyDown.getOrElse(noopKey), ctx.parentOnKeyDown),
-            onKeyUp = composeKeyed(sel.attrs.onKeyUp.getOrElse(noopKey), ctx.parentOnKeyUp),
-            onInput = _ => noop,
-            onChange = _ => noop,
-            onSubmit = noop,
-            onFocus = sel.attrs.onFocus.getOrElse(noop),
-            onBlur = sel.attrs.onBlur.getOrElse(noop),
-            onScroll = ctx.parentOnScroll,
-            colspan = 1,
-            rowspan = 1,
-            imageData = Absent
-        )
+        val toggleClick: Unit < Async =
+            expandedRef.get.map(curr => expandedRef.set(!curr))
+
+        val widgetOnKeyDown: UI.KeyEvent => Unit < Async = ke =>
+            ke.key match
+                case UI.Keyboard.Escape =>
+                    expandedRef.set(false)
+                case UI.Keyboard.ArrowDown =>
+                    highlightRef.get.map(h => highlightRef.set(math.min(h + 1, options.size - 1)))
+                case UI.Keyboard.ArrowUp =>
+                    highlightRef.get.map(h => highlightRef.set(math.max(h - 1, 0)))
+                case UI.Keyboard.Enter =>
+                    highlightRef.get.map { idx =>
+                        if idx >= 0 && idx < options.size then
+                            val (value, _) = options(idx)
+                            val writeEffect: Unit < Async = selectValueRef match
+                                case Present(ref) => ref.set(value)
+                                case _            => ()
+                            writeEffect
+                                .andThen(expandedRef.set(false))
+                                .andThen(sel.onChange match
+                                    case Present(f) => f(value)
+                                    case _          => ())
+                        else ()
+                    }
+                case _ => ()
+
+        val handlers = ctx.parentHandlers
+            .withWidgetKey(key)
+            .withId(sel.attrs.identifier)
+            .withTabIndex(sel.attrs.tabIndex)
+            .withDisabled(disabled)
+            .composeOnClick(sel.attrs.onClick.getOrElse(()))
+            .withOnClickSelf(toggleClick)
+            .composeOnKeyDown(widgetOnKeyDown)
+            .composeOnKeyDown(sel.attrs.onKeyDown.getOrElse(_ => ()))
+            .composeOnKeyUp(sel.attrs.onKeyUp.getOrElse(_ => ()))
+            .withOnFocus(sel.attrs.onFocus.getOrElse(()))
+            .withOnBlur(sel.attrs.onBlur.getOrElse(()))
 
         registerFocusable(sel, key, disabled, ctx)
 
         val displayChildren = Chunk(Resolved.Text(selectedText), Resolved.Text(" ▼"))
 
+        // Select children (label + arrow) flow horizontally
+        val rowStyle = style ++ Style.row
         if isExpanded then
-            // Build popup with option nodes
-            val optionNodes = buildOptionNodes(options, sel, key, expanded, ctx)
+            val optionNodes = buildOptionNodes(options, sel, selectValueRef, expandedRef, ctx)
             val popup       = Resolved.Node(ElemTag.Popup, Style.empty, Handlers.empty, optionNodes)
-            Resolved.Node(ElemTag.Div, style, handlers, displayChildren.append(popup))
+            Resolved.Node(ElemTag.Div, rowStyle, handlers, displayChildren.append(popup))
         else
-            Resolved.Node(ElemTag.Div, style, handlers, displayChildren)
+            Resolved.Node(ElemTag.Div, rowStyle, handlers, displayChildren)
         end if
     end lowerSelect
 
@@ -525,47 +546,56 @@ object Lower:
 
         val display = f"$currentValue%.1f"
 
+        // Safe refs for handler computation
+        val rangeValueRef: Maybe[SignalRef[Double]] = ri.value match
+            case Present(_: SignalRef[?]) =>
+                ctx.state.widgetState.get[SignalRef.Unsafe[Double]](key.child("value")).map(_.safe)
+            case _ => Absent
+        val rangeDisabledRef: Maybe[SignalRef[Boolean]] = ri.disabled match
+            case Present(_: Signal[?]) =>
+                ctx.state.widgetState.get[SignalRef.Unsafe[Boolean]](key.child("disabled")).map(_.safe)
+            case _ => Absent
+
         val widgetOnKeyDown: UI.KeyEvent => Unit < Async = ke =>
-            Sync.Unsafe.defer {
-                val dis = readBooleanOrSignal(ri.disabled, key, "disabled", ctx.state)
+            val disCheck = rangeDisabledRef match
+                case Present(ref) => ref.get
+                case _            => Kyo.lift(ri.disabled.map { case b: Boolean => b; case _ => false }.getOrElse(false))
+            disCheck.map { dis =>
                 if !dis then
-                    val curVal = readDoubleOrRef(ri.value, key, ctx.state, minVal)
-                    val delta = ke.key match
-                        case UI.Keyboard.ArrowRight | UI.Keyboard.ArrowUp  => step
-                        case UI.Keyboard.ArrowLeft | UI.Keyboard.ArrowDown => -step
-                        case _                                             => 0.0
-                    if delta != 0.0 then
-                        val newVal = math.max(minVal, math.min(maxVal, curVal + delta))
-                        writeDoubleRef(ri.value, key, ctx.state, newVal)
-                            .andThen(ri.onChange match
+                    val valRead = rangeValueRef match
+                        case Present(ref) => ref.get
+                        case _            => Kyo.lift(ri.value.map { case d: Double => d; case _ => minVal }.getOrElse(minVal))
+                    valRead.map { curVal =>
+                        val delta = ke.key match
+                            case UI.Keyboard.ArrowRight | UI.Keyboard.ArrowUp  => step
+                            case UI.Keyboard.ArrowLeft | UI.Keyboard.ArrowDown => -step
+                            case _                                             => 0.0
+                        if delta != 0.0 then
+                            val newVal = math.max(minVal, math.min(maxVal, curVal + delta))
+                            val writeEffect: Unit < Async = rangeValueRef match
+                                case Present(ref) => ref.set(newVal)
+                                case _            => ()
+                            writeEffect.andThen(ri.onChange match
                                 case Present(f) => f(newVal)
-                                case Absent     => noop)
-                    else noop
-                    end if
-                else noop
-                end if
+                                case Absent     => ())
+                        else ()
+                        end if
+                    }
+                else ()
             }
 
-        val handlers = Handlers(
-            widgetKey = Maybe(key),
-            id = ri.attrs.identifier,
-            forId = Absent,
-            tabIndex = ri.attrs.tabIndex,
-            disabled = disabled,
-            onClick = composeUnit(ri.attrs.onClick.getOrElse(noop), ctx.parentOnClick),
-            onClickSelf = ri.attrs.onClickSelf.getOrElse(noop),
-            onKeyDown = composeKeyed(widgetOnKeyDown, composeKeyed(ri.attrs.onKeyDown.getOrElse(noopKey), ctx.parentOnKeyDown)),
-            onKeyUp = composeKeyed(ri.attrs.onKeyUp.getOrElse(noopKey), ctx.parentOnKeyUp),
-            onInput = _ => noop,
-            onChange = _ => noop,
-            onSubmit = noop,
-            onFocus = ri.attrs.onFocus.getOrElse(noop),
-            onBlur = ri.attrs.onBlur.getOrElse(noop),
-            onScroll = ctx.parentOnScroll,
-            colspan = 1,
-            rowspan = 1,
-            imageData = Absent
-        )
+        val handlers = ctx.parentHandlers
+            .withWidgetKey(key)
+            .withId(ri.attrs.identifier)
+            .withTabIndex(ri.attrs.tabIndex)
+            .withDisabled(disabled)
+            .composeOnClick(ri.attrs.onClick.getOrElse(()))
+            .withOnClickSelf(ri.attrs.onClickSelf.getOrElse(()))
+            .composeOnKeyDown(widgetOnKeyDown)
+            .composeOnKeyDown(ri.attrs.onKeyDown.getOrElse(_ => ()))
+            .composeOnKeyUp(ri.attrs.onKeyUp.getOrElse(_ => ()))
+            .withOnFocus(ri.attrs.onFocus.getOrElse(()))
+            .withOnBlur(ri.attrs.onBlur.getOrElse(()))
 
         if !disabled then
             ri.attrs.tabIndex match
@@ -582,10 +612,9 @@ object Lower:
     private def lowerImg(img: UI.Img, key: WidgetKey, dynamicPath: Chunk[String], ctx: Ctx)(using AllowUnsafe, Frame): Resolved =
         val style = resolveStyle(img, key, ctx.state)
         val alt   = img.alt.getOrElse("")
-        val handlers = Handlers.empty.copy(
-            widgetKey = Maybe(key),
-            id = img.attrs.identifier
-        )
+        val handlers = Handlers.empty
+            .withWidgetKey(key)
+            .withId(img.attrs.identifier)
         Resolved.Node(ElemTag.Div, style, handlers, Chunk(Resolved.Text(alt)))
     end lowerImg
 
@@ -687,7 +716,7 @@ object Lower:
                     case _: UI.H1     => Style.bold.padding(1.px, 0.px)
                     case _: UI.H2     => Style.bold
                     case _: UI.Button => Style.border(1.px, theme.borderColor).padding(0.px, 1.px)
-                    case _: UI.Hr     => Style.border(1.px, theme.borderColor).width(100.pct)
+                    case _: UI.Hr     => Style.borderBottom(1.px, theme.borderColor).width(100.pct).height(1.px)
                     case _            => Style.empty
 
     // ---- Tag resolution ----
@@ -702,51 +731,29 @@ object Lower:
 
     private def buildHandlers(elem: UI.Element, key: WidgetKey, disabled: Boolean, ctx: Ctx)(using AllowUnsafe, Frame): Handlers =
         val attrs = elem.attrs
-        Handlers(
-            widgetKey = Maybe(key),
-            id = attrs.identifier,
-            forId = elem match
-                case lbl: UI.Label => lbl.forId
-                case _             => Absent
-            ,
-            tabIndex = attrs.tabIndex,
-            disabled = disabled,
-            onClick = composeUnit(attrs.onClick.getOrElse(noop), ctx.parentOnClick),
-            onClickSelf = attrs.onClickSelf.getOrElse(noop),
-            onKeyDown = composeKeyed(attrs.onKeyDown.getOrElse(noopKey), ctx.parentOnKeyDown),
-            onKeyUp = composeKeyed(attrs.onKeyUp.getOrElse(noopKey), ctx.parentOnKeyUp),
-            onInput = _ => noop,
-            onChange = _ => noop,
-            onSubmit = noop,
-            onFocus = attrs.onFocus.getOrElse(noop),
-            onBlur = attrs.onBlur.getOrElse(noop),
-            onScroll = ctx.parentOnScroll,
-            colspan = elem match
+        ctx.parentHandlers
+            .withWidgetKey(key)
+            .withId(attrs.identifier)
+            .withForId(elem match
+                case lbl: UI.Label => lbl.forId;
+                case _             => Absent)
+            .withTabIndex(attrs.tabIndex)
+            .withDisabled(disabled)
+            .withColspan(elem match
                 case td: UI.Td => td.colspan.getOrElse(1)
                 case th: UI.Th => th.colspan.getOrElse(1)
-                case _         => 1
-            ,
-            rowspan = elem match
+                case _         => 1)
+            .withRowspan(elem match
                 case td: UI.Td => td.rowspan.getOrElse(1)
                 case th: UI.Th => th.rowspan.getOrElse(1)
-                case _         => 1
-            ,
-            imageData = Absent
-        )
+                case _         => 1)
+            .composeOnClick(attrs.onClick.getOrElse(()))
+            .withOnClickSelf(attrs.onClickSelf.getOrElse(()))
+            .composeOnKeyDown(attrs.onKeyDown.getOrElse(_ => ()))
+            .composeOnKeyUp(attrs.onKeyUp.getOrElse(_ => ()))
+            .withOnFocus(attrs.onFocus.getOrElse(()))
+            .withOnBlur(attrs.onBlur.getOrElse(()))
     end buildHandlers
-
-    // ---- Handler composition ----
-
-    /** Compose two Unit < Async: child fires first, then parent. */
-    private def composeUnit(child: Unit < Async, parent: Unit < Async)(using Frame): Unit < Async =
-        child.andThen(parent)
-
-    /** Compose two keyed handlers: child fires first, then parent (same event). */
-    private def composeKeyed(
-        child: UI.KeyEvent => Unit < Async,
-        parent: UI.KeyEvent => Unit < Async
-    )(using Frame): UI.KeyEvent => Unit < Async =
-        e => child(e).andThen(parent(e))
 
     // ---- Child walking ----
 
@@ -791,8 +798,8 @@ object Lower:
     private def buildOptionNodes(
         options: Chunk[(String, String)],
         sel: UI.Select,
-        key: WidgetKey,
-        expanded: SignalRef.Unsafe[Boolean],
+        selectValueRef: Maybe[SignalRef[String]],
+        expandedRef: SignalRef[Boolean],
         ctx: Ctx
     )(using AllowUnsafe, Frame): Chunk[Resolved] =
         @tailrec def loop(i: Int, acc: Chunk[Resolved]): Chunk[Resolved] =
@@ -800,14 +807,17 @@ object Lower:
             else
                 val (value, text) = options(i)
                 val optClick: Unit < Async =
-                    writeStringRef(sel.value, key, ctx.state, value)
-                        .andThen(expanded.set(false))
+                    val writeEffect: Unit < Async = selectValueRef match
+                        case Present(ref) => ref.set(value)
+                        case _            => ()
+                    writeEffect
+                        .andThen(expandedRef.set(false))
                         .andThen(sel.onChange match
                             case Present(f) => f(value)
-                            case Absent     => noop)
-                val optHandlers = Handlers.empty.copy(
-                    onClick = composeUnit(optClick, ctx.parentOnClick)
-                )
+                            case Absent     => ())
+                end optClick
+                val optHandlers = Handlers.empty
+                    .withOnClick(optClick)
                 loop(i + 1, acc.append(Resolved.Node(ElemTag.Div, Style.empty, optHandlers, Chunk(Resolved.Text(text)))))
         loop(0, Chunk.empty)
     end buildOptionNodes
@@ -841,16 +851,16 @@ object Lower:
     private def writeStringRef(value: Maybe[String | SignalRef[String]], key: WidgetKey, state: ScreenState, newVal: String)(using
         AllowUnsafe
     ): Unit < Async =
-        if value.isEmpty then noop
+        if value.isEmpty then ()
         else
             value.get match
                 case _: SignalRef[?] =>
                     state.widgetState.get[SignalRef.Unsafe[String]](key.child("value")) match
                         case Present(ref) =>
                             ref.set(newVal)
-                            noop
-                        case _ => noop
-                case _ => noop
+                            ()
+                        case _ => ()
+                case _ => ()
 
     private def readDoubleOrRef(value: Maybe[Double | SignalRef[Double]], key: WidgetKey, state: ScreenState, default: Double)(using
         AllowUnsafe
@@ -867,31 +877,28 @@ object Lower:
     private def writeDoubleRef(value: Maybe[Double | SignalRef[Double]], key: WidgetKey, state: ScreenState, newVal: Double)(using
         AllowUnsafe
     ): Unit < Async =
-        if value.isEmpty then noop
+        if value.isEmpty then ()
         else
             value.get match
                 case _: SignalRef[?] =>
                     state.widgetState.get[SignalRef.Unsafe[Double]](key.child("value")) match
                         case Present(ref) =>
                             ref.set(newVal)
-                            noop
-                        case _ => noop
-                case _ => noop
+                            ()
+                        case _ => ()
+                case _ => ()
 
     private def fireStringCallback(cb: Maybe[String => Unit < Async], value: String): Unit < Async =
         cb match
             case Present(f) => f(value)
-            case Absent     => noop
+            case Absent     => ()
 
     /** Register element as focusable if eligible. Single source of truth for focusable rules. */
     private def registerFocusable(elem: UI.Element, key: WidgetKey, disabled: Boolean, ctx: Ctx): Unit =
         if !disabled then
             val isFocusable = elem match
-                case _: UI.Focusable    => true
-                case _: UI.TextInput    => true
-                case _: UI.BooleanInput => true
-                case _: UI.PickerInput  => true
-                case _                  => false
+                case _: UI.Focusable => true
+                case _               => false
             val tabAllowed = elem.attrs.tabIndex match
                 case Present(idx) => idx >= 0
                 case Absent       => isFocusable

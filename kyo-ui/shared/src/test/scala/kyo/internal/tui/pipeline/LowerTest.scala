@@ -66,11 +66,11 @@ class LowerTest extends Test:
     }
 
     "br" - {
-        "becomes newline text" in run {
+        "becomes Break" in run {
             lowerUI(UI.br).map { result =>
                 result.tree match
-                    case Resolved.Text(v) => assert(v == "\n")
-                    case _                => fail("expected Text with newline")
+                    case Resolved.Break => succeed
+                    case _              => fail("expected Break")
             }
         }
     }

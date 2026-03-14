@@ -17,6 +17,10 @@ object Styler:
                 Styled.Text(value, inheritText(parent))
             case Resolved.Cursor(offset) =>
                 Styled.Cursor(offset)
+            case Resolved.Break =>
+                Styled.Break
+            case Resolved.Rule(userStyle) =>
+                Styled.Rule(resolve(userStyle, parent))
 
     /** Resolve a node's style by combining parent inheritance with user-specified props.
       *
@@ -79,7 +83,7 @@ object Styler:
         var roundTR                                           = false
         var roundBR                                           = false
         var roundBL                                           = false
-        var direction                                         = Style.FlexDirection.row
+        var direction: Maybe[Style.FlexDirection]             = Absent
         var justify                                           = Style.Justification.start
         var align                                             = Style.Alignment.start
         var gap: Length                                       = Length.zero
@@ -115,7 +119,7 @@ object Styler:
                         marBottom = b
                         marLeft = l
                     case Style.Prop.Gap(v)               => gap = v
-                    case Style.Prop.FlexDirectionProp(d) => direction = d
+                    case Style.Prop.FlexDirectionProp(d) => direction = Maybe(d)
                     case Style.Prop.FlexWrapProp(w)      => flexWrap = w
                     case Style.Prop.Align(v)             => align = v
                     case Style.Prop.Justify(v)           => justify = v
@@ -337,7 +341,7 @@ object Styler:
             roundTR = false,
             roundBR = false,
             roundBL = false,
-            direction = Style.FlexDirection.row,
+            direction = Absent,
             justify = Style.Justification.start,
             align = Style.Alignment.start,
             gap = Length.zero,

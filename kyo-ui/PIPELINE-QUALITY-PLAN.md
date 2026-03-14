@@ -25,6 +25,66 @@ These are non-negotiable for all pipeline code — current and future phases.
 - **Prefer instance methods** over companion object functions when the method operates on a single value of the type.
 - **Don't create private wrapper aliases** — if a method moves to a type, update all call sites directly. No `private def resolve(...) = Length.resolve(...)`.
 
+### AllowUnsafe discipline — THE cardinal rule
+
+Every method falls into exactly one of three categories. **No exceptions. No hybrids.**
+
+1. **A pure method without any side effects doesn't need `AllowUnsafe` nor to compose computations.** Just data in, data out.
+   - Examples: `Styler.style`, `Layout.layout`, `Painter.paint`, `Differ.diff`, `Compositor.composite`
+
+2. **Methods that perform side effects without returning a computation MUST take `AllowUnsafe`.**
+   - Examples: `SignalRef.Unsafe.get()`, `SignalRef.Unsafe.set()`, `WidgetStateCache.getOrCreate`
+   - Examples: Lower Phase 2 walk methods, `readBooleanOrSignal`, `readStringOrRef`
+
+3. **All methods that return a computation MUST NOT take `AllowUnsafe` and use `Sync.Unsafe.defer` to call APIs that take `AllowUnsafe`.**
+   - Examples: `Pipeline.renderFrame`, `Pipeline.dispatchEvent`, `Lower.lower`, `Dispatch.dispatch`
+   - `Sync.Unsafe.defer` is ONLY for the boundary — wrapping the initial unsafe reads before entering computation land
+
+### Signal usage in computation code
+
+**Always use the safe `SignalRef` API in computation code.** Call `.safe` on any `SignalRef.Unsafe` to get the safe view. The safe `.get` and `.set` return `< IO` — proper computations that compose naturally.
+
+**Never use `Sync.Unsafe.defer` to suspend unsafe signal operations inside computation code.** If you need to read or write a signal inside `.map`, `.andThen`, or a handler closure, use the safe API.
+
+```scala
+// WRONG — Sync.Unsafe.defer inside computation code
+val handler: Unit < Async =
+    Sync.Unsafe.defer {
+        val pos = cursorPos.get()
+        cursorPos.set(pos + 1)
+    }
+
+// WRONG — bare unsafe .set() inside .andThen
+someComputation.andThen(cursorPos.set(pos + 1))
+
+// RIGHT — safe ref, .get and .set return < IO
+val cursorRef = cursorPos.safe
+cursorRef.get.map { pos =>
+    cursorRef.set(pos + 1)
+}
+```
+
+**Handler closures are pure computation code.** They capture safe refs (obtained via `.safe` at construction time in the Rule 2 lowering method) and use only the safe API:
+
+```scala
+// Construction time (Rule 2 method with AllowUnsafe):
+val cursorRef   = cursorPos.safe      // safe view captured once
+val valueRef    = cachedValueRef.safe
+val disabledRef = cachedDisabledRef.safe
+
+// Handler (pure computation — no AllowUnsafe, no Sync.Unsafe.defer):
+val widgetOnKeyDown: UI.KeyEvent => Unit < Async = ke =>
+    disabledRef.get.map { disabled =>
+        if !disabled then
+            cursorRef.get.map { pos =>
+                valueRef.set(newVal)
+                    .andThen(cursorRef.set(pos + 1))
+                    .andThen(fireCallback(newVal))
+            }
+        else ()
+    }
+```
+
 ### Control flow
 - **No `while`, `var` for loop control, or `return`** — use `@tailrec def loop`. Local `var` is acceptable only for building up an immutable result in bounded scope.
 - **No `asInstanceOf`** — pattern match instead.

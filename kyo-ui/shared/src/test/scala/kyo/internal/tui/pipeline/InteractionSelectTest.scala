@@ -63,7 +63,7 @@ class InteractionSelectTest extends Test:
             end for
         }
 
-        "onChange fires when option selected" in run {
+        "onChange fires when option selected via keyboard" in run {
             var selected = ""
             val s = screen(
                 UI.select.value("apple").onChange(v => selected = v)(
@@ -75,8 +75,9 @@ class InteractionSelectTest extends Test:
             )
             for
                 _ <- s.render
-                _ <- s.click(1, 0) // open dropdown
-                _ <- s.click(1, 1) // click second option
+                _ <- s.click(1, 0)                // focus and open dropdown
+                _ <- s.key(UI.Keyboard.ArrowDown) // highlight "Banana"
+                _ <- s.enter                      // select highlighted
             yield assert(selected == "banana", s"expected 'banana' selected, got: $selected")
             end for
         }
@@ -148,6 +149,29 @@ class InteractionSelectTest extends Test:
                 _ <- s.render
                 _ <- s.click(1, 0)
             yield assert(selected == "", s"disabled select should not respond to click")
+            end for
+        }
+    }
+
+    "arrow up navigates options" - {
+        "arrow up from second option selects first" in run {
+            var selected = ""
+            val s = screen(
+                UI.select.value("apple").onChange(v => selected = v)(
+                    UI.option.value("apple")("Apple"),
+                    UI.option.value("banana")("Banana"),
+                    UI.option.value("cherry")("Cherry")
+                ),
+                15,
+                5
+            )
+            for
+                _ <- s.render
+                _ <- s.click(1, 0)                // open dropdown
+                _ <- s.key(UI.Keyboard.ArrowDown) // highlight "Banana"
+                _ <- s.key(UI.Keyboard.ArrowUp)   // highlight back to "Apple"
+                _ <- s.enter                      // select
+            yield assert(selected == "apple", s"expected 'apple', got: $selected")
             end for
         }
     }

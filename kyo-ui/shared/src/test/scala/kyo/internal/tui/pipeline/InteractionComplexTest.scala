@@ -279,11 +279,11 @@ class InteractionComplexTest extends Test:
                     UI.input.value(ref.safe)
                 ),
                 20,
-                1
+                3
             )
             for
                 _ <- s.render
-                _ <- s.click(6, 0) // click on input area (after "Name:")
+                _ <- s.click(0, 1) // click on input (row 1, div is column-direction)
                 _ <- s.typeChar('J')
                 _ <- s.typeChar('o')
                 _ <- s.typeChar('e')

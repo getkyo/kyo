@@ -1,12 +1,11 @@
-package kyo
+package demo
 
+import kyo.*
 import kyo.Length.*
 import kyo.internal.tui.pipeline.*
 import scala.language.implicitConversions
 
 object TuiDemo extends KyoApp:
-
-    given Frame = Frame.internal
 
     val cols = 60
     val rows = 20
@@ -15,7 +14,7 @@ object TuiDemo extends KyoApp:
         RenderToString.render(
             UI.div(
                 UI.h1("Welcome to Kyo UI"),
-                UI.div(
+                UI.div.style(Style.row)(
                     UI.span("A "),
                     UI.span.style(Style.bold)("pure"),
                     UI.span(" rendering pipeline")
