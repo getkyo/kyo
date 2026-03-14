@@ -1,0 +1,149 @@
+package kyo.internal.tui.pipeline
+
+import kyo.*
+import kyo.Length.*
+import kyo.Test
+import scala.language.implicitConversions
+
+class InteractionFocusTest extends Test:
+
+    given Frame = Frame.internal
+
+    import AllowUnsafe.embrace.danger
+
+    def screen(ui: UI, cols: Int, rows: Int) = Screen(ui, cols, rows)
+
+    "tab navigation" - {
+        "tab cycles through focusable elements" in run {
+            var focused = ""
+            val s = screen(
+                UI.div(
+                    UI.button.onFocus { focused = "btn1" }("B1"),
+                    UI.button.onFocus { focused = "btn2" }("B2"),
+                    UI.button.onFocus { focused = "btn3" }("B3")
+                ),
+                20,
+                3
+            )
+            for
+                _ <- s.render
+                _ <- s.tab
+            yield assert(focused == "btn1", s"expected btn1 focused, got: $focused")
+            end for
+        }
+
+        "second tab moves to next element" in run {
+            var focused = ""
+            val s = screen(
+                UI.div(
+                    UI.button.onFocus { focused = "btn1" }("B1"),
+                    UI.button.onFocus { focused = "btn2" }("B2")
+                ),
+                20,
+                3
+            )
+            for
+                _ <- s.render
+                _ <- s.tab
+                _ <- s.tab
+            yield assert(focused == "btn2", s"expected btn2 focused, got: $focused")
+            end for
+        }
+
+        "shift+tab cycles backward" in run {
+            var focused = ""
+            val s = screen(
+                UI.div(
+                    UI.button.onFocus { focused = "btn1" }("B1"),
+                    UI.button.onFocus { focused = "btn2" }("B2"),
+                    UI.button.onFocus { focused = "btn3" }("B3")
+                ),
+                20,
+                3
+            )
+            for
+                _ <- s.render
+                _ <- s.tab      // → btn1
+                _ <- s.tab      // → btn2
+                _ <- s.shiftTab // → btn1
+            yield assert(focused == "btn1", s"expected btn1 focused after shift+tab, got: $focused")
+            end for
+        }
+    }
+
+    "click focus" - {
+        "click sets focus on button" in run {
+            var focused = ""
+            val s = screen(
+                UI.div(
+                    UI.button.onFocus { focused = "clicked" }("Click me")
+                ),
+                15,
+                1
+            )
+            for
+                _ <- s.render
+                _ <- s.click(1, 0)
+            yield assert(focused == "clicked", s"expected 'clicked' focused, got: $focused")
+            end for
+        }
+    }
+
+    "focus and blur events" - {
+        "onFocus fires when focused" in run {
+            var focusFired = false
+            val s = screen(
+                UI.div(
+                    UI.button.onFocus { focusFired = true }("B1")
+                ),
+                10,
+                1
+            )
+            for
+                _ <- s.render
+                _ <- s.tab
+            yield assert(focusFired, "onFocus should have fired")
+            end for
+        }
+
+        "onBlur fires when focus moves away" in run {
+            var blurFired = false
+            val s = screen(
+                UI.div(
+                    UI.button.onBlur { blurFired = true }("B1"),
+                    UI.button("B2")
+                ),
+                15,
+                1
+            )
+            for
+                _ <- s.render
+                _ <- s.tab // focus B1
+                _ <- s.tab // focus B2 → blur B1
+            yield assert(blurFired, "onBlur should have fired when focus moved away")
+            end for
+        }
+    }
+
+    "disabled elements" - {
+        "disabled button skipped in tab order" in run {
+            var focused = ""
+            val s = screen(
+                UI.div(
+                    UI.button.onFocus { focused = "btn1" }("B1"),
+                    UI.button.disabled(true).onFocus { focused = "btn2" }("B2"),
+                    UI.button.onFocus { focused = "btn3" }("B3")
+                ),
+                20,
+                3
+            )
+            for
+                _ <- s.render
+                _ <- s.tab // → btn1
+                _ <- s.tab // → btn3 (skip btn2)
+            yield assert(focused == "btn3", s"expected btn3 (skipping disabled btn2), got: $focused")
+            end for
+        }
+    }
+
+end InteractionFocusTest

@@ -107,12 +107,12 @@ object UI:
 
     sealed trait Interactive extends Element:
         def tabIndex(v: Int): Self                       = withAttrs(attrs.copy(tabIndex = Present(v)))
-        def onClick(action: Unit < Async): Self          = withAttrs(attrs.copy(onClick = Present(action)))
-        def onClickSelf(action: Unit < Async): Self      = withAttrs(attrs.copy(onClickSelf = Present(action)))
+        def onClick(action: => Unit < Async): Self       = withAttrs(attrs.copy(onClick = Present(Sync.defer(action)(using frame))))
+        def onClickSelf(action: => Unit < Async): Self   = withAttrs(attrs.copy(onClickSelf = Present(Sync.defer(action)(using frame))))
         def onKeyDown(f: KeyEvent => Unit < Async): Self = withAttrs(attrs.copy(onKeyDown = Present(f)))
         def onKeyUp(f: KeyEvent => Unit < Async): Self   = withAttrs(attrs.copy(onKeyUp = Present(f)))
-        def onFocus(action: Unit < Async): Self          = withAttrs(attrs.copy(onFocus = Present(action)))
-        def onBlur(action: Unit < Async): Self           = withAttrs(attrs.copy(onBlur = Present(action)))
+        def onFocus(action: => Unit < Async): Self       = withAttrs(attrs.copy(onFocus = Present(Sync.defer(action)(using frame))))
+        def onBlur(action: => Unit < Async): Self        = withAttrs(attrs.copy(onBlur = Present(Sync.defer(action)(using frame))))
     end Interactive
 
     // ---- Layout traits ----
@@ -341,9 +341,9 @@ object UI:
             onSubmit: Maybe[Unit < Async] = Absent
         )(using val frame: Frame) extends Block with Interactive:
             type Self = Form
-            def withAttrs(a: Attrs): Form            = copy(attrs = a)
-            def apply(cs: UI*): Form                 = copy(children = children ++ kyo.Span.from(cs))
-            def onSubmit(action: Unit < Async): Form = copy(onSubmit = Present(action))
+            def withAttrs(a: Attrs): Form               = copy(attrs = a)
+            def apply(cs: UI*): Form                    = copy(children = children ++ kyo.Span.from(cs))
+            def onSubmit(action: => Unit < Async): Form = copy(onSubmit = Present(Sync.defer(action)(using frame)))
         end Form
 
         final case class Textarea(
