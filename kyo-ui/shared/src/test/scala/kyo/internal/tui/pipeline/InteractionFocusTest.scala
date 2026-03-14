@@ -71,6 +71,45 @@ class InteractionFocusTest extends Test:
         }
     }
 
+    "tab wrap-around" - {
+        "tab past last wraps to first" in run {
+            var focused = ""
+            val s = screen(
+                UI.div(
+                    UI.button.onFocus { focused = "btn1" }("B1"),
+                    UI.button.onFocus { focused = "btn2" }("B2")
+                ),
+                20,
+                3
+            )
+            for
+                _ <- s.render
+                _ <- s.tab // → btn1
+                _ <- s.tab // → btn2
+                _ <- s.tab // → wraps to btn1
+            yield assert(focused == "btn1", s"expected wrap to btn1, got: $focused")
+            end for
+        }
+
+        "shift+tab from first wraps to last" in run {
+            var focused = ""
+            val s = screen(
+                UI.div(
+                    UI.button.onFocus { focused = "btn1" }("B1"),
+                    UI.button.onFocus { focused = "btn2" }("B2")
+                ),
+                20,
+                3
+            )
+            for
+                _ <- s.render
+                _ <- s.tab      // → btn1
+                _ <- s.shiftTab // → wraps to btn2
+            yield assert(focused == "btn2", s"expected wrap to btn2, got: $focused")
+            end for
+        }
+    }
+
     "click focus" - {
         "click sets focus on button" in run {
             var focused = ""
@@ -125,6 +164,25 @@ class InteractionFocusTest extends Test:
         }
     }
 
+    "keyboard event on focused button" - {
+        "space on focused button fires onClick" in run {
+            var clicked = false
+            val s = screen(
+                UI.div(
+                    UI.button.onClick { clicked = true }("B1")
+                ),
+                15,
+                3
+            )
+            for
+                _ <- s.render
+                _ <- s.click(2, 1)            // focus button via click (inside border)
+                _ <- s.key(UI.Keyboard.Space) // press space on focused button
+            yield assert(clicked, "space on focused button should fire onClick")
+            end for
+        }
+    }
+
     "disabled elements" - {
         "disabled button skipped in tab order" in run {
             var focused = ""
@@ -142,6 +200,26 @@ class InteractionFocusTest extends Test:
                 _ <- s.tab // → btn1
                 _ <- s.tab // → btn3 (skip btn2)
             yield assert(focused == "btn3", s"expected btn3 (skipping disabled btn2), got: $focused")
+            end for
+        }
+    }
+
+    "mouse interactions" - {
+        "click on different buttons changes focus" in run {
+            var focused = ""
+            val s = screen(
+                UI.div.style(Style.row)(
+                    UI.button.onFocus { focused = "left" }("L"),
+                    UI.button.onFocus { focused = "right" }("R")
+                ),
+                20,
+                3
+            )
+            for
+                _ <- s.render
+                _ <- s.click(2, 1)  // click left button content
+                _ <- s.click(12, 1) // click right button content
+            yield assert(focused == "right", s"expected right focused, got: $focused")
             end for
         }
     }

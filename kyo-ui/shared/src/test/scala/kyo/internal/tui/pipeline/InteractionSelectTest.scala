@@ -106,6 +106,35 @@ class InteractionSelectTest extends Test:
         }
     }
 
+    "escape closes dropdown" - {
+        "escape closes without selecting" in run {
+            var selected = ""
+            val s = screen(
+                UI.select.value("apple").onChange(v => selected = v)(
+                    UI.option.value("apple")("Apple"),
+                    UI.option.value("banana")("Banana")
+                ),
+                15,
+                5
+            )
+            for
+                _ <- s.render
+                _ <- s.click(1, 0)             // open
+                _ <- s.key(UI.Keyboard.Escape) // close without selecting
+            yield assert(selected == "", s"escape should not select, got: $selected")
+            end for
+        }
+    }
+
+    "select with no options" - {
+        "empty select renders without crash" in run {
+            val s = screen(UI.select.value(""), 10, 1)
+            s.render.andThen {
+                assert(s.frame.length == 10)
+            }
+        }
+    }
+
     "disabled select" - {
         "ignores click" in run {
             var selected = ""

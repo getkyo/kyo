@@ -46,6 +46,44 @@ class InteractionLayoutTest extends Test:
             s.renderAndAssert("AB CD     ")
         }
 
+        "three children in row" in run {
+            val s = screen(
+                UI.div.style(Style.row)(
+                    UI.span.style(Style.width(3.px))("A"),
+                    UI.span.style(Style.width(3.px))("B"),
+                    UI.span.style(Style.width(3.px))("C")
+                ),
+                12,
+                1
+            )
+            s.render.andThen {
+                val f = s.frame
+                assert(f.contains("A") && f.contains("B") && f.contains("C"))
+                assert(f.indexOf("A") < f.indexOf("B"))
+                assert(f.indexOf("B") < f.indexOf("C"))
+            }
+        }
+
+        "row with gap" in run {
+            val s = screen(
+                UI.div.style(Style.row.gap(2.px))(
+                    UI.span.style(Style.width(2.px))("A"),
+                    UI.span.style(Style.width(2.px))("B")
+                ),
+                10,
+                1
+            )
+            s.render.andThen {
+                val f = s.frame
+                assert(f.contains("A"))
+                assert(f.contains("B"))
+                // Gap of 2 between A and B
+                val aEnd   = f.indexOf("A") + 1
+                val bStart = f.indexOf("B")
+                assert(bStart - aEnd >= 2, s"gap too small: A ends at $aEnd, B starts at $bStart")
+            }
+        }
+
         "children wider than parent should shrink" in run {
             val s = screen(
                 UI.div.style(Style.row)(
@@ -80,6 +118,19 @@ class InteractionLayoutTest extends Test:
                 3
             )
             s.renderAndAssert("top  \nbot  \n     ")
+        }
+
+        "three children stacked" in run {
+            val s = screen(
+                UI.div.style(Style.column)(
+                    UI.div.style(Style.height(1.px))("A"),
+                    UI.div.style(Style.height(1.px))("B"),
+                    UI.div.style(Style.height(1.px))("C")
+                ),
+                3,
+                3
+            )
+            s.renderAndAssert("A  \nB  \nC  ")
         }
     }
 
@@ -185,6 +236,29 @@ class InteractionLayoutTest extends Test:
         }
     }
 
+    "border with padding" - {
+        "border and padding combined" in run {
+            val s = screen(
+                UI.div.style(
+                    Style.border(1.px, Style.Color.rgb(128, 128, 128))
+                        .padding(1.px).width(9.px).height(5.px)
+                )("X"),
+                9,
+                5
+            )
+            s.render.andThen {
+                val f = s.frame
+                assert(f.contains("X"), "content missing inside border+padding")
+                assert(f.contains("┌"), "border missing")
+                // X should be offset by border(1) + padding(1) = 2 from left edge
+                val lines       = f.linesIterator.toVector
+                val contentLine = lines.find(_.contains("X")).get
+                val xPos        = contentLine.indexOf("X")
+                assert(xPos >= 2, s"X at col $xPos, expected >= 2 (border+padding)")
+            }
+        }
+    }
+
     "explicit width" - {
         "respected" in run {
             val s = screen(
@@ -230,6 +304,26 @@ class InteractionLayoutTest extends Test:
                 val f = s.frame
                 assert(f.startsWith("L"))
                 assert(f.contains("R"))
+            }
+        }
+
+        "two flex-grow children split equally" in run {
+            val s = screen(
+                UI.div.style(Style.row.width(10.px))(
+                    UI.div.style(Style.flexGrow(1.0))("A"),
+                    UI.div.style(Style.flexGrow(1.0))("B")
+                ),
+                10,
+                1
+            )
+            s.render.andThen {
+                val f = s.frame
+                assert(f.contains("A"))
+                assert(f.contains("B"))
+                // Both should get ~5 cols each
+                val aPos = f.indexOf("A")
+                val bPos = f.indexOf("B")
+                assert(bPos >= 4, s"B at $bPos, expected >= 4 for equal split")
             }
         }
     }

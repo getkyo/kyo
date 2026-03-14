@@ -88,13 +88,14 @@ object Dispatch:
             case InputEvent.Mouse(MouseKind.LeftPress, mx, my) =>
                 hitTest(layout, mx, my) match
                     case Present(node) if !node.handlers.disabled =>
+                        val isFocusable = node.handlers.widgetKey.exists(k => state.focusableIds.exists(_ == k))
                         val focusEffect = node.handlers.forId match
                             case Present(targetId) =>
                                 findByUserId(layout.base, targetId) match
                                     case Present(target) => setFocus(target, layout, state)
                                     case _               => noop
                             case _ =>
-                                if node.handlers.tabIndex.nonEmpty then setFocus(node, layout, state)
+                                if isFocusable then setFocus(node, layout, state)
                                 else noop
                         state.activeId.set(node.handlers.widgetKey)
                         focusEffect

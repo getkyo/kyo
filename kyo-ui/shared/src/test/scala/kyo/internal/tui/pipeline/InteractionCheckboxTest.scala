@@ -53,6 +53,43 @@ class InteractionCheckboxTest extends Test:
         }
     }
 
+    "checkbox disabled" - {
+        "disabled checkbox ignores click" in run {
+            var toggled = false
+            val s = Screen(
+                UI.checkbox.checked(false).disabled(true).onChange(b => toggled = b),
+                5,
+                1
+            )
+            for
+                _ <- s.render
+                _ <- s.click(1, 0)
+            yield
+                assert(!toggled, "disabled checkbox should not toggle")
+                assert(s.frame.contains("[ ]"), "disabled checkbox should stay unchecked")
+            end for
+        }
+    }
+
+    "checkbox double click" - {
+        "double click returns to original state" in run {
+            var lastState = false
+            val s = Screen(
+                UI.checkbox.checked(false).onChange(b => lastState = b),
+                5,
+                1
+            )
+            for
+                _ <- s.render
+                _ <- s.click(1, 0) // check
+                _ <- s.click(1, 0) // uncheck
+            yield
+                assert(!lastState, "double click should return to unchecked")
+                assert(s.frame.contains("[ ]"))
+            end for
+        }
+    }
+
     "radio" - {
         "unchecked renders ( )" in run {
             val s = Screen(UI.radio.checked(false), 5, 1)

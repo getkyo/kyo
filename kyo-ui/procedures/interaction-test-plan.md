@@ -1,5 +1,13 @@
 # Interaction Test Plan
 
+## ⚠️ RULES — DO NOT FORGET ⚠️
+1. **NEVER STOP** — run all iterations to completion without pausing
+2. **ONLY use Bash for `sbt` commands** — use dedicated tools (Read, Edit, Write, Grep, Glob) for everything else
+3. **TESTS ONLY** — do NOT modify production code to make tests pass. Tests expose bugs; that's the deliverable
+4. **Read IMPLEMENTATION-PLAN.md between iterations** — re-anchor on design principles
+5. **By-name callbacks** — action callbacks (onClick, onFocus, onBlur, onSubmit) use `=> Unit < Async` with `Sync.defer`. Use `{ ... }` syntax in tests, not `(name = value)` which Scala interprets as named param
+6. **Mouse tests** — always include mouse interaction tests (click, hover) alongside keyboard tests. Mouse hit-testing across borders, nested containers, and overlapping elements is a critical coverage area
+
 ## Rendering bugs found
 
 ### Overflow: children wider than parent not constrained

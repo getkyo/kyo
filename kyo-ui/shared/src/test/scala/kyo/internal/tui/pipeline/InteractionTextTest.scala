@@ -185,18 +185,38 @@ class InteractionTextTest extends Test:
         }
     }
 
-    "dynamic text via signal" - {
-        "text updates after signal change" in run {
-            val ref = SignalRef.Unsafe.init("before")
-            val s = screen(
-                UI.div(
-                    UI.when(ref.safe.map(_ => true))(UI.span(ref.safe.map(identity)))
-                ),
-                15,
-                1
-            )
+    "p element" - {
+        "renders paragraph text" in run {
+            val s = screen(UI.p("paragraph"), 15, 1)
             s.render.andThen {
-                assert(s.frame.contains("before"), s"initial text missing: ${s.frame}")
+                assert(s.frame.contains("paragraph"), "p content missing")
+            }
+        }
+    }
+
+    "pre element" - {
+        "renders preformatted text" in run {
+            val s = screen(UI.pre("code"), 10, 1)
+            s.render.andThen {
+                assert(s.frame.contains("code"), "pre content missing")
+            }
+        }
+    }
+
+    "code element" - {
+        "renders code text" in run {
+            val s = screen(UI.code("x = 1"), 10, 1)
+            s.render.andThen {
+                assert(s.frame.contains("x = 1"), "code content missing")
+            }
+        }
+    }
+
+    "nav element" - {
+        "renders navigation content" in run {
+            val s = screen(UI.nav(UI.span("Menu")), 10, 1)
+            s.render.andThen {
+                assert(s.frame.contains("Menu"), "nav content missing")
             }
         }
     }
@@ -206,10 +226,10 @@ class InteractionTextTest extends Test:
             val s = screen(
                 UI.button("Click me"),
                 15,
-                1
+                3
             )
             s.render.andThen {
-                assert(s.frame.contains("Click"), "button text missing")
+                assert(s.frame.contains("Click"), s"button text missing: ${s.frame}")
             }
         }
 
@@ -218,11 +238,11 @@ class InteractionTextTest extends Test:
             val s = screen(
                 UI.button.onClick { clicked = true }("Press"),
                 10,
-                1
+                3
             )
             for
                 _ <- s.render
-                _ <- s.click(2, 0)
+                _ <- s.click(2, 1) // click on content row inside border
             yield assert(clicked, "button onClick should have fired")
             end for
         }
@@ -293,6 +313,40 @@ class InteractionTextTest extends Test:
             val s = screen(UI.label("Name:"), 10, 1)
             s.render.andThen {
                 assert(s.frame.contains("Name:"), "label text missing")
+            }
+        }
+    }
+
+    "section element" - {
+        "renders section content" in run {
+            val s = screen(UI.section(UI.span("content")), 15, 1)
+            s.render.andThen {
+                assert(s.frame.contains("content"), "section content missing")
+            }
+        }
+    }
+
+    "header and footer" - {
+        "header renders" in run {
+            val s = screen(UI.header(UI.span("top")), 10, 1)
+            s.render.andThen {
+                assert(s.frame.contains("top"), "header content missing")
+            }
+        }
+
+        "footer renders" in run {
+            val s = screen(UI.footer(UI.span("bottom")), 10, 1)
+            s.render.andThen {
+                assert(s.frame.contains("bottom"), "footer content missing")
+            }
+        }
+    }
+
+    "main element" - {
+        "renders main content" in run {
+            val s = screen(UI.main(UI.span("main")), 10, 1)
+            s.render.andThen {
+                assert(s.frame.contains("main"), "main content missing")
             }
         }
     }

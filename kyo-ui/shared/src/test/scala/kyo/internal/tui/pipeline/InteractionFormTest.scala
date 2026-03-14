@@ -71,6 +71,37 @@ class InteractionFormTest extends Test:
         }
     }
 
+    "button renders text" - {
+        "button shows its label" in run {
+            val s = screen(
+                UI.button("Save"),
+                10,
+                3
+            )
+            s.render.andThen {
+                assert(s.frame.contains("Save"), s"button label missing: ${s.frame}")
+            }
+        }
+    }
+
+    "onClick bubbles from child" - {
+        "click on child fires parent onClick" in run {
+            var parentClicked = false
+            val s = screen(
+                UI.div.onClick { parentClicked = true }(
+                    UI.span("child text")
+                ),
+                15,
+                1
+            )
+            for
+                _ <- s.render
+                _ <- s.click(2, 0)
+            yield assert(parentClicked, "parent onClick should fire via bubbling")
+            end for
+        }
+    }
+
     "button click" - {
         "onClick fires on button" in run {
             var clicked = false
@@ -79,11 +110,11 @@ class InteractionFormTest extends Test:
                     UI.button.onClick { clicked = true }("Click")
                 ),
                 10,
-                1
+                3
             )
             for
                 _ <- s.render
-                _ <- s.click(1, 0)
+                _ <- s.click(1, 1) // click on content row inside button border
             yield assert(clicked, "button onClick should have fired")
             end for
         }
@@ -95,11 +126,11 @@ class InteractionFormTest extends Test:
                     UI.button.disabled(true).onClick { clicked = true }("Click")
                 ),
                 10,
-                1
+                3
             )
             for
                 _ <- s.render
-                _ <- s.click(1, 0)
+                _ <- s.click(1, 1) // click on content row inside button border
             yield assert(!clicked, "disabled button should not fire onClick")
             end for
         }

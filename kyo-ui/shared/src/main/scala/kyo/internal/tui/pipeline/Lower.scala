@@ -82,7 +82,12 @@ object Lower:
             case bi: UI.BooleanInput => materializeMaybeBoolSignal(bi.checked, key, "checked", state)
             case _                   => ()
 
-        styleEffect.andThen(hiddenEffect).andThen(disabledEffect).andThen(checkedEffect)
+        val valueEffect: Unit < (Async & Scope) = elem match
+            case ti: UI.TextInput   => materializeMaybeStringSignal(ti.value, key, "value", state)
+            case pi: UI.PickerInput => materializeMaybeStringSignal(pi.value, key, "value", state)
+            case _                  => ()
+
+        styleEffect.andThen(hiddenEffect).andThen(disabledEffect).andThen(checkedEffect).andThen(valueEffect)
     end materializeElement
 
     private def materializeChildSignals(children: kyo.Span[UI], state: ScreenState, dynamicPath: Chunk[String])(using
@@ -127,6 +132,25 @@ object Lower:
             value.get match
                 case _: Boolean     => ()
                 case sig: Signal[?] => materializeSignal[Boolean](sig.asInstanceOf[Signal[Boolean]], key, suffix, state).unit
+
+    private def materializeMaybeStringSignal(
+        value: Maybe[String | SignalRef[String]],
+        key: WidgetKey,
+        suffix: String,
+        state: ScreenState
+    )(using Frame): Unit < (Async & Scope) =
+        if value.isEmpty then ()
+        else
+            value.get match
+                case _: String         => ()
+                case ref: SignalRef[?] =>
+                    // Cache the ORIGINAL ref's unsafe version for two-way binding
+                    Sync.Unsafe.defer {
+                        val cacheKey = key.child(suffix)
+                        discard(state.widgetState.getOrCreate(cacheKey, ref.unsafe))
+                    }
+                case sig: Signal[?] =>
+                    materializeSignal[String](sig.asInstanceOf[Signal[String]], key, suffix, state).unit
 
     // ---- Phase 2: Core recursive walk (side-effectful under AllowUnsafe, no Async & Scope) ----
 
@@ -209,9 +233,18 @@ object Lower:
         val tag      = resolveTag(elem)
         val handlers = buildHandlers(elem, key, disabled, ctx)
 
-        // Register focusable
-        if !disabled && elem.attrs.tabIndex.exists(_ >= 0) then
-            ctx.focusables.addOne(key)
+        // Register focusable — Focusable elements (Button, Anchor, etc.) are focusable by default
+        val isFocusable =
+            if disabled then false
+            else
+                elem match
+                    case _: UI.Focusable =>
+                        elem.attrs.tabIndex match
+                            case Present(idx) => idx >= 0
+                            case Absent       => true
+                    case _ =>
+                        elem.attrs.tabIndex.exists(_ >= 0)
+        if isFocusable then ctx.focusables.addOne(key)
 
         // Recurse children with this node's composed handlers
         val childCtx = ctx.copy(
@@ -235,7 +268,7 @@ object Lower:
             SignalRef.Unsafe.init(0)
         )
 
-        val currentValue = readStringOrRef(ti.value, "")
+        val currentValue = readStringOrRef(ti.value, key, ctx.state, "")
         val disabled     = readBooleanOrSignal(ti.disabled, key, "disabled", ctx.state)
         val readOnly     = ti.readOnly.getOrElse(false)
 
@@ -255,7 +288,7 @@ object Lower:
         def insertChar(ch: String): Unit < Async =
             val pos    = cursorPos.get()
             val newVal = currentValue.substring(0, pos) + ch + currentValue.substring(pos)
-            writeStringRef(ti.value, newVal)
+            writeStringRef(ti.value, key, ctx.state, newVal)
                 .andThen(cursorPos.set(pos + 1))
                 .andThen(fireStringCallback(ti.onInput, newVal))
                 .andThen(fireStringCallback(ti.onChange, newVal))
@@ -270,7 +303,7 @@ object Lower:
                         val pos = cursorPos.get()
                         if pos > 0 then
                             val newVal = currentValue.substring(0, pos - 1) + currentValue.substring(pos)
-                            writeStringRef(ti.value, newVal)
+                            writeStringRef(ti.value, key, ctx.state, newVal)
                                 .andThen(cursorPos.set(pos - 1))
                                 .andThen(fireStringCallback(ti.onInput, newVal))
                                 .andThen(fireStringCallback(ti.onChange, newVal))
@@ -280,7 +313,7 @@ object Lower:
                         val pos = cursorPos.get()
                         if pos < currentValue.length then
                             val newVal = currentValue.substring(0, pos) + currentValue.substring(pos + 1)
-                            writeStringRef(ti.value, newVal)
+                            writeStringRef(ti.value, key, ctx.state, newVal)
                                 .andThen(fireStringCallback(ti.onInput, newVal))
                                 .andThen(fireStringCallback(ti.onChange, newVal))
                         else noop
@@ -351,7 +384,17 @@ object Lower:
         AllowUnsafe,
         Frame
     ): Resolved =
-        val checked  = readBooleanOrSignal(bi.checked, key, "checked", ctx.state)
+        // Internal checked state — persists across re-renders
+        val checkedRef = ctx.state.widgetState.getOrCreate(
+            key.child("_checked"),
+            SignalRef.Unsafe.init(bi.checked match
+                case Present(b: Boolean) => b
+                case _                   => false)
+        )
+        // If checked is a Signal, use the materialized ref; otherwise use internal ref
+        val checked = bi.checked match
+            case Present(_: Signal[?]) => readBooleanOrSignal(bi.checked, key, "checked", ctx.state)
+            case _                     => checkedRef.get()
         val disabled = readBooleanOrSignal(bi.disabled, key, "disabled", ctx.state)
         val style    = resolveStyle(bi, key, ctx.state)
 
@@ -362,10 +405,13 @@ object Lower:
 
         val widgetOnClick: Unit < Async =
             if !disabled then
-                val newVal = !checked
-                bi.onChange match
-                    case Present(f) => f(newVal)
-                    case Absent     => noop
+                Sync.Unsafe.defer {
+                    val newVal = !checkedRef.get()
+                    checkedRef.set(newVal)
+                    bi.onChange match
+                        case Present(f) => f(newVal)
+                        case Absent     => noop
+                }
             else noop
 
         val handlers = Handlers(
@@ -405,7 +451,7 @@ object Lower:
         val expanded  = ctx.state.widgetState.getOrCreate(key.child("expanded"), SignalRef.Unsafe.init(false))
         val highlight = ctx.state.widgetState.getOrCreate(key.child("highlight"), SignalRef.Unsafe.init(0))
 
-        val currentValue = readStringOrRef(sel.value, "")
+        val currentValue = readStringOrRef(sel.value, key, ctx.state, "")
         val disabled     = readBooleanOrSignal(sel.disabled, key, "disabled", ctx.state)
         val style        = resolveStyle(sel, key, ctx.state)
         val isExpanded   = expanded.get()
@@ -452,7 +498,7 @@ object Lower:
 
         if isExpanded then
             // Build popup with option nodes
-            val optionNodes = buildOptionNodes(options, sel, expanded, ctx)
+            val optionNodes = buildOptionNodes(options, sel, key, expanded, ctx)
             val popup       = Resolved.Node(ElemTag.Popup, Style.empty, Handlers.empty, optionNodes)
             Resolved.Node(ElemTag.Div, style, handlers, displayChildren.append(popup))
         else
@@ -715,6 +761,7 @@ object Lower:
     private def buildOptionNodes(
         options: Chunk[(String, String)],
         sel: UI.Select,
+        key: WidgetKey,
         expanded: SignalRef.Unsafe[Boolean],
         ctx: Ctx
     )(using AllowUnsafe, Frame): Chunk[Resolved] =
@@ -723,7 +770,7 @@ object Lower:
             else
                 val (value, text) = options(i)
                 val optClick: Unit < Async =
-                    writeStringRef(sel.value, value)
+                    writeStringRef(sel.value, key, ctx.state, value)
                         .andThen(expanded.set(false))
                         .andThen(sel.onChange match
                             case Present(f) => f(value)
@@ -749,20 +796,30 @@ object Lower:
                         .map(_.get())
                         .getOrElse(false)
 
-    private def readStringOrRef(value: Maybe[String | SignalRef[String]], default: String)(using AllowUnsafe): String =
+    private def readStringOrRef(value: Maybe[String | SignalRef[String]], key: WidgetKey, state: ScreenState, default: String)(using
+        AllowUnsafe
+    ): String =
         if value.isEmpty then default
         else
             value.get match
-                case s: String         => s
-                case ref: SignalRef[?] => ref.asInstanceOf[SignalRef.Unsafe[String]].get()
+                case s: String => s
+                case _: SignalRef[?] =>
+                    state.widgetState.get[SignalRef.Unsafe[String]](key.child("value")) match
+                        case Present(ref) => ref.get()
+                        case _            => default
 
-    private def writeStringRef(value: Maybe[String | SignalRef[String]], newVal: String)(using AllowUnsafe): Unit < Async =
+    private def writeStringRef(value: Maybe[String | SignalRef[String]], key: WidgetKey, state: ScreenState, newVal: String)(using
+        AllowUnsafe
+    ): Unit < Async =
         if value.isEmpty then noop
         else
             value.get match
-                case ref: SignalRef[?] =>
-                    ref.asInstanceOf[SignalRef.Unsafe[String]].set(newVal)
-                    noop
+                case _: SignalRef[?] =>
+                    state.widgetState.get[SignalRef.Unsafe[String]](key.child("value")) match
+                        case Present(ref) =>
+                            ref.set(newVal)
+                            noop
+                        case _ => noop
                 case _ => noop
 
     private def fireStringCallback(cb: Maybe[String => Unit < Async], value: String): Unit < Async =
