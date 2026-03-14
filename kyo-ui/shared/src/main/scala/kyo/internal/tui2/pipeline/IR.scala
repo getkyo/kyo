@@ -11,6 +11,9 @@ enum ElemTag derives CanEqual:
 // ---- Geometry ----
 
 case class Rect(x: Int, y: Int, w: Int, h: Int) derives CanEqual:
+    def contains(px: Int, py: Int): Boolean =
+        px >= x && px < x + w && py >= y && py < y + h
+
     def intersect(other: Rect): Rect =
         val ix = math.max(x, other.x)
         val iy = math.max(y, other.y)
@@ -115,6 +118,17 @@ enum Laid:
 end Laid
 
 case class LayoutResult(base: Laid, popups: Chunk[Laid])
+
+// ---- Input Events ----
+
+enum MouseKind derives CanEqual:
+    case LeftPress, LeftRelease, Move, ScrollUp, ScrollDown
+
+enum InputEvent:
+    case Key(key: UI.Keyboard, ctrl: Boolean, alt: Boolean, shift: Boolean)
+    case Mouse(kind: MouseKind, x: Int, y: Int)
+    case Paste(text: String)
+end InputEvent
 
 // ---- Cell + CellGrid (paint output) ----
 

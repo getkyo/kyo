@@ -1400,7 +1400,7 @@ object Dispatch:
 
 **Estimated size:** ~200 lines (significantly smaller than 350 — no tree walking for bubbling, no form-finding, no scroll container fallback)
 
-**Review checkpoint:** Phase complete when Dispatch.scala compiles with all 17+ tests passing. Review focuses on event routing correctness and forId redirect. Present for review before starting Phase 9.
+**Review checkpoint:** ✅ Complete. Dispatch returns `Unit < Async` — unsafe reads set up the computation, handler effects are composed and returned. `AllowUnsafe` for setup reads, no unsafe calls in computation composition. `hitTest`, `findByKey`, `findByUserId` are pure queries. `Rect.contains` instance method for hit testing.
 
 ---
 
@@ -1461,7 +1461,7 @@ object Pipeline:
 
 **Estimated size:** ~40 lines
 
-**Review checkpoint:** Phase complete when Pipeline.scala compiles with all 5 tests passing. Small file — review focuses on correct wiring. Present for review before starting Phase 10.
+**Review checkpoint:** ✅ Complete. Pipeline wires all steps: `renderFrame` returns `Array[Byte] < (Async & Scope)` (Lower is effectful), `dispatchEvent` returns `Unit < Async` (handler effects composed). `AllowUnsafe` for state reads, effects returned as computations.
 
 ---
 
