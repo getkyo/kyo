@@ -1,6 +1,7 @@
 package kyo
 
 object UIDsl:
+    export Length.*
     export Style.Alignment
     export Style.BorderStyle
     export Style.Color
@@ -11,8 +12,6 @@ object UIDsl:
     export Style.Justification
     export Style.Overflow
     export Style.Position
-    export Style.Size
-    export Style.Size.*
     export Style.TextAlign
     export Style.TextDecoration
     export Style.TextOverflow

@@ -1,6 +1,7 @@
 package kyo.internal.tui2.pipeline
 
 import kyo.*
+import kyo.Length.*
 import kyo.Test
 
 class IRTest extends Test:
@@ -33,7 +34,7 @@ class IRTest extends Test:
 
         "child appends segment" in run {
             val parent = WidgetKey(Frame.derive, Chunk.empty)
-            val child  = WidgetKey.child(parent, "cursor")
+            val child  = parent.child("cursor")
             assert(child.frame == parent.frame)
             assert(child.dynamicPath == Chunk("cursor"))
         }
@@ -89,18 +90,18 @@ class IRTest extends Test:
     }
 
     "Styled" - {
-        "Node with ComputedStyle" in {
-            val node = Styled.Node(ElemTag.Span, ComputedStyle.Default, Handlers.empty, Chunk.empty)
+        "Node with FlatStyle" in {
+            val node = Styled.Node(ElemTag.Span, FlatStyle.Default, Handlers.empty, Chunk.empty)
             node match
                 case Styled.Node(tag, cs, _, _) =>
                     assert(tag == ElemTag.Span)
-                    assert(cs.fg == ColorEnc.pack(255, 255, 255))
+                    assert(cs.fg == PackedColor(255, 255, 255))
                 case _ => fail("expected Node")
             end match
         }
 
-        "Text with ComputedStyle" in {
-            val text = Styled.Text("world", ComputedStyle.Default)
+        "Text with FlatStyle" in {
+            val text = Styled.Text("world", FlatStyle.Default)
             text match
                 case Styled.Text(v, cs) =>
                     assert(v == "world")
@@ -115,7 +116,7 @@ class IRTest extends Test:
             val bounds  = Rect(0, 0, 80, 24)
             val content = Rect(1, 1, 78, 22)
             val clip    = Rect(0, 0, 80, 24)
-            val node    = Laid.Node(ElemTag.Div, ComputedStyle.Default, Handlers.empty, bounds, content, clip, Chunk.empty)
+            val node    = Laid.Node(ElemTag.Div, FlatStyle.Default, Handlers.empty, bounds, content, clip, Chunk.empty)
             node match
                 case Laid.Node(_, _, _, b, c, cl, _) =>
                     assert(b == bounds)
@@ -126,7 +127,7 @@ class IRTest extends Test:
         }
 
         "Text with bounds" in {
-            val text = Laid.Text("hi", ComputedStyle.Default, Rect(0, 0, 2, 1), Rect(0, 0, 80, 24))
+            val text = Laid.Text("hi", FlatStyle.Default, Rect(0, 0, 2, 1), Rect(0, 0, 80, 24))
             text match
                 case Laid.Text(v, _, b, _) =>
                     assert(v == "hi")
@@ -149,7 +150,7 @@ class IRTest extends Test:
         "base and popups" in {
             val base = Laid.Node(
                 ElemTag.Div,
-                ComputedStyle.Default,
+                FlatStyle.Default,
                 Handlers.empty,
                 Rect(0, 0, 80, 24),
                 Rect(0, 0, 80, 24),
@@ -158,7 +159,7 @@ class IRTest extends Test:
             )
             val popup = Laid.Node(
                 ElemTag.Popup,
-                ComputedStyle.Default,
+                FlatStyle.Default,
                 Handlers.empty,
                 Rect(10, 10, 20, 5),
                 Rect(10, 10, 20, 5),
@@ -191,115 +192,107 @@ class IRTest extends Test:
         }
     }
 
-    "ComputedStyle.Default" - {
+    "FlatStyle.Default" - {
         "sensible defaults" in {
-            val cs = ComputedStyle.Default
-            assert(cs.fg == ColorEnc.pack(255, 255, 255))
-            assert(cs.bg == ColorEnc.Transparent)
+            val cs = FlatStyle.Default
+            assert(cs.fg == PackedColor(255, 255, 255))
+            assert(cs.bg == PackedColor.Transparent)
             assert(!cs.bold)
             assert(cs.opacity == 1.0)
             assert(cs.lineHeight == 1)
-            assert(cs.letterSpacing == 0)
+            assert(cs.letterSpacing == Length.zero)
             assert(cs.flexShrink == 1.0)
             assert(cs.flexGrow == 0.0)
-            assert(SizeEnc.isAuto(cs.width))
-            assert(SizeEnc.isAuto(cs.height))
-            assert(cs.overflow == 0)
-            assert(cs.position == 0)
+            assert(cs.width == Length.Auto)
+            assert(cs.height == Length.Auto)
+            assert(cs.overflow == Style.Overflow.visible)
+            assert(cs.position == Style.Position.flow)
         }
     }
 
-    "SizeEnc" - {
-        "px round-trip" in {
-            assert(SizeEnc.px(42) == 42)
-            assert(SizeEnc.resolve(42, 100) == 42)
+    "Length" - {
+        "Px" in {
+            assert(Length.Px(42) == 42.px)
         }
 
-        "pct round-trip" in {
-            val encoded = SizeEnc.pct(50.0)
-            assert(SizeEnc.isPct(encoded))
-            assert(!SizeEnc.isAuto(encoded))
-            assert(SizeEnc.resolve(encoded, 100) == 50)
+        "Pct" in {
+            assert(Length.Pct(50.0) == 50.pct)
         }
 
-        "auto" in {
-            assert(SizeEnc.isAuto(SizeEnc.Auto))
-            assert(!SizeEnc.isPct(SizeEnc.Auto))
-            assert(SizeEnc.resolve(SizeEnc.Auto, 80) == 80)
+        "Auto" in {
+            assert(Length.Auto != Length.zero)
+            assert(Length.Auto == Length.Auto)
         }
 
-        "pct 100% of 200 = 200" in {
-            val encoded = SizeEnc.pct(100.0)
-            assert(SizeEnc.resolve(encoded, 200) == 200)
+        "zero" in {
+            assert(Length.zero == Length.Px(0))
         }
 
-        "pct 25% of 80 = 20" in {
-            val encoded = SizeEnc.pct(25.0)
-            assert(SizeEnc.resolve(encoded, 80) == 20)
+        "extensions" in {
+            assert(10.px == Length.Px(10.0))
+            assert(50.pct == Length.Pct(50.0))
+            assert(2.em == Length.Em(2.0))
         }
     }
 
-    "ColorEnc" - {
+    val black = PackedColor(0, 0, 0)
+
+    "PackedColor" - {
         "pack and unpack round-trip" in {
-            val color = ColorEnc.pack(128, 64, 32)
-            assert(ColorEnc.r(color) == 128)
-            assert(ColorEnc.g(color) == 64)
-            assert(ColorEnc.b(color) == 32)
+            val color = PackedColor(128, 64, 32)
+            assert(color.r == 128)
+            assert(color.g == 64)
+            assert(color.b == 32)
         }
 
-        "pack(0,0,0) = 0" in {
-            assert(ColorEnc.pack(0, 0, 0) == 0)
+        "white" in {
+            val white = PackedColor(255, 255, 255)
+            assert(white.r == 255)
+            assert(white.g == 255)
+            assert(white.b == 255)
         }
 
-        "pack(255,255,255)" in {
-            val white = ColorEnc.pack(255, 255, 255)
-            assert(ColorEnc.r(white) == 255)
-            assert(ColorEnc.g(white) == 255)
-            assert(ColorEnc.b(white) == 255)
-        }
-
-        "Transparent is -1" in {
-            assert(ColorEnc.Transparent == -1)
+        "Transparent" in {
+            assert(PackedColor.Transparent != black)
         }
 
         "fromStyle Transparent" in {
-            assert(ColorEnc.fromStyle(Style.Color.Transparent, 0) == ColorEnc.Transparent)
+            assert(PackedColor.fromStyle(Style.Color.Transparent, black) == PackedColor.Transparent)
         }
 
         "fromStyle Rgb" in {
-            val c = ColorEnc.fromStyle(Style.Color.rgb(255, 0, 0), 0)
-            assert(ColorEnc.r(c) == 255)
-            assert(ColorEnc.g(c) == 0)
-            assert(ColorEnc.b(c) == 0)
+            val c = PackedColor.fromStyle(Style.Color.rgb(255, 0, 0), black)
+            assert(c.r == 255)
+            assert(c.g == 0)
+            assert(c.b == 0)
         }
 
         "fromStyle Rgba full opacity" in {
-            val c = ColorEnc.fromStyle(Style.Color.rgba(100, 200, 50, 1.0), 0)
-            assert(ColorEnc.r(c) == 100)
-            assert(ColorEnc.g(c) == 200)
-            assert(ColorEnc.b(c) == 50)
+            val c = PackedColor.fromStyle(Style.Color.rgba(100, 200, 50, 1.0), black)
+            assert(c.r == 100)
+            assert(c.g == 200)
+            assert(c.b == 50)
         }
 
         "fromStyle Rgba blending" in {
-            val bg = ColorEnc.pack(0, 0, 0)
-            val c  = ColorEnc.fromStyle(Style.Color.rgba(200, 100, 50, 0.5), bg)
-            assert(ColorEnc.r(c) == 100)
-            assert(ColorEnc.g(c) == 50)
-            assert(ColorEnc.b(c) == 25)
+            val c = PackedColor.fromStyle(Style.Color.rgba(200, 100, 50, 0.5), black)
+            assert(c.r == 100)
+            assert(c.g == 50)
+            assert(c.b == 25)
         }
 
         "fromStyle Hex 6-digit" in {
-            val c = ColorEnc.fromStyle(Style.Color.hex("ff8000"), 0)
-            assert(ColorEnc.r(c) == 255)
-            assert(ColorEnc.g(c) == 128)
-            assert(ColorEnc.b(c) == 0)
+            val c = PackedColor.fromStyle(Style.Color.hex("ff8000"), black)
+            assert(c.r == 255)
+            assert(c.g == 128)
+            assert(c.b == 0)
         }
 
         "fromStyle Hex 3-digit" in {
-            val c = ColorEnc.fromStyle(Style.Color.hex("f00"), 0)
-            assert(ColorEnc.r(c) == 255)
-            assert(ColorEnc.g(c) == 0)
-            assert(ColorEnc.b(c) == 0)
+            val c = PackedColor.fromStyle(Style.Color.hex("f00"), black)
+            assert(c.r == 255)
+            assert(c.g == 0)
+            assert(c.b == 0)
         }
     }
 

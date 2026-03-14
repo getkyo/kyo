@@ -16,11 +16,11 @@ private[kyo] object CssStyleRenderer:
         case Color.Rgba(r, g, b, a) => s"rgba($r, $g, $b, $a)"
         case Color.Transparent      => "transparent"
 
-    def size(s: Size): String = s match
-        case Size.Px(v)  => if v == 0 then "0" else s"${fmt(v)}px"
-        case Size.Pct(v) => s"${fmt(v)}%"
-        case Size.Em(v)  => s"${fmt(v)}em"
-        case Size.Auto   => "auto"
+    def size(s: Length): String = s match
+        case Length.Px(v)  => if v == 0 then "0" else s"${fmt(v)}px"
+        case Length.Pct(v) => s"${fmt(v)}%"
+        case Length.Em(v)  => s"${fmt(v)}em"
+        case Length.Auto   => "auto"
 
     def render(style: Style): String =
         val sb      = new StringBuilder
@@ -130,7 +130,7 @@ private[kyo] object CssStyleRenderer:
         case Cursor.notAllowed => "not-allowed"
         case Cursor.crosshair  => "crosshair"
         case Cursor.help       => "help"
-        case Cursor.wait_      => "wait"
+        case Cursor.await      => "wait"
         case Cursor.grab       => "grab"
         case Cursor.grabbing   => "grabbing"
 

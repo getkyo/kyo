@@ -12,16 +12,16 @@ final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
         val cls = p.getClass
         Style(props.filter(x => !(x.getClass eq cls)) :+ p)
 
-    private inline def clampSize(s: Size): Size = s match
-        case Size.Px(v)  => if v < 0 then Size.Px(0) else s
-        case Size.Pct(v) => if v < 0 then Size.Pct(0) else s
-        case Size.Em(v)  => if v < 0 then Size.Em(0) else s
-        case Size.Auto   => s
+    private inline def clampSize(s: Length): Length = s match
+        case Length.Px(v)  => if v < 0 then Length.Px(0) else s
+        case Length.Pct(v) => if v < 0 then Length.Pct(0) else s
+        case Length.Em(v)  => if v < 0 then Length.Em(0) else s
+        case Length.Auto   => s
 
-    private inline def clampSizeMin1(s: Size): Size = s match
-        case Size.Px(v) => if v < 1 then Size.Px(1) else s
-        case Size.Em(v) => if v < 0.1 then Size.Em(0.1) else s
-        case _          => s
+    private inline def clampSizeMin1(s: Length): Length = s match
+        case Length.Px(v) => if v < 1 then Length.Px(1) else s
+        case Length.Em(v) => if v < 0.1 then Length.Em(0.1) else s
+        case _            => s
 
     // Composition
 
@@ -80,27 +80,27 @@ final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
 
     // Padding — px, pct, or em (no auto)
 
-    def padding(all: Size.Px | Size.Pct | Size.Em): Style =
+    def padding(all: Length.Px | Length.Pct | Length.Em): Style =
         val c = clampSize(all); appendProp(Prop.Padding(c, c, c, c))
-    def padding(vertical: Size.Px | Size.Pct | Size.Em, horizontal: Size.Px | Size.Pct | Size.Em): Style =
+    def padding(vertical: Length.Px | Length.Pct | Length.Em, horizontal: Length.Px | Length.Pct | Length.Em): Style =
         val v = clampSize(vertical); val h = clampSize(horizontal); appendProp(Prop.Padding(v, h, v, h))
     def padding(
-        top: Size.Px | Size.Pct | Size.Em,
-        right: Size.Px | Size.Pct | Size.Em,
-        bottom: Size.Px | Size.Pct | Size.Em,
-        left: Size.Px | Size.Pct | Size.Em
+        top: Length.Px | Length.Pct | Length.Em,
+        right: Length.Px | Length.Pct | Length.Em,
+        bottom: Length.Px | Length.Pct | Length.Em,
+        left: Length.Px | Length.Pct | Length.Em
     ): Style =
         appendProp(Prop.Padding(clampSize(top), clampSize(right), clampSize(bottom), clampSize(left)))
 
     // Margin — any size including auto
 
-    def margin(all: Size): Style                        = appendProp(Prop.Margin(all, all, all, all))
-    def margin(vertical: Size, horizontal: Size): Style = appendProp(Prop.Margin(vertical, horizontal, vertical, horizontal))
-    def margin(top: Size, right: Size, bottom: Size, left: Size): Style = appendProp(Prop.Margin(top, right, bottom, left))
+    def margin(all: Length): Style                          = appendProp(Prop.Margin(all, all, all, all))
+    def margin(vertical: Length, horizontal: Length): Style = appendProp(Prop.Margin(vertical, horizontal, vertical, horizontal))
+    def margin(top: Length, right: Length, bottom: Length, left: Length): Style = appendProp(Prop.Margin(top, right, bottom, left))
 
     // Gap — px or em
 
-    def gap(v: Size.Px | Size.Em): Style = appendProp(Prop.Gap(clampSize(v)))
+    def gap(v: Length.Px | Length.Em): Style = appendProp(Prop.Gap(clampSize(v)))
 
     // Layout direction
 
@@ -124,16 +124,16 @@ final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
 
     // Sizing — any size including auto
 
-    def width(v: Size): Style     = appendProp(Prop.Width(clampSize(v)))
-    def height(v: Size): Style    = appendProp(Prop.Height(clampSize(v)))
-    def minWidth(v: Size): Style  = appendProp(Prop.MinWidth(clampSize(v)))
-    def maxWidth(v: Size): Style  = appendProp(Prop.MaxWidth(clampSize(v)))
-    def minHeight(v: Size): Style = appendProp(Prop.MinHeight(clampSize(v)))
-    def maxHeight(v: Size): Style = appendProp(Prop.MaxHeight(clampSize(v)))
+    def width(v: Length): Style     = appendProp(Prop.Width(clampSize(v)))
+    def height(v: Length): Style    = appendProp(Prop.Height(clampSize(v)))
+    def minWidth(v: Length): Style  = appendProp(Prop.MinWidth(clampSize(v)))
+    def maxWidth(v: Length): Style  = appendProp(Prop.MaxWidth(clampSize(v)))
+    def minHeight(v: Length): Style = appendProp(Prop.MinHeight(clampSize(v)))
+    def maxHeight(v: Length): Style = appendProp(Prop.MaxHeight(clampSize(v)))
 
     // Typography
 
-    def fontSize(v: Size.Px | Size.Em): Style = appendProp(Prop.FontSizeProp(clampSizeMin1(v)))
+    def fontSize(v: Length.Px | Length.Em): Style = appendProp(Prop.FontSizeProp(clampSizeMin1(v)))
 
     def fontWeight(v: FontWeight): Style                    = appendProp(Prop.FontWeightProp(v))
     def fontWeight(f: FontWeight.type => FontWeight): Style = fontWeight(f(FontWeight))
@@ -155,7 +155,7 @@ final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
 
     def lineHeight(v: Double): Style = appendProp(Prop.LineHeightProp(math.max(0.1, v)))
 
-    def letterSpacing(v: Size.Px | Size.Em): Style = appendProp(Prop.LetterSpacingProp(v))
+    def letterSpacing(v: Length.Px | Length.Em): Style = appendProp(Prop.LetterSpacingProp(v))
 
     def textTransform(v: TextTransform): Style                       = appendProp(Prop.TextTransformProp(v))
     def textTransform(f: TextTransform.type => TextTransform): Style = textTransform(f(TextTransform))
@@ -168,18 +168,18 @@ final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
 
     // Borders — width is px only
 
-    def border(width: Size.Px, style: BorderStyle, c: Color): Style =
+    def border(width: Length.Px, style: BorderStyle, c: Color): Style =
         val w = clampSize(width)
         appendProp(Prop.BorderWidthProp(w, w, w, w))
             .appendProp(Prop.BorderStyleProp(style))
             .appendProp(Prop.BorderColorProp(c, c, c, c))
     end border
 
-    def border(width: Size.Px, style: BorderStyle, hex: String): Style            = border(width, style, Color.hex(hex))
-    def border(width: Size.Px, style: BorderStyle, f: Color.type => Color): Style = border(width, style, f(Color))
-    def border(width: Size.Px, c: Color): Style                                   = border(width, BorderStyle.solid, c)
-    def border(width: Size.Px, hex: String): Style                                = border(width, BorderStyle.solid, Color.hex(hex))
-    def border(width: Size.Px, f: Color.type => Color): Style                     = border(width, BorderStyle.solid, f(Color))
+    def border(width: Length.Px, style: BorderStyle, hex: String): Style            = border(width, style, Color.hex(hex))
+    def border(width: Length.Px, style: BorderStyle, f: Color.type => Color): Style = border(width, style, f(Color))
+    def border(width: Length.Px, c: Color): Style                                   = border(width, BorderStyle.solid, c)
+    def border(width: Length.Px, hex: String): Style                                = border(width, BorderStyle.solid, Color.hex(hex))
+    def border(width: Length.Px, f: Color.type => Color): Style                     = border(width, BorderStyle.solid, f(Color))
 
     def borderColor(c: Color): Style               = appendProp(Prop.BorderColorProp(c, c, c, c))
     def borderColor(hex: String): Style            = borderColor(Color.hex(hex))
@@ -187,55 +187,55 @@ final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
     def borderColor(top: Color, right: Color, bottom: Color, left: Color): Style =
         appendProp(Prop.BorderColorProp(top, right, bottom, left))
 
-    def borderWidth(v: Size.Px): Style =
+    def borderWidth(v: Length.Px): Style =
         val c = clampSize(v)
         appendProp(Prop.BorderWidthProp(c, c, c, c))
-    def borderWidth(top: Size.Px, right: Size.Px, bottom: Size.Px, left: Size.Px): Style =
+    def borderWidth(top: Length.Px, right: Length.Px, bottom: Length.Px, left: Length.Px): Style =
         appendProp(Prop.BorderWidthProp(clampSize(top), clampSize(right), clampSize(bottom), clampSize(left)))
 
     def borderStyle(v: BorderStyle): Style                     = appendProp(Prop.BorderStyleProp(v))
     def borderStyle(f: BorderStyle.type => BorderStyle): Style = borderStyle(f(BorderStyle))
 
-    def borderTop(width: Size.Px, c: Color): Style               = appendProp(Prop.BorderTopProp(clampSize(width), c))
-    def borderTop(width: Size.Px, hex: String): Style            = borderTop(width, Color.hex(hex))
-    def borderTop(width: Size.Px, f: Color.type => Color): Style = borderTop(width, f(Color))
+    def borderTop(width: Length.Px, c: Color): Style               = appendProp(Prop.BorderTopProp(clampSize(width), c))
+    def borderTop(width: Length.Px, hex: String): Style            = borderTop(width, Color.hex(hex))
+    def borderTop(width: Length.Px, f: Color.type => Color): Style = borderTop(width, f(Color))
 
-    def borderRight(width: Size.Px, c: Color): Style               = appendProp(Prop.BorderRightProp(clampSize(width), c))
-    def borderRight(width: Size.Px, hex: String): Style            = borderRight(width, Color.hex(hex))
-    def borderRight(width: Size.Px, f: Color.type => Color): Style = borderRight(width, f(Color))
+    def borderRight(width: Length.Px, c: Color): Style               = appendProp(Prop.BorderRightProp(clampSize(width), c))
+    def borderRight(width: Length.Px, hex: String): Style            = borderRight(width, Color.hex(hex))
+    def borderRight(width: Length.Px, f: Color.type => Color): Style = borderRight(width, f(Color))
 
-    def borderBottom(width: Size.Px, c: Color): Style               = appendProp(Prop.BorderBottomProp(clampSize(width), c))
-    def borderBottom(width: Size.Px, hex: String): Style            = borderBottom(width, Color.hex(hex))
-    def borderBottom(width: Size.Px, f: Color.type => Color): Style = borderBottom(width, f(Color))
+    def borderBottom(width: Length.Px, c: Color): Style               = appendProp(Prop.BorderBottomProp(clampSize(width), c))
+    def borderBottom(width: Length.Px, hex: String): Style            = borderBottom(width, Color.hex(hex))
+    def borderBottom(width: Length.Px, f: Color.type => Color): Style = borderBottom(width, f(Color))
 
-    def borderLeft(width: Size.Px, c: Color): Style               = appendProp(Prop.BorderLeftProp(clampSize(width), c))
-    def borderLeft(width: Size.Px, hex: String): Style            = borderLeft(width, Color.hex(hex))
-    def borderLeft(width: Size.Px, f: Color.type => Color): Style = borderLeft(width, f(Color))
+    def borderLeft(width: Length.Px, c: Color): Style               = appendProp(Prop.BorderLeftProp(clampSize(width), c))
+    def borderLeft(width: Length.Px, hex: String): Style            = borderLeft(width, Color.hex(hex))
+    def borderLeft(width: Length.Px, f: Color.type => Color): Style = borderLeft(width, f(Color))
 
     // Border radius — px or pct
 
-    def rounded(v: Size.Px | Size.Pct): Style =
+    def rounded(v: Length.Px | Length.Pct): Style =
         val c = clampSize(v)
         appendProp(Prop.BorderRadiusProp(c, c, c, c))
     def rounded(
-        topLeft: Size.Px | Size.Pct,
-        topRight: Size.Px | Size.Pct,
-        bottomRight: Size.Px | Size.Pct,
-        bottomLeft: Size.Px | Size.Pct
+        topLeft: Length.Px | Length.Pct,
+        topRight: Length.Px | Length.Pct,
+        bottomRight: Length.Px | Length.Pct,
+        bottomLeft: Length.Px | Length.Pct
     ): Style =
         appendProp(Prop.BorderRadiusProp(clampSize(topLeft), clampSize(topRight), clampSize(bottomRight), clampSize(bottomLeft)))
 
     // Effects
 
     def shadow(
-        x: Size.Px = Size.zero,
-        y: Size.Px = Size.zero,
-        blur: Size.Px = Size.zero,
-        spread: Size.Px = Size.zero,
+        x: Length.Px = Length.zero,
+        y: Length.Px = Length.zero,
+        blur: Length.Px = Length.zero,
+        spread: Length.Px = Length.zero,
         c: Color = Color.rgba(0, 0, 0, 0.25)
     ): Style = appendProp(Prop.ShadowProp(x, y, clampSize(blur), spread, c))
 
-    def shadow(x: Size.Px, y: Size.Px, blur: Size.Px, spread: Size.Px, f: Color.type => Color): Style =
+    def shadow(x: Length.Px, y: Length.Px, blur: Length.Px, spread: Length.Px, f: Color.type => Color): Style =
         shadow(x, y, blur, spread, f(Color))
 
     def opacity(v: Double): Style = appendProp(Prop.OpacityProp(math.max(0.0, math.min(1.0, v))))
@@ -247,7 +247,7 @@ final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
 
     // Transform — px or pct
 
-    def translate(x: Size.Px | Size.Pct, y: Size.Px | Size.Pct): Style = appendProp(Prop.TranslateProp(x, y))
+    def translate(x: Length.Px | Length.Pct, y: Length.Px | Length.Pct): Style = appendProp(Prop.TranslateProp(x, y))
 
     // Position
 
@@ -272,18 +272,23 @@ final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
     def invert(v: Double): Style     = appendProp(Prop.InvertProp(math.max(0.0, math.min(1.0, v))))
     def saturate(v: Double): Style   = appendProp(Prop.SaturateProp(math.max(0.0, v)))
     def hueRotate(v: Double): Style  = appendProp(Prop.HueRotateProp(v))
-    def blur(v: Size.Px): Style      = appendProp(Prop.BlurProp(clampSize(v)))
+    def blur(v: Length.Px): Style    = appendProp(Prop.BlurProp(clampSize(v)))
 
     // Background gradient
 
     def bgGradient(
         direction: GradientDirection.type => GradientDirection,
-        stop1: (Color, Size.Pct),
-        stop2: (Color, Size.Pct),
-        stops: (Color, Size.Pct)*
+        stop1: (Color, Length.Pct),
+        stop2: (Color, Length.Pct),
+        stops: (Color, Length.Pct)*
     ): Style = bgGradient(direction(GradientDirection), stop1, stop2, stops*)
 
-    def bgGradient(direction: GradientDirection, stop1: (Color, Size.Pct), stop2: (Color, Size.Pct), stops: (Color, Size.Pct)*): Style =
+    def bgGradient(
+        direction: GradientDirection,
+        stop1: (Color, Length.Pct),
+        stop2: (Color, Length.Pct),
+        stops: (Color, Length.Pct)*
+    ): Style =
         val allStops  = stop1 +: stop2 +: stops
         val colors    = new Array[Color](allStops.length)
         val positions = new Array[Double](allStops.length)
@@ -304,130 +309,135 @@ object Style:
 
     val empty: Style = Style(Span.empty[Prop])
 
-    def bg(c: Color): Style                               = empty.bg(c)
-    def bg(hex: String): Style                            = empty.bg(hex)
-    def bg(f: Color.type => Color): Style                 = empty.bg(f)
-    def color(c: Color): Style                            = empty.color(c)
-    def color(hex: String): Style                         = empty.color(hex)
-    def color(f: Color.type => Color): Style              = empty.color(f)
-    def padding(all: Size.Px | Size.Pct | Size.Em): Style = empty.padding(all)
-    def padding(vertical: Size.Px | Size.Pct | Size.Em, horizontal: Size.Px | Size.Pct | Size.Em): Style =
+    def bg(c: Color): Style                                     = empty.bg(c)
+    def bg(hex: String): Style                                  = empty.bg(hex)
+    def bg(f: Color.type => Color): Style                       = empty.bg(f)
+    def color(c: Color): Style                                  = empty.color(c)
+    def color(hex: String): Style                               = empty.color(hex)
+    def color(f: Color.type => Color): Style                    = empty.color(f)
+    def padding(all: Length.Px | Length.Pct | Length.Em): Style = empty.padding(all)
+    def padding(vertical: Length.Px | Length.Pct | Length.Em, horizontal: Length.Px | Length.Pct | Length.Em): Style =
         empty.padding(vertical, horizontal)
     def padding(
-        top: Size.Px | Size.Pct | Size.Em,
-        right: Size.Px | Size.Pct | Size.Em,
-        bottom: Size.Px | Size.Pct | Size.Em,
-        left: Size.Px | Size.Pct | Size.Em
+        top: Length.Px | Length.Pct | Length.Em,
+        right: Length.Px | Length.Pct | Length.Em,
+        bottom: Length.Px | Length.Pct | Length.Em,
+        left: Length.Px | Length.Pct | Length.Em
     ): Style = empty.padding(top, right, bottom, left)
-    def margin(all: Size): Style                                                  = empty.margin(all)
-    def margin(vertical: Size, horizontal: Size): Style                           = empty.margin(vertical, horizontal)
-    def margin(top: Size, right: Size, bottom: Size, left: Size): Style           = empty.margin(top, right, bottom, left)
-    def gap(v: Size.Px | Size.Em): Style                                          = empty.gap(v)
-    def row: Style                                                                = empty.row
-    def column: Style                                                             = empty.column
-    def flexWrap(v: FlexWrap): Style                                              = empty.flexWrap(v)
-    def flexWrap(f: FlexWrap.type => FlexWrap): Style                             = empty.flexWrap(f)
-    def align(v: Alignment): Style                                                = empty.align(v)
-    def align(f: Alignment.type => Alignment): Style                              = empty.align(f)
-    def justify(v: Justification): Style                                          = empty.justify(v)
-    def justify(f: Justification.type => Justification): Style                    = empty.justify(f)
-    def overflow(v: Overflow): Style                                              = empty.overflow(v)
-    def overflow(f: Overflow.type => Overflow): Style                             = empty.overflow(f)
-    def width(v: Size): Style                                                     = empty.width(v)
-    def height(v: Size): Style                                                    = empty.height(v)
-    def minWidth(v: Size): Style                                                  = empty.minWidth(v)
-    def maxWidth(v: Size): Style                                                  = empty.maxWidth(v)
-    def minHeight(v: Size): Style                                                 = empty.minHeight(v)
-    def maxHeight(v: Size): Style                                                 = empty.maxHeight(v)
-    def fontSize(v: Size.Px | Size.Em): Style                                     = empty.fontSize(v)
-    def fontWeight(v: FontWeight): Style                                          = empty.fontWeight(v)
-    def fontWeight(f: FontWeight.type => FontWeight): Style                       = empty.fontWeight(f)
-    def bold: Style                                                               = empty.bold
-    def italic: Style                                                             = empty.italic
-    def fontStyle(v: FontStyle): Style                                            = empty.fontStyle(v)
-    def fontStyle(f: FontStyle.type => FontStyle): Style                          = empty.fontStyle(f)
-    def fontFamily(v: String): Style                                              = empty.fontFamily(v)
-    def textAlign(v: TextAlign): Style                                            = empty.textAlign(v)
-    def textAlign(f: TextAlign.type => TextAlign): Style                          = empty.textAlign(f)
-    def textDecoration(v: TextDecoration): Style                                  = empty.textDecoration(v)
-    def textDecoration(f: TextDecoration.type => TextDecoration): Style           = empty.textDecoration(f)
-    def underline: Style                                                          = empty.underline
-    def strikethrough: Style                                                      = empty.strikethrough
-    def lineHeight(v: Double): Style                                              = empty.lineHeight(v)
-    def letterSpacing(v: Size.Px | Size.Em): Style                                = empty.letterSpacing(v)
-    def textTransform(v: TextTransform): Style                                    = empty.textTransform(v)
-    def textTransform(f: TextTransform.type => TextTransform): Style              = empty.textTransform(f)
-    def textOverflow(v: TextOverflow): Style                                      = empty.textOverflow(v)
-    def textOverflow(f: TextOverflow.type => TextOverflow): Style                 = empty.textOverflow(f)
-    def textWrap(v: TextWrap): Style                                              = empty.textWrap(v)
-    def textWrap(f: TextWrap.type => TextWrap): Style                             = empty.textWrap(f)
-    def border(width: Size.Px, style: BorderStyle, c: Color): Style               = empty.border(width, style, c)
-    def border(width: Size.Px, style: BorderStyle, hex: String): Style            = empty.border(width, style, hex)
-    def border(width: Size.Px, style: BorderStyle, f: Color.type => Color): Style = empty.border(width, style, f)
-    def border(width: Size.Px, c: Color): Style                                   = empty.border(width, c)
-    def border(width: Size.Px, hex: String): Style                                = empty.border(width, hex)
-    def border(width: Size.Px, f: Color.type => Color): Style                     = empty.border(width, f)
-    def borderColor(c: Color): Style                                              = empty.borderColor(c)
-    def borderColor(hex: String): Style                                           = empty.borderColor(hex)
-    def borderColor(f: Color.type => Color): Style                                = empty.borderColor(f)
-    def borderColor(top: Color, right: Color, bottom: Color, left: Color): Style  = empty.borderColor(top, right, bottom, left)
-    def borderWidth(v: Size.Px): Style                                            = empty.borderWidth(v)
-    def borderWidth(top: Size.Px, right: Size.Px, bottom: Size.Px, left: Size.Px): Style =
+    def margin(all: Length): Style                                                  = empty.margin(all)
+    def margin(vertical: Length, horizontal: Length): Style                         = empty.margin(vertical, horizontal)
+    def margin(top: Length, right: Length, bottom: Length, left: Length): Style     = empty.margin(top, right, bottom, left)
+    def gap(v: Length.Px | Length.Em): Style                                        = empty.gap(v)
+    def row: Style                                                                  = empty.row
+    def column: Style                                                               = empty.column
+    def flexWrap(v: FlexWrap): Style                                                = empty.flexWrap(v)
+    def flexWrap(f: FlexWrap.type => FlexWrap): Style                               = empty.flexWrap(f)
+    def align(v: Alignment): Style                                                  = empty.align(v)
+    def align(f: Alignment.type => Alignment): Style                                = empty.align(f)
+    def justify(v: Justification): Style                                            = empty.justify(v)
+    def justify(f: Justification.type => Justification): Style                      = empty.justify(f)
+    def overflow(v: Overflow): Style                                                = empty.overflow(v)
+    def overflow(f: Overflow.type => Overflow): Style                               = empty.overflow(f)
+    def width(v: Length): Style                                                     = empty.width(v)
+    def height(v: Length): Style                                                    = empty.height(v)
+    def minWidth(v: Length): Style                                                  = empty.minWidth(v)
+    def maxWidth(v: Length): Style                                                  = empty.maxWidth(v)
+    def minHeight(v: Length): Style                                                 = empty.minHeight(v)
+    def maxHeight(v: Length): Style                                                 = empty.maxHeight(v)
+    def fontSize(v: Length.Px | Length.Em): Style                                   = empty.fontSize(v)
+    def fontWeight(v: FontWeight): Style                                            = empty.fontWeight(v)
+    def fontWeight(f: FontWeight.type => FontWeight): Style                         = empty.fontWeight(f)
+    def bold: Style                                                                 = empty.bold
+    def italic: Style                                                               = empty.italic
+    def fontStyle(v: FontStyle): Style                                              = empty.fontStyle(v)
+    def fontStyle(f: FontStyle.type => FontStyle): Style                            = empty.fontStyle(f)
+    def fontFamily(v: String): Style                                                = empty.fontFamily(v)
+    def textAlign(v: TextAlign): Style                                              = empty.textAlign(v)
+    def textAlign(f: TextAlign.type => TextAlign): Style                            = empty.textAlign(f)
+    def textDecoration(v: TextDecoration): Style                                    = empty.textDecoration(v)
+    def textDecoration(f: TextDecoration.type => TextDecoration): Style             = empty.textDecoration(f)
+    def underline: Style                                                            = empty.underline
+    def strikethrough: Style                                                        = empty.strikethrough
+    def lineHeight(v: Double): Style                                                = empty.lineHeight(v)
+    def letterSpacing(v: Length.Px | Length.Em): Style                              = empty.letterSpacing(v)
+    def textTransform(v: TextTransform): Style                                      = empty.textTransform(v)
+    def textTransform(f: TextTransform.type => TextTransform): Style                = empty.textTransform(f)
+    def textOverflow(v: TextOverflow): Style                                        = empty.textOverflow(v)
+    def textOverflow(f: TextOverflow.type => TextOverflow): Style                   = empty.textOverflow(f)
+    def textWrap(v: TextWrap): Style                                                = empty.textWrap(v)
+    def textWrap(f: TextWrap.type => TextWrap): Style                               = empty.textWrap(f)
+    def border(width: Length.Px, style: BorderStyle, c: Color): Style               = empty.border(width, style, c)
+    def border(width: Length.Px, style: BorderStyle, hex: String): Style            = empty.border(width, style, hex)
+    def border(width: Length.Px, style: BorderStyle, f: Color.type => Color): Style = empty.border(width, style, f)
+    def border(width: Length.Px, c: Color): Style                                   = empty.border(width, c)
+    def border(width: Length.Px, hex: String): Style                                = empty.border(width, hex)
+    def border(width: Length.Px, f: Color.type => Color): Style                     = empty.border(width, f)
+    def borderColor(c: Color): Style                                                = empty.borderColor(c)
+    def borderColor(hex: String): Style                                             = empty.borderColor(hex)
+    def borderColor(f: Color.type => Color): Style                                  = empty.borderColor(f)
+    def borderColor(top: Color, right: Color, bottom: Color, left: Color): Style    = empty.borderColor(top, right, bottom, left)
+    def borderWidth(v: Length.Px): Style                                            = empty.borderWidth(v)
+    def borderWidth(top: Length.Px, right: Length.Px, bottom: Length.Px, left: Length.Px): Style =
         empty.borderWidth(top, right, bottom, left)
-    def borderStyle(v: BorderStyle): Style                          = empty.borderStyle(v)
-    def borderStyle(f: BorderStyle.type => BorderStyle): Style      = empty.borderStyle(f)
-    def borderTop(width: Size.Px, c: Color): Style                  = empty.borderTop(width, c)
-    def borderTop(width: Size.Px, hex: String): Style               = empty.borderTop(width, hex)
-    def borderTop(width: Size.Px, f: Color.type => Color): Style    = empty.borderTop(width, f)
-    def borderRight(width: Size.Px, c: Color): Style                = empty.borderRight(width, c)
-    def borderRight(width: Size.Px, hex: String): Style             = empty.borderRight(width, hex)
-    def borderRight(width: Size.Px, f: Color.type => Color): Style  = empty.borderRight(width, f)
-    def borderBottom(width: Size.Px, c: Color): Style               = empty.borderBottom(width, c)
-    def borderBottom(width: Size.Px, hex: String): Style            = empty.borderBottom(width, hex)
-    def borderBottom(width: Size.Px, f: Color.type => Color): Style = empty.borderBottom(width, f)
-    def borderLeft(width: Size.Px, c: Color): Style                 = empty.borderLeft(width, c)
-    def borderLeft(width: Size.Px, hex: String): Style              = empty.borderLeft(width, hex)
-    def borderLeft(width: Size.Px, f: Color.type => Color): Style   = empty.borderLeft(width, f)
-    def rounded(v: Size.Px | Size.Pct): Style                       = empty.rounded(v)
+    def borderStyle(v: BorderStyle): Style                            = empty.borderStyle(v)
+    def borderStyle(f: BorderStyle.type => BorderStyle): Style        = empty.borderStyle(f)
+    def borderTop(width: Length.Px, c: Color): Style                  = empty.borderTop(width, c)
+    def borderTop(width: Length.Px, hex: String): Style               = empty.borderTop(width, hex)
+    def borderTop(width: Length.Px, f: Color.type => Color): Style    = empty.borderTop(width, f)
+    def borderRight(width: Length.Px, c: Color): Style                = empty.borderRight(width, c)
+    def borderRight(width: Length.Px, hex: String): Style             = empty.borderRight(width, hex)
+    def borderRight(width: Length.Px, f: Color.type => Color): Style  = empty.borderRight(width, f)
+    def borderBottom(width: Length.Px, c: Color): Style               = empty.borderBottom(width, c)
+    def borderBottom(width: Length.Px, hex: String): Style            = empty.borderBottom(width, hex)
+    def borderBottom(width: Length.Px, f: Color.type => Color): Style = empty.borderBottom(width, f)
+    def borderLeft(width: Length.Px, c: Color): Style                 = empty.borderLeft(width, c)
+    def borderLeft(width: Length.Px, hex: String): Style              = empty.borderLeft(width, hex)
+    def borderLeft(width: Length.Px, f: Color.type => Color): Style   = empty.borderLeft(width, f)
+    def rounded(v: Length.Px | Length.Pct): Style                     = empty.rounded(v)
     def rounded(
-        topLeft: Size.Px | Size.Pct,
-        topRight: Size.Px | Size.Pct,
-        bottomRight: Size.Px | Size.Pct,
-        bottomLeft: Size.Px | Size.Pct
+        topLeft: Length.Px | Length.Pct,
+        topRight: Length.Px | Length.Pct,
+        bottomRight: Length.Px | Length.Pct,
+        bottomLeft: Length.Px | Length.Pct
     ): Style = empty.rounded(topLeft, topRight, bottomRight, bottomLeft)
     def shadow(
-        x: Size.Px = Size.zero,
-        y: Size.Px = Size.zero,
-        blur: Size.Px = Size.zero,
-        spread: Size.Px = Size.zero,
+        x: Length.Px = Length.zero,
+        y: Length.Px = Length.zero,
+        blur: Length.Px = Length.zero,
+        spread: Length.Px = Length.zero,
         c: Color = Color.rgba(0, 0, 0, 0.25)
     ): Style = empty.shadow(x, y, blur, spread, c)
-    def shadow(x: Size.Px, y: Size.Px, blur: Size.Px, spread: Size.Px, f: Color.type => Color): Style =
+    def shadow(x: Length.Px, y: Length.Px, blur: Length.Px, spread: Length.Px, f: Color.type => Color): Style =
         empty.shadow(x, y, blur, spread, f)
-    def opacity(v: Double): Style                                      = empty.opacity(v)
-    def cursor(v: Cursor): Style                                       = empty.cursor(v)
-    def cursor(f: Cursor.type => Cursor): Style                        = empty.cursor(f)
-    def translate(x: Size.Px | Size.Pct, y: Size.Px | Size.Pct): Style = empty.translate(x, y)
-    def position(v: Position): Style                                   = empty.position(v)
-    def position(f: Position.type => Position): Style                  = empty.position(f)
-    def flexGrow(v: Double): Style                                     = empty.flexGrow(v)
-    def flexShrink(v: Double): Style                                   = empty.flexShrink(v)
-    def displayNone: Style                                             = empty.displayNone
-    def brightness(v: Double): Style                                   = empty.brightness(v)
-    def contrast(v: Double): Style                                     = empty.contrast(v)
-    def grayscale(v: Double): Style                                    = empty.grayscale(v)
-    def sepia(v: Double): Style                                        = empty.sepia(v)
-    def invert(v: Double): Style                                       = empty.invert(v)
-    def saturate(v: Double): Style                                     = empty.saturate(v)
-    def hueRotate(v: Double): Style                                    = empty.hueRotate(v)
-    def blur(v: Size.Px): Style                                        = empty.blur(v)
-    def bgGradient(direction: GradientDirection, stop1: (Color, Size.Pct), stop2: (Color, Size.Pct), stops: (Color, Size.Pct)*): Style =
+    def opacity(v: Double): Style                                              = empty.opacity(v)
+    def cursor(v: Cursor): Style                                               = empty.cursor(v)
+    def cursor(f: Cursor.type => Cursor): Style                                = empty.cursor(f)
+    def translate(x: Length.Px | Length.Pct, y: Length.Px | Length.Pct): Style = empty.translate(x, y)
+    def position(v: Position): Style                                           = empty.position(v)
+    def position(f: Position.type => Position): Style                          = empty.position(f)
+    def flexGrow(v: Double): Style                                             = empty.flexGrow(v)
+    def flexShrink(v: Double): Style                                           = empty.flexShrink(v)
+    def displayNone: Style                                                     = empty.displayNone
+    def brightness(v: Double): Style                                           = empty.brightness(v)
+    def contrast(v: Double): Style                                             = empty.contrast(v)
+    def grayscale(v: Double): Style                                            = empty.grayscale(v)
+    def sepia(v: Double): Style                                                = empty.sepia(v)
+    def invert(v: Double): Style                                               = empty.invert(v)
+    def saturate(v: Double): Style                                             = empty.saturate(v)
+    def hueRotate(v: Double): Style                                            = empty.hueRotate(v)
+    def blur(v: Length.Px): Style                                              = empty.blur(v)
+    def bgGradient(
+        direction: GradientDirection,
+        stop1: (Color, Length.Pct),
+        stop2: (Color, Length.Pct),
+        stops: (Color, Length.Pct)*
+    ): Style =
         empty.bgGradient(direction, stop1, stop2, stops*)
     def bgGradient(
         direction: GradientDirection.type => GradientDirection,
-        stop1: (Color, Size.Pct),
-        stop2: (Color, Size.Pct),
-        stops: (Color, Size.Pct)*
+        stop1: (Color, Length.Pct),
+        stop2: (Color, Length.Pct),
+        stops: (Color, Length.Pct)*
     ): Style = empty.bgGradient(direction, stop1, stop2, stops*)
     def hover(s: Style): Style                  = empty.hover(s)
     def hover(f: Style.type => Style): Style    = empty.hover(f)
@@ -486,37 +496,6 @@ object Style:
         val slate: Color       = Hex("#64748b")
     end Color
 
-    // ---- Size ----
-
-    sealed abstract class Size derives CanEqual
-
-    object Size:
-        final case class Px(value: Double) extends Size:
-            def unary_- : Px = Px(-value)
-        final case class Pct(value: Double) extends Size:
-            def unary_- : Pct = Pct(-value)
-        final case class Em(value: Double) extends Size:
-            def unary_- : Em = Em(-value)
-        case object Auto extends Size
-
-        val auto: Auto.type = Auto
-        val zero: Px        = Px(0)
-
-        implicit def intToPx(v: Int): Px       = Px(v.toDouble)
-        implicit def doubleToPx(v: Double): Px = Px(v)
-
-        extension (v: Int)
-            def px: Px   = Px(v.toDouble)
-            def pct: Pct = Pct(v.toDouble)
-            def em: Em   = Em(v.toDouble)
-        end extension
-        extension (v: Double)
-            def px: Px   = Px(v)
-            def pct: Pct = Pct(v)
-            def em: Em   = Em(v)
-        end extension
-    end Size
-
     // ---- Enums ----
 
     enum FlexDirection derives CanEqual:
@@ -559,7 +538,7 @@ object Style:
         case none, solid, dashed, dotted
 
     enum Cursor derives CanEqual:
-        case default_, pointer, text, move, notAllowed, crosshair, help, wait_, grab, grabbing
+        case default_, pointer, text, move, notAllowed, crosshair, help, await, grab, grabbing
 
     enum Position derives CanEqual:
         case flow, overlay
@@ -574,49 +553,49 @@ object Style:
         case BgColor(color: Color)
         case TextColor(color: Color)
         // Layout
-        case Padding(top: Size, right: Size, bottom: Size, left: Size)
-        case Margin(top: Size, right: Size, bottom: Size, left: Size)
-        case Gap(value: Size)
+        case Padding(top: Length, right: Length, bottom: Length, left: Length)
+        case Margin(top: Length, right: Length, bottom: Length, left: Length)
+        case Gap(value: Length)
         case FlexDirectionProp(value: FlexDirection)
         case FlexWrapProp(value: FlexWrap)
         case Align(value: Alignment)
         case Justify(value: Justification)
         case OverflowProp(value: Overflow)
         // Sizing
-        case Width(value: Size)
-        case Height(value: Size)
-        case MinWidth(value: Size)
-        case MaxWidth(value: Size)
-        case MinHeight(value: Size)
-        case MaxHeight(value: Size)
+        case Width(value: Length)
+        case Height(value: Length)
+        case MinWidth(value: Length)
+        case MaxWidth(value: Length)
+        case MinHeight(value: Length)
+        case MaxHeight(value: Length)
         // Typography
-        case FontSizeProp(value: Size)
+        case FontSizeProp(value: Length)
         case FontWeightProp(value: FontWeight)
         case FontStyleProp(value: FontStyle)
         case FontFamilyProp(value: String)
         case TextAlignProp(value: TextAlign)
         case TextDecorationProp(value: TextDecoration)
         case LineHeightProp(value: Double)
-        case LetterSpacingProp(value: Size)
+        case LetterSpacingProp(value: Length)
         case TextTransformProp(value: TextTransform)
         case TextOverflowProp(value: TextOverflow)
         case TextWrapProp(value: TextWrap)
         // Borders
         case BorderColorProp(top: Color, right: Color, bottom: Color, left: Color)
-        case BorderWidthProp(top: Size, right: Size, bottom: Size, left: Size)
+        case BorderWidthProp(top: Length, right: Length, bottom: Length, left: Length)
         case BorderStyleProp(value: BorderStyle)
-        case BorderTopProp(width: Size, color: Color)
-        case BorderRightProp(width: Size, color: Color)
-        case BorderBottomProp(width: Size, color: Color)
-        case BorderLeftProp(width: Size, color: Color)
-        case BorderRadiusProp(topLeft: Size, topRight: Size, bottomRight: Size, bottomLeft: Size)
+        case BorderTopProp(width: Length, color: Color)
+        case BorderRightProp(width: Length, color: Color)
+        case BorderBottomProp(width: Length, color: Color)
+        case BorderLeftProp(width: Length, color: Color)
+        case BorderRadiusProp(topLeft: Length, topRight: Length, bottomRight: Length, bottomLeft: Length)
         // Effects
-        case ShadowProp(x: Size, y: Size, blur: Size, spread: Size, color: Color)
+        case ShadowProp(x: Length, y: Length, blur: Length, spread: Length, color: Color)
         case OpacityProp(value: Double)
         // Cursor
         case CursorProp(value: Cursor)
         // Transform
-        case TranslateProp(x: Size, y: Size)
+        case TranslateProp(x: Length, y: Length)
         // Position
         case PositionProp(value: Position)
         // Visibility
@@ -632,7 +611,7 @@ object Style:
         case InvertProp(value: Double)
         case SaturateProp(value: Double)
         case HueRotateProp(value: Double)
-        case BlurProp(value: Size)
+        case BlurProp(value: Length)
         // Background gradient
         case BgGradientProp(direction: GradientDirection, colors: Span[Color], positions: Span[Double])
         // Pseudo-states

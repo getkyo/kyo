@@ -34,8 +34,8 @@ class ScreenStateTest extends Test:
         "resolve Default" in {
             val t = ResolvedTheme.resolve(Theme.Default)
             assert(t.variant == Theme.Default)
-            assert(t.fg == ColorEnc.pack(255, 255, 255))
-            assert(t.bg == ColorEnc.Transparent)
+            assert(t.fg == PackedColor(255, 255, 255))
+            assert(t.bg == PackedColor.Transparent)
         }
 
         "resolve Minimal" in {
@@ -49,19 +49,19 @@ class ScreenStateTest extends Test:
         }
     }
 
-    "ComputedStyle.fromTheme" - {
+    "FlatStyle.fromTheme" - {
         "sets fg and bg from theme" in {
             val t  = ResolvedTheme.resolve(Theme.Default)
-            val cs = ComputedStyle.fromTheme(t)
+            val cs = FlatStyle.fromTheme(t)
             assert(cs.fg == t.fg)
             assert(cs.bg == t.bg)
         }
 
         "preserves other defaults" in {
-            val cs = ComputedStyle.fromTheme(defaultTheme)
+            val cs = FlatStyle.fromTheme(defaultTheme)
             assert(!cs.bold)
             assert(cs.lineHeight == 1)
-            assert(SizeEnc.isAuto(cs.width))
+            assert(cs.width == Length.Auto)
         }
     }
 

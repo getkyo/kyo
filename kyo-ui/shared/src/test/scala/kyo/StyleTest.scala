@@ -1,7 +1,7 @@
 package kyo
 
+import kyo.Length.*
 import kyo.Style.*
-import kyo.Style.Size.*
 import kyo.internal.CssStyleRenderer
 import scala.language.implicitConversions
 
@@ -10,7 +10,7 @@ class StyleTest extends Test:
     extension (s: Style)
         def toCss: String = CssStyleRenderer.render(s)
 
-    extension (s: Style.Size)
+    extension (s: Length)
         def css: String = CssStyleRenderer.size(s)
 
     extension (c: Style.Color)
@@ -108,17 +108,17 @@ class StyleTest extends Test:
         }
 
         "auto" in {
-            assert(Style.Size.auto.css == "auto")
+            assert(Length.Auto.css == "auto")
         }
 
         "zero" in {
-            assert(Style.Size.zero.css == "0")
+            assert(0.px.css == "0")
         }
 
         "constructor" in {
-            assert(Style.Size.Px(10).css == "10px")
-            assert(Style.Size.Pct(50).css == "50%")
-            assert(Style.Size.Em(1.5).css == "1.5em")
+            assert(10.px.css == "10px")
+            assert(50.pct.css == "50%")
+            assert(1.5.em.css == "1.5em")
         }
     }
 
@@ -393,7 +393,7 @@ class StyleTest extends Test:
             assert(Style.cursor(Style.Cursor.notAllowed).toCss == "cursor: not-allowed;")
             assert(Style.cursor(Style.Cursor.crosshair).toCss == "cursor: crosshair;")
             assert(Style.cursor(Style.Cursor.help).toCss == "cursor: help;")
-            assert(Style.cursor(Style.Cursor.wait_).toCss == "cursor: wait;")
+            assert(Style.cursor(Style.Cursor.await).toCss == "cursor: wait;")
             assert(Style.cursor(Style.Cursor.grab).toCss == "cursor: grab;")
             assert(Style.cursor(Style.Cursor.grabbing).toCss == "cursor: grabbing;")
         }
@@ -529,7 +529,7 @@ class StyleTest extends Test:
 
         "blur" in {
             val s = Style.blur(5.px)
-            assert(s.props(0) == Style.Prop.BlurProp(Size.Px(5)))
+            assert(s.props(0) == Style.Prop.BlurProp(Length.Px(5)))
         }
 
         "chaining multiple filters" in {

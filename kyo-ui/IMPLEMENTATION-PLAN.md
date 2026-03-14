@@ -35,7 +35,9 @@ Every pipeline step is a pure function: input → output. No ambient context, no
 - No step reads or writes shared mutable state (except Lower reading reactive refs, and Dispatch writing them)
 - No implicit ordering dependencies — steps compose as `diff ∘ composite ∘ paint ∘ layout ∘ style ∘ lower`
 - Widget behavior is fully encoded during Lower; downstream steps are widget-type-agnostic
-- Prefer `@tailrec` over `while` loops for traversals (exception: pixel-level painting and SGR emission where mutable tracking is clearer)
+- **No imperative constructs:** No `while`, no `var` for loop control, no `return`. Use `@tailrec def loop`. No `asInstanceOf` — pattern match. No `;`-joined statements.
+- **Typed values over primitives:** Use `Length` for sizes, `PackedColor` for colors, enum types for categorical values. No `Int` ordinals, no sentinel values — use `Maybe[T]`.
+- **Full quality standards in `PIPELINE-QUALITY-PLAN.md`** — all phases must follow these before submitting for review.
 
 ### Modular
 
@@ -235,12 +237,12 @@ Table layout is fundamentally different from flex: column widths are globally co
 
 ### Overlay vs Popup positioning
 
-- **`position: overlay`** (ComputedStyle.position = 1): escapes flex flow but stays in the parent's clip context. Analogous to CSS `position: absolute`.
+- **`position: overlay`** (FlatStyle.position = 1): escapes flex flow but stays in the parent's clip context. Analogous to CSS `position: absolute`.
 - **`ElemTag.Popup`**: extracted to a separate cell grid. Not clipped by any parent. Used for dropdowns/tooltips that must escape scroll containers.
 
 ### Scroll containers
 
-Elements with `overflow: scroll` have a scroll offset persisted as `SignalRef.Unsafe[Int]` in the `WidgetStateCache`. During lower, the offset is read and stored in the element's Style (→ `scrollTop`/`scrollLeft` on `ComputedStyle`). Layout uses these values to translate child positions. The `onScroll` handler updates the SignalRef.
+Elements with `overflow: scroll` have a scroll offset persisted as `SignalRef.Unsafe[Int]` in the `WidgetStateCache`. During lower, the offset is read and stored in the element's Style (→ `scrollTop`/`scrollLeft` on `FlatStyle`). Layout uses these values to translate child positions. The `onScroll` handler updates the SignalRef.
 
 ### Paint: shadows, gradients, and filters
 
@@ -253,9 +255,9 @@ All implementable in 24-bit color terminals:
 
 `Img` elements are lowered to a `Resolved.Node` with image data on Handlers. Paint writes the image data to `CellGrid.rawSequences` as positioned raw terminal bytes (kitty/sixel protocol). The cell grid underneath is filled with alt text for terminals without image support.
 
-### Size encoding in ComputedStyle
+### Size encoding in FlatStyle
 
-Style supports `Px`, `Pct`, `Em`, and `Auto`. ComputedStyle uses `Int` fields:
+Style supports `Px`, `Pct`, `Em`, and `Auto`. FlatStyle uses `Int` fields:
 - `>= 0`: absolute cells (from `Style.Px`)
 - `< 0 && > Int.MinValue/2`: percentage, encoded as `-(pct * 100).toInt` (50% = -5000)
 - `Int.MinValue`: auto (content-determined or fill-parent)
@@ -318,7 +320,7 @@ All pipeline code in `shared/` (cross-platform). Only terminal I/O in `jvm/`.
 
 ```
 shared/src/main/scala/kyo/internal/tui2/pipeline/
-├── IR.scala              # All IR types: Resolved, Styled, Laid, CellGrid, ComputedStyle, Handlers
+├── IR.scala              # All IR types: Resolved, Styled, Laid, CellGrid, FlatStyle, Handlers
 ├── ScreenState.scala      # ScreenState + WidgetStateCache
 ├── Lower.scala           # UI → Resolved
 ├── Styler.scala          # Resolved → Styled
@@ -478,15 +480,15 @@ enum Resolved:
 
 // After style: each node has computed visual properties
 enum Styled:
-    case Node(tag: ElemTag, computed: ComputedStyle, handlers: Handlers, children: Chunk[Styled])
-    case Text(value: String, computed: ComputedStyle)
+    case Node(tag: ElemTag, computed: FlatStyle, handlers: Handlers, children: Chunk[Styled])
+    case Text(value: String, computed: FlatStyle)
     case Cursor(charOffset: Int)
 
 // After layout: each node has position and bounds
 enum Laid:
-    case Node(tag: ElemTag, computed: ComputedStyle, handlers: Handlers,
+    case Node(tag: ElemTag, computed: FlatStyle, handlers: Handlers,
               bounds: Rect, content: Rect, clip: Rect, children: Chunk[Laid])
-    case Text(value: String, computed: ComputedStyle, bounds: Rect, clip: Rect)
+    case Text(value: String, computed: FlatStyle, bounds: Rect, clip: Rect)
     case Cursor(pos: Rect)
 
 case class LayoutResult(base: Laid, popups: Chunk[Laid])
@@ -513,75 +515,62 @@ object CellGrid:
 
 Note: `CellGrid.cells` is `Array[Cell]` (mutable) for paint performance — Painter writes cells in a single pass without allocating intermediate structures. The `CellGrid` itself is treated as an output value: created, filled by Painter, then consumed immutably by Compositor and Differ.
 
-**ComputedStyle** — fully resolved visual and layout properties:
+**FlatStyle** — fully resolved visual and layout properties:
 
 ```scala
 // Color encoding: packed 24-bit RGB = (r << 16) | (g << 8) | b. Transparent = -1.
 // Size encoding: >= 0 = px, < 0 && > MinValue/2 = -(pct*100), MinValue = auto.
 // Em converted to px by Styler (1em = 1 cell). Layout resolves pct/auto.
-case class ComputedStyle(
+case class FlatStyle(
     // Visual (inheritable)
     fg: Int, bg: Int,
     bold: Boolean, italic: Boolean, underline: Boolean, strikethrough: Boolean,
     opacity: Double, cursor: Int,
     // Shadow (non-inheritable)
-    shadowX: Int, shadowY: Int, shadowBlur: Int, shadowSpread: Int, shadowColor: Int,
+    shadowX: Length.Px, shadowY: Length.Px, shadowBlur: Length.Px, shadowSpread: Length.Px,
+    shadowColor: PackedColor,
     // Gradient (non-inheritable)
-    gradientDirection: Int, gradientStops: Chunk[(Int, Double)],
+    gradientDirection: Maybe[Style.GradientDirection], gradientStops: Chunk[(PackedColor, Double)],
     // Filters (non-inheritable)
     brightness: Double, contrast: Double, grayscale: Double, sepia: Double,
-    invert: Double, saturate: Double, hueRotate: Double, blur: Int,
+    invert: Double, saturate: Double, hueRotate: Double, blur: Length.Px,
     // Transform (non-inheritable)
-    translateX: Int, translateY: Int,
+    translateX: Length, translateY: Length,
     // Text (inheritable)
-    textAlign: Int, textTransform: Int, textWrap: Int, textOverflow: Int,
-    lineHeight: Int, letterSpacing: Int,
-    // Box model (non-inheritable, size-encoded)
-    padTop: Int, padRight: Int, padBottom: Int, padLeft: Int,
-    marTop: Int, marRight: Int, marBottom: Int, marLeft: Int,
-    borderTop: Int, borderRight: Int, borderBottom: Int, borderLeft: Int,
-    borderStyle: Int,
-    borderColorTop: Int, borderColorRight: Int, borderColorBottom: Int, borderColorLeft: Int,
+    textAlign: Style.TextAlign, textTransform: Style.TextTransform,
+    textWrap: Style.TextWrap, textOverflow: Style.TextOverflow,
+    lineHeight: Int, letterSpacing: Length,
+    // Box model (non-inheritable)
+    padTop: Length, padRight: Length, padBottom: Length, padLeft: Length,
+    marTop: Length, marRight: Length, marBottom: Length, marLeft: Length,
+    borderTop: Length.Px, borderRight: Length.Px, borderBottom: Length.Px, borderLeft: Length.Px,
+    borderStyle: Style.BorderStyle,
+    borderColorTop: PackedColor, borderColorRight: PackedColor,
+    borderColorBottom: PackedColor, borderColorLeft: PackedColor,
     roundTL: Boolean, roundTR: Boolean, roundBR: Boolean, roundBL: Boolean,
-    // Layout (non-inheritable, size-encoded)
-    direction: Int, justify: Int, align: Int, gap: Int,
-    flexGrow: Double, flexShrink: Double, flexWrap: Int,
-    width: Int, height: Int,
-    minWidth: Int, maxWidth: Int, minHeight: Int, maxHeight: Int,
-    overflow: Int, scrollTop: Int, scrollLeft: Int, position: Int
+    // Layout (non-inheritable)
+    direction: Style.FlexDirection, justify: Style.Justification,
+    align: Style.Alignment, gap: Length,
+    flexGrow: Double, flexShrink: Double, flexWrap: Style.FlexWrap,
+    width: Length, height: Length,
+    minWidth: Length, maxWidth: Length, minHeight: Length, maxHeight: Length,
+    overflow: Style.Overflow, scrollTop: Int, scrollLeft: Int, position: Style.Position
 )
 ```
 
-**Encoding helpers:**
+**Type helpers:**
 
-```scala
-object SizeEnc:
-    val Auto: Int = Int.MinValue
-    def px(v: Int): Int = v
-    def pct(v: Double): Int = -(v * 100).toInt
-    def isPct(v: Int): Boolean = v < 0 && v > Int.MinValue / 2
-    def isAuto(v: Int): Boolean = v == Int.MinValue
-    def resolve(v: Int, parentPx: Int): Int =
-        if v >= 0 then v
-        else if isAuto(v) then parentPx
-        else ((-v) * parentPx) / 10000
-
-object ColorEnc:
-    val Transparent: Int = -1
-    def pack(r: Int, g: Int, b: Int): Int = (r << 16) | (g << 8) | b
-    def r(c: Int): Int = (c >> 16) & 0xFF
-    def g(c: Int): Int = (c >> 8) & 0xFF
-    def b(c: Int): Int = c & 0xFF
-    def fromStyle(c: Style.Color, parentBg: Int): Int = ...
-```
+- `Length` — standalone ADT in `kyo-ui/shared/src/main/scala/kyo/Length.scala` with `Px | Pct | Em | Auto`. Methods: `resolve(length, parentPx)`, `resolveOrAuto(length, parentPx)`, `toPx(length)`. Extensions: `N.px`, `N.pct`, `N.em`.
+- `PackedColor` — opaque type over `Int` in IR.scala. `PackedColor(r, g, b)`, `.r`/`.g`/`.b`/`.raw` extensions, `PackedColor.Transparent`, `PackedColor.fromStyle(color, parentBg)`.
+- `Rect` — `intersect(other)` instance method for clip computation.
 
 **Tests (IRTest.scala):**
 - Construct each IR variant, verify field access
 - `Handlers.empty` defaults: `colspan=1, rowspan=1, imageData=Absent, disabled=false`, all event handlers are noops
 - `CellGrid.empty` produces correct dimensions with `Cell.Empty` cells
-- `SizeEnc` round-trips: `pct(50.0)` → `resolve(_, 100)` = 50
-- `ColorEnc` round-trips: `pack(r, g, b)` → `r(c), g(c), b(c)` correct
-- `ComputedStyle.Default` produces sensible defaults
+- `Length` round-trips: `pct(50.0)` → `resolve(_, 100)` = 50
+- `PackedColor` round-trips: `pack(r, g, b)` → `r(c), g(c), b(c)` correct
+- `FlatStyle.Default` produces sensible defaults
 - `WidgetKey` construction and `WidgetKey.child` produce correct frame/path values
 - All three IR enum variants (`Resolved`, `Styled`, `Laid`) constructible with correct fields
 
@@ -591,7 +580,7 @@ object ColorEnc:
 
 **Estimated size:** ~350 lines
 
-**Review checkpoint:** ✅ Complete. All 34 tests pass.
+**Review checkpoint:** ✅ Complete. All 34 tests pass. Refactored: `Length` → `Length` types, `PackedColor` → `PackedColor` opaque type, all enum fields typed (not Int ordinals), `gradientDirection: Maybe[Style.GradientDirection]`.
 
 ---
 
@@ -622,8 +611,8 @@ object ResolvedTheme:
         case Theme.Default =>
             ResolvedTheme(
                 variant = Theme.Default,
-                fg = ColorEnc.pack(255, 255, 255),
-                bg = ColorEnc.Transparent,
+                fg = PackedColor.pack(255, 255, 255),
+                bg = PackedColor.Transparent,
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
                 highlightFg = Style.Color.rgb(255, 255, 255)
@@ -631,8 +620,8 @@ object ResolvedTheme:
         case Theme.Minimal =>
             ResolvedTheme(
                 variant = Theme.Minimal,
-                fg = ColorEnc.pack(255, 255, 255),
-                bg = ColorEnc.Transparent,
+                fg = PackedColor.pack(255, 255, 255),
+                bg = PackedColor.Transparent,
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
                 highlightFg = Style.Color.rgb(255, 255, 255)
@@ -640,16 +629,16 @@ object ResolvedTheme:
         case Theme.Plain =>
             ResolvedTheme(
                 variant = Theme.Plain,
-                fg = ColorEnc.pack(255, 255, 255),
-                bg = ColorEnc.Transparent,
+                fg = PackedColor.pack(255, 255, 255),
+                bg = PackedColor.Transparent,
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
                 highlightFg = Style.Color.rgb(255, 255, 255)
             )
 
-/** Produce root ComputedStyle from resolved theme. Sets inherited fg/bg for the tree. */
-object ComputedStyle:
-    def fromTheme(theme: ResolvedTheme): ComputedStyle =
+/** Produce root FlatStyle from resolved theme. Sets inherited fg/bg for the tree. */
+object FlatStyle:
+    def fromTheme(theme: ResolvedTheme): FlatStyle =
         Default.copy(fg = theme.fg, bg = theme.bg)
 ```
 
@@ -728,9 +717,9 @@ class WidgetStateCache:
 - `focusableIds` starts empty
 - `prevLayout` and `prevGrid` start as `Absent`
 - `ResolvedTheme.resolve` produces correct values per variant
-- `ComputedStyle.fromTheme` sets fg/bg from theme
+- `FlatStyle.fromTheme` sets fg/bg from theme
 
-**Dependencies:** Phase 0 (SignalRef.Unsafe), Phase 1 (IR types for `WidgetKey`, `LayoutResult`, `CellGrid`, `ComputedStyle`, `ColorEnc`).
+**Dependencies:** Phase 0 (SignalRef.Unsafe), Phase 1 (IR types for `WidgetKey`, `LayoutResult`, `CellGrid`, `FlatStyle`, `PackedColor`).
 
 **Compile isolation:** Only depends on types from Phase 1 and `SignalRef.Unsafe` from kyo-core. No pipeline logic.
 
@@ -949,7 +938,7 @@ object Styler:
     /** Pure function: resolve style inheritance down the tree.
       * No state reads, no side effects.
       */
-    def style(node: Resolved, parent: ComputedStyle): Styled =
+    def style(node: Resolved, parent: FlatStyle): Styled =
         node match
             case Resolved.Node(tag, userStyle, handlers, children) =>
                 val computed = resolve(userStyle, parent)
@@ -964,43 +953,40 @@ object Styler:
 **`resolve`:** Start from parent's inherited properties + defaults for non-inherited. Iterate `userStyle.props`, override matching fields:
 
 ```scala
-private def resolve(userStyle: Style, parent: ComputedStyle): ComputedStyle =
+private def resolve(userStyle: Style, parent: FlatStyle): FlatStyle =
     // Inherited from parent
     var fg = parent.fg; var bg = parent.bg
     var bold = parent.bold; var italic = parent.italic
     // ... all inheritable properties
 
     // Non-inherited start at defaults
-    var padTop = 0; var padRight = 0; ...
-    var width = SizeEnc.Auto; var height = SizeEnc.Auto
+    var padTop: Length = Length.zero
+    var padRight: Length = Length.zero
+    // ...
+    var width: Length = Length.Auto
+    var height: Length = Length.Auto
 
     // Apply user style props
-    var i = 0
     val props = userStyle.props
-    while i < props.length do
-        props(i) match
-            case Prop.BgColor(c)           => bg = ColorEnc.fromStyle(c, parent.bg)
-            case Prop.TextColor(c)         => fg = ColorEnc.fromStyle(c, parent.bg)
-            case Prop.Padding(t, r, b, l)  => padTop = sizeToInt(t); ...
-            case Prop.Width(v)             => width = sizeToInt(v)
-            case Prop.FontSizeProp(_)      => () // consumed by Lower (theme sizing), no-op
-            case Prop.FontFamilyProp(_)    => () // TUI-irrelevant, no-op
-            case _: Prop.HoverProp         => () // already merged by Lower
-            case _: Prop.FocusProp         => ()
-            case _: Prop.ActiveProp        => ()
-            case _: Prop.DisabledProp      => ()
-            // ... all 56 Prop variants
-        i += 1
-    ComputedStyle(fg, bg, bold, italic, ...)
-```
-
-**`sizeToInt`:**
-```scala
-private def sizeToInt(s: Style.Size): Int = s match
-    case Size.Px(v)  => v.toInt
-    case Size.Pct(v) => SizeEnc.pct(v)
-    case Size.Em(v)  => v.toInt  // 1em = 1 cell in monospace TUI
-    case Size.Auto   => SizeEnc.Auto
+    @tailrec def loop(i: Int): Unit =
+        if i < props.size then
+            props(i) match
+                case Prop.BgColor(c)           => bg = PackedColor.fromStyle(c, parent.bg)
+                case Prop.TextColor(c)         => fg = PackedColor.fromStyle(c, parent.bg)
+                case Prop.Padding(t, r, b, l)  =>
+                    padTop = t
+                    padRight = r
+                    padBottom = b
+                    padLeft = l
+                case Prop.Width(v)             => width = v
+                case Prop.BorderWidthProp(t, r, b, l) =>
+                    borderTop = Length.toPx(t)
+                    // ... (Length.toPx for Length.Px fields)
+                case Prop.FlexDirectionProp(d) => direction = d  // enum, not .ordinal
+                // ... all 56 Prop variants
+            loop(i + 1)
+    loop(0)
+    FlatStyle(fg, bg, bold, italic, ...)
 ```
 
 **`inheritText`:** Only visual/text properties from parent. No layout, no box model.
@@ -1013,7 +999,7 @@ private def sizeToInt(s: Style.Size): Int = s match
 - Child inherits parent's color when not set
 - Child overrides parent's color when set
 - Width/padding don't inherit
-- Size encoding: `width(50.pct)` → correct SizeEnc value
+- Size encoding: `width(50.pct)` → correct Length value
 - Color encoding: `color(rgb(255,0,0))` → `fg = 0xFF0000`
 - Transparent: `bg(transparent)` → `bg = -1`
 - RGBA blending against parent bg
@@ -1024,13 +1010,13 @@ private def sizeToInt(s: Style.Size): Int = s match
 - Deep inheritance: 5 levels, properties propagate
 - All 56 Prop variants handled without error
 
-**Dependencies:** Phase 1 (IR types only — reads `Resolved`, produces `Styled`, uses `ComputedStyle`).
+**Dependencies:** Phase 1 (IR types only — reads `Resolved`, produces `Styled`, uses `FlatStyle`).
 
 **Compile isolation:** Pure function, no ScreenState or SignalRef dependency. Only imports IR types from Phase 1.
 
 **Estimated size:** ~250 lines
 
-**Review checkpoint:** Phase complete when Styler.scala compiles with all 13+ tests passing. Pure function — review focuses on inheritance rules and prop coverage. Present for review before starting Phase 5.
+**Review checkpoint:** ✅ Complete. All 14 tests pass. Refactored: assigns `Length` directly (no `sizeToInt`), `toPx` helper for `Length.Px` fields, `PackedColor.fromStyle` for colors, FontWeight uses explicit match (no `.ordinal`), one statement per line.
 
 ---
 
@@ -1121,7 +1107,7 @@ object Layout:
 
 **Estimated size:** ~600 lines
 
-**Review checkpoint:** Phase complete when Layout.scala compiles with all 18+ tests passing. Review focuses on flex distribution correctness and table layout. Present for review before starting Phase 6.
+**Review checkpoint:** ✅ Complete. All 22 tests pass. Layout uses `Length` types (not `Length`), `available` rect is authoritative, `resolveAvailable` bridges explicit sizes, nested defs for categorization/overlay loops, pattern match instead of `asInstanceOf`.
 
 ---
 
@@ -1200,59 +1186,49 @@ object Painter:
 
 ```scala
 object Compositor:
-    /** Pure function: merge popup layer on top of base layer. */
     def composite(base: CellGrid, popup: CellGrid): CellGrid =
         val result = CellGrid.empty(base.width, base.height)
-        var i = 0
-        while i < base.cells.length do
-            result.cells(i) =
-                if popup.cells(i) != Cell.Empty then popup.cells(i)
-                else base.cells(i)
-            i += 1
-        result.copy(rawSequences = base.rawSequences ++ popup.rawSequences)
+        @tailrec def loop(i: Int): Unit =
+            if i < base.cells.length then
+                result.cells(i) =
+                    if popup.cells(i) != Cell.Empty then popup.cells(i)
+                    else base.cells(i)
+                loop(i + 1)
+        loop(0)
+        result.copy(rawSequences = base.rawSequences.concat(popup.rawSequences))
 ```
 
-~30 lines.
+~20 lines.
 
 #### 7b: Differ (`pipeline/Differ.scala`)
 
 ```scala
 object Differ:
-    /** Pure function: compare two grids, emit minimal ANSI escape sequences.
-      * No shared state — all tracking (lastFg, cursorPos, etc.) is local.
-      */
+    private case class TermState(
+        fg: Maybe[PackedColor], bg: Maybe[PackedColor],
+        bold: Boolean, italic: Boolean, underline: Boolean,
+        strikethrough: Boolean, dimmed: Boolean,
+        cursorPos: Maybe[(Int, Int)]
+    )
+
     def diff(prev: CellGrid, curr: CellGrid): Array[Byte] =
         val buf = new java.io.ByteArrayOutputStream(curr.width * curr.height * 4)
-        // Local tracking state for SGR batching
-        var lastFg = -2; var lastBg = -2; ...
-        var cursorRow = -1; var cursorCol = -1
 
-        var y = 0
-        while y < curr.height do
-            var x = 0
-            while x < curr.width do
-                val ci = y * curr.width + x
-                val currCell = curr.cells(ci)
-                val prevCell = if ci < prev.cells.length then prev.cells(ci) else Cell.Empty
-                if currCell != prevCell then
-                    if cursorRow != y || cursorCol != x then emitMoveCursor(buf, y, x)
-                    emitSGR(buf, currCell, lastFg, lastBg, ...)
-                    // update tracking
-                    emitChar(buf, ...)
-                    cursorRow = y; cursorCol = x + 1
-                x += 1
-            y += 1
-        // Raw sequences (images) after cells
-        curr.rawSequences.foreach { case (rect, bytes) =>
-            emitMoveCursor(buf, rect.y, rect.x)
-            buf.write(bytes)
-        }
+        @tailrec def eachCol(col: Int, row: Int, term: TermState): TermState = ...
+        @tailrec def eachRow(row: Int, term: TermState): TermState =
+            if row >= curr.height then term
+            else eachRow(row + 1, eachCol(0, row, term))
+
+        discard(eachRow(0, Initial))
+
+        @tailrec def eachRaw(i: Int): Unit = ...
+        eachRaw(0)
         buf.toByteArray
 ```
 
-24-bit true color (`ESC[38;2;r;g;bm`). Tracking skips redundant SGR sequences.
+Named ANSI primitives: `enableBold`, `enableDim`, `enableItalic`, `enableUnderline`, `enableStrikethrough`, `resetAllAttributes`, `moveCursorTo`, `writeFgColor`, `writeBgColor`, `writeChar`, `writeDecimal`. SGR tracking threaded as immutable `TermState` — no mutable vars.
 
-~200 lines.
+~190 lines.
 
 **Tests:**
 - CompositorTest: empty popup → base; popup overrides base; rawSequences concatenated
@@ -1262,7 +1238,7 @@ object Differ:
 
 **Compile isolation:** Pure functions, no ScreenState or SignalRef dependency. Only imports IR types from Phase 1.
 
-**Review checkpoint:** Phase complete when both Compositor.scala and Differ.scala compile with all 4+ tests passing. Small phases — review together. Present for review before starting Phase 8.
+**Review checkpoint:** ✅ Complete. 9 tests pass (3 Compositor + 6 Differ). Refactored: `@tailrec` loops, `TermState` with `Maybe[PackedColor]` for colors and `Maybe[(Int, Int)]` for cursor, named ANSI primitives (`enableBold`, `resetAllAttributes`, `moveCursorTo`, etc.).
 
 ---
 
@@ -1282,12 +1258,13 @@ object Dispatch:
       */
     def hitTest(layout: LayoutResult, mx: Int, my: Int): Maybe[Laid.Node] =
         // Check popups in reverse order (topmost first)
-        var i = layout.popups.size - 1
-        while i >= 0 do
-            val hit = hitTestNode(layout.popups(i), mx, my)
-            if hit.nonEmpty then return hit
-            i -= 1
-        hitTestNode(layout.base, mx, my)
+        @tailrec def loop(i: Int): Maybe[Laid.Node] =
+            if i < 0 then hitTestNode(layout.base, mx, my)
+            else
+                val hit = hitTestNode(layout.popups(i), mx, my)
+                if hit.nonEmpty then hit
+                else loop(i - 1)
+        loop(layout.popups.size - 1)
 
     private def hitTestNode(node: Laid, mx: Int, my: Int): Maybe[Laid.Node] =
         node match
@@ -1449,7 +1426,7 @@ object Pipeline:
         state.widgetState.beginFrame()
         val LowerResult(resolved, focusableIds) = Lower.lower(ui, state)
         state.focusableIds = focusableIds
-        val rootStyle    = ComputedStyle.fromTheme(state.theme)
+        val rootStyle    = FlatStyle.fromTheme(state.theme)
         val styled       = Styler.style(resolved, rootStyle)
         val layoutResult = Layout.layout(styled, viewport)
         val (base, pop)  = Painter.paint(layoutResult, viewport)
@@ -2133,7 +2110,7 @@ private def collectOptions(children: kyo.Span[UI]): Chunk[String] =
 
 ```scala
 object Styler:
-    def style(node: Resolved, parent: ComputedStyle): Styled =
+    def style(node: Resolved, parent: FlatStyle): Styled =
         node match
             case Resolved.Node(tag, userStyle, handlers, children) =>
                 val computed = resolve(userStyle, parent)
@@ -2144,7 +2121,7 @@ object Styler:
             case Resolved.Cursor(offset) =>
                 Styled.Cursor(offset)
 
-    private def resolve(userStyle: Style, parent: ComputedStyle): ComputedStyle =
+    private def resolve(userStyle: Style, parent: FlatStyle): FlatStyle =
         // ---- Start with inherited values from parent ----
         var fg = parent.fg
         var bg = parent.bg
@@ -2163,7 +2140,7 @@ object Styler:
 
         // ---- Non-inherited: start at defaults ----
         var shadowX = 0; var shadowY = 0; var shadowBlur = 0
-        var shadowSpread = 0; var shadowColor = ColorEnc.Transparent
+        var shadowSpread = 0; var shadowColor = PackedColor.Transparent
         var gradientDirection = 0
         var gradientStops: Chunk[(Int, Double)] = Chunk.empty
         var brightness = 1.0; var contrast = 1.0; var grayscale = 0.0
@@ -2174,16 +2151,16 @@ object Styler:
         var marTop = 0; var marRight = 0; var marBottom = 0; var marLeft = 0
         var borderTop = 0; var borderRight = 0; var borderBottom = 0; var borderLeft = 0
         var borderStyle = 0
-        var borderColorTop = ColorEnc.Transparent
-        var borderColorRight = ColorEnc.Transparent
-        var borderColorBottom = ColorEnc.Transparent
-        var borderColorLeft = ColorEnc.Transparent
+        var borderColorTop = PackedColor.Transparent
+        var borderColorRight = PackedColor.Transparent
+        var borderColorBottom = PackedColor.Transparent
+        var borderColorLeft = PackedColor.Transparent
         var roundTL = false; var roundTR = false; var roundBR = false; var roundBL = false
         var direction = 0; var justify = 0; var align = 0; var gap = 0
         var flexGrow = 0.0; var flexShrink = 1.0; var flexWrap = 0
-        var width = SizeEnc.Auto; var height = SizeEnc.Auto
-        var minWidth = 0; var maxWidth = SizeEnc.Auto
-        var minHeight = 0; var maxHeight = SizeEnc.Auto
+        var width = Length.Auto; var height = Length.Auto
+        var minWidth = 0; var maxWidth = Length.Auto
+        var minHeight = 0; var maxHeight = Length.Auto
         var overflow = 0; var scrollTop = 0; var scrollLeft = 0; var position = 0
 
         // ---- Apply user style props ----
@@ -2191,73 +2168,91 @@ object Styler:
         var i = 0
         while i < props.length do
             props(i) match
-                case Prop.BgColor(c)             => bg = ColorEnc.fromStyle(c, parent.bg)
-                case Prop.TextColor(c)           => fg = ColorEnc.fromStyle(c, parent.bg)
-                case Prop.Padding(t, r, b, l)    =>
-                    padTop = sizeToInt(t); padRight = sizeToInt(r)
-                    padBottom = sizeToInt(b); padLeft = sizeToInt(l)
-                case Prop.Margin(t, r, b, l)     =>
-                    marTop = sizeToInt(t); marRight = sizeToInt(r)
-                    marBottom = sizeToInt(b); marLeft = sizeToInt(l)
-                case Prop.Gap(v)                 => gap = sizeToInt(v)
-                case Prop.Width(v)               => width = sizeToInt(v)
-                case Prop.Height(v)              => height = sizeToInt(v)
-                case Prop.MinWidth(v)            => minWidth = sizeToInt(v)
-                case Prop.MaxWidth(v)            => maxWidth = sizeToInt(v)
-                case Prop.MinHeight(v)           => minHeight = sizeToInt(v)
-                case Prop.MaxHeight(v)           => maxHeight = sizeToInt(v)
-                case Prop.FlexDirectionProp(d)   => direction = d.ordinal
-                case Prop.FlexWrapProp(w)        => flexWrap = w.ordinal
+                case Prop.BgColor(c)             => bg = PackedColor.fromStyle(c, parent.bg)
+                case Prop.TextColor(c)           => fg = PackedColor.fromStyle(c, parent.bg)
+                case Prop.Padding(t, r, b, l) =>
+                    padTop = t
+                    padRight = r
+                    padBottom = b
+                    padLeft = l
+                case Prop.Margin(t, r, b, l) =>
+                    marTop = t
+                    marRight = r
+                    marBottom = b
+                    marLeft = l
+                case Prop.Gap(v)                 => gap = v
+                case Prop.Width(v)               => width = v
+                case Prop.Height(v)              => height = v
+                case Prop.MinWidth(v)            => minWidth = v
+                case Prop.MaxWidth(v)            => maxWidth = v
+                case Prop.MinHeight(v)           => minHeight = v
+                case Prop.MaxHeight(v)           => maxHeight = v
+                case Prop.FlexDirectionProp(d)   => direction = d
+                case Prop.FlexWrapProp(w)        => flexWrap = w
                 case Prop.FlexGrowProp(v)        => flexGrow = v
                 case Prop.FlexShrinkProp(v)      => flexShrink = v
-                case Prop.Align(v)               => align = v.ordinal
-                case Prop.Justify(v)             => justify = v.ordinal
-                case Prop.OverflowProp(v)        => overflow = v.ordinal
+                case Prop.Align(v)               => align = v
+                case Prop.Justify(v)             => justify = v
+                case Prop.OverflowProp(v)        => overflow = v
                 case Prop.FontWeightProp(w)      =>
-                    bold = w == FontWeight.bold || w.ordinal >= FontWeight.w700.ordinal
+                    bold = w match
+                        case FontWeight.bold | FontWeight.w700 |
+                            FontWeight.w800 | FontWeight.w900 => true
+                        case _ => false
                 case Prop.FontStyleProp(s)       => italic = s == FontStyle.italic
                 case Prop.TextDecorationProp(d)  =>
                     underline = d == TextDecoration.underline
                     strikethrough = d == TextDecoration.strikethrough
-                case Prop.TextAlignProp(v)       => textAlign = v.ordinal
-                case Prop.TextTransformProp(v)   => textTransform = v.ordinal
-                case Prop.TextOverflowProp(v)    => textOverflow = v.ordinal
-                case Prop.TextWrapProp(v)        => textWrap = v.ordinal
+                case Prop.TextAlignProp(v)       => textAlign = v
+                case Prop.TextTransformProp(v)   => textTransform = v
+                case Prop.TextOverflowProp(v)    => textOverflow = v
+                case Prop.TextWrapProp(v)        => textWrap = v
                 case Prop.LineHeightProp(v)      => lineHeight = math.max(1, v.toInt)
-                case Prop.LetterSpacingProp(v)   => letterSpacing = sizeToInt(v)
+                case Prop.LetterSpacingProp(v)   => letterSpacing = v
                 case Prop.OpacityProp(v)         => opacity = v
-                case Prop.CursorProp(v)          => cursorStyle = v.ordinal
-                case Prop.PositionProp(v)        => position = v.ordinal
+                case Prop.CursorProp(v)          => cursorStyle = v
+                case Prop.PositionProp(v)        => position = v
                 case Prop.TranslateProp(x, y)    =>
-                    translateX = sizeToInt(x); translateY = sizeToInt(y)
+                    translateX = x
+                    translateY = y
                 case Prop.BorderWidthProp(t, r, b, l) =>
-                    borderTop = sizeToInt(t); borderRight = sizeToInt(r)
-                    borderBottom = sizeToInt(b); borderLeft = sizeToInt(l)
+                    borderTop = Length.toPx(t)
+                    borderRight = Length.toPx(r)
+                    borderBottom = Length.toPx(b)
+                    borderLeft = Length.toPx(l)
                 case Prop.BorderColorProp(t, r, b, l) =>
-                    borderColorTop = ColorEnc.fromStyle(t, parent.bg)
-                    borderColorRight = ColorEnc.fromStyle(r, parent.bg)
-                    borderColorBottom = ColorEnc.fromStyle(b, parent.bg)
-                    borderColorLeft = ColorEnc.fromStyle(l, parent.bg)
-                case Prop.BorderStyleProp(v)     => borderStyle = v.ordinal
+                    borderColorTop = PackedColor.fromStyle(t, parent.bg)
+                    borderColorRight = PackedColor.fromStyle(r, parent.bg)
+                    borderColorBottom = PackedColor.fromStyle(b, parent.bg)
+                    borderColorLeft = PackedColor.fromStyle(l, parent.bg)
+                case Prop.BorderStyleProp(v)     => borderStyle = v
                 case Prop.BorderTopProp(w, c)    =>
-                    borderTop = sizeToInt(w); borderColorTop = ColorEnc.fromStyle(c, parent.bg)
+                    borderTop = Length.toPx(w)
+                    borderColorTop = PackedColor.fromStyle(c, parent.bg)
                 case Prop.BorderRightProp(w, c)  =>
-                    borderRight = sizeToInt(w); borderColorRight = ColorEnc.fromStyle(c, parent.bg)
+                    borderRight = Length.toPx(w)
+                    borderColorRight = PackedColor.fromStyle(c, parent.bg)
                 case Prop.BorderBottomProp(w, c) =>
-                    borderBottom = sizeToInt(w); borderColorBottom = ColorEnc.fromStyle(c, parent.bg)
+                    borderBottom = Length.toPx(w)
+                    borderColorBottom = PackedColor.fromStyle(c, parent.bg)
                 case Prop.BorderLeftProp(w, c)   =>
-                    borderLeft = sizeToInt(w); borderColorLeft = ColorEnc.fromStyle(c, parent.bg)
+                    borderLeft = Length.toPx(w)
+                    borderColorLeft = PackedColor.fromStyle(c, parent.bg)
                 case Prop.BorderRadiusProp(tl, tr, br, bl) =>
-                    roundTL = sizeToInt(tl) > 0; roundTR = sizeToInt(tr) > 0
-                    roundBR = sizeToInt(br) > 0; roundBL = sizeToInt(bl) > 0
+                    roundTL = Length.toPx(tl).value > 0
+                    roundTR = Length.toPx(tr).value > 0
+                    roundBR = Length.toPx(br).value > 0
+                    roundBL = Length.toPx(bl).value > 0
                 case Prop.ShadowProp(x, y, b, s, c) =>
-                    shadowX = sizeToInt(x); shadowY = sizeToInt(y)
-                    shadowBlur = sizeToInt(b); shadowSpread = sizeToInt(s)
-                    shadowColor = ColorEnc.fromStyle(c, parent.bg)
+                    shadowX = Length.toPx(x)
+                    shadowY = Length.toPx(y)
+                    shadowBlur = Length.toPx(b)
+                    shadowSpread = Length.toPx(s)
+                    shadowColor = PackedColor.fromStyle(c, parent.bg)
                 case Prop.BgGradientProp(dir, colors, positions) =>
-                    gradientDirection = dir.ordinal + 1
+                    gradientDirection = Maybe(dir)
                     gradientStops = Chunk.from(Array.tabulate(colors.length) { j =>
-                        (ColorEnc.fromStyle(colors(j), parent.bg), positions(j))
+                        (PackedColor.fromStyle(colors(j), parent.bg), positions(j))
                     })
                 case Prop.BrightnessProp(v)      => brightness = v
                 case Prop.ContrastProp(v)        => contrast = v
@@ -2266,7 +2261,7 @@ object Styler:
                 case Prop.InvertProp(v)          => invert = v
                 case Prop.SaturateProp(v)        => saturate = v
                 case Prop.HueRotateProp(v)       => hueRotate = v
-                case Prop.BlurProp(v)            => blur = sizeToInt(v)
+                case Prop.BlurProp(v)            => blur = Length.toPx(v)
                 // Pseudo-states already merged by Lower — skip
                 case _: Prop.HoverProp           => ()
                 case _: Prop.FocusProp           => ()
@@ -2276,9 +2271,9 @@ object Styler:
                 case _: Prop.FontSizeProp        => ()
                 case _: Prop.FontFamilyProp      => ()
                 case Prop.HiddenProp             => ()
-            i += 1
+            loop(i + 1)
 
-        ComputedStyle(fg, bg, bold, italic, underline, strikethrough, opacity, cursorStyle,
+        FlatStyle(fg, bg, bold, italic, underline, strikethrough, opacity, cursorStyle,
             shadowX, shadowY, shadowBlur, shadowSpread, shadowColor,
             gradientDirection, gradientStops,
             brightness, contrast, grayscale, sepia, invert, saturate, hueRotate, blur,
@@ -2294,40 +2289,41 @@ object Styler:
             width, height, minWidth, maxWidth, minHeight, maxHeight,
             overflow, scrollTop, scrollLeft, position)
 
-    private def inheritText(parent: ComputedStyle): ComputedStyle =
+    private def inheritText(parent: FlatStyle): FlatStyle =
         // Only inherited properties, everything else at defaults
-        ComputedStyle(
-            fg = parent.fg, bg = ColorEnc.Transparent,
+        FlatStyle(
+            fg = parent.fg, bg = PackedColor.Transparent,
             bold = parent.bold, italic = parent.italic,
             underline = parent.underline, strikethrough = parent.strikethrough,
-            opacity = parent.opacity, cursor = 0,
-            shadowX = 0, shadowY = 0, shadowBlur = 0, shadowSpread = 0,
-            shadowColor = ColorEnc.Transparent,
-            gradientDirection = 0, gradientStops = Chunk.empty,
+            opacity = parent.opacity, cursor = Style.Cursor.default_,
+            shadowX = Length.zero, shadowY = Length.zero,
+            shadowBlur = Length.zero, shadowSpread = Length.zero,
+            shadowColor = PackedColor.Transparent,
+            gradientDirection = Absent, gradientStops = Chunk.empty,
             brightness = 1.0, contrast = 1.0, grayscale = 0.0, sepia = 0.0,
-            invert = 0.0, saturate = 1.0, hueRotate = 0.0, blur = 0,
-            translateX = 0, translateY = 0,
+            invert = 0.0, saturate = 1.0, hueRotate = 0.0, blur = Length.zero,
+            translateX = Length.zero, translateY = Length.zero,
             textAlign = parent.textAlign, textTransform = parent.textTransform,
             textWrap = parent.textWrap, textOverflow = parent.textOverflow,
             lineHeight = parent.lineHeight, letterSpacing = parent.letterSpacing,
-            padTop = 0, padRight = 0, padBottom = 0, padLeft = 0,
-            marTop = 0, marRight = 0, marBottom = 0, marLeft = 0,
-            borderTop = 0, borderRight = 0, borderBottom = 0, borderLeft = 0,
-            borderStyle = 0,
-            borderColorTop = ColorEnc.Transparent, borderColorRight = ColorEnc.Transparent,
-            borderColorBottom = ColorEnc.Transparent, borderColorLeft = ColorEnc.Transparent,
+            padTop = Length.zero, padRight = Length.zero,
+            padBottom = Length.zero, padLeft = Length.zero,
+            marTop = Length.zero, marRight = Length.zero,
+            marBottom = Length.zero, marLeft = Length.zero,
+            borderTop = Length.zero, borderRight = Length.zero,
+            borderBottom = Length.zero, borderLeft = Length.zero,
+            borderStyle = Style.BorderStyle.none,
+            borderColorTop = PackedColor.Transparent, borderColorRight = PackedColor.Transparent,
+            borderColorBottom = PackedColor.Transparent, borderColorLeft = PackedColor.Transparent,
             roundTL = false, roundTR = false, roundBR = false, roundBL = false,
-            direction = 0, justify = 0, align = 0, gap = 0,
-            flexGrow = 0.0, flexShrink = 1.0, flexWrap = 0,
-            width = SizeEnc.Auto, height = SizeEnc.Auto,
-            minWidth = 0, maxWidth = SizeEnc.Auto, minHeight = 0, maxHeight = SizeEnc.Auto,
-            overflow = 0, scrollTop = 0, scrollLeft = 0, position = 0)
-
-    private def sizeToInt(s: Style.Size): Int = s match
-        case Size.Px(v)  => v.toInt
-        case Size.Pct(v) => SizeEnc.pct(v)
-        case Size.Em(v)  => v.toInt
-        case Size.Auto   => SizeEnc.Auto
+            direction = Style.FlexDirection.row, justify = Style.Justification.start,
+            align = Style.Alignment.start, gap = Length.zero,
+            flexGrow = 0.0, flexShrink = 1.0, flexWrap = Style.FlexWrap.wrap,
+            width = Length.Auto, height = Length.Auto,
+            minWidth = Length.zero, maxWidth = Length.Auto,
+            minHeight = Length.zero, maxHeight = Length.Auto,
+            overflow = Style.Overflow.visible, scrollTop = 0, scrollLeft = 0,
+            position = Style.Position.flow)
 ```
 
 ### Layout: flex algorithm
@@ -2346,8 +2342,8 @@ object Layout:
     /** Measure intrinsic width of a node (without layout context). */
     private def measureWidth(node: Styled): Int = node match
         case Styled.Node(_, cs, _, children) =>
-            val w = SizeEnc.resolve(cs.width, Int.MaxValue)
-            if !SizeEnc.isAuto(cs.width) && w < Int.MaxValue then
+            val w = Length.resolve(cs.width, Int.MaxValue)
+            if !Length.isAuto(cs.width) && w < Int.MaxValue then
                 w
             else
                 val chrome = cs.padLeft + cs.padRight + cs.borderLeft + cs.borderRight +
@@ -2375,8 +2371,8 @@ object Layout:
     /** Measure intrinsic height of a node given a constrained width. */
     private def measureHeight(node: Styled, availW: Int): Int = node match
         case Styled.Node(_, cs, _, children) =>
-            val h = SizeEnc.resolve(cs.height, Int.MaxValue)
-            if !SizeEnc.isAuto(cs.height) && h < Int.MaxValue then h
+            val h = Length.resolve(cs.height, Int.MaxValue)
+            if !Length.isAuto(cs.height) && h < Int.MaxValue then h
             else
                 val chrome = cs.padTop + cs.padBottom + cs.borderTop + cs.borderBottom +
                              cs.marTop + cs.marBottom
@@ -2420,7 +2416,7 @@ object Layout:
             // 2. Compute box model rects
             val outerX = available.x + cs.marLeft
             val outerY = available.y + cs.marTop
-            val outerW = if resolvedW == SizeEnc.Auto then
+            val outerW = if resolvedW == Length.Auto then
                 available.w - cs.marLeft - cs.marRight
             else resolvedW
             val outerH = resolvedH  // may still be Auto
@@ -2452,13 +2448,13 @@ object Layout:
                 layoutTable(flow, contentX, contentY, contentW, clip, popups)
             else
                 layoutFlex(flow, cs, contentX, contentY, contentW,
-                    if outerH == SizeEnc.Auto then Int.MaxValue
+                    if outerH == Length.Auto then Int.MaxValue
                     else outerH - cs.borderTop - cs.borderBottom - cs.padTop - cs.padBottom,
                     clip, cs.overflow, cs.scrollTop, cs.scrollLeft, popups)
 
             // 5. Compute actual height if auto
             val actualContentH =
-                if outerH != SizeEnc.Auto then
+                if outerH != Length.Auto then
                     outerH - cs.borderTop - cs.borderBottom - cs.padTop - cs.padBottom
                 else
                     @tailrec def maxBottom(j: Int, maxY: Int): Int =
@@ -2471,7 +2467,7 @@ object Layout:
                             maxBottom(j + 1, math.max(maxY, bottom))
                     maxBottom(0, contentY)
 
-            val actualOuterH = if outerH == SizeEnc.Auto then
+            val actualOuterH = if outerH == Length.Auto then
                 actualContentH + cs.borderTop + cs.borderBottom + cs.padTop + cs.padBottom
             else outerH
 
@@ -2481,8 +2477,8 @@ object Layout:
                 else
                     val overlayLaid = overlays.map { styled =>
                         val ov = styled.asInstanceOf[Styled.Node]
-                        val ovX = contentX + SizeEnc.resolve(ov.computed.translateX, contentW)
-                        val ovY = contentY + SizeEnc.resolve(ov.computed.translateY, actualContentH)
+                        val ovX = contentX + Length.resolve(ov.computed.translateX, contentW)
+                        val ovY = contentY + Length.resolve(ov.computed.translateY, actualContentH)
                         arrange(ov, Rect(ovX, ovY, contentW, actualContentH), clip, popups)
                     }
                     laidChildren.concat(overlayLaid)
@@ -2499,7 +2495,7 @@ object Layout:
     // ---- Flex distribute algorithm ----
 
     private def layoutFlex(
-        children: Chunk[Styled], cs: ComputedStyle,
+        children: Chunk[Styled], cs: FlatStyle,
         cx: Int, cy: Int, cw: Int, ch: Int,
         clip: Rect, overflow: Int, scrollTop: Int, scrollLeft: Int,
         popups: ChunkBuilder[Laid]
@@ -2696,8 +2692,8 @@ object Layout:
     // ---- Helpers ----
 
     private def resolveDim(encoded: Int, parentPx: Int): Int =
-        if SizeEnc.isAuto(encoded) then SizeEnc.Auto
-        else SizeEnc.resolve(encoded, parentPx)
+        if Length.isAuto(encoded) then Length.Auto
+        else Length.resolve(encoded, parentPx)
 
     private def intersect(a: Rect, b: Rect): Rect =
         val x = math.max(a.x, b.x)
@@ -2754,14 +2750,14 @@ object Painter:
         val clip = n.clip
 
         // 1. Shadow
-        if cs.shadowColor != ColorEnc.Transparent &&
+        if cs.shadowColor != PackedColor.Transparent &&
            (cs.shadowX != 0 || cs.shadowY != 0 || cs.shadowSpread != 0) then
             paintShadow(grid, b, cs, clip)
 
         // 2. Background
         if cs.gradientDirection > 0 && cs.gradientStops.size >= 2 then
             paintGradient(grid, b, cs.gradientDirection, cs.gradientStops, clip)
-        else if cs.bg != ColorEnc.Transparent then
+        else if cs.bg != PackedColor.Transparent then
             fillBg(grid, b.x, b.y, b.w, b.h, cs.bg, clip)
 
         // 3. Border
@@ -2806,7 +2802,7 @@ object Painter:
     private val BoxDashed = Array('┌', '┄', '┐', '┆', '┆', '└', '┄', '┘')
     private val BoxDotted = Array('┌', '·', '┐', '·', '·', '└', '·', '┘')
 
-    private def paintBorder(grid: CellGrid, b: Rect, cs: ComputedStyle, clip: Rect): Unit =
+    private def paintBorder(grid: CellGrid, b: Rect, cs: FlatStyle, clip: Rect): Unit =
         val chars = cs.borderStyle match
             case 1 => BoxSolid  // solid
             case 2 => BoxDashed // dashed
@@ -2975,14 +2971,14 @@ object Painter:
         lerpColor(c1, c2, f)
 
     private def lerpColor(c1: Int, c2: Int, f: Double): Int =
-        val r = (ColorEnc.r(c1) * (1 - f) + ColorEnc.r(c2) * f).toInt
-        val g = (ColorEnc.g(c1) * (1 - f) + ColorEnc.g(c2) * f).toInt
-        val b = (ColorEnc.b(c1) * (1 - f) + ColorEnc.b(c2) * f).toInt
-        ColorEnc.pack(clamp(r), clamp(g), clamp(b))
+        val r = (PackedColor.r(c1) * (1 - f) + PackedColor.r(c2) * f).toInt
+        val g = (PackedColor.g(c1) * (1 - f) + PackedColor.g(c2) * f).toInt
+        val b = (PackedColor.b(c1) * (1 - f) + PackedColor.b(c2) * f).toInt
+        PackedColor.pack(clamp(r), clamp(g), clamp(b))
 
     // ---- Shadow painting ----
 
-    private def paintShadow(grid: CellGrid, b: Rect, cs: ComputedStyle, clip: Rect): Unit =
+    private def paintShadow(grid: CellGrid, b: Rect, cs: FlatStyle, clip: Rect): Unit =
         val sx = b.x + cs.shadowX - cs.shadowSpread
         val sy = b.y + cs.shadowY - cs.shadowSpread
         val sw = b.w + cs.shadowSpread * 2
@@ -3015,7 +3011,7 @@ object Painter:
 
     // ---- Filter application ----
 
-    private def applyFilters(grid: CellGrid, b: Rect, cs: ComputedStyle, clip: Rect): Unit =
+    private def applyFilters(grid: CellGrid, b: Rect, cs: FlatStyle, clip: Rect): Unit =
         var y = b.y
         while y < b.y + b.h do
             var x = b.x
@@ -3029,9 +3025,9 @@ object Painter:
                 x += 1
             y += 1
 
-    private def applyFilterChain(color: Int, cs: ComputedStyle): Int =
-        if color == ColorEnc.Transparent then return color
-        var r = ColorEnc.r(color); var g = ColorEnc.g(color); var b = ColorEnc.b(color)
+    private def applyFilterChain(color: Int, cs: FlatStyle): Int =
+        if color == PackedColor.Transparent then return color
+        var r = PackedColor.r(color); var g = PackedColor.g(color); var b = PackedColor.b(color)
 
         // Brightness: multiply RGB
         if cs.brightness != 1.0 then
@@ -3080,7 +3076,7 @@ object Painter:
             val (nr, ng, nb) = hslToRgb((h + cs.hueRotate) % 360.0, s, l)
             r = nr; g = ng; b = nb
 
-        ColorEnc.pack(r, g, b)
+        PackedColor.pack(r, g, b)
 
     // ---- Helpers ----
 
@@ -3195,11 +3191,11 @@ object Differ:
                         lastUnderline = cc.underline; lastStrikethrough = cc.strikethrough
                         lastDimmed = cc.dimmed
                     // Foreground color
-                    if cc.fg != lastFg && cc.fg != ColorEnc.Transparent then
+                    if cc.fg != lastFg && cc.fg != PackedColor.Transparent then
                         emit24bitFg(buf, cc.fg)
                         lastFg = cc.fg
                     // Background color
-                    if cc.bg != lastBg && cc.bg != ColorEnc.Transparent then
+                    if cc.bg != lastBg && cc.bg != PackedColor.Transparent then
                         emit24bitBg(buf, cc.bg)
                         lastBg = cc.bg
                     // Character
@@ -3234,17 +3230,17 @@ object Differ:
     private def emit24bitFg(buf: java.io.ByteArrayOutputStream, color: Int): Unit =
         buf.write(27); buf.write('['); buf.write('3'); buf.write('8'); buf.write(';')
         buf.write('2'); buf.write(';')
-        writeInt(buf, ColorEnc.r(color)); buf.write(';')
-        writeInt(buf, ColorEnc.g(color)); buf.write(';')
-        writeInt(buf, ColorEnc.b(color)); buf.write('m')
+        writeInt(buf, PackedColor.r(color)); buf.write(';')
+        writeInt(buf, PackedColor.g(color)); buf.write(';')
+        writeInt(buf, PackedColor.b(color)); buf.write('m')
 
     // ESC [ 48;2;r;g;b m
     private def emit24bitBg(buf: java.io.ByteArrayOutputStream, color: Int): Unit =
         buf.write(27); buf.write('['); buf.write('4'); buf.write('8'); buf.write(';')
         buf.write('2'); buf.write(';')
-        writeInt(buf, ColorEnc.r(color)); buf.write(';')
-        writeInt(buf, ColorEnc.g(color)); buf.write(';')
-        writeInt(buf, ColorEnc.b(color)); buf.write('m')
+        writeInt(buf, PackedColor.r(color)); buf.write(';')
+        writeInt(buf, PackedColor.g(color)); buf.write(';')
+        writeInt(buf, PackedColor.b(color)); buf.write('m')
 
     private def writeInt(buf: java.io.ByteArrayOutputStream, v: Int): Unit =
         if v >= 100 then
