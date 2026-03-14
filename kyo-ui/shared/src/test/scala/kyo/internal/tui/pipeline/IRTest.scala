@@ -296,4 +296,139 @@ class IRTest extends Test:
         }
     }
 
+    "Rect" - {
+        "contains point inside" in {
+            assert(Rect(0, 0, 10, 10).contains(5, 5))
+        }
+
+        "contains point on origin" in {
+            assert(Rect(0, 0, 10, 10).contains(0, 0))
+        }
+
+        "does not contain point at w,h" in {
+            // contains uses < not <=
+            assert(!Rect(0, 0, 10, 10).contains(10, 10))
+        }
+
+        "does not contain point outside" in {
+            assert(!Rect(5, 5, 10, 10).contains(4, 5))
+        }
+
+        "zero-size rect contains nothing" in {
+            assert(!Rect(5, 5, 0, 0).contains(5, 5))
+        }
+
+        "intersect overlapping" in {
+            val r = Rect(0, 0, 10, 10).intersect(Rect(5, 5, 10, 10))
+            assert(r == Rect(5, 5, 5, 5))
+        }
+
+        "intersect non-overlapping" in {
+            val r = Rect(0, 0, 5, 5).intersect(Rect(10, 10, 5, 5))
+            assert(r.w == 0 || r.h == 0)
+        }
+
+        "intersect identical" in {
+            val r = Rect(3, 3, 7, 7).intersect(Rect(3, 3, 7, 7))
+            assert(r == Rect(3, 3, 7, 7))
+        }
+    }
+
+    "RGB edge cases" - {
+        "Transparent component extraction" in {
+            // RGB.Transparent = -1 as Int. Extracting r/g/b from -1:
+            // (-1 >> 16) & 0xff = 255, (-1 >> 8) & 0xff = 255, (-1) & 0xff = 255
+            // This means Transparent looks like white when components are extracted
+            val t = RGB.Transparent
+            assert(t.r == 255)
+            assert(t.g == 255)
+            assert(t.b == 255)
+        }
+
+        "lerp f=0 returns first color" in {
+            val a      = RGB(100, 50, 25)
+            val b      = RGB(200, 100, 50)
+            val result = a.lerp(b, 0.0)
+            assert(result.r == 100)
+            assert(result.g == 50)
+            assert(result.b == 25)
+        }
+
+        "lerp f=1 returns second color" in {
+            val a      = RGB(100, 50, 25)
+            val b      = RGB(200, 100, 50)
+            val result = a.lerp(b, 1.0)
+            assert(result.r == 200)
+            assert(result.g == 100)
+            assert(result.b == 50)
+        }
+
+        "lerp f=0.5 returns midpoint" in {
+            val a      = RGB(0, 0, 0)
+            val b      = RGB(200, 100, 50)
+            val result = a.lerp(b, 0.5)
+            assert(result.r == 100)
+            assert(result.g == 50)
+            assert(result.b == 25)
+        }
+
+        "invert white to black" in {
+            val w   = RGB(255, 255, 255)
+            val inv = w.invert
+            assert(inv.r == 0)
+            assert(inv.g == 0)
+            assert(inv.b == 0)
+        }
+
+        "invert black to white" in {
+            val b   = RGB(0, 0, 0)
+            val inv = b.invert
+            assert(inv.r == 255)
+            assert(inv.g == 255)
+            assert(inv.b == 255)
+        }
+
+        "clamp negative" in {
+            assert(RGB.clamp(-10) == 0)
+        }
+
+        "clamp above 255" in {
+            assert(RGB.clamp(300) == 255)
+        }
+
+        "clamp in range" in {
+            assert(RGB.clamp(128) == 128)
+        }
+    }
+
+    "Length" - {
+        "resolve Pct of 0 parent" in {
+            assert(Length.resolve(Length.Pct(50), 0) == 0)
+        }
+
+        "resolve Auto fills parent" in {
+            assert(Length.resolve(Length.Auto, 100) == 100)
+        }
+
+        "resolveOrAuto Auto returns Absent" in {
+            assert(Length.resolveOrAuto(Length.Auto, 100).isEmpty)
+        }
+
+        "resolveOrAuto Px returns Present" in {
+            assert(Length.resolveOrAuto(Length.Px(42), 100) == Maybe(42))
+        }
+
+        "toPx Em converts" in {
+            assert(Length.toPx(Length.Em(3)) == Length.Px(3))
+        }
+
+        "toPx Pct returns zero" in {
+            assert(Length.toPx(Length.Pct(50)) == Length.zero)
+        }
+
+        "toPx Auto returns zero" in {
+            assert(Length.toPx(Length.Auto) == Length.zero)
+        }
+    }
+
 end IRTest

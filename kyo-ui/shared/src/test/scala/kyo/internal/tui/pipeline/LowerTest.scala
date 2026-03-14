@@ -224,4 +224,60 @@ class LowerTest extends Test:
         }
     }
 
+    "radio" - {
+        "unchecked shows ( )" in run {
+            lowerUI(UI.radio).map { result =>
+                result.tree match
+                    case Resolved.Node(_, _, _, children) =>
+                        children(0) match
+                            case Resolved.Text(v) => assert(v == "( )")
+                            case _                => fail("expected Text")
+                    case _ => fail("expected Node")
+            }
+        }
+    }
+
+    "hiddenInput" - {
+        "filtered out" in run {
+            lowerUI(UI.hiddenInput).map { result =>
+                result.tree match
+                    case Resolved.Text(v) => assert(v == "")
+                    case _                => fail("expected empty Text for hidden input")
+            }
+        }
+    }
+
+    "disabled" - {
+        "button disabled not in focusableIds" in run {
+            lowerUI(UI.button.disabled(true).tabIndex(0)("click")).map { result =>
+                assert(result.focusableIds.isEmpty)
+            }
+        }
+    }
+
+    "handler composition" - {
+        "onClick handlers have widgetKey" in run {
+            lowerUI(
+                UI.div.onClick(())("inner")
+            ).map { result =>
+                result.tree match
+                    case Resolved.Node(_, _, handlers, _) =>
+                        assert(handlers.widgetKey.nonEmpty)
+                    case _ => fail("expected Node")
+            }
+        }
+    }
+
+    "theme" - {
+        "h1 gets bold style in Default theme" in run {
+            lowerUI(UI.h1("Title")).map { result =>
+                result.tree match
+                    case Resolved.Node(_, style, _, _) =>
+                        // Theme should add bold
+                        assert(style.props.exists(_.isInstanceOf[Style.Prop.FontWeightProp]))
+                    case _ => fail("expected Node")
+            }
+        }
+    }
+
 end LowerTest

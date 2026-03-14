@@ -210,4 +210,68 @@ class PainterTest extends Test:
         }
     }
 
+    "border styles" - {
+        "dashed border uses ┄" in {
+            val cs = defaultStyle.copy(
+                borderTop = 1.px,
+                borderRight = 1.px,
+                borderBottom = 1.px,
+                borderLeft = 1.px,
+                borderStyle = Style.BorderStyle.dashed,
+                borderColorTop = gray,
+                borderColorRight = gray,
+                borderColorBottom = gray,
+                borderColorLeft = gray
+            )
+            val grid = paintSingle(boxNode(cs, bounds = Rect(0, 0, 5, 3)))
+            assert(grid.cells(1).char == '┄') // dashed top edge
+        }
+
+        "none border draws no chars" in {
+            val cs   = defaultStyle.copy(borderStyle = Style.BorderStyle.none)
+            val grid = paintSingle(boxNode(cs, bounds = Rect(0, 0, 5, 3)))
+            assert(grid.cells(0).char == '\u0000') // no border drawn
+        }
+    }
+
+    "transparent background" - {
+        "cells not changed" in {
+            val cs   = defaultStyle.copy(bg = RGB.Transparent)
+            val grid = paintSingle(boxNode(cs, bounds = Rect(0, 0, 3, 2)))
+            // Transparent bg should NOT overwrite cells
+            assert(grid.cells(0).bg == RGB(0, 0, 0)) // stays at Cell.Empty bg
+        }
+    }
+
+    "cursor edge cases" - {
+        "cursor on empty cell shows block" in {
+            val cursor = Laid.Cursor(Rect(0, 0, 1, 1))
+            val parent = boxNode(children = Chunk(cursor))
+            val grid   = paintSingle(parent)
+            assert(grid.cells(0).char == '█')
+        }
+
+        "cursor at grid boundary" in {
+            val cursor = Laid.Cursor(Rect(19, 9, 1, 1)) // last cell in 20x10
+            val parent = boxNode(children = Chunk(cursor))
+            val grid   = paintSingle(parent)
+            // Should not crash
+            assert(grid.cells(9 * 20 + 19).char == '█')
+        }
+
+        "cursor outside grid does not crash" in {
+            val cursor = Laid.Cursor(Rect(100, 100, 1, 1)) // way outside
+            val parent = boxNode(children = Chunk(cursor))
+            val grid   = paintSingle(parent)               // should not throw
+            succeed
+        }
+    }
+
+    "empty children" - {
+        "no crash in paintBox" in {
+            val grid = paintSingle(boxNode(children = Chunk.empty))
+            succeed
+        }
+    }
+
 end PainterTest

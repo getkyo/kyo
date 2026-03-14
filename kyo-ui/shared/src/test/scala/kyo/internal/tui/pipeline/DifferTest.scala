@@ -70,6 +70,28 @@ class DifferTest extends Test:
             assert(s.contains("\u001b[1m"))
         }
 
+        "bg color emits SGR 48" in {
+            val prev   = CellGrid.empty(1, 1)
+            val curr   = gridWith(1, 1, 0 -> Cell('A', white, red, false, false, false, false, false))
+            val result = Differ.diff(prev, curr)
+            val s      = new String(result, "UTF-8")
+            assert(s.contains("48;2;255;0;0")) // bg color
+        }
+
+        "transparent fg not emitted" in {
+            val prev   = CellGrid.empty(1, 1)
+            val curr   = gridWith(1, 1, 0 -> Cell('A', RGB.Transparent, black, false, false, false, false, false))
+            val result = Differ.diff(prev, curr)
+            val s      = new String(result, "UTF-8")
+            assert(!s.contains("38;2;")) // no fg color emitted
+        }
+
+        "empty grid produces empty output" in {
+            val grid   = CellGrid.empty(0, 0)
+            val result = Differ.diff(grid, grid)
+            assert(result.isEmpty)
+        }
+
         "rawSequences appended after cells" in {
             val prev   = CellGrid.empty(2, 2)
             val data   = "IMG".getBytes("UTF-8")
