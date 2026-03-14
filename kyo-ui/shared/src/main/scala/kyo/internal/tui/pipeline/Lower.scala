@@ -1,4 +1,4 @@
-package kyo.internal.tui2.pipeline
+package kyo.internal.tui.pipeline
 
 import kyo.*
 import kyo.Length.*
@@ -32,7 +32,7 @@ object Lower:
 
     def lower(ui: UI, state: ScreenState)(using AllowUnsafe, Frame): LowerResult < (Async & Scope) =
         // Phase 1: materialize all Signals into cached SignalRef.Unsafe (creates piping fibers)
-        materialize(ui, state, Chunk.empty).map { _ =>
+        materialize(ui, state, Chunk.empty).andThen {
             // Phase 2: side-effectful lowering under AllowUnsafe
             // Reads cached SignalRef.Unsafe.get(), mutates ChunkBuilder
             val focusables = ChunkBuilder.init[WidgetKey]
@@ -59,7 +59,7 @@ object Lower:
 
             case fe: UI.internal.Foreach[?] =>
                 val key = WidgetKey(fe.frame, dynamicPath)
-                materializeSignal[Chunk[Any]](fe.signal.asInstanceOf[Signal[Chunk[Any]]], key, "items", state).map(_ => ())
+                materializeSignal[Chunk[Any]](fe.signal.asInstanceOf[Signal[Chunk[Any]]], key, "items", state).unit
 
             case elem: UI.Element =>
                 val key = WidgetKey(elem.frame, dynamicPath)
@@ -68,19 +68,19 @@ object Lower:
                 )
 
     private def materializeElement(elem: UI.Element, key: WidgetKey, state: ScreenState)(using Frame): Unit < (Async & Scope) =
-        val styleEffect = elem.attrs.uiStyle match
-            case _: Style       => (): Unit < (Async & Scope)
-            case sig: Signal[?] => materializeSignal[Style](sig.asInstanceOf[Signal[Style]], key, "style", state).map(_ => ())
+        val styleEffect: Unit < (Async & Scope) = elem.attrs.uiStyle match
+            case _: Style       => ()
+            case sig: Signal[?] => materializeSignal[Style](sig.asInstanceOf[Signal[Style]], key, "style", state).unit
 
         val hiddenEffect = materializeMaybeBoolSignal(elem.attrs.hidden, key, "hidden", state)
 
-        val disabledEffect = elem match
+        val disabledEffect: Unit < (Async & Scope) = elem match
             case hd: UI.HasDisabled => materializeMaybeBoolSignal(hd.disabled, key, "disabled", state)
-            case _                  => (): Unit < (Async & Scope)
+            case _                  => ()
 
-        val checkedEffect = elem match
+        val checkedEffect: Unit < (Async & Scope) = elem match
             case bi: UI.BooleanInput => materializeMaybeBoolSignal(bi.checked, key, "checked", state)
-            case _                   => (): Unit < (Async & Scope)
+            case _                   => ()
 
         styleEffect.andThen(hiddenEffect).andThen(disabledEffect).andThen(checkedEffect)
     end materializeElement
@@ -126,7 +126,7 @@ object Lower:
         else
             value.get match
                 case _: Boolean     => ()
-                case sig: Signal[?] => materializeSignal[Boolean](sig.asInstanceOf[Signal[Boolean]], key, suffix, state).map(_ => ())
+                case sig: Signal[?] => materializeSignal[Boolean](sig.asInstanceOf[Signal[Boolean]], key, suffix, state).unit
 
     // ---- Phase 2: Core recursive walk (side-effectful under AllowUnsafe, no Async & Scope) ----
 

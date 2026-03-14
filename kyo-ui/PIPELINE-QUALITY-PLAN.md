@@ -2,7 +2,7 @@
 
 Goal: all pipeline code is **correct, simple, safe, readable, and modular**.
 
-This plan covers `kyo-ui/shared/src/main/scala/kyo/internal/tui2/pipeline/` and establishes standards for all future phases.
+This plan covers `kyo-ui/shared/src/main/scala/kyo/internal/tui/pipeline/` and establishes standards for all future phases.
 
 ---
 
@@ -173,3 +173,24 @@ These are justified — they represent actual counts or pixel coordinates, not e
 - `FlatStyle.lineHeight` — integer multiplier
 - `FlatStyle.scrollTop/Left` — pixel offsets
 - `Handlers.tabIndex: Maybe[Int]` — focus order
+
+---
+
+## Follow-up items
+
+Things to address in future sessions:
+
+### Code quality
+- **Math methods on `Length`** — add `+`, `-`, `*`, `/` where they make sense to avoid `.value.toInt` scattered through Layout and Painter
+- **Full code review** — read through all pipeline files end-to-end now that the pipeline is complete, looking for readability improvements, missing scaladocs, and patterns that could be simplified
+- **Dispatch and Pipeline tests** — Dispatch and Pipeline have no dedicated test files yet. The integration tests in PipelineTest cover basic wiring but don't test hitTest, findByKey, cycleFocus, forId redirect, etc.
+
+### Backend
+- **TuiBackend** — shared code, wire Pipeline with terminal I/O. Runs in `Async & Scope`. Needs raw terminal mode, ANSI output, input event loop
+- **TerminalEmulator** — JVM-only headless testing harness. Wraps Pipeline with a simulated terminal for snapshot testing
+- **Input parsing** — convert raw terminal input bytes to `InputEvent` (keyboard, mouse, paste)
+- **Signal change detection** — detect when SignalRef values change and trigger re-render automatically
+
+### Plan maintenance
+- **Update IMPLEMENTATION-PLAN.md** — some detailed algorithm listings are stale (Lower, Dispatch). The pseudocode was updated for quality patterns but may diverge from actual implementation
+- **Update PIPELINE-QUALITY-PLAN.md** — add rules about `AllowUnsafe` discipline: unsafe reads to set up computations, no unsafe in composed effects. Add rules about `.andThen` over `.map(_ =>)` and `.unit` over `.map(_ => ())`

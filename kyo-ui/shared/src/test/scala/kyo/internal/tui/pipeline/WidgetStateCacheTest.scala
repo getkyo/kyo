@@ -1,4 +1,4 @@
-package kyo.internal.tui2.pipeline
+package kyo.internal.tui.pipeline
 
 import kyo.*
 import kyo.Test

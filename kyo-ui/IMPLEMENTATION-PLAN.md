@@ -2,13 +2,13 @@
 
 New backend from scratch. UI and Style APIs stay unchanged.
 
-> **Important:** The old tui2 backend code (RenderCtx, EventDispatch, WidgetRegistry, Terminal.scala, InputParser.scala, InputEvent, SignalCollector.scala, ColorUtils.scala, ResolvedTheme.scala, and all old backend/renderer files) has been **deleted**. Do not search for or reference any of these files — they no longer exist in the codebase. The motivation section below describes the old architecture's problems for context only.
+> **Important:** The old tui backend code (RenderCtx, EventDispatch, WidgetRegistry, Terminal.scala, InputParser.scala, InputEvent, SignalCollector.scala, ColorUtils.scala, ResolvedTheme.scala, and all old backend/renderer files) has been **deleted**. Do not search for or reference any of these files — they no longer exist in the codebase. The motivation section below describes the old architecture's problems for context only.
 
 ---
 
 ## Motivation
 
-The previous tui2 renderer (now deleted) accumulated architectural problems across multiple sessions. Every bug fix followed the same pattern: state added to `RenderCtx` (a god object visible to all widgets), special cases added to `EventDispatch` (a central switch statement), fixes applied to whichever file was open rather than where responsibility belongs.
+The previous tui renderer (now deleted) accumulated architectural problems across multiple sessions. Every bug fix followed the same pattern: state added to `RenderCtx` (a god object visible to all widgets), special cases added to `EventDispatch` (a central switch statement), fixes applied to whichever file was open rather than where responsibility belongs.
 
 **The pattern:** Select dropdown required 9 mutable fields on RenderCtx, code in 6 files, 11 separate code locations. A developer touching any of them must understand all 11 to avoid breaking the dropdown.
 
@@ -129,7 +129,7 @@ Two pieces of state are **not** `SignalRef` because they're frame-local outputs,
 - `UIBackend.scala` — backend trait
 - `UISession.scala` — session type
 
-> **Note:** All old tui2 internal code has been deleted (RenderCtx, EventDispatch, WidgetRegistry, Terminal.scala, InputParser.scala, InputEvent, SignalCollector.scala, ColorUtils.scala, ResolvedTheme.scala). These must be rebuilt as part of this plan or replaced by new pipeline equivalents. Do not search for them.
+> **Note:** All old tui internal code has been deleted (RenderCtx, EventDispatch, WidgetRegistry, Terminal.scala, InputParser.scala, InputEvent, SignalCollector.scala, ColorUtils.scala, ResolvedTheme.scala). These must be rebuilt as part of this plan or replaced by new pipeline equivalents. Do not search for them.
 
 ---
 
@@ -319,7 +319,7 @@ All pipeline code in `shared/` (cross-platform). Only terminal I/O in `jvm/`.
 ### New files
 
 ```
-shared/src/main/scala/kyo/internal/tui2/pipeline/
+shared/src/main/scala/kyo/internal/tui/pipeline/
 ├── IR.scala              # All IR types: Resolved, Styled, Laid, CellGrid, FlatStyle, Handlers
 ├── ScreenState.scala      # ScreenState + WidgetStateCache
 ├── Lower.scala           # UI → Resolved
@@ -335,7 +335,7 @@ jvm/src/main/scala/kyo/
 ├── Tui2Backend.scala     # Backend: terminal I/O + main loop using Pipeline
 ├── TerminalEmulator.scala # Headless testing harness using Pipeline
 
-shared/src/test/scala/kyo/internal/tui2/pipeline/
+shared/src/test/scala/kyo/internal/tui/pipeline/
 ├── IRTest.scala
 ├── LowerTest.scala
 ├── StylerTest.scala
@@ -405,7 +405,7 @@ Key properties:
 
 **Goal:** Define all intermediate representation types as immutable data.
 
-**File:** `shared/src/main/scala/kyo/internal/tui2/pipeline/IR.scala`
+**File:** `shared/src/main/scala/kyo/internal/tui/pipeline/IR.scala`
 
 Everything in this file is immutable. No `var`, no mutable collections, no side effects.
 
@@ -1554,7 +1554,7 @@ def renderToString(ui: UI, cols: Int, rows: Int, theme: Theme = Theme.Default)(u
 
 **Estimated size:** ~250 lines total across backend files
 
-**Review checkpoint:** Phase complete when Tui2Backend, TerminalEmulator, and renderToString compile with all 6+ integration tests passing. Final phase — review focuses on terminal I/O correctness and headless testing harness. Present for final review.
+**Review checkpoint:** ✅ Partial — `RenderToString` and `Pipeline` integration tests complete (6 tests). `RenderToString.render` suspends state creation with `Sync.Unsafe.defer`, returns `String < (Async & Scope)`. `Pipeline.dispatchEvent` returns `Unit < Async`. Terminal I/O backend (Tui2Backend, TerminalEmulator) deferred to JVM-specific implementation.
 
 ---
 
