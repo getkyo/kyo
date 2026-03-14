@@ -1348,8 +1348,8 @@ object Dispatch:
 
     private def cycleFocus(state: ScreenState, layout: LayoutResult, reverse: Boolean)(using AllowUnsafe): Unit =
         val ids = state.focusableIds
-        if ids.isEmpty then return
-        val current = state.focusedId.unsafe.get()
+        if ids.nonEmpty then
+            val current = state.focusedId.unsafe.get()
         val currentIdx = current.map(k => ids.indexOf(k)).getOrElse(-1)
         val nextIdx = if reverse then
             if currentIdx <= 0 then ids.size - 1 else currentIdx - 1
@@ -1735,8 +1735,9 @@ private def lowerElement(
         withPseudo ++ extractPseudoStyle(baseStyle, classOf[Prop.DisabledProp])
     else withPseudo
 
-    // 7. Check displayNone
-    if finalStyle.find[Prop.HiddenProp].nonEmpty then return Resolved.Text("")
+    // 7. Check displayNone — early exit via if/else, not return
+    if finalStyle.find[Prop.HiddenProp].nonEmpty then Resolved.Text("")
+    else
 
     // 8. Build base handlers from Attrs (noop defaults for unset handlers)
     val baseHandlers = buildHandlers(elem, key, disabled)
@@ -2349,7 +2350,7 @@ object Layout:
                 val chrome = cs.padLeft + cs.padRight + cs.borderLeft + cs.borderRight +
                              cs.marLeft + cs.marRight
                 val childrenWidth =
-                    if cs.direction == 0 then // column
+                    if cs.direction == Style.FlexDirection.column then // column
                         @tailrec def maxWidth(i: Int, max: Int): Int =
                             if i >= children.size then max
                             else maxWidth(i + 1, math.max(max, measureWidth(children(i))))
@@ -2378,7 +2379,7 @@ object Layout:
                              cs.marTop + cs.marBottom
                 val contentW = availW - chrome
                 val childrenHeight =
-                    if cs.direction == 0 then // column: sum heights + gaps
+                    if cs.direction == Style.FlexDirection.column then // column: sum heights + gaps
                         @tailrec def sumHeight(i: Int, sum: Int): Int =
                             if i >= children.size then sum
                             else sumHeight(i + 1, sum + measureHeight(children(i), contentW) + (if i > 0 then cs.gap else 0))
@@ -2436,7 +2437,7 @@ object Layout:
                             available.w, available.h)
                         popups.add(arrange(n, popupRect, Rect(0, 0, available.w, available.h), popups))
                         categorize(i + 1, flow, overlays)
-                    case n: Styled.Node if n.computed.position == 1 =>
+                    case n: Styled.Node if n.style.position == Style.Position.overlay =>
                         categorize(i + 1, flow, overlays.append(n))
                     case other =>
                         categorize(i + 1, flow.append(other), overlays)
@@ -2477,14 +2478,14 @@ object Layout:
                 else
                     val overlayLaid = overlays.map { styled =>
                         val ov = styled.asInstanceOf[Styled.Node]
-                        val ovX = contentX + Length.resolve(ov.computed.translateX, contentW)
-                        val ovY = contentY + Length.resolve(ov.computed.translateY, actualContentH)
+                        val ovX = contentX + Length.resolve(ov.style.translateX, contentW)
+                        val ovY = contentY + Length.resolve(ov.style.translateY, actualContentH)
                         arrange(ov, Rect(ovX, ovY, contentW, actualContentH), clip, popups)
                     }
                     laidChildren.concat(overlayLaid)
 
             // 7. Compute clip for children
-            val childClip = if cs.overflow == 1 || cs.overflow == 2 then // hidden or scroll
+            val childClip = if cs.overflow == Style.Overflow.hidden || cs.overflow == Style.Overflow.scroll then
                 intersect(clip, Rect(contentX, contentY, contentW, actualContentH))
             else clip
 
@@ -2500,9 +2501,10 @@ object Layout:
         clip: Rect, overflow: Int, scrollTop: Int, scrollLeft: Int,
         popups: ChunkBuilder[Laid]
     ): Chunk[Laid] =
-        if children.isEmpty then return Chunk.empty
+        if children.isEmpty then Chunk.empty
+        else
 
-        val isColumn = cs.direction == 0
+        val isColumn = cs.direction == Style.FlexDirection.column
         val mainSize = if isColumn then ch else cw
         val crossSize = if isColumn then cw else ch
         val n = children.size
@@ -2522,8 +2524,8 @@ object Layout:
                     case nd: Styled.Node =>
                         childMainSizes(i) = if isColumn then measureHeight(nd, cw) else measureWidth(nd)
                         childCrossSizes(i) = if isColumn then measureWidth(nd) else measureHeight(nd, cw)
-                        childGrow(i) = nd.computed.flexGrow
-                        childShrink(i) = nd.computed.flexShrink
+                        childGrow(i) = nd.style.flexGrow
+                        childShrink(i) = nd.style.flexShrink
                     case t: Styled.Text =>
                         childMainSizes(i) = if isColumn then measureHeight(t, cw) else measureWidth(t)
                         childCrossSizes(i) = if isColumn then measureWidth(t) else measureHeight(t, cw)
@@ -2590,7 +2592,7 @@ object Layout:
                     case 3 => 0                              // stretch
                     case _ => 0
 
-                val childCrossActual = if cs.align == 3 then crossSize else childCross
+                val childCrossActual = if cs.align == Style.Alignment.stretch then crossSize else childCross
 
                 val (childX, childY, childW, childH) = if isColumn then
                     (cx + crossPos - scrollLeft, cy + mainPos - scrollTop,
@@ -2627,7 +2629,8 @@ object Layout:
                 case _ => countCols(i + 1, maxCols)
         val numCols = countCols(0, 0)
 
-        if numCols == 0 then return Chunk.empty
+        if numCols == 0 then Chunk.empty
+        else
 
         // 2. Measure intrinsic column widths (mutable array — accumulating max per column)
         val colWidths = new Array[Int](numCols)
@@ -2679,7 +2682,7 @@ object Layout:
                             layoutCells(j + 1, col + colspan, cellX + cellW,
                                 math.max(rowHeight, cellH), cells.append(laid))
                     val (cellLaid, rowHeight) = layoutCells(0, 0, cx, 0, Chunk.empty)
-                    val rowNode = Laid.Node(ElemTag.Div, row.computed, row.handlers,
+                    val rowNode = Laid.Node(ElemTag.Div, row.style, row.handlers,
                         Rect(cx, rowY, cw, rowHeight),
                         Rect(cx, rowY, cw, rowHeight),
                         clip, cellLaid)
@@ -2703,7 +2706,7 @@ object Layout:
         Rect(x, y, math.max(0, r - x), math.max(0, bot - y))
 
     private def splitLines(text: String, maxWidth: Int, textWrap: Int): Chunk[String] =
-        if textWrap == 1 then // noWrap
+        if textWrap == Style.TextWrap.noWrap then // noWrap
             Chunk(text)
         else
             val parts = text.split('\n')
@@ -2728,6 +2731,9 @@ object Layout:
 object Painter:
     import scala.annotation.tailrec
 
+    val white = PackedColor(255, 255, 255)
+    val black = PackedColor(0, 0, 0)
+
     def paint(layout: LayoutResult, viewport: Rect): (CellGrid, CellGrid) =
         val base = CellGrid.empty(viewport.w, viewport.h)
         paintNode(layout.base, base)
@@ -2745,23 +2751,26 @@ object Painter:
         case c: Laid.Cursor => paintCursor(c, grid)
 
     private def paintBoxNode(n: Laid.Node, grid: CellGrid): Unit =
-        val cs = n.computed
+        val cs = n.style
         val b = n.bounds
         val clip = n.clip
 
         // 1. Shadow
         if cs.shadowColor != PackedColor.Transparent &&
-           (cs.shadowX != 0 || cs.shadowY != 0 || cs.shadowSpread != 0) then
+           (cs.shadowX.value != 0 || cs.shadowY.value != 0 || cs.shadowSpread.value != 0) then
             paintShadow(grid, b, cs, clip)
 
         // 2. Background
-        if cs.gradientDirection > 0 && cs.gradientStops.size >= 2 then
-            paintGradient(grid, b, cs.gradientDirection, cs.gradientStops, clip)
-        else if cs.bg != PackedColor.Transparent then
-            fillBg(grid, b.x, b.y, b.w, b.h, cs.bg, clip)
+        cs.gradientDirection match
+            case Present(dir) if cs.gradientStops.size >= 2 =>
+                paintGradient(grid, b, dir, cs.gradientStops, clip)
+            case _ =>
+                if cs.bg != PackedColor.Transparent then
+                    fillBg(grid, b.x, b.y, b.w, b.h, cs.bg, clip)
 
         // 3. Border
-        if cs.borderTop > 0 || cs.borderRight > 0 || cs.borderBottom > 0 || cs.borderLeft > 0 then
+        if cs.borderTop.value > 0 || cs.borderRight.value > 0 ||
+           cs.borderBottom.value > 0 || cs.borderLeft.value > 0 then
             paintBorder(grid, b, cs, clip)
 
         // 4. Image
@@ -2783,137 +2792,110 @@ object Painter:
 
     // ---- Background fill ----
 
-    private def fillBg(grid: CellGrid, x: Int, y: Int, w: Int, h: Int, bg: Int, clip: Rect): Unit =
-        var row = y
-        while row < y + h do
-            var col = x
-            while col < x + w do
-                if inClip(col, row, clip) && inBounds(col, row, grid) then
-                    val idx = row * grid.width + col
-                    val existing = grid.cells(idx)
-                    grid.cells(idx) = existing.copy(bg = bg)
-                col += 1
-            row += 1
+    private def fillBg(grid: CellGrid, x: Int, y: Int, w: Int, h: Int, bg: PackedColor, clip: Rect): Unit =
+        @tailrec def eachRow(row: Int): Unit =
+            if row < y + h then
+                @tailrec def eachCol(col: Int): Unit =
+                    if col < x + w then
+                        if inClip(col, row, clip) && inBounds(col, row, grid) then
+                            val idx = row * grid.width + col
+                            grid.cells(idx) = grid.cells(idx).copy(bg = bg)
+                        eachCol(col + 1)
+                eachCol(x)
+                eachRow(row + 1)
+        eachRow(y)
 
     // ---- Border drawing ----
 
-    private val BoxSolid = Array('┌', '─', '┐', '│', '│', '└', '─', '┘')
-    private val BoxRound = Array('╭', '─', '╮', '│', '│', '╰', '─', '╯')
+    private val BoxSolid  = Array('┌', '─', '┐', '│', '│', '└', '─', '┘')
+    private val BoxRound  = Array('╭', '─', '╮', '│', '│', '╰', '─', '╯')
     private val BoxDashed = Array('┌', '┄', '┐', '┆', '┆', '└', '┄', '┘')
     private val BoxDotted = Array('┌', '·', '┐', '·', '·', '└', '·', '┘')
 
     private def paintBorder(grid: CellGrid, b: Rect, cs: FlatStyle, clip: Rect): Unit =
         val chars = cs.borderStyle match
-            case 1 => BoxSolid  // solid
-            case 2 => BoxDashed // dashed
-            case 3 => BoxDotted // dotted
-            case _ => BoxSolid
+            case Style.BorderStyle.solid  => BoxSolid
+            case Style.BorderStyle.dashed => BoxDashed
+            case Style.BorderStyle.dotted => BoxDotted
+            case Style.BorderStyle.none   => BoxSolid
 
-        val x1 = b.x; val y1 = b.y
-        val x2 = b.x + b.w - 1; val y2 = b.y + b.h - 1
+        val x1 = b.x
+        val y1 = b.y
+        val x2 = b.x + b.w - 1
+        val y2 = b.y + b.h - 1
 
         // Corners
-        if cs.borderTop > 0 && cs.borderLeft > 0 then
+        if cs.borderTop.value > 0 && cs.borderLeft.value > 0 then
             val ch = if cs.roundTL then BoxRound(0) else chars(0)
             setCell(grid, x1, y1, ch, cs.borderColorTop, cs.bg, clip)
-        if cs.borderTop > 0 && cs.borderRight > 0 then
-            val ch = if cs.roundTR then BoxRound(2) else chars(2)
-            setCell(grid, x2, y1, ch, cs.borderColorTop, cs.bg, clip)
-        if cs.borderBottom > 0 && cs.borderLeft > 0 then
-            val ch = if cs.roundBL then BoxRound(5) else chars(5)
-            setCell(grid, x1, y2, ch, cs.borderColorBottom, cs.bg, clip)
-        if cs.borderBottom > 0 && cs.borderRight > 0 then
-            val ch = if cs.roundBR then BoxRound(7) else chars(7)
-            setCell(grid, x2, y2, ch, cs.borderColorBottom, cs.bg, clip)
+        // ... (same pattern for TR, BL, BR corners)
 
-        // Top edge
-        if cs.borderTop > 0 then
-            var col = x1 + 1
-            while col < x2 do
-                setCell(grid, col, y1, chars(1), cs.borderColorTop, cs.bg, clip)
-                col += 1
-
-        // Bottom edge
-        if cs.borderBottom > 0 then
-            var col = x1 + 1
-            while col < x2 do
-                setCell(grid, col, y2, chars(6), cs.borderColorBottom, cs.bg, clip)
-                col += 1
-
-        // Left edge
-        if cs.borderLeft > 0 then
-            var row = y1 + 1
-            while row < y2 do
-                setCell(grid, x1, row, chars(3), cs.borderColorLeft, cs.bg, clip)
-                row += 1
-
-        // Right edge
-        if cs.borderRight > 0 then
-            var row = y1 + 1
-            while row < y2 do
-                setCell(grid, x2, row, chars(4), cs.borderColorRight, cs.bg, clip)
-                row += 1
+        // Edges — @tailrec loops, not while
+        if cs.borderTop.value > 0 then
+            @tailrec def topEdge(col: Int): Unit =
+                if col < x2 then
+                    setCell(grid, col, y1, chars(1), cs.borderColorTop, cs.bg, clip)
+                    topEdge(col + 1)
+            topEdge(x1 + 1)
+        // ... (same pattern for bottom, left, right edges)
 
     // ---- Text painting ----
 
     private def paintText(t: Laid.Text, grid: CellGrid): Unit =
-        val cs = t.computed
-        var text = t.value
+        val cs = t.style
+        val spacing = Length.resolve(cs.letterSpacing, 0)
 
-        // Text transform
-        text = cs.textTransform match
-            case 1 => text.toUpperCase      // uppercase
-            case 2 => text.toLowerCase      // lowercase
-            case 3 => text.capitalize       // capitalize (first char upper)
-            case _ => text                  // none
+        // Text transform — match on enum
+        val text = cs.textTransform match
+            case Style.TextTransform.uppercase  => t.value.toUpperCase
+            case Style.TextTransform.lowercase  => t.value.toLowerCase
+            case Style.TextTransform.capitalize => t.value.capitalize
+            case Style.TextTransform.none       => t.value
 
-        // Split into lines
-        val maxCharsPerLine = t.bounds.w / math.max(1, 1 + cs.letterSpacing)
+        val maxCharsPerLine = t.bounds.w / math.max(1, 1 + spacing)
         val lines = splitLines(text, maxCharsPerLine, cs.textWrap)
 
-        var lineY = t.bounds.y
-        var lineIdx = 0
-        while lineIdx < lines.size do
-            val line = lines(lineIdx)
+        @tailrec def eachLine(lineIdx: Int, lineY: Int): Unit =
+            if lineIdx < lines.size then
+                val line = lines(lineIdx)
 
-            // Text overflow: ellipsis
-            val displayLine = if cs.textOverflow == 1 && line.length > maxCharsPerLine && maxCharsPerLine > 3 then
-                line.substring(0, maxCharsPerLine - 1) + "…"
-            else if line.length > maxCharsPerLine && maxCharsPerLine > 0 then
-                line.substring(0, maxCharsPerLine)
-            else line
+                // Text overflow — match on enum
+                val displayLine = cs.textOverflow match
+                    case Style.TextOverflow.ellipsis if line.length > maxCharsPerLine && maxCharsPerLine > 3 =>
+                        line.substring(0, maxCharsPerLine - 1) + "…"
+                    case _ if line.length > maxCharsPerLine && maxCharsPerLine > 0 =>
+                        line.substring(0, maxCharsPerLine)
+                    case _ => line
 
-            // Text align
-            val lineWidth = displayLine.length * (1 + cs.letterSpacing)
-            val startX = cs.textAlign match
-                case 0 => t.bounds.x                                      // left
-                case 1 => t.bounds.x + (t.bounds.w - lineWidth) / 2       // center
-                case 2 => t.bounds.x + t.bounds.w - lineWidth             // right
-                case _ => t.bounds.x
+                // Text align — match on enum
+                val lineWidth = displayLine.length * (1 + spacing)
+                val startX = cs.textAlign match
+                    case Style.TextAlign.left    => t.bounds.x
+                    case Style.TextAlign.center  => t.bounds.x + (t.bounds.w - lineWidth) / 2
+                    case Style.TextAlign.right   => t.bounds.x + t.bounds.w - lineWidth
+                    case Style.TextAlign.justify => t.bounds.x
 
-            // Write characters
-            var charIdx = 0
-            var cellX = startX
-            while charIdx < displayLine.length do
-                setCell(grid, cellX, lineY, displayLine.charAt(charIdx),
-                    cs.fg, cs.bg, t.clip,
-                    cs.bold, cs.italic, cs.underline, cs.strikethrough)
-                cellX += 1 + cs.letterSpacing
-                charIdx += 1
+                @tailrec def eachChar(charIdx: Int, cellX: Int): Unit =
+                    if charIdx < displayLine.length then
+                        setCell(grid, cellX, lineY, displayLine.charAt(charIdx),
+                            cs.fg, cs.bg, t.clip,
+                            cs.bold, cs.italic, cs.underline, cs.strikethrough)
+                        eachChar(charIdx + 1, cellX + 1 + spacing)
+                eachChar(0, startX)
 
-            lineY += cs.lineHeight
-            lineIdx += 1
+                eachLine(lineIdx + 1, lineY + cs.lineHeight)
+        eachLine(0, t.bounds.y)
 
     // ---- Cursor painting ----
 
     private def paintCursor(c: Laid.Cursor, grid: CellGrid): Unit =
-        val x = c.pos.x; val y = c.pos.y
-        if x >= 0 && x < grid.width && y >= 0 && y < grid.height then
+        val x = c.pos.x
+        val y = c.pos.y
+        if inBounds(x, y, grid) then
             val idx = y * grid.width + x
             val existing = grid.cells(idx)
-            // Invert fg/bg
-            val newFg = if existing.bg == 0 then 0xFFFFFF else existing.bg
-            val newBg = if existing.fg == 0 then 0xFFFFFF else existing.fg
+            val newFg = if existing.bg == black then white else existing.bg
+            val newBg = if existing.fg == black then white else existing.fg
             val ch = if existing.char == '\u0000' then '█' else existing.char
             grid.cells(idx) = Cell(ch, newFg, newBg,
                 existing.bold, existing.italic, existing.underline,
@@ -2922,166 +2904,79 @@ object Painter:
     // ---- Gradient painting ----
 
     private def paintGradient(
-        grid: CellGrid, b: Rect, direction: Int,
-        stops: Chunk[(Int, Double)], clip: Rect
+        grid: CellGrid, b: Rect, direction: Style.GradientDirection,
+        stops: Chunk[(PackedColor, Double)], clip: Rect
     ): Unit =
-        var y = b.y
-        while y < b.y + b.h do
-            var x = b.x
-            while x < b.x + b.w do
-                if inClip(x, y, clip) && inBounds(x, y, grid) then
-                    // Compute position along gradient axis (0.0 to 1.0)
-                    val t = direction match
-                        case 1 => (x - b.x).toDouble / math.max(1, b.w - 1)       // toRight
-                        case 2 => 1.0 - (x - b.x).toDouble / math.max(1, b.w - 1) // toLeft
-                        case 3 => 1.0 - (y - b.y).toDouble / math.max(1, b.h - 1) // toTop
-                        case 4 => (y - b.y).toDouble / math.max(1, b.h - 1)       // toBottom
-                        case 5 => // toTopRight
-                            ((x - b.x).toDouble / math.max(1, b.w - 1) +
-                             (1.0 - (y - b.y).toDouble / math.max(1, b.h - 1))) / 2.0
-                        case 6 => // toTopLeft
-                            ((1.0 - (x - b.x).toDouble / math.max(1, b.w - 1)) +
-                             (1.0 - (y - b.y).toDouble / math.max(1, b.h - 1))) / 2.0
-                        case 7 => // toBottomRight
-                            ((x - b.x).toDouble / math.max(1, b.w - 1) +
-                             (y - b.y).toDouble / math.max(1, b.h - 1)) / 2.0
-                        case 8 => // toBottomLeft
-                            ((1.0 - (x - b.x).toDouble / math.max(1, b.w - 1)) +
-                             (y - b.y).toDouble / math.max(1, b.h - 1)) / 2.0
-                        case _ => 0.0
-                    val color = interpolateGradient(stops, t)
-                    val idx = y * grid.width + x
-                    grid.cells(idx) = grid.cells(idx).copy(bg = color)
-                x += 1
-            y += 1
+        @tailrec def eachRow(y: Int): Unit =
+            if y < b.y + b.h then
+                @tailrec def eachCol(x: Int): Unit =
+                    if x < b.x + b.w then
+                        if inClip(x, y, clip) && inBounds(x, y, grid) then
+                            val t = gradientPosition(direction, x - b.x, y - b.y, b.w, b.h)
+                            val color = interpolateGradient(stops, t)
+                            grid.cells(y * grid.width + x) = grid.cells(y * grid.width + x).copy(bg = color)
+                        eachCol(x + 1)
+                eachCol(b.x)
+                eachRow(y + 1)
+        eachRow(b.y)
 
-    private def interpolateGradient(stops: Chunk[(Int, Double)], t: Double): Int =
-        if stops.size == 0 then return 0
-        if stops.size == 1 then return stops(0)._1
-        // Find surrounding stops
-        @tailrec def findBounds(i: Int, lo: Int, hi: Int): (Int, Int) =
-            if i >= stops.size then (lo, hi)
-            else if stops(i)._2 >= t then (lo, i) // found upper bound
-            else findBounds(i + 1, if stops(i)._2 <= t then i else lo, hi)
-        val (lo, hi) = findBounds(0, 0, stops.size - 1)
-        if lo == hi then return stops(lo)._1
-        val (c1, p1) = stops(lo)
-        val (c2, p2) = stops(hi)
-        val f = if p2 == p1 then 0.0 else (t - p1) / (p2 - p1)
-        lerpColor(c1, c2, f)
+    /** Compute position (0.0 to 1.0) along gradient axis */
+    private def gradientPosition(dir: Style.GradientDirection, dx: Int, dy: Int, w: Int, h: Int): Double =
+        val fx = dx.toDouble / math.max(1, w - 1)
+        val fy = dy.toDouble / math.max(1, h - 1)
+        dir match
+            case Style.GradientDirection.toRight       => fx
+            case Style.GradientDirection.toLeft         => 1.0 - fx
+            case Style.GradientDirection.toBottom       => fy
+            case Style.GradientDirection.toTop          => 1.0 - fy
+            case Style.GradientDirection.toTopRight     => (fx + (1.0 - fy)) / 2.0
+            case Style.GradientDirection.toTopLeft      => ((1.0 - fx) + (1.0 - fy)) / 2.0
+            case Style.GradientDirection.toBottomRight  => (fx + fy) / 2.0
+            case Style.GradientDirection.toBottomLeft   => ((1.0 - fx) + fy) / 2.0
 
-    private def lerpColor(c1: Int, c2: Int, f: Double): Int =
-        val r = (PackedColor.r(c1) * (1 - f) + PackedColor.r(c2) * f).toInt
-        val g = (PackedColor.g(c1) * (1 - f) + PackedColor.g(c2) * f).toInt
-        val b = (PackedColor.b(c1) * (1 - f) + PackedColor.b(c2) * f).toInt
-        PackedColor.pack(clamp(r), clamp(g), clamp(b))
-
-    // ---- Shadow painting ----
-
-    private def paintShadow(grid: CellGrid, b: Rect, cs: FlatStyle, clip: Rect): Unit =
-        val sx = b.x + cs.shadowX - cs.shadowSpread
-        val sy = b.y + cs.shadowY - cs.shadowSpread
-        val sw = b.w + cs.shadowSpread * 2
-        val sh = b.h + cs.shadowSpread * 2
-        // Simple: fill shadow rect with shadow color
-        // If blur > 0, use shade characters for outer pixels
-        if cs.shadowBlur == 0 then
-            fillBg(grid, sx, sy, sw, sh, cs.shadowColor, clip)
+    private def interpolateGradient(stops: Chunk[(PackedColor, Double)], t: Double): PackedColor =
+        if stops.size <= 1 then
+            if stops.isEmpty then black else stops(0)._1
         else
-            // Layered blur approximation
-            var layer = cs.shadowBlur
-            while layer >= 0 do
-                val shade = if layer == 0 then '▓'
-                    else if layer <= cs.shadowBlur / 3 then '▒'
-                    else '░'
-                val lx = sx - layer; val ly = sy - layer
-                val lw = sw + layer * 2; val lh = sh + layer * 2
-                var row = ly
-                while row < ly + lh do
-                    var col = lx
-                    while col < lx + lw do
-                        if (row == ly || row == ly + lh - 1 || col == lx || col == lx + lw - 1) then
-                            if inClip(col, row, clip) && inBounds(col, row, grid) then
-                                val idx = row * grid.width + col
-                                grid.cells(idx) = Cell(shade, cs.shadowColor, grid.cells(idx).bg,
-                                    false, false, false, false, false)
-                        col += 1
-                    row += 1
-                layer -= 1
+            // ... find surrounding stops, lerp between them
+            val (c1, c2, f) = findStopPair(stops, t)
+            c1.lerp(c2, f) // lerp is a PackedColor method
 
     // ---- Filter application ----
 
     private def applyFilters(grid: CellGrid, b: Rect, cs: FlatStyle, clip: Rect): Unit =
-        var y = b.y
-        while y < b.y + b.h do
-            var x = b.x
-            while x < b.x + b.w do
-                if inClip(x, y, clip) && inBounds(x, y, grid) then
-                    val idx = y * grid.width + x
-                    val cell = grid.cells(idx)
-                    val newFg = applyFilterChain(cell.fg, cs)
-                    val newBg = applyFilterChain(cell.bg, cs)
-                    grid.cells(idx) = cell.copy(fg = newFg, bg = newBg)
-                x += 1
-            y += 1
+        @tailrec def eachRow(y: Int): Unit =
+            if y < b.y + b.h then
+                @tailrec def eachCol(x: Int): Unit =
+                    if x < b.x + b.w then
+                        if inClip(x, y, clip) && inBounds(x, y, grid) then
+                            val idx = y * grid.width + x
+                            val cell = grid.cells(idx)
+                            grid.cells(idx) = cell.copy(
+                                fg = applyFilterChain(cell.fg, cs),
+                                bg = applyFilterChain(cell.bg, cs)
+                            )
+                        eachCol(x + 1)
+                eachCol(b.x)
+                eachRow(y + 1)
+        eachRow(b.y)
 
-    private def applyFilterChain(color: Int, cs: FlatStyle): Int =
-        if color == PackedColor.Transparent then return color
-        var r = PackedColor.r(color); var g = PackedColor.g(color); var b = PackedColor.b(color)
-
-        // Brightness: multiply RGB
-        if cs.brightness != 1.0 then
-            r = clamp((r * cs.brightness).toInt)
-            g = clamp((g * cs.brightness).toInt)
-            b = clamp((b * cs.brightness).toInt)
-
-        // Contrast: scale from midpoint
-        if cs.contrast != 1.0 then
-            r = clamp(((r - 128) * cs.contrast + 128).toInt)
-            g = clamp(((g - 128) * cs.contrast + 128).toInt)
-            b = clamp(((b - 128) * cs.contrast + 128).toInt)
-
-        // Grayscale: convert to luminance
-        if cs.grayscale > 0.0 then
-            val lum = (0.299 * r + 0.587 * g + 0.114 * b).toInt
-            r = clamp((r * (1 - cs.grayscale) + lum * cs.grayscale).toInt)
-            g = clamp((g * (1 - cs.grayscale) + lum * cs.grayscale).toInt)
-            b = clamp((b * (1 - cs.grayscale) + lum * cs.grayscale).toInt)
-
-        // Sepia
-        if cs.sepia > 0.0 then
-            val sr = clamp((0.393 * r + 0.769 * g + 0.189 * b).toInt)
-            val sg = clamp((0.349 * r + 0.686 * g + 0.168 * b).toInt)
-            val sb = clamp((0.272 * r + 0.534 * g + 0.131 * b).toInt)
-            r = clamp((r * (1 - cs.sepia) + sr * cs.sepia).toInt)
-            g = clamp((g * (1 - cs.sepia) + sg * cs.sepia).toInt)
-            b = clamp((b * (1 - cs.sepia) + sb * cs.sepia).toInt)
-
-        // Invert
-        if cs.invert > 0.0 then
-            r = clamp((r * (1 - cs.invert) + (255 - r) * cs.invert).toInt)
-            g = clamp((g * (1 - cs.invert) + (255 - g) * cs.invert).toInt)
-            b = clamp((b * (1 - cs.invert) + (255 - b) * cs.invert).toInt)
-
-        // Saturate: scale saturation around luminance
-        if cs.saturate != 1.0 then
-            val lum = (0.299 * r + 0.587 * g + 0.114 * b).toInt
-            r = clamp((lum + (r - lum) * cs.saturate).toInt)
-            g = clamp((lum + (g - lum) * cs.saturate).toInt)
-            b = clamp((lum + (b - lum) * cs.saturate).toInt)
-
-        // HueRotate: rotate in HSL space
-        if cs.hueRotate != 0.0 then
-            val (h, s, l) = rgbToHsl(r, g, b)
-            val (nr, ng, nb) = hslToRgb((h + cs.hueRotate) % 360.0, s, l)
-            r = nr; g = ng; b = nb
-
-        PackedColor.pack(r, g, b)
+    private def applyFilterChain(color: PackedColor, cs: FlatStyle): PackedColor =
+        if color == PackedColor.Transparent then color
+        else
+            // Apply brightness, contrast, grayscale, sepia, invert, saturate, hueRotate
+            // Each filter uses PackedColor methods for extraction/construction
+            // Local vars acceptable here — building up a single PackedColor result
+            var r = color.r
+            var g = color.g
+            var b = color.b
+            // ... (filter math same as before, using PackedColor(...) to construct result)
+            PackedColor(PackedColor.clamp(r), PackedColor.clamp(g), PackedColor.clamp(b))
 
     // ---- Helpers ----
 
     private def setCell(grid: CellGrid, x: Int, y: Int, ch: Char,
-                        fg: Int, bg: Int, clip: Rect,
+                        fg: PackedColor, bg: PackedColor, clip: Rect,
                         bold: Boolean = false, italic: Boolean = false,
                         underline: Boolean = false, strikethrough: Boolean = false): Unit =
         if inClip(x, y, clip) && inBounds(x, y, grid) then
@@ -3093,165 +2988,77 @@ object Painter:
     private inline def inBounds(x: Int, y: Int, grid: CellGrid): Boolean =
         x >= 0 && x < grid.width && y >= 0 && y < grid.height
 
-    private inline def clamp(v: Int): Int =
-        if v < 0 then 0 else if v > 255 then 255 else v
-
-    private def rgbToHsl(r: Int, g: Int, b: Int): (Double, Double, Double) =
-        val rf = r / 255.0; val gf = g / 255.0; val bf = b / 255.0
-        val max = math.max(rf, math.max(gf, bf))
-        val min = math.min(rf, math.min(gf, bf))
-        val l = (max + min) / 2.0
-        if max == min then (0.0, 0.0, l)
-        else
-            val d = max - min
-            val s = if l > 0.5 then d / (2.0 - max - min) else d / (max + min)
-            val h = if max == rf then ((gf - bf) / d + (if gf < bf then 6 else 0)) * 60
-                    else if max == gf then ((bf - rf) / d + 2) * 60
-                    else ((rf - gf) / d + 4) * 60
-            (h, s, l)
-
-    private def hslToRgb(h: Double, s: Double, l: Double): (Int, Int, Int) =
-        if s == 0 then
-            val v = clamp((l * 255).toInt)
-            (v, v, v)
-        else
-            def hue2rgb(p: Double, q: Double, t0: Double): Double =
-                val t = if t0 < 0 then t0 + 1 else if t0 > 1 then t0 - 1 else t0
-                if t < 1.0/6 then p + (q - p) * 6 * t
-                else if t < 1.0/2 then q
-                else if t < 2.0/3 then p + (q - p) * (2.0/3 - t) * 6
-                else p
-            val q = if l < 0.5 then l * (1 + s) else l + s - l * s
-            val p = 2 * l - q
-            val hNorm = h / 360.0
-            (clamp((hue2rgb(p, q, hNorm + 1.0/3) * 255).toInt),
-             clamp((hue2rgb(p, q, hNorm) * 255).toInt),
-             clamp((hue2rgb(p, q, hNorm - 1.0/3) * 255).toInt))
-
-    private def splitLines(text: String, maxWidth: Int, textWrap: Int): Chunk[String] =
-        if textWrap == 1 then Chunk(text) // noWrap
-        else
-            val parts = text.split('\n')
-            @tailrec def loop(i: Int, acc: Chunk[String]): Chunk[String] =
-                if i >= parts.length then acc
-                else
-                    val line = parts(i)
-                    if line.length <= maxWidth || maxWidth <= 0 then loop(i + 1, acc.append(line))
-                    else
-                        @tailrec def wrap(pos: Int, inner: Chunk[String]): Chunk[String] =
-                            if pos >= line.length then inner
-                            else wrap(pos + maxWidth,
-                                inner.append(line.substring(pos, math.min(pos + maxWidth, line.length))))
-                        loop(i + 1, wrap(0, acc))
-            loop(0, Chunk.empty)
+    // splitLines reuses Layout.splitLines or is extracted to a shared utility
 ```
+
+**Key differences from old pseudocode:**
+- `n.style` not `n.computed`
+- All enums matched by variant (`Style.BorderStyle.solid`), not Int ordinals
+- All colors typed as `PackedColor`, not `Int`
+- `PackedColor.lerp`, `PackedColor.clamp` — color operations on the type
+- `gradientDirection: Maybe[Style.GradientDirection]` — pattern match, not `> 0`
+- Border widths accessed as `.value` (they're `Length.Px`)
+- All `while` → `@tailrec def eachRow`/`eachCol`/`eachLine`/`eachChar`
+- No `return` — early exits via `if`/`else`
+- No `;`-joined statements
+- No magic `0xFFFFFF` — named `white`/`black` constants
 
 ### Differ: complete ANSI emission
 
-> **Note**: Differ uses imperative while loops intentionally. The inner loop tracks 7 pieces of
-> SGR state (lastFg, lastBg, lastBold, lastItalic, lastUnderline, lastStrikethrough, lastDimmed)
-> plus cursor position, mutating them conditionally per cell. Converting to @tailrec with 9+
-> accumulator parameters would be far less readable than the mutable version.
+> **Note**: Differ has been refactored to use `@tailrec` with immutable `TermState` threaded
+> through `eachCol`/`eachRow` loops. SGR tracking uses `Maybe[PackedColor]` for colors and
+> `Maybe[(Int, Int)]` for cursor position — no sentinel values. ANSI protocol details are behind
+> named methods (`enableBold`, `resetAllAttributes`, `moveCursorTo`, `writeFgColor`, etc.).
+> See `Differ.scala` for the current implementation.
 
 ```scala
 object Differ:
+    private case class TermState(
+        fg: Maybe[PackedColor], bg: Maybe[PackedColor],
+        bold: Boolean, italic: Boolean, underline: Boolean,
+        strikethrough: Boolean, dimmed: Boolean,
+        cursorPos: Maybe[(Int, Int)]
+    )
+
     def diff(prev: CellGrid, curr: CellGrid): Array[Byte] =
         val buf = new java.io.ByteArrayOutputStream(curr.width * curr.height * 4)
-        var lastFg = -2; var lastBg = -2
-        var lastBold = false; var lastItalic = false
-        var lastUnderline = false; var lastStrikethrough = false; var lastDimmed = false
-        var cursorRow = -1; var cursorCol = -1
 
-        var y = 0
-        while y < curr.height do
-            var x = 0
-            while x < curr.width do
-                val ci = y * curr.width + x
-                val cc = curr.cells(ci)
-                val pc = if ci < prev.cells.length then prev.cells(ci) else Cell.Empty
-                if cc != pc then
-                    // Move cursor if not consecutive
-                    if cursorRow != y || cursorCol != x then
-                        moveCursor(buf, y + 1, x + 1) // ANSI is 1-based
-                    // SGR: reset if attributes changed
-                    var needReset = false
-                    if cc.bold != lastBold || cc.italic != lastItalic ||
-                       cc.underline != lastUnderline || cc.strikethrough != lastStrikethrough ||
-                       cc.dimmed != lastDimmed then
-                        needReset = true
-                    if needReset then
-                        buf.write(27); buf.write('['); buf.write('0'); buf.write('m') // reset
-                        lastFg = -2; lastBg = -2 // force re-emit colors after reset
-                        if cc.bold then { buf.write(27); buf.write('['); buf.write('1'); buf.write('m') }
-                        if cc.dimmed then { buf.write(27); buf.write('['); buf.write('2'); buf.write('m') }
-                        if cc.italic then { buf.write(27); buf.write('['); buf.write('3'); buf.write('m') }
-                        if cc.underline then { buf.write(27); buf.write('['); buf.write('4'); buf.write('m') }
-                        if cc.strikethrough then { buf.write(27); buf.write('['); buf.write('9'); buf.write('m') }
-                        lastBold = cc.bold; lastItalic = cc.italic
-                        lastUnderline = cc.underline; lastStrikethrough = cc.strikethrough
-                        lastDimmed = cc.dimmed
-                    // Foreground color
-                    if cc.fg != lastFg && cc.fg != PackedColor.Transparent then
-                        emit24bitFg(buf, cc.fg)
-                        lastFg = cc.fg
-                    // Background color
-                    if cc.bg != lastBg && cc.bg != PackedColor.Transparent then
-                        emit24bitBg(buf, cc.bg)
-                        lastBg = cc.bg
-                    // Character
-                    val ch = if cc.char == '\u0000' then ' ' else cc.char
-                    if ch < 128 then buf.write(ch.toInt)
-                    else buf.write(ch.toString.getBytes("UTF-8"))
-                    cursorRow = y; cursorCol = x + 1
-                x += 1
-            y += 1
+        @tailrec def eachCol(col: Int, row: Int, term: TermState): TermState =
+            if col >= curr.width then term
+            else
+                val idx = row * curr.width + col
+                val currCell = curr.cells(idx)
+                val prevCell = if idx < prev.cells.length then prev.cells(idx) else Cell.Empty
+                if currCell != prevCell then
+                    if !term.cursorPos.contains((row, col)) then
+                        moveCursorTo(buf, row, col)
+                    val afterAttrs = updateTextAttributes(buf, term, currCell)
+                    val afterFg    = updateFgColor(buf, afterAttrs, currCell.fg)
+                    val afterBg    = updateBgColor(buf, afterFg, currCell.bg)
+                    writeChar(buf, currCell.char)
+                    eachCol(col + 1, row, afterBg.copy(cursorPos = Maybe((row, col + 1))))
+                else
+                    eachCol(col + 1, row, term)
 
-        // Raw sequences (images) after cells
-        import scala.annotation.tailrec
-        @tailrec def emitRaw(i: Int): Unit =
+        @tailrec def eachRow(row: Int, term: TermState): TermState =
+            if row >= curr.height then term
+            else eachRow(row + 1, eachCol(0, row, term))
+
+        discard(eachRow(0, Initial))
+
+        @tailrec def eachRaw(i: Int): Unit =
             if i < curr.rawSequences.size then
                 val (rect, bytes) = curr.rawSequences(i)
-                moveCursor(buf, rect.y + 1, rect.x + 1)
+                moveCursorTo(buf, rect.y, rect.x)
                 buf.write(bytes)
-                emitRaw(i + 1)
-        emitRaw(0)
-
+                eachRaw(i + 1)
+        eachRaw(0)
         buf.toByteArray
 
-    // ESC [ row ; col H
-    private def moveCursor(buf: java.io.ByteArrayOutputStream, row: Int, col: Int): Unit =
-        buf.write(27); buf.write('[')
-        writeInt(buf, row)
-        buf.write(';')
-        writeInt(buf, col)
-        buf.write('H')
-
-    // ESC [ 38;2;r;g;b m
-    private def emit24bitFg(buf: java.io.ByteArrayOutputStream, color: Int): Unit =
-        buf.write(27); buf.write('['); buf.write('3'); buf.write('8'); buf.write(';')
-        buf.write('2'); buf.write(';')
-        writeInt(buf, PackedColor.r(color)); buf.write(';')
-        writeInt(buf, PackedColor.g(color)); buf.write(';')
-        writeInt(buf, PackedColor.b(color)); buf.write('m')
-
-    // ESC [ 48;2;r;g;b m
-    private def emit24bitBg(buf: java.io.ByteArrayOutputStream, color: Int): Unit =
-        buf.write(27); buf.write('['); buf.write('4'); buf.write('8'); buf.write(';')
-        buf.write('2'); buf.write(';')
-        writeInt(buf, PackedColor.r(color)); buf.write(';')
-        writeInt(buf, PackedColor.g(color)); buf.write(';')
-        writeInt(buf, PackedColor.b(color)); buf.write('m')
-
-    private def writeInt(buf: java.io.ByteArrayOutputStream, v: Int): Unit =
-        if v >= 100 then
-            buf.write('0' + v / 100)
-            buf.write('0' + (v / 10) % 10)
-            buf.write('0' + v % 10)
-        else if v >= 10 then
-            buf.write('0' + v / 10)
-            buf.write('0' + v % 10)
-        else
-            buf.write('0' + v)
+    // Named ANSI primitives: moveCursorTo, resetAllAttributes, enableBold,
+    // enableDim, enableItalic, enableUnderline, enableStrikethrough,
+    // writeFgColor, writeBgColor, writeChar, writeDecimal
+    // See Differ.scala for full implementation
 ```
 
 ### Dispatch: complete event routing (pre-composed handlers)
@@ -3407,8 +3214,8 @@ object Dispatch:
 
     private def cycleFocus(state: ScreenState, layout: LayoutResult, reverse: Boolean)(using AllowUnsafe): Unit =
         val keys = state.focusableIds
-        if keys.isEmpty then return
-        val current = state.focusedId.unsafe.get()
+        if keys.nonEmpty then
+            val current = state.focusedId.unsafe.get()
         val idx = current.map(k => keys.indexOf(k)).getOrElse(-1)
         val nextIdx =
             if reverse then (if idx <= 0 then keys.size - 1 else idx - 1)
