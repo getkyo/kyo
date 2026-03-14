@@ -7,8 +7,6 @@ import scala.language.implicitConversions
 
 class InteractionFormTest extends Test:
 
-    given Frame = Frame.internal
-
     import AllowUnsafe.embrace.danger
 
     def screen(ui: UI, cols: Int, rows: Int) = Screen(ui, cols, rows)

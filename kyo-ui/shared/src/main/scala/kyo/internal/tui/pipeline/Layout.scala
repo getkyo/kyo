@@ -379,6 +379,8 @@ object Layout:
                 case t: Styled.Text =>
                     mainSizes(i) = if isColumn then measureHeight(t, cw) else measureWidth(t)
                     crossSizes(i) = if isColumn then measureWidth(t) else measureHeight(t, cw)
+                    grow(i) = t.style.flexGrow
+                    shrink(i) = t.style.flexShrink
                 case _: Styled.Cursor =>
                     mainSizes(i) = 1
                     crossSizes(i) = 1

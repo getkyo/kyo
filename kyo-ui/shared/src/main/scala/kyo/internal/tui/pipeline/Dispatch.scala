@@ -159,16 +159,21 @@ object Dispatch:
                     if currentIdx <= 0 then keys.size - 1 else currentIdx - 1
                 else if currentIdx < 0 || currentIdx >= keys.size - 1 then 0
                 else currentIdx + 1
-            val newKey = keys(nextIdx)
-            val blurEffect = current.flatMap(k => findByKey(layout.base, k)) match
-                case Present(old) => old.handlers.onBlur
-                case _            => noop
-            val focusEffect = findByKey(layout.base, newKey) match
-                case Present(node) => node.handlers.onFocus
-                case _             => noop
+            val newKey  = keys(nextIdx)
+            val oldNode = current.flatMap(k => findByKey(layout.base, k))
+            val newNode = findByKey(layout.base, newKey)
             state.focusedId.set(Maybe(newKey))
-            // Return composed computation — no more unsafe calls after this
-            blurEffect.andThen(focusEffect)
+            // Fire blur on old, then focus on new
+            newNode match
+                case Present(node) =>
+                    oldNode match
+                        case Present(old) => old.handlers.onBlur.andThen(node.handlers.onFocus)
+                        case _            => node.handlers.onFocus
+                case _ =>
+                    oldNode match
+                        case Present(old) => old.handlers.onBlur
+                        case _            => noop
+            end match
         else noop
         end if
     end cycleFocus

@@ -7,11 +7,76 @@ import scala.language.implicitConversions
 
 class InteractionFocusTest extends Test:
 
-    given Frame = Frame.internal
-
     import AllowUnsafe.embrace.danger
 
     def screen(ui: UI, cols: Int, rows: Int) = Screen(ui, cols, rows)
+
+    "focus diagnostics" - {
+        "buttons are registered as focusable" in run {
+            val s = screen(
+                UI.div(
+                    UI.button("B1"),
+                    UI.button("B2")
+                ),
+                20,
+                3
+            )
+            s.render.andThen {
+                assert(s.layoutPresent, "layout should exist after render")
+                assert(s.focusableCount >= 2, s"expected >= 2 focusables, got ${s.focusableCount}")
+            }
+        }
+
+        "tab sets focusedId" in run {
+            val s = screen(
+                UI.div(
+                    UI.button("B1"),
+                    UI.button("B2")
+                ),
+                20,
+                3
+            )
+            for
+                _ <- s.render
+                _ <- s.tab
+            yield assert(s.focusedKey.nonEmpty, s"focusedKey should be set after tab, got ${s.focusedKey}")
+            end for
+        }
+
+        "tab fires onFocus via direct dispatch" in run {
+            var fired = false
+            val s = screen(
+                UI.div(
+                    UI.button.onFocus { fired = true }("B1")
+                ),
+                15,
+                3
+            )
+            for
+                _ <- s.render
+                _ <- s.tab
+                _ <- s.tab // second tab to re-focus same element (wraps)
+            yield assert(fired, s"onFocus should have fired, focusedKey=${s.focusedKey}")
+            end for
+        }
+
+        "focusable keys exist in layout tree" in run {
+            val s = screen(
+                UI.div(
+                    UI.button("B1"),
+                    UI.button("B2")
+                ),
+                20,
+                3
+            )
+            s.render.andThen {
+                val keys = s.focusableKeys
+                assert(keys.size >= 2, s"expected 2+ focusable keys, got ${keys.size}")
+                val missing = keys.filter(k => !s.findKeyInLayout(k))
+                assert(missing.isEmpty, s"keys not found in layout: $missing")
+            }
+        }
+    }
 
     "tab navigation" - {
         "tab cycles through focusable elements" in run {

@@ -69,4 +69,12 @@ class Screen(ui: UI, val cols: Int, val rows: Int)(using AllowUnsafe, Frame):
 
     def arrowRight: String < (Async & Scope) =
         key(UI.Keyboard.ArrowRight)
+    def focusableCount: Int             = state.focusableIds.size
+    def focusableKeys: Chunk[WidgetKey] = state.focusableIds
+    def focusedKey: Maybe[WidgetKey]    = state.focusedId.get()
+    def layoutPresent: Boolean          = state.prevLayout.nonEmpty
+    def findKeyInLayout(key: WidgetKey): Boolean =
+        state.prevLayout match
+            case Present(layout) => Dispatch.findByKey(layout.base, key).nonEmpty
+            case _               => false
 end Screen

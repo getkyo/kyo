@@ -4,12 +4,12 @@
 
 | Metric | Value |
 |--------|-------|
-| Total tests | 118 |
-| Passing | 94 (80%) |
-| Failing | 24 (20%) |
+| Total tests | 122 |
+| Passing | 112 (92%) |
+| Failing | 10 (8%) |
 | Test files | 8 |
-| Bugs fixed | 4 |
-| Bugs remaining | 7 |
+| Production bugs fixed | 11 |
+| Full test suite | 474 pass, 10 fail (all in interaction tests) |
 
 ## Test Files
 
