@@ -45,9 +45,9 @@ object Styler:
         var shadowY: Length.Px                                = Length.zero
         var shadowBlur: Length.Px                             = Length.zero
         var shadowSpread: Length.Px                           = Length.zero
-        var shadowColor                                       = PackedColor.Transparent
+        var shadowColor                                       = RGB.Transparent
         var gradientDirection: Maybe[Style.GradientDirection] = Absent
-        var gradientStops: Chunk[(PackedColor, Double)]       = Chunk.empty
+        var gradientStops: Chunk[(RGB, Double)]               = Chunk.empty
         var brightness                                        = 1.0
         var contrast                                          = 1.0
         var grayscale                                         = 0.0
@@ -71,10 +71,10 @@ object Styler:
         var borderBottom: Length.Px                           = Length.zero
         var borderLeft: Length.Px                             = Length.zero
         var borderStyle                                       = Style.BorderStyle.none
-        var borderColorTop                                    = PackedColor.Transparent
-        var borderColorRight                                  = PackedColor.Transparent
-        var borderColorBottom                                 = PackedColor.Transparent
-        var borderColorLeft                                   = PackedColor.Transparent
+        var borderColorTop                                    = RGB.Transparent
+        var borderColorRight                                  = RGB.Transparent
+        var borderColorBottom                                 = RGB.Transparent
+        var borderColorLeft                                   = RGB.Transparent
         var roundTL                                           = false
         var roundTR                                           = false
         var roundBR                                           = false
@@ -102,8 +102,8 @@ object Styler:
         @tailrec def loop(i: Int): Unit =
             if i < props.size then
                 props(i) match
-                    case Style.Prop.BgColor(c)   => bg = PackedColor.fromStyle(c, parent.bg)
-                    case Style.Prop.TextColor(c) => fg = PackedColor.fromStyle(c, parent.bg)
+                    case Style.Prop.BgColor(c)   => bg = RGB.fromStyle(c, parent.bg)
+                    case Style.Prop.TextColor(c) => fg = RGB.fromStyle(c, parent.bg)
                     case Style.Prop.Padding(t, r, b, l) =>
                         padTop = t
                         padRight = r
@@ -153,23 +153,23 @@ object Styler:
                         borderBottom = Length.toPx(b)
                         borderLeft = Length.toPx(l)
                     case Style.Prop.BorderColorProp(t, r, b, l) =>
-                        borderColorTop = PackedColor.fromStyle(t, parent.bg)
-                        borderColorRight = PackedColor.fromStyle(r, parent.bg)
-                        borderColorBottom = PackedColor.fromStyle(b, parent.bg)
-                        borderColorLeft = PackedColor.fromStyle(l, parent.bg)
+                        borderColorTop = RGB.fromStyle(t, parent.bg)
+                        borderColorRight = RGB.fromStyle(r, parent.bg)
+                        borderColorBottom = RGB.fromStyle(b, parent.bg)
+                        borderColorLeft = RGB.fromStyle(l, parent.bg)
                     case Style.Prop.BorderStyleProp(v) => borderStyle = v
                     case Style.Prop.BorderTopProp(w, c) =>
                         borderTop = Length.toPx(w)
-                        borderColorTop = PackedColor.fromStyle(c, parent.bg)
+                        borderColorTop = RGB.fromStyle(c, parent.bg)
                     case Style.Prop.BorderRightProp(w, c) =>
                         borderRight = Length.toPx(w)
-                        borderColorRight = PackedColor.fromStyle(c, parent.bg)
+                        borderColorRight = RGB.fromStyle(c, parent.bg)
                     case Style.Prop.BorderBottomProp(w, c) =>
                         borderBottom = Length.toPx(w)
-                        borderColorBottom = PackedColor.fromStyle(c, parent.bg)
+                        borderColorBottom = RGB.fromStyle(c, parent.bg)
                     case Style.Prop.BorderLeftProp(w, c) =>
                         borderLeft = Length.toPx(w)
-                        borderColorLeft = PackedColor.fromStyle(c, parent.bg)
+                        borderColorLeft = RGB.fromStyle(c, parent.bg)
                     case Style.Prop.BorderRadiusProp(tl, tr, br, bl) =>
                         roundTL = Length.toPx(tl).value > 0
                         roundTR = Length.toPx(tr).value > 0
@@ -180,11 +180,11 @@ object Styler:
                         shadowY = Length.toPx(y)
                         shadowBlur = Length.toPx(b)
                         shadowSpread = Length.toPx(s)
-                        shadowColor = PackedColor.fromStyle(c, parent.bg)
+                        shadowColor = RGB.fromStyle(c, parent.bg)
                     case Style.Prop.BgGradientProp(dir, colors, positions) =>
                         gradientDirection = Maybe(dir)
                         gradientStops = Chunk.from(Array.tabulate(colors.size) { j =>
-                            (PackedColor.fromStyle(colors(j), parent.bg), positions(j))
+                            (RGB.fromStyle(colors(j), parent.bg), positions(j))
                         })
                     case Style.Prop.FlexGrowProp(v)   => flexGrow = v
                     case Style.Prop.FlexShrinkProp(v) => flexShrink = v
@@ -286,7 +286,7 @@ object Styler:
     private def inheritText(parent: FlatStyle): FlatStyle =
         FlatStyle(
             fg = parent.fg,
-            bg = PackedColor.Transparent,
+            bg = RGB.Transparent,
             bold = parent.bold,
             italic = parent.italic,
             underline = parent.underline,
@@ -297,7 +297,7 @@ object Styler:
             shadowY = Length.zero,
             shadowBlur = Length.zero,
             shadowSpread = Length.zero,
-            shadowColor = PackedColor.Transparent,
+            shadowColor = RGB.Transparent,
             gradientDirection = Absent,
             gradientStops = Chunk.empty,
             brightness = 1.0,
@@ -329,10 +329,10 @@ object Styler:
             borderBottom = Length.zero,
             borderLeft = Length.zero,
             borderStyle = Style.BorderStyle.none,
-            borderColorTop = PackedColor.Transparent,
-            borderColorRight = PackedColor.Transparent,
-            borderColorBottom = PackedColor.Transparent,
-            borderColorLeft = PackedColor.Transparent,
+            borderColorTop = RGB.Transparent,
+            borderColorRight = RGB.Transparent,
+            borderColorBottom = RGB.Transparent,
+            borderColorLeft = RGB.Transparent,
             roundTL = false,
             roundTR = false,
             roundBR = false,

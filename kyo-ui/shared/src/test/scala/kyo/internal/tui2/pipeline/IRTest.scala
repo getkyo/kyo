@@ -95,7 +95,7 @@ class IRTest extends Test:
             node match
                 case Styled.Node(tag, cs, _, _) =>
                     assert(tag == ElemTag.Span)
-                    assert(cs.fg == PackedColor(255, 255, 255))
+                    assert(cs.fg == RGB(255, 255, 255))
                 case _ => fail("expected Node")
             end match
         }
@@ -175,8 +175,8 @@ class IRTest extends Test:
         "Empty cell" in {
             val c = Cell.Empty
             assert(c.char == '\u0000')
-            assert(c.fg == 0)
-            assert(c.bg == 0)
+            assert(c.fg == RGB(0, 0, 0))
+            assert(c.bg == RGB(0, 0, 0))
             assert(!c.bold && !c.italic && !c.underline && !c.strikethrough && !c.dimmed)
         }
     }
@@ -186,7 +186,7 @@ class IRTest extends Test:
             val grid = CellGrid.empty(10, 5)
             assert(grid.width == 10)
             assert(grid.height == 5)
-            assert(grid.cells.length == 50)
+            assert(grid.cells.size == 50)
             assert(grid.cells.forall(_ == Cell.Empty))
             assert(grid.rawSequences.isEmpty)
         }
@@ -195,8 +195,8 @@ class IRTest extends Test:
     "FlatStyle.Default" - {
         "sensible defaults" in {
             val cs = FlatStyle.Default
-            assert(cs.fg == PackedColor(255, 255, 255))
-            assert(cs.bg == PackedColor.Transparent)
+            assert(cs.fg == RGB(255, 255, 255))
+            assert(cs.bg == RGB.Transparent)
             assert(!cs.bold)
             assert(cs.opacity == 1.0)
             assert(cs.lineHeight == 1)
@@ -235,61 +235,61 @@ class IRTest extends Test:
         }
     }
 
-    val black = PackedColor(0, 0, 0)
+    val black = RGB(0, 0, 0)
 
-    "PackedColor" - {
+    "RGB" - {
         "pack and unpack round-trip" in {
-            val color = PackedColor(128, 64, 32)
+            val color = RGB(128, 64, 32)
             assert(color.r == 128)
             assert(color.g == 64)
             assert(color.b == 32)
         }
 
         "white" in {
-            val white = PackedColor(255, 255, 255)
+            val white = RGB(255, 255, 255)
             assert(white.r == 255)
             assert(white.g == 255)
             assert(white.b == 255)
         }
 
         "Transparent" in {
-            assert(PackedColor.Transparent != black)
+            assert(RGB.Transparent != black)
         }
 
         "fromStyle Transparent" in {
-            assert(PackedColor.fromStyle(Style.Color.Transparent, black) == PackedColor.Transparent)
+            assert(RGB.fromStyle(Style.Color.Transparent, black) == RGB.Transparent)
         }
 
         "fromStyle Rgb" in {
-            val c = PackedColor.fromStyle(Style.Color.rgb(255, 0, 0), black)
+            val c = RGB.fromStyle(Style.Color.rgb(255, 0, 0), black)
             assert(c.r == 255)
             assert(c.g == 0)
             assert(c.b == 0)
         }
 
         "fromStyle Rgba full opacity" in {
-            val c = PackedColor.fromStyle(Style.Color.rgba(100, 200, 50, 1.0), black)
+            val c = RGB.fromStyle(Style.Color.rgba(100, 200, 50, 1.0), black)
             assert(c.r == 100)
             assert(c.g == 200)
             assert(c.b == 50)
         }
 
         "fromStyle Rgba blending" in {
-            val c = PackedColor.fromStyle(Style.Color.rgba(200, 100, 50, 0.5), black)
+            val c = RGB.fromStyle(Style.Color.rgba(200, 100, 50, 0.5), black)
             assert(c.r == 100)
             assert(c.g == 50)
             assert(c.b == 25)
         }
 
         "fromStyle Hex 6-digit" in {
-            val c = PackedColor.fromStyle(Style.Color.hex("ff8000"), black)
+            val c = RGB.fromStyle(Style.Color.hex("ff8000"), black)
             assert(c.r == 255)
             assert(c.g == 128)
             assert(c.b == 0)
         }
 
         "fromStyle Hex 3-digit" in {
-            val c = PackedColor.fromStyle(Style.Color.hex("f00"), black)
+            val c = RGB.fromStyle(Style.Color.hex("f00"), black)
             assert(c.r == 255)
             assert(c.g == 0)
             assert(c.b == 0)

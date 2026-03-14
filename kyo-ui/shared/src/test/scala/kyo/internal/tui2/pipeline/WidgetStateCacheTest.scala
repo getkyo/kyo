@@ -5,6 +5,8 @@ import kyo.Test
 
 class WidgetStateCacheTest extends Test:
 
+    import AllowUnsafe.embrace.danger
+
     "WidgetStateCache" - {
         "getOrCreate creates on first call, returns same on second" in {
             val cache = new WidgetStateCache

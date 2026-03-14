@@ -631,7 +631,7 @@ object Layout:
     // ---- Helpers ----
 
     /** Split text into lines, applying word wrap at `maxWidth` characters. */
-    private def splitLines(text: String, maxWidth: Int, textWrap: Style.TextWrap): Chunk[String] =
+    private[pipeline] def splitLines(text: String, maxWidth: Int, textWrap: Style.TextWrap): Chunk[String] =
         if textWrap == Style.TextWrap.noWrap then Chunk(text)
         else
             val parts = text.split('\n')

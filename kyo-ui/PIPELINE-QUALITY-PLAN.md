@@ -12,7 +12,7 @@ These are non-negotiable for all pipeline code — current and future phases.
 
 ### Types over primitives
 - **Use `Length` for all dimensional values** — widths, padding, margins, gaps, offsets, radii. Use `Length` (can be `Auto`/`Pct`/`Px`/`Em`) for values that need parent context, `Length.Px` for values that are always resolved pixels. Use `N.px`, `N.pct` extension methods in tests and usage code.
-- **Use `PackedColor` for all colors** — opaque type over `Int`. Use `PackedColor(r, g, b)` to construct, `.r`/`.g`/`.b` extensions to extract. Use `PackedColor.Transparent` not `-1`.
+- **Use `RGB` for all colors** — opaque type over `Int`. Use `RGB(r, g, b)` to construct, `.r`/`.g`/`.b` extensions to extract. Use `RGB.Transparent` not `-1`.
 - **Use `FlatStyle`** (not `ComputedStyle`) for the resolved style type.
 - **Use enums for all categorical values** — `Style.FlexDirection`, `Style.Alignment`, `Style.Justification`, etc. Never store as `Int` ordinals. Match on enum variants, never compare `.ordinal`.
 - **Use `Maybe[T]` for absent values** — never sentinel ints like `-1`, `-2`, `Int.MinValue`.
@@ -21,7 +21,7 @@ These are non-negotiable for all pipeline code — current and future phases.
 - **Methods that operate on a type belong to that type**, not to consumers. If multiple pipeline stages need the same operation on a value, it's a method on the type.
   - `Length.resolve`, `Length.resolveOrAuto`, `Length.toPx` — resolution is about what `Length` means
   - `Rect.intersect` — intersection is geometry, not layout algorithm
-  - `PackedColor.fromStyle`, `.r`/`.g`/`.b` — color operations belong to the color type
+  - `RGB.fromStyle`, `.r`/`.g`/`.b` — color operations belong to the color type
 - **Prefer instance methods** over companion object functions when the method operates on a single value of the type.
 - **Don't create private wrapper aliases** — if a method moves to a type, update all call sites directly. No `private def resolve(...) = Length.resolve(...)`.
 
@@ -57,11 +57,11 @@ All items below are done and tested (245 tests passing).
 - Styler assigns `Length` directly, uses `Length.toPx` for `Length.Px` fields
 - Layout calls `Length.resolve` / `Length.resolveOrAuto` — no overflow bugs
 
-### `PackedColor` opaque type (replaces `ColorEnc`)
-- Opaque type `PackedColor = Int` with `CanEqual`
+### `RGB` opaque type (replaces `ColorEnc`)
+- Opaque type `RGB = Int` with `CanEqual`
 - 11 color fields + `gradientStops` + `Cell.fg/bg` + `ResolvedTheme.fg/bg` typed
 - Extension methods `.r`, `.g`, `.b`, `.raw` for extraction
-- `PackedColor.fromStyle` for conversion from `Style.Color`
+- `RGB.fromStyle` for conversion from `Style.Color`
 - Deleted `ColorEnc` entirely
 
 ### `FlatStyle` (replaces `ComputedStyle`)
@@ -82,7 +82,7 @@ All items below are done and tested (245 tests passing).
 - `layoutOverlayChildren` uses pattern match instead of `asInstanceOf`
 
 ### Differ type safety
-- `TermState.fg/bg: Maybe[PackedColor]` — no sentinel values
+- `TermState.fg/bg: Maybe[RGB]` — no sentinel values
 - `TermState.cursorPos: Maybe[(Int, Int)]` — no `-1` sentinel
 - Named ANSI primitives (`enableBold`, `resetAllAttributes`, `moveCursorTo`)
 
@@ -98,11 +98,12 @@ All items below are done and tested (245 tests passing).
 When implementing Phases 3 (Lower), 6 (Painter), 8 (Dispatch), 9 (Pipeline), 10 (Integration):
 
 ### Before writing code
-1. Read the Principles section above — every principle is non-negotiable
+1. **Re-read this entire plan** — every principle is non-negotiable. Don't start coding until you've reviewed them.
 2. Ask: does this logic belong to the type or to the consumer?
-3. Use `Length` for dimensions, `PackedColor` for colors, enums for categories, `Maybe` for absence
+3. Use `Length` for dimensions, `RGB` for colors, enums for categories, `Maybe` for absence
 4. Use `FlatStyle` (not `ComputedStyle`)
 5. The IMPLEMENTATION-PLAN.md pseudocode for unimplemented phases uses `while`/`return`/`Int` ordinals — these are **wrong** and must be rewritten using the patterns established in completed phases
+6. **IR types are fully immutable** — no `var`, no mutable `Array`, no mutable fields. If you need mutable state during a computation (e.g., painting cells), use a private mutable buffer internally and freeze into an immutable IR type at the boundary. See Painter's `Canvas` pattern.
 
 ### While writing code
 - All iteration via `@tailrec def loop` — no `while`
@@ -114,22 +115,25 @@ When implementing Phases 3 (Lower), 6 (Painter), 8 (Dispatch), 9 (Pipeline), 10 
 - Name intermediates after what changed — `afterAttrs`, `afterFg`, not `state2`, `state3`
 - Comments explain domain constraints ("terminals can't turn off individual attributes"), not what code does ("reset and re-emit")
 - Protocol/encoding details behind named methods — never inline raw byte writes or bit manipulation in business logic
+- **Apply every established pattern proactively** — don't wait to be told "use enums here too." If a pattern was established (enums over ordinals, `Maybe` over sentinels, `Length` over `Int`, instance methods over companions), apply it to every new piece of code without being asked.
 
 ### Before submitting for review
 - All tests pass (existing + new)
 - No raw `Int` for colors/sizes/enums anywhere in the diff
 - No `.ordinal`, sentinel values, `while`, `return`, `asInstanceOf`, `;`-joined statements
+- No `var` in IR types — case classes must be fully immutable
 - No private wrappers that just delegate to a type method — update all call sites directly
 - Audit every private helper: could it be an instance method on its primary argument type?
-- Audit every `Int` parameter and field: should it be `Length`, `PackedColor`, an enum, or `Maybe[T]`?
+- Audit every `Int` parameter and field: should it be `Length`, `RGB`, an enum, or `Maybe[T]`?
 - Audit every comment: does it explain "why" or just restate the code?
+- **Audit for immutability**: does any IR case class have `var`, mutable `Array`, or `ChunkBuilder` as a field? If so, redesign — use a private mutable buffer internally and freeze at the boundary.
 
 ## How to handle user feedback
 
 ### TODOs in code
 - The user adds TODO comments as feedback — these are instructions, not suggestions
-- Address every TODO. Don't decide on your own what a TODO means — if ambiguous, present options and wait
-- Don't rename things, change field names, or restructure code beyond what the TODO asks without presenting the plan first
+- Address **exactly** what the TODO says — don't reinterpret, expand scope, or change things the TODO didn't ask about
+- If ambiguous, present options and wait — don't guess
 - After addressing a TODO, remove it — don't leave comments about intermediate development state
 
 ### When the user says to do something
@@ -144,11 +148,16 @@ When implementing Phases 3 (Lower), 6 (Painter), 8 (Dispatch), 9 (Pipeline), 10 
 - If you notice an opportunity to improve quality (like moving logic to its type), raise it and wait for approval before implementing
 - Never diverge from the user's design — if they say "use Length", use Length everywhere, not "Length in some places and Int aliases in others"
 
+### When tests fail
+- **NEVER change a test to make it pass.** If a test fails, the code is wrong, not the test. Changing test expectations to match buggy behavior is reward hacking.
+- The only exception: if the test itself has a genuine bug (wrong assertion logic, wrong setup). Even then, explain why the test is wrong before changing it.
+- Fix the root cause in the production code. Trace through the failing case to understand what's actually wrong.
+
 ### Quality bar
 - The code should get MORE readable and safe with each change, never less
 - Every change is an opportunity to raise quality — don't just fix the immediate issue, look for the pattern and apply it consistently
-- If tests are failing, fix the root cause in the code, not in the test expectations — unless the test itself is wrong
 - When in doubt about whether something is good enough, it isn't — do the thorough version
+- **Don't default to the easy/fast path.** The correct path is the one that follows every principle in this plan. If that takes more work, do the work.
 
 ---
 

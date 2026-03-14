@@ -12,13 +12,13 @@ final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
         val cls = p.getClass
         Style(props.filter(x => !(x.getClass eq cls)) :+ p)
 
-    private inline def clampSize(s: Length): Length = s match
+    private def clampSize(s: Length): Length = s match
         case Length.Px(v)  => if v < 0 then Length.Px(0) else s
         case Length.Pct(v) => if v < 0 then Length.Pct(0) else s
         case Length.Em(v)  => if v < 0 then Length.Em(0) else s
         case Length.Auto   => s
 
-    private inline def clampSizeMin1(s: Length): Length = s match
+    private def clampSizeMin1(s: Length): Length = s match
         case Length.Px(v) => if v < 1 then Length.Px(1) else s
         case Length.Em(v) => if v < 0.1 then Length.Em(0.1) else s
         case _            => s
@@ -458,8 +458,8 @@ object Style:
         final case class Rgba private[kyo] (r: Int, g: Int, b: Int, a: Double) extends Color
         case object Transparent                                                extends Color
 
-        private inline def clamp255(v: Int): Int      = math.max(0, math.min(255, v))
-        private inline def clamp01(v: Double): Double = math.max(0.0, math.min(1.0, v))
+        private def clamp255(v: Int): Int      = math.max(0, math.min(255, v))
+        private def clamp01(v: Double): Double = math.max(0.0, math.min(1.0, v))
 
         def hex(value: String): Color =
             val v = if value.nonEmpty && value.charAt(0) != '#' then "#" + value else value

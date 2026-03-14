@@ -36,7 +36,7 @@ Every pipeline step is a pure function: input → output. No ambient context, no
 - No implicit ordering dependencies — steps compose as `diff ∘ composite ∘ paint ∘ layout ∘ style ∘ lower`
 - Widget behavior is fully encoded during Lower; downstream steps are widget-type-agnostic
 - **No imperative constructs:** No `while`, no `var` for loop control, no `return`. Use `@tailrec def loop`. No `asInstanceOf` — pattern match. No `;`-joined statements.
-- **Typed values over primitives:** Use `Length` for sizes, `PackedColor` for colors, enum types for categorical values. No `Int` ordinals, no sentinel values — use `Maybe[T]`.
+- **Typed values over primitives:** Use `Length` for sizes, `RGB` for colors, enum types for categorical values. No `Int` ordinals, no sentinel values — use `Maybe[T]`.
 - **Full quality standards in `PIPELINE-QUALITY-PLAN.md`** — all phases must follow these before submitting for review.
 
 ### Modular
@@ -528,9 +528,9 @@ case class FlatStyle(
     opacity: Double, cursor: Int,
     // Shadow (non-inheritable)
     shadowX: Length.Px, shadowY: Length.Px, shadowBlur: Length.Px, shadowSpread: Length.Px,
-    shadowColor: PackedColor,
+    shadowColor: RGB,
     // Gradient (non-inheritable)
-    gradientDirection: Maybe[Style.GradientDirection], gradientStops: Chunk[(PackedColor, Double)],
+    gradientDirection: Maybe[Style.GradientDirection], gradientStops: Chunk[(RGB, Double)],
     // Filters (non-inheritable)
     brightness: Double, contrast: Double, grayscale: Double, sepia: Double,
     invert: Double, saturate: Double, hueRotate: Double, blur: Length.Px,
@@ -545,8 +545,8 @@ case class FlatStyle(
     marTop: Length, marRight: Length, marBottom: Length, marLeft: Length,
     borderTop: Length.Px, borderRight: Length.Px, borderBottom: Length.Px, borderLeft: Length.Px,
     borderStyle: Style.BorderStyle,
-    borderColorTop: PackedColor, borderColorRight: PackedColor,
-    borderColorBottom: PackedColor, borderColorLeft: PackedColor,
+    borderColorTop: RGB, borderColorRight: RGB,
+    borderColorBottom: RGB, borderColorLeft: RGB,
     roundTL: Boolean, roundTR: Boolean, roundBR: Boolean, roundBL: Boolean,
     // Layout (non-inheritable)
     direction: Style.FlexDirection, justify: Style.Justification,
@@ -561,7 +561,7 @@ case class FlatStyle(
 **Type helpers:**
 
 - `Length` — standalone ADT in `kyo-ui/shared/src/main/scala/kyo/Length.scala` with `Px | Pct | Em | Auto`. Methods: `resolve(length, parentPx)`, `resolveOrAuto(length, parentPx)`, `toPx(length)`. Extensions: `N.px`, `N.pct`, `N.em`.
-- `PackedColor` — opaque type over `Int` in IR.scala. `PackedColor(r, g, b)`, `.r`/`.g`/`.b`/`.raw` extensions, `PackedColor.Transparent`, `PackedColor.fromStyle(color, parentBg)`.
+- `RGB` — opaque type over `Int` in IR.scala. `RGB(r, g, b)`, `.r`/`.g`/`.b`/`.raw` extensions, `RGB.Transparent`, `RGB.fromStyle(color, parentBg)`.
 - `Rect` — `intersect(other)` instance method for clip computation.
 
 **Tests (IRTest.scala):**
@@ -569,7 +569,7 @@ case class FlatStyle(
 - `Handlers.empty` defaults: `colspan=1, rowspan=1, imageData=Absent, disabled=false`, all event handlers are noops
 - `CellGrid.empty` produces correct dimensions with `Cell.Empty` cells
 - `Length` round-trips: `pct(50.0)` → `resolve(_, 100)` = 50
-- `PackedColor` round-trips: `pack(r, g, b)` → `r(c), g(c), b(c)` correct
+- `RGB` round-trips: `pack(r, g, b)` → `r(c), g(c), b(c)` correct
 - `FlatStyle.Default` produces sensible defaults
 - `WidgetKey` construction and `WidgetKey.child` produce correct frame/path values
 - All three IR enum variants (`Resolved`, `Styled`, `Laid`) constructible with correct fields
@@ -580,7 +580,7 @@ case class FlatStyle(
 
 **Estimated size:** ~350 lines
 
-**Review checkpoint:** ✅ Complete. All 34 tests pass. Refactored: `Length` → `Length` types, `PackedColor` → `PackedColor` opaque type, all enum fields typed (not Int ordinals), `gradientDirection: Maybe[Style.GradientDirection]`.
+**Review checkpoint:** ✅ Complete. All 34 tests pass. Refactored: `Length` → `Length` types, `RGB` → `RGB` opaque type, all enum fields typed (not Int ordinals), `gradientDirection: Maybe[Style.GradientDirection]`.
 
 ---
 
@@ -611,8 +611,8 @@ object ResolvedTheme:
         case Theme.Default =>
             ResolvedTheme(
                 variant = Theme.Default,
-                fg = PackedColor.pack(255, 255, 255),
-                bg = PackedColor.Transparent,
+                fg = RGB.pack(255, 255, 255),
+                bg = RGB.Transparent,
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
                 highlightFg = Style.Color.rgb(255, 255, 255)
@@ -620,8 +620,8 @@ object ResolvedTheme:
         case Theme.Minimal =>
             ResolvedTheme(
                 variant = Theme.Minimal,
-                fg = PackedColor.pack(255, 255, 255),
-                bg = PackedColor.Transparent,
+                fg = RGB.pack(255, 255, 255),
+                bg = RGB.Transparent,
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
                 highlightFg = Style.Color.rgb(255, 255, 255)
@@ -629,8 +629,8 @@ object ResolvedTheme:
         case Theme.Plain =>
             ResolvedTheme(
                 variant = Theme.Plain,
-                fg = PackedColor.pack(255, 255, 255),
-                bg = PackedColor.Transparent,
+                fg = RGB.pack(255, 255, 255),
+                bg = RGB.Transparent,
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
                 highlightFg = Style.Color.rgb(255, 255, 255)
@@ -719,7 +719,7 @@ class WidgetStateCache:
 - `ResolvedTheme.resolve` produces correct values per variant
 - `FlatStyle.fromTheme` sets fg/bg from theme
 
-**Dependencies:** Phase 0 (SignalRef.Unsafe), Phase 1 (IR types for `WidgetKey`, `LayoutResult`, `CellGrid`, `FlatStyle`, `PackedColor`).
+**Dependencies:** Phase 0 (SignalRef.Unsafe), Phase 1 (IR types for `WidgetKey`, `LayoutResult`, `CellGrid`, `FlatStyle`, `RGB`).
 
 **Compile isolation:** Only depends on types from Phase 1 and `SignalRef.Unsafe` from kyo-core. No pipeline logic.
 
@@ -923,7 +923,7 @@ private def themeStyle(elem: UI.Element, theme: ResolvedTheme): Style =
 
 **Estimated size:** ~800 lines
 
-**Review checkpoint:** Phase complete when Lower.scala compiles with all 14+ tests passing. This is the largest and most complex phase — review the widget expansion patterns carefully. Each sub-phase (3a–3h) can be reviewed incrementally if preferred. Present for review before starting Phase 4.
+**Review checkpoint:** ✅ Complete. All 16 tests pass. Lower uses `WalkContext` for handler threading, `@tailrec` loops, `Frame` on all UI elements for identity, `.andThen` for effect composition, `Maybe.isEmpty`/`.get` for union type matching. Widget expansion: TextInput with cursor/insert/delete, Checkbox/Radio with toggle, Select with popup, RangeInput with step. No `asInstanceOf` except for kyo union type erasure (`Signal[?]`, `SignalRef[?]`).
 
 ---
 
@@ -971,8 +971,8 @@ private def resolve(userStyle: Style, parent: FlatStyle): FlatStyle =
     @tailrec def loop(i: Int): Unit =
         if i < props.size then
             props(i) match
-                case Prop.BgColor(c)           => bg = PackedColor.fromStyle(c, parent.bg)
-                case Prop.TextColor(c)         => fg = PackedColor.fromStyle(c, parent.bg)
+                case Prop.BgColor(c)           => bg = RGB.fromStyle(c, parent.bg)
+                case Prop.TextColor(c)         => fg = RGB.fromStyle(c, parent.bg)
                 case Prop.Padding(t, r, b, l)  =>
                     padTop = t
                     padRight = r
@@ -1016,7 +1016,7 @@ private def resolve(userStyle: Style, parent: FlatStyle): FlatStyle =
 
 **Estimated size:** ~250 lines
 
-**Review checkpoint:** ✅ Complete. All 14 tests pass. Refactored: assigns `Length` directly (no `sizeToInt`), `toPx` helper for `Length.Px` fields, `PackedColor.fromStyle` for colors, FontWeight uses explicit match (no `.ordinal`), one statement per line.
+**Review checkpoint:** ✅ Complete. All 14 tests pass. Refactored: assigns `Length` directly (no `sizeToInt`), `toPx` helper for `Length.Px` fields, `RGB.fromStyle` for colors, FontWeight uses explicit match (no `.ordinal`), one statement per line.
 
 ---
 
@@ -1174,7 +1174,7 @@ object Painter:
 
 **Estimated size:** ~500 lines
 
-**Review checkpoint:** Phase complete when Painter.scala compiles with all 14+ tests passing. Review focuses on clipping correctness and visual output. Present for review before starting Phase 7.
+**Review checkpoint:** ✅ Complete. All 15 tests pass. Painter uses private `Canvas` class for mutable painting, freezes into immutable `CellGrid` (with `Span[Cell]`) at the end. All enums matched by variant, `RGB` throughout, `@tailrec` loops, `RGB.lerp`/`.clamp` for color math, `Length.resolve` for letter spacing. `CellGrid.cells` changed from `Array[Cell]` to `Span[Cell]` — IR is fully immutable.
 
 ---
 
@@ -1205,7 +1205,7 @@ object Compositor:
 ```scala
 object Differ:
     private case class TermState(
-        fg: Maybe[PackedColor], bg: Maybe[PackedColor],
+        fg: Maybe[RGB], bg: Maybe[RGB],
         bold: Boolean, italic: Boolean, underline: Boolean,
         strikethrough: Boolean, dimmed: Boolean,
         cursorPos: Maybe[(Int, Int)]
@@ -1238,7 +1238,7 @@ Named ANSI primitives: `enableBold`, `enableDim`, `enableItalic`, `enableUnderli
 
 **Compile isolation:** Pure functions, no ScreenState or SignalRef dependency. Only imports IR types from Phase 1.
 
-**Review checkpoint:** ✅ Complete. 9 tests pass (3 Compositor + 6 Differ). Refactored: `@tailrec` loops, `TermState` with `Maybe[PackedColor]` for colors and `Maybe[(Int, Int)]` for cursor, named ANSI primitives (`enableBold`, `resetAllAttributes`, `moveCursorTo`, etc.).
+**Review checkpoint:** ✅ Complete. 9 tests pass (3 Compositor + 6 Differ). Refactored: `@tailrec` loops, `TermState` with `Maybe[RGB]` for colors and `Maybe[(Int, Int)]` for cursor, named ANSI primitives (`enableBold`, `resetAllAttributes`, `moveCursorTo`, etc.).
 
 ---
 
@@ -2141,7 +2141,7 @@ object Styler:
 
         // ---- Non-inherited: start at defaults ----
         var shadowX = 0; var shadowY = 0; var shadowBlur = 0
-        var shadowSpread = 0; var shadowColor = PackedColor.Transparent
+        var shadowSpread = 0; var shadowColor = RGB.Transparent
         var gradientDirection = 0
         var gradientStops: Chunk[(Int, Double)] = Chunk.empty
         var brightness = 1.0; var contrast = 1.0; var grayscale = 0.0
@@ -2152,10 +2152,10 @@ object Styler:
         var marTop = 0; var marRight = 0; var marBottom = 0; var marLeft = 0
         var borderTop = 0; var borderRight = 0; var borderBottom = 0; var borderLeft = 0
         var borderStyle = 0
-        var borderColorTop = PackedColor.Transparent
-        var borderColorRight = PackedColor.Transparent
-        var borderColorBottom = PackedColor.Transparent
-        var borderColorLeft = PackedColor.Transparent
+        var borderColorTop = RGB.Transparent
+        var borderColorRight = RGB.Transparent
+        var borderColorBottom = RGB.Transparent
+        var borderColorLeft = RGB.Transparent
         var roundTL = false; var roundTR = false; var roundBR = false; var roundBL = false
         var direction = 0; var justify = 0; var align = 0; var gap = 0
         var flexGrow = 0.0; var flexShrink = 1.0; var flexWrap = 0
@@ -2169,8 +2169,8 @@ object Styler:
         var i = 0
         while i < props.length do
             props(i) match
-                case Prop.BgColor(c)             => bg = PackedColor.fromStyle(c, parent.bg)
-                case Prop.TextColor(c)           => fg = PackedColor.fromStyle(c, parent.bg)
+                case Prop.BgColor(c)             => bg = RGB.fromStyle(c, parent.bg)
+                case Prop.TextColor(c)           => fg = RGB.fromStyle(c, parent.bg)
                 case Prop.Padding(t, r, b, l) =>
                     padTop = t
                     padRight = r
@@ -2222,23 +2222,23 @@ object Styler:
                     borderBottom = Length.toPx(b)
                     borderLeft = Length.toPx(l)
                 case Prop.BorderColorProp(t, r, b, l) =>
-                    borderColorTop = PackedColor.fromStyle(t, parent.bg)
-                    borderColorRight = PackedColor.fromStyle(r, parent.bg)
-                    borderColorBottom = PackedColor.fromStyle(b, parent.bg)
-                    borderColorLeft = PackedColor.fromStyle(l, parent.bg)
+                    borderColorTop = RGB.fromStyle(t, parent.bg)
+                    borderColorRight = RGB.fromStyle(r, parent.bg)
+                    borderColorBottom = RGB.fromStyle(b, parent.bg)
+                    borderColorLeft = RGB.fromStyle(l, parent.bg)
                 case Prop.BorderStyleProp(v)     => borderStyle = v
                 case Prop.BorderTopProp(w, c)    =>
                     borderTop = Length.toPx(w)
-                    borderColorTop = PackedColor.fromStyle(c, parent.bg)
+                    borderColorTop = RGB.fromStyle(c, parent.bg)
                 case Prop.BorderRightProp(w, c)  =>
                     borderRight = Length.toPx(w)
-                    borderColorRight = PackedColor.fromStyle(c, parent.bg)
+                    borderColorRight = RGB.fromStyle(c, parent.bg)
                 case Prop.BorderBottomProp(w, c) =>
                     borderBottom = Length.toPx(w)
-                    borderColorBottom = PackedColor.fromStyle(c, parent.bg)
+                    borderColorBottom = RGB.fromStyle(c, parent.bg)
                 case Prop.BorderLeftProp(w, c)   =>
                     borderLeft = Length.toPx(w)
-                    borderColorLeft = PackedColor.fromStyle(c, parent.bg)
+                    borderColorLeft = RGB.fromStyle(c, parent.bg)
                 case Prop.BorderRadiusProp(tl, tr, br, bl) =>
                     roundTL = Length.toPx(tl).value > 0
                     roundTR = Length.toPx(tr).value > 0
@@ -2249,11 +2249,11 @@ object Styler:
                     shadowY = Length.toPx(y)
                     shadowBlur = Length.toPx(b)
                     shadowSpread = Length.toPx(s)
-                    shadowColor = PackedColor.fromStyle(c, parent.bg)
+                    shadowColor = RGB.fromStyle(c, parent.bg)
                 case Prop.BgGradientProp(dir, colors, positions) =>
                     gradientDirection = Maybe(dir)
                     gradientStops = Chunk.from(Array.tabulate(colors.length) { j =>
-                        (PackedColor.fromStyle(colors(j), parent.bg), positions(j))
+                        (RGB.fromStyle(colors(j), parent.bg), positions(j))
                     })
                 case Prop.BrightnessProp(v)      => brightness = v
                 case Prop.ContrastProp(v)        => contrast = v
@@ -2293,13 +2293,13 @@ object Styler:
     private def inheritText(parent: FlatStyle): FlatStyle =
         // Only inherited properties, everything else at defaults
         FlatStyle(
-            fg = parent.fg, bg = PackedColor.Transparent,
+            fg = parent.fg, bg = RGB.Transparent,
             bold = parent.bold, italic = parent.italic,
             underline = parent.underline, strikethrough = parent.strikethrough,
             opacity = parent.opacity, cursor = Style.Cursor.default_,
             shadowX = Length.zero, shadowY = Length.zero,
             shadowBlur = Length.zero, shadowSpread = Length.zero,
-            shadowColor = PackedColor.Transparent,
+            shadowColor = RGB.Transparent,
             gradientDirection = Absent, gradientStops = Chunk.empty,
             brightness = 1.0, contrast = 1.0, grayscale = 0.0, sepia = 0.0,
             invert = 0.0, saturate = 1.0, hueRotate = 0.0, blur = Length.zero,
@@ -2314,8 +2314,8 @@ object Styler:
             borderTop = Length.zero, borderRight = Length.zero,
             borderBottom = Length.zero, borderLeft = Length.zero,
             borderStyle = Style.BorderStyle.none,
-            borderColorTop = PackedColor.Transparent, borderColorRight = PackedColor.Transparent,
-            borderColorBottom = PackedColor.Transparent, borderColorLeft = PackedColor.Transparent,
+            borderColorTop = RGB.Transparent, borderColorRight = RGB.Transparent,
+            borderColorBottom = RGB.Transparent, borderColorLeft = RGB.Transparent,
             roundTL = false, roundTR = false, roundBR = false, roundBL = false,
             direction = Style.FlexDirection.row, justify = Style.Justification.start,
             align = Style.Alignment.start, gap = Length.zero,
@@ -2731,8 +2731,8 @@ object Layout:
 object Painter:
     import scala.annotation.tailrec
 
-    val white = PackedColor(255, 255, 255)
-    val black = PackedColor(0, 0, 0)
+    val white = RGB(255, 255, 255)
+    val black = RGB(0, 0, 0)
 
     def paint(layout: LayoutResult, viewport: Rect): (CellGrid, CellGrid) =
         val base = CellGrid.empty(viewport.w, viewport.h)
@@ -2756,7 +2756,7 @@ object Painter:
         val clip = n.clip
 
         // 1. Shadow
-        if cs.shadowColor != PackedColor.Transparent &&
+        if cs.shadowColor != RGB.Transparent &&
            (cs.shadowX.value != 0 || cs.shadowY.value != 0 || cs.shadowSpread.value != 0) then
             paintShadow(grid, b, cs, clip)
 
@@ -2765,7 +2765,7 @@ object Painter:
             case Present(dir) if cs.gradientStops.size >= 2 =>
                 paintGradient(grid, b, dir, cs.gradientStops, clip)
             case _ =>
-                if cs.bg != PackedColor.Transparent then
+                if cs.bg != RGB.Transparent then
                     fillBg(grid, b.x, b.y, b.w, b.h, cs.bg, clip)
 
         // 3. Border
@@ -2792,7 +2792,7 @@ object Painter:
 
     // ---- Background fill ----
 
-    private def fillBg(grid: CellGrid, x: Int, y: Int, w: Int, h: Int, bg: PackedColor, clip: Rect): Unit =
+    private def fillBg(grid: CellGrid, x: Int, y: Int, w: Int, h: Int, bg: RGB, clip: Rect): Unit =
         @tailrec def eachRow(row: Int): Unit =
             if row < y + h then
                 @tailrec def eachCol(col: Int): Unit =
@@ -2905,7 +2905,7 @@ object Painter:
 
     private def paintGradient(
         grid: CellGrid, b: Rect, direction: Style.GradientDirection,
-        stops: Chunk[(PackedColor, Double)], clip: Rect
+        stops: Chunk[(RGB, Double)], clip: Rect
     ): Unit =
         @tailrec def eachRow(y: Int): Unit =
             if y < b.y + b.h then
@@ -2934,13 +2934,13 @@ object Painter:
             case Style.GradientDirection.toBottomRight  => (fx + fy) / 2.0
             case Style.GradientDirection.toBottomLeft   => ((1.0 - fx) + fy) / 2.0
 
-    private def interpolateGradient(stops: Chunk[(PackedColor, Double)], t: Double): PackedColor =
+    private def interpolateGradient(stops: Chunk[(RGB, Double)], t: Double): RGB =
         if stops.size <= 1 then
             if stops.isEmpty then black else stops(0)._1
         else
             // ... find surrounding stops, lerp between them
             val (c1, c2, f) = findStopPair(stops, t)
-            c1.lerp(c2, f) // lerp is a PackedColor method
+            c1.lerp(c2, f) // lerp is a RGB method
 
     // ---- Filter application ----
 
@@ -2961,22 +2961,22 @@ object Painter:
                 eachRow(y + 1)
         eachRow(b.y)
 
-    private def applyFilterChain(color: PackedColor, cs: FlatStyle): PackedColor =
-        if color == PackedColor.Transparent then color
+    private def applyFilterChain(color: RGB, cs: FlatStyle): RGB =
+        if color == RGB.Transparent then color
         else
             // Apply brightness, contrast, grayscale, sepia, invert, saturate, hueRotate
-            // Each filter uses PackedColor methods for extraction/construction
-            // Local vars acceptable here — building up a single PackedColor result
+            // Each filter uses RGB methods for extraction/construction
+            // Local vars acceptable here — building up a single RGB result
             var r = color.r
             var g = color.g
             var b = color.b
-            // ... (filter math same as before, using PackedColor(...) to construct result)
-            PackedColor(PackedColor.clamp(r), PackedColor.clamp(g), PackedColor.clamp(b))
+            // ... (filter math same as before, using RGB(...) to construct result)
+            RGB(RGB.clamp(r), RGB.clamp(g), RGB.clamp(b))
 
     // ---- Helpers ----
 
     private def setCell(grid: CellGrid, x: Int, y: Int, ch: Char,
-                        fg: PackedColor, bg: PackedColor, clip: Rect,
+                        fg: RGB, bg: RGB, clip: Rect,
                         bold: Boolean = false, italic: Boolean = false,
                         underline: Boolean = false, strikethrough: Boolean = false): Unit =
         if inClip(x, y, clip) && inBounds(x, y, grid) then
@@ -2994,8 +2994,8 @@ object Painter:
 **Key differences from old pseudocode:**
 - `n.style` not `n.computed`
 - All enums matched by variant (`Style.BorderStyle.solid`), not Int ordinals
-- All colors typed as `PackedColor`, not `Int`
-- `PackedColor.lerp`, `PackedColor.clamp` — color operations on the type
+- All colors typed as `RGB`, not `Int`
+- `RGB.lerp`, `RGB.clamp` — color operations on the type
 - `gradientDirection: Maybe[Style.GradientDirection]` — pattern match, not `> 0`
 - Border widths accessed as `.value` (they're `Length.Px`)
 - All `while` → `@tailrec def eachRow`/`eachCol`/`eachLine`/`eachChar`
@@ -3006,7 +3006,7 @@ object Painter:
 ### Differ: complete ANSI emission
 
 > **Note**: Differ has been refactored to use `@tailrec` with immutable `TermState` threaded
-> through `eachCol`/`eachRow` loops. SGR tracking uses `Maybe[PackedColor]` for colors and
+> through `eachCol`/`eachRow` loops. SGR tracking uses `Maybe[RGB]` for colors and
 > `Maybe[(Int, Int)]` for cursor position — no sentinel values. ANSI protocol details are behind
 > named methods (`enableBold`, `resetAllAttributes`, `moveCursorTo`, `writeFgColor`, etc.).
 > See `Differ.scala` for the current implementation.
@@ -3014,7 +3014,7 @@ object Painter:
 ```scala
 object Differ:
     private case class TermState(
-        fg: Maybe[PackedColor], bg: Maybe[PackedColor],
+        fg: Maybe[RGB], bg: Maybe[RGB],
         bold: Boolean, italic: Boolean, underline: Boolean,
         strikethrough: Boolean, dimmed: Boolean,
         cursorPos: Maybe[(Int, Int)]

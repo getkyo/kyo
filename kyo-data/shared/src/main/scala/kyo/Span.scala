@@ -474,6 +474,24 @@ object Span:
             r
         end map
 
+        /** Builds a new Span by applying a function to each element and its index.
+          *
+          * @param f
+          *   the function to apply to each element and its index
+          * @return
+          *   a new Span containing the results of applying the function to each element
+          */
+        inline def mapIndexed[B: ClassTag](inline f: (Int, A) => B): Span[B] =
+            val size = self.length
+            val r    = new Array[B](size)
+            @tailrec def loop(idx: Int): Unit =
+                if idx < size then
+                    r(idx) = f(idx, self(idx))
+                    loop(idx + 1)
+            loop(0)
+            r
+        end mapIndexed
+
         /** Builds a new Span by applying a function to all elements and using the elements of the resulting collections.
           *
           * @param f

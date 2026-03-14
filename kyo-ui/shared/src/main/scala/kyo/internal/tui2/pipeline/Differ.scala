@@ -14,8 +14,8 @@ object Differ:
       * redundant escape sequences.
       */
     private case class TermState(
-        fg: Maybe[PackedColor],
-        bg: Maybe[PackedColor],
+        fg: Maybe[RGB],
+        bg: Maybe[RGB],
         bold: Boolean,
         italic: Boolean,
         underline: Boolean,
@@ -43,7 +43,7 @@ object Differ:
             else
                 val idx      = row * curr.width + col
                 val currCell = curr.cells(idx)
-                val prevCell = if idx < prev.cells.length then prev.cells(idx) else Cell.Empty
+                val prevCell = if idx < prev.cells.size then prev.cells(idx) else Cell.Empty
                 if currCell != prevCell then
                     if !term.cursorPos.contains((row, col)) then
                         moveCursorTo(buf, row, col)
@@ -105,14 +105,14 @@ object Differ:
             )
         else term
 
-    private def updateFgColor(buf: java.io.ByteArrayOutputStream, term: TermState, fg: PackedColor): TermState =
-        if fg != PackedColor.Transparent && !term.fg.contains(fg) then
+    private def updateFgColor(buf: java.io.ByteArrayOutputStream, term: TermState, fg: RGB): TermState =
+        if fg != RGB.Transparent && !term.fg.contains(fg) then
             writeFgColor(buf, fg)
             term.copy(fg = Maybe(fg))
         else term
 
-    private def updateBgColor(buf: java.io.ByteArrayOutputStream, term: TermState, bg: PackedColor): TermState =
-        if bg != PackedColor.Transparent && !term.bg.contains(bg) then
+    private def updateBgColor(buf: java.io.ByteArrayOutputStream, term: TermState, bg: RGB): TermState =
+        if bg != RGB.Transparent && !term.bg.contains(bg) then
             writeBgColor(buf, bg)
             term.copy(bg = Maybe(bg))
         else term
@@ -130,7 +130,7 @@ object Differ:
     // Color sequences use 24-bit true color: ESC [ 38;2;r;g;b m (fg) / ESC [ 48;2;r;g;b m (bg)
     // Cursor movement: ESC [ <row> ; <col> H (1-based coordinates)
 
-    private inline val Esc = 27
+    private val Esc = 27
 
     private def moveCursorTo(buf: java.io.ByteArrayOutputStream, row: Int, col: Int): Unit =
         buf.write(Esc); buf.write('[')
@@ -158,7 +158,7 @@ object Differ:
     private def enableStrikethrough(buf: java.io.ByteArrayOutputStream): Unit =
         buf.write(Esc); buf.write('['); buf.write('9'); buf.write('m')
 
-    private def writeFgColor(buf: java.io.ByteArrayOutputStream, color: PackedColor): Unit =
+    private def writeFgColor(buf: java.io.ByteArrayOutputStream, color: RGB): Unit =
         buf.write(Esc); buf.write('['); buf.write('3'); buf.write('8'); buf.write(';')
         buf.write('2'); buf.write(';')
         writeDecimal(buf, color.r); buf.write(';')
@@ -166,7 +166,7 @@ object Differ:
         writeDecimal(buf, color.b); buf.write('m')
     end writeFgColor
 
-    private def writeBgColor(buf: java.io.ByteArrayOutputStream, color: PackedColor): Unit =
+    private def writeBgColor(buf: java.io.ByteArrayOutputStream, color: RGB): Unit =
         buf.write(Esc); buf.write('['); buf.write('4'); buf.write('8'); buf.write(';')
         buf.write('2'); buf.write(';')
         writeDecimal(buf, color.r); buf.write(';')

@@ -19,9 +19,9 @@ class WidgetStateCache:
     private val map      = new java.util.HashMap[WidgetKey, Any]
     private val accessed = new java.util.HashSet[WidgetKey]
 
-    def beginFrame(): Unit = accessed.clear()
+    def beginFrame()(using AllowUnsafe): Unit = accessed.clear()
 
-    def getOrCreate[S](key: WidgetKey, init: => S): S =
+    def getOrCreate[S](key: WidgetKey, init: => S)(using AllowUnsafe): S =
         discard(accessed.add(key))
         val existing = map.get(key)
         if existing.asInstanceOf[AnyRef] ne null then existing.asInstanceOf[S]
@@ -32,10 +32,10 @@ class WidgetStateCache:
         end if
     end getOrCreate
 
-    def get[S](key: WidgetKey): Maybe[S] =
+    def get[S](key: WidgetKey)(using AllowUnsafe): Maybe[S] =
         val v = map.get(key)
         if v.asInstanceOf[AnyRef] ne null then Maybe(v.asInstanceOf[S]) else Absent
 
-    def sweep(): Unit =
+    def sweep()(using AllowUnsafe): Unit =
         discard(map.keySet().removeIf(k => !accessed.contains(k)))
 end WidgetStateCache

@@ -28,7 +28,7 @@ class StylerTest extends Test:
                 case Styled.Node(_, _, _, children) =>
                     children(0) match
                         case Styled.Node(_, cs, _, _) =>
-                            assert(cs.fg == PackedColor(255, 0, 0))
+                            assert(cs.fg == RGB(255, 0, 0))
                         case _ => fail("expected child Node")
                 case _ => fail("expected Node")
             end match
@@ -46,7 +46,7 @@ class StylerTest extends Test:
                 case Styled.Node(_, _, _, children) =>
                     children(0) match
                         case Styled.Node(_, cs, _, _) =>
-                            assert(cs.fg == PackedColor(0, 255, 0))
+                            assert(cs.fg == RGB(0, 255, 0))
                         case _ => fail("expected child Node")
                 case _ => fail("expected Node")
             end match
@@ -110,12 +110,12 @@ class StylerTest extends Test:
     "color encoding" - {
         "color rgb(255,0,0)" in {
             val cs = styleNode(Style.color(Style.Color.rgb(255, 0, 0)))
-            assert(cs.fg == PackedColor(255, 0, 0))
+            assert(cs.fg == RGB(255, 0, 0))
         }
 
         "bg transparent" in {
             val cs = styleNode(Style.bg(Style.Color.Transparent))
-            assert(cs.bg == PackedColor.Transparent)
+            assert(cs.bg == RGB.Transparent)
         }
 
         "rgba blending against parent bg" in {
@@ -154,9 +154,9 @@ class StylerTest extends Test:
                     children(0) match
                         case Styled.Text(v, cs) =>
                             assert(v == "hello")
-                            assert(cs.fg == PackedColor(100, 200, 50))
+                            assert(cs.fg == RGB(100, 200, 50))
                             assert(cs.bold)
-                            assert(cs.bg == PackedColor.Transparent)
+                            assert(cs.bg == RGB.Transparent)
                             assert(cs.width == Length.Auto)
                         case _ => fail("expected Text")
                 case _ => fail("expected Node")

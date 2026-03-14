@@ -120,8 +120,8 @@ case class LayoutResult(base: Laid, popups: Chunk[Laid])
 
 case class Cell(
     char: Char,
-    fg: PackedColor,
-    bg: PackedColor,
+    fg: RGB,
+    bg: RGB,
     bold: Boolean,
     italic: Boolean,
     underline: Boolean,
@@ -130,25 +130,25 @@ case class Cell(
 ) derives CanEqual
 
 object Cell:
-    val Empty: Cell = Cell('\u0000', PackedColor(0, 0, 0), PackedColor(0, 0, 0), false, false, false, false, false)
+    val Empty: Cell = Cell('\u0000', RGB(0, 0, 0), RGB(0, 0, 0), false, false, false, false, false)
 
 case class CellGrid(
     width: Int,
     height: Int,
-    cells: Array[Cell],
+    cells: Span[Cell],
     rawSequences: Chunk[(Rect, Array[Byte])]
 )
 
 object CellGrid:
     def empty(w: Int, h: Int): CellGrid =
-        CellGrid(w, h, Array.fill(w * h)(Cell.Empty), Chunk.empty)
+        CellGrid(w, h, Span.fill(w * h)(Cell.Empty), Chunk.empty)
 
 // ---- FlatStyle ----
 
 case class FlatStyle(
     // Visual (inheritable)
-    fg: PackedColor,
-    bg: PackedColor,
+    fg: RGB,
+    bg: RGB,
     bold: Boolean,
     italic: Boolean,
     underline: Boolean,
@@ -160,10 +160,10 @@ case class FlatStyle(
     shadowY: Length.Px,
     shadowBlur: Length.Px,
     shadowSpread: Length.Px,
-    shadowColor: PackedColor,
+    shadowColor: RGB,
     // Gradient (non-inheritable)
     gradientDirection: Maybe[Style.GradientDirection],
-    gradientStops: Chunk[(PackedColor, Double)],
+    gradientStops: Chunk[(RGB, Double)],
     // Filters (non-inheritable)
     brightness: Double,
     contrast: Double,
@@ -197,10 +197,10 @@ case class FlatStyle(
     borderBottom: Length.Px,
     borderLeft: Length.Px,
     borderStyle: Style.BorderStyle,
-    borderColorTop: PackedColor,
-    borderColorRight: PackedColor,
-    borderColorBottom: PackedColor,
-    borderColorLeft: PackedColor,
+    borderColorTop: RGB,
+    borderColorRight: RGB,
+    borderColorBottom: RGB,
+    borderColorLeft: RGB,
     roundTL: Boolean,
     roundTR: Boolean,
     roundBR: Boolean,
@@ -227,8 +227,8 @@ case class FlatStyle(
 
 object FlatStyle:
     val Default: FlatStyle = FlatStyle(
-        fg = PackedColor(255, 255, 255),
-        bg = PackedColor.Transparent,
+        fg = RGB(255, 255, 255),
+        bg = RGB.Transparent,
         bold = false,
         italic = false,
         underline = false,
@@ -239,7 +239,7 @@ object FlatStyle:
         shadowY = Length.zero,
         shadowBlur = Length.zero,
         shadowSpread = Length.zero,
-        shadowColor = PackedColor.Transparent,
+        shadowColor = RGB.Transparent,
         gradientDirection = Absent,
         gradientStops = Chunk.empty,
         brightness = 1.0,
@@ -271,10 +271,10 @@ object FlatStyle:
         borderBottom = Length.zero,
         borderLeft = Length.zero,
         borderStyle = Style.BorderStyle.none,
-        borderColorTop = PackedColor.Transparent,
-        borderColorRight = PackedColor.Transparent,
-        borderColorBottom = PackedColor.Transparent,
-        borderColorLeft = PackedColor.Transparent,
+        borderColorTop = RGB.Transparent,
+        borderColorRight = RGB.Transparent,
+        borderColorBottom = RGB.Transparent,
+        borderColorLeft = RGB.Transparent,
         roundTL = false,
         roundTR = false,
         roundBR = false,
@@ -305,8 +305,8 @@ end FlatStyle
 
 case class ResolvedTheme(
     variant: Theme,
-    fg: PackedColor,
-    bg: PackedColor,
+    fg: RGB,
+    bg: RGB,
     borderColor: Style.Color,
     highlightBg: Style.Color,
     highlightFg: Style.Color
@@ -317,8 +317,8 @@ object ResolvedTheme:
         case Theme.Default =>
             ResolvedTheme(
                 variant = Theme.Default,
-                fg = PackedColor(255, 255, 255),
-                bg = PackedColor.Transparent,
+                fg = RGB(255, 255, 255),
+                bg = RGB.Transparent,
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
                 highlightFg = Style.Color.rgb(255, 255, 255)
@@ -326,8 +326,8 @@ object ResolvedTheme:
         case Theme.Minimal =>
             ResolvedTheme(
                 variant = Theme.Minimal,
-                fg = PackedColor(255, 255, 255),
-                bg = PackedColor.Transparent,
+                fg = RGB(255, 255, 255),
+                bg = RGB.Transparent,
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
                 highlightFg = Style.Color.rgb(255, 255, 255)
@@ -335,8 +335,8 @@ object ResolvedTheme:
         case Theme.Plain =>
             ResolvedTheme(
                 variant = Theme.Plain,
-                fg = PackedColor(255, 255, 255),
-                bg = PackedColor.Transparent,
+                fg = RGB(255, 255, 255),
+                bg = RGB.Transparent,
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
                 highlightFg = Style.Color.rgb(255, 255, 255)
@@ -348,36 +348,50 @@ end ResolvedTheme
 /** RGB color packed into an Int: bits [23:16] = red, [15:8] = green, [7:0] = blue. Opaque type — prevents confusion with sizes, indices, or
   * other Int values.
   */
-opaque type PackedColor = Int
+opaque type RGB = Int
 
-given CanEqual[PackedColor, PackedColor] = CanEqual.derived
+object RGB:
+    given CanEqual[RGB, RGB] = CanEqual.derived
+    val Transparent: RGB     = -1
 
-object PackedColor:
-    val Transparent: PackedColor = -1
+    def apply(r: Int, g: Int, b: Int): RGB = (r << 16) | (g << 8) | b
 
-    def apply(r: Int, g: Int, b: Int): PackedColor = (r << 16) | (g << 8) | b
-
-    extension (c: PackedColor)
+    extension (c: RGB)
         def r: Int   = (c >> 16) & 0xff
         def g: Int   = (c >> 8) & 0xff
         def b: Int   = c & 0xff
         def raw: Int = c
+
+        /** Linear interpolation between two colors. `f` ranges from 0.0 (this) to 1.0 (other). */
+        def lerp(other: RGB, f: Double): RGB =
+            RGB(
+                clamp((c.r * (1 - f) + other.r * f).toInt),
+                clamp((c.g * (1 - f) + other.g * f).toInt),
+                clamp((c.b * (1 - f) + other.b * f).toInt)
+            )
+
+        /** Swap fg and bg — used for cursor rendering. */
+        def invert: RGB =
+            RGB(255 - c.r, 255 - c.g, 255 - c.b)
     end extension
 
-    def fromStyle(c: Style.Color, parentBg: PackedColor): PackedColor =
+    def clamp(v: Int): Int =
+        if v < 0 then 0 else if v > 255 then 255 else v
+
+    def fromStyle(c: Style.Color, parentBg: RGB): RGB =
         c match
             case Style.Color.Transparent  => Transparent
-            case Style.Color.Rgb(r, g, b) => PackedColor(r, g, b)
+            case Style.Color.Rgb(r, g, b) => RGB(r, g, b)
             case Style.Color.Rgba(r, g, b, a) =>
-                if a >= 1.0 then PackedColor(r, g, b)
+                if a >= 1.0 then RGB(r, g, b)
                 else if a <= 0.0 then
-                    if parentBg == Transparent then PackedColor(0, 0, 0)
+                    if parentBg == Transparent then RGB(0, 0, 0)
                     else parentBg
                 else
                     val bgR = if parentBg == Transparent then 0 else parentBg.r
                     val bgG = if parentBg == Transparent then 0 else parentBg.g
                     val bgB = if parentBg == Transparent then 0 else parentBg.b
-                    PackedColor(
+                    RGB(
                         clamp((r * a + bgR * (1 - a)).toInt),
                         clamp((g * a + bgG * (1 - a)).toInt),
                         clamp((b * a + bgB * (1 - a)).toInt)
@@ -385,34 +399,31 @@ object PackedColor:
             case Style.Color.Hex(hex) =>
                 parseHex(hex)
 
-    private def clamp(v: Int): Int =
-        if v < 0 then 0 else if v > 255 then 255 else v
-
-    private def parseHex(hex: String): PackedColor =
+    private def parseHex(hex: String): RGB =
         val s = if hex.charAt(0) == '#' then hex.substring(1) else hex
         s.length match
             case 3 =>
                 val r = Integer.parseInt(s.substring(0, 1), 16)
                 val g = Integer.parseInt(s.substring(1, 2), 16)
                 val b = Integer.parseInt(s.substring(2, 3), 16)
-                PackedColor(r * 17, g * 17, b * 17) // expand 4-bit to 8-bit
+                RGB(r * 17, g * 17, b * 17) // expand 4-bit to 8-bit
             case 4 =>
                 val r = Integer.parseInt(s.substring(0, 1), 16)
                 val g = Integer.parseInt(s.substring(1, 2), 16)
                 val b = Integer.parseInt(s.substring(2, 3), 16)
-                PackedColor(r * 17, g * 17, b * 17) // 4th char is alpha — ignored
+                RGB(r * 17, g * 17, b * 17) // 4th char is alpha — ignored
             case 6 =>
                 val r = Integer.parseInt(s.substring(0, 2), 16)
                 val g = Integer.parseInt(s.substring(2, 4), 16)
                 val b = Integer.parseInt(s.substring(4, 6), 16)
-                PackedColor(r, g, b)
+                RGB(r, g, b)
             case 8 =>
                 val r = Integer.parseInt(s.substring(0, 2), 16)
                 val g = Integer.parseInt(s.substring(2, 4), 16)
                 val b = Integer.parseInt(s.substring(4, 6), 16)
-                PackedColor(r, g, b) // last 2 chars are alpha — ignored
+                RGB(r, g, b) // last 2 chars are alpha — ignored
             case _ =>
-                PackedColor(0, 0, 0)
+                RGB(0, 0, 0)
         end match
     end parseHex
-end PackedColor
+end RGB
