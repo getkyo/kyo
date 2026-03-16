@@ -21,6 +21,9 @@ sealed abstract class Fields[A] extends Serializable:
     /** Tuple representation of the fields: `"a" ~ Int & "b" ~ String` becomes `("a" ~ Int) *: ("b" ~ String) *: EmptyTuple`. */
     type AsTuple <: Tuple
 
+    /** Structural representation of the fields: `"a" ~ Int & "b" ~ String` becomes `Fields.Structural & { def a: Int; def b: String }`. */
+    type Struct <: Fields.Structural
+
     /** Applies a type constructor `F` to each field component and re-intersects the results. For example,
       * `Fields["a" ~ Int & "b" ~ String].Map[Option]` yields `Option["a" ~ Int] & Option["b" ~ String]`.
       */
@@ -44,9 +47,10 @@ end Fields
 /** Companion providing derivation, type-level utilities, and evidence types for field operations. */
 object Fields:
 
-    private[kyo] def createAux[A, T <: Tuple](_fields: => List[Field[?, ?]]): Fields.Aux[A, T] =
+    private[kyo] def createAux[A, T <: Tuple, S <: Structural](_fields: => List[Field[?, ?]]): Fields.Aux[A, T, S] =
         new Fields[A]:
             type AsTuple = T
+            type Struct  = S
             lazy val fields = _fields
 
     private[kyo] type Join[A <: Tuple] = Tuple.Fold[A, Any, [B, C] =>> B & C]
@@ -68,9 +72,10 @@ object Fields:
         case (n ~ v1) *: rest       => (n ~ (v1, LookupValue[n, T2])) & ZipValues[rest, T2]
 
     /** Refinement type alias that exposes the `AsTuple` member. */
-    type Aux[A, T] =
+    type Aux[A, T, S] =
         Fields[A]:
             type AsTuple = T
+            type Struct  = S
 
     /** Macro-derived given that produces a `Fields` instance for any field intersection type or case class. */
     transparent inline given derive[A]: Fields[A] =
@@ -160,4 +165,15 @@ object Fields:
             ${ internal.FieldsMacros.sameNamesImpl[A, B] }
     end SameNames
 
+    type Structural = Structural.Impl & Selectable
+    object Structural:
+        opaque type Impl = Dict[String, Any]
+
+        extension (s: Impl)
+            def selectDynamic(name: String): Any =
+                s(name)
+
+        private[kyo] def from[A](dict: Dict[String, Any]): Structural & A =
+            dict.asInstanceOf[Structural & A]
+    end Structural
 end Fields
