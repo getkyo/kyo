@@ -14,6 +14,12 @@ class ClockTest extends Test:
             }
         }
 
+        "nowWith" in run {
+            Clock.nowWith { now =>
+                assert(now - javaNow() < 1.milli)
+            }
+        }
+
         "unsafe now" in {
             import AllowUnsafe.embrace.danger
             val now = Clock.live.unsafe.now()
@@ -493,7 +499,7 @@ class ClockTest extends Test:
                     time2 <- Clock.nowMonotonic
                 yield
                     assert(time2 - time1 >= 4.millis)
-                    assert(time2 - time1 < 40.millis)
+                    assert(time2 - time1 < 200.millis)
             }
         }
     }

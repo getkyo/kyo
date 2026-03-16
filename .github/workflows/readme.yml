@@ -18,4 +18,4 @@ jobs:
         with:
           jvm: corretto:24
           apps: sbt
-      # - run: sbt checkReadme
+      - run: sbt checkReadme

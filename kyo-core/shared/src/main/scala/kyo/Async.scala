@@ -163,6 +163,27 @@ object Async extends AsyncPlatformSpecific:
     def timeout[E, A, S](
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(after: Duration)(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E | Timeout] & Async & S) =
+        _timeout(after, Result.Failure(Timeout(Present(after))))(v)
+
+    /** Runs a computation with a timeout, aborting with a custom error on expiry.
+      *
+      * @param after
+      *   The timeout duration
+      * @param error
+      *   The error to use on timeout
+      * @param v
+      *   The computation to run
+      * @return
+      *   The result of the computation, or the custom error on timeout
+      */
+    def timeoutWithError[E, A, S](
+        using isolate: Isolate[S, Abort[E] & Async, S]
+    )(after: Duration, error: => Result.Error[E])(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E] & Async & S) =
+        _timeout(after, error)(v)
+
+    private inline def _timeout[E, A, S](
+        using isolate: Isolate[S, Abort[E] & Async, S]
+    )(after: Duration, inline error: => Result.Error[E])(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E] & Async & S) =
         if !after.isFinite then v
         else
             isolate.capture { state =>
@@ -170,7 +191,7 @@ object Async extends AsyncPlatformSpecific:
                     Clock.use { clock =>
                         Sync.Unsafe.defer {
                             val sleepFiber = clock.unsafe.sleep(after)
-                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout(Present(after))))))
+                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(error)))
                             task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
                             isolate.restore(task.get)
                         }
@@ -178,7 +199,7 @@ object Async extends AsyncPlatformSpecific:
                 }
             }
         end if
-    end timeout
+    end _timeout
 
     /** Races multiple computations and returns the result of the first successful computation to complete. When one computation succeeds,
       * all other computations are interrupted.

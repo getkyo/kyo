@@ -122,6 +122,33 @@ class ChannelTest extends Test:
             v  <- f.get
         yield assert(!d1 && v == 1)
     }
+    "takeWith" - {
+        "applies function to taken value" in run {
+            for
+                c <- Channel.init[Int](2)
+                _ <- c.put(1)
+                v <- c.takeWith(_ * 10)
+            yield assert(v == 10)
+        }
+        "blocks when empty then applies function" in run {
+            for
+                c  <- Channel.init[Int](2)
+                f  <- Fiber.initUnscoped(c.takeWith(_ + 5))
+                _  <- Async.sleep(10.millis)
+                d1 <- f.done
+                _  <- c.put(3)
+                _  <- untilTrue(f.done)
+                v  <- f.get
+            yield assert(!d1 && v == 8)
+        }
+        "fails on closed channel" in run {
+            for
+                c <- Channel.init[Int](2)
+                _ <- c.close
+                r <- Abort.run[Closed](c.takeWith(_ * 2))
+            yield assert(r.isFailure)
+        }
+    }
     "putBatch" - {
         "non-nested" - {
             "should put a batch" in run {
