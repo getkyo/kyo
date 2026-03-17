@@ -2,18 +2,19 @@ package kyo
 
 final case class Log(unsafe: Log.Unsafe):
     def level: Log.Level                                                          = unsafe.level
-    inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.trace(msg))
+    inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.trace(msg))
     inline def trace(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
-        Sync.Unsafe(unsafe.trace(msg, t))
-    inline def debug(inline msg: => Text)(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.debug(msg))
+        Sync.Unsafe.defer(unsafe.trace(msg, t))
+    inline def debug(inline msg: => Text)(using inline frame: Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.debug(msg))
     inline def debug(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
-        Sync.Unsafe(unsafe.debug(msg, t))
-    inline def info(inline msg: => Text)(using inline frame: Frame): Unit < Sync                         = Sync.Unsafe(unsafe.info(msg))
-    inline def info(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.info(msg, t))
-    inline def warn(inline msg: => Text)(using inline frame: Frame): Unit < Sync                         = Sync.Unsafe(unsafe.warn(msg))
-    inline def warn(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < Sync        = Sync.Unsafe(unsafe.warn(msg, t))
-    inline def error(inline msg: => Text)(using inline frame: Frame): Unit < Sync                        = Sync.Unsafe(unsafe.error(msg))
-    inline def error(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < Sync       = Sync.Unsafe(unsafe.error(msg, t))
+        Sync.Unsafe.defer(unsafe.debug(msg, t))
+    inline def info(inline msg: => Text)(using inline frame: Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.info(msg))
+    inline def info(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
+        Sync.Unsafe.defer(unsafe.info(msg, t))
+    inline def warn(inline msg: => Text)(using inline frame: Frame): Unit < Sync                   = Sync.Unsafe.defer(unsafe.warn(msg))
+    inline def warn(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < Sync  = Sync.Unsafe.defer(unsafe.warn(msg, t))
+    inline def error(inline msg: => Text)(using inline frame: Frame): Unit < Sync                  = Sync.Unsafe.defer(unsafe.error(msg))
+    inline def error(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.error(msg, t))
 end Log
 
 /** Logging utility object for Kyo applications. */

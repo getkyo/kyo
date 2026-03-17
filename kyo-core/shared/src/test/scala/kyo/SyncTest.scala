@@ -292,7 +292,7 @@ class SyncTest extends Test:
                         steps = unsafeOperation(value) :: steps
                         value * 2
                     }
-                    v2 <- Sync.Unsafe {
+                    v2 <- Sync.Unsafe.defer {
                         steps = v1 :: steps
                         v1 + 1
                     }

@@ -26,14 +26,14 @@ final case class Barrier private (unsafe: Barrier.Unsafe):
       * @return
       *   Unit
       */
-    def await(using Frame): Unit < Async = Sync.Unsafe(unsafe.await().safe.get)
+    def await(using Frame): Unit < Async = Sync.Unsafe.defer(unsafe.await().safe.get)
 
     /** Returns the number of parties still waiting at the barrier.
       *
       * @return
       *   The number of waiting parties
       */
-    def pending(using Frame): Int < Sync = Sync.Unsafe(unsafe.pending())
+    def pending(using Frame): Int < Sync = Sync.Unsafe.defer(unsafe.pending())
 
 end Barrier
 
@@ -57,7 +57,7 @@ object Barrier:
       *   The result of applying the function
       */
     inline def initWith[A, S](parties: Int)(inline f: Barrier => A < S)(using inline frame: Frame): A < (S & Sync) =
-        Sync.Unsafe(f(Barrier(Unsafe.init(parties))))
+        Sync.Unsafe.defer(f(Barrier(Unsafe.init(parties))))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:

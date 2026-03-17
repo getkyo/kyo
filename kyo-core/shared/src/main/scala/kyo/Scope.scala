@@ -133,7 +133,7 @@ object Scope:
       *   The result of the effect wrapped in Async and S effects.
       */
     def run[A, S](closeParallelism: Int)(v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             val finalizer = Finalizer.Awaitable.Unsafe.init(closeParallelism)
             ContextEffect.handle(Tag[Scope], finalizer, _ => finalizer)(v)
                 .handle(
@@ -166,7 +166,7 @@ object Scope:
                         val promise = Promise.Unsafe.init[Unit, Any]().safe
 
                         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
-                            Sync.Unsafe {
+                            Sync.Unsafe.defer {
                                 if !queue.offer(v).contains(true) then
                                     Abort.panic(new Closed(
                                         "Finalizer",
@@ -178,7 +178,7 @@ object Scope:
                         end ensure
 
                         def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
-                            Sync.Unsafe {
+                            Sync.Unsafe.defer {
                                 queue.close() match
                                     case Absent => ()
                                     case Present(tasks) =>

@@ -118,24 +118,24 @@ object Random:
       */
     def apply(u: Unsafe): Random =
         new Random:
-            def nextInt(using Frame)                      = Sync.Unsafe(u.nextInt())
-            def nextInt(exclusiveBound: Int)(using Frame) = Sync.Unsafe(u.nextInt(exclusiveBound))
-            def nextLong(using Frame)                     = Sync.Unsafe(u.nextLong())
-            def nextDouble(using Frame)                   = Sync.Unsafe(u.nextDouble())
-            def nextBoolean(using Frame)                  = Sync.Unsafe(u.nextBoolean())
-            def nextFloat(using Frame)                    = Sync.Unsafe(u.nextFloat())
-            def nextGaussian(using Frame)                 = Sync.Unsafe(u.nextGaussian())
-            def nextValue[A](seq: Seq[A])(using Frame)    = Sync.Unsafe(u.nextValue[A](seq))
+            def nextInt(using Frame)                      = Sync.Unsafe.defer(u.nextInt())
+            def nextInt(exclusiveBound: Int)(using Frame) = Sync.Unsafe.defer(u.nextInt(exclusiveBound))
+            def nextLong(using Frame)                     = Sync.Unsafe.defer(u.nextLong())
+            def nextDouble(using Frame)                   = Sync.Unsafe.defer(u.nextDouble())
+            def nextBoolean(using Frame)                  = Sync.Unsafe.defer(u.nextBoolean())
+            def nextFloat(using Frame)                    = Sync.Unsafe.defer(u.nextFloat())
+            def nextGaussian(using Frame)                 = Sync.Unsafe.defer(u.nextGaussian())
+            def nextValue[A](seq: Seq[A])(using Frame)    = Sync.Unsafe.defer(u.nextValue[A](seq))
             def nextValues[A](length: Int, seq: Seq[A])(using Frame) =
-                Sync.Unsafe(u.nextValues(length, seq))
+                Sync.Unsafe.defer(u.nextValues(length, seq))
             def nextStringAlphanumeric(length: Int)(using Frame) =
-                Sync.Unsafe(u.nextStringAlphanumeric(length))
+                Sync.Unsafe.defer(u.nextStringAlphanumeric(length))
             def nextString(length: Int, chars: Seq[Char])(using Frame) =
-                Sync.Unsafe(u.nextString(length, chars))
+                Sync.Unsafe.defer(u.nextString(length, chars))
             def nextBytes(length: Int)(using Frame) =
-                Sync.Unsafe(u.nextBytes(length))
+                Sync.Unsafe.defer(u.nextBytes(length))
             def shuffle[A](seq: Seq[A])(using Frame) =
-                Sync.Unsafe(u.shuffle(seq))
+                Sync.Unsafe.defer(u.shuffle(seq))
             def unsafe: Unsafe = u
 
     /** A live instance of Random using the default java.util.Random. */

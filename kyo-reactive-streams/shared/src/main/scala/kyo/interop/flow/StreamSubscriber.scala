@@ -4,7 +4,6 @@ import StreamSubscriber.*
 import java.util.concurrent.Flow.*
 import kyo.*
 import kyo.Result.Error
-import kyo.Result.Panic
 import scala.annotation.tailrec
 
 final private[kyo] class StreamSubscriber[V](
@@ -17,7 +16,7 @@ final private[kyo] class StreamSubscriber[V](
     private enum UpstreamState derives CanEqual:
         case Uninitialized                                                               extends UpstreamState
         case WaitForRequest(subscription: Subscription, items: Chunk[V], remaining: Int) extends UpstreamState
-        case Finished(reason: Maybe[Error[Any]], leftOver: Chunk[V])                     extends UpstreamState
+        case Finished(reason: Maybe[Throwable], leftOver: Chunk[V])                      extends UpstreamState
     end UpstreamState
 
     private val state = AtomicRef.Unsafe.init(
@@ -77,7 +76,7 @@ final private[kyo] class StreamSubscriber[V](
             val curState = state.get()
             curState match
                 case (UpstreamState.WaitForRequest(_, items, _), maybePromise) =>
-                    val nextState = UpstreamState.Finished(Maybe(Panic(throwable)), items) -> Absent
+                    val nextState = UpstreamState.Finished(Maybe(throwable), items) -> Absent
                     if state.compareAndSet(curState, nextState) then
                         maybePromise.foreach(_.completeUnitDiscard())
                     else
@@ -194,7 +193,7 @@ final private[kyo] class StreamSubscriber[V](
                         if state.compareAndSet(curState, s) then
                             Sync.defer {
                                 reason match
-                                    case Present(error) => Result.fail(error)
+                                    case Present(error) => Result.panic(error)
                                     case Absent         => Result.fail(SubscriberDone)
                             }
                         else
@@ -281,5 +280,5 @@ object StreamSubscriber:
         strategy: EmitStrategy = EmitStrategy.Eager
     )(
         using Frame
-    ): StreamSubscriber[V] < Sync = Sync.Unsafe(new StreamSubscriber(bufferSize, strategy))
+    ): StreamSubscriber[V] < Sync = Sync.Unsafe.defer(new StreamSubscriber(bufferSize, strategy))
 end StreamSubscriber

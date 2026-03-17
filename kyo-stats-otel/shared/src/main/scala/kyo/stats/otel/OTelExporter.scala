@@ -19,42 +19,35 @@ class OTelExporter extends StatsExporter {
     }
 
     override def histogram(path: List[String], description: String, summary: Summary): Unit = {
+        val name = path.mkString(".")
 
-        meter.gaugeBuilder(path.mkString(".") + ".p50")
+        meter.gaugeBuilder(name + ".p50")
             .setDescription(description)
-            .buildWithCallback(_.record(summary.p50, Attributes.empty()))
+            .buildWithCallback(_.record(summary.percentile(50.0), Attributes.empty()))
 
-        meter.gaugeBuilder(path.mkString(".") + ".p90")
+        meter.gaugeBuilder(name + ".p90")
             .setDescription(description)
-            .buildWithCallback(_.record(summary.p90, Attributes.empty()))
+            .buildWithCallback(_.record(summary.percentile(90.0), Attributes.empty()))
 
-        meter.gaugeBuilder(path.mkString(".") + ".p99")
+        meter.gaugeBuilder(name + ".p99")
             .setDescription(description)
-            .buildWithCallback(_.record(summary.p99, Attributes.empty()))
+            .buildWithCallback(_.record(summary.percentile(99.0), Attributes.empty()))
 
-        meter.gaugeBuilder(path.mkString(".") + ".p999")
+        meter.gaugeBuilder(name + ".p999")
             .setDescription(description)
-            .buildWithCallback(_.record(summary.p999, Attributes.empty()))
+            .buildWithCallback(_.record(summary.percentile(99.9), Attributes.empty()))
 
-        meter.gaugeBuilder(path.mkString(".") + ".p9999")
+        meter.gaugeBuilder(name + ".p9999")
             .setDescription(description)
-            .buildWithCallback(_.record(summary.p9999, Attributes.empty()))
+            .buildWithCallback(_.record(summary.percentile(99.99), Attributes.empty()))
 
-        meter.gaugeBuilder(path.mkString(".") + ".min")
+        meter.gaugeBuilder(name + ".min")
             .setDescription(description)
             .buildWithCallback(_.record(summary.min, Attributes.empty()))
 
-        meter.gaugeBuilder(path.mkString(".") + ".max")
+        meter.gaugeBuilder(name + ".max")
             .setDescription(description)
             .buildWithCallback(_.record(summary.max, Attributes.empty()))
-
-        meter.gaugeBuilder(path.mkString(".") + ".mean")
-            .setDescription(description)
-            .buildWithCallback(_.record(summary.mean, Attributes.empty()))
-
-        meter.gaugeBuilder(path.mkString(".") + ".count")
-            .setDescription(description)
-            .buildWithCallback(_.record(summary.count.toDouble, Attributes.empty()))
         ()
     }
 

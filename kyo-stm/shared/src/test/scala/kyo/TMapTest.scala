@@ -426,7 +426,7 @@ class TMapTest extends Test:
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, 1))
                 }
                 _ <- Async.fill(10, 10)(
-                    STM.run {
+                    STM.run(Schedule.fixed(1.millis).jitter(0.5).take(50)) {
                         Kyo.foreachDiscard((1 to size)) { i =>
                             map.updateWith(i)(v => Maybe(v.getOrElse(0) + 1))
                         }
@@ -437,7 +437,7 @@ class TMapTest extends Test:
                 snapshot.size == size &&
                     snapshot.forall((_, v) => v == 11) // Initial 1 + 10 increments
             ))
-                .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(50))
                 .andThen(succeed)
         }
 

@@ -89,6 +89,8 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         val safepoint = Safepoint.get
         val next      = eval(startMillis, clock, deadline)(using safepoint)
         if !isPending() then
+            if !isNull(curr) && curr.evalNow.isEmpty then
+                ensureInterrupt()(using safepoint)
             if !finalizers.isEmpty then
                 finalizers.run(pollError())
                 finalizers = Finalizers.empty
@@ -104,6 +106,15 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
             Task.Done
         end if
     end run
+
+    // Handle race when interrupted before processing Async.Join and linking interrupts
+    private def ensureInterrupt()(using Safepoint): Unit =
+        discard {
+            ArrowEffect.handleFirst(Tag[Async.Join], curr.asInstanceOf[Any < Async.Join])(
+                [C] => (input, _) => this.interrupts(input),
+                _ => ()
+            )
+        }
 
     private inline def nullResult = null.asInstanceOf[A < Ctx & Async & Abort[E]]
 

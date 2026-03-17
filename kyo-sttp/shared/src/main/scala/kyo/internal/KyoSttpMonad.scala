@@ -43,7 +43,7 @@ sealed class KyoSttpMonad(using Frame) extends MonadAsyncError[M]:
         Sync.defer(t)
 
     def async[A](register: (Either[Throwable, A] => Unit) => Canceler): M[A] =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             val p = Promise.Unsafe.init[A, Any]()
             val canceller =
                 register {

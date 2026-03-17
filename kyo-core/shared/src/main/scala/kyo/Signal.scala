@@ -182,7 +182,7 @@ object Signal:
         @implicitNotFound(missingCanEqual)
         canEqual: CanEqual[A, A]
     ): B < (S & Sync) =
-        Sync.Unsafe(f(new SignalRef(SignalRef.Unsafe.init(initial))))
+        Sync.Unsafe.defer(f(new SignalRef(SignalRef.Unsafe.init(initial))))
 
     /** Creates a new immutable signal with a constant value.
       *
@@ -320,9 +320,9 @@ object Signal:
       */
     final class SignalRef[A] private[Signal] (_unsafe: SignalRef.Unsafe[A])(using CanEqual[A, A]) extends Signal[A]:
 
-        def currentWith[B, S](f: A => B < S)(using Frame) = Sync.Unsafe(f(unsafe.get()))
+        def currentWith[B, S](f: A => B < S)(using Frame) = Sync.Unsafe.defer(f(unsafe.get()))
 
-        def nextWith[B, S](f: A => B < S)(using Frame) = Sync.Unsafe(unsafe.next().safe.use(f))
+        def nextWith[B, S](f: A => B < S)(using Frame) = Sync.Unsafe.defer(unsafe.next().safe.use(f))
 
         /** Retrieves the current value of the reference.
           *
@@ -343,7 +343,7 @@ object Signal:
           * @return
           *   The transformed value wrapped in combined effects S & Sync
           */
-        inline def use[B, S](inline f: A => B < S)(using Frame): B < (S & Sync) = Sync.Unsafe(f(_unsafe.get()))
+        inline def use[B, S](inline f: A => B < S)(using Frame): B < (S & Sync) = Sync.Unsafe.defer(f(_unsafe.get()))
 
         /** Sets the reference to a new value.
           *
@@ -352,7 +352,7 @@ object Signal:
           * @param value
           *   The new value to set
           */
-        def set(value: A)(using Frame): Unit < Sync = Sync.Unsafe(_unsafe.set(value))
+        def set(value: A)(using Frame): Unit < Sync = Sync.Unsafe.defer(_unsafe.set(value))
 
         /** Updates the reference's value and returns the previous value.
           *
@@ -362,7 +362,7 @@ object Signal:
           *   The previous value
           */
         def getAndSet(value: A)(using Frame): A < Sync =
-            Sync.Unsafe(_unsafe.getAndSet(value))
+            Sync.Unsafe.defer(_unsafe.getAndSet(value))
 
         /** Atomically sets the value to the given updated value if the current value equals the expected value.
           *
@@ -374,7 +374,7 @@ object Signal:
           *   True if successful, false otherwise
           */
         def compareAndSet(curr: A, next: A)(using Frame): Boolean < Sync =
-            Sync.Unsafe(_unsafe.compareAndSet(curr, next))
+            Sync.Unsafe.defer(_unsafe.compareAndSet(curr, next))
 
         /** Atomically updates the current value using the provided function and returns the previous value.
           *
@@ -384,7 +384,7 @@ object Signal:
           *   The previous value
           */
         def getAndUpdate(f: A => A)(using Frame): A < Sync =
-            Sync.Unsafe(_unsafe.getAndUpdate(f))
+            Sync.Unsafe.defer(_unsafe.getAndUpdate(f))
 
         /** Atomically updates the current value using the provided function and returns the new value.
           *
@@ -394,7 +394,7 @@ object Signal:
           *   The new value
           */
         def updateAndGet(f: A => A)(using Frame): A < Sync =
-            Sync.Unsafe(_unsafe.updateAndGet(f))
+            Sync.Unsafe.defer(_unsafe.updateAndGet(f))
 
         def unsafe: SignalRef.Unsafe[A] = _unsafe
     end SignalRef

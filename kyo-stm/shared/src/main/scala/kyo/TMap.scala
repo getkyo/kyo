@@ -62,13 +62,13 @@ object TMap:
     inline def initWith[K, V](inline entries: (K, V)*)[A, S](inline f: TMap[K, V] => A < S)(
         using inline frame: Frame
     ): TMap[K, V] < (Sync & S) =
-        TID.useIOUnsafe { tid =>
+        STM.withCurrentTransactionOrNew { tick =>
             val trefs =
                 entries.foldLeft(Map.empty[K, TRef[V]]) {
                     case (acc, (k, v)) =>
-                        acc.updated(k, TRef.Unsafe.init(tid, v))
+                        acc.updated(k, TRef.Unsafe.init(tick, v))
                 }
-            TRef.Unsafe.init(tid, trefs)
+            TRef.Unsafe.init(tick, trefs)
         }
 
     extension [K, V](self: TMap[K, V])

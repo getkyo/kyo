@@ -55,7 +55,7 @@ object StreamCoreExtensions:
 
         private def emitWithStatus(listener: Hub.Listener[Result.Partial[E, Maybe[Chunk[A]]]])(using Frame) =
             // Ensure the end-of-stream signal is propagated to new listeners
-            Sync.Unsafe(streamStatus.get()).map:
+            Sync.Unsafe.defer(streamStatus.get()).map:
                 case Present(Result.Success(_)) =>
                     Abort.run[Closed](hub.put(Result.Success(Absent))).andThen(emit(listener))
                 case Present(Result.Failure(e)) =>
@@ -90,8 +90,9 @@ object StreamCoreExtensions:
                     )
                 ).map:
                     case Result.Success(_) =>
-                        Sync.Unsafe(streamStatus.set(Present(Result.Success(())))).andThen(hub.put(Result.Success(Absent)))
-                    case Result.Failure(e) => Sync.Unsafe(streamStatus.set(Present(Result.Failure(e)))).andThen(hub.put(Result.Failure(e)))
+                        Sync.Unsafe.defer(streamStatus.set(Present(Result.Success(())))).andThen(hub.put(Result.Success(Absent)))
+                    case Result.Failure(e) =>
+                        Sync.Unsafe.defer(streamStatus.set(Present(Result.Failure(e)))).andThen(hub.put(Result.Failure(e)))
                     case panic @ Result.Panic(e) => Abort.get(panic)
             })(_.interrupt).unit
     end StreamHubImpl
@@ -104,7 +105,7 @@ object StreamCoreExtensions:
             Tag[Emit[Chunk[Chunk[A]]]],
             Frame
         ): StreamHubImpl[A, E] < (Async & Scope) =
-            Sync.Unsafe:
+            Sync.Unsafe.defer:
                 Latch.initWith(1): latch =>
                     Hub.initWith[Result.Partial[E, Maybe[Chunk[A]]]](bufferSize): hub =>
                         StreamHubImpl(hub, AtomicRef.Unsafe.init(Absent), latch)
@@ -989,7 +990,7 @@ object StreamCoreExtensions:
             end Event
 
             Stream[Chunk[V], S & Abort[E] & Async]:
-                Sync.Unsafe {
+                Sync.Unsafe.defer {
                     val safeMax = 1 max maxSize
                     val channel = Channel.Unsafe.init[Event](1 max bufferSize).safe
 
