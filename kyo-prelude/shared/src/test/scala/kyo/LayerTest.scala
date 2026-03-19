@@ -40,7 +40,7 @@ class LayerTest extends Test:
             val sharkLayer     = Layer.from(g => Shark(g))
             val megaSharkLayer = Layer.from(s => MegaShark(s))
 
-            val combinedLayer = guppyLayer andTo sharkLayer andTo megaSharkLayer
+            val combinedLayer = guppyLayer using sharkLayer using megaSharkLayer
 
             val env = Memo.run(combinedLayer.run).eval
             assert(env.get[Guppy].name == "Tiny Guppy")
@@ -57,9 +57,9 @@ class LayerTest extends Test:
             val sharkLayer                    = Layer.from(Shark.apply)
             val dummy: Layer[Dummy, Any]      = Layer(new Dummy {})
 
-            val guppyAndShark: Layer[Guppy & Shark, Env[Dummy]] = guppyLayer andTo sharkLayer
+            val guppyAndShark: Layer[Guppy & Shark, Env[Dummy]] = guppyLayer using sharkLayer
 
-            val combinedLayer = dummy andTo guppyAndShark
+            val combinedLayer = dummy using guppyAndShark
 
             val env = Memo.run(combinedLayer.run).eval
             assert(env.get[Guppy].name == "Tiny Guppy")

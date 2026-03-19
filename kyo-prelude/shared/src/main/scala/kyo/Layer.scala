@@ -76,9 +76,7 @@ abstract class Layer[+Out, -S] extends Serializable:
       * @return
       *   A new layer producing both outputs
       */
-    final infix def andTo[Out2, S2](that: Layer[Out2, Env[Out] & S2]): Layer[Out & Out2, S & S2] = self and (self to that)
-
-    final infix def using[Out2, S2](that: Layer[Out2, Env[Out] & S2]): Layer[Out & Out2, S & S2] = self andTo that
+    final infix def using[Out2, S2](that: Layer[Out2, Env[Out] & S2]): Layer[Out & Out2, S & S2] = self and (self to that)
 
 end Layer
 
