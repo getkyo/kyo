@@ -33,6 +33,18 @@ case class WidgetKey(frame: Frame, dynamicPath: Chunk[String]) derives CanEqual:
     def child(segment: String): WidgetKey =
         WidgetKey(frame, dynamicPath.append(segment))
 
+// ---- Widget Interaction State ----
+
+/** Resolved interaction state for a widget. Computed once per element in Lower, passed to both style merging and widget expansion. Prevents
+  * bugs where a widget forgets to check focus/hover/disabled.
+  */
+case class WidgetState(
+    focused: Boolean,
+    hovered: Boolean,
+    active: Boolean,
+    disabled: Boolean
+)
+
 // ---- Handlers ----
 
 /** Pre-composed event handlers carried through the IR. Nullary handlers are stored as thunks to guarantee deferred evaluation — they cannot
@@ -51,6 +63,7 @@ final class Handlers private (
     val colspan: Int,
     val rowspan: Int,
     val imageData: Maybe[ImageData],
+    val cursorPosition: Maybe[(Int, Int)],
     private val _onClick: () => Unit < Async,
     private val _onClickSelf: () => Unit < Async,
     private val _onKeyDown: UI.KeyEvent => Unit < Async,
@@ -77,14 +90,15 @@ final class Handlers private (
 
     // ---- Builders (Lower calls these to set individual fields) ----
 
-    def withWidgetKey(k: WidgetKey): Handlers        = copy(_widgetKey = Maybe(k))
-    def withId(v: Maybe[String]): Handlers           = copy(_id = v)
-    def withForId(v: Maybe[String]): Handlers        = copy(_forId = v)
-    def withTabIndex(v: Maybe[Int]): Handlers        = copy(_tabIndex = v)
-    def withDisabled(v: Boolean): Handlers           = copy(_disabled = v)
-    def withColspan(v: Int): Handlers                = copy(_colspan = v)
-    def withRowspan(v: Int): Handlers                = copy(_rowspan = v)
-    def withImageData(v: Maybe[ImageData]): Handlers = copy(_imageData = v)
+    def withWidgetKey(k: WidgetKey): Handlers              = copy(_widgetKey = Maybe(k))
+    def withId(v: Maybe[String]): Handlers                 = copy(_id = v)
+    def withForId(v: Maybe[String]): Handlers              = copy(_forId = v)
+    def withTabIndex(v: Maybe[Int]): Handlers              = copy(_tabIndex = v)
+    def withDisabled(v: Boolean): Handlers                 = copy(_disabled = v)
+    def withColspan(v: Int): Handlers                      = copy(_colspan = v)
+    def withRowspan(v: Int): Handlers                      = copy(_rowspan = v)
+    def withImageData(v: Maybe[ImageData]): Handlers       = copy(_imageData = v)
+    def withCursorPosition(v: Maybe[(Int, Int)]): Handlers = copy(_cursorPosition = v)
 
     def withOnClick(action: => Unit < Async): Handlers          = copy(__onClick = () => action)
     def withOnClickSelf(action: => Unit < Async): Handlers      = copy(__onClickSelf = () => action)
@@ -125,6 +139,7 @@ final class Handlers private (
         _colspan: Int = this.colspan,
         _rowspan: Int = this.rowspan,
         _imageData: Maybe[ImageData] = this.imageData,
+        _cursorPosition: Maybe[(Int, Int)] = this.cursorPosition,
         __onClick: () => Unit < Async = this._onClick,
         __onClickSelf: () => Unit < Async = this._onClickSelf,
         __onKeyDown: UI.KeyEvent => Unit < Async = this._onKeyDown,
@@ -144,6 +159,7 @@ final class Handlers private (
         _colspan,
         _rowspan,
         _imageData,
+        _cursorPosition,
         __onClick,
         __onClickSelf,
         __onKeyDown,
@@ -174,6 +190,7 @@ object Handlers:
         1,
         1,
         Absent,
+        Absent,
         noopThunk,
         noopThunk,
         noopKey,
@@ -192,7 +209,7 @@ end Handlers
 enum Resolved derives CanEqual:
     case Node(tag: ElemTag, style: Style, handlers: Handlers, children: Chunk[Resolved])
     case Text(value: String)
-    case Cursor(charOffset: Int)
+    case Empty              // hidden element — zero size, absent from layout
     case Break              // line break — layout advances to next line
     case Rule(style: Style) // horizontal rule — full-width separator line
 end Resolved
@@ -202,7 +219,7 @@ end Resolved
 enum Styled derives CanEqual:
     case Node(tag: ElemTag, style: FlatStyle, handlers: Handlers, children: Chunk[Styled])
     case Text(value: String, style: FlatStyle)
-    case Cursor(charOffset: Int)
+    case Empty
     case Break
     case Rule(style: FlatStyle)
 end Styled
@@ -217,10 +234,10 @@ enum Laid:
         bounds: Rect,
         content: Rect,
         clip: Rect,
+        childClip: Rect,
         children: Chunk[Laid]
     )
     case Text(value: String, style: FlatStyle, bounds: Rect, clip: Rect)
-    case Cursor(pos: Rect)
     case Rule(style: FlatStyle, bounds: Rect, clip: Rect)
 end Laid
 
@@ -438,8 +455,8 @@ object ResolvedTheme:
         case Theme.Default =>
             ResolvedTheme(
                 variant = Theme.Default,
-                fg = RGB.Transparent,
-                bg = RGB.Transparent,
+                fg = RGB(255, 255, 255),
+                bg = RGB(0, 0, 0),
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
                 highlightFg = Style.Color.rgb(255, 255, 255)
@@ -447,8 +464,8 @@ object ResolvedTheme:
         case Theme.Minimal =>
             ResolvedTheme(
                 variant = Theme.Minimal,
-                fg = RGB.Transparent,
-                bg = RGB.Transparent,
+                fg = RGB(255, 255, 255),
+                bg = RGB(0, 0, 0),
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
                 highlightFg = Style.Color.rgb(255, 255, 255)
@@ -456,8 +473,8 @@ object ResolvedTheme:
         case Theme.Plain =>
             ResolvedTheme(
                 variant = Theme.Plain,
-                fg = RGB.Transparent,
-                bg = RGB.Transparent,
+                fg = RGB(255, 255, 255),
+                bg = RGB(0, 0, 0),
                 borderColor = Style.Color.rgb(128, 128, 128),
                 highlightBg = Style.Color.rgb(0, 0, 255),
                 highlightFg = Style.Color.rgb(255, 255, 255)

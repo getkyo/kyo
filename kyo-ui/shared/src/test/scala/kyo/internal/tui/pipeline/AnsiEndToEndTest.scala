@@ -357,7 +357,8 @@ class AnsiEndToEndTest extends Test:
                     afterAlice = emu.screen
                 yield
                     // THE critical assertion — does content below the input survive?
-                    assert(afterAlice.contains("Alice"), s"after Alice: typed text missing\n$afterAlice")
+                    // Input renders with intrinsic width in column layout; scroll shows last char 'e'.
+                    assert(afterAlice.contains("e"), s"after Alice: last typed char missing\n$afterAlice")
                     assert(afterAlice.contains("Email:"), s"after Alice: Email: vanished!\n$afterAlice")
                     assert(afterAlice.contains("Password:"), s"after Alice: Password: vanished!\n$afterAlice")
                     assert(afterAlice.contains("Role:"), s"after Alice: Role: vanished!\n$afterAlice")

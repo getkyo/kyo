@@ -59,8 +59,8 @@ class LowerTest extends Test:
         "filtered out" in run {
             lowerUI(UI.div.hidden(true)("x")).map { result =>
                 result.tree match
-                    case Resolved.Text(v) => assert(v == "")
-                    case _                => fail("expected empty Text for hidden element")
+                    case Resolved.Empty => succeed
+                    case _              => fail("expected Empty for hidden element")
             }
         }
     }
@@ -86,20 +86,15 @@ class LowerTest extends Test:
     }
 
     "input" - {
-        "expands to div with text and cursor" in run {
+        "unfocused expands to div with text only (no cursor)" in run {
             lowerUI(UI.input.value("hello")).map { result =>
                 result.tree match
                     case Resolved.Node(ElemTag.Div, _, _, children) =>
-                        assert(children.size == 3)
+                        // Unfocused input has no cursor — just the display text
+                        assert(children.size == 1, s"expected 1 child (text), got ${children.size}")
                         children(0) match
-                            case Resolved.Text(_) => succeed
-                            case _                => fail("expected Text before cursor")
-                        children(1) match
-                            case Resolved.Cursor(_) => succeed
-                            case _                  => fail("expected Cursor")
-                        children(2) match
-                            case Resolved.Text(_) => succeed
-                            case _                => fail("expected Text after cursor")
+                            case Resolved.Text(v) => assert(v == "hello")
+                            case _                => fail("expected Text")
                     case _ => fail("expected Div node for input")
             }
         }

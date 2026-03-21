@@ -43,13 +43,13 @@ class JvmTerminalIO(
 
     def enterAlternateScreen(using Frame): Unit < Sync =
         Sync.Unsafe.defer {
-            ttyOut.write("\u001b[?1049h\u001b[2J\u001b[H".getBytes)
+            ttyOut.write(TerminalEscape.EnterSequence.getBytes)
             ttyOut.flush()
         }
 
     def exitAlternateScreen(using Frame): Unit < Sync =
         Sync.Unsafe.defer {
-            ttyOut.write("\u001b[?1049l".getBytes)
+            ttyOut.write(TerminalEscape.ExitAlternateScreen.getBytes)
             ttyOut.flush()
         }
 
@@ -57,14 +57,17 @@ class JvmTerminalIO(
 
     def enableMouseTracking(using Frame): Unit < Sync =
         Sync.Unsafe.defer {
-            // ?1003h = all-motion tracking, ?1006h = SGR encoding, ?2004h = bracketed paste
-            ttyOut.write("\u001b[?1003h\u001b[?1006h\u001b[?2004h".getBytes)
+            ttyOut.write(
+                (TerminalEscape.EnableAllMotionMouse + TerminalEscape.EnableSgrMouse + TerminalEscape.EnableBracketedPaste).getBytes
+            )
             ttyOut.flush()
         }
 
     def disableMouseTracking(using Frame): Unit < Sync =
         Sync.Unsafe.defer {
-            ttyOut.write("\u001b[?2004l\u001b[?1006l\u001b[?1003l".getBytes)
+            ttyOut.write(
+                (TerminalEscape.DisableBracketedPaste + TerminalEscape.DisableSgrMouse + TerminalEscape.DisableAllMotionMouse).getBytes
+            )
             ttyOut.flush()
         }
 
@@ -72,13 +75,13 @@ class JvmTerminalIO(
 
     def showCursor(using Frame): Unit < Sync =
         Sync.Unsafe.defer {
-            ttyOut.write("\u001b[?25h".getBytes)
+            ttyOut.write(TerminalEscape.ShowCursor.getBytes)
             ttyOut.flush()
         }
 
     def hideCursor(using Frame): Unit < Sync =
         Sync.Unsafe.defer {
-            ttyOut.write("\u001b[?25l".getBytes)
+            ttyOut.write(TerminalEscape.HideCursor.getBytes)
             ttyOut.flush()
         }
 
@@ -109,6 +112,11 @@ class JvmTerminalIO(
         }
 
     // ---- Input parsing ----
+
+    override def hasInput(using Frame): Boolean < Sync =
+        Sync.Unsafe.defer {
+            ttyIn.available() > 0
+        }
 
     def readEvent(using Frame): InputEvent < Async =
         Sync.Unsafe.defer {
@@ -264,11 +272,12 @@ class JvmTerminalIO(
             val y   = parts(2).toIntOption.getOrElse(1) - 1
             val kind =
                 if finalChar == 'm' then MouseKind.LeftRelease
-                else if btn == 0 then MouseKind.LeftPress
-                else if btn == 32 then MouseKind.Move
-                else if btn == 64 then MouseKind.ScrollUp
-                else if btn == 65 then MouseKind.ScrollDown
-                else MouseKind.LeftPress
+                else if (btn & 32) != 0 then MouseKind.Move // bit 5 = motion flag (hover or drag)
+                else if (btn & 64) != 0 then                // bits 6-7 = scroll
+                    if (btn & 1) != 0 then MouseKind.ScrollDown
+                    else MouseKind.ScrollUp
+                else if (btn & 3) == 0 then MouseKind.LeftPress // bits 0-1 = 0 = left button
+                else MouseKind.Move                             // other buttons treated as move
             InputEvent.Mouse(kind, x, y)
         else
             InputEvent.Key(UI.Keyboard.Unknown(s"mouse:$params"), ctrl = false, alt = false, shift = false)

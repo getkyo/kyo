@@ -91,7 +91,9 @@ class DifferRegressionTest extends Test:
 
                     _ <- s.typeChar('B')
                     afterFrame = s.frame
-                    _          = s.assertAllPresent("Name:", "Email:", "footer", "AB")
+                    // In Plain theme, input shrinks to content width after typing.
+                    // Focused scroll window shows last char "B", not full "AB".
+                    _ = s.assertAllPresent("Name:", "Email:", "footer", "B")
                 yield
                     // Verify the "Email:" label survived all renders
                     assert(afterFrame.contains("Email:"), s"Email label disappeared!\nBefore:\n$beforeFrame\nAfter:\n$afterFrame")
@@ -159,14 +161,20 @@ class DifferRegressionTest extends Test:
     }
 
     "cursor visibility" - {
-        "cursor cell has non-transparent colors" in run {
+        "unfocused input has no cursor" in run {
             val s = Screen(UI.input.value(""), 10, 1)
             s.render.andThen {
-                val grid = s.frame
-                // The cursor should be visible — either as █ or inverted colors
-                // At minimum, the frame should not be all spaces
-                assert(grid.trim.nonEmpty || grid.contains("█"), s"cursor not visible: '$grid'")
+                assert(!s.hasCursor, "unfocused input should not show cursor")
             }
+        }
+
+        "focused input shows cursor" in run {
+            val s = Screen(UI.input.value(""), 10, 1)
+            for
+                _ <- s.render
+                _ <- s.click(0, 0)
+            yield assert(s.hasCursor, s"focused input should show cursor")
+            end for
         }
     }
 

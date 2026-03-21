@@ -45,47 +45,52 @@ object Layout:
     private def measureWidth(node: Styled): Int = node match
         case Styled.Node(tag, cs, _, children) =>
             Length.resolveOrAuto(cs.width, 0) match
-                case Present(w) if w > 0 => w
+                case Present(w) if w > 0 =>
+                    w + Length.resolve(cs.marLeft, 0) + Length.resolve(cs.marRight, 0)
                 case _ =>
                     val chrome = Length.resolve(cs.padLeft, 0) + Length.resolve(cs.padRight, 0) +
                         cs.borderLeft.value.toInt + cs.borderRight.value.toInt +
                         Length.resolve(cs.marLeft, 0) + Length.resolve(cs.marRight, 0)
-                    val dir = effectiveDirection(tag, cs.direction)
+                    val dir  = effectiveDirection(tag, cs.direction)
+                    val flow = filterFlowChildren(children)
                     val childrenSize =
-                        if dir == Style.FlexDirection.column then maxChildWidth(children, 0, 0)
-                        else sumChildWidths(children, Length.resolve(cs.gap, 0), 0, 0)
+                        if dir == Style.FlexDirection.column then maxChildWidth(flow, 0, 0)
+                        else sumChildWidths(flow, Length.resolve(cs.gap, 0), 0, 0)
                     chrome + childrenSize
         case Styled.Text(value, cs) =>
             val lines = splitLines(value, Int.MaxValue, cs.textWrap)
             maxLineWidth(lines, Length.resolve(cs.letterSpacing, 0), 0, 0)
-        case Styled.Break     => 0
-        case _: Styled.Rule   => 0 // rule fills parent width, intrinsic is 0
-        case Styled.Cursor(_) => 1
+        case Styled.Empty   => 0
+        case Styled.Break   => 0
+        case _: Styled.Rule => 0 // rule fills parent width, intrinsic is 0
 
     /** Measure intrinsic height of a node given a constrained width. Percentages and Auto return 0. */
     private def measureHeight(node: Styled, availWidth: Int): Int = node match
         case Styled.Node(tag, cs, _, children) =>
             Length.resolveOrAuto(cs.height, 0) match
-                case Present(h) if h > 0 => h
+                case Present(h) if h > 0 =>
+                    h + Length.resolve(cs.marTop, 0) + Length.resolve(cs.marBottom, 0)
                 case _ =>
                     val chrome = Length.resolve(cs.padTop, 0) + Length.resolve(cs.padBottom, 0) +
                         cs.borderTop.value.toInt + cs.borderBottom.value.toInt +
                         Length.resolve(cs.marTop, 0) + Length.resolve(cs.marBottom, 0)
                     val contentW = availWidth - chrome
                     val dir      = effectiveDirection(tag, cs.direction)
+                    // Exclude popup/overlay children from measurement (they're positioned separately)
+                    val flow = filterFlowChildren(children)
                     val childrenSize =
                         if dir == Style.FlexDirection.column then
-                            sumChildHeights(children, Length.resolve(cs.gap, 0), contentW, 0, 0)
-                        else maxChildHeight(children, contentW, 0, 0)
+                            sumChildHeights(flow, Length.resolve(cs.gap, 0), contentW, 0, 0)
+                        else maxChildHeight(flow, contentW, 0, 0)
                     chrome + childrenSize
         case Styled.Text(value, cs) =>
             val spacing      = Length.resolve(cs.letterSpacing, 0)
             val charsPerLine = availWidth / math.max(1, 1 + spacing)
             val lines        = splitLines(value, charsPerLine, cs.textWrap)
             lines.size * cs.lineHeight
-        case Styled.Cursor(_) => 1
-        case Styled.Break     => 0
-        case _: Styled.Rule   => 1
+        case Styled.Empty   => 0
+        case Styled.Break   => 0
+        case _: Styled.Rule => 1
 
     // Measurement helpers
 
@@ -125,12 +130,13 @@ object Layout:
             val h = measureHeight(node, available.w)
             Laid.Text(value, cs, Rect(available.x, available.y, available.w, h), clip)
 
-        case Styled.Cursor(charOffset) =>
-            Laid.Cursor(Rect(available.x + charOffset, available.y, 1, 1))
+        case Styled.Empty =>
+            // Hidden element — zero size, absent from layout
+            Laid.Text("", FlatStyle.Default, Rect(available.x, available.y, 0, 0), clip)
 
         case Styled.Break =>
             // Zero-height, consumed by layout positioning (no visual output)
-            Laid.Cursor(Rect(available.x, available.y, 0, 0))
+            Laid.Text("", FlatStyle.Default, Rect(available.x, available.y, 0, 0), clip)
 
         case Styled.Rule(cs) =>
             Laid.Rule(cs, Rect(available.x, available.y, available.w, 1), clip)
@@ -140,9 +146,14 @@ object Layout:
             val marR = Length.resolve(cs.marRight, available.w)
             val marT = Length.resolve(cs.marTop, available.h)
 
-            val outerX = available.x + marL
-            val outerY = available.y + marT
-            val outerW = available.w - marL - marR
+            val outerX    = available.x + marL
+            val outerY    = available.y + marT
+            val rawOuterW = available.w - marL - marR
+
+            // Clamp outer width against min/max constraints
+            val minW   = resolveConstraint(cs.minWidth, available.w, 0)
+            val maxW   = resolveConstraint(cs.maxWidth, available.w, Int.MaxValue)
+            val outerW = math.max(minW, math.min(maxW, rawOuterW))
 
             val brdL = cs.borderLeft.value.toInt
             val brdR = cs.borderRight.value.toInt
@@ -155,22 +166,37 @@ object Layout:
 
             val contentX = outerX + brdL + padL
             val contentY = outerY + brdT + padT
-            val contentW = outerW - brdL - brdR - padL - padR
+            val contentW = math.max(0, outerW - brdL - brdR - padL - padR)
 
             val marB = Length.resolve(cs.marBottom, available.h)
             val explicitH = cs.height match
                 case Length.Auto => Absent
                 case _           => Maybe(available.h - marT - marB)
 
-            // Separate children: popups are extracted, overlays deferred, rest flows
-            val (flow, overlays) =
-                categorizeChildren(children, outerX, outerY, explicitH, available, popups, clip)
+            // Separate children: popups collected (positioned later), overlays deferred, rest flows
+            val (flow, overlays, popupChildren) =
+                categorizeChildren(children)
 
-            // Flex or table layout for flow children
+            // Compute content height constraints for clipping
             val contentH = explicitH.getOrElse(Int.MaxValue) - brdT - brdB - padT - padB
+            val chrome   = brdT + brdB + padT + padB
+            val minH     = resolveConstraint(cs.minHeight, available.h, 0)
+            val maxH     = resolveConstraint(cs.maxHeight, available.h, Int.MaxValue)
+
+            // Pre-compute clip for children based on explicit/max height constraints
+            val preClipH =
+                if explicitH.nonEmpty then math.max(0, contentH)
+                else if maxH < Int.MaxValue then math.max(0, maxH - chrome)
+                else Int.MaxValue
+            val childClip =
+                if (cs.overflow == Style.Overflow.hidden || cs.overflow == Style.Overflow.scroll) && preClipH < Int.MaxValue then
+                    clip.intersect(Rect(contentX, contentY, contentW, preClipH))
+                else clip
+
+            // Flex or table layout for flow children — uses childClip so overflow is clipped
             val laidChildren =
                 if tag == ElemTag.Table then
-                    layoutTable(flow, contentX, contentY, contentW, clip, popups)
+                    layoutTable(flow, contentX, contentY, contentW, childClip, popups)
                 else
                     layoutFlex(
                         flow,
@@ -180,62 +206,82 @@ object Layout:
                         contentY,
                         contentW,
                         math.max(0, contentH),
-                        clip,
+                        childClip,
                         cs.scrollTop,
                         cs.scrollLeft,
                         popups
                     )
 
             // Compute actual height if auto
-            val actualContentH =
+            val hasBorder = brdT > 0 || brdB > 0
+            val naturalContentH =
                 if explicitH.nonEmpty then math.max(0, contentH)
-                else computeContentHeight(laidChildren, contentY)
+                else
+                    val computed = computeContentHeight(laidChildren, contentY)
+                    // Bordered containers with no content get at least 1 row (so border has a middle row)
+                    if hasBorder && computed == 0 then 1 else computed
 
-            val actualOuterH =
-                if explicitH.nonEmpty then explicitH.get
-                else actualContentH + brdT + brdB + padT + padB
+            // Clamp height against min/max constraints
+            val rawOuterH      = if explicitH.nonEmpty then explicitH.get else naturalContentH + chrome
+            val clampedOuterH  = math.max(minH, math.min(maxH, rawOuterH))
+            val actualContentH = math.max(0, clampedOuterH - chrome)
+
+            // Position popups NOW that we know actual height
+            layoutPopups(popupChildren, outerX, outerY, clampedOuterH, outerW, popups, clip)
 
             // Layout overlay children
             val allChildren =
                 if overlays.isEmpty then laidChildren
-                else laidChildren.concat(layoutOverlayChildren(overlays, contentX, contentY, contentW, actualContentH, clip, popups))
+                else laidChildren.concat(layoutOverlayChildren(overlays, contentX, contentY, contentW, actualContentH, childClip, popups))
 
-            // Compute clip for children
-            val childClip =
-                if cs.overflow == Style.Overflow.hidden || cs.overflow == Style.Overflow.scroll then
-                    clip.intersect(Rect(contentX, contentY, contentW, actualContentH))
-                else clip
-
-            val bounds  = Rect(outerX, outerY, outerW, actualOuterH)
+            val bounds  = Rect(outerX, outerY, outerW, clampedOuterH)
             val content = Rect(contentX, contentY, contentW, actualContentH)
-            Laid.Node(tag, cs, handlers, bounds, content, childClip, allChildren)
+            // clip = parent clip (for node's own border/bg rendering)
+            // childClip = content clip (for overflow-hidden children)
+            Laid.Node(tag, cs, handlers, bounds, content, clip, childClip, allChildren)
 
     // ---- Child categorization ----
 
     private def categorizeChildren(
-        children: Chunk[Styled],
-        outerX: Int,
-        outerY: Int,
-        outerH: Maybe[Int],
-        available: Rect,
-        popups: ChunkBuilder[Laid],
-        clip: Rect
-    ): (Chunk[Styled], Chunk[Styled]) =
-        @tailrec def loop(i: Int, flow: Chunk[Styled], overlays: Chunk[Styled]): (Chunk[Styled], Chunk[Styled]) =
-            if i >= children.size then (flow, overlays)
+        children: Chunk[Styled]
+    ): (Chunk[Styled], Chunk[Styled], Chunk[Styled.Node]) =
+        @tailrec def loop(
+            i: Int,
+            flow: Chunk[Styled],
+            overlays: Chunk[Styled],
+            popupNodes: Chunk[Styled.Node]
+        ): (Chunk[Styled], Chunk[Styled], Chunk[Styled.Node]) =
+            if i >= children.size then (flow, overlays, popupNodes)
             else
                 children(i) match
                     case n: Styled.Node if n.tag == ElemTag.Popup =>
-                        val h         = outerH.getOrElse(0)
-                        val popupRect = Rect(outerX, outerY + math.max(h, 0) + 1, available.w, available.h)
-                        popups.addOne(arrange(n, popupRect, Rect(0, 0, available.w, available.h), popups))
-                        loop(i + 1, flow, overlays)
+                        loop(i + 1, flow, overlays, popupNodes.append(n))
                     case n: Styled.Node if n.style.position == Style.Position.overlay =>
-                        loop(i + 1, flow, overlays.append(n))
+                        loop(i + 1, flow, overlays.append(n), popupNodes)
                     case other =>
-                        loop(i + 1, flow.append(other), overlays)
-        loop(0, Chunk.empty, Chunk.empty)
+                        loop(i + 1, flow.append(other), overlays, popupNodes)
+        loop(0, Chunk.empty, Chunk.empty, Chunk.empty)
     end categorizeChildren
+
+    /** Position and arrange popup children. Called AFTER actual height is known. */
+    private def layoutPopups(
+        popupChildren: Chunk[Styled.Node],
+        outerX: Int,
+        outerY: Int,
+        outerH: Int,
+        outerW: Int,
+        popups: ChunkBuilder[Laid],
+        clip: Rect
+    ): Unit =
+        @tailrec def loop(i: Int): Unit =
+            if i < popupChildren.size then
+                // Popup width matches parent (like web <select> dropdown), height uses remaining viewport
+                val popupY    = outerY + outerH
+                val popupRect = Rect(outerX, popupY, outerW, clip.h - popupY)
+                popups.addOne(arrange(popupChildren(i), popupRect, clip, popups))
+                loop(i + 1)
+        loop(0)
+    end layoutPopups
 
     // ---- Content height computation ----
 
@@ -247,10 +293,9 @@ object Layout:
         if i >= children.size then maxY - contentY
         else
             val bottom = children(i) match
-                case n: Laid.Node   => n.bounds.y + n.bounds.h
-                case t: Laid.Text   => t.bounds.y + t.bounds.h
-                case c: Laid.Cursor => c.pos.y + c.pos.h
-                case r: Laid.Rule   => r.bounds.y + r.bounds.h
+                case n: Laid.Node => n.bounds.y + n.bounds.h
+                case t: Laid.Text => t.bounds.y + t.bounds.h
+                case r: Laid.Rule => r.bounds.y + r.bounds.h
             findMaxBottom(children, contentY, i + 1, math.max(maxY, bottom))
 
     // ---- Overlay layout ----
@@ -387,14 +432,18 @@ object Layout:
                     val crossParent = if isColumn then cw else ch
                     val mainLen     = if isColumn then nd.style.height else nd.style.width
                     val crossLen    = if isColumn then nd.style.width else nd.style.height
+                    // measureWidth/measureHeight include margin. For explicit sizes, add margin manually.
+                    val mainMargin =
+                        if isColumn then Length.resolve(nd.style.marTop, ch) + Length.resolve(nd.style.marBottom, ch)
+                        else Length.resolve(nd.style.marLeft, cw) + Length.resolve(nd.style.marRight, cw)
                     mainSizes(i) = mainLen match
                         case Length.Auto => if isColumn then measureHeight(nd, cw) else measureWidth(nd)
-                        case explicit    => Length.resolve(explicit, mainParent)
+                        case explicit    => Length.resolve(explicit, mainParent) + mainMargin
                     crossSizes(i) = crossLen match
                         case Length.Auto =>
-                            val intrinsic = if isColumn then measureWidth(nd) else measureHeight(nd, cw)
-                            // Cap at parent cross size — children cannot exceed their container
-                            if intrinsic > 0 then math.min(intrinsic, crossParent) else crossParent
+                            // Auto-width in column (or auto-height in row): fill parent cross axis
+                            // This matches CSS block model where <div> defaults to width: 100%
+                            crossParent
                         case explicit => Length.resolve(explicit, crossParent)
                     grow(i) = nd.style.flexGrow
                     shrink(i) = nd.style.flexShrink
@@ -403,9 +452,9 @@ object Layout:
                     crossSizes(i) = if isColumn then measureWidth(t) else measureHeight(t, cw)
                     grow(i) = t.style.flexGrow
                     shrink(i) = t.style.flexShrink
-                case _: Styled.Cursor =>
-                    mainSizes(i) = 1
-                    crossSizes(i) = 1
+                case Styled.Empty =>
+                    mainSizes(i) = 0
+                    crossSizes(i) = 0
                 case Styled.Break =>
                     mainSizes(i) = 0
                     crossSizes(i) = 0
@@ -614,6 +663,7 @@ object Layout:
                         Rect(cx, rowY, cw, rowHeight),
                         Rect(cx, rowY, cw, rowHeight),
                         clip,
+                        clip,
                         cellLaid
                     )
                     layoutTableRows(rows, colWidths, numCols, cx, cy, cw, clip, popups, i + 1, rowY + rowHeight, acc.append(rowNode))
@@ -664,6 +714,19 @@ object Layout:
         else spanWidth(colWidths, numCols, col, colspan, k + 1, w + colWidths(col + k))
 
     // ---- Helpers ----
+
+    /** Filter out popup and overlay children — they don't participate in flow measurement. */
+    private def filterFlowChildren(children: Chunk[Styled]): Chunk[Styled] =
+        children.filter {
+            case n: Styled.Node if n.tag == ElemTag.Popup                     => false
+            case n: Styled.Node if n.style.position == Style.Position.overlay => false
+            case _                                                            => true
+        }
+
+    /** Resolve a min/max constraint. Auto returns the default (0 for min, MaxValue for max). */
+    private def resolveConstraint(len: Length, parent: Int, default: Int): Int = len match
+        case Length.Auto => default
+        case explicit    => Length.resolve(explicit, parent)
 
     /** Split text into lines, applying word wrap at `maxWidth` characters. */
     private[pipeline] def splitLines(text: String, maxWidth: Int, textWrap: Style.TextWrap): Chunk[String] =

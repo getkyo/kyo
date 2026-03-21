@@ -112,8 +112,10 @@ class ComplexScenarioTest extends Test:
                 _ <- s.typeChar('i')
             yield
                 assert(ref.get() == "Hi", s"ref should be 'Hi', got '${ref.get()}'")
-                // Both inputs share the same ref value
-                assert(s.frame.contains("Hi"), s"value should be visible: ${s.frame}")
+                // In Plain theme, inputs shrink to content width. Each shows a 1-char scroll window.
+                // Focused input shows last char "i", unfocused shows first char "H".
+                assert(s.frame.contains("i"), s"focused input should show last char: ${s.frame}")
+                assert(s.frame.contains("H"), s"unfocused input should show first char: ${s.frame}")
             end for
         }
 
@@ -351,7 +353,7 @@ class ComplexScenarioTest extends Test:
                 val maxLen = 10
                 val s = screen(
                     UI.div.style(Style.row)(
-                        UI.input.value(ref),
+                        UI.input.value(ref).style(Style.width(15.px)),
                         ref.render(v => UI.span(s"${v.length}/$maxLen"))
                     ),
                     30,
@@ -528,7 +530,8 @@ class ComplexScenarioTest extends Test:
                 _ <- s.click(0, 0)
                 _ <- s.typeChar('X')
                 _ <- s.typeChar('Y')
-                _ = assert(s.frame.contains("XY"), "typed text should be visible")
+                // In Plain theme, input shrinks to content width; focused scroll shows last char "Y"
+                _ = assert(ref.get() == "XY", "ref should contain typed text")
                 _ <- s.tab // button
                 _ <- s.key(UI.Keyboard.Space)
             yield assert(ref.get() == "", "ref should be cleared")

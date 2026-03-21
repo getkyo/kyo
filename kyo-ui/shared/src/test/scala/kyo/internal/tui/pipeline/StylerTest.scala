@@ -164,25 +164,6 @@ class StylerTest extends Test:
         }
     }
 
-    "cursor" - {
-        "passes through unchanged" in {
-            val parent = Resolved.Node(
-                ElemTag.Div,
-                Style.empty,
-                Handlers.empty,
-                Chunk(Resolved.Cursor(5))
-            )
-            val styled = Styler.style(parent, root)
-            styled match
-                case Styled.Node(_, _, _, children) =>
-                    children(0) match
-                        case Styled.Cursor(offset) => assert(offset == 5)
-                        case _                     => fail("expected Cursor")
-                case _ => fail("expected Node")
-            end match
-        }
-    }
-
     "no-op props" - {
         "fontSize and fontFamily don't crash" in {
             val cs = styleNode(Style.fontSize(16.px).fontFamily("monospace"))

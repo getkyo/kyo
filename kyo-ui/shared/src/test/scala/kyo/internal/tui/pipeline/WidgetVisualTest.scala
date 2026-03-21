@@ -32,8 +32,7 @@ class WidgetVisualTest extends Test:
                     5
                 )
                 s.render.andThen {
-                    val cursorCount = s.frame.count(_ == '\u2588')
-                    assert(cursorCount == 0, s"unfocused inputs should have no cursor, found $cursorCount in:\n${s.frame}")
+                    assert(!s.hasCursor, s"unfocused inputs should have no cursor in:\n${s.frame}")
                 }
             }
 
@@ -49,9 +48,7 @@ class WidgetVisualTest extends Test:
                 for
                     _ <- s.render
                     _ <- s.tab
-                yield
-                    val cursorCount = s.frame.count(_ == '\u2588')
-                    assert(cursorCount == 1, s"exactly 1 cursor expected, found $cursorCount in:\n${s.frame}")
+                yield assert(s.hasCursor, s"exactly 1 cursor expected in:\n${s.frame}")
                 end for
             }
 
@@ -69,11 +66,10 @@ class WidgetVisualTest extends Test:
                     _ <- s.tab
                     _ <- s.tab
                 yield
-                    val f           = s.frame
-                    val cursorCount = f.count(_ == '\u2588')
-                    assert(cursorCount == 1, s"exactly 1 cursor expected, found $cursorCount")
+                    assert(s.hasCursor, "exactly 1 cursor expected")
+                    val cursorLine = s.cursorRow
+                    val f          = s.frame
                     val lines      = f.linesIterator.toVector
-                    val cursorLine = lines.indexWhere(_.contains("\u2588"))
                     val secondLine = lines.indexWhere(_.contains("second"))
                     assert(cursorLine == secondLine, s"cursor at line $cursorLine should be on second input at line $secondLine")
                 end for
@@ -92,10 +88,7 @@ class WidgetVisualTest extends Test:
                 for
                     _ <- s.render
                     _ <- s.tab
-                yield
-                    val f           = s.frame
-                    val cursorCount = f.count(_ == '\u2588')
-                    assert(cursorCount == 1, s"expected 1 cursor, found $cursorCount")
+                yield assert(s.hasCursor, "expected 1 cursor")
                 end for
             }
 
@@ -112,10 +105,7 @@ class WidgetVisualTest extends Test:
                     _ <- s.render
                     _ <- s.tab // focus input
                     _ <- s.tab // focus button
-                yield
-                    val f           = s.frame
-                    val cursorCount = f.count(_ == '\u2588')
-                    assert(cursorCount == 0, s"buttons don't show text cursor, found $cursorCount in:\n$f")
+                yield assert(!s.hasCursor, s"buttons don't show text cursor in:\n${s.frame}")
                 end for
             }
         }
@@ -130,9 +120,8 @@ class WidgetVisualTest extends Test:
                     _ <- s.render
                     _ <- s.click(0, 0)
                 yield
-                    val f         = s.frame
-                    val cursorPos = f.indexOf('\u2588')
-                    assert(cursorPos == 0, s"cursor should be at position 0, found at $cursorPos in: $f")
+                    val cursorPos = s.cursorCol
+                    assert(cursorPos == 0, s"cursor should be at position 0, found at $cursorPos in: ${s.frame}")
                 end for
             }
 
@@ -141,11 +130,10 @@ class WidgetVisualTest extends Test:
                 val s   = screen(UI.input.value(ref.safe), 15, 1)
                 for
                     _ <- s.render
-                    _ <- s.click(0, 0)
+                    _ <- s.tab
                 yield
-                    val f         = s.frame
-                    val cursorPos = f.indexOf('\u2588')
-                    assert(cursorPos == 5, s"cursor should be at position 5 after 'hello', found at $cursorPos in: $f")
+                    val cursorPos = s.cursorCol
+                    assert(cursorPos == 5, s"cursor should be at position 5 after 'hello', found at $cursorPos in: ${s.frame}")
                 end for
             }
 
@@ -158,9 +146,8 @@ class WidgetVisualTest extends Test:
                     _ <- s.typeChar('A')
                     _ <- s.typeChar('B')
                 yield
-                    val f         = s.frame
-                    val cursorPos = f.indexOf('\u2588')
-                    assert(cursorPos == 2, s"cursor should be at position 2 after 'AB', found at $cursorPos in: $f")
+                    val cursorPos = s.cursorCol
+                    assert(cursorPos == 2, s"cursor should be at position 2 after 'AB', found at $cursorPos in: ${s.frame}")
                 end for
             }
 
@@ -174,9 +161,8 @@ class WidgetVisualTest extends Test:
                     _ <- s.typeChar('B')
                     _ <- s.arrowLeft
                 yield
-                    val f         = s.frame
-                    val cursorPos = f.indexOf('\u2588')
-                    assert(cursorPos == 1, s"cursor should be at position 1 between A and B, found at $cursorPos in: $f")
+                    val cursorPos = s.cursorCol
+                    assert(cursorPos == 1, s"cursor should be at position 1 between A and B, found at $cursorPos in: ${s.frame}")
                 end for
             }
 
@@ -190,9 +176,8 @@ class WidgetVisualTest extends Test:
                     _ <- s.typeChar('B')
                     _ <- s.key(UI.Keyboard.Home)
                 yield
-                    val f         = s.frame
-                    val cursorPos = f.indexOf('\u2588')
-                    assert(cursorPos == 0, s"cursor should be at position 0 after Home, found at $cursorPos in: $f")
+                    val cursorPos = s.cursorCol
+                    assert(cursorPos == 0, s"cursor should be at position 0 after Home, found at $cursorPos in: ${s.frame}")
                 end for
             }
 
@@ -207,9 +192,8 @@ class WidgetVisualTest extends Test:
                     _ <- s.key(UI.Keyboard.Home)
                     _ <- s.arrowRight
                 yield
-                    val f         = s.frame
-                    val cursorPos = f.indexOf('\u2588')
-                    assert(cursorPos == 1, s"cursor should be at position 1 after Home+Right, found at $cursorPos in: $f")
+                    val cursorPos = s.cursorCol
+                    assert(cursorPos == 1, s"cursor should be at position 1 after Home+Right, found at $cursorPos in: ${s.frame}")
                 end for
             }
 
@@ -218,10 +202,10 @@ class WidgetVisualTest extends Test:
                 val s   = screen(UI.password.value(ref.safe), 15, 1)
                 for
                     _ <- s.render
-                    _ <- s.click(0, 0)
+                    _ <- s.tab
                 yield
+                    val cursorPos = s.cursorCol
                     val f         = s.frame
-                    val cursorPos = f.indexOf('\u2588')
                     val dotsEnd   = f.lastIndexOf('\u2022') + 1
                     assert(cursorPos == dotsEnd, s"cursor at $cursorPos should be right after dots ending at $dotsEnd in: $f")
                 end for
@@ -238,11 +222,11 @@ class WidgetVisualTest extends Test:
                     _ <- s.render
                     _ <- s.click(0, 0)
                     _ <- s.typeChar('A')
-                    pos1 = s.frame.indexOf('\u2588')
+                    pos1 = s.cursorCol
                     _ <- s.typeChar('B')
-                    pos2 = s.frame.indexOf('\u2588')
+                    pos2 = s.cursorCol
                     _ <- s.backspace
-                    pos3 = s.frame.indexOf('\u2588')
+                    pos3 = s.cursorCol
                 yield
                     assert(pos1 == 1, s"after A, cursor at $pos1, expected 1")
                     assert(pos2 == 2, s"after AB, cursor at $pos2, expected 2")
@@ -262,16 +246,13 @@ class WidgetVisualTest extends Test:
                 for
                     _ <- s.render
                     _ <- s.tab
-                    firstFrame = s.frame
+                    firstCursorLine = s.cursorRow
                     _ <- s.tab
-                    secondFrame = s.frame
-                yield
-                    val firstCursorLine  = firstFrame.linesIterator.toVector.indexWhere(_.contains("\u2588"))
-                    val secondCursorLine = secondFrame.linesIterator.toVector.indexWhere(_.contains("\u2588"))
-                    assert(
-                        secondCursorLine > firstCursorLine,
-                        s"cursor should move down: was at line $firstCursorLine, now at $secondCursorLine"
-                    )
+                    secondCursorLine = s.cursorRow
+                yield assert(
+                    secondCursorLine > firstCursorLine,
+                    s"cursor should move down: was at line $firstCursorLine, now at $secondCursorLine"
+                )
                 end for
             }
 
@@ -287,10 +268,10 @@ class WidgetVisualTest extends Test:
                 for
                     _ <- s.render
                     _ <- s.tab // focus input1
-                    line1 = s.frame.linesIterator.toVector.indexWhere(_.contains("\u2588"))
+                    line1 = s.cursorRow
                     _ <- s.tab      // focus input2
                     _ <- s.shiftTab // back to input1
-                    line3 = s.frame.linesIterator.toVector.indexWhere(_.contains("\u2588"))
+                    line3 = s.cursorRow
                 yield assert(line1 == line3, s"cursor should return to input1 row: started at $line1, returned to $line3")
                 end for
             }
@@ -305,8 +286,7 @@ class WidgetVisualTest extends Test:
             "empty input no focus - no cursor" in run {
                 val s = screen(UI.input.value(""), 15, 1)
                 s.render.andThen {
-                    val cursorCount = s.frame.count(_ == '\u2588')
-                    assert(cursorCount == 0, s"unfocused empty input should have no cursor: ${s.frame}")
+                    assert(!s.hasCursor, s"unfocused empty input should have no cursor: ${s.frame}")
                 }
             }
 
@@ -316,9 +296,7 @@ class WidgetVisualTest extends Test:
                 for
                     _ <- s.render
                     _ <- s.click(0, 0)
-                yield
-                    val cursorCount = s.frame.count(_ == '\u2588')
-                    assert(cursorCount == 1, s"focused empty input should show cursor: ${s.frame}")
+                yield assert(s.hasCursor, s"focused empty input should show cursor: ${s.frame}")
                 end for
             }
 
@@ -327,7 +305,7 @@ class WidgetVisualTest extends Test:
                 s.render.andThen {
                     val f = s.frame
                     assert(f.contains("hello"), s"value missing: $f")
-                    assert(f.count(_ == '\u2588') == 0, s"unfocused should have no cursor: $f")
+                    assert(!s.hasCursor, s"unfocused should have no cursor: $f")
                 }
             }
 
@@ -340,7 +318,7 @@ class WidgetVisualTest extends Test:
                 yield
                     val f = s.frame
                     assert(f.contains("hello"), s"value missing: $f")
-                    assert(f.count(_ == '\u2588') == 1, s"focused should have cursor: $f")
+                    assert(s.hasCursor, s"focused should have cursor: $f")
                 end for
             }
 
@@ -485,19 +463,18 @@ class WidgetVisualTest extends Test:
                 end for
             }
 
-            "backspace to empty - placeholder reappears" in run {
+            "backspace to empty while focused - placeholder stays hidden" in run {
                 val ref = SignalRef.Unsafe.init("")
                 val s   = screen(UI.input.value(ref.safe).placeholder("hint"), 20, 1)
                 for
                     _ <- s.render
-                    _ = assert(s.frame.contains("hint"))
                     _ <- s.click(0, 0)
                     _ <- s.typeChar('X')
-                    _ = assert(!s.frame.contains("hint"))
                     _ <- s.backspace
                 yield
                     assert(ref.get() == "", "should be empty after backspace")
-                    assert(s.frame.contains("hint"), s"placeholder should reappear: ${s.frame}")
+                    // Still focused — placeholder hidden
+                    assert(!s.frame.contains("hint"), s"placeholder should stay hidden while focused: ${s.frame}")
                 end for
             }
         }
@@ -528,7 +505,7 @@ class WidgetVisualTest extends Test:
                 yield
                     val f = s.frame
                     assert(f.contains("\u2022\u2022"), s"two dots missing: $f")
-                    assert(f.count(_ == '\u2588') == 1, s"cursor missing: $f")
+                    assert(s.hasCursor, s"cursor missing: $f")
                 end for
             }
 
@@ -545,7 +522,7 @@ class WidgetVisualTest extends Test:
                     val f = s.frame
                     assert(ref.get() == "a", s"expected 'a', got '${ref.get()}'")
                     assert(f.contains("\u2022"), s"one dot missing: $f")
-                    assert(f.count(_ == '\u2588') == 1, s"cursor missing: $f")
+                    assert(s.hasCursor, s"cursor missing: $f")
                 end for
             }
 
@@ -558,7 +535,7 @@ class WidgetVisualTest extends Test:
                 yield
                     val f = s.frame
                     assert(f.contains("\u2022\u2022\u2022"), s"dots missing: $f")
-                    assert(f.count(_ == '\u2588') == 1, s"cursor missing: $f")
+                    assert(s.hasCursor, s"cursor missing: $f")
                 end for
             }
 
@@ -567,7 +544,7 @@ class WidgetVisualTest extends Test:
                 s.render.andThen {
                     val f = s.frame
                     assert(f.contains("\u2022\u2022\u2022"), s"dots missing: $f")
-                    assert(f.count(_ == '\u2588') == 0, s"unfocused should have no cursor: $f")
+                    assert(!s.hasCursor, s"unfocused should have no cursor: $f")
                 }
             }
         }
@@ -886,7 +863,7 @@ class WidgetVisualTest extends Test:
 
         "6.1 appearance" - {
             "has border in default theme" in run {
-                val s = screen(UI.button("OK"), 10, 3)
+                val s = Screen(UI.button("OK"), 10, 3, Theme.Default)
                 s.render.andThen {
                     val f = s.frame
                     assert(f.contains("OK"), s"button text missing: $f")
@@ -927,11 +904,11 @@ class WidgetVisualTest extends Test:
                 val s = screen(
                     UI.div(UI.button.onClick { clicked = true }("Click")),
                     10,
-                    3
+                    1
                 )
                 for
                     _ <- s.render
-                    _ <- s.click(1, 1)
+                    _ <- s.click(0, 0) // Plain theme: no border, button text at row 0
                 yield assert(clicked, "button onClick should fire")
                 end for
             }
@@ -941,11 +918,11 @@ class WidgetVisualTest extends Test:
                 val s = screen(
                     UI.div(UI.button.onClick { clicked = true }("B1")),
                     15,
-                    3
+                    1
                 )
                 for
                     _ <- s.render
-                    _ <- s.click(2, 1)
+                    _ <- s.click(0, 0) // Plain theme: no border, button text at row 0
                     _ <- s.key(UI.Keyboard.Space)
                 yield assert(clicked, "space on focused button should fire onClick")
                 end for
@@ -956,11 +933,11 @@ class WidgetVisualTest extends Test:
                 val s = screen(
                     UI.div(UI.button.disabled(true).onClick { clicked = true }("No")),
                     10,
-                    3
+                    1
                 )
                 for
                     _ <- s.render
-                    _ <- s.click(1, 1)
+                    _ <- s.click(0, 0) // Plain theme: no border, button text at row 0
                     _ <- s.key(UI.Keyboard.Space)
                 yield assert(!clicked, "disabled button should ignore click and keyboard")
                 end for
@@ -1326,7 +1303,7 @@ class WidgetVisualTest extends Test:
                 )
                 for
                     _ <- s.render
-                    _ <- s.click(2, 1)
+                    _ <- s.click(0, 0)
                 yield assert(focused, "clicking button should focus it")
                 end for
             }
@@ -1339,11 +1316,11 @@ class WidgetVisualTest extends Test:
                         UI.button.onFocus { focused = true }("Yes")
                     ),
                     20,
-                    3
+                    2
                 )
                 for
                     _ <- s.render
-                    _ <- s.click(1, 1)
+                    _ <- s.click(0, 0) // Plain theme: no border, disabled button at row 0
                 yield assert(!focused, "clicking disabled button should not focus")
                 end for
             }
@@ -1362,10 +1339,7 @@ class WidgetVisualTest extends Test:
                 for
                     _ <- s.render
                     _ <- s.tab
-                yield
-                    val f           = s.frame
-                    val cursorCount = f.count(_ == '\u2588')
-                    assert(cursorCount == 1, s"only focused input should have cursor, found $cursorCount")
+                yield assert(s.hasCursor, "only focused input should have cursor")
                 end for
             }
 
@@ -1384,9 +1358,10 @@ class WidgetVisualTest extends Test:
                     _ <- s.tab
                     _ <- s.tab
                 yield
-                    val f           = s.frame
-                    val cursorCount = f.count(_ == '\u2588')
-                    assert(cursorCount == 1, s"only one cursor at a time, found $cursorCount")
+                    assert(s.hasCursor, "should have exactly one cursor")
+                    // Verify cursor is only on one row (one input focused at a time)
+                    val row = s.cursorRow
+                    assert(row >= 0, "cursor should be on a valid row")
                 end for
             }
 

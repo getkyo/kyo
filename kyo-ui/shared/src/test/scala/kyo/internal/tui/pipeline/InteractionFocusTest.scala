@@ -237,11 +237,11 @@ class InteractionFocusTest extends Test:
                     UI.button.onClick { clicked = true }("B1")
                 ),
                 15,
-                3
+                1
             )
             for
                 _ <- s.render
-                _ <- s.click(2, 1)            // focus button via click (inside border)
+                _ <- s.click(0, 0)            // Plain theme: no border, button text at row 0
                 _ <- s.key(UI.Keyboard.Space) // press space on focused button
             yield assert(clicked, "space on focused button should fire onClick")
             end for
@@ -278,12 +278,12 @@ class InteractionFocusTest extends Test:
                     UI.button.onFocus { focused = "right" }("R")
                 ),
                 20,
-                3
+                1
             )
             for
                 _ <- s.render
-                _ <- s.click(2, 1) // click left button content (border=1, pad=1, content at x=2)
-                _ <- s.click(7, 1) // click right button content (second button starts at x=5)
+                _ <- s.click(0, 0) // Plain theme: no border, "L" at col 0, row 0
+                _ <- s.click(1, 0) // Plain theme: "R" at col 1, row 0
             yield assert(focused == "right", s"expected right focused, got: $focused")
             end for
         }

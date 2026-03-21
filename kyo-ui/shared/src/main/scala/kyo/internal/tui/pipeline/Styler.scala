@@ -15,8 +15,8 @@ object Styler:
                 Styled.Node(tag, flat, handlers, styledChildren)
             case Resolved.Text(value) =>
                 Styled.Text(value, inheritText(parent))
-            case Resolved.Cursor(offset) =>
-                Styled.Cursor(offset)
+            case Resolved.Empty =>
+                Styled.Empty
             case Resolved.Break =>
                 Styled.Break
             case Resolved.Rule(userStyle) =>

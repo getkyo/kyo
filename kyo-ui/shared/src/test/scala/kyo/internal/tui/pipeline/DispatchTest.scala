@@ -33,7 +33,7 @@ class DispatchTest extends Test:
             case Present(k) => base.withWidgetKey(k)
             case _          => base
         val bounds = Rect(x, y, w, h)
-        Laid.Node(ElemTag.Div, defaultStyle, handlers, bounds, bounds, viewport, children)
+        Laid.Node(ElemTag.Div, defaultStyle, handlers, bounds, bounds, viewport, viewport, children)
     end node
 
     def mkKey(name: String): WidgetKey =

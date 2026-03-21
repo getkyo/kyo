@@ -107,8 +107,11 @@ object Dispatch:
                                 case _ =>
                                     if isFocusable then setFocusImpl(node, layout, state)
                                     else noop
+                            // Position cursor at click column for text inputs
+                            val cursorEffect = setCursorFromClick(node, mx, state)
                             state.activeId.safe.set(node.handlers.widgetKey)
                                 .andThen(focusEffect)
+                                .andThen(cursorEffect)
                                 .andThen(node.handlers.onClick)
                                 .andThen(node.handlers.onClickSelf)
                         case _ => noop
@@ -138,6 +141,20 @@ object Dispatch:
 
                 case _ => noop
         }
+
+    /** Position cursor at click column for text inputs. Checks for cursor ref in widget state. */
+    private def setCursorFromClick(node: Laid.Node, mx: Int, state: ScreenState)(using Frame): Unit < Async =
+        node.handlers.widgetKey match
+            case Present(key) =>
+                Sync.Unsafe.defer {
+                    state.widgetState.get[SignalRef.Unsafe[Int]](key.child("cursor")) match
+                        case Present(ref) =>
+                            val offset = math.max(0, mx - node.content.x)
+                            ref.set(offset)
+                            ()
+                        case _ => ()
+                }
+            case _ => noop
 
     /** Set focus to a node. Fires blur on old, focus on new. Rule 3: returns computation, no AllowUnsafe. */
     private def setFocusImpl(node: Laid.Node, layout: LayoutResult, state: ScreenState)(using Frame): Unit < Async =

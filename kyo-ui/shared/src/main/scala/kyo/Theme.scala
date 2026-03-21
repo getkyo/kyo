@@ -1,17 +1,18 @@
 package kyo
 
-/** Theme controls default tag styling applied by each backend.
+/** Theme provides color tokens for styling. Each backend applies its own default element styles (borders, padding, etc.) using these
+  * tokens. The theme does NOT contain element-specific styles — those are backend-specific.
   *
-  * Each backend expands these variants into backend-specific defaults. For TUI, Default adds borders on inputs, bold headings, etc. For
-  * web/JavaFX, Default is typically empty since the browser handles tag styling.
+  * For TUI, the "user agent stylesheet" is in Lower.themeStyle. For web, the browser provides defaults. The theme only controls
+  * colors/branding that are shared across backends.
   */
 enum Theme derives CanEqual:
-    /** Rich defaults: bordered inputs, bold headings, styled buttons, horizontal rules. */
+    /** Standard colors: white on black, grey borders. */
     case Default
 
-    /** Minimal defaults: bold headings, basic gap, horizontal rules. */
+    /** Same colors, reduced element styling (bold headings, hr only). */
     case Minimal
 
-    /** No defaults: raw unstyled elements. */
+    /** Same colors, no element styling at all. */
     case Plain
 end Theme

@@ -8,7 +8,7 @@ import scala.annotation.tailrec
 object RenderToString:
 
     /** Render a UI tree to a string representation of the terminal grid. */
-    def render(ui: UI, cols: Int, rows: Int, theme: Theme = Theme.Default)(using Frame): String < (Async & Scope) =
+    def render(ui: UI, cols: Int, rows: Int, theme: Theme = Theme.Plain)(using Frame): String < (Async & Scope) =
         Sync.Unsafe.defer {
             val resolved = ResolvedTheme.resolve(theme)
             val state    = new ScreenState(resolved)

@@ -35,17 +35,16 @@ object Painter:
     end paint
 
     private def paintNode(node: Laid, canvas: Canvas): Unit = node match
-        case n: Laid.Node   => paintBox(n, canvas)
-        case t: Laid.Text   => paintText(t, canvas)
-        case c: Laid.Cursor => paintCursor(c, canvas)
-        case r: Laid.Rule   => paintRule(r, canvas)
+        case n: Laid.Node => paintBox(n, canvas)
+        case t: Laid.Text => paintText(t, canvas)
+        case r: Laid.Rule => paintRule(r, canvas)
 
     // ---- Box painting ----
 
     private def paintBox(n: Laid.Node, canvas: Canvas): Unit =
         val cs   = n.style
         val b    = n.bounds
-        val clip = n.clip
+        val clip = n.clip // parent clip — used for border, bg, shadow, filters
 
         // 1. Shadow
         if cs.shadowColor != RGB.Transparent &&
@@ -129,37 +128,45 @@ object Painter:
         if cs.borderBottom.value > 0 && cs.borderRight.value > 0 then
             setCell(canvas, x2, y2, if cs.roundBR then BoxRound(7) else chars(7), cs.borderColorBottom, cs.bg, clip)
 
-        // Edges
+        // Edges — start/end adjusted based on whether adjacent corners exist
         if cs.borderTop.value > 0 then
+            val startCol = if cs.borderLeft.value > 0 then x1 + 1 else x1
+            val endCol   = if cs.borderRight.value > 0 then x2 else x2 + 1
             @tailrec def topEdge(col: Int): Unit =
-                if col < x2 then
+                if col < endCol then
                     setCell(canvas, col, y1, chars(1), cs.borderColorTop, cs.bg, clip)
                     topEdge(col + 1)
-            topEdge(x1 + 1)
+            topEdge(startCol)
         end if
 
         if cs.borderBottom.value > 0 then
+            val startCol = if cs.borderLeft.value > 0 then x1 + 1 else x1
+            val endCol   = if cs.borderRight.value > 0 then x2 else x2 + 1
             @tailrec def bottomEdge(col: Int): Unit =
-                if col < x2 then
+                if col < endCol then
                     setCell(canvas, col, y2, chars(6), cs.borderColorBottom, cs.bg, clip)
                     bottomEdge(col + 1)
-            bottomEdge(x1 + 1)
+            bottomEdge(startCol)
         end if
 
         if cs.borderLeft.value > 0 then
+            val startRow = if cs.borderTop.value > 0 then y1 + 1 else y1
+            val endRow   = if cs.borderBottom.value > 0 then y2 else y2 + 1
             @tailrec def leftEdge(row: Int): Unit =
-                if row < y2 then
+                if row < endRow then
                     setCell(canvas, x1, row, chars(3), cs.borderColorLeft, cs.bg, clip)
                     leftEdge(row + 1)
-            leftEdge(y1 + 1)
+            leftEdge(startRow)
         end if
 
         if cs.borderRight.value > 0 then
+            val startRow = if cs.borderTop.value > 0 then y1 + 1 else y1
+            val endRow   = if cs.borderBottom.value > 0 then y2 else y2 + 1
             @tailrec def rightEdge(row: Int): Unit =
-                if row < y2 then
+                if row < endRow then
                     setCell(canvas, x2, row, chars(4), cs.borderColorRight, cs.bg, clip)
                     rightEdge(row + 1)
-            rightEdge(y1 + 1)
+            rightEdge(startRow)
         end if
     end paintBorder
 
@@ -202,8 +209,9 @@ object Painter:
                     case Style.TextAlign.right   => t.bounds.x + t.bounds.w - lineWidth
                     case Style.TextAlign.justify => t.bounds.x
 
+                val endX = t.bounds.x + t.bounds.w
                 @tailrec def eachChar(charIdx: Int, cellX: Int): Unit =
-                    if charIdx < displayLine.length then
+                    if charIdx < displayLine.length && cellX < endX then
                         setCell(
                             canvas,
                             cellX,
@@ -223,30 +231,6 @@ object Painter:
                 eachLine(lineIdx + 1, lineY + cs.lineHeight)
         eachLine(0, t.bounds.y)
     end paintText
-
-    // ---- Cursor painting ----
-
-    private def paintCursor(c: Laid.Cursor, canvas: Canvas): Unit =
-        val x = c.pos.x
-        val y = c.pos.y
-        if inBounds(x, y, canvas) then
-            val idx      = y * canvas.width + x
-            val existing = canvas.cells(idx)
-            val newFg    = if existing.bg == black then white else existing.bg
-            val newBg    = if existing.fg == black then white else existing.fg
-            val ch       = if existing.char == '\u0000' then '█' else existing.char
-            canvas.cells(idx) = Cell(
-                ch,
-                newFg,
-                newBg,
-                existing.bold,
-                existing.italic,
-                existing.underline,
-                existing.strikethrough,
-                existing.dimmed
-            )
-        end if
-    end paintCursor
 
     // ---- Rule painting (horizontal line) ----
 

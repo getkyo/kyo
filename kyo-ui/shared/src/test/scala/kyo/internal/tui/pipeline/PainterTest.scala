@@ -25,7 +25,7 @@ class PainterTest extends Test:
         clip: Rect = viewport,
         children: Chunk[Laid] = Chunk.empty
     ): Laid =
-        Laid.Node(ElemTag.Div, cs, Handlers.empty, bounds, content, clip, children)
+        Laid.Node(ElemTag.Div, cs, Handlers.empty, bounds, content, clip, clip, children)
 
     def paintSingle(node: Laid): CellGrid =
         val layout    = LayoutResult(node, Chunk.empty)
@@ -112,13 +112,17 @@ class PainterTest extends Test:
     }
 
     "cursor" - {
-        "fg/bg swapped" in {
-            val text   = textNode("abc", defaultStyle.copy(fg = white, bg = black))
-            val cursor = Laid.Cursor(Rect(1, 0, 1, 1))
-            val parent = boxNode(children = Chunk(text, cursor))
-            val grid   = paintSingle(parent)
-            // Cursor at position 1 should swap colors
-            assert(grid.cells(1).fg != white || grid.cells(1).bg != black)
+        "cursorPosition on handlers does not affect cell grid" in {
+            // Cursor is rendered by the terminal via escape sequences, not into the cell grid
+            val text     = textNode("abc", defaultStyle.copy(fg = white, bg = black))
+            val handlers = Handlers.empty.withCursorPosition(Maybe((1, 0)))
+            val parent =
+                Laid.Node(ElemTag.Div, defaultStyle.copy(bg = black), handlers, viewport, viewport, viewport, viewport, Chunk(text))
+            val grid = paintSingle(parent)
+            // Text is undisturbed — cursor is not painted into cells
+            assert(grid.cells(0).char == 'a')
+            assert(grid.cells(1).char == 'b')
+            assert(grid.cells(2).char == 'c')
         }
     }
 
@@ -244,25 +248,19 @@ class PainterTest extends Test:
     }
 
     "cursor edge cases" - {
-        "cursor on empty cell shows block" in {
-            val cursor = Laid.Cursor(Rect(0, 0, 1, 1))
-            val parent = boxNode(children = Chunk(cursor))
-            val grid   = paintSingle(parent)
-            assert(grid.cells(0).char == '█')
+        "cursorPosition at boundary does not crash" in {
+            val handlers = Handlers.empty.withCursorPosition(Maybe((19, 0)))
+            val content  = Rect(0, 9, 20, 1)
+            val parent   = Laid.Node(ElemTag.Div, defaultStyle, handlers, viewport, content, viewport, viewport, Chunk.empty)
+            val grid     = paintSingle(parent) // should not throw
+            succeed
         }
 
-        "cursor at grid boundary" in {
-            val cursor = Laid.Cursor(Rect(19, 9, 1, 1)) // last cell in 20x10
-            val parent = boxNode(children = Chunk(cursor))
-            val grid   = paintSingle(parent)
-            // Should not crash
-            assert(grid.cells(9 * 20 + 19).char == '█')
-        }
-
-        "cursor outside grid does not crash" in {
-            val cursor = Laid.Cursor(Rect(100, 100, 1, 1)) // way outside
-            val parent = boxNode(children = Chunk(cursor))
-            val grid   = paintSingle(parent)               // should not throw
+        "cursorPosition beyond grid does not crash" in {
+            val handlers = Handlers.empty.withCursorPosition(Maybe((100, 0)))
+            val content  = Rect(0, 0, 200, 1)
+            val parent   = Laid.Node(ElemTag.Div, defaultStyle, handlers, viewport, content, viewport, viewport, Chunk.empty)
+            val grid     = paintSingle(parent) // should not throw
             succeed
         }
     }

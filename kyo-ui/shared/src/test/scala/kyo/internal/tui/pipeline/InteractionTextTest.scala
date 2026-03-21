@@ -236,11 +236,11 @@ class InteractionTextTest extends Test:
             val s = screen(
                 UI.button.onClick { clicked = true }("Press"),
                 10,
-                3
+                1
             )
             for
                 _ <- s.render
-                _ <- s.click(2, 1) // click on content row inside border
+                _ <- s.click(0, 0) // Plain theme: no border, button text at row 0
             yield assert(clicked, "button onClick should have fired")
             end for
         }

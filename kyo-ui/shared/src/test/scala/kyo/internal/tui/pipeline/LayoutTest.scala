@@ -37,7 +37,7 @@ class LayoutTest extends Test:
                 viewport
             )
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     children(0) match
                         case Laid.Text(v, _, bounds, _) =>
                             assert(v == "hello")
@@ -57,7 +57,7 @@ class LayoutTest extends Test:
                 viewport
             )
             result.base match
-                case Laid.Node(_, _, _, _, content, _, children) =>
+                case Laid.Node(_, _, _, _, content, _, _, children) =>
                     assert(content.x == 2)
                     assert(content.y == 3)
                     assert(content.w == 76)
@@ -94,7 +94,7 @@ class LayoutTest extends Test:
                 viewport
             )
             result.base match
-                case Laid.Node(_, _, _, bounds, content, _, children) =>
+                case Laid.Node(_, _, _, bounds, content, _, _, children) =>
                     assert(bounds.x == 1)  // margin
                     assert(content.x == 4) // margin + border + pad
                     children(0) match
@@ -114,7 +114,7 @@ class LayoutTest extends Test:
             val child2 = styledDiv(withHeight(5))
             val result = Layout.layout(styledDiv(cs, Chunk(child1, child2)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     val c1 = children(0).asInstanceOf[Laid.Node]
                     val c2 = children(1).asInstanceOf[Laid.Node]
                     assert(c1.bounds.y == 0)
@@ -131,7 +131,7 @@ class LayoutTest extends Test:
             val child2 = styledDiv(withHeight(4))
             val result = Layout.layout(styledDiv(cs, Chunk(child1, child2)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     val c2 = children(1).asInstanceOf[Laid.Node]
                     assert(c2.bounds.y == 5) // 3 + 2 gap
                 case _ => fail("expected Node")
@@ -146,7 +146,7 @@ class LayoutTest extends Test:
             val child2 = styledDiv(withSize(20, 5))
             val result = Layout.layout(styledDiv(cs, Chunk(child1, child2)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     val c1 = children(0).asInstanceOf[Laid.Node]
                     val c2 = children(1).asInstanceOf[Laid.Node]
                     assert(c1.bounds.x == 0)
@@ -165,7 +165,7 @@ class LayoutTest extends Test:
             val growing = styledDiv(defaultStyle.copy(width = 10.px, height = 5.px, flexGrow = 1.0))
             val result  = Layout.layout(styledDiv(cs, Chunk(fixed, growing)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     val c2 = children(1).asInstanceOf[Laid.Node]
                     assert(c2.bounds.w > 10) // should have grown
                 case _ => fail("expected Node")
@@ -180,7 +180,7 @@ class LayoutTest extends Test:
             val child2 = styledDiv(defaultStyle.copy(height = 5.px, flexShrink = 1.0))
             val result = Layout.layout(styledDiv(cs, Chunk(child1, child2)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     val c1 = children(0).asInstanceOf[Laid.Node]
                     val c2 = children(1).asInstanceOf[Laid.Node]
                     // auto-width children fill available, no overflow
@@ -196,7 +196,7 @@ class LayoutTest extends Test:
             val child  = styledDiv(withSize(20, 5))
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     val c = children(0).asInstanceOf[Laid.Node]
                     assert(c.bounds.x == 40) // (100 - 20) / 2
                 case _ => fail("expected Node")
@@ -208,7 +208,7 @@ class LayoutTest extends Test:
             val child  = styledDiv(withSize(20, 5))
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     val c = children(0).asInstanceOf[Laid.Node]
                     assert(c.bounds.x == 80) // 100 - 20
                 case _ => fail("expected Node")
@@ -223,7 +223,7 @@ class LayoutTest extends Test:
             val child  = styledDiv(withSize(10, 5))
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     val c = children(0).asInstanceOf[Laid.Node]
                     // cross axis is Y for row, centered in 20
                     assert(c.bounds.y == 7) // (20 - 5) / 2 = 7
@@ -241,7 +241,7 @@ class LayoutTest extends Test:
             val child  = styledDiv(withSize(10, 5))
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     val c = children(0).asInstanceOf[Laid.Node]
                     assert(c.bounds.h == 20) // stretched to parent height
                 case _ => fail("expected Node")
@@ -255,9 +255,9 @@ class LayoutTest extends Test:
             val child  = styledDiv(withSize(80, 20))
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, clip, _) =>
-                    assert(clip.w <= 40)
-                    assert(clip.h <= 10)
+                case Laid.Node(_, _, _, _, _, _, childClip, _) =>
+                    assert(childClip.w <= 40)
+                    assert(childClip.h <= 10)
                 case _ => fail("expected Node")
             end match
         }
@@ -269,7 +269,7 @@ class LayoutTest extends Test:
             val child  = styledDiv(withHeight(10))
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     val c = children(0).asInstanceOf[Laid.Node]
                     assert(c.bounds.y == -5) // shifted up by scrollTop
                 case _ => fail("expected Node")
@@ -286,7 +286,7 @@ class LayoutTest extends Test:
             )
             assert(result.popups.size == 1)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     assert(children.size == 1) // only the text, popup extracted
                 case _ => fail("expected Node")
             end match
@@ -306,7 +306,7 @@ class LayoutTest extends Test:
                 ))
             val result = Layout.layout(styledDiv(cs, Chunk(overlay)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     assert(children.size == 1)
                     val c = children(0).asInstanceOf[Laid.Node]
                     assert(c.bounds.x == 10)
@@ -324,10 +324,10 @@ class LayoutTest extends Test:
             val table  = Styled.Node(ElemTag.Table, withSize(80, 24), Handlers.empty, Chunk(row))
             val result = Layout.layout(table, viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     assert(children.size == 1) // one row
                     children(0) match
-                        case Laid.Node(_, _, _, _, _, _, cells) =>
+                        case Laid.Node(_, _, _, _, _, _, _, cells) =>
                             assert(cells.size == 2)
                         case _ => fail("expected row Node")
                     end match
@@ -342,7 +342,7 @@ class LayoutTest extends Test:
             val child  = styledDiv(defaultStyle.copy(width = 50.pct, height = 5.px))
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     val c = children(0).asInstanceOf[Laid.Node]
                     assert(c.bounds.w == 50)
                 case _ => fail("expected Node")
@@ -356,28 +356,9 @@ class LayoutTest extends Test:
             val child  = styledDiv(defaultStyle) // auto width
             val result = Layout.layout(styledDiv(cs, Chunk(child)), viewport)
             result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
+                case Laid.Node(_, _, _, _, _, _, _, children) =>
                     val c = children(0).asInstanceOf[Laid.Node]
                     assert(c.bounds.w == 60)
-                case _ => fail("expected Node")
-            end match
-        }
-    }
-
-    "cursor" - {
-        "at correct character offset" in {
-            val result = Layout.layout(
-                styledDiv(defaultStyle, Chunk(Styled.Cursor(7))),
-                viewport
-            )
-            result.base match
-                case Laid.Node(_, _, _, _, _, _, children) =>
-                    children(0) match
-                        case Laid.Cursor(pos) =>
-                            assert(pos.x == 7)
-                            assert(pos.w == 1)
-                            assert(pos.h == 1)
-                        case _ => fail("expected Cursor")
                 case _ => fail("expected Node")
             end match
         }

@@ -34,8 +34,8 @@ class ScreenStateTest extends Test:
         "resolve Default" in {
             val t = ResolvedTheme.resolve(Theme.Default)
             assert(t.variant == Theme.Default)
-            assert(t.fg == RGB.Transparent)
-            assert(t.bg == RGB.Transparent)
+            assert(t.fg == RGB(255, 255, 255))
+            assert(t.bg == RGB(0, 0, 0))
         }
 
         "resolve Minimal" in {

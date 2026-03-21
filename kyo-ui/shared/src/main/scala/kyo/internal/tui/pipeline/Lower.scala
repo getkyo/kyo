@@ -128,7 +128,13 @@ object Lower:
         if value.isEmpty then ()
         else
             value.get match
-                case _: Boolean     => ()
+                case _: Boolean        => ()
+                case ref: SignalRef[?] =>
+                    // Cache the ORIGINAL ref directly for two-way binding (same as string refs)
+                    Sync.Unsafe.defer {
+                        val cacheKey = key.child(suffix)
+                        discard(state.widgetState.getOrCreate(cacheKey, ref.unsafe))
+                    }
                 case sig: Signal[?] => materializeSignal[Boolean](sig.asInstanceOf[Signal[Boolean]], key, suffix, state).unit
 
     private def materializeMaybeStringSignal(
@@ -219,32 +225,45 @@ object Lower:
 
         // Check hidden
         val hidden = readBooleanOrSignal(elem.attrs.hidden, key, "hidden", ctx.state)
-        if hidden then Resolved.Text("")
+        if hidden then Resolved.Empty
         else
+            // Compute interaction state once — used by both style merging and widget expansion
+            val ws = WidgetState(
+                focused = ctx.state.focusedId.get().contains(key),
+                hovered = ctx.state.hoveredId.get().contains(key),
+                active = ctx.state.activeId.get().contains(key),
+                disabled = isDisabled(elem, ctx.state)
+            )
             // Dispatch to widget-specific or passthrough lowering
             elem match
-                case ti: UI.TextInput    => lowerTextInput(ti, key, dynamicPath, ctx)
-                case bi: UI.BooleanInput => lowerBooleanInput(bi, key, dynamicPath, ctx)
-                case sel: UI.Select      => lowerSelect(sel, key, dynamicPath, ctx)
-                case ri: UI.RangeInput   => lowerRangeInput(ri, key, dynamicPath, ctx)
+                case ti: UI.TextInput    => lowerTextInput(ti, key, ws, dynamicPath, ctx)
+                case bi: UI.BooleanInput => lowerBooleanInput(bi, key, ws, dynamicPath, ctx)
+                case sel: UI.Select      => lowerSelect(sel, key, ws, dynamicPath, ctx)
+                case ri: UI.RangeInput   => lowerRangeInput(ri, key, ws, dynamicPath, ctx)
                 case _: UI.HiddenInput   => Resolved.Text("")
                 case _: UI.Br            => Resolved.Break
-                case hr: UI.Hr           => Resolved.Rule(resolveStyle(hr, key, ctx.state))
-                case img: UI.Img         => lowerImg(img, key, dynamicPath, ctx)
-                case _                   => lowerPassthrough(elem, key, dynamicPath, ctx)
+                case hr: UI.Hr           => Resolved.Rule(resolveStyle(hr, key, ws, ctx.state))
+                case img: UI.Img         => lowerImg(img, key, ws, dynamicPath, ctx)
+                case _                   => lowerPassthrough(elem, key, ws, dynamicPath, ctx)
+            end match
         end if
     end lowerElement
 
     // ---- Passthrough elements (Div, Span, H1-H6, P, etc.) ----
 
-    private def lowerPassthrough(elem: UI.Element, key: WidgetKey, dynamicPath: Chunk[String], ctx: Ctx)(using
+    private def lowerPassthrough(elem: UI.Element, key: WidgetKey, ws: WidgetState, dynamicPath: Chunk[String], ctx: Ctx)(using
         AllowUnsafe,
         Frame
     ): Resolved =
-        val style    = resolveStyle(elem, key, ctx.state)
-        val disabled = isDisabled(elem, ctx.state)
-        val tag      = resolveTag(elem)
-        val handlers = buildHandlers(elem, key, disabled, ctx)
+        val style        = resolveStyle(elem, key, ws, ctx.state)
+        val disabled     = ws.disabled
+        val tag          = resolveTag(elem)
+        val baseHandlers = buildHandlers(elem, key, disabled, ctx)
+        // Button inside form: clicking fires form onSubmit (like HTML submit button)
+        val handlers = elem match
+            case _: UI.Button if ctx.parentOnSubmit ne noopSubmit =>
+                baseHandlers.composeOnClick(ctx.parentOnSubmit())
+            case _ => baseHandlers
 
         registerFocusable(elem, key, disabled, ctx)
 
@@ -262,25 +281,36 @@ object Lower:
 
     // ---- TextInput widget expansion ----
 
-    private def lowerTextInput(ti: UI.TextInput, key: WidgetKey, dynamicPath: Chunk[String], ctx: Ctx)(using AllowUnsafe, Frame): Resolved =
+    private def lowerTextInput(ti: UI.TextInput, key: WidgetKey, ws: WidgetState, dynamicPath: Chunk[String], ctx: Ctx)(using
+        AllowUnsafe,
+        Frame
+    ): Resolved =
+        val currentValue = readStringOrRef(ti.value, key, ctx.state, "")
+
+        // Initialize cursor at end of current value, not at 0
         val cursorPos = ctx.state.widgetState.getOrCreate(
             key.child("cursor"),
-            SignalRef.Unsafe.init(0)
+            SignalRef.Unsafe.init(currentValue.length)
         )
+        val disabled = ws.disabled
+        val readOnly = ti.readOnly.getOrElse(false)
 
-        val currentValue = readStringOrRef(ti.value, key, ctx.state, "")
-        val disabled     = readBooleanOrSignal(ti.disabled, key, "disabled", ctx.state)
-        val readOnly     = ti.readOnly.getOrElse(false)
-
-        // Display text — password masks with •, empty shows placeholder
-        val displayText = ti match
-            case _: UI.Password            => "•" * currentValue.length
-            case _ if currentValue.isEmpty => ti.placeholder.getOrElse("")
-            case _                         => currentValue
+        // Display text:
+        // - Focused + empty: show nothing (placeholder hidden while editing)
+        // - Unfocused + empty: show placeholder (dimmed in style below)
+        // - Has value + password: show dots
+        // - Has value: show value
+        val isShowingPlaceholder = currentValue.isEmpty && !ws.focused && ti.placeholder.nonEmpty
+        val displayText =
+            if currentValue.isEmpty then
+                if ws.focused then ""
+                else ti.placeholder.getOrElse("")
+            else
+                ti match
+                    case _: UI.Password => "•" * currentValue.length
+                    case _              => currentValue
 
         val cursor = math.min(cursorPos.get(), displayText.length)
-        val before = displayText.substring(0, cursor)
-        val after  = displayText.substring(cursor)
 
         val isTextarea = ti.isInstanceOf[UI.Textarea]
 
@@ -296,74 +326,95 @@ object Lower:
             case _ => Absent
 
         // Handler: pure computation code — no Sync.Unsafe.defer, only safe refs
+        // Cursor movement is allowed in readonly mode; only editing is blocked.
         val widgetOnKeyDown: UI.KeyEvent => Unit < Async = ke =>
             // Read disabled state (safe API returns < IO)
             val disabledCheck = disabledRef match
                 case Present(ref) => ref.get
                 case _            => Kyo.lift(ti.disabled.map { case b: Boolean => b; case _ => false }.getOrElse(false))
             disabledCheck.map { dis =>
-                val ro = ti.readOnly.getOrElse(false)
-                if !ro && !dis then
-                    // Read current value (safe API)
-                    val valueRead = valueRef match
-                        case Present(ref) => ref.get
-                        case _            => Kyo.lift(ti.value.map { case s: String => s; case _ => "" }.getOrElse(""))
-                    valueRead.map { curValue =>
-                        def writeValue(newVal: String): Unit < Async =
-                            valueRef match
-                                case Present(ref) => ref.set(newVal)
-                                case _            => ()
-                        def insert(ch: String): Unit < Async =
+                if dis then ()
+                else
+                    // Cursor movement — allowed even in readonly
+                    ke.key match
+                        case UI.Keyboard.ArrowLeft =>
                             cursorRef.get.map { pos =>
-                                val newVal = curValue.substring(0, pos) + ch + curValue.substring(pos)
-                                writeValue(newVal)
-                                    .andThen(cursorRef.set(pos + 1))
-                                    .andThen(fireStringCallback(ti.onInput, newVal))
-                                    .andThen(fireStringCallback(ti.onChange, newVal))
+                                if pos > 0 then cursorRef.set(pos - 1) else ()
                             }
-                        ke.key match
-                            case UI.Keyboard.Char(c) => insert(c.toString)
-                            case UI.Keyboard.Space   => insert(" ")
-                            case UI.Keyboard.Backspace =>
+                        case UI.Keyboard.ArrowRight =>
+                            val valLen = valueRef match
+                                case Present(ref) => ref.get.map(_.length)
+                                case _            => Kyo.lift(currentValue.length)
+                            valLen.map { len =>
                                 cursorRef.get.map { pos =>
-                                    if pos > 0 then
-                                        val newVal = curValue.substring(0, pos - 1) + curValue.substring(pos)
-                                        writeValue(newVal)
-                                            .andThen(cursorRef.set(pos - 1))
-                                            .andThen(fireStringCallback(ti.onInput, newVal))
-                                            .andThen(fireStringCallback(ti.onChange, newVal))
-                                    else ()
+                                    if pos < len then cursorRef.set(pos + 1) else ()
                                 }
-                            case UI.Keyboard.Delete =>
-                                cursorRef.get.map { pos =>
-                                    if pos < curValue.length then
-                                        val newVal = curValue.substring(0, pos) + curValue.substring(pos + 1)
-                                        writeValue(newVal)
-                                            .andThen(fireStringCallback(ti.onInput, newVal))
-                                            .andThen(fireStringCallback(ti.onChange, newVal))
-                                    else ()
+                            }
+                        case UI.Keyboard.Home => cursorRef.set(0)
+                        case UI.Keyboard.End =>
+                            val valLen = valueRef match
+                                case Present(ref) => ref.get.map(_.length)
+                                case _            => Kyo.lift(currentValue.length)
+                            valLen.map(len => cursorRef.set(len))
+                        // Editing — blocked by readonly
+                        case _ =>
+                            val ro = ti.readOnly.getOrElse(false)
+                            if ro then ()
+                            else
+                                val valueRead = valueRef match
+                                    case Present(ref) => ref.get
+                                    case _            => Kyo.lift(ti.value.map { case s: String => s; case _ => "" }.getOrElse(""))
+                                valueRead.map { curValue =>
+                                    def writeValue(newVal: String): Unit < Async =
+                                        valueRef match
+                                            case Present(ref) => ref.set(newVal)
+                                            case _            => ()
+                                    def insert(ch: String): Unit < Async =
+                                        cursorRef.get.map { pos =>
+                                            val safePos = math.min(pos, curValue.length)
+                                            val newVal  = curValue.substring(0, safePos) + ch + curValue.substring(safePos)
+                                            writeValue(newVal)
+                                                .andThen(cursorRef.set(safePos + 1))
+                                                .andThen(fireStringCallback(ti.onInput, newVal))
+                                                .andThen(fireStringCallback(ti.onChange, newVal))
+                                        }
+                                    ke.key match
+                                        case UI.Keyboard.Char(c) => insert(c.toString)
+                                        case UI.Keyboard.Space   => insert(" ")
+                                        case UI.Keyboard.Backspace =>
+                                            cursorRef.get.map { pos =>
+                                                val safePos = math.min(pos, curValue.length)
+                                                if safePos > 0 then
+                                                    val newVal = curValue.substring(0, safePos - 1) + curValue.substring(safePos)
+                                                    writeValue(newVal)
+                                                        .andThen(cursorRef.set(safePos - 1))
+                                                        .andThen(fireStringCallback(ti.onInput, newVal))
+                                                        .andThen(fireStringCallback(ti.onChange, newVal))
+                                                else ()
+                                                end if
+                                            }
+                                        case UI.Keyboard.Delete =>
+                                            cursorRef.get.map { pos =>
+                                                val safePos = math.min(pos, curValue.length)
+                                                if safePos < curValue.length then
+                                                    val newVal = curValue.substring(0, safePos) + curValue.substring(safePos + 1)
+                                                    writeValue(newVal)
+                                                        .andThen(fireStringCallback(ti.onInput, newVal))
+                                                        .andThen(fireStringCallback(ti.onChange, newVal))
+                                                else ()
+                                                end if
+                                            }
+                                        case UI.Keyboard.Enter =>
+                                            if isTextarea then insert("\n")
+                                            else ctx.parentOnSubmit()
+                                        case _ => ()
+                                    end match
                                 }
-                            case UI.Keyboard.ArrowLeft =>
-                                cursorRef.get.map { pos =>
-                                    if pos > 0 then cursorRef.set(pos - 1) else ()
-                                }
-                            case UI.Keyboard.ArrowRight =>
-                                cursorRef.get.map { pos =>
-                                    if pos < curValue.length then cursorRef.set(pos + 1) else ()
-                                }
-                            case UI.Keyboard.Home => cursorRef.set(0)
-                            case UI.Keyboard.End  => cursorRef.set(curValue.length)
-                            case UI.Keyboard.Enter =>
-                                if isTextarea then insert("\n")
-                                else ctx.parentOnSubmit()
-                            case _ => ()
-                        end match
-                    }
-                else ()
-                end if
+                            end if
+                    end match
             }
 
-        val style = resolveStyle(ti, key, ctx.state)
+        val style = resolveStyle(ti, key, ws, ctx.state)
 
         // Build handlers: start from parentHandlers (carries parent bubbling chain),
         // then compose widget's own onKeyDown, user's onKeyDown, and other handlers
@@ -384,44 +435,94 @@ object Lower:
 
         registerFocusable(ti, key, disabled, ctx)
 
-        // Text input children (before, cursor, after) flow horizontally
+        // Placeholder gets dimmed color on the input div — scoped to this div only, not siblings
+        val placeholderDim = if isShowingPlaceholder then Style.color(Style.Color.rgb(128, 128, 128)) else Style.empty
+        // Single-line inputs: noWrap + overflow hidden (like web <input>)
+        // Textarea: wraps normally
+        val wrapStyle =
+            if isTextarea then Style.empty
+            else Style.textWrap(Style.TextWrap.noWrap).overflow(Style.Overflow.hidden)
+        // No Style.row — single text child fills parent width in column layout
+        val effectiveStyle = style ++ wrapStyle ++ placeholderDim
+
+        // Horizontal scroll for single-line inputs: emit visible window of text
+        val (visibleText, scrollOffset) =
+            if isTextarea || displayText.isEmpty then (displayText, 0)
+            else
+                // Read previous frame's visible width from layout tree
+                val prevWidth = ctx.state.prevLayout.flatMap { layout =>
+                    Dispatch.findByKey(layout.base, key).map(_.content.w)
+                }.getOrElse(Int.MaxValue)
+
+                // Read/update scroll offset to keep cursor in visible window
+                val scrollRef = ctx.state.widgetState.getOrCreate(
+                    key.child("scrollX"),
+                    SignalRef.Unsafe.init(0)
+                )
+                val prevOffset = scrollRef.get()
+                // Adjust scroll to keep cursor visible
+                val adjusted =
+                    if !ws.focused then 0
+                    else if cursor >= prevOffset + prevWidth then cursor - prevWidth + 1
+                    else if cursor < prevOffset then cursor
+                    else prevOffset
+                val offset = math.max(0, math.min(adjusted, math.max(0, displayText.length - prevWidth)))
+                scrollRef.set(offset)
+                // Extract visible window
+                val endIdx = math.min(offset + prevWidth, displayText.length)
+                (displayText.substring(offset, endIdx), offset)
+            end if
+        end val
+
+        // Cursor position is relative to visible window
+        val adjustedHandlers =
+            if ws.focused then
+                val visibleCursorCol = cursor - scrollOffset
+                val beforeCursor     = visibleText.substring(0, math.max(0, math.min(visibleCursorCol, visibleText.length)))
+                val lines            = beforeCursor.split("\n", -1)
+                val cursorRow        = lines.length - 1
+                val cursorCol        = lines.last.length
+                handlers.withCursorPosition(Maybe((cursorCol, cursorRow)))
+            else handlers.withCursorPosition(Absent)
+
         Resolved.Node(
             ElemTag.Div,
-            style ++ Style.row,
-            handlers,
-            Chunk(
-                Resolved.Text(before),
-                Resolved.Cursor(cursor),
-                Resolved.Text(after)
-            )
+            effectiveStyle,
+            adjustedHandlers,
+            Chunk(Resolved.Text(visibleText))
         )
     end lowerTextInput
 
     // ---- BooleanInput (Checkbox / Radio) ----
 
-    private def lowerBooleanInput(bi: UI.BooleanInput, key: WidgetKey, dynamicPath: Chunk[String], ctx: Ctx)(using
+    private def lowerBooleanInput(bi: UI.BooleanInput, key: WidgetKey, ws: WidgetState, dynamicPath: Chunk[String], ctx: Ctx)(using
         AllowUnsafe,
         Frame
     ): Resolved =
         // Internal checked state — persists across re-renders
-        val checkedRef = ctx.state.widgetState.getOrCreate(
+        val internalRef = ctx.state.widgetState.getOrCreate(
             key.child("_checked"),
             SignalRef.Unsafe.init(bi.checked match
                 case Present(b: Boolean) => b
                 case _                   => false)
         )
-        // If checked is a Signal, use the materialized ref; otherwise use internal ref
+        // Determine the effective ref: user's SignalRef for two-way binding, internal ref otherwise
+        val effectiveRef = bi.checked match
+            case Present(_: SignalRef[?]) =>
+                ctx.state.widgetState.get[SignalRef.Unsafe[Boolean]](key.child("checked"))
+                    .getOrElse(internalRef)
+            case _ => internalRef
         val checked = bi.checked match
             case Present(_: Signal[?]) => readBooleanOrSignal(bi.checked, key, "checked", ctx.state)
-            case _                     => checkedRef.get()
-        val disabled = readBooleanOrSignal(bi.disabled, key, "disabled", ctx.state)
-        val style    = resolveStyle(bi, key, ctx.state)
+            case _                     => effectiveRef.get()
+        val disabled = ws.disabled
+        val style    = resolveStyle(bi, key, ws, ctx.state)
 
         val display = bi match
             case _: UI.Checkbox => if checked then "[x]" else "[ ]"
             case _: UI.Radio    => if checked then "(•)" else "( )"
 
-        val checkedSafe = checkedRef.safe
+        val checkedSafe = effectiveRef.safe
         val widgetOnClick: Unit < Async =
             checkedSafe.get.map { curr =>
                 val newVal = !curr
@@ -453,13 +554,16 @@ object Lower:
 
     // ---- Select dropdown ----
 
-    private def lowerSelect(sel: UI.Select, key: WidgetKey, dynamicPath: Chunk[String], ctx: Ctx)(using AllowUnsafe, Frame): Resolved =
+    private def lowerSelect(sel: UI.Select, key: WidgetKey, ws: WidgetState, dynamicPath: Chunk[String], ctx: Ctx)(using
+        AllowUnsafe,
+        Frame
+    ): Resolved =
         val expanded  = ctx.state.widgetState.getOrCreate(key.child("expanded"), SignalRef.Unsafe.init(false))
         val highlight = ctx.state.widgetState.getOrCreate(key.child("highlight"), SignalRef.Unsafe.init(0))
 
         val currentValue = readStringOrRef(sel.value, key, ctx.state, "")
-        val disabled     = readBooleanOrSignal(sel.disabled, key, "disabled", ctx.state)
-        val style        = resolveStyle(sel, key, ctx.state)
+        val disabled     = ws.disabled
+        val style        = resolveStyle(sel, key, ws, ctx.state)
         val isExpanded   = expanded.get()
 
         // Collect option texts/values
@@ -523,7 +627,8 @@ object Lower:
         val rowStyle = style ++ Style.row
         if isExpanded then
             val optionNodes = buildOptionNodes(options, sel, selectValueRef, expandedRef, ctx)
-            val popup       = Resolved.Node(ElemTag.Popup, Style.empty, Handlers.empty, optionNodes)
+            val popupStyle  = Style.border(1.px, ctx.state.theme.borderColor).bg(Style.Color.rgb(0, 0, 0))
+            val popup       = Resolved.Node(ElemTag.Popup, popupStyle, Handlers.empty, optionNodes)
             Resolved.Node(ElemTag.Div, rowStyle, handlers, displayChildren.append(popup))
         else
             Resolved.Node(ElemTag.Div, rowStyle, handlers, displayChildren)
@@ -532,12 +637,12 @@ object Lower:
 
     // ---- RangeInput ----
 
-    private def lowerRangeInput(ri: UI.RangeInput, key: WidgetKey, dynamicPath: Chunk[String], ctx: Ctx)(using
+    private def lowerRangeInput(ri: UI.RangeInput, key: WidgetKey, ws: WidgetState, dynamicPath: Chunk[String], ctx: Ctx)(using
         AllowUnsafe,
         Frame
     ): Resolved =
-        val disabled = readBooleanOrSignal(ri.disabled, key, "disabled", ctx.state)
-        val style    = resolveStyle(ri, key, ctx.state)
+        val disabled = ws.disabled
+        val style    = resolveStyle(ri, key, ws, ctx.state)
         val minVal   = ri.min.getOrElse(0.0)
         val maxVal   = ri.max.getOrElse(100.0)
         val step     = ri.step.getOrElse(1.0)
@@ -609,8 +714,11 @@ object Lower:
 
     // ---- Img ----
 
-    private def lowerImg(img: UI.Img, key: WidgetKey, dynamicPath: Chunk[String], ctx: Ctx)(using AllowUnsafe, Frame): Resolved =
-        val style = resolveStyle(img, key, ctx.state)
+    private def lowerImg(img: UI.Img, key: WidgetKey, ws: WidgetState, dynamicPath: Chunk[String], ctx: Ctx)(using
+        AllowUnsafe,
+        Frame
+    ): Resolved =
+        val style = resolveStyle(img, key, ws, ctx.state)
         val alt   = img.alt.getOrElse("")
         val handlers = Handlers.empty
             .withWidgetKey(key)
@@ -620,7 +728,7 @@ object Lower:
 
     // ---- Style resolution ----
 
-    private def resolveStyle(elem: UI.Element, key: WidgetKey, state: ScreenState)(using AllowUnsafe, Frame): Style =
+    private def resolveStyle(elem: UI.Element, key: WidgetKey, ws: WidgetState, state: ScreenState)(using AllowUnsafe, Frame): Style =
         val userStyle = elem.attrs.uiStyle match
             case s: Style     => s
             case _: Signal[?] =>
@@ -629,47 +737,40 @@ object Lower:
                     .map(_.get())
                     .getOrElse(Style.empty)
 
-        val theme   = themeStyle(elem, state.theme)
-        val base    = theme ++ userStyle
-        val focused = state.focusedId.get()
-        val hovered = state.hoveredId.get()
-        val active  = state.activeId.get()
+        val theme = themeStyle(elem, state.theme)
+        val base  = theme ++ userStyle
 
-        mergePseudoStates(base, key, focused, hovered, active, isDisabled(elem, state))
+        mergePseudoStates(base, ws)
     end resolveStyle
 
     private def mergePseudoStates(
         base: Style,
-        key: WidgetKey,
-        focused: Maybe[WidgetKey],
-        hovered: Maybe[WidgetKey],
-        active: Maybe[WidgetKey],
-        disabled: Boolean
+        ws: WidgetState
     ): Style =
         val conditions = Chunk(
             (
-                focused.contains(key),
+                ws.focused,
                 (p: Style.Prop) =>
                     p match
                         case _: Style.Prop.FocusProp => true;
                         case _                       => false
             ),
             (
-                hovered.contains(key),
+                ws.hovered,
                 (p: Style.Prop) =>
                     p match
                         case _: Style.Prop.HoverProp => true;
                         case _                       => false
             ),
             (
-                active.contains(key),
+                ws.active,
                 (p: Style.Prop) =>
                     p match
                         case _: Style.Prop.ActiveProp => true;
                         case _                        => false
             ),
             (
-                disabled,
+                ws.disabled,
                 (p: Style.Prop) =>
                     p match
                         case _: Style.Prop.DisabledProp => true;
@@ -702,6 +803,9 @@ object Lower:
 
     // ---- Theme styles ----
 
+    /** TUI "user agent stylesheet" — default styles per element type, using theme color tokens. This is the TUI equivalent of browser
+      * default styles. Each entry mirrors what a web browser would show for that HTML element.
+      */
     private def themeStyle(elem: UI.Element, theme: ResolvedTheme): Style =
         theme.variant match
             case Theme.Plain => Style.empty
@@ -713,11 +817,19 @@ object Lower:
                     case _        => Style.empty
             case Theme.Default =>
                 elem match
-                    case _: UI.H1     => Style.bold.padding(1.px, 0.px)
-                    case _: UI.H2     => Style.bold
-                    case _: UI.Button => Style.border(1.px, theme.borderColor).padding(0.px, 1.px)
-                    case _: UI.Hr     => Style.borderBottom(1.px, theme.borderColor).width(100.pct).height(1.px)
-                    case _            => Style.empty
+                    // Headings
+                    case _: UI.H1 => Style.bold.padding(1.px, 0.px)
+                    case _: UI.H2 => Style.bold
+                    // Form controls — bordered like web browser defaults
+                    case _: UI.TextInput => Style.border(1.px, theme.borderColor).padding(0.px, 1.px).width(100.pct)
+                    case _: UI.Select    => Style.border(1.px, theme.borderColor).padding(0.px, 1.px).width(100.pct)
+                    case _: UI.Button    => Style.border(1.px, theme.borderColor).padding(0.px, 1.px)
+                    // Table cells — padding for column spacing
+                    case _: UI.Th => Style.bold.padding(0.px, 1.px)
+                    case _: UI.Td => Style.padding(0.px, 1.px)
+                    // Separators
+                    case _: UI.Hr => Style.borderBottom(1.px, theme.borderColor).width(100.pct).height(1.px)
+                    case _        => Style.empty
 
     // ---- Tag resolution ----
 
@@ -760,9 +872,42 @@ object Lower:
     private def walkChildren(children: kyo.Span[UI], dynamicPath: Chunk[String], ctx: Ctx)(using AllowUnsafe, Frame): Chunk[Resolved] =
         @tailrec def loop(i: Int, acc: Chunk[Resolved]): Chunk[Resolved] =
             if i >= children.size then acc
-            else loop(i + 1, acc.append(walk(children(i), dynamicPath, ctx)))
+            else
+                children(i) match
+                    // Flatten Foreach/Fragment results into parent's children list
+                    // (prevents wrapping in a Div which breaks table layout)
+                    case fe: UI.internal.Foreach[?] =>
+                        loop(i + 1, acc.concat(walkForeachFlat(fe, dynamicPath, ctx)))
+                    case UI.internal.Fragment(fcs) =>
+                        loop(i + 1, acc.concat(walkChildren(fcs, dynamicPath, ctx)))
+                    case other =>
+                        loop(i + 1, acc.append(walk(other, dynamicPath, ctx)))
         loop(0, Chunk.empty)
     end walkChildren
+
+    /** Walk Foreach and return flat list of resolved items (no wrapping). */
+    private def walkForeachFlat(fe: UI.internal.Foreach[?], dynamicPath: Chunk[String], ctx: Ctx)(using
+        AllowUnsafe,
+        Frame
+    ): Chunk[Resolved] =
+        val key = WidgetKey(fe.frame, dynamicPath)
+        val items = ctx.state.widgetState.get[SignalRef.Unsafe[Chunk[Any]]](key.child("items")) match
+            case Present(ref) => ref.get()
+            case _            => Chunk.empty
+        val keyFn  = fe.key
+        val render = fe.render.asInstanceOf[(Int, Any) => UI]
+        @tailrec def eachItem(i: Int, acc: Chunk[Resolved]): Chunk[Resolved] =
+            if i >= items.size then acc
+            else
+                val item = items(i)
+                val childPath = keyFn match
+                    case Present(fn) => dynamicPath.append(fn.asInstanceOf[Any => String](item))
+                    case Absent      => dynamicPath.append(i.toString)
+                val childUI  = render(i, item)
+                val resolved = walk(childUI, childPath, ctx)
+                eachItem(i + 1, acc.append(resolved))
+        eachItem(0, Chunk.empty)
+    end walkForeachFlat
 
     /** Wrap multiple children — single child unwrapped, multiple wrapped in a transparent Div. */
     private def wrapChildren(children: Chunk[Resolved]): Resolved =

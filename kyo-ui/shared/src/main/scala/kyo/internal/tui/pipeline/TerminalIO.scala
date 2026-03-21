@@ -34,6 +34,9 @@ trait TerminalIO:
       */
     def readEvent(using Frame): InputEvent < Async
 
+    /** Check if input is available without blocking. Returns true if readEvent would return immediately. */
+    def hasInput(using Frame): Boolean < Sync = Kyo.lift(false)
+
     /** Register a platform-specific shutdown hook to restore terminal state on process termination. Default no-op — platform
       * implementations override with actual hook registration.
       */

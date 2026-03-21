@@ -108,11 +108,11 @@ class InteractionFormTest extends Test:
                     UI.button.onClick { clicked = true }("Click")
                 ),
                 10,
-                3
+                1
             )
             for
                 _ <- s.render
-                _ <- s.click(1, 1) // click on content row inside button border
+                _ <- s.click(0, 0) // Plain theme: no border, button text at row 0
             yield assert(clicked, "button onClick should have fired")
             end for
         }
@@ -124,11 +124,11 @@ class InteractionFormTest extends Test:
                     UI.button.disabled(true).onClick { clicked = true }("Click")
                 ),
                 10,
-                3
+                1
             )
             for
                 _ <- s.render
-                _ <- s.click(1, 1) // click on content row inside button border
+                _ <- s.click(0, 0) // Plain theme: no border, button text at row 0
             yield assert(!clicked, "disabled button should not fire onClick")
             end for
         }

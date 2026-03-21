@@ -60,6 +60,7 @@ class IRTest extends Test:
             assert(h.colspan == 1)
             assert(h.rowspan == 1)
             assert(h.imageData == Absent)
+            assert(h.cursorPosition == Absent)
         }
     }
 
@@ -81,12 +82,6 @@ class IRTest extends Test:
                 case _                => fail("expected Text")
         }
 
-        "Cursor construction" in {
-            val cursor = Resolved.Cursor(5)
-            cursor match
-                case Resolved.Cursor(offset) => assert(offset == 5)
-                case _                       => fail("expected Cursor")
-        }
     }
 
     "Styled" - {
@@ -116,9 +111,9 @@ class IRTest extends Test:
             val bounds  = Rect(0, 0, 80, 24)
             val content = Rect(1, 1, 78, 22)
             val clip    = Rect(0, 0, 80, 24)
-            val node    = Laid.Node(ElemTag.Div, FlatStyle.Default, Handlers.empty, bounds, content, clip, Chunk.empty)
+            val node    = Laid.Node(ElemTag.Div, FlatStyle.Default, Handlers.empty, bounds, content, clip, clip, Chunk.empty)
             node match
-                case Laid.Node(_, _, _, b, c, cl, _) =>
+                case Laid.Node(_, _, _, b, c, cl, _, _) =>
                     assert(b == bounds)
                     assert(c == content)
                     assert(cl == clip)
@@ -136,14 +131,6 @@ class IRTest extends Test:
             end match
         }
 
-        "Cursor with pos" in {
-            val cursor = Laid.Cursor(Rect(5, 3, 1, 1))
-            cursor match
-                case Laid.Cursor(pos) =>
-                    assert(pos.x == 5 && pos.y == 3)
-                case _ => fail("expected Cursor")
-            end match
-        }
     }
 
     "LayoutResult" - {
@@ -155,6 +142,7 @@ class IRTest extends Test:
                 Rect(0, 0, 80, 24),
                 Rect(0, 0, 80, 24),
                 Rect(0, 0, 80, 24),
+                Rect(0, 0, 80, 24),
                 Chunk.empty
             )
             val popup = Laid.Node(
@@ -163,6 +151,7 @@ class IRTest extends Test:
                 Handlers.empty,
                 Rect(10, 10, 20, 5),
                 Rect(10, 10, 20, 5),
+                Rect(0, 0, 80, 24),
                 Rect(0, 0, 80, 24),
                 Chunk.empty
             )
