@@ -203,7 +203,7 @@ class StreamCoreExtensionsTest extends Test:
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12, Int.MaxValue)
-                        s2 = stream.mapParUnordered(par, buf)(i => if i == 1 then Async.sleep(10.millis).andThen(i + 1) else i + 1)
+                        s2 = stream.mapParUnordered(par, buf)(i => if i == 1 then Async.sleep(100.millis).andThen(i + 1) else i + 1)
                         res <- s2.run
                     yield assert(
                         res.toSet == (2 to 5).toSet &&
