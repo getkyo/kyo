@@ -993,32 +993,36 @@ class HttpRouteTest extends Test:
 
     "Name conflicts" - {
 
-        "duplicate query parameter names rejected at compile time" in pendingUntilFixed {
-            typeCheckFailure("""
+        "duplicate query parameter names become an union" in {
+            val r =
                 HttpRoute.getRaw("users")
-                    .request(_.query[Int]("page").query[Int]("page"))
-            """)("Duplicate request field")
+                    .request(_.query[Int]("page").query[String]("page"))
+            val _: HttpRoute["page" ~ (Int | String), Any, Nothing] = r
+            succeed
         }
 
-        "query and header with same name rejected at compile time" in pendingUntilFixed {
-            typeCheckFailure("""
+        "query and header with same name become an union" in {
+            val r =
                 HttpRoute.getRaw("users")
-                    .request(_.query[String]("token").header[String]("token"))
-            """)("Duplicate request field")
+                    .request(_.query[String]("token").header[Int]("token"))
+            val _: HttpRoute["token" ~ (Int | String), Any, Nothing] = r
+            succeed
         }
 
-        "query named 'body' conflicts with bodyJson" in pendingUntilFixed {
-            typeCheckFailure("""
+        "query named 'body' conflicts with bodyJson" in {
+            val r =
                 HttpRoute.postRaw("data")
-                    .request(_.query[String]("body").bodyJson[String])
-            """)("Duplicate request field")
+                    .request(_.query[String]("body").bodyJson[Int])
+            val _: HttpRoute["body" ~ (Int | String), Any, Nothing] = r
+            succeed
         }
 
-        "duplicate response header names rejected at compile time" in pendingUntilFixed {
-            typeCheckFailure("""
+        "duplicate response header names rejected at compile time" in {
+            val r =
                 HttpRoute.getRaw("users")
-                    .response(_.header[String]("X-Id").header[String]("X-Id"))
-            """)("Duplicate response field")
+                    .response(_.header[String]("X-Id").header[Int]("X-Id"))
+            val _: HttpRoute[Any, "X-Id" ~ (Int | String), Nothing] = r
+            succeed
         }
     }
 

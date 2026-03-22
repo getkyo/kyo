@@ -848,6 +848,7 @@ class HttpOpenApiTest extends kyo.Test:
                     "{\"openapi\":\"3.0.0\",\"info\":{\"title\":\"T\",\"version\":\"1\"},\"paths\":{\"/items\":{\"get\":{\"operationId\":\"listItems\",\"responses\":{\"200\":{\"description\":\"ok\",\"content\":{\"application/json\":{\"json\":{\"$$ref\":\"#/components/jsons/Item\"}}}}}}}}}"
                 )
             """)("ref")
+            ()
         }
 
         // BUG: array json type is not handled — falls through to String.
@@ -875,6 +876,7 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             // BUG: array falls to String. Should compile as Chunk[String].
             typeCheck("""val r: HttpRoute[Any, "body" ~ Chunk[String], Nothing] = api.listItems""")
+            ()
         }
 
         // BUG: object json type is not handled — falls through to String.
@@ -902,6 +904,7 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             // BUG: object falls to String. A bare object json should not produce "body" ~ String.
             typeCheck("""val r: HttpRoute[Any, Any, Nothing] = api.listItems""")
+            ()
         }
 
         // Enum values are not used for type safety — parameter is just String.
@@ -986,6 +989,7 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             // Should map to a date/time type, not plain String
             typeCheck("""val r: HttpRoute["since" ~ java.time.Instant, Any, Nothing] = api.listItems""")
+            ()
         }
 
         // BUG: string/date format falls through to plain String.
@@ -1010,6 +1014,7 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             // Should map to a date type, not plain String
             typeCheck("""val r: HttpRoute["since" ~ java.time.LocalDate, Any, Nothing] = api.listItems""")
+            ()
         }
 
         // BUG: non-JSON response content types are silently ignored.
@@ -1069,6 +1074,7 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             // Should produce a union type, not String
             typeCheck("""val r: HttpRoute[Any, "body" ~ (String | Int), Nothing] = api.listItems""")
+            ()
         }
 
         // BUG: string/byte format falls through to plain String.
@@ -1093,6 +1099,7 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             // Should map to a byte array type, not plain String
             typeCheck("""val r: HttpRoute["data" ~ Span[Byte], Any, Nothing] = api.listItems""")
+            ()
         }
 
         // BUG: string/binary format falls through to plain String.
@@ -1117,6 +1124,7 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             // Should map to a binary type, not plain String
             typeCheck("""val r: HttpRoute["data" ~ Span[Byte], Any, Nothing] = api.listItems""")
+            ()
         }
 
         // BUG: anyOf json is not handled — falls through to String.
@@ -1148,6 +1156,7 @@ class HttpOpenApiTest extends kyo.Test:
                 }
             }""")
             typeCheck("""val r: HttpRoute[Any, "body" ~ (String | Int), Nothing] = api.listItems""")
+            ()
         }
 
         // BUG: allOf json is not handled — falls through to String.
@@ -1180,6 +1189,7 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             // allOf with no type should not silently produce "body" ~ String
             typeCheck("""val r: HttpRoute[Any, Any, Nothing] = api.listItems""")
+            ()
         }
 
         // BUG: application/xml response content is silently ignored.
@@ -1236,6 +1246,7 @@ class HttpOpenApiTest extends kyo.Test:
                     "{\"openapi\":\"3.0.0\",\"info\":{\"title\":\"T\",\"version\":\"1\"},\"paths\":{\"/items/{id}\":{\"get\":{\"operationId\":\"getItem\",\"parameters\":[{\"name\":\"id\",\"in\":\"path\",\"required\":true,\"json\":{\"$$ref\":\"#/components/jsons/ItemId\"}}],\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}"
                 )
             """)("ref")
+            ()
         }
 
         // BUG: only error responses (no 2xx, no default) silently falls back to OK with empty response.
@@ -1289,6 +1300,7 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             // Should map to Chunk, not String
             typeCheck("""val r: HttpRoute[Any, "body" ~ Chunk[String], Nothing] = api.listItems""")
+            ()
         }
 
         // BUG: security schemes are parsed but ignored — no auth headers/params generated.
@@ -1399,6 +1411,7 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             // nullable + required should be Maybe[String], not String
             typeCheck("""val r: HttpRoute["filter" ~ Maybe[String], Any, Nothing] = api.listItems""")
+            ()
         }
 
         // BUG: default values in parameters are ignored.
