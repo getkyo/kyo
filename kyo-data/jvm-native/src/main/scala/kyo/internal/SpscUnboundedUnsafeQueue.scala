@@ -24,6 +24,9 @@ final private[kyo] class SpscUnboundedUnsafeQueue[A](chunkSize: Int) extends Uns
     private var producerMask        = (chunkCapacity - 1).toLong
     private var producerBufferLimit = chunkCapacity.toLong - (chunkCapacity.toLong / 4)
 
+    // cache-line padding between producer and consumer fields
+    private val p0, p1, p2, p3, p4, p5, p6, p7 = 0L
+
     // unsafe: mutable consumer-side fields
     private var consumerBuffer = initialBuffer
     private var consumerMask   = (chunkCapacity - 1).toLong

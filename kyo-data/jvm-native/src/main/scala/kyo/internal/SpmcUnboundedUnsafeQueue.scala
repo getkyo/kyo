@@ -29,6 +29,9 @@ final private[kyo] class SpmcUnboundedUnsafeQueue[A](chunkSize: Int) extends Uns
     private var pChunk      = initialChunk
     private var pChunkIndex = 0L
 
+    // cache-line padding between producer and consumer fields
+    private val p0, p1, p2, p3, p4, p5, p6, p7 = 0L
+
     // Shared consumer-side: chunk + its chunk index, read atomically via AtomicReference
     private val consumerChunkRef = new AtomicReference[ChunkRef](
         new ChunkRef(initialChunk, 0L)

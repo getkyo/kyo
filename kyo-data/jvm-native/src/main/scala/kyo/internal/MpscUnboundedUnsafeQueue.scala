@@ -25,6 +25,9 @@ final private[kyo] class MpscUnboundedUnsafeQueue[A](chunkSize: Int) extends Uns
     @volatile private var producerBuffer = initialBuffer
     @volatile private var producerMask   = initialMask
 
+    // cache-line padding between producer and consumer fields
+    private val p0, p1, p2, p3, p4, p5, p6, p7 = 0L
+
     // unsafe: consumer-only mutable fields
     private var consumerBuffer = initialBuffer
     private var consumerMask   = initialMask

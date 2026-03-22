@@ -302,29 +302,33 @@ final private[kyo] class MpmcUnboundedUnsafeQueue[A](chunkSize: Int, maxPooledCh
             else if ccChunkIndex < ciChunkIndex then
                 // consumer chunk is stale (updated via lazySet by another consumer)
                 // walk forward through chunk links to find the right chunk
-                @tailrec def walkForward(chunk: Chunk, ci: Long): Maybe[A] =
-                    if ci >= ciChunkIndex then
-                        if ci == ciChunkIndex && consumerIndex.get() == cIdx then
-                            if isPooled then
-                                val seq = chunk.sequence.get(ciChunkOffset)
-                                if seq == ciChunkIndex then
-                                    val e = chunk.buffer.get(ciChunkOffset)
-                                    if consumerIndex.get() == cIdx && !isNull(e) then
-                                        Maybe(e.asInstanceOf[A])
-                                    else loop(pIndex)
-                                else loop(pIndex)
-                                end if
-                            else
-                                val e = chunk.buffer.get(ciChunkOffset)
-                                if !isNull(e) then
-                                    Maybe(e.asInstanceOf[A])
-                                else loop(pIndex)
-                        else loop(pIndex)
+                @tailrec def walkForward(chunk: Chunk, ci: Long): Chunk | Null =
+                    if ci >= ciChunkIndex then chunk
                     else
                         val nextChunk = chunk.next.get()
-                        if nextChunk == null then loop(pIndex) // can't follow, retry
+                        if nextChunk == null then null
                         else walkForward(nextChunk, ci + 1)
-                walkForward(cChunk, ccChunkIndex)
+                val targetChunk = walkForward(cChunk, ccChunkIndex)
+                if targetChunk == null || consumerIndex.get() != cIdx then
+                    loop(pIndex)
+                else
+                    val chunk = targetChunk.asInstanceOf[Chunk]
+                    if isPooled then
+                        val seq = chunk.sequence.get(ciChunkOffset)
+                        if seq == ciChunkIndex then
+                            val e = chunk.buffer.get(ciChunkOffset)
+                            if consumerIndex.get() == cIdx && !isNull(e) then
+                                Maybe(e.asInstanceOf[A])
+                            else loop(pIndex)
+                        else loop(pIndex)
+                        end if
+                    else
+                        val e = chunk.buffer.get(ciChunkOffset)
+                        if !isNull(e) then
+                            Maybe(e.asInstanceOf[A])
+                        else loop(pIndex)
+                    end if
+                end if
             else
                 // check if empty
                 if cIdx >= pIndex then
@@ -348,6 +352,9 @@ private[kyo] object MpmcUnboundedUnsafeQueue:
         chunkCapacity: Int,
         pooled: Boolean
     ):
+        // cache-line padding between index and read-heavy fields
+        private val p0, p1, p2, p3, p4, p5, p6, p7 = 0L
+
         // No init needed: AtomicReferenceArray defaults to null, which is the empty sentinel.
         // Using null (not Absent) avoids a visibility race on ARM: chunks are published via
         // lazySet (StoreStore only), so Absent writes might not be visible when a consumer
