@@ -82,7 +82,7 @@ class LayerTest extends Test:
             pendingUntilFixed:
                 case class R2(a: String, b: Int)
 
-                // adding a type annototion to layer here is creating the issue
+                // adding a type annotation to layer here is creating the issue
                 val layer: Layer[R2, Env[String & Int]] = Layer.from(R2.apply)
 
                 val v: TypeMap[R2] < (Env[String & Int] & Memo) = layer.run
