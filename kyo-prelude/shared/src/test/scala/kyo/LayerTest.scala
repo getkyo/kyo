@@ -75,7 +75,7 @@ class LayerTest extends Test:
             val guppyLayer: Layer[Guppy, Any]                = Layer(Guppy("Tiny Guppy"))
             val sharkLayer: Layer[Shark, Env[Guppy & Dummy]] = Layer.from(Shark.apply)
 
-            discard(typeCheckFailure("""sharkLayer provide guppyLayer""")("???"))
+            discard(typeCheckFailure("""sharkLayer provide guppyLayer""")("circular"))
         }
 
         "from 2" in:
