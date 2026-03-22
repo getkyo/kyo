@@ -125,7 +125,7 @@ object Cache:
                             if promise.unsafe.interrupt() then
                                 store.remove(v)
                         } {
-                            Abort.run[Throwable](f(v)).map {
+                            Abort.runWith[Throwable](f(v)) {
                                 case Result.Success(v) =>
                                     // Success — complete promise, keep in cache
                                     Sync.Unsafe.defer {
@@ -271,7 +271,14 @@ object Cache:
             (Integer.highestOneBit(target - 1) << 1) - 1
 
         private val values =
-            new AtomicReferenceArray[Slot[V]](mask + 1)
+            val a = new AtomicReferenceArray[Slot[V]](mask + 1)
+            @tailrec def loop(i: Int): Unit =
+                if i <= mask then
+                    a.set(i, Slot.empty)
+                    loop(i + 1)
+            loop(0)
+            a
+        end values
 
         private val keys: Array[Maybe[K]] =
             val a = new Array[AnyRef](mask + 1)
@@ -333,61 +340,14 @@ object Cache:
 
         /** Inserts value for key, or returns the existing value if already present. */
         def add(key: K, value: V)(using AllowUnsafe): V =
-            val now = nowCentis()
+            val now  = nowCentis()
+            val home = spread(key.hashCode()) & mask
 
-            @tailrec def loop(slot: Int, dist: Int, firstTomb: Int): V =
-                if dist > mask then
-                    // Table full — use saved tombstone or force eviction
-                    if firstTomb >= 0 then
-                        claim(firstTomb, key, value, now)
-                    else
-                        evict()
-                        add(key, value)
-                    end if
-                else
-                    val s = values.get(slot)
-                    if s.isLocked then
-                        // Slot being written — restart
-                        add(key, value)
-                    else if s.isPresent then
-                        if keyMatch(slot, key) then
-                            // Re-read to guard against slot recycle (remove+add between reading value and key)
-                            val s2 = values.get(slot)
-                            if !s2.isPresent || (s2.value.asInstanceOf[AnyRef] ne s.value.asInstanceOf[AnyRef]) then
-                                // Slot was recycled — re-read from same position (not full restart, to avoid livelock)
-                                loop(slot, dist, firstTomb)
-                            else if !isExpired(slot, now) then
-                                // Key exists and is valid — return existing
-                                states.set(slot, states.get(slot).withAccess(now))
-                                s.value
-                            else if values.compareAndSet(slot, s, Slot.locked) then
-                                // Expired — reclaim in-place
-                                states.set(slot, State(now))
-                                values.set(slot, Slot(value))
-                                onExpire(key, s.value)
-                                value
-                            else
-                                // CAS failed — retry
-                                add(key, value)
-                            end if
-                        else
-                            // Different key — keep probing
-                            loop(next(slot), dist + 1, firstTomb)
-                        end if
-                    else if s.isTombstone then
-                        // Remember first tombstone for potential reuse
-                        loop(next(slot), dist + 1, if firstTomb < 0 then slot else firstTomb)
-                    else
-                        // Empty — key absent, insert at first tombstone or here
-                        if firstTomb >= 0 then claim(firstTomb, key, value, now)
-                        else claim(slot, key, value, now)
-                    end if
-
-            def claim(target: Int, key: K, value: V, now: Int): V =
+            // Returns true if successfully claimed, false = retry from scratch
+            def claim(target: Int): Boolean =
                 val current = values.get(target)
-                if (current.isEmpty || current.isTombstone) &&
-                    values.compareAndSet(target, current, Slot.locked)
-                then
+                (current.isEmpty || current.isTombstone) &&
+                values.compareAndSet(target, current, Slot.locked) && {
                     // Re-scan chain to detect duplicate key inserted concurrently
                     @tailrec def isDuplicate(slot: Int, dist: Int): Boolean =
                         dist <= mask && {
@@ -407,10 +367,10 @@ object Cache:
                                 }
                         }
 
-                    if isDuplicate(spread(key.hashCode()) & mask, 0) then
+                    if isDuplicate(home, 0) then
                         // Rollback — restore as tombstone to preserve chain
                         values.set(target, Slot.tombstone)
-                        add(key, value)
+                        false
                     else
                         // Commit the new entry
                         keys(target) = Maybe(key)
@@ -418,27 +378,75 @@ object Cache:
                         values.set(target, Slot(value))
                         discard(size.incrementAndGet())
                         if size.get() > maxSize then evict()
-                        value
+                        true
                     end if
-                else
-                    // CAS failed — retry
-                    add(key, value)
-                end if
+                }
             end claim
 
-            loop(spread(key.hashCode()) & mask, 0, -1)
+            @tailrec def loop(slot: Int, dist: Int, firstTomb: Int): V =
+                if dist > mask then
+                    // Table full — use saved tombstone or force eviction
+                    if firstTomb >= 0 then
+                        if claim(firstTomb) then value
+                        else loop(home, 0, -1)
+                    else
+                        evict()
+                        loop(home, 0, -1)
+                    end if
+                else
+                    val s = values.get(slot)
+                    if s.isLocked then
+                        // Slot being written — restart
+                        loop(home, 0, -1)
+                    else if s.isPresent then
+                        if keyMatch(slot, key) then
+                            // Re-read to guard against slot recycle (remove+add between reading value and key)
+                            val s2 = values.get(slot)
+                            if !s2.isPresent || (s2.value.asInstanceOf[AnyRef] ne s.value.asInstanceOf[AnyRef]) then
+                                // Slot was recycled — re-read from same position (not full restart, to avoid livelock)
+                                loop(slot, dist, firstTomb)
+                            else if !isExpired(slot, now) then
+                                // Key exists and is valid — return existing
+                                states.set(slot, states.get(slot).withAccess(now))
+                                s.value
+                            else if values.compareAndSet(slot, s, Slot.locked) then
+                                // Expired — reclaim in-place
+                                states.set(slot, State(now))
+                                values.set(slot, Slot(value))
+                                onExpire(key, s.value)
+                                value
+                            else
+                                // CAS failed — retry
+                                loop(home, 0, -1)
+                            end if
+                        else
+                            // Different key — keep probing
+                            loop(next(slot), dist + 1, firstTomb)
+                        end if
+                    else if s.isTombstone then
+                        // Remember first tombstone for potential reuse
+                        loop(next(slot), dist + 1, if firstTomb < 0 then slot else firstTomb)
+                    else
+                        // Empty — key absent, insert at first tombstone or here
+                        val target = if firstTomb >= 0 then firstTomb else slot
+                        if claim(target) then value
+                        else loop(home, 0, -1)
+                    end if
+
+            loop(home, 0, -1)
         end add
 
         /** Removes an entry by marking it as a tombstone. */
 
         def remove(key: K)(using AllowUnsafe): Unit =
+            val home = spread(key.hashCode()) & mask
 
             @tailrec def loop(slot: Int, dist: Int): Unit =
                 if dist <= mask then
                     val s = values.get(slot)
                     if s.isLocked then
                         // Slot being written — restart
-                        remove(key)
+                        loop(home, 0)
                     else if s.isPresent then
                         if keyMatch(slot, key) then
                             // Found — tombstone it
@@ -458,7 +466,7 @@ object Cache:
                     // else: empty slot — key absent, done
                     end if
 
-            loop(spread(key.hashCode()) & mask, 0)
+            loop(home, 0)
         end remove
 
         /** Diagnostic stats. Scans all slots for entries, ghosts, and consistency violations. */
@@ -631,10 +639,10 @@ object Cache:
             def toCentis(duration: Duration): Int =
                 if duration > Duration.Zero then (duration.toMillis / 10).toInt.max(1) else -1
 
-            opaque type Slot[+V] = V | AnyRef | Null
+            opaque type Slot[+V] = V | AnyRef
 
             object Slot:
-                val empty: Slot[Nothing]     = null
+                val empty: Slot[Nothing]     = new AnyRef
                 val locked: Slot[Nothing]    = new AnyRef
                 val tombstone: Slot[Nothing] = new AnyRef
 

@@ -1856,4 +1856,49 @@ class CacheTest extends Test:
         }
     }
 
+    "stack safety" - {
+
+        "add under contention" in runJVM {
+            for
+                c     <- Cache.init[Int, String](1)
+                latch <- Latch.init(1)
+                fibers <- Kyo.foreach(1 to 1000)(i =>
+                    Fiber.initUnscoped(latch.await.andThen(c.add(i % 4, s"val-$i")))
+                )
+                _       <- latch.release
+                results <- Kyo.foreach(fibers)(_.get)
+            yield
+                val distinct = results.distinct
+                assert(distinct.nonEmpty)
+                assert(distinct.forall(_.startsWith("val-")))
+            end for
+        }
+
+        "add and remove under contention" in runJVM {
+            for
+                c     <- Cache.init[Int, String](1)
+                latch <- Latch.init(1)
+                fibers <- Kyo.foreach(1 to 1000)(i =>
+                    Fiber.initUnscoped(latch.await.andThen {
+                        if i % 2 == 0 then c.add(i % 4, s"val-$i")
+                        else c.remove(i % 4).andThen("removed")
+                    })
+                )
+                _       <- latch.release
+                results <- Kyo.foreach(fibers)(_.get)
+                final0  <- c.get(0)
+                final1  <- c.get(1)
+                final2  <- c.get(2)
+                final3  <- c.get(3)
+            yield
+                assert(results.size == 1000)
+                // After contention settles, each key is either present or removed
+                Seq(final0, final1, final2, final3).foreach { v =>
+                    v.foreach(s => discard(assert(s.startsWith("val-"))))
+                }
+                succeed
+            end for
+        }
+    }
+
 end CacheTest
