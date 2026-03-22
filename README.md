@@ -54,7 +54,6 @@ Kyo is structured as a monorepo, published to Maven Central:
 | kyo-zio              | ✅   | ✅   | ❌      | Bidirectional ZIO interop with support for ZIO, ZLayer, and ZStream  |
 | kyo-zio-test         | ✅   | ✅   | ❌      | ZIO Test framework integration for testing Kyo effects               |
 | kyo-cats             | ✅   | ✅   | ❌      | Bidirectional Cats IO interop with support for Sync, Async and Abort |
-| kyo-cache            | ✅   | ❌   | ❌      | High-performance caching using Caffeine with memoization             |
 | kyo-stats-registry   | ✅   | ✅   | ✅      | Metrics collection with counters, histograms, and gauges             |
 | kyo-stats-otel       | ✅   | ❌   | ❌      | OpenTelemetry integration for metrics and tracing export             |
 | kyo-playwright       | ✅   | ❌   | ❌      | Browser automation testing using Microsoft Playwright                |
@@ -2848,51 +2847,63 @@ val d: Int < Sync =
     a.map(_.pending)
 ```
 
-### Barrier: Multi-party Rendezvous
+### Gate: Coordinated Concurrent Passage
 
-The `Barrier` effect provides a synchronization primitive that allows a fixed number of parties to wait for each other to reach a common point of execution. It's particularly useful in scenarios where multiple fibers need to synchronize their progress.
+`Gate` coordinates concurrent parties through a shared passage point — parties arrive and wait until all expected parties are present, then everyone passes through together. The gate then resets for the next group, like a revolving door.
+
+Two variants are available: `Gate` for a fixed set of participants (similar to Java's `CyclicBarrier` but with pass tracking and non-blocking arrival), and `Gate.Dynamic` for dynamic membership with `join`/`leave` and hierarchical subgroups (similar to Java's `Phaser`).
+
+Unlike `Latch`, which is asymmetric (some tasks release while others wait), `Gate` is symmetric: all parties participate equally and pass through together.
 
 ```scala
 import kyo.*
 
-// Initialize a barrier for 3 parties
-val a: Barrier < Sync =
-    Barrier.init(3)
+// Initialize a gate for 3 parties
+val a: Gate < Sync =
+    Gate.initUnscoped(3)
 
-// Wait for the barrier to be released
-val b: Unit < Async =
-    a.map(_.await)
+// Pass through the gate (blocks until all parties arrive)
+val b: Unit < (Async & Abort[Closed]) =
+    a.map(_.pass)
 
-// Get the number of parties still waiting
-val c: Int < Sync =
-    a.map(_.pending)
+// Signal arrival without waiting for others
+val c: Unit < Sync =
+    a.map(_.arrive)
+
+// Get the number of parties still expected
+val d: Int < Sync =
+    a.map(_.pendingCount)
+
+// Get how many times the gate has been fully passed through
+val e: Int < Sync =
+    a.map(_.passCount)
 
 // Example usage with multiple fibers
-val d: Unit < Async =
+val f: Unit < (Async & Abort[Closed]) =
     for
-        barrier <- Barrier.init(3)
-        _       <- Async.zip(
-                     barrier.await,
-                     barrier.await,
-                     barrier.await
-                   )
+        gate <- Gate.initUnscoped(3)
+        _   <- Async.zip(
+                 gate.pass,
+                 gate.pass,
+                 gate.pass
+               )
     yield ()
 
-// Fibers can join the barrier at different points of the computation
-val e: Unit < Async =
+// Fibers can join the gate at different points of the computation
+val g: Unit < (Async & Abort[Closed]) =
     for
-        barrier <- Barrier.init(3)
-        fiber1  <- Fiber.initUnscoped(Async.sleep(1.second))
-        fiber2  <- Fiber.initUnscoped(Async.sleep(2.seconds))
-        _       <- Async.zip(
-                     fiber1.get.map(_ => barrier.await),
-                     fiber2.get.map(_ => barrier.await),
-                     Fiber.initUnscoped(barrier.await).map(_.get)
-                   )
+        gate   <- Gate.initUnscoped(3)
+        fiber1 <- Fiber.initUnscoped(Async.sleep(1.second))
+        fiber2 <- Fiber.initUnscoped(Async.sleep(2.seconds))
+        _      <- Async.zip(
+                    fiber1.get.map(_ => gate.pass),
+                    fiber2.get.map(_ => gate.pass),
+                    Fiber.initUnscoped(gate.pass).map(_.get)
+                  )
     yield ()
 ```
 
-The `Barrier` is initialized with a specific number of parties. Each party calls `await` when it reaches the barrier point. The barrier releases all waiting parties when the last party arrives. After all parties have been released, the barrier cannot be reset or reused.
+Use `init` (with `Scope`) for automatic cleanup or `initUnscoped` with manual `close`. A custom stop condition or fixed pass count can be provided at creation to auto-close the gate.
 
 ### Atomic: Concurrent State
 
@@ -3319,139 +3330,34 @@ The code highlighting feature supports basic syntax highlighting for Scala keywo
 
 ## Integrations
 
-### Cache: Memoized Functions via Caffeine
+### Cache: Lock-free Caching with Memoization
 
-Kyo provides caching through memoization. A single `Cache` instance can be reused by multiple memoized functions. This allows for flexible scoping of caches, enabling users to use the same cache for various operations.
+Kyo provides a lock-free, bounded cache with CLOCK eviction and optional time-based expiration. It can be used directly as a key-value store or to memoize functions.
 
 ```scala
 import kyo.*
 
-val a: Int < Async =
+// Direct key-value caching
+val a: String < Sync =
     for
+        cache <- Cache.init[String, String](maxSize = 100)
+        _     <- cache.add("key", "value")
+        v     <- cache.getOrElse("key", "default")
+    yield v
 
-        // The initialization takes a
-        // builder function that mirrors
-        // Caffeine's builder
-        cache <- Cache.init(_.maxSize(100))
-
-        // Create a memoized function
-        fun = cache.memo { (v: String) =>
-            // Note how the implementation
-            // can use other effects
+// Function memoization
+val b: Int < (Async & Sync) =
+    for
+        fun <- Cache.memo(maxSize = 100) { (v: String) =>
+            // The implementation can use
+            // other effects
             Sync.defer(v.toInt)
         }
-
-        // Use the function
         v <- fun("10")
     yield v
 ```
 
-Although multiple memoized functions can reuse the same `Cache`, each function operates as an isolated cache and doesn't share any values with others. Internally, cache entries include the instance of the function as part of the key to ensure this separation. Only the cache space is shared, allowing for efficient use of resources without compromising the independence of each function's cache.
-
-### Requests: HTTP Client via Sttp
-
-`Requests` provides a simplified API for [Sttp 3](https://github.com/softwaremill/sttp) implemented on top of Kyo's concurrent package.
-
-To perform a request, use the `apply` method. It takes a builder function based on Sttp's request building API.
-
-```scala
-import kyo.*
-import kyo.Requests.Backend
-import sttp.client3.*
-
-// Perform a request using a builder function
-val a: String < (Async & Abort[FailedRequest]) =
-    Requests(_.get(uri"https://httpbin.org/get"))
-
-// Alternatively, requests can be
-// defined separately
-val b: String < (Async & Abort[FailedRequest]) =
-    Requests.request(Requests.basicRequest.get(uri"https://httpbin.org/get"))
-
-// It's possible to use the default implementation or provide
-// a custom `Backend` via `let`
-
-// An example request
-val c: String < (Async & Abort[FailedRequest]) =
-    Requests(_.get(uri"https://httpbin.org/get"))
-
-// Implementing a custom mock backend
-val backend: Backend =
-    new Backend:
-        def send[T](r: Request[T, Any])(using Frame) =
-            Response.ok(Right("mocked")).asInstanceOf[Response[T]]
-
-// Use the custom backend
-val d: String < (Async & Abort[FailedRequest]) =
-    Requests.let(backend)(a)
-```
-
-Please refer to Sttp's documentation for details on how to build requests. Streaming is currently unsupported.
-
-Users are free to use any JSON libraries supported by Sttp; however, [zio-json](https://github.com/zio/zio-json) is recommended, as it is used in Kyo's tests and modules requiring HTTP communication, such as `AIs`.
-
-### Routes: HTTP Server via Tapir
-
-`Routes` integrates with the Tapir library to help set up HTTP servers. The method `Routes.add` is used for adding routes. This method requires the definition of a route, which can be a Tapir Endpoint instance or a builder function. Additionally, the method requires the implementation of the endpoint, which is provided as the second parameter group. To start the server, the `Routes` effect is handled, which initializes the HTTP server with the specified routes.
-
-```scala
-import kyo.*
-import sttp.tapir.*
-import sttp.tapir.server.netty.*
-
-// A simple health route using an endpoint builder
-val a: Unit < Routes =
-    Routes.add(
-        _.get.in("health")
-            .out(stringBody)
-    ) { _ =>
-        "ok"
-    }
-
-// The endpoint can also be defined separately
-val health2 = endpoint.get.in("health2").out(stringBody)
-
-val b: Unit < Routes =
-    Routes.add(health2)(_ => "ok")
-
-// Starting the server by handling the effect
-val c: NettyKyoServerBinding < Async =
-    Routes.run(a.andThen(b))
-
-// Alternatively, a customized server configuration can be used
-val d: NettyKyoServerBinding < Async =
-    Routes.run(NettyKyoServer().port(9999))(a.andThen(b))
-```
-
-The parameters for Tapir's endpoint type are aligned with Kyo effects as follows:
-
-`Endpoint[SECURITY_INPUT, INPUT, ERROR_OUTPUT, OUTPUT, CAPABILITIES]`
-
-This translates to the endpoint function format:
-
-`INPUT => OUTPUT < (Env[SECURITY_INPUT] & Abort[ERROR_OUTPUT])`
-
-Currently, the `CAPABILITIES` parameter is not supported in Kyo since streaming functionality is not available. An example of using these parameters is shown below:
-
-```scala
-import kyo.*
-import sttp.model.*
-import sttp.tapir.*
-
-// An endpoint with an 'Int' path input and 'StatusCode' error output
-val a: Unit < Routes =
-    Routes.add(
-        _.get.in("test" / path[Int]("id"))
-            .errorOut(statusCode)
-            .out(stringBody)
-    ) { (id: Int) =>
-        if id == 42 then "ok"
-        else Abort.fail(StatusCode.NotFound)
-        // returns a 'String < Abort[StatusCode]'
-    }
-```
-
-For further examples, refer to TechEmpower's benchmark [subproject](https://github.com/TechEmpower/FrameworkBenchmarks/tree/master/frameworks/Scala/kyo-tapir) for a simple runnable demonstration, and  Kyo's [example ledger service](https://github.com/getkyo/kyo/tree/main/kyo-examples/jvm/src/main/scala/examples/ledger) for practical applications of these concepts.
+`Cache.memo` creates a self-contained cache for a function's results and deduplicates concurrent calls to the same key — only one fiber computes while others wait on the result. Expiration policies (`expireAfterAccess`, `expireAfterWrite`) can be configured independently on both `Cache.init` and `Cache.memo`.
 
 ### ZIOs: Integration with ZIO
 
