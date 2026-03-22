@@ -117,33 +117,24 @@ class STMTest extends Test:
         "exceeding retry budget" in run {
             for
                 ref      <- TRef.init(0)
-                latch1   <- Latch.init(1)
-                latch2   <- Latch.init(1)
                 attempts <- AtomicInt.init
-                _ <-
-                    Fiber.initUnscoped {
-                        STM.run(latch1.release.andThen(ref.set(42)))
-                            .andThen(latch2.release)
-                    }
                 v <-
                     Abort.run {
-                        STM.run(Schedule.never) {
-                            Kyo.fill(100) {
-                                for
-                                    _ <- attempts.incrementAndGet
-                                    _ <- latch1.await
-                                    _ <- ref.get
-                                    _ <- latch2.await
-                                    v <- ref.get
-                                    _ <- Abort.when(v == 0)(new Exception)
-                                yield v
-                            }
+                        STM.run(Schedule.repeat(10)) {
+                            for
+                                _ <- attempts.incrementAndGet
+                                _ <- ref.get
+                                _ <- Fiber.init(STM.run(ref.update(_ + 1))).map(_.get)
+                                v <- ref.get
+                                _ <- Abort.when(v == 0)(new Exception)
+                            yield v
                         }
                     }
                 a <- attempts.get
             yield
                 assert(v.isFailure)
-                assert(a <= 100)
+                assert(a == 11)
+            end for
         }
     }
 

@@ -6,15 +6,19 @@ import scala.annotation.tailrec
 /** A synchronization primitive that allows one or more tasks to wait until a set of operations being performed in other tasks completes.
   *
   * Latch provides a countdown mechanism where tasks can wait for a counter to reach zero before proceeding. The counter is decremented
-  * through `release` operations, with waiting tasks unblocked once the count reaches zero.
+  * through `release` operations, with waiting tasks unblocked once the count reaches zero. Similar to
+  * `java.util.concurrent.CountDownLatch`.
   *
   * Latches are commonly used for coordinating startup sequences, signaling completion of distributed work, or implementing simple fork-join
   * patterns where one task must wait for multiple operations to complete.
   *
+  * Unlike [[kyo.Gate]], which is symmetric (all parties pass through together), Latch is asymmetric: some tasks count down while others
+  * wait.
+  *
   * When initialized with count <= 0, the latch behaves as a no-op with all await operations completing immediately.
   *
   * @see
-  *   [[kyo.Barrier]] A related primitive that synchronizes a fixed number of tasks at a specific execution point
+  *   [[kyo.Gate]] for symmetric synchronization where all parties pass through together
   */
 final case class Latch private (unsafe: Latch.Unsafe):
 

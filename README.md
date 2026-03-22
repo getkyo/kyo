@@ -54,7 +54,6 @@ Kyo is structured as a monorepo, published to Maven Central:
 | kyo-zio              | ✅   | ✅   | ❌      | Bidirectional ZIO interop with support for ZIO, ZLayer, and ZStream  |
 | kyo-zio-test         | ✅   | ✅   | ❌      | ZIO Test framework integration for testing Kyo effects               |
 | kyo-cats             | ✅   | ✅   | ❌      | Bidirectional Cats IO interop with support for Sync, Async and Abort |
-| kyo-cache            | ✅   | ❌   | ❌      | High-performance caching using Caffeine with memoization             |
 | kyo-stats-registry   | ✅   | ✅   | ✅      | Metrics collection with counters, histograms, and gauges             |
 | kyo-stats-otel       | ✅   | ❌   | ❌      | OpenTelemetry integration for metrics and tracing export             |
 | kyo-playwright       | ✅   | ❌   | ❌      | Browser automation testing using Microsoft Playwright                |
@@ -2848,51 +2847,63 @@ val d: Int < Sync =
     a.map(_.pending)
 ```
 
-### Barrier: Multi-party Rendezvous
+### Gate: Coordinated Concurrent Passage
 
-The `Barrier` effect provides a synchronization primitive that allows a fixed number of parties to wait for each other to reach a common point of execution. It's particularly useful in scenarios where multiple fibers need to synchronize their progress.
+`Gate` coordinates concurrent parties through a shared passage point — parties arrive and wait until all expected parties are present, then everyone passes through together. The gate then resets for the next group, like a revolving door.
+
+Two variants are available: `Gate` for a fixed set of participants (similar to Java's `CyclicBarrier` but with pass tracking and non-blocking arrival), and `Gate.Dynamic` for dynamic membership with `join`/`leave` and hierarchical subgroups (similar to Java's `Phaser`).
+
+Unlike `Latch`, which is asymmetric (some tasks release while others wait), `Gate` is symmetric: all parties participate equally and pass through together.
 
 ```scala
 import kyo.*
 
-// Initialize a barrier for 3 parties
-val a: Barrier < Sync =
-    Barrier.init(3)
+// Initialize a gate for 3 parties
+val a: Gate < Sync =
+    Gate.initUnscoped(3)
 
-// Wait for the barrier to be released
-val b: Unit < Async =
-    a.map(_.await)
+// Pass through the gate (blocks until all parties arrive)
+val b: Unit < (Async & Abort[Closed]) =
+    a.map(_.pass)
 
-// Get the number of parties still waiting
-val c: Int < Sync =
-    a.map(_.pending)
+// Signal arrival without waiting for others
+val c: Unit < Sync =
+    a.map(_.arrive)
+
+// Get the number of parties still expected
+val d: Int < Sync =
+    a.map(_.pendingCount)
+
+// Get how many times the gate has been fully passed through
+val e: Int < Sync =
+    a.map(_.passCount)
 
 // Example usage with multiple fibers
-val d: Unit < Async =
+val f: Unit < (Async & Abort[Closed]) =
     for
-        barrier <- Barrier.init(3)
-        _       <- Async.zip(
-                     barrier.await,
-                     barrier.await,
-                     barrier.await
-                   )
+        gate <- Gate.initUnscoped(3)
+        _   <- Async.zip(
+                 gate.pass,
+                 gate.pass,
+                 gate.pass
+               )
     yield ()
 
-// Fibers can join the barrier at different points of the computation
-val e: Unit < Async =
+// Fibers can join the gate at different points of the computation
+val g: Unit < (Async & Abort[Closed]) =
     for
-        barrier <- Barrier.init(3)
-        fiber1  <- Fiber.initUnscoped(Async.sleep(1.second))
-        fiber2  <- Fiber.initUnscoped(Async.sleep(2.seconds))
-        _       <- Async.zip(
-                     fiber1.get.map(_ => barrier.await),
-                     fiber2.get.map(_ => barrier.await),
-                     Fiber.initUnscoped(barrier.await).map(_.get)
-                   )
+        gate   <- Gate.initUnscoped(3)
+        fiber1 <- Fiber.initUnscoped(Async.sleep(1.second))
+        fiber2 <- Fiber.initUnscoped(Async.sleep(2.seconds))
+        _      <- Async.zip(
+                    fiber1.get.map(_ => gate.pass),
+                    fiber2.get.map(_ => gate.pass),
+                    Fiber.initUnscoped(gate.pass).map(_.get)
+                  )
     yield ()
 ```
 
-The `Barrier` is initialized with a specific number of parties. Each party calls `await` when it reaches the barrier point. The barrier releases all waiting parties when the last party arrives. After all parties have been released, the barrier cannot be reset or reused.
+Use `init` (with `Scope`) for automatic cleanup or `initUnscoped` with manual `close`. A custom stop condition or fixed pass count can be provided at creation to auto-close the gate.
 
 ### Atomic: Concurrent State
 
@@ -3319,34 +3330,34 @@ The code highlighting feature supports basic syntax highlighting for Scala keywo
 
 ## Integrations
 
-### Cache: Memoized Functions via Caffeine
+### Cache: Lock-free Caching with Memoization
 
-Kyo provides caching through memoization. A single `Cache` instance can be reused by multiple memoized functions. This allows for flexible scoping of caches, enabling users to use the same cache for various operations.
+Kyo provides a lock-free, bounded cache with CLOCK eviction and optional time-based expiration. It can be used directly as a key-value store or to memoize functions.
 
 ```scala
 import kyo.*
 
-val a: Int < Async =
+// Direct key-value caching
+val a: String < Sync =
     for
+        cache <- Cache.init[String, String](maxSize = 100)
+        _     <- cache.add("key", "value")
+        v     <- cache.getOrElse("key", "default")
+    yield v
 
-        // The initialization takes a
-        // builder function that mirrors
-        // Caffeine's builder
-        cache <- Cache.init(_.maxSize(100))
-
-        // Create a memoized function
-        fun = cache.memo { (v: String) =>
-            // Note how the implementation
-            // can use other effects
+// Function memoization
+val b: Int < (Async & Sync) =
+    for
+        fun <- Cache.memo(maxSize = 100) { (v: String) =>
+            // The implementation can use
+            // other effects
             Sync.defer(v.toInt)
         }
-
-        // Use the function
         v <- fun("10")
     yield v
 ```
 
-Although multiple memoized functions can reuse the same `Cache`, each function operates as an isolated cache and doesn't share any values with others. Internally, cache entries include the instance of the function as part of the key to ensure this separation. Only the cache space is shared, allowing for efficient use of resources without compromising the independence of each function's cache.
+`Cache.memo` creates a self-contained cache for a function's results and deduplicates concurrent calls to the same key — only one fiber computes while others wait on the result. Expiration policies (`expireAfterAccess`, `expireAfterWrite`) can be configured independently on both `Cache.init` and `Cache.memo`.
 
 ### Requests: HTTP Client via Sttp
 
