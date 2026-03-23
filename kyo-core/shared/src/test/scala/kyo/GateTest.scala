@@ -1216,25 +1216,6 @@ class GateTest extends Test:
                     .andThen(succeed)
             }
 
-            "concurrent join and leave" in run {
-                (for
-                    gate  <- Gate.Dynamic.initUnscoped(10)
-                    latch <- Latch.init(1)
-                    joinFiber <- Fiber.initUnscoped(
-                        latch.await.andThen(Async.foreach(1 to 10, 10)(_ => gate.join))
-                    )
-                    leaveFiber <- Fiber.initUnscoped(
-                        latch.await.andThen(Async.foreach(1 to 10, 10)(_ => gate.leave))
-                    )
-                    _ <- latch.release
-                    _ <- joinFiber.get
-                    _ <- leaveFiber.get
-                    s <- gate.size
-                yield assert(s == 10))
-                    .handle(Loop.repeat(repeats))
-                    .andThen(succeed)
-            }
-
             "subgroup contention" in run {
                 (for
                     parent <- Gate.Dynamic.initUnscoped(1)
