@@ -5,7 +5,7 @@ import scala.quoted.*
 private[kyo] object NotIntersectionMacro:
     def derive[A: Type](using Quotes): Expr[kyo.NotIntersection[A]] =
         import quotes.reflect.*
-        TypeRepr.of[A].dealias match
+        TypeRepr.of[A].dealiasKeepOpaques match
             case _: AndType =>
                 report.errorAndAbort(
                     s"Intersection types are not supported here. Found: ${TypeRepr.of[A].show}"
