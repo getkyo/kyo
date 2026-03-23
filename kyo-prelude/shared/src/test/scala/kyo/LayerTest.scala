@@ -48,6 +48,52 @@ class LayerTest extends Test:
             assert(env.get[MegaShark].belly.belly.name == "Tiny Guppy")
         }
 
+        "a using b with Env2" in {
+            trait Dummy
+            case class Guppy(name: String)
+            case class Shark(belly: Guppy, dummy: Dummy)
+
+            val guppyLayer: Layer[Guppy, Any] = Layer(Guppy("Tiny Guppy"))
+            val sharkLayer                    = Layer.from(Shark.apply)
+            val dummy: Layer[Dummy, Any]      = Layer(new Dummy {})
+
+            val guppyAndShark: Layer[Guppy & Shark, Env[Dummy]] = guppyLayer using sharkLayer
+
+            val combinedLayer = dummy using guppyAndShark
+
+            val env = Memo.run(combinedLayer.run).eval
+            assert(env.get[Guppy].name == "Tiny Guppy")
+            assert(env.get[Shark].belly.name == "Tiny Guppy")
+
+        }
+
+        "provide should not allow circular deps" in pendingUntilFixed {
+            trait Dummy
+            case class Guppy(name: String)
+            case class Shark(belly: Guppy, dummy: Dummy)
+
+            val guppyLayer: Layer[Guppy, Any]                = Layer(Guppy("Tiny Guppy"))
+            val sharkLayer: Layer[Shark, Env[Guppy & Dummy]] = Layer.from(Shark.apply)
+
+            discard(typeCheckFailure("""sharkLayer provide guppyLayer""")("circular"))
+        }
+
+        "from 2" in:
+            pendingUntilFixed:
+                case class R2(a: String, b: Int)
+
+                // adding a type annotation to layer here is creating the issue
+                val layer: Layer[R2, Env[String & Int]] = Layer.from(R2.apply)
+
+                val v: TypeMap[R2] < (Env[String & Int] & Memo) = layer.run
+
+                val r2: R2 = v.handle(Env.run(1), Env.run("abc"), Memo.run, _.eval, _.get[R2])
+
+                // fatal: kyo.TypeMap of contents [TypeMap(java.lang.String -> abc, scala.Int -> 1)] missing value of type: [(scala.Int & java.lang.String)].
+                assert(r2.a == "abc")
+                assert(r2.b == 1)
+                ()
+
         "In =:= Out" in {
             trait Value:
                 def result: String
