@@ -15,6 +15,6 @@ abstract class Test extends AsyncFreeSpec with BaseKyoCoreTest with NonImplicitA
 
     override given executionContext: ExecutionContext = Platform.executionContext
 
-    def runZIO[A](v: zio.ZIO[Any, Any, A]): Future[A] =
+    def runZIO[A](v: zio.ZIO[Any, Throwable, A]): Future[A] =
         zio.Unsafe.unsafely(zio.Runtime.default.unsafe.runToFuture(v))
 end Test

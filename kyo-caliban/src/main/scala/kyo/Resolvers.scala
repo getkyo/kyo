@@ -2,13 +2,13 @@ package kyo
 
 import caliban.*
 import caliban.CalibanError
+import caliban.Configurator.ExecutionConfiguration
 import caliban.ResponseValue.*
 import caliban.Value.*
 import caliban.execution.QueryExecution
 import caliban.uploads.*
 import com.github.plokhotnyuk.jsoniter_scala.core.*
 import com.github.plokhotnyuk.jsoniter_scala.macros.*
-import zio.URIO
 import zio.ZEnvironment
 import zio.ZIO
 
@@ -62,8 +62,8 @@ object Resolvers:
         interpreter: GraphQLInterpreter[Any, CalibanError],
         config: Config = Config.default
     )(using Frame): HttpServer < (Async & Scope) =
-        val cfg = composeConfigurator(config)
-        HttpServer.init(buildHandlers(interpreter, config.path, cfg, ZEnvironment.empty, config.filter, config.graphiql)*)
+        val wrapped = CalibanHttpUtils.configuredInterpreter(interpreter, toExecutionConfig(config))
+        HttpServer.init(buildHandlers(wrapped, config.path, ZEnvironment.empty, config.filter, config.graphiql)*)
     end run
 
     /** Runs a GraphQL server with a custom Runner for arbitrary kyo effects.
@@ -86,8 +86,8 @@ object Resolvers:
         runner: Runner[R],
         config: Config
     )(using zio.Tag[Runner[R]], Frame): HttpServer < (Async & Scope) =
-        val cfg = composeConfigurator(config)
-        HttpServer.init(buildHandlers(interpreter, config.path, cfg, ZEnvironment(runner), config.filter, config.graphiql)*)
+        val wrapped = CalibanHttpUtils.configuredInterpreter(interpreter, toExecutionConfig(config))
+        HttpServer.init(buildHandlers(wrapped, config.path, ZEnvironment(runner), config.filter, config.graphiql)*)
     end run
 
     /** Runs a GraphQL server with a custom Runner using default configuration.
@@ -126,11 +126,13 @@ object Resolvers:
 
     private val uploadMapCodec = JsonCodecMaker.make[Map[String, List[String]]]
 
-    private def composeConfigurator(config: Config): URIO[zio.Scope, Unit] =
-        Configurator.setEnableIntrospection(config.enableIntrospection) *>
-            Configurator.setSkipValidation(config.skipValidation) *>
-            Configurator.setQueryExecution(config.queryExecution) *>
-            Configurator.setAllowMutationsOverGetRequests(config.allowMutationsOverGetRequests)
+    private def toExecutionConfig(config: Config): ExecutionConfiguration =
+        ExecutionConfiguration(
+            skipValidation = config.skipValidation,
+            enableIntrospection = config.enableIntrospection,
+            queryExecution = config.queryExecution,
+            allowMutationsOverGetRequests = config.allowMutationsOverGetRequests
+        )
 
     private def parseRequest(body: Span[Byte], headers: HttpHeaders): GraphQLRequest =
         val ct = headers.get("content-type")
@@ -167,10 +169,9 @@ object Resolvers:
     private def executeQuery[R](
         interpreter: GraphQLInterpreter[R, CalibanError],
         request: GraphQLRequest,
-        configurator: URIO[zio.Scope, Unit],
         env: ZEnvironment[R]
     )(using Frame): GraphQLResponse[CalibanError] < Async =
-        ZIOs.get(ZIO.scoped(configurator *> interpreter.executeRequest(request)).provideEnvironment(env))
+        ZIOs.get(interpreter.executeRequest(request).provideEnvironment(env))
     end executeQuery
 
     private def encodeResponse(
@@ -204,7 +205,6 @@ object Resolvers:
     private def buildHandlers[R](
         interpreter: GraphQLInterpreter[R, CalibanError],
         path: String,
-        configurator: URIO[zio.Scope, Unit],
         env: ZEnvironment[R],
         filter: HttpFilter.Passthrough[Nothing],
         graphiql: Boolean
@@ -213,7 +213,7 @@ object Resolvers:
         // POST (queries & mutations)
         val postRoute = HttpRoute.postRaw(path).request(_.bodyBinary).response(_.bodyBinary).filter(filter)
         val postHandler = postRoute.handler { req =>
-            executeQuery(interpreter, parseRequest(req.fields.body, req.headers), configurator, env).map { response =>
+            executeQuery(interpreter, parseRequest(req.fields.body, req.headers), env).map { response =>
                 encodeResponse(response, req.headers)
             }
         }
@@ -233,7 +233,7 @@ object Resolvers:
                 req.fields.variables,
                 req.fields.extensions
             )
-            executeQuery(interpreter, gqlRequest, configurator, env).map { response =>
+            executeQuery(interpreter, gqlRequest, env).map { response =>
                 encodeResponse(response, req.headers)
             }
         }
@@ -241,7 +241,7 @@ object Resolvers:
         // SSE (subscriptions)
         val sseRoute = HttpRoute.postRaw(s"$path/sse").request(_.bodyBinary).response(_.bodySseText).filter(filter)
         val sseHandler = sseRoute.handler { req =>
-            executeQuery(interpreter, parseRequest(req.fields.body, req.headers), configurator, env).map { response =>
+            executeQuery(interpreter, parseRequest(req.fields.body, req.headers), env).map { response =>
                 val zioStream = CalibanHttpUtils.transformSseResponse(
                     response,
                     rv => HttpSseEvent(writeToString(rv)(using CalibanHttpUtils.responseValueCodec), event = Present("next")),
@@ -254,7 +254,7 @@ object Resolvers:
         // @defer (multipart/mixed streaming)
         val deferRoute = HttpRoute.postRaw(s"$path/defer").request(_.bodyBinary).response(_.bodyStream).filter(filter)
         val deferHandler = deferRoute.handler { req =>
-            executeQuery(interpreter, parseRequest(req.fields.body, req.headers), configurator, env).map { response =>
+            executeQuery(interpreter, parseRequest(req.fields.body, req.headers), env).map { response =>
                 val pipeline  = CalibanHttpUtils.DeferMultipart.createPipeline(response)
                 val zioStream = (zio.stream.ZStream(response.data) >>> pipeline).catchAll(_ => zio.stream.ZStream.empty)
                 val parts     = ZStreams.get(zioStream).map(formatDeferPart)
@@ -296,7 +296,7 @@ object Resolvers:
                         k -> paths.flatMap(_.split("\\.").toList.map(PathValue.parse))
                     }.toList
                     val remapped = GraphQLUploadRequest(operations, pathMap, fileHandle).remap
-                    executeQuery(interpreter, remapped, configurator, env).map(encodeResponse(_, req.headers))
+                    executeQuery(interpreter, remapped, env).map(encodeResponse(_, req.headers))
             end match
         }
 

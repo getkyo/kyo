@@ -284,6 +284,68 @@ class ResolverTest extends Test:
         end for
     }
 
+    "Config - enableIntrospection false rejects __schema queries" in run {
+        val api = graphQL(RootResolver(defaultQuery))
+        for
+            interpreter       <- Resolvers.get(api)
+            server            <- Resolvers.run(interpreter, Resolvers.Config.default.enableIntrospection(false))
+            (status, body, _) <- postGql(server.port, """{"query":"{ __schema { types { name } } }"}""")
+        yield assert(body.contains("Introspection is disabled"), s"Expected introspection disabled error, got: $body")
+        end for
+    }
+
+    "Config - enableIntrospection true allows __schema queries" in run {
+        val api = graphQL(RootResolver(defaultQuery))
+        for
+            interpreter       <- Resolvers.get(api)
+            server            <- Resolvers.run(interpreter, Resolvers.Config.default.enableIntrospection(true))
+            (status, body, _) <- postGql(server.port, """{"query":"{ __schema { types { name } } }"}""")
+        yield
+            assert(status == HttpStatus.OK)
+            assert(body.contains("__schema"), s"Expected introspection data, got: $body")
+            assert(!body.contains("Introspection is disabled"), s"Introspection should be allowed, got: $body")
+        end for
+    }
+
+    "Config - allowMutationsOverGetRequests false blocks GET mutations" in run {
+        val api = graphQL(RootResolver(defaultQuery, Mutation(99)))
+        for
+            interpreter       <- Resolvers.get(api)
+            server            <- Resolvers.run(interpreter, Resolvers.Config.default.allowMutationsOverGetRequests(false))
+            (status, body, _) <- getGql(server.port, "query=mutation%7BdoSomething%7D")
+        yield
+            assert(status == HttpStatus.BadRequest)
+            assert(
+                body.contains("Mutations are not allowed for GET requests"),
+                s"Expected mutation-over-GET error, got: $body"
+            )
+        end for
+    }
+
+    "Config - allowMutationsOverGetRequests true allows GET mutations" in run {
+        val api = graphQL(RootResolver(defaultQuery, Mutation(99)))
+        for
+            interpreter       <- Resolvers.get(api)
+            server            <- Resolvers.run(interpreter, Resolvers.Config.default.allowMutationsOverGetRequests(true))
+            (status, body, _) <- getGql(server.port, "query=mutation%7BdoSomething%7D")
+        yield
+            assert(status == HttpStatus.OK)
+            assert(body.contains(""""doSomething":99"""), s"Expected mutation result, got: $body")
+        end for
+    }
+
+    "Config - queryExecution Sequential executes fields sequentially" in run {
+        val api = graphQL(RootResolver(defaultQuery))
+        for
+            interpreter <- Resolvers.get(api)
+            server      <- Resolvers.run(interpreter, Resolvers.Config.default.queryExecution(caliban.execution.QueryExecution.Sequential))
+            (status, body, _) <- postGql(server.port, """{"query":"{ k1 k2 k3 }"}""")
+        yield
+            assert(status == HttpStatus.OK)
+            assert(body.contains(""""k1":42"""), s"Expected correct result with Sequential execution, got: $body")
+        end for
+    }
+
     // ==================== Server - SSE ====================
 
     "SSE - one-shot query" in run {

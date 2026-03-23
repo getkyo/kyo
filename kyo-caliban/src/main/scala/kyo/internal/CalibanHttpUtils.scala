@@ -1,5 +1,6 @@
 package caliban
 
+import caliban.Configurator.ExecutionConfiguration
 import caliban.ResponseValue.ObjectValue
 import com.github.plokhotnyuk.jsoniter_scala.core.JsonValueCodec
 
@@ -39,5 +40,11 @@ object CalibanHttpUtils:
         def createPipeline[E](response: GraphQLResponse[E]): zio.stream.ZPipeline[Any, Throwable, ResponseValue, ResponseValue] =
             HttpUtils.DeferMultipart.createPipeline(response)
     end DeferMultipart
+
+    def configuredInterpreter[R](
+        interpreter: GraphQLInterpreter[R, CalibanError],
+        config: ExecutionConfiguration
+    ): GraphQLInterpreter[R, CalibanError] =
+        interpreter.wrapExecutionWith(Configurator.ref.locally(config)(_))
 
 end CalibanHttpUtils
