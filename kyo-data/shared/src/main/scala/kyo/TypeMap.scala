@@ -28,7 +28,7 @@ object TypeMap:
           * @throws RuntimeException
           *   if the value is not found
           */
-        def get[B >: A](using t: Tag[B]): B =
+        def get[B >: A](using t: Tag[B], ev: NotIntersection[B]): B =
             def search: Any =
                 val it = self.iterator
                 while it.hasNext do

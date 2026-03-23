@@ -63,6 +63,11 @@ class TypeMapTest extends Test:
             assert(e.get[Char] == 'c')
             assert(e.size == 4)
         }
+        "get rejects intersection types" in {
+            typeCheckFailure("TypeMap(42, \"foo\").get[Int & String]")(
+                "Intersection types are not supported here"
+            )
+        }
         "distinct" in pendingUntilFixed {
             discard(typeCheckFailure("TypeMap(0, 0)")("should fail"))
         }
@@ -97,7 +102,6 @@ class TypeMapTest extends Test:
             val e: TypeMap[A & B] = TypeMap(b)
 
             assert(e.get[A] eq b)
-            assert(e.get[A & B] eq b)
             assert(e.get[A | B] eq b)
         }
         "deterministic" in {
@@ -201,7 +205,6 @@ class TypeMapTest extends Test:
             assert(e2.get[Int] == 42)
             assert(e2.get[A] == c)
             assert(e2.get[B] == c)
-            assert(e2.get[A & B] == c)
             assert(e2.get[A | B] == c)
             assert(e2.get[A | Thread] == c)
         }
