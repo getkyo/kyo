@@ -45,8 +45,10 @@ class EnvTest extends Test:
         succeed
     }
 
-    "intersection type env" in {
-        typeCheck("Env.get[Int & Double]")
+    "intersection type env rejects get on intersection" in {
+        typeCheckFailure("Env.get[Int & Double]")(
+            "Intersection types are not supported here"
+        )
     }
 
     "reduce large intersection incrementally" in {
