@@ -442,7 +442,7 @@ object ArrowEffect:
                                     handleLoopLoop(Loop.continue(kyo(v, context)), context)
                             end new
                         case kyo =>
-                            kyo.asInstanceOf[A]
+                            kyo.unsafeGet
                 case _ =>
                     v.asInstanceOf[A < (S & S2)]
         end handleLoopLoop
@@ -535,10 +535,8 @@ object ArrowEffect:
                                 def apply(v: OX[Any], context: Context)(using Safepoint) =
                                     handleLoopLoop(Loop.continue(state, kyo(v, context)), context)
                             end new
-                        case kyo: Nested[?] =>
-                            done(state, kyo.v.asInstanceOf[A])
                         case kyo =>
-                            done(state, kyo.asInstanceOf[A])
+                            done(state, kyo.unsafeGet)
                     end match
                 case _ =>
                     v.asInstanceOf[B < (S & S2)] // Loop.done
