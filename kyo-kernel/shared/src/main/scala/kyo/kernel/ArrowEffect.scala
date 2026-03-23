@@ -535,6 +535,8 @@ object ArrowEffect:
                                 def apply(v: OX[Any], context: Context)(using Safepoint) =
                                     handleLoopLoop(Loop.continue(state, kyo(v, context)), context)
                             end new
+                        case kyo: Nested[?] =>
+                            done(state, kyo.v.asInstanceOf[A])
                         case kyo =>
                             done(state, kyo.asInstanceOf[A])
                     end match
