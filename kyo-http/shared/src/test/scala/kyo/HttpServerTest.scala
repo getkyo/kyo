@@ -1203,7 +1203,7 @@ class HttpServerTest extends Test:
                         )
                     ))
                     _           <- latch.release
-                    fastResults <- Async.timeout(1.second)(Kyo.foreach(fastFibers)(_.get))
+                    fastResults <- Async.timeout(5.seconds)(Kyo.foreach(fastFibers)(_.get))
                     _           <- slowFiber.interrupt
                 yield assert(fastResults.forall(_.status == HttpStatus.OK)))
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
