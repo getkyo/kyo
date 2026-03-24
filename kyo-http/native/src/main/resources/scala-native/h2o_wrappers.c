@@ -270,19 +270,17 @@ void kyo_h2o_stop(kyo_h2o_server *server) {
     write(server->response_pipe[1], &c, 1);
 }
 
+/* Must be called after the evloop thread has joined.
+ * We intentionally skip h2o_context_dispose because h2o 2.2.5 asserts that
+ * all timeout entry lists are empty, which fails if any connections were
+ * active at shutdown. The context memory is leaked but bounded per server
+ * instance, and the OS reclaims it on process exit.
+ * h2o_socket objects are owned by the event loop and must not be touched
+ * after the evloop thread exits — closing the underlying fds suffices. */
 void kyo_h2o_destroy(kyo_h2o_server *server) {
-    if (server->listener) {
-        h2o_socket_read_stop(server->listener);
-        h2o_socket_close(server->listener);
-    }
-    if (server->response_sock) {
-        h2o_socket_read_stop(server->response_sock);
-        h2o_socket_close(server->response_sock);
-    }
     close(server->listen_fd);
     close(server->response_pipe[0]);
     close(server->response_pipe[1]);
-    h2o_context_dispose(&server->ctx);
     h2o_config_dispose(&server->config);
     free(server);
 }
