@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #define H2O_USE_LIBUV 0
 #include <stdlib.h>
 #include <string.h>
