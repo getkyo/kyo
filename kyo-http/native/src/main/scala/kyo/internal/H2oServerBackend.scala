@@ -281,7 +281,8 @@ private[kyo] object H2oServerBackend:
                 Sync.defer {
                     H2oBindings.stop(newServer)
                     ss.evloopThread.join(gracePeriod.toMillis.max(5000))
-                    H2oBindings.destroy(newServer)
+                    if !ss.evloopThread.isAlive then
+                        H2oBindings.destroy(newServer)
                     discard(registry.remove(serverKey(newServer)))
                 }
             def await(using Frame): Unit < Async =
@@ -489,7 +490,8 @@ private[kyo] object H2oServerBackend:
                 enqueueBuffered(ss, req, status.code, headers, Span.empty[Byte]),
             onBuffered = (status, headers, body) =>
                 // RFC 9110 §8.6: HEAD Content-Length MUST match what GET would return
-                val h = if isHead && headers.get("Content-Length").isEmpty then headers.add("Content-Length", body.size.toString) else headers
+                val h =
+                    if isHead && headers.get("Content-Length").isEmpty then headers.add("Content-Length", body.size.toString) else headers
                 enqueueBuffered(ss, req, status.code, h, if isHead then Span.empty[Byte] else body)
             ,
             onStreaming = (status, headers, stream) =>
