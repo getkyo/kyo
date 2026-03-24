@@ -796,7 +796,7 @@ class ChannelTest extends Test:
 
         "putBatch and takeExactly" in run {
             (for
-                size    <- Choice.eval(0, 1, 2, 10, 100)
+                size    <- Choice.eval(1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
 

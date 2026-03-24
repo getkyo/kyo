@@ -281,8 +281,7 @@ private[kyo] object H2oServerBackend:
                 Sync.defer {
                     H2oBindings.stop(newServer)
                     ss.evloopThread.join(gracePeriod.toMillis.max(5000))
-                    if !ss.evloopThread.isAlive then
-                        H2oBindings.destroy(newServer)
+                    H2oBindings.destroy(newServer)
                     discard(registry.remove(serverKey(newServer)))
                 }
             def await(using Frame): Unit < Async =

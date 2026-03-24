@@ -186,6 +186,10 @@ kyo_h2o_server *kyo_h2o_start(const char *host, int port,
     /* Initialize h2o config */
     h2o_config_init(&server->config);
     server->config.max_request_entity_size = (size_t)max_body_size;
+    /* Immediate graceful shutdown — connections close without delay
+     * after h2o_context_request_shutdown, enabling fast cleanup. */
+    server->config.http1.graceful_shutdown_timeout = 0;
+    server->config.http2.graceful_shutdown_timeout = 0;
 
     /* Register host and catch-all path */
     server->hostconf = h2o_config_register_host(
@@ -256,9 +260,54 @@ kyo_h2o_server *kyo_h2o_start(const char *host, int port,
     return server;
 }
 
-/* Run one iteration of the event loop. Returns 0 if still running, 1 if stopped. */
+/* Run one iteration of the event loop. Returns 0 if still running, 1 if stopped.
+ *
+ * When running becomes 0, performs graceful shutdown ON the evloop thread
+ * (where all h2o operations must happen):
+ * 1. Close listener/pipe sockets — stop accepting new connections
+ * 2. h2o_context_request_shutdown — tell h2o to close active connections
+ * 3. Drain the event loop — let h2o process connection close sequences
+ *    and unlink timeout entries. Runs until no events fire within 1 second
+ *    (h2o's longest non-configurable internal timeout is 1 second).
+ * 4. h2o_context_dispose + h2o_config_dispose — safe now that timeouts are drained
+ * 5. Close underlying fds and return 1 → thread exits
+ */
 int kyo_h2o_evloop_run_once(kyo_h2o_server *server) {
-    if (!server->running) return 1;
+    if (!server->running) {
+        /* Step 1: stop accepting */
+        if (server->listener) {
+            h2o_socket_read_stop(server->listener);
+            h2o_socket_close(server->listener);
+            server->listener = NULL;
+        }
+        if (server->response_sock) {
+            h2o_socket_read_stop(server->response_sock);
+            h2o_socket_close(server->response_sock);
+            server->response_sock = NULL;
+        }
+
+        /* Step 2: request graceful shutdown of all connections */
+        h2o_context_request_shutdown(&server->ctx);
+
+        /* Step 3: drain — run until no events fire within 1s.
+         * h2o_evloop_run returns 0 if it processed events, -1 on timeout.
+         * After request_shutdown, h2o closes connections asynchronously.
+         * Each close sequence fires callbacks that unlink timeout entries.
+         * A full second with no events means all close sequences completed. */
+        while (h2o_evloop_run(server->ctx.loop, 1000) == 0)
+            ;
+
+        /* Step 4: dispose (safe — all timeout entries are now unlinked) */
+        h2o_context_dispose(&server->ctx);
+        h2o_config_dispose(&server->config);
+
+        /* Step 5: close underlying fds */
+        close(server->listen_fd);
+        close(server->response_pipe[0]);
+        close(server->response_pipe[1]);
+
+        return 1;
+    }
     h2o_evloop_run(server->ctx.loop, INT32_MAX);
     return server->running ? 0 : 1;
 }
@@ -270,18 +319,8 @@ void kyo_h2o_stop(kyo_h2o_server *server) {
     write(server->response_pipe[1], &c, 1);
 }
 
-/* Must be called after the evloop thread has joined.
- * We intentionally skip h2o_context_dispose because h2o 2.2.5 asserts that
- * all timeout entry lists are empty, which fails if any connections were
- * active at shutdown. The context memory is leaked but bounded per server
- * instance, and the OS reclaims it on process exit.
- * h2o_socket objects are owned by the event loop and must not be touched
- * after the evloop thread exits — closing the underlying fds suffices. */
+/* Must be called after the evloop thread has joined (cleanup already done). */
 void kyo_h2o_destroy(kyo_h2o_server *server) {
-    close(server->listen_fd);
-    close(server->response_pipe[0]);
-    close(server->response_pipe[1]);
-    h2o_config_dispose(&server->config);
     free(server);
 }
 
