@@ -1,16 +1,18 @@
+#define _POSIX_C_SOURCE 200809L
 #define H2O_USE_LIBUV 0
-#include <h2o.h>
-#include <h2o/socket/evloop.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/socket.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <h2o.h>
+#include <h2o/socket/evloop.h>
 
 /* ── Forward declaration ───────────────────────────────────────────── */
 

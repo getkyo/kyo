@@ -28,7 +28,7 @@ object TypeMap:
           * @throws RuntimeException
           *   if the value is not found
           */
-        def get[B >: A](using t: Tag[B]): B =
+        def get[B >: A](using t: Tag[B], ev: NotIntersection[B]): B =
             def search: Any =
                 val it = self.iterator
                 while it.hasNext do
@@ -66,7 +66,9 @@ object TypeMap:
           *   A new TypeMap containing all key-value pairs from both TypeMaps
           */
         inline def union[B](that: TypeMap[B]): TypeMap[A & B] =
-            self ++ that
+            if that.isEmpty then self
+            else if self.isEmpty then that
+            else self ++ that
 
         /** Filters the TypeMap to only include key-value pairs where the key is a subtype of the given type.
           *
