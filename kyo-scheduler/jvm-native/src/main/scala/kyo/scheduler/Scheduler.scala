@@ -417,7 +417,7 @@ final class Scheduler(
                         cycleWorkers()
                         LockSupport.parkNanos(cycleIntervalNs)
                     }
-                    Thread.interrupted()
+                    Thread.interrupted(): Unit
                 }
             ): Callable[Unit]
         )
