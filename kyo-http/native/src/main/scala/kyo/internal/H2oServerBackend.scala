@@ -97,9 +97,9 @@ private[kyo] object H2oServerBackend:
         val state0: ServerState,
         val req: H2oReq,
         val streamId: Int,
-        var generator: H2oGenerator,
-        val ready: Promise.Unsafe[Nothing, Unit]
+        var generator: H2oGenerator
     ):
+        val generatorReady       = Promise.Unsafe.init[Unit, Any]()
         @volatile var state: Int = READY_FOR_DATA
         val chunkQueue           = new ConcurrentLinkedQueue[(Array[Byte], Boolean)]()
         @volatile var stopped    = false
@@ -197,8 +197,11 @@ private[kyo] object H2oServerBackend:
                                 sendBufferedNative(br.req, br.status, br.headers, br.body)
                             case sr: StreamStartResponse =>
                                 startStreamingNative(ss, sr.streamCtx, sr.status, sr.headers)
-                                discard(sr.streamCtx.ready.complete(Result.success(())))
-                                sr.streamCtx.tryDeliver()
+                                sr.streamCtx.generatorReady.completeUnitDiscard()
+                                // startStreamingNative already called h2o_send(empty, IN_PROGRESS).
+                                // Mark as WAITING_FOR_PROCEED so tryDeliver doesn't issue a
+                                // second h2o_send before the proceed callback fires.
+                                sr.streamCtx.state = WAITING_FOR_PROCEED
                             case sc: StreamChunkNotify =>
                                 sc.streamCtx.tryDeliver()
                             case er: ErrorResponse =>
@@ -266,6 +269,7 @@ private[kyo] object H2oServerBackend:
         H2oBindings.setDrain(newServer, drainCallback)
         H2oBindings.setProceed(newServer, proceedCallback)
         H2oBindings.setStop(newServer, stopCallback)
+        H2oBindings.acceptStart(newServer)
 
         ss.evloopThread = new Thread(
             () => while H2oBindings.evloopRunOnce(newServer) == 0 do (),
@@ -500,15 +504,14 @@ private[kyo] object H2oServerBackend:
                     enqueueBuffered(ss, req, status.code, headers, Span.empty[Byte])
                 else
                     val streamId = nextStreamId.getAndIncrement()
-                    val ready    = Promise.Unsafe.init[Nothing, Unit]()
-                    val ctx      = new StreamContext(ss, req, streamId, null, ready)
+                    val ctx      = new StreamContext(ss, req, streamId, null)
                     discard(ss.streams.put(streamId, ctx))
                     discard(ss.responseQueue.add(new StreamStartResponse(ctx, status.code, headers)))
                     H2oBindings.wake(ss.server)
 
                     discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
                         // Wait for generator to be initialized by the evloop thread
-                        ready.safe.get.andThen {
+                        ctx.generatorReady.safe.get.andThen {
                             stream.foreach { span =>
                                 Sync.defer {
                                     if !ctx.stopped then

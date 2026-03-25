@@ -249,7 +249,6 @@ kyo_h2o_server *kyo_h2o_start(const char *host, int port,
         H2O_SOCKET_FLAG_DONT_READ
     );
     server->listener->data = server;
-    h2o_socket_read_start(server->listener, on_accept);
 
     /* Register response pipe with event loop, store server in socket data */
     server->response_sock = h2o_evloop_socket_create(
@@ -258,7 +257,6 @@ kyo_h2o_server *kyo_h2o_start(const char *host, int port,
         H2O_SOCKET_FLAG_DONT_READ
     );
     server->response_sock->data = server;
-    h2o_socket_read_start(server->response_sock, on_response_pipe);
 
     /* Initialize accept context (plaintext) */
     memset(&server->accept_ctx, 0, sizeof(server->accept_ctx));
@@ -274,6 +272,13 @@ int kyo_h2o_evloop_run_once(kyo_h2o_server *server) {
     if (!server->running) return 1;
     h2o_evloop_run(server->ctx.loop, INT32_MAX);
     return server->running ? 0 : 1;
+}
+
+/* Start accepting connections. Must be called after all callbacks are set
+ * and before the evloop thread is started. */
+void kyo_h2o_accept_start(kyo_h2o_server *server) {
+    h2o_socket_read_start(server->listener, on_accept);
+    h2o_socket_read_start(server->response_sock, on_response_pipe);
 }
 
 void kyo_h2o_stop(kyo_h2o_server *server) {
