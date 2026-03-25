@@ -97,7 +97,8 @@ private[kyo] object H2oServerBackend:
         val state0: ServerState,
         val req: H2oReq,
         val streamId: Int,
-        var generator: H2oGenerator
+        var generator: H2oGenerator,
+        val ready: Promise.Unsafe[Nothing, Unit]
     ):
         @volatile var state: Int = READY_FOR_DATA
         val chunkQueue           = new ConcurrentLinkedQueue[(Array[Byte], Boolean)]()
@@ -196,6 +197,7 @@ private[kyo] object H2oServerBackend:
                                 sendBufferedNative(br.req, br.status, br.headers, br.body)
                             case sr: StreamStartResponse =>
                                 startStreamingNative(ss, sr.streamCtx, sr.status, sr.headers)
+                                discard(sr.streamCtx.ready.complete(Result.success(())))
                                 sr.streamCtx.tryDeliver()
                             case sc: StreamChunkNotify =>
                                 sc.streamCtx.tryDeliver()
@@ -281,8 +283,7 @@ private[kyo] object H2oServerBackend:
                 Sync.defer {
                     H2oBindings.stop(newServer)
                     ss.evloopThread.join(gracePeriod.toMillis.max(5000))
-                    if !ss.evloopThread.isAlive then
-                        H2oBindings.destroy(newServer)
+                    H2oBindings.destroy(newServer)
                     discard(registry.remove(serverKey(newServer)))
                 }
             def await(using Frame): Unit < Async =
@@ -499,18 +500,22 @@ private[kyo] object H2oServerBackend:
                     enqueueBuffered(ss, req, status.code, headers, Span.empty[Byte])
                 else
                     val streamId = nextStreamId.getAndIncrement()
-                    val ctx      = new StreamContext(ss, req, streamId, null)
+                    val ready    = Promise.Unsafe.init[Nothing, Unit]()
+                    val ctx      = new StreamContext(ss, req, streamId, null, ready)
                     discard(ss.streams.put(streamId, ctx))
                     discard(ss.responseQueue.add(new StreamStartResponse(ctx, status.code, headers)))
                     H2oBindings.wake(ss.server)
 
                     discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
-                        stream.foreach { span =>
-                            Sync.defer {
-                                if !ctx.stopped then
-                                    ctx.enqueueChunk(span.toArrayUnsafe, isFinal = false)
-                                    discard(ss.responseQueue.add(new StreamChunkNotify(ctx)))
-                                    H2oBindings.wake(ss.server)
+                        // Wait for generator to be initialized by the evloop thread
+                        ready.safe.get.andThen {
+                            stream.foreach { span =>
+                                Sync.defer {
+                                    if !ctx.stopped then
+                                        ctx.enqueueChunk(span.toArrayUnsafe, isFinal = false)
+                                        discard(ss.responseQueue.add(new StreamChunkNotify(ctx)))
+                                        H2oBindings.wake(ss.server)
+                                }
                             }
                         }.andThen {
                             Sync.defer {

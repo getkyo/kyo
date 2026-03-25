@@ -1,5 +1,18 @@
 #define _POSIX_C_SOURCE 200809L
 #define H2O_USE_LIBUV 0
+#include "native_deps.h"
+
+/* Verify libh2o is installed and is a compatible version */
+#if !__has_include(<h2o/version.h>)
+#error "libh2o not found. Install: macOS: brew install h2o | Ubuntu: sudo apt-get install libh2o-evloop-dev (see kyo-http native_deps.h for exact version)"
+#endif
+#include <h2o/version.h>
+_Static_assert(
+    H2O_VERSION_MAJOR == KYO_H2O_VERSION_MAJOR && H2O_VERSION_MINOR == KYO_H2O_VERSION_MINOR,
+    "Incompatible libh2o version (expected 2.2.x). "
+    "Install: macOS: brew install h2o | "
+    "Ubuntu: sudo apt-get install " KYO_H2O_APT_PKG
+);
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -265,19 +278,19 @@ int kyo_h2o_evloop_run_once(kyo_h2o_server *server) {
 
 void kyo_h2o_stop(kyo_h2o_server *server) {
     server->running = 0;
-    /* Wake event loop by writing to response pipe */
     char c = 0;
     write(server->response_pipe[1], &c, 1);
 }
 
-/* Must be called after the evloop thread has joined.
- * We intentionally skip h2o_context_dispose because h2o 2.2.5 asserts that
- * all timeout entry lists are empty, which fails if any connections were
- * active at shutdown. The context memory is leaked but bounded per server
- * instance, and the OS reclaims it on process exit.
- * h2o_socket objects are owned by the event loop and must not be touched
- * after the evloop thread exits — closing the underlying fds suffices. */
 void kyo_h2o_destroy(kyo_h2o_server *server) {
+    if (server->listener) {
+        h2o_socket_read_stop(server->listener);
+        h2o_socket_close(server->listener);
+    }
+    if (server->response_sock) {
+        h2o_socket_read_stop(server->response_sock);
+        h2o_socket_close(server->response_sock);
+    }
     close(server->listen_fd);
     close(server->response_pipe[0]);
     close(server->response_pipe[1]);
@@ -482,3 +495,4 @@ void kyo_h2o_wake(kyo_h2o_server *server) {
     char c = 1;
     write(server->response_pipe[1], &c, 1);
 }
+
