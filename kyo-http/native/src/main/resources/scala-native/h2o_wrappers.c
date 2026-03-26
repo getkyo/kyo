@@ -393,14 +393,17 @@ void kyo_h2o_send_buffered(h2o_req_t *req, int status,
     req->res.status = status;
     req->res.reason = "OK";
 
-    /* Add response headers */
+    /* Add response headers — copy to pool so they outlive caller's Zone */
     for (int i = 0; i < header_count; i++) {
+        char *name_copy = h2o_mem_alloc_pool(&req->pool, header_name_lens[i]);
+        memcpy(name_copy, header_names[i], header_name_lens[i]);
+        char *value_copy = h2o_mem_alloc_pool(&req->pool, header_value_lens[i]);
+        memcpy(value_copy, header_values[i], header_value_lens[i]);
         h2o_add_header_by_str(
             &req->pool, &req->res.headers,
-            header_names[i], header_name_lens[i],
-            0, /* don't check for existing */
-            NULL,
-            header_values[i], header_value_lens[i]
+            name_copy, header_name_lens[i],
+            1, NULL,
+            value_copy, header_value_lens[i]
         );
     }
 
@@ -431,11 +434,15 @@ void kyo_h2o_send_error(h2o_req_t *req, int status,
     req->res.reason = "Error";
 
     for (int i = 0; i < header_count; i++) {
+        char *name_copy = h2o_mem_alloc_pool(&req->pool, header_name_lens[i]);
+        memcpy(name_copy, header_names[i], header_name_lens[i]);
+        char *value_copy = h2o_mem_alloc_pool(&req->pool, header_value_lens[i]);
+        memcpy(value_copy, header_values[i], header_value_lens[i]);
         h2o_add_header_by_str(
             &req->pool, &req->res.headers,
-            header_names[i], header_name_lens[i],
-            0, NULL,
-            header_values[i], header_value_lens[i]
+            name_copy, header_name_lens[i],
+            1, NULL,
+            value_copy, header_value_lens[i]
         );
     }
 
@@ -463,11 +470,16 @@ kyo_h2o_generator *kyo_h2o_start_streaming(
     req->res.reason = "OK";
 
     for (int i = 0; i < header_count; i++) {
+        /* Copy header name and value to pool so they outlive the caller's Zone */
+        char *name_copy = h2o_mem_alloc_pool(&req->pool, header_name_lens[i]);
+        memcpy(name_copy, header_names[i], header_name_lens[i]);
+        char *value_copy = h2o_mem_alloc_pool(&req->pool, header_value_lens[i]);
+        memcpy(value_copy, header_values[i], header_value_lens[i]);
         h2o_add_header_by_str(
             &req->pool, &req->res.headers,
-            header_names[i], header_name_lens[i],
-            0, NULL,
-            header_values[i], header_value_lens[i]
+            name_copy, header_name_lens[i],
+            1, NULL,
+            value_copy, header_value_lens[i]
         );
     }
 

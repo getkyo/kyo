@@ -78,8 +78,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
         wakeUp()
     end enqueue
 
-    /** Cancel a transfer. Safe to call from any thread — the actual curl_multi_remove_handle
-      * happens on the event loop thread.
+    /** Cancel a transfer. Safe to call from any thread — the actual curl_multi_remove_handle happens on the event loop thread.
       */
     def cancel(transferId: Long): Unit =
         discard(cancelQueue.add(java.lang.Long.valueOf(transferId)))

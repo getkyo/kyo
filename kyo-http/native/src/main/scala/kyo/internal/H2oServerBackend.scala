@@ -88,6 +88,10 @@ private[kyo] object H2oServerBackend:
         val extraHeaders: HttpHeaders
     ) extends PendingResponse
 
+    final private class ReadySignal(
+        val latch: CountDownLatch
+    ) extends PendingResponse
+
     // ── Streaming state machine ─────────────────────────────────────────
 
     private val READY_FOR_DATA      = 0
@@ -198,15 +202,14 @@ private[kyo] object H2oServerBackend:
                                 sendBufferedNative(br.req, br.status, br.headers, br.body)
                             case sr: StreamStartResponse =>
                                 startStreamingNative(ss, sr.streamCtx, sr.status, sr.headers)
-                                sr.streamCtx.generatorReady.completeUnitDiscard()
-                                // startStreamingNative already called h2o_send(empty, IN_PROGRESS).
-                                // Mark as WAITING_FOR_PROCEED so tryDeliver doesn't issue a
-                                // second h2o_send before the proceed callback fires.
                                 sr.streamCtx.state = WAITING_FOR_PROCEED
+                                sr.streamCtx.generatorReady.completeUnitDiscard()
                             case sc: StreamChunkNotify =>
                                 sc.streamCtx.tryDeliver()
                             case er: ErrorResponse =>
                                 sendImmediateError(er.req, er.status, er.extraHeaders)
+                            case rs: ReadySignal =>
+                                rs.latch.countDown()
                     catch case _: Throwable => ()
                     end try
                     resp = ss.responseQueue.poll()
@@ -272,16 +275,18 @@ private[kyo] object H2oServerBackend:
         H2oBindings.setStop(newServer, stopCallback)
         H2oBindings.acceptStart(newServer)
 
-        val ready = new CountDownLatch(1)
         ss.evloopThread = new Thread(
-            () =>
-                ready.countDown()
-                while H2oBindings.evloopRunOnce(newServer) == 0 do ()
-            ,
+            () => while H2oBindings.evloopRunOnce(newServer) == 0 do (),
             "kyo-h2o-evloop"
         )
         ss.evloopThread.setDaemon(true)
         ss.evloopThread.start()
+        // Wake the evloop so it processes the accept callback registration,
+        // then wait for the drain callback to fire — this guarantees the
+        // server is fully accepting connections before we return the port.
+        val ready = new CountDownLatch(1)
+        discard(ss.responseQueue.add(new ReadySignal(ready)))
+        H2oBindings.wake(newServer)
         ready.await()
 
         val boundPort = H2oBindings.port(newServer)
