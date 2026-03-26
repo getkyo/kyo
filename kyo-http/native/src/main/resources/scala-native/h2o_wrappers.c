@@ -299,6 +299,19 @@ void kyo_h2o_destroy(kyo_h2o_server *server) {
     close(server->listen_fd);
     close(server->response_pipe[0]);
     close(server->response_pipe[1]);
+    /* Force-clear pending timeout entries so h2o_context_dispose doesn't
+     * assert. These entries belong to keep-alive connections whose timers
+     * haven't expired yet. Since we're destroying everything, it's safe.
+     * All 8 timeouts from h2o_context_init/h2o_context_dispose (v2.2.5): */
+    h2o_linklist_init_anchor(&server->ctx.zero_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.one_sec_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.hundred_ms_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.handshake_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.http1.req_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.http2.idle_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.http2.graceful_shutdown_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.proxy.io_timeout._entries);
+    h2o_context_dispose(&server->ctx);
     h2o_config_dispose(&server->config);
     free(server);
 }
