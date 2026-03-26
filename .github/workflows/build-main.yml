@@ -28,7 +28,7 @@ jobs:
         apps: sbt
 
     - name: Build Native
-      run: sbt '+kyoNative/test'
+      run: ./scripts/native-test.sh
 
     - name: Build JVM
       run: sbt '+kyoJVM/test'
