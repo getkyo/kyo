@@ -2,6 +2,7 @@ package kyo.internal
 
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.internal.H2oBindings
@@ -87,6 +88,10 @@ private[kyo] object H2oServerBackend:
         val extraHeaders: HttpHeaders
     ) extends PendingResponse
 
+    final private class ReadySignal(
+        val latch: CountDownLatch
+    ) extends PendingResponse
+
     // ── Streaming state machine ─────────────────────────────────────────
 
     private val READY_FOR_DATA      = 0
@@ -99,6 +104,7 @@ private[kyo] object H2oServerBackend:
         val streamId: Int,
         var generator: H2oGenerator
     ):
+        val generatorReady       = Promise.Unsafe.init[Unit, Any]()
         @volatile var state: Int = READY_FOR_DATA
         val chunkQueue           = new ConcurrentLinkedQueue[(Array[Byte], Boolean)]()
         @volatile var stopped    = false
@@ -196,11 +202,14 @@ private[kyo] object H2oServerBackend:
                                 sendBufferedNative(br.req, br.status, br.headers, br.body)
                             case sr: StreamStartResponse =>
                                 startStreamingNative(ss, sr.streamCtx, sr.status, sr.headers)
-                                sr.streamCtx.tryDeliver()
+                                sr.streamCtx.state = WAITING_FOR_PROCEED
+                                sr.streamCtx.generatorReady.completeUnitDiscard()
                             case sc: StreamChunkNotify =>
                                 sc.streamCtx.tryDeliver()
                             case er: ErrorResponse =>
                                 sendImmediateError(er.req, er.status, er.extraHeaders)
+                            case rs: ReadySignal =>
+                                rs.latch.countDown()
                     catch case _: Throwable => ()
                     end try
                     resp = ss.responseQueue.poll()
@@ -264,6 +273,7 @@ private[kyo] object H2oServerBackend:
         H2oBindings.setDrain(newServer, drainCallback)
         H2oBindings.setProceed(newServer, proceedCallback)
         H2oBindings.setStop(newServer, stopCallback)
+        H2oBindings.acceptStart(newServer)
 
         ss.evloopThread = new Thread(
             () => while H2oBindings.evloopRunOnce(newServer) == 0 do (),
@@ -271,6 +281,13 @@ private[kyo] object H2oServerBackend:
         )
         ss.evloopThread.setDaemon(true)
         ss.evloopThread.start()
+        // Wake the evloop so it processes the accept callback registration,
+        // then wait for the drain callback to fire — this guarantees the
+        // server is fully accepting connections before we return the port.
+        val ready = new CountDownLatch(1)
+        discard(ss.responseQueue.add(new ReadySignal(ready)))
+        H2oBindings.wake(newServer)
+        ready.await()
 
         val boundPort = H2oBindings.port(newServer)
 
@@ -504,12 +521,15 @@ private[kyo] object H2oServerBackend:
                     H2oBindings.wake(ss.server)
 
                     discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
-                        stream.foreach { span =>
-                            Sync.defer {
-                                if !ctx.stopped then
-                                    ctx.enqueueChunk(span.toArrayUnsafe, isFinal = false)
-                                    discard(ss.responseQueue.add(new StreamChunkNotify(ctx)))
-                                    H2oBindings.wake(ss.server)
+                        // Wait for generator to be initialized by the evloop thread
+                        ctx.generatorReady.safe.get.andThen {
+                            stream.foreach { span =>
+                                Sync.defer {
+                                    if !ctx.stopped then
+                                        ctx.enqueueChunk(span.toArrayUnsafe, isFinal = false)
+                                        discard(ss.responseQueue.add(new StreamChunkNotify(ctx)))
+                                        H2oBindings.wake(ss.server)
+                                }
                             }
                         }.andThen {
                             Sync.defer {

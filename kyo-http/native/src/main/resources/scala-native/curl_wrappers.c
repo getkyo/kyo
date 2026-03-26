@@ -1,3 +1,6 @@
+#if !__has_include(<curl/curl.h>)
+#error "libcurl not found. Install: macOS: brew install curl | Ubuntu: sudo apt-get install libcurl4-openssl-dev"
+#endif
 #include <curl/curl.h>
 
 /* curl_easy_setopt wrappers (variadic: CURLcode curl_easy_setopt(CURL*, CURLoption, ...)) */

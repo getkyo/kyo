@@ -54,8 +54,15 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
-        Sync.ensure(onReleaseUnsafe) {
-            Sync.Unsafe.defer {
+        Sync.Unsafe.defer {
+            val transferId = CurlClientBackend.nextTransferId.getAndIncrement()
+            Sync.ensure { error =>
+                Sync.Unsafe.defer {
+                    onReleaseUnsafe(error)
+                    if error.nonEmpty then
+                        eventLoop.cancel(transferId)
+                }
+            } {
                 Zone {
                     val handle = curl_easy_init()
                     if handle == null then
@@ -65,9 +72,8 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
                             new RuntimeException("curl_easy_init returned null")
                         ))
                     else
-                        val transferId = CurlClientBackend.nextTransferId.getAndIncrement()
-                        val promise    = Promise.Unsafe.init[CurlBufferedResult, Abort[HttpException]]()
-                        val state      = new CurlBufferedTransferState(promise, handle, conn.host, conn.port)
+                        val promise = Promise.Unsafe.init[CurlBufferedResult, Abort[HttpException]]()
+                        val state   = new CurlBufferedTransferState(promise, handle, conn.host, conn.port)
                         configureHandle(handle, conn, route, request, transferId, state)
                         eventLoop.enqueue(transferId, state)
                         promise.safe.use { result =>
@@ -94,12 +100,15 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
         Sync.Unsafe.defer {
+            val transferId          = CurlClientBackend.nextTransferId.getAndIncrement()
             val phase2Started       = AtomicBoolean.Unsafe.init(false)
             val streamFullyConsumed = AtomicBoolean.Unsafe.init(false)
             Sync.ensure { error =>
                 Sync.Unsafe.defer {
                     if !phase2Started.get() then
                         onReleaseUnsafe(error)
+                    if error.nonEmpty then
+                        eventLoop.cancel(transferId)
                 }
             } {
                 Zone {
@@ -111,7 +120,6 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
                             new RuntimeException("curl_easy_init returned null")
                         ))
                     else
-                        val transferId    = CurlClientBackend.nextTransferId.getAndIncrement()
                         val headerPromise = Promise.Unsafe.init[CurlStreamingHeaders, Abort[HttpException]]()
                         val byteChannel   = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
                         val state         = new CurlStreamingTransferState(headerPromise, byteChannel, handle, conn.host, conn.port)

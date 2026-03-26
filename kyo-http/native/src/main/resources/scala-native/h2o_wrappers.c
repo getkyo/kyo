@@ -1,5 +1,18 @@
 #define _POSIX_C_SOURCE 200809L
 #define H2O_USE_LIBUV 0
+#include "native_deps.h"
+
+/* Verify libh2o is installed and is a compatible version */
+#if !__has_include(<h2o/version.h>)
+#error "libh2o not found. Install: macOS: brew install h2o | Ubuntu: sudo apt-get install libh2o-evloop-dev (see kyo-http native_deps.h for exact version)"
+#endif
+#include <h2o/version.h>
+_Static_assert(
+    H2O_VERSION_MAJOR == KYO_H2O_VERSION_MAJOR && H2O_VERSION_MINOR == KYO_H2O_VERSION_MINOR,
+    "Incompatible libh2o version (expected 2.2.x). "
+    "Install: macOS: brew install h2o | "
+    "Ubuntu: sudo apt-get install " KYO_H2O_APT_PKG
+);
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -186,10 +199,6 @@ kyo_h2o_server *kyo_h2o_start(const char *host, int port,
     /* Initialize h2o config */
     h2o_config_init(&server->config);
     server->config.max_request_entity_size = (size_t)max_body_size;
-    /* Immediate graceful shutdown — connections close without delay
-     * after h2o_context_request_shutdown, enabling fast cleanup. */
-    server->config.http1.graceful_shutdown_timeout = 0;
-    server->config.http2.graceful_shutdown_timeout = 0;
 
     /* Register host and catch-all path */
     server->hostconf = h2o_config_register_host(
@@ -240,7 +249,6 @@ kyo_h2o_server *kyo_h2o_start(const char *host, int port,
         H2O_SOCKET_FLAG_DONT_READ
     );
     server->listener->data = server;
-    h2o_socket_read_start(server->listener, on_accept);
 
     /* Register response pipe with event loop, store server in socket data */
     server->response_sock = h2o_evloop_socket_create(
@@ -249,7 +257,6 @@ kyo_h2o_server *kyo_h2o_start(const char *host, int port,
         H2O_SOCKET_FLAG_DONT_READ
     );
     server->response_sock->data = server;
-    h2o_socket_read_start(server->response_sock, on_response_pipe);
 
     /* Initialize accept context (plaintext) */
     memset(&server->accept_ctx, 0, sizeof(server->accept_ctx));
@@ -260,67 +267,52 @@ kyo_h2o_server *kyo_h2o_start(const char *host, int port,
     return server;
 }
 
-/* Run one iteration of the event loop. Returns 0 if still running, 1 if stopped.
- *
- * When running becomes 0, performs graceful shutdown ON the evloop thread
- * (where all h2o operations must happen):
- * 1. Close listener/pipe sockets — stop accepting new connections
- * 2. h2o_context_request_shutdown — tell h2o to close active connections
- * 3. Drain the event loop — let h2o process connection close sequences
- *    and unlink timeout entries. Runs until no events fire within 1 second
- *    (h2o's longest non-configurable internal timeout is 1 second).
- * 4. h2o_context_dispose + h2o_config_dispose — safe now that timeouts are drained
- * 5. Close underlying fds and return 1 → thread exits
- */
+/* Run one iteration of the event loop. Returns 0 if still running, 1 if stopped. */
 int kyo_h2o_evloop_run_once(kyo_h2o_server *server) {
-    if (!server->running) {
-        /* Step 1: stop accepting */
-        if (server->listener) {
-            h2o_socket_read_stop(server->listener);
-            h2o_socket_close(server->listener);
-            server->listener = NULL;
-        }
-        if (server->response_sock) {
-            h2o_socket_read_stop(server->response_sock);
-            h2o_socket_close(server->response_sock);
-            server->response_sock = NULL;
-        }
-
-        /* Step 2: request graceful shutdown of all connections */
-        h2o_context_request_shutdown(&server->ctx);
-
-        /* Step 3: drain — run until no events fire within 1s.
-         * h2o_evloop_run returns 0 if it processed events, -1 on timeout.
-         * After request_shutdown, h2o closes connections asynchronously.
-         * Each close sequence fires callbacks that unlink timeout entries.
-         * A full second with no events means all close sequences completed. */
-        while (h2o_evloop_run(server->ctx.loop, 1000) == 0)
-            ;
-
-        /* Step 4: dispose (safe — all timeout entries are now unlinked) */
-        h2o_context_dispose(&server->ctx);
-        h2o_config_dispose(&server->config);
-
-        /* Step 5: close underlying fds */
-        close(server->listen_fd);
-        close(server->response_pipe[0]);
-        close(server->response_pipe[1]);
-
-        return 1;
-    }
+    if (!server->running) return 1;
     h2o_evloop_run(server->ctx.loop, INT32_MAX);
     return server->running ? 0 : 1;
 }
 
+/* Start accepting connections. Must be called after all callbacks are set
+ * and before the evloop thread is started. */
+void kyo_h2o_accept_start(kyo_h2o_server *server) {
+    h2o_socket_read_start(server->listener, on_accept);
+    h2o_socket_read_start(server->response_sock, on_response_pipe);
+}
+
 void kyo_h2o_stop(kyo_h2o_server *server) {
     server->running = 0;
-    /* Wake event loop by writing to response pipe */
     char c = 0;
     write(server->response_pipe[1], &c, 1);
 }
 
-/* Must be called after the evloop thread has joined (cleanup already done). */
 void kyo_h2o_destroy(kyo_h2o_server *server) {
+    if (server->listener) {
+        h2o_socket_read_stop(server->listener);
+        h2o_socket_close(server->listener);
+    }
+    if (server->response_sock) {
+        h2o_socket_read_stop(server->response_sock);
+        h2o_socket_close(server->response_sock);
+    }
+    close(server->listen_fd);
+    close(server->response_pipe[0]);
+    close(server->response_pipe[1]);
+    /* Force-clear pending timeout entries so h2o_context_dispose doesn't
+     * assert. These entries belong to keep-alive connections whose timers
+     * haven't expired yet. Since we're destroying everything, it's safe.
+     * All 8 timeouts from h2o_context_init/h2o_context_dispose (v2.2.5): */
+    h2o_linklist_init_anchor(&server->ctx.zero_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.one_sec_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.hundred_ms_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.handshake_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.http1.req_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.http2.idle_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.http2.graceful_shutdown_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.proxy.io_timeout._entries);
+    h2o_context_dispose(&server->ctx);
+    h2o_config_dispose(&server->config);
     free(server);
 }
 
@@ -414,14 +406,17 @@ void kyo_h2o_send_buffered(h2o_req_t *req, int status,
     req->res.status = status;
     req->res.reason = "OK";
 
-    /* Add response headers */
+    /* Add response headers — copy to pool so they outlive caller's Zone */
     for (int i = 0; i < header_count; i++) {
+        char *name_copy = h2o_mem_alloc_pool(&req->pool, header_name_lens[i]);
+        memcpy(name_copy, header_names[i], header_name_lens[i]);
+        char *value_copy = h2o_mem_alloc_pool(&req->pool, header_value_lens[i]);
+        memcpy(value_copy, header_values[i], header_value_lens[i]);
         h2o_add_header_by_str(
             &req->pool, &req->res.headers,
-            header_names[i], header_name_lens[i],
-            0, /* don't check for existing */
-            NULL,
-            header_values[i], header_value_lens[i]
+            name_copy, header_name_lens[i],
+            1, NULL,
+            value_copy, header_value_lens[i]
         );
     }
 
@@ -452,11 +447,15 @@ void kyo_h2o_send_error(h2o_req_t *req, int status,
     req->res.reason = "Error";
 
     for (int i = 0; i < header_count; i++) {
+        char *name_copy = h2o_mem_alloc_pool(&req->pool, header_name_lens[i]);
+        memcpy(name_copy, header_names[i], header_name_lens[i]);
+        char *value_copy = h2o_mem_alloc_pool(&req->pool, header_value_lens[i]);
+        memcpy(value_copy, header_values[i], header_value_lens[i]);
         h2o_add_header_by_str(
             &req->pool, &req->res.headers,
-            header_names[i], header_name_lens[i],
-            0, NULL,
-            header_values[i], header_value_lens[i]
+            name_copy, header_name_lens[i],
+            1, NULL,
+            value_copy, header_value_lens[i]
         );
     }
 
@@ -484,11 +483,16 @@ kyo_h2o_generator *kyo_h2o_start_streaming(
     req->res.reason = "OK";
 
     for (int i = 0; i < header_count; i++) {
+        /* Copy header name and value to pool so they outlive the caller's Zone */
+        char *name_copy = h2o_mem_alloc_pool(&req->pool, header_name_lens[i]);
+        memcpy(name_copy, header_names[i], header_name_lens[i]);
+        char *value_copy = h2o_mem_alloc_pool(&req->pool, header_value_lens[i]);
+        memcpy(value_copy, header_values[i], header_value_lens[i]);
         h2o_add_header_by_str(
             &req->pool, &req->res.headers,
-            header_names[i], header_name_lens[i],
-            0, NULL,
-            header_values[i], header_value_lens[i]
+            name_copy, header_name_lens[i],
+            1, NULL,
+            value_copy, header_value_lens[i]
         );
     }
 
@@ -521,3 +525,4 @@ void kyo_h2o_wake(kyo_h2o_server *server) {
     char c = 1;
     write(server->response_pipe[1], &c, 1);
 }
+
