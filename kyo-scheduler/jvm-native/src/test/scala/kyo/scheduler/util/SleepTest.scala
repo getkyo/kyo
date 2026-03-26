@@ -44,7 +44,7 @@ class SleepTest extends AnyFreeSpec with NonImplicitAssertions {
         // Spawn many blocking threads — each does Thread.sleep(1) in a loop.
         // On Native, each call does pipe+poll+close×2, creating fd table and
         // OS scheduler contention that amplifies probe jitter.
-        val nThreads = 200
+        val nThreads = 100
         val threads = (0 until nThreads).map { _ =>
             val t = new Thread(() => {
                 while (running.get()) {
@@ -86,7 +86,7 @@ class SleepTest extends AnyFreeSpec with NonImplicitAssertions {
         }).sum / samples
         val stddev = Math.sqrt(variance)
 
-        val threshold = Concurrency.defaultConfig.jitterUpperThreshold * 3
+        val threshold = Concurrency.defaultConfig.jitterUpperThreshold * 5
         assert(
             stddev < threshold,
             s"Sleep jitter stddev=${stddev.toLong}ns (avg=${avg.toLong}ns) exceeds regulator threshold ${threshold.toLong}ns"

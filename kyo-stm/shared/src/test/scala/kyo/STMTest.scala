@@ -835,6 +835,7 @@ class STMTest extends Test:
     "opacity" - {
 
         "bug #1411" in runJVM {
+            val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 r1 <- STM.run(TRef.init("a"))
                 r2 <- STM.run(TRef.init("a"))
@@ -852,9 +853,10 @@ class STMTest extends Test:
                         _  <- STM.retryIf(v1 != v2)
                     yield ()
                 _ <- Async.foreachDiscard(1 to 10000) { _ =>
-                    Async.collectAll(List(STM.run(txn1), STM.run(txn2)), 2)
+                    Async.collectAll(List(STM.run(retrySchedule)(txn1), STM.run(retrySchedule)(txn2)), 2)
                 }
             yield succeed
+            end for
         }
 
         "division by zero" in runJVM {

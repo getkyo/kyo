@@ -47,7 +47,7 @@ object Env:
       * @return
       *   A computation that retrieves the value from the environment
       */
-    inline def get[R](using inline tag: Tag[R])(using inline frame: Frame): R < Env[R] =
+    inline def get[R](using inline tag: Tag[R], inline ni: NotIntersection[R])(using inline frame: Frame): R < Env[R] =
         use[R](identity)
 
     /** Retrieves the entire TypeMap containing all environment values specified by the type intersection R.
@@ -122,10 +122,12 @@ object Env:
     inline def use[R](
         using Frame
     )[A, S](inline f: R => A < S)(
-        using inline tag: Tag[R]
+        using
+        inline tag: Tag[R],
+        inline ni: NotIntersection[R]
     ): A < (Env[R] & S) =
         ContextEffect.suspendWith(erasedTag[R]) { map =>
-            f(map.asInstanceOf[TypeMap[R]].get(using tag))
+            f(map.asInstanceOf[TypeMap[R]].get(using tag, ni))
         }
 
     /** Applies a function to the entire TypeMap of environment values specified by the type intersection R.

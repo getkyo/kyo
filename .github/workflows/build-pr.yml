@@ -18,7 +18,7 @@ jobs:
         target:
           - { name: "JVM", command: "sbt '+kyoJVM/testQuick'" }
           - { name: "JS", command: "sbt '+kyoJS/testQuick'" }
-          - { name: "Native", command: "sbt '+kyoNative/testQuick'" }
+          - { name: "Native", command: "./scripts/native-test.sh '+kyoNative/testQuick'" }
     env:
       JAVA_OPTS: -Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
       JVM_OPTS:  -Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
@@ -32,8 +32,8 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libidn2-0-dev
-    - uses: coursier/setup-action@v2
+        sudo apt-get install -y libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
+    - uses: coursier/setup-action@v3
       with:
         jvm: corretto:24
         apps: sbt

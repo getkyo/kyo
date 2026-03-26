@@ -143,6 +143,9 @@ private[kyo] object H2oBindings:
 
     // ── Wake event loop ─────────────────────────────────────────────────
 
+    @extern @name("kyo_h2o_accept_start")
+    def acceptStart(server: H2oServer): Unit = extern
+
     @extern @name("kyo_h2o_wake")
     def wake(server: H2oServer): Unit = extern
 
