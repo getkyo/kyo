@@ -1,16 +1,31 @@
+#define _POSIX_C_SOURCE 200809L
 #define H2O_USE_LIBUV 0
-#include <h2o.h>
-#include <h2o/socket/evloop.h>
+#include "native_deps.h"
+
+/* Verify libh2o is installed and is a compatible version */
+#if !__has_include(<h2o/version.h>)
+#error "libh2o not found. Install: macOS: brew install h2o | Ubuntu: sudo apt-get install libh2o-evloop-dev (see kyo-http native_deps.h for exact version)"
+#endif
+#include <h2o/version.h>
+_Static_assert(
+    H2O_VERSION_MAJOR == KYO_H2O_VERSION_MAJOR && H2O_VERSION_MINOR == KYO_H2O_VERSION_MINOR,
+    "Incompatible libh2o version (expected 2.2.x). "
+    "Install: macOS: brew install h2o | "
+    "Ubuntu: sudo apt-get install " KYO_H2O_APT_PKG
+);
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/socket.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <h2o.h>
+#include <h2o/socket/evloop.h>
 
 /* ── Forward declaration ───────────────────────────────────────────── */
 
@@ -234,7 +249,6 @@ kyo_h2o_server *kyo_h2o_start(const char *host, int port,
         H2O_SOCKET_FLAG_DONT_READ
     );
     server->listener->data = server;
-    h2o_socket_read_start(server->listener, on_accept);
 
     /* Register response pipe with event loop, store server in socket data */
     server->response_sock = h2o_evloop_socket_create(
@@ -243,7 +257,6 @@ kyo_h2o_server *kyo_h2o_start(const char *host, int port,
         H2O_SOCKET_FLAG_DONT_READ
     );
     server->response_sock->data = server;
-    h2o_socket_read_start(server->response_sock, on_response_pipe);
 
     /* Initialize accept context (plaintext) */
     memset(&server->accept_ctx, 0, sizeof(server->accept_ctx));
@@ -261,9 +274,15 @@ int kyo_h2o_evloop_run_once(kyo_h2o_server *server) {
     return server->running ? 0 : 1;
 }
 
+/* Start accepting connections. Must be called after all callbacks are set
+ * and before the evloop thread is started. */
+void kyo_h2o_accept_start(kyo_h2o_server *server) {
+    h2o_socket_read_start(server->listener, on_accept);
+    h2o_socket_read_start(server->response_sock, on_response_pipe);
+}
+
 void kyo_h2o_stop(kyo_h2o_server *server) {
     server->running = 0;
-    /* Wake event loop by writing to response pipe */
     char c = 0;
     write(server->response_pipe[1], &c, 1);
 }
@@ -280,6 +299,18 @@ void kyo_h2o_destroy(kyo_h2o_server *server) {
     close(server->listen_fd);
     close(server->response_pipe[0]);
     close(server->response_pipe[1]);
+    /* Force-clear pending timeout entries so h2o_context_dispose doesn't
+     * assert. These entries belong to keep-alive connections whose timers
+     * haven't expired yet. Since we're destroying everything, it's safe.
+     * All 8 timeouts from h2o_context_init/h2o_context_dispose (v2.2.5): */
+    h2o_linklist_init_anchor(&server->ctx.zero_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.one_sec_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.hundred_ms_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.handshake_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.http1.req_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.http2.idle_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.http2.graceful_shutdown_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.proxy.io_timeout._entries);
     h2o_context_dispose(&server->ctx);
     h2o_config_dispose(&server->config);
     free(server);
@@ -375,14 +406,17 @@ void kyo_h2o_send_buffered(h2o_req_t *req, int status,
     req->res.status = status;
     req->res.reason = "OK";
 
-    /* Add response headers */
+    /* Add response headers — copy to pool so they outlive caller's Zone */
     for (int i = 0; i < header_count; i++) {
+        char *name_copy = h2o_mem_alloc_pool(&req->pool, header_name_lens[i]);
+        memcpy(name_copy, header_names[i], header_name_lens[i]);
+        char *value_copy = h2o_mem_alloc_pool(&req->pool, header_value_lens[i]);
+        memcpy(value_copy, header_values[i], header_value_lens[i]);
         h2o_add_header_by_str(
             &req->pool, &req->res.headers,
-            header_names[i], header_name_lens[i],
-            0, /* don't check for existing */
-            NULL,
-            header_values[i], header_value_lens[i]
+            name_copy, header_name_lens[i],
+            1, NULL,
+            value_copy, header_value_lens[i]
         );
     }
 
@@ -413,11 +447,15 @@ void kyo_h2o_send_error(h2o_req_t *req, int status,
     req->res.reason = "Error";
 
     for (int i = 0; i < header_count; i++) {
+        char *name_copy = h2o_mem_alloc_pool(&req->pool, header_name_lens[i]);
+        memcpy(name_copy, header_names[i], header_name_lens[i]);
+        char *value_copy = h2o_mem_alloc_pool(&req->pool, header_value_lens[i]);
+        memcpy(value_copy, header_values[i], header_value_lens[i]);
         h2o_add_header_by_str(
             &req->pool, &req->res.headers,
-            header_names[i], header_name_lens[i],
-            0, NULL,
-            header_values[i], header_value_lens[i]
+            name_copy, header_name_lens[i],
+            1, NULL,
+            value_copy, header_value_lens[i]
         );
     }
 
@@ -445,11 +483,16 @@ kyo_h2o_generator *kyo_h2o_start_streaming(
     req->res.reason = "OK";
 
     for (int i = 0; i < header_count; i++) {
+        /* Copy header name and value to pool so they outlive the caller's Zone */
+        char *name_copy = h2o_mem_alloc_pool(&req->pool, header_name_lens[i]);
+        memcpy(name_copy, header_names[i], header_name_lens[i]);
+        char *value_copy = h2o_mem_alloc_pool(&req->pool, header_value_lens[i]);
+        memcpy(value_copy, header_values[i], header_value_lens[i]);
         h2o_add_header_by_str(
             &req->pool, &req->res.headers,
-            header_names[i], header_name_lens[i],
-            0, NULL,
-            header_values[i], header_value_lens[i]
+            name_copy, header_name_lens[i],
+            1, NULL,
+            value_copy, header_value_lens[i]
         );
     }
 
@@ -482,3 +525,4 @@ void kyo_h2o_wake(kyo_h2o_server *server) {
     char c = 1;
     write(server->response_pipe[1], &c, 1);
 }
+

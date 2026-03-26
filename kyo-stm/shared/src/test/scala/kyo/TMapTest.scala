@@ -370,10 +370,11 @@ class TMapTest extends Test:
         val repeats = 100
 
         "concurrent modifications" in runNotJS {
+            val retrySchedule = STM.defaultRetrySchedule.forever
             (for
                 size     <- Choice.eval(1, 10, 100)
                 map      <- STM.run(TMap.init[Int, Int]())
-                _        <- Async.foreach(1 to size, size)(i => STM.run(map.put(i, i)))
+                _        <- Async.foreach(1 to size, size)(i => STM.run(retrySchedule)(map.put(i, i)))
                 snapshot <- STM.run(map.snapshot)
             yield assert(
                 snapshot.size == size &&

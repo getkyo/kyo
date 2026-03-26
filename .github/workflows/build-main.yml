@@ -21,18 +21,18 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libidn2-0-dev libh2o-evloop-dev
-    - uses: coursier/setup-action@v2
+        sudo apt-get install -y libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
+    - uses: coursier/setup-action@v3
       with:
         jvm: corretto:24
         apps: sbt
+
+    - name: Build Native
+      run: ./scripts/native-test.sh
 
     - name: Build JVM
       run: sbt '+kyoJVM/test'
 
     - name: Build JS
       run: sbt '+kyoJS/test'
-
-    - name: Build Native
-      run: sbt '+kyoNative/test'
  

@@ -797,7 +797,7 @@ lazy val `native-settings` = Seq(
     fork                                              := false,
     bspEnabled                                        := false,
     Test / testForkedParallel                         := false,
-    Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "8388608",
+    Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "16777216",
     libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.6.0"
 )
 
