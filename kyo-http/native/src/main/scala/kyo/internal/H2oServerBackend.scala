@@ -2,6 +2,7 @@ package kyo.internal
 
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.internal.H2oBindings
@@ -271,12 +272,17 @@ private[kyo] object H2oServerBackend:
         H2oBindings.setStop(newServer, stopCallback)
         H2oBindings.acceptStart(newServer)
 
+        val ready = new CountDownLatch(1)
         ss.evloopThread = new Thread(
-            () => while H2oBindings.evloopRunOnce(newServer) == 0 do (),
+            () =>
+                ready.countDown()
+                while H2oBindings.evloopRunOnce(newServer) == 0 do ()
+            ,
             "kyo-h2o-evloop"
         )
         ss.evloopThread.setDaemon(true)
         ss.evloopThread.start()
+        ready.await()
 
         val boundPort = H2oBindings.port(newServer)
 

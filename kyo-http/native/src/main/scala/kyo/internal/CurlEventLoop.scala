@@ -29,6 +29,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
     // Transfer management
     private[kyo] val transfers = new ConcurrentHashMap[Long, CurlTransferState]()
     private val requestQueue   = new ConcurrentLinkedQueue[java.lang.Long]()
+    private val cancelQueue    = new ConcurrentLinkedQueue[java.lang.Long]()
 
     // Socket tracking (event loop thread only)
     private val socketMap = new HashMap[Int, Short]()
@@ -77,6 +78,14 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
         wakeUp()
     end enqueue
 
+    /** Cancel a transfer. Safe to call from any thread — the actual curl_multi_remove_handle
+      * happens on the event loop thread.
+      */
+    def cancel(transferId: Long): Unit =
+        discard(cancelQueue.add(java.lang.Long.valueOf(transferId)))
+        wakeUp()
+    end cancel
+
     /** Shut down the event loop. */
     def shutdown(): Unit =
         running = false
@@ -118,6 +127,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
             discard(curl_multi_socket_action(multi, CURL_SOCKET_TIMEOUT, 0, runningHandles))
 
             while running do
+                drainCancelQueue()
                 drainRequestQueue()
                 checkPausedTransfers()
 
@@ -161,6 +171,23 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
             end while
         }
     end eventLoop
+
+    private def drainCancelQueue(): Unit =
+        var boxedId: java.lang.Long = cancelQueue.poll()
+        while boxedId != null do
+            val id    = boxedId.longValue
+            val state = transfers.remove(id)
+            if state != null then
+                discard(curl_multi_remove_handle(multi, state.easyHandle))
+                val (host, port) = state match
+                    case bs: CurlBufferedTransferState  => (bs.host, bs.port)
+                    case ss: CurlStreamingTransferState => (ss.host, ss.port)
+                failTransfer(state, HttpConnectException(host, port, new RuntimeException("Transfer cancelled")))
+                cleanupTransfer(state)
+            end if
+            boxedId = cancelQueue.poll()
+        end while
+    end drainCancelQueue
 
     private def drainRequestQueue(): Unit =
         var boxedId: java.lang.Long = requestQueue.poll()
