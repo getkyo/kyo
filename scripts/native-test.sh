@@ -16,13 +16,13 @@ set -uo pipefail
 
 MAX_RETRIES=3
 SBT_CMD="${1:-+kyoNative/test}"
+LOG=$(mktemp)
+trap "rm -f $LOG" EXIT
 
 for attempt in $(seq 1 $MAX_RETRIES); do
     echo "=== Native test attempt $attempt/$MAX_RETRIES ==="
-    output=$(sbt "$SBT_CMD" 2>&1)
-    exit_code=$?
-
-    echo "$output"
+    sbt "$SBT_CMD" 2>&1 | tee "$LOG"
+    exit_code=${PIPESTATUS[0]}
 
     if [ $exit_code -eq 0 ]; then
         echo "=== Native tests passed ==="
@@ -30,13 +30,13 @@ for attempt in $(seq 1 $MAX_RETRIES); do
     fi
 
     # Check for actual test failures
-    if echo "$output" | grep -qE "Tests:.*failed [1-9]"; then
+    if grep -qE "Tests:.*failed [1-9]" "$LOG"; then
         echo "=== Native tests FAILED ==="
         exit 1
     fi
 
     # If test output exists (Tests: line present), tolerate crash with 0 failures
-    if echo "$output" | grep -qE "Tests:"; then
+    if grep -qE "Tests:" "$LOG"; then
         echo "=== Native tests: 0 failures (process crash tolerated) ==="
         exit 0
     fi
