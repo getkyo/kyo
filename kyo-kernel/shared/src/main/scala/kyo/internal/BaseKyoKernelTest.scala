@@ -28,32 +28,32 @@ private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
     @targetName("runNotNativeAssertion")
     def runNotNative(v: => Assertion < S)(using Frame): Future[Assertion] = runNotNative(v.map(Future.successful(_)))
 
-    def runJVM(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
-        if Platform.isJVM then
+    inline def runJVM(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
+        inline if Platform.isJVM then
             run(v)
         else
             Future.successful(assertionSuccess)
 
-    def runJS(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
-        if Platform.isJS then
+    inline def runJS(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
+        inline if Platform.isJS then
             run(v)
         else
             Future.successful(assertionSuccess)
 
-    def runNotJS(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
-        if !Platform.isJS then
+    inline def runNotJS(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
+        inline if !Platform.isJS then
             run(v)
         else
             Future.successful(assertionSuccess)
 
-    def runNative(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
-        if Platform.isNative then
+    inline def runNative(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
+        inline if Platform.isNative then
             run(v)
         else
             Future.successful(assertionSuccess)
 
-    def runNotNative(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
-        if !Platform.isNative then
+    inline def runNotNative(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
+        inline if !Platform.isNative then
             run(v)
         else
             Future.successful(assertionSuccess)
