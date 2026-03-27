@@ -2,6 +2,7 @@ package kyo.scheduler.regulator
 
 import java.util.concurrent.atomic.LongAdder
 import java.util.function.DoubleSupplier
+import kyo.AllowUnsafe.embrace.danger
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.top.RegulatorStatus
 import kyo.scheduler.util.*
