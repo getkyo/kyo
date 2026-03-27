@@ -9,10 +9,10 @@ import kyo.*
   */
 object OTLPClient:
 
-    private[otlp] val sdkVersion            = "1.0.0"
-    private[otlp] val instrumentationScope   = InstrumentationScope("kyo-stats", version = sdkVersion)
+    private[otlp] val sdkVersion           = "1.0.0"
+    private[otlp] val instrumentationScope = InstrumentationScope("kyo-stats", version = sdkVersion)
 
-    private val stat = Stat.initScope("kyo", "stats", "otel")
+    private val stat                 = Stat.initScope("kyo", "stats", "otel")
     private val traceExportFailures  = stat.initCounter("trace.export.failures", "Trace export failures after retries")
     private val metricExportFailures = stat.initCounter("metric.export.failures", "Metric export failures after retries")
     private val rejectedSpans        = stat.initCounter("spans.rejected", "Spans rejected by collector")
@@ -24,7 +24,10 @@ object OTLPClient:
       */
     def sendTraces(config: OTLPConfig, request: ExportTraceRequest)(using Frame): Unit < Async =
         send[ExportTraceRequest, ExportTraceResponse](
-            config, config.tracesEndpoint, request, traceExportFailures
+            config,
+            config.tracesEndpoint,
+            request,
+            traceExportFailures
         ) { response =>
             response.partialSuccess match
                 case Present(ps) if ps.rejectedSpans > 0 =>
@@ -39,7 +42,10 @@ object OTLPClient:
       */
     def sendMetrics(config: OTLPConfig, request: ExportMetricsRequest)(using Frame): Unit < Async =
         send[ExportMetricsRequest, ExportMetricsResponse](
-            config, config.metricsEndpoint, request, metricExportFailures
+            config,
+            config.metricsEndpoint,
+            request,
+            metricExportFailures
         ) { response =>
             response.partialSuccess match
                 case Present(ps) if ps.rejectedDataPoints > 0 =>
@@ -58,8 +64,9 @@ object OTLPClient:
     /** Builds the OTLP resource with service name, SDK metadata, and any custom resource attributes from config. */
     private[otlp] def buildResource(config: OTLPConfig): OTLPResource =
         OTLPResource(
-            attributes = (KeyValue("service.name", AnyValue.string(config.serviceName)) +: sdkAttributes)
-                ++ config.resourceAttributes.map { case (k, v) => KeyValue(k, AnyValue.string(v)) }
+            attributes =
+                (KeyValue("service.name", AnyValue.string(config.serviceName)) +: sdkAttributes)
+                    ++ config.resourceAttributes.map { case (k, v) => KeyValue(k, AnyValue.string(v)) }
         )
 
     private def send[A: Json, B: Json](
@@ -81,8 +88,8 @@ object OTLPClient:
                     case Result.Success(parsedUrl) =>
                         val request =
                             config.headers.foldLeft(
-                            HttpRequest(route.method, parsedUrl).addField("body", body)
-                        ) { case (req, (name, value)) => req.addHeader(name, value) }
+                                HttpRequest(route.method, parsedUrl).addField("body", body)
+                            ) { case (req, (name, value)) => req.addHeader(name, value) }
                         HttpClient.use { client =>
                             client.sendWith(route, request) { res =>
                                 res.fields.body
@@ -95,11 +102,13 @@ object OTLPClient:
                 failureCounter.inc
                     .andThen(Log.error(s"OTLP export failed: $err"))
         }
+    end send
+
     /** Starts a serialized export loop driven by a trigger channel.
       *
       * A periodic producer offers to the trigger at fixed rate via `Clock.repeatAtInterval`. External producers (e.g., batch-size
-      * threshold) can also offer to the same trigger. A single consumer fiber takes from the trigger and flushes, ensuring no overlap.
-      * The trigger channel has capacity 1, so offers are naturally coalesced when the consumer is busy.
+      * threshold) can also offer to the same trigger. A single consumer fiber takes from the trigger and flushes, ensuring no overlap. The
+      * trigger channel has capacity 1, so offers are naturally coalesced when the consumer is busy.
       */
     /** Starts a serialized export loop driven by a trigger channel.
       *
@@ -130,4 +139,6 @@ object OTLPClient:
             }
             _ <- Scope.ensure(consumer.interrupt.unit)
         yield ()
+        end for
+    end startExportLoop
 end OTLPClient

@@ -4,7 +4,7 @@ import kyo.*
 
 class OTLPHttpFilterFactoryTest extends Test:
 
-    given Frame       = Frame.internal
+    given Frame = Frame.internal
     import AllowUnsafe.embrace.danger
 
     "serverFilter" - {

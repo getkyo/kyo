@@ -152,9 +152,9 @@ case class AnyValue(
 ) derives Json
 
 object AnyValue:
-    def string(v: String): AnyValue  = AnyValue(stringValue = Present(v))
-    def int(v: Long): AnyValue       = AnyValue(intValue = Present(v.toString))
-    def double(v: Double): AnyValue  = AnyValue(doubleValue = Present(v))
+    def string(v: String): AnyValue   = AnyValue(stringValue = Present(v))
+    def int(v: Long): AnyValue        = AnyValue(intValue = Present(v.toString))
+    def double(v: Double): AnyValue   = AnyValue(doubleValue = Present(v))
     def boolean(v: Boolean): AnyValue = AnyValue(boolValue = Present(v))
 end AnyValue
 
@@ -162,20 +162,25 @@ end AnyValue
 object OTLPModel:
     /** DELTA aggregation temporality (1) */
     val DeltaTemporality = 1
+
     /** CUMULATIVE aggregation temporality (2) */
     val CumulativeTemporality = 2
 
     /** Internal span — default for in-process operations. */
     val SpanKindInternal = 1
+
     /** Server span — the handler side of an RPC or HTTP request. */
     val SpanKindServer = 2
+
     /** Client span — the caller side of an RPC or HTTP request. */
     val SpanKindClient = 3
 
     /** Status not explicitly set. */
     val StatusUnset = 0
+
     /** Operation completed successfully. */
     val StatusOk = 1
+
     /** Operation failed. */
     val StatusError = 2
 end OTLPModel

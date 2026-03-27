@@ -77,6 +77,8 @@ object OTLPConfig:
                 metricExportInterval = envOrDefault("OTEL_METRIC_EXPORT_INTERVAL", "60000").toLong.millis,
                 metricExportTimeout = envOrDefault("OTEL_METRIC_EXPORT_TIMEOUT", "30000").toLong.millis
             ))
+        end if
+    end loadIfEnabled
 
     private def envOrDefault(name: String, default: String): String =
         val v = java.lang.System.getenv(name)

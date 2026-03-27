@@ -68,8 +68,11 @@ class OTLPClientTest extends Test:
                 scopeSpans = Seq(ScopeSpans(
                     scope = InstrumentationScope("kyo-stats"),
                     spans = Seq(OTLPSpan(
-                        traceId = "abc", spanId = "def", name = name,
-                        startTimeUnixNano = "1", endTimeUnixNano = "2"
+                        traceId = "abc",
+                        spanId = "def",
+                        name = name,
+                        startTimeUnixNano = "1",
+                        endTimeUnixNano = "2"
                     ))
                 ))
             ))
@@ -105,6 +108,7 @@ class OTLPClientTest extends Test:
                     assert(spans.head.name == "test-operation")
                     assert(spans.head.traceId == "0af7651916cd43dd8448eb211c80319c")
                     assert(spans.head.spanId == "b7ad6b7169203331")
+                end for
             }
         }
 
@@ -116,8 +120,11 @@ class OTLPClientTest extends Test:
                         scopeSpans = Seq(ScopeSpans(
                             scope = InstrumentationScope("kyo-stats"),
                             spans = Seq(OTLPSpan(
-                                traceId = "abc", spanId = "def", name = "x",
-                                startTimeUnixNano = "1", endTimeUnixNano = "2"
+                                traceId = "abc",
+                                spanId = "def",
+                                name = "x",
+                                startTimeUnixNano = "1",
+                                endTimeUnixNano = "2"
                             ))
                         ))
                     ))
@@ -130,18 +137,25 @@ class OTLPClientTest extends Test:
                     assert(attrs.exists(kv => kv.key == "service.name" && kv.value.stringValue == Present("test-client")))
                     assert(attrs.exists(kv => kv.key == "telemetry.sdk.name" && kv.value.stringValue == Present("kyo")))
                     assert(attrs.exists(kv => kv.key == "env" && kv.value.stringValue == Present("test")))
+                end for
             }
         }
 
         "includes span attributes and events" in run {
             withCollector { (config, traceCh, _) =>
                 val span = OTLPSpan(
-                    traceId = "abc", spanId = "def", name = "op",
+                    traceId = "abc",
+                    spanId = "def",
+                    name = "op",
                     kind = OTLPModel.SpanKindServer,
-                    startTimeUnixNano = "1", endTimeUnixNano = "2",
+                    startTimeUnixNano = "1",
+                    endTimeUnixNano = "2",
                     attributes = Seq(KeyValue("http.method", AnyValue.string("GET"))),
-                    events = Seq(SpanEvent("exception", "1500000000",
-                        Seq(KeyValue("message", AnyValue.string("boom"))))),
+                    events = Seq(SpanEvent(
+                        "exception",
+                        "1500000000",
+                        Seq(KeyValue("message", AnyValue.string("boom")))
+                    )),
                     status = SpanStatus(code = OTLPModel.StatusError, message = "request failed")
                 )
                 val request = ExportTraceRequest(
@@ -163,6 +177,7 @@ class OTLPClientTest extends Test:
                     assert(s.events.exists(_.name == "exception"))
                     assert(s.status.code == OTLPModel.StatusError)
                     assert(s.status.message == "request failed")
+                end for
             }
         }
 
@@ -170,8 +185,11 @@ class OTLPClientTest extends Test:
             withCollector { (config, traceCh, _) =>
                 val spans = (1 to 5).map(i =>
                     OTLPSpan(
-                        traceId = "abc", spanId = s"span$i", name = s"op-$i",
-                        startTimeUnixNano = "1", endTimeUnixNano = "2"
+                        traceId = "abc",
+                        spanId = s"span$i",
+                        name = s"op-$i",
+                        startTimeUnixNano = "1",
+                        endTimeUnixNano = "2"
                     )
                 )
                 val request = ExportTraceRequest(
@@ -193,19 +211,26 @@ class OTLPClientTest extends Test:
                         assert(receivedSpans.exists(_.name == s"op-$i"))
                     )
                     succeed
+                end for
             }
         }
 
         "parent-child relationship preserved" in run {
             withCollector { (config, traceCh, _) =>
                 val parent = OTLPSpan(
-                    traceId = "aaa", spanId = "parent1", name = "parent-op",
-                    startTimeUnixNano = "1", endTimeUnixNano = "3"
+                    traceId = "aaa",
+                    spanId = "parent1",
+                    name = "parent-op",
+                    startTimeUnixNano = "1",
+                    endTimeUnixNano = "3"
                 )
                 val child = OTLPSpan(
-                    traceId = "aaa", spanId = "child1", parentSpanId = "parent1",
+                    traceId = "aaa",
+                    spanId = "child1",
+                    parentSpanId = "parent1",
                     name = "child-op",
-                    startTimeUnixNano = "1", endTimeUnixNano = "2"
+                    startTimeUnixNano = "1",
+                    endTimeUnixNano = "2"
                 )
                 val request = ExportTraceRequest(
                     resourceSpans = Seq(ResourceSpans(
@@ -225,6 +250,7 @@ class OTLPClientTest extends Test:
                     val childSpan = spans.find(_.name == "child-op").get
                     assert(childSpan.parentSpanId == "parent1")
                     assert(childSpan.traceId == "aaa")
+                end for
             }
         }
 
@@ -240,13 +266,14 @@ class OTLPClientTest extends Test:
                             HttpResponse.ok.addField("body", ExportTraceResponse())
                         }
                 }
-                server   <- HttpServer.init(0, "localhost")(traceHandler, defaultMetricHandler)
-                config   = testConfig(server.port)
+                server <- HttpServer.init(0, "localhost")(traceHandler, defaultMetricHandler)
+                config = testConfig(server.port)
                 _        <- OTLPClient.sendTraces(config, mkSimpleTraceRequest(config, "retry-test"))
                 received <- traceCh.take
             yield
                 assert(attempts.get() >= 2, s"Expected at least 2 attempts, got ${attempts.get()}")
                 assert(received.resourceSpans.head.scopeSpans.head.spans.head.name == "retry-test")
+            end for
         }
 
         "retries after 429 and delivers" in run {
@@ -261,13 +288,14 @@ class OTLPClientTest extends Test:
                             HttpResponse.ok.addField("body", ExportTraceResponse())
                         }
                 }
-                server   <- HttpServer.init(0, "localhost")(traceHandler, defaultMetricHandler)
-                config   = testConfig(server.port)
+                server <- HttpServer.init(0, "localhost")(traceHandler, defaultMetricHandler)
+                config = testConfig(server.port)
                 _        <- OTLPClient.sendTraces(config, mkSimpleTraceRequest(config, "rate-limit-test"))
                 received <- traceCh.take
             yield
                 assert(attempts.get() >= 2)
                 assert(received.resourceSpans.head.scopeSpans.head.spans.head.name == "rate-limit-test")
+            end for
         }
 
         "handles partial success with rejected spans" in run {
@@ -275,20 +303,22 @@ class OTLPClientTest extends Test:
                 traceCh <- Channel.init[ExportTraceRequest](10)
                 traceHandler = mkTraceRoute.handler { req =>
                     traceCh.put(req.fields.body).andThen {
-                        HttpResponse.ok.addField("body", ExportTraceResponse(
-                            partialSuccess = Present(TracePartialSuccess(
-                                rejectedSpans = 3,
-                                errorMessage = "queue full"
-                            ))
-                        ))
+                        HttpResponse.ok.addField(
+                            "body",
+                            ExportTraceResponse(
+                                partialSuccess = Present(TracePartialSuccess(
+                                    rejectedSpans = 3,
+                                    errorMessage = "queue full"
+                                ))
+                            )
+                        )
                     }
                 }
-                server   <- HttpServer.init(0, "localhost")(traceHandler, defaultMetricHandler)
-                config   = testConfig(server.port)
+                server <- HttpServer.init(0, "localhost")(traceHandler, defaultMetricHandler)
+                config = testConfig(server.port)
                 _        <- OTLPClient.sendTraces(config, mkSimpleTraceRequest(config, "partial-test"))
                 received <- traceCh.take
-            yield
-                assert(received.resourceSpans.head.scopeSpans.head.spans.head.name == "partial-test")
+            yield assert(received.resourceSpans.head.scopeSpans.head.spans.head.name == "partial-test")
         }
     }
 
@@ -328,6 +358,7 @@ class OTLPClientTest extends Test:
                     assert(metrics.head.sum.isDefined)
                     assert(metrics.head.sum.get.dataPoints.head.asInt == Present("42"))
                     assert(metrics.head.sum.get.isMonotonic)
+                end for
             }
         }
 
@@ -369,6 +400,7 @@ class OTLPClientTest extends Test:
                     assert(dp.count == "10")
                     assert(dp.min == 0.5)
                     assert(dp.max == 42.0)
+                end for
             }
         }
 
@@ -402,6 +434,7 @@ class OTLPClientTest extends Test:
                     assert(metrics.head.name == "system.memory")
                     assert(metrics.head.gauge.isDefined)
                     assert(metrics.head.gauge.get.dataPoints.head.asDouble == Present(1073741824.0))
+                end for
             }
         }
 
@@ -413,12 +446,15 @@ class OTLPClientTest extends Test:
                 }
                 metricHandler = mkMetricRoute.handler { req =>
                     metricCh.put(req.fields.body).andThen {
-                        HttpResponse.ok.addField("body", ExportMetricsResponse(
-                            partialSuccess = Present(MetricsPartialSuccess(
-                                rejectedDataPoints = 5,
-                                errorMessage = "too many"
-                            ))
-                        ))
+                        HttpResponse.ok.addField(
+                            "body",
+                            ExportMetricsResponse(
+                                partialSuccess = Present(MetricsPartialSuccess(
+                                    rejectedDataPoints = 5,
+                                    errorMessage = "too many"
+                                ))
+                            )
+                        )
                     }
                 }
                 server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
@@ -447,17 +483,16 @@ class OTLPClientTest extends Test:
                 )
                 _        <- OTLPClient.sendMetrics(config, request)
                 received <- metricCh.take
-            yield
-                assert(received.resourceMetrics.head.scopeMetrics.head.metrics.head.name == "test.metric")
+            yield assert(received.resourceMetrics.head.scopeMetrics.head.metrics.head.name == "test.metric")
         }
     }
 
     "buildResource" - {
 
         "includes service name and SDK metadata" in {
-            val config = testConfig(0)
+            val config   = testConfig(0)
             val resource = OTLPClient.buildResource(config)
-            val attrs = resource.attributes
+            val attrs    = resource.attributes
             assert(attrs.exists(kv => kv.key == "service.name" && kv.value.stringValue == Present("test-client")))
             assert(attrs.exists(kv => kv.key == "telemetry.sdk.name" && kv.value.stringValue == Present("kyo")))
             assert(attrs.exists(kv => kv.key == "telemetry.sdk.language" && kv.value.stringValue == Present("scala")))
@@ -465,7 +500,7 @@ class OTLPClientTest extends Test:
         }
 
         "includes custom resource attributes" in {
-            val config = testConfig(0)
+            val config   = testConfig(0)
             val resource = OTLPClient.buildResource(config)
             assert(resource.attributes.exists(kv => kv.key == "env" && kv.value.stringValue == Present("test")))
         }

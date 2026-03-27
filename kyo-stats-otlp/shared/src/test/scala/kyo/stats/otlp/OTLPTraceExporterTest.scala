@@ -3,8 +3,8 @@ package kyo.stats.otlp
 import kyo.*
 import kyo.stats.*
 import kyo.stats.Attributes
-import kyo.stats.internal.TraceSpan
 import kyo.stats.internal.TraceExporter
+import kyo.stats.internal.TraceSpan
 import kyo.stats.internal.UnsafeTraceSpan
 
 class OTLPTraceExporterTest extends Test:
@@ -123,6 +123,7 @@ class OTLPTraceExporterTest extends Test:
             HttpResponse.ok.addField("body", ExportMetricsResponse())
         }
         (traceHandler, metricHandler)
+    end defaultHandlers
 
     "startSpan" - {
 
@@ -137,7 +138,7 @@ class OTLPTraceExporterTest extends Test:
                     }
                     (_, metricHandler) = defaultHandlers
                     server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
-                    config = exporterTestConfig(server.port, batchSize = 1)
+                    config   = exporterTestConfig(server.port, batchSize = 1)
                     exporter = OTLPTraceExporter.init(config)
                     _ <- control.advance(100.millis)
                     _ = exporter.startSpan(List("test"), "id-test", now()).end(now())
@@ -163,13 +164,13 @@ class OTLPTraceExporterTest extends Test:
                     }
                     (_, metricHandler) = defaultHandlers
                     server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
-                    config = exporterTestConfig(server.port, batchSize = 2)
+                    config   = exporterTestConfig(server.port, batchSize = 2)
                     exporter = OTLPTraceExporter.init(config)
                     _ <- control.advance(100.millis)
                     parent = exporter.startSpan(List("test"), "parent-op", now())
                     child  = exporter.startSpan(List("test"), "child-op", now(), parent = Some(parent))
-                    _ = child.end(now())
-                    _ = parent.end(now())
+                    _      = child.end(now())
+                    _      = parent.end(now())
                     received <- traceCh.take
                 yield
                     val spans      = received.resourceSpans.head.scopeSpans.head.spans
@@ -192,11 +193,11 @@ class OTLPTraceExporterTest extends Test:
                     }
                     (_, metricHandler) = defaultHandlers
                     server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
-                    config = exporterTestConfig(server.port, batchSize = 1)
+                    config   = exporterTestConfig(server.port, batchSize = 1)
                     exporter = OTLPTraceExporter.init(config)
                     _ <- control.advance(100.millis)
                     nonPropParent = UnsafeTraceSpan.noop
-                    _ = exporter.startSpan(List("test"), "orphan-op", now(), parent = Some(nonPropParent)).end(now())
+                    _             = exporter.startSpan(List("test"), "orphan-op", now(), parent = Some(nonPropParent)).end(now())
                     received <- traceCh.take
                 yield
                     val span = received.resourceSpans.head.scopeSpans.head.spans.head
@@ -220,7 +221,7 @@ class OTLPTraceExporterTest extends Test:
                     (_, metricHandler) = defaultHandlers
                     server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
                     // batchSize=3, queue 6 spans → flush should recurse once (3+3)
-                    config = exporterTestConfig(server.port, queueSize = 100, batchSize = 3)
+                    config   = exporterTestConfig(server.port, queueSize = 100, batchSize = 3)
                     exporter = OTLPTraceExporter.init(config)
                     _ <- control.advance(100.millis)
                     _ = (1 to 6).foreach { i =>
@@ -251,7 +252,7 @@ class OTLPTraceExporterTest extends Test:
                     }
                     (_, metricHandler) = defaultHandlers
                     server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
-                    config = exporterTestConfig(server.port, queueSize = 2, batchSize = 100)
+                    config   = exporterTestConfig(server.port, queueSize = 2, batchSize = 100)
                     exporter = OTLPTraceExporter.init(config)
                     _ <- control.advance(100.millis)
                     _ = (1 to 10).foreach { i =>
@@ -281,7 +282,7 @@ class OTLPTraceExporterTest extends Test:
                     }
                     (_, metricHandler) = defaultHandlers
                     server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
-                    config = exporterTestConfig(server.port, queueSize = 100, batchSize = 3)
+                    config   = exporterTestConfig(server.port, queueSize = 100, batchSize = 3)
                     exporter = OTLPTraceExporter.init(config)
                     _ <- control.advance(100.millis)
                     _ = (1 to 3).foreach { i =>

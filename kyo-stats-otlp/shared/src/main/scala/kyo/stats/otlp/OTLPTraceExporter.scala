@@ -1,12 +1,12 @@
 package kyo.stats.otlp
 
+import java.util.concurrent.ConcurrentLinkedQueue
 import kyo.*
 import kyo.stats.*
 import kyo.stats.Attributes
 import kyo.stats.Attributes.Attribute
 import kyo.stats.internal.TraceExporter
 import kyo.stats.internal.UnsafeTraceSpan
-import java.util.concurrent.ConcurrentLinkedQueue
 
 /** Trace exporter that buffers completed spans and flushes them to an OTLP collector over HTTP/JSON.
   *
@@ -24,23 +24,23 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
 
     private[otlp] val started = AtomicBoolean.Unsafe.init
 
-    private val droppedSpansCounter = Stat.initScope("kyo", "stats", "otel").initCounter("spans.dropped", "Spans dropped due to full export queue")
+    private val droppedSpansCounter =
+        Stat.initScope("kyo", "stats", "otel").initCounter("spans.dropped", "Spans dropped due to full export queue")
 
     private val maxExportBatchSize = config.bspMaxExportBatchSize
 
     // ExporterFactory (kyo-stats-registry) can't have Frame
-    private val spanChannel = {
+    private val spanChannel =
         given Frame = Frame.internal
         Channel.Unsafe.init[OTLPSpan](
             config.bspMaxQueueSize,
             Access.MultiProducerSingleConsumer
         )
-    }
+    end spanChannel
 
-    private[otlp] val trigger = {
+    private[otlp] val trigger =
         given Frame = Frame.internal
         Channel.Unsafe.init[Unit](1, Access.MultiProducerSingleConsumer)
-    }
 
     OTLPInitPlatform.triggerStart(this)
 
@@ -84,6 +84,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
             startNanos,
             toKeyValues(attributes)
         )
+    end startSpan
 
     private class SpanUnsafe(
         val traceId: String,
@@ -94,7 +95,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
         startNanos: Long,
         attrs: Seq[KeyValue]
     ) extends UnsafeTraceSpan with UnsafeTraceSpan.Propagatable:
-        private val events = new ConcurrentLinkedQueue[SpanEvent]()
+        private val events                                       = new ConcurrentLinkedQueue[SpanEvent]()
         @volatile private var spanStatus: UnsafeTraceSpan.Status = UnsafeTraceSpan.Status.Unset
 
         def setStatus(status: UnsafeTraceSpan.Status)(using AllowUnsafe): Unit =
@@ -102,7 +103,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
 
         // UnsafeTraceSpan (kyo-stats-registry) can't have Frame
         def end(now: java.time.Instant)(using AllowUnsafe): Unit =
-            given Frame = Frame.internal
+            given Frame  = Frame.internal
             val endNanos = Instant.fromJava(now).toDuration.toNanos
             val status = (spanStatus: UnsafeTraceSpan.Status) match
                 case _: UnsafeTraceSpan.Status.Unset.type => SpanStatus(code = OTLPModel.StatusUnset)
@@ -127,6 +128,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
                             val _ = trigger.offer(())
                         case _ => ()
                 case _ => droppedSpansCounter.unsafe.inc()
+            end match
         end end
 
         def event(name: String, a: Attributes, now: java.time.Instant)(using AllowUnsafe): Unit =
@@ -146,8 +148,10 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
                 if item ne null then
                     buf.addOne(item)
                     loop()
+            end loop
             loop()
             buf.result()
+        end drainEvents
     end SpanUnsafe
 
     /** Drains up to `bspMaxExportBatchSize` spans from the queue and sends them. Recurses if a full batch was drained. */
@@ -187,6 +191,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
         val buf = new Array[Byte](bytes)
         java.util.concurrent.ThreadLocalRandom.current().nextBytes(buf)
         buf.map(b => String.format("%02x", Byte.box(b))).mkString
+    end randomHex
 
     private def toKeyValues(a: Attributes): Seq[KeyValue] =
         a.get.map {

@@ -31,4 +31,6 @@ private[otlp] object OTLPInitPlatform:
                     }
                 }
             }
+        end if
+    end triggerStart
 end OTLPInitPlatform

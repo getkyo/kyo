@@ -14,7 +14,8 @@ class OTLPTraceContextFilterTest extends Test:
         extends UnsafeTraceSpan with UnsafeTraceSpan.Propagatable:
         def end(now: java.time.Instant)(using AllowUnsafe): Unit                                = ()
         def event(name: String, a: Attributes, now: java.time.Instant)(using AllowUnsafe): Unit = ()
-        def setStatus(status: UnsafeTraceSpan.Status)(using AllowUnsafe): Unit                   = ()
+        def setStatus(status: UnsafeTraceSpan.Status)(using AllowUnsafe): Unit                  = ()
+    end TestPropagatable
 
     "server filter" - {
 
@@ -28,15 +29,18 @@ class OTLPTraceContextFilterTest extends Test:
             var capturedTraceId = ""
             var capturedSpanId  = ""
 
-            filter.apply(request, (req: HttpRequest[Any]) =>
-                TraceSpan.current.map { span =>
-                    span match
-                        case Present(TraceSpan(s: UnsafeTraceSpan.Propagatable)) =>
-                            capturedTraceId = s.traceId
-                            capturedSpanId = s.spanId
-                        case _ => ()
-                    HttpResponse.ok
-                }
+            filter.apply(
+                request,
+                (req: HttpRequest[Any]) =>
+                    TraceSpan.current.map { span =>
+                        span match
+                            case Present(TraceSpan(s: UnsafeTraceSpan.Propagatable)) =>
+                                capturedTraceId = s.traceId
+                                capturedSpanId = s.spanId
+                            case _ => ()
+                        end match
+                        HttpResponse.ok
+                    }
             ).map { _ =>
                 assert(capturedTraceId == traceId)
                 assert(capturedSpanId == spanId)
@@ -49,9 +53,11 @@ class OTLPTraceContextFilterTest extends Test:
 
             var nextCalled = false
 
-            filter.apply(request, (req: HttpRequest[Any]) =>
-                nextCalled = true
-                HttpResponse.ok
+            filter.apply(
+                request,
+                (req: HttpRequest[Any]) =>
+                    nextCalled = true
+                    HttpResponse.ok
             ).map { _ =>
                 assert(nextCalled)
             }
@@ -64,14 +70,17 @@ class OTLPTraceContextFilterTest extends Test:
 
             var spanSet = false
 
-            filter.apply(request, (req: HttpRequest[Any]) =>
-                TraceSpan.current.map { span =>
-                    span match
-                        case Present(TraceSpan(_: UnsafeTraceSpan.Propagatable)) =>
-                            spanSet = true
-                        case _ => ()
-                    HttpResponse.ok
-                }
+            filter.apply(
+                request,
+                (req: HttpRequest[Any]) =>
+                    TraceSpan.current.map { span =>
+                        span match
+                            case Present(TraceSpan(_: UnsafeTraceSpan.Propagatable)) =>
+                                spanSet = true
+                            case _ => ()
+                        end match
+                        HttpResponse.ok
+                    }
             ).map { _ =>
                 assert(!spanSet)
             }
@@ -84,14 +93,17 @@ class OTLPTraceContextFilterTest extends Test:
 
             var spanSet = false
 
-            filter.apply(request, (req: HttpRequest[Any]) =>
-                TraceSpan.current.map { span =>
-                    span match
-                        case Present(TraceSpan(_: UnsafeTraceSpan.Propagatable)) =>
-                            spanSet = true
-                        case _ => ()
-                    HttpResponse.ok
-                }
+            filter.apply(
+                request,
+                (req: HttpRequest[Any]) =>
+                    TraceSpan.current.map { span =>
+                        span match
+                            case Present(TraceSpan(_: UnsafeTraceSpan.Propagatable)) =>
+                                spanSet = true
+                            case _ => ()
+                        end match
+                        HttpResponse.ok
+                    }
             ).map { _ =>
                 assert(!spanSet)
             }
@@ -104,14 +116,17 @@ class OTLPTraceContextFilterTest extends Test:
 
             var spanSet = false
 
-            filter.apply(request, (req: HttpRequest[Any]) =>
-                TraceSpan.current.map { span =>
-                    span match
-                        case Present(TraceSpan(_: UnsafeTraceSpan.Propagatable)) =>
-                            spanSet = true
-                        case _ => ()
-                    HttpResponse.ok
-                }
+            filter.apply(
+                request,
+                (req: HttpRequest[Any]) =>
+                    TraceSpan.current.map { span =>
+                        span match
+                            case Present(TraceSpan(_: UnsafeTraceSpan.Propagatable)) =>
+                                spanSet = true
+                            case _ => ()
+                        end match
+                        HttpResponse.ok
+                    }
             ).map { _ =>
                 assert(!spanSet)
             }
@@ -124,14 +139,17 @@ class OTLPTraceContextFilterTest extends Test:
 
             var spanSet = false
 
-            filter.apply(request, (req: HttpRequest[Any]) =>
-                TraceSpan.current.map { span =>
-                    span match
-                        case Present(TraceSpan(_: UnsafeTraceSpan.Propagatable)) =>
-                            spanSet = true
-                        case _ => ()
-                    HttpResponse.ok
-                }
+            filter.apply(
+                request,
+                (req: HttpRequest[Any]) =>
+                    TraceSpan.current.map { span =>
+                        span match
+                            case Present(TraceSpan(_: UnsafeTraceSpan.Propagatable)) =>
+                                spanSet = true
+                            case _ => ()
+                        end match
+                        HttpResponse.ok
+                    }
             ).map { _ =>
                 assert(!spanSet)
             }
@@ -150,9 +168,11 @@ class OTLPTraceContextFilterTest extends Test:
             var capturedTraceparent: Maybe[String] = Maybe.empty
 
             TraceSpan.let(span) {
-                filter.apply(request, (req: HttpRequest[Any]) =>
-                    capturedTraceparent = req.headers.get("traceparent")
-                    HttpResponse.ok
+                filter.apply(
+                    request,
+                    (req: HttpRequest[Any]) =>
+                        capturedTraceparent = req.headers.get("traceparent")
+                        HttpResponse.ok
                 )
             }.map { _ =>
                 assert(capturedTraceparent == Present(s"00-$traceId-$spanId-01"))
@@ -169,9 +189,11 @@ class OTLPTraceContextFilterTest extends Test:
             var capturedTraceparent: Maybe[String] = Maybe.empty
 
             TraceSpan.let(span) {
-                filter.apply(request, (req: HttpRequest[Any]) =>
-                    capturedTraceparent = req.headers.get("traceparent")
-                    HttpResponse.ok
+                filter.apply(
+                    request,
+                    (req: HttpRequest[Any]) =>
+                        capturedTraceparent = req.headers.get("traceparent")
+                        HttpResponse.ok
                 )
             }.map { _ =>
                 capturedTraceparent match
@@ -193,9 +215,11 @@ class OTLPTraceContextFilterTest extends Test:
 
             var capturedTraceparent: Maybe[String] = Maybe.empty
 
-            filter.apply(request, (req: HttpRequest[Any]) =>
-                capturedTraceparent = req.headers.get("traceparent")
-                HttpResponse.ok
+            filter.apply(
+                request,
+                (req: HttpRequest[Any]) =>
+                    capturedTraceparent = req.headers.get("traceparent")
+                    HttpResponse.ok
             ).map { _ =>
                 assert(capturedTraceparent.isEmpty)
             }
@@ -209,9 +233,11 @@ class OTLPTraceContextFilterTest extends Test:
             var capturedTraceparent: Maybe[String] = Maybe.empty
 
             TraceSpan.let(span) {
-                filter.apply(request, (req: HttpRequest[Any]) =>
-                    capturedTraceparent = req.headers.get("traceparent")
-                    HttpResponse.ok
+                filter.apply(
+                    request,
+                    (req: HttpRequest[Any]) =>
+                        capturedTraceparent = req.headers.get("traceparent")
+                        HttpResponse.ok
                 )
             }.map { _ =>
                 assert(capturedTraceparent.isEmpty)
@@ -231,10 +257,12 @@ class OTLPTraceContextFilterTest extends Test:
             var capturedContentType: Maybe[String] = Maybe.empty
 
             TraceSpan.let(span) {
-                filter.apply(request, (req: HttpRequest[Any]) =>
-                    capturedAuth = req.headers.get("Authorization")
-                    capturedContentType = req.headers.get("Content-Type")
-                    HttpResponse.ok
+                filter.apply(
+                    request,
+                    (req: HttpRequest[Any]) =>
+                        capturedAuth = req.headers.get("Authorization")
+                        capturedContentType = req.headers.get("Content-Type")
+                        HttpResponse.ok
                 )
             }.map { _ =>
                 assert(capturedAuth == Present("Bearer token"))
@@ -257,17 +285,22 @@ class OTLPTraceContextFilterTest extends Test:
             var capturedSpanId  = ""
 
             TraceSpan.let(span) {
-                clientFilter.apply(request, (req: HttpRequest[Any]) =>
-                    serverFilter.apply(req, (innerReq: HttpRequest[Any]) =>
-                        TraceSpan.current.map { maybSpan =>
-                            maybSpan match
-                                case Present(TraceSpan(s: UnsafeTraceSpan.Propagatable)) =>
-                                    capturedTraceId = s.traceId
-                                    capturedSpanId = s.spanId
-                                case _ => ()
-                            HttpResponse.ok
-                        }
-                    )
+                clientFilter.apply(
+                    request,
+                    (req: HttpRequest[Any]) =>
+                        serverFilter.apply(
+                            req,
+                            (innerReq: HttpRequest[Any]) =>
+                                TraceSpan.current.map { maybSpan =>
+                                    maybSpan match
+                                        case Present(TraceSpan(s: UnsafeTraceSpan.Propagatable)) =>
+                                            capturedTraceId = s.traceId
+                                            capturedSpanId = s.spanId
+                                        case _ => ()
+                                    end match
+                                    HttpResponse.ok
+                                }
+                        )
                 )
             }.map { _ =>
                 assert(capturedTraceId == traceId)

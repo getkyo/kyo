@@ -2,8 +2,8 @@ package kyo.stats.otlp
 
 import kyo.*
 import kyo.stats.*
-import kyo.stats.internal.UnsafeTraceSpan
 import kyo.stats.internal.TraceSpan
+import kyo.stats.internal.UnsafeTraceSpan
 
 /** W3C Trace Context propagation filters for HTTP client and server.
   *
@@ -57,6 +57,8 @@ object OTLPTraceContextFilter:
             Present((parts(1), parts(2)))
         else
             Absent
+        end if
+    end parseTraceparent
 end OTLPTraceContextFilter
 
 private class RemoteSpanUnsafe(
@@ -65,4 +67,5 @@ private class RemoteSpanUnsafe(
 ) extends UnsafeTraceSpan with UnsafeTraceSpan.Propagatable:
     def end(now: java.time.Instant)(using AllowUnsafe): Unit                                = ()
     def event(name: String, a: Attributes, now: java.time.Instant)(using AllowUnsafe): Unit = ()
-    def setStatus(status: UnsafeTraceSpan.Status)(using AllowUnsafe): Unit                   = ()
+    def setStatus(status: UnsafeTraceSpan.Status)(using AllowUnsafe): Unit                  = ()
+end RemoteSpanUnsafe

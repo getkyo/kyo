@@ -53,7 +53,7 @@ class OTLPMetricsExporterTest extends Test:
         "exports registered counter at interval" in run {
             withCollector { (config, metricCh) =>
                 val uniqueName = "test.export.counter." + java.util.UUID.randomUUID().toString.take(8)
-                val counter = Stat.initScope("test", "export").initCounter(uniqueName, "test counter")
+                val counter    = Stat.initScope("test", "export").initCounter(uniqueName, "test counter")
                 for
                     _        <- counter.add(100)
                     _        <- OTLPMetricsExporter.run(config)
@@ -64,13 +64,14 @@ class OTLPMetricsExporterTest extends Test:
                     assert(found.isDefined)
                     assert(found.get.sum.isDefined)
                     assert(found.get.sum.get.dataPoints.head.asInt == Present("100"))
+                end for
             }
         }
 
         "exports registered histogram at interval" in run {
             withCollector { (config, metricCh) =>
                 val uniqueName = "test.export.histogram." + java.util.UUID.randomUUID().toString.take(8)
-                val histogram = Stat.initScope("test", "export").initHistogram(uniqueName, "test histogram")
+                val histogram  = Stat.initScope("test", "export").initHistogram(uniqueName, "test histogram")
                 for
                     _        <- histogram.observe(42.0)
                     _        <- histogram.observe(7.0)
@@ -82,14 +83,15 @@ class OTLPMetricsExporterTest extends Test:
                     assert(found.isDefined)
                     assert(found.get.histogram.isDefined)
                     assert(found.get.histogram.get.dataPoints.head.count == "2")
+                end for
             }
         }
 
         "exports registered gauge at interval" in run {
             withCollector { (config, metricCh) =>
-                val uniqueName = "test.export.gauge." + java.util.UUID.randomUUID().toString.take(8)
+                val uniqueName           = "test.export.gauge." + java.util.UUID.randomUUID().toString.take(8)
                 @volatile var gaugeValue = 99.5
-                val _ = Stat.initScope("test", "export").initGauge(uniqueName, "test gauge")(gaugeValue)
+                val _                    = Stat.initScope("test", "export").initGauge(uniqueName, "test gauge")(gaugeValue)
                 for
                     _        <- OTLPMetricsExporter.run(config)
                     received <- metricCh.take
@@ -99,13 +101,14 @@ class OTLPMetricsExporterTest extends Test:
                     assert(found.isDefined)
                     assert(found.get.gauge.isDefined)
                     assert(found.get.gauge.get.dataPoints.head.asDouble == Present(99.5))
+                end for
             }
         }
 
         "multiple intervals trigger multiple exports" in run {
             withCollector { (config, metricCh) =>
                 val uniqueName = "test.export.multi." + java.util.UUID.randomUUID().toString.take(8)
-                val counter = Stat.initScope("test", "export").initCounter(uniqueName, "test counter")
+                val counter    = Stat.initScope("test", "export").initCounter(uniqueName, "test counter")
                 for
                     _    <- counter.add(10)
                     _    <- OTLPMetricsExporter.run(config)
@@ -115,6 +118,7 @@ class OTLPMetricsExporterTest extends Test:
                 yield
                     val all = Seq(req1, req2).flatMap(_.resourceMetrics.head.scopeMetrics.head.metrics)
                     assert(all.count(_.name == s"test.export.$uniqueName") >= 1)
+                end for
             }
         }
     }

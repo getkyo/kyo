@@ -7,9 +7,9 @@ import org.scalatest.Tag
 import org.scalatest.freespec.AsyncFreeSpec
 import scala.concurrent.ExecutionContext
 
-abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest {
+abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest:
 
-    private def runWhen(cond: => Boolean) = if (cond) "" else "org.scalatest.Ignore"
+    private def runWhen(cond: => Boolean) = if cond then "" else "org.scalatest.Ignore"
     object jvmOnly extends Tag(runWhen(kyo.internal.Platform.isJVM))
     object jsOnly  extends Tag(runWhen(kyo.internal.Platform.isJS))
 
@@ -18,4 +18,4 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     def assertionFailure(msg: String) = fail(msg)
 
     implicit override def executionContext: ExecutionContext = Platform.executionContext
-}
+end Test

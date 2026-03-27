@@ -11,10 +11,9 @@ import kyo.stats.internal.*
   */
 object OTLPMetricsExporter:
 
-    private val lastExportTime = {
+    private val lastExportTime =
         import AllowUnsafe.embrace.danger
         AtomicRef.Unsafe.init[Instant](Instant.Epoch)
-    }
 
     private def instantToNanos(instant: Instant): String =
         instant.toDuration.toNanos.toString
@@ -46,11 +45,11 @@ object OTLPMetricsExporter:
                 registry.counters.map.forEach { (path, tuple) =>
                     val (ref, desc) = tuple
                     val counter     = ref.get()
-                    if (counter == null) {
+                    if counter == null then
                         registry.counters.map.remove(path): Unit
-                    } else {
+                    else
                         val delta = counter.delta()
-                        if (delta != 0L) {
+                        if delta != 0L then
                             metrics.addOne(Metric(
                                 name = path.mkString("."),
                                 description = desc,
@@ -65,18 +64,18 @@ object OTLPMetricsExporter:
                                     isMonotonic = true
                                 ))
                             ))
-                        }
-                    }
+                        end if
+                    end if
                 }
 
                 registry.counterGauges.map.forEach { (path, tuple) =>
                     val (ref, desc) = tuple
                     val cg          = ref.get()
-                    if (cg == null) {
+                    if cg == null then
                         registry.counterGauges.map.remove(path): Unit
-                    } else {
+                    else
                         val delta = cg.delta()
-                        if (delta != 0L) {
+                        if delta != 0L then
                             metrics.addOne(Metric(
                                 name = path.mkString("."),
                                 description = desc,
@@ -91,18 +90,18 @@ object OTLPMetricsExporter:
                                     isMonotonic = true
                                 ))
                             ))
-                        }
-                    }
+                        end if
+                    end if
                 }
 
                 registry.histograms.map.forEach { (path, tuple) =>
                     val (ref, desc) = tuple
                     val histogram   = ref.get()
-                    if (histogram == null) {
+                    if histogram == null then
                         registry.histograms.map.remove(path): Unit
-                    } else {
+                    else
                         val summary = histogram.summary()
-                        if (summary.count > 0) {
+                        if summary.count > 0 then
                             metrics.addOne(Metric(
                                 name = path.mkString("."),
                                 description = desc,
@@ -120,16 +119,16 @@ object OTLPMetricsExporter:
                                     aggregationTemporality = OTLPModel.DeltaTemporality
                                 ))
                             ))
-                        }
-                    }
+                        end if
+                    end if
                 }
 
                 registry.gauges.map.forEach { (path, tuple) =>
                     val (ref, desc) = tuple
                     val gauge       = ref.get()
-                    if (gauge == null) {
+                    if gauge == null then
                         registry.gauges.map.remove(path): Unit
-                    } else {
+                    else
                         val current = gauge.collect()
                         metrics.addOne(Metric(
                             name = path.mkString("."),
@@ -143,10 +142,10 @@ object OTLPMetricsExporter:
                                 ))
                             ))
                         ))
-                    }
+                    end if
                 }
 
-                if (metrics.knownSize > 0) {
+                if metrics.knownSize > 0 then
                     val request = ExportMetricsRequest(
                         resourceMetrics = Seq(ResourceMetrics(
                             resource = OTLPClient.buildResource(config),
@@ -157,9 +156,10 @@ object OTLPMetricsExporter:
                         ))
                     )
                     OTLPClient.sendMetrics(config, request)
-                } else {
-                    ()
-                }
+                else
+                    (
+                )
+                end if
             }
         }
 end OTLPMetricsExporter
