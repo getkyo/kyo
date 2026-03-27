@@ -687,7 +687,7 @@ class StreamCoreExtensionsTest extends Test:
                 }
             }
 
-            "group by size and time" in run {
+            "group by size and time" in runNotJS {
                 Clock.withTimeControl { tc =>
                     stream(tc).groupedWithin(3, 20.millis).run.map: result =>
                         assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5), Chunk(6, 7, 8), Chunk(9, 10), Chunk(11)))

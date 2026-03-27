@@ -1,5 +1,6 @@
 package kyo.stats.internal
 
+import kyo.AllowUnsafe.embrace.danger
 import org.scalatest.freespec.AnyFreeSpec
 
 class UnsafeHistogramTest extends AnyFreeSpec {

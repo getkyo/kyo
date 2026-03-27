@@ -150,7 +150,10 @@ final class HttpClient private (
         // Client-side filters (e.g. basicAuth, bearerAuth) are Passthrough — they transform the request
         // and forward next's result unchanged. We cast so that next's return type aligns with A
         // (the result of sendWith(f)), preserving connection-holding semantics inside Sync.ensure.
-        val filter = route.filter.asInstanceOf[HttpFilter[Any, In, Out, Out, Nothing]]
+        // Auto-discovered filters (e.g. W3C trace context from kyo-stats-otlp) are composed first.
+        val filter = HttpFilterFactory.composedClient.andThen(route.filter)
+            .asInstanceOf[HttpFilter[Any, In, Out, Out, Nothing]]
+
         filter[In, Out, HttpException](
             request,
             (filteredReq: HttpRequest[In]) =>

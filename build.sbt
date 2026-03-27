@@ -109,7 +109,7 @@ lazy val kyoJVM = project
         `kyo-direct`.jvm,
         `kyo-stm`.jvm,
         `kyo-stats-registry`.jvm,
-        `kyo-stats-otel`.jvm,
+        `kyo-stats-otlp`.jvm,
         `kyo-logging-jpl`.jvm,
         `kyo-logging-slf4j`.jvm,
         `kyo-reactive-streams`.jvm,
@@ -147,6 +147,7 @@ lazy val kyoJS = project
         `kyo-stats-registry`.js,
         `kyo-reactive-streams`.js,
         `kyo-sttp`.js,
+        `kyo-stats-otlp`.js,
         `kyo-zio-test`.js,
         `kyo-zio`.js,
         `kyo-cats`.js,
@@ -180,7 +181,8 @@ lazy val kyoNative = project
         `kyo-scheduler-zio`.native,
         `kyo-zio`.native,
         `kyo-zio-test`.native,
-        `kyo-stm`.native
+        `kyo-stm`.native,
+        `kyo-stats-otlp`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -308,8 +310,7 @@ lazy val `kyo-kernel` =
         .in(file("kyo-kernel"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.jctools"   % "jctools-core" % "4.0.6",
-            libraryDependencies += "org.javassist" % "javassist"    % "3.30.2-GA" % Test,
+            libraryDependencies += "org.javassist" % "javassist" % "3.30.2-GA" % Test,
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
@@ -446,19 +447,21 @@ lazy val `kyo-stats-registry` =
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
-lazy val `kyo-stats-otel` =
-    crossProject(JVMPlatform)
+lazy val `kyo-stats-otlp` =
+    crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
-        .in(file("kyo-stats-otel"))
-        .dependsOn(`kyo-core`)
+        .in(file("kyo-stats-otlp"))
+        .dependsOn(`kyo-http`)
         .settings(
-            `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.60.1",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.60.1" % Test,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
+            `kyo-settings`
         )
         .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
 
 lazy val `kyo-reactive-streams` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
@@ -580,14 +583,13 @@ lazy val `kyo-caliban` =
         .crossType(CrossType.Pure)
         .in(file("kyo-caliban"))
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-tapir`)
+        .dependsOn(`kyo-http`)
         .dependsOn(`kyo-zio`)
         .dependsOn(`kyo-zio-test`)
-        .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "3.0.0",
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "3.0.0"
+            libraryDependencies += "com.github.ghostdogpr"                 %% "caliban"               % "3.0.0",
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.28.2" % "provided"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -798,7 +800,7 @@ lazy val `native-settings` = Seq(
     fork                                              := false,
     bspEnabled                                        := false,
     Test / testForkedParallel                         := false,
-    Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "8388608",
+    Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "16777216",
     libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.6.0"
 )
 

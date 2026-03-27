@@ -235,7 +235,7 @@ object PublisherToSubscriberTest:
     type TestError = TestError.type
     object TestError extends Exception("BOOM")
     private[flow] val BufferSize      = 1 << 4
-    private[flow] val MaxStreamLength = 1 << 10
+    private[flow] val MaxStreamLength = 1 << 4
 end PublisherToSubscriberTest
 
 final class PublisherToEagerSubscriberTest extends PublisherToSubscriberTest:

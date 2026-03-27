@@ -299,6 +299,19 @@ void kyo_h2o_destroy(kyo_h2o_server *server) {
     close(server->listen_fd);
     close(server->response_pipe[0]);
     close(server->response_pipe[1]);
+    /* Force-clear pending timeout entries so h2o_context_dispose doesn't
+     * assert. These entries belong to keep-alive connections whose timers
+     * haven't expired yet. Since we're destroying everything, it's safe.
+     * All 8 timeouts from h2o_context_init/h2o_context_dispose (v2.2.5): */
+    h2o_linklist_init_anchor(&server->ctx.zero_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.one_sec_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.hundred_ms_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.handshake_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.http1.req_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.http2.idle_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.http2.graceful_shutdown_timeout._entries);
+    h2o_linklist_init_anchor(&server->ctx.proxy.io_timeout._entries);
+    h2o_context_dispose(&server->ctx);
     h2o_config_dispose(&server->config);
     free(server);
 }
@@ -393,14 +406,17 @@ void kyo_h2o_send_buffered(h2o_req_t *req, int status,
     req->res.status = status;
     req->res.reason = "OK";
 
-    /* Add response headers */
+    /* Add response headers — copy to pool so they outlive caller's Zone */
     for (int i = 0; i < header_count; i++) {
+        char *name_copy = h2o_mem_alloc_pool(&req->pool, header_name_lens[i]);
+        memcpy(name_copy, header_names[i], header_name_lens[i]);
+        char *value_copy = h2o_mem_alloc_pool(&req->pool, header_value_lens[i]);
+        memcpy(value_copy, header_values[i], header_value_lens[i]);
         h2o_add_header_by_str(
             &req->pool, &req->res.headers,
-            header_names[i], header_name_lens[i],
-            0, /* don't check for existing */
-            NULL,
-            header_values[i], header_value_lens[i]
+            name_copy, header_name_lens[i],
+            1, NULL,
+            value_copy, header_value_lens[i]
         );
     }
 
@@ -431,11 +447,15 @@ void kyo_h2o_send_error(h2o_req_t *req, int status,
     req->res.reason = "Error";
 
     for (int i = 0; i < header_count; i++) {
+        char *name_copy = h2o_mem_alloc_pool(&req->pool, header_name_lens[i]);
+        memcpy(name_copy, header_names[i], header_name_lens[i]);
+        char *value_copy = h2o_mem_alloc_pool(&req->pool, header_value_lens[i]);
+        memcpy(value_copy, header_values[i], header_value_lens[i]);
         h2o_add_header_by_str(
             &req->pool, &req->res.headers,
-            header_names[i], header_name_lens[i],
-            0, NULL,
-            header_values[i], header_value_lens[i]
+            name_copy, header_name_lens[i],
+            1, NULL,
+            value_copy, header_value_lens[i]
         );
     }
 
@@ -463,11 +483,16 @@ kyo_h2o_generator *kyo_h2o_start_streaming(
     req->res.reason = "OK";
 
     for (int i = 0; i < header_count; i++) {
+        /* Copy header name and value to pool so they outlive the caller's Zone */
+        char *name_copy = h2o_mem_alloc_pool(&req->pool, header_name_lens[i]);
+        memcpy(name_copy, header_names[i], header_name_lens[i]);
+        char *value_copy = h2o_mem_alloc_pool(&req->pool, header_value_lens[i]);
+        memcpy(value_copy, header_values[i], header_value_lens[i]);
         h2o_add_header_by_str(
             &req->pool, &req->res.headers,
-            header_names[i], header_name_lens[i],
-            0, NULL,
-            header_values[i], header_value_lens[i]
+            name_copy, header_name_lens[i],
+            1, NULL,
+            value_copy, header_value_lens[i]
         );
     }
 

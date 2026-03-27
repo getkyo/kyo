@@ -2,7 +2,7 @@ package kyo
 
 import kyo.stats.*
 import kyo.stats.internal.*
-import kyo.stats.internal.TraceReceiver
+import kyo.stats.internal.TraceExporter
 
 /** A counter for tracking numeric values that only increase.
   */
@@ -97,9 +97,9 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
     ): Counter =
         new Counter:
             val unsafe                    = registryScope.counter(name, description)
-            def get(using Frame)          = Sync.defer(unsafe.get())
-            def inc(using Frame)          = Sync.defer(unsafe.inc())
-            def add(v: Long)(using Frame) = Sync.defer(unsafe.add(v))
+            def get(using Frame)          = Sync.Unsafe.defer(unsafe.get())
+            def inc(using Frame)          = Sync.Unsafe.defer(unsafe.inc())
+            def add(v: Long)(using Frame) = Sync.Unsafe.defer(unsafe.add(v))
 
     /** Initialize a new Histogram.
       * @param name
@@ -116,8 +116,8 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
     ): Histogram =
         new Histogram:
             val unsafe                          = registryScope.histogram(name, description, boundaries)
-            def observe(v: Double)(using Frame) = Sync.defer(unsafe.observe(v))
-            def observe(v: Long)(using Frame)   = Sync.defer(unsafe.observe(v))
+            def observe(v: Double)(using Frame) = Sync.Unsafe.defer(unsafe.observe(v))
+            def observe(v: Long)(using Frame)   = Sync.Unsafe.defer(unsafe.observe(v))
 
     /** Initialize a new Gauge.
       * @param name
@@ -135,7 +135,7 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
     )(f: => Double): Gauge =
         new Gauge:
             val unsafe               = registryScope.gauge(name, description)(f)
-            def collect(using Frame) = Sync.defer(unsafe.collect())
+            def collect(using Frame) = Sync.Unsafe.defer(unsafe.collect())
 
     /** Initialize a new CounterGauge.
       * @param name
@@ -153,7 +153,7 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
     )(f: => Long): CounterGauge =
         new CounterGauge:
             val unsafe               = registryScope.counterGauge(name, description)(f)
-            def collect(using Frame) = Sync.defer(f)
+            def collect(using Frame) = Sync.Unsafe.defer(unsafe.collect())
 
     /** Trace a span of execution.
       * @param name
@@ -169,24 +169,26 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
         name: String,
         attributes: Attributes = Attributes.empty
     )(v: => A < S)(using Frame): A < (Sync & S) =
-        Stat.traceReceiver.use(internal.TraceSpan.trace(_, registryScope.path, name, attributes)(v))
+        Stat.traceExporter.use(internal.TraceSpan.trace(_, registryScope.path, name, attributes)(v))
 end Stat
 
 object Stat:
 
-    private[Stat] val traceReceiver = Local.init[TraceReceiver](TraceReceiver.get)
+    private[Stat] val traceExporter =
+        given AllowUnsafe = AllowUnsafe.embrace.danger
+        Local.init[TraceExporter](TraceExporter.get)
 
-    /** Listen to traces using a custom receiver.
-      * @param receiver
-      *   The TraceReceiver to use
+    /** Listen to traces using a custom exporter.
+      * @param exporter
+      *   The TraceExporter to use
       * @param v
       *   The computation to trace
       * @return
       *   The result of the computation, wrapped in Sync
       */
-    def traceListen[A, S](receiver: TraceReceiver)(v: A < S)(using Frame): A < (Sync & S) =
-        traceReceiver.use { curr =>
-            traceReceiver.let(TraceReceiver.all(List(curr, receiver)))(v)
+    def traceListen[A, S](exporter: TraceExporter)(v: A < S)(using Frame): A < (Sync & S) =
+        traceExporter.use { curr =>
+            traceExporter.let(TraceExporter.all(List(curr, exporter)))(v)
         }
 
     private[kyo] val kyoScope = initScope("kyo")

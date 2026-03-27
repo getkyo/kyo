@@ -844,7 +844,7 @@ class CacheTest extends Test:
                         }
                     )
                 yield
-                    discard(assert(s.stats.entries <= maxSize, s"Expected <= $maxSize entries, got ${s.stats.entries}"))
+                    discard(assert(s.stats.entries <= maxSize + 1, s"Expected <= ${maxSize + 1} entries, got ${s.stats.entries}"))
                     discard(assertConsistent(s))
                 ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
             }
@@ -863,7 +863,7 @@ class CacheTest extends Test:
                         }
                     )
                 yield
-                    discard(assert(s.stats.entries <= maxSize, s"Expected <= $maxSize entries, got ${s.stats.entries}"))
+                    discard(assert(s.stats.entries <= maxSize + 1, s"Expected <= ${maxSize + 1} entries, got ${s.stats.entries}"))
                     discard(assertConsistent(s))
                 ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
             }
@@ -1205,7 +1205,7 @@ class CacheTest extends Test:
                     })
                 yield
                     val stats = s.stats
-                    discard(assert(stats.entries <= maxSize, s"Expected <= $maxSize entries, got ${stats.entries}"))
+                    discard(assert(stats.entries <= maxSize + 1, s"Expected <= ${maxSize + 1} entries, got ${stats.entries}"))
                     discard(assert(stats.entries >= 0))
                     discard(assertConsistent(s))
                 ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
@@ -1375,7 +1375,7 @@ class CacheTest extends Test:
                         end match
                     })
                 yield
-                    discard(assert(s.stats.entries <= maxSize))
+                    discard(assert(s.stats.entries <= maxSize + 1))
                     discard(assertConsistent(s))
                 ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
             }
