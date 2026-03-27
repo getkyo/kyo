@@ -427,7 +427,7 @@ class TMapTest extends Test:
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, 1))
                 }
                 _ <- Async.fill(10, 10)(
-                    STM.run(Schedule.fixed(1.millis).jitter(0.5).take(50)) {
+                    STM.run(Schedule.fixed(1.millis).jitter(0.5).forever) {
                         Kyo.foreachDiscard((1 to size)) { i =>
                             map.updateWith(i)(v => Maybe(v.getOrElse(0) + 1))
                         }
