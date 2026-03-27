@@ -1260,7 +1260,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
                     size  <- sizes
-                    c     <- HttpClient.initUnscoped(client, size + 1)
+                    c     <- HttpClient.initUnscoped(client, size * 2)
                     latch <- Latch.init(1)
                     slowReq = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/slow", Absent))
                     fastReq = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/fast", Absent))
