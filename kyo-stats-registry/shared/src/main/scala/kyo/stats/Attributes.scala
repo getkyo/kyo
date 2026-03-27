@@ -3,14 +3,14 @@ package kyo.stats
 import kyo.stats.Attributes.AsAttribute
 import scala.annotation.implicitNotFound
 
-case class Attributes(get: List[Attributes.Attribute]):
+case class Attributes(get: List[Attributes.Attribute]) {
     def add(a: Attributes): Attributes =
         Attributes(get ++ a.get)
     def add[A](name: String, value: A)(implicit a: AsAttribute[A]): Attributes =
         add(Attributes.add(name, value))
-end Attributes
+}
 
-object Attributes:
+object Attributes {
     val empty: Attributes = Attributes(Nil)
 
     def add[A](name: String, value: A)(implicit a: AsAttribute[A]) =
@@ -20,7 +20,7 @@ object Attributes:
         Attributes(l.flatMap(_.get))
 
     sealed trait Attribute
-    object Attribute:
+    object Attribute {
         case class BooleanListAttribute(name: String, value: List[Boolean]) extends Attribute
         case class BooleanAttribute(name: String, value: Boolean)           extends Attribute
         case class DoubleListAttribute(name: String, value: List[Double])   extends Attribute
@@ -29,7 +29,7 @@ object Attributes:
         case class LongAttribute(name: String, value: Long)                 extends Attribute
         case class StringListAttribute(name: String, value: List[String])   extends Attribute
         case class StringAttribute(name: String, value: String)             extends Attribute
-    end Attribute
+    }
 
     @implicitNotFound(
         "Invalid attribute type: '${A}'. Supported: 'Boolean', " +
@@ -37,7 +37,7 @@ object Attributes:
     )
     case class AsAttribute[A](f: (String, A) => Attribute)
 
-    object AsAttribute:
+    object AsAttribute {
         implicit val booleanList: AsAttribute[List[Boolean]] =
             AsAttribute(Attribute.BooleanListAttribute(_, _))
         implicit val boolean: AsAttribute[Boolean] =
@@ -58,5 +58,5 @@ object Attributes:
             AsAttribute(Attribute.StringListAttribute(_, _))
         implicit val string: AsAttribute[String] =
             AsAttribute(Attribute.StringAttribute(_, _))
-    end AsAttribute
-end Attributes
+    }
+}

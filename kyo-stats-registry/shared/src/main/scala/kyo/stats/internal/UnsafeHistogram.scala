@@ -59,9 +59,9 @@ class UnsafeHistogram(boundaries: Array[Double]) extends Serializable {
     private def pack(min: Float, max: Float): Long =
         (floatToIntBits(min).toLong << 32) | (floatToIntBits(max).toLong & 0xffffffffL)
 
-    def observe(v: Long)(using AllowUnsafe): Unit = observe(v.toDouble)
+    def observe(v: Long)(implicit _au: AllowUnsafe): Unit = observe(v.toDouble)
 
-    def observe(v: Double)(using AllowUnsafe): Unit = {
+    def observe(v: Double)(implicit _au: AllowUnsafe): Unit = {
         @tailrec def findBucket(lo: Int, hi: Int): Unit =
             if (lo >= hi)
                 buckets(lo).increment()
@@ -91,7 +91,7 @@ class UnsafeHistogram(boundaries: Array[Double]) extends Serializable {
         loop()
     }
 
-    def summary()(using AllowUnsafe): Summary = {
+    def summary()(implicit _au: AllowUnsafe): Summary = {
         val counts = new Array[Long](buckets.length)
         @tailrec def loop(i: Int, total: Long): Long =
             if (i >= counts.length)

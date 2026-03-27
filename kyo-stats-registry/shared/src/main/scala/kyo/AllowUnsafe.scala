@@ -19,8 +19,11 @@ Options (in order of preference):
 
 WARNING: Using AllowUnsafe directly bypasses important safety mechanisms and may break referential transparency. Ensure you fully understand the risks before proceeding this way.
 """)
-opaque type AllowUnsafe = Null
+abstract class AllowUnsafe private ()
 
-object AllowUnsafe:
-    object embrace:
-        inline given danger: AllowUnsafe = null
+object AllowUnsafe {
+    private val instance: AllowUnsafe = new AllowUnsafe() {}
+    object embrace {
+        implicit val danger: AllowUnsafe = instance
+    }
+}
