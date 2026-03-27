@@ -8,10 +8,10 @@ import scala.annotation.tailrec
 final case class TraceSpan(unsafe: UnsafeTraceSpan):
 
     def end(using Frame): Unit < Sync =
-        Clock.now.map(now => Sync.Unsafe.defer(unsafe.end(now.toJava)))
+        Clock.nowWith(now => Sync.Unsafe.defer(unsafe.end(now.toJava)))
 
     def event(name: String, a: Attributes)(using Frame): Unit < Sync =
-        Clock.now.map(now => Sync.Unsafe.defer(unsafe.event(name, a, now.toJava)))
+        Clock.nowWith(now => Sync.Unsafe.defer(unsafe.event(name, a, now.toJava)))
 
     def setStatus(status: UnsafeTraceSpan.Status)(using Frame): Unit < Sync =
         Sync.Unsafe.defer(unsafe.setStatus(status))
@@ -38,21 +38,21 @@ object TraceSpan:
                     new UnsafeTraceSpan:
                         def end(now: java.time.Instant)(using AllowUnsafe) =
                             @tailrec def loop(c: Seq[TraceSpan]): Unit =
-                                if c ne Nil then
+                                if c.nonEmpty then
                                     c.head.unsafe.end(now)
                                     loop(c.tail)
                             loop(l)
                         end end
                         def event(name: String, a: Attributes, now: java.time.Instant)(using AllowUnsafe) =
                             @tailrec def loop(c: Seq[TraceSpan]): Unit =
-                                if c ne Nil then
+                                if c.nonEmpty then
                                     c.head.unsafe.event(name, a, now)
                                     loop(c.tail)
                             loop(l)
                         end event
                         def setStatus(status: UnsafeTraceSpan.Status)(using AllowUnsafe) =
                             @tailrec def loop(c: Seq[TraceSpan]): Unit =
-                                if c ne Nil then
+                                if c.nonEmpty then
                                     c.head.unsafe.setStatus(status)
                                     loop(c.tail)
                             loop(l)
