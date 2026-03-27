@@ -15,7 +15,7 @@ set -uo pipefail
 #
 
 MAX_RETRIES=3
-SBT_CMD="${1:-+kyoNative/test}"
+SBT_CMD="${1:-kyoNative/test}"
 LOG=$(mktemp)
 trap "rm -f $LOG" EXIT
 
