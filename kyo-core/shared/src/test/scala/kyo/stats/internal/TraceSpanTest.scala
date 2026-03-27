@@ -50,9 +50,9 @@ class TraceSpanTest extends Test:
         var isEnded           = false
         var lastEvent: String = ""
 
-        def end()(using AllowUnsafe) =
+        def end(now: java.time.Instant)(using AllowUnsafe) =
             isEnded = true
-        def event(name: String, a: Attributes)(using AllowUnsafe) =
+        def event(name: String, a: Attributes, now: java.time.Instant)(using AllowUnsafe) =
             lastEvent = name
         def setStatus(status: UnsafeTraceSpan.Status)(using AllowUnsafe) = ()
     end TestSpan

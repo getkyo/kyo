@@ -5,7 +5,7 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class StatsRegistryTest extends AnyFreeSpec {
 
-    given AllowUnsafe = AllowUnsafe.embrace.danger
+    implicit val _au: AllowUnsafe = AllowUnsafe.embrace.danger
 
     "scope" - {
         "create scope with path" in {

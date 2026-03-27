@@ -104,10 +104,10 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
         def end(now: java.time.Instant)(using AllowUnsafe): Unit =
             given Frame = Frame.internal
             val endNanos = Instant.fromJava(now).toDuration.toNanos
-            val status = spanStatus match
-                case UnsafeTraceSpan.Status.Unset      => SpanStatus(code = OTLPModel.StatusUnset)
-                case UnsafeTraceSpan.Status.Ok         => SpanStatus(code = OTLPModel.StatusOk)
-                case UnsafeTraceSpan.Status.Error(msg) => SpanStatus(code = OTLPModel.StatusError, message = msg)
+            val status = (spanStatus: UnsafeTraceSpan.Status) match
+                case _: UnsafeTraceSpan.Status.Unset.type => SpanStatus(code = OTLPModel.StatusUnset)
+                case _: UnsafeTraceSpan.Status.Ok.type    => SpanStatus(code = OTLPModel.StatusOk)
+                case e: UnsafeTraceSpan.Status.Error      => SpanStatus(code = OTLPModel.StatusError, message = e.message)
             val span = OTLPSpan(
                 traceId = traceId,
                 spanId = spanId,

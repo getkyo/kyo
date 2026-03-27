@@ -1,5 +1,6 @@
 package kyo.stats.internal
 
+import java.time.Instant
 import kyo.*
 import kyo.stats.*
 
@@ -9,7 +10,7 @@ class TraceExporterTest extends Test:
 
     "TraceExporter.noop" in {
         val noopExporter = TraceExporter.noop
-        val span         = noopExporter.startSpan(Nil, "noopSpan")
+        val span         = noopExporter.startSpan(Nil, "noopSpan", Instant.now())
         assert(span eq UnsafeTraceSpan.noop)
     }
 
@@ -18,7 +19,7 @@ class TraceExporterTest extends Test:
         val mockExporter2    = new TestTraceExporter
         val combinedExporter = TraceExporter.all(List(mockExporter1, mockExporter2))
 
-        combinedExporter.startSpan(Nil, "combinedSpan")
+        combinedExporter.startSpan(Nil, "combinedSpan", Instant.now())
         assert(mockExporter1.spanStarted && mockExporter2.spanStarted)
     }
 
@@ -28,6 +29,7 @@ class TraceExporterTest extends Test:
         def startSpan(
             scope: List[String],
             name: String,
+            now: Instant,
             parent: Option[UnsafeTraceSpan],
             attributes: Attributes
         )(using AllowUnsafe): UnsafeTraceSpan =
