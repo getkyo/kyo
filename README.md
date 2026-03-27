@@ -3490,28 +3490,29 @@ case class Query2(k: Int < CustomEffects) derives schema.SemiAuto
 
 Then, the `Resolvers` effect allows easily turning these schemas into a GraphQL server.
 The method `Resolvers.get` is used for importing a `GraphQL` object from Caliban into Kyo.
-You can then run this effect using `Resolvers.run` to get an HTTP server. This effect requires `ZIO` because Caliban uses ZIO internally to run.
+You can then run this effect using `Resolvers.run` to get an `HttpServer`. This effect requires `Async` because Caliban uses ZIO internally to run.
 
 ```scala
 import caliban.*
 import caliban.schema.*
 import kyo.*
 import kyo.given
-import sttp.tapir.server.netty.*
-import zio.Task
 
 case class Query(k: Int < Abort[Throwable]) derives Schema.SemiAuto
 val api = graphQL(RootResolver(Query(42)))
 
-val a: NettyKyoServerBinding < (Async & Abort[CalibanError]) =
-    Resolvers.run { Resolvers.get(api) }
+val a: HttpServer < (Async & Scope & Abort[CalibanError]) =
+    for
+        interpreter <- Resolvers.get(api)
+        server      <- Resolvers.run(interpreter)
+    yield server
 
-// similarly to the tapir integration, you can also pass a `NettyKyoServer` explicitly
-val b: NettyKyoServerBinding < (Async & Abort[CalibanError]) =
-    Resolvers.run(NettyKyoServer().port(9999)) { Resolvers.get(api) }
-
-// you can turn this into a ZIO as seen in the ZIO integration
-val c: Task[NettyKyoServerBinding] = ZIOs.run(b)
+// with custom configuration
+val b: HttpServer < (Async & Scope & Abort[CalibanError]) =
+    for
+        interpreter <- Resolvers.get(api)
+        server      <- Resolvers.run(interpreter, Resolvers.Config.default.path("custom/graphql"))
+    yield server
 ```
 
 When using arbitrary Kyo effects, you need to provide the `Runner` for that effect when calling the `run` function.
@@ -3520,7 +3521,6 @@ import caliban.*
 import caliban.schema.*
 import kyo.*
 import kyo.given
-import zio.Task
 
 type CustomEffects = Var[Int] & Env[String]
 object schema extends SchemaDerivation[Runner[CustomEffects]]
@@ -3530,9 +3530,13 @@ val api = graphQL(RootResolver(Query(42)))
 
 // runner for our CustomEffects
 val runner = new Runner[CustomEffects]:
-    def apply[T](v: T < CustomEffects): Task[T] = ZIOs.run(Env.run("kyo")(Var.run(0)(v)))
+    def apply[A](v: A < CustomEffects): A < (Abort[Throwable] & Async) = Env.run("kyo")(Var.run(0)(v))
 
-val d = Resolvers.run(runner) { Resolvers.get(api) }
+val d: HttpServer < (Async & Scope & Abort[CalibanError]) =
+    for
+        interpreter <- Resolvers.get(api)
+        server      <- Resolvers.run(interpreter, runner)
+    yield server
 ```
 
 ### AIs: LLM Abstractions via OpenAI
