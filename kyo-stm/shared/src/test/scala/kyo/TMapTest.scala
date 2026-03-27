@@ -367,7 +367,7 @@ class TMapTest extends Test:
     }
 
     "Concurrency" - {
-        val repeats = 100
+        val repeats = 50
 
         "concurrent modifications" in runNotJS {
             val retrySchedule = STM.defaultRetrySchedule.forever

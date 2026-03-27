@@ -1,7 +1,7 @@
 package kyo
 
 import java.util.concurrent.atomic.AtomicReference
-import org.jctools.queues.*
+import kyo.internal.*
 import scala.annotation.tailrec
 
 /** A high-performance, thread-safe queue with configurable concurrency patterns.
@@ -457,13 +457,13 @@ object Queue:
             ): Unsafe[A] =
                 access match
                     case Access.MultiProducerMultiConsumer =>
-                        Queue.Unsafe.fromJava(new MpmcUnboundedXaddArrayQueue[A](chunkSize))
+                        Queue.Unsafe.fromInternal(new MpmcUnboundedUnsafeQueue[A](chunkSize))
                     case Access.MultiProducerSingleConsumer =>
-                        Queue.Unsafe.fromJava(new MpscUnboundedArrayQueue[A](chunkSize))
+                        Queue.Unsafe.fromInternal(new MpscUnboundedUnsafeQueue[A](chunkSize))
                     case Access.SingleProducerMultiConsumer =>
-                        Queue.Unsafe.fromJava(new MpmcUnboundedXaddArrayQueue[A](chunkSize))
+                        Queue.Unsafe.fromInternal(new SpmcUnboundedUnsafeQueue[A](chunkSize))
                     case Access.SingleProducerSingleConsumer =>
-                        Queue.Unsafe.fromJava(new SpscUnboundedArrayQueue[A](chunkSize))
+                        Queue.Unsafe.fromInternal(new SpscUnboundedUnsafeQueue[A](chunkSize))
 
             def initDropping[A](_capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(
                 using
@@ -659,47 +659,38 @@ object Queue:
                 case _ =>
                     access match
                         case Access.MultiProducerMultiConsumer =>
-                            fromJava(new MpmcArrayQueue[A](capacity), capacity)
+                            fromInternal(new MpmcUnsafeQueue[A](capacity))
                         case Access.MultiProducerSingleConsumer =>
-                            fromJava(new MpscArrayQueue[A](capacity), capacity)
+                            fromInternal(new MpscUnsafeQueue[A](capacity))
                         case Access.SingleProducerMultiConsumer =>
-                            fromJava(new SpmcArrayQueue[A](capacity), capacity)
+                            fromInternal(new SpmcUnsafeQueue[A](capacity))
                         case Access.SingleProducerSingleConsumer =>
                             if capacity >= 4 then
-                                fromJava(new SpscArrayQueue[A](capacity), capacity)
+                                fromInternal(new SpscUnsafeQueue[A](capacity))
                             else
                                 // Spsc queue doesn't support capacity < 4
-                                fromJava(new SpmcArrayQueue[A](capacity), capacity)
+                                fromInternal(new SpmcUnsafeQueue[A](capacity))
 
-        def fromJava[A](q: java.util.Queue[A], _capacity: Int = Int.MaxValue)(using initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
+        private[Queue] def fromInternal[A](q: UnsafeQueue[A])(using initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
             new Closeable[A](initFrame):
-                def capacity                   = _capacity
+                def capacity                   = q.capacity
                 def size()(using AllowUnsafe)  = op(q.size())
                 def empty()(using AllowUnsafe) = op(q.isEmpty())
-                def full()(using AllowUnsafe)  = op(q.size() >= _capacity)
+                def full()(using AllowUnsafe)  = op(q.isFull())
                 def offer(v: A)(using AllowUnsafe) =
                     offerOp(
                         q.offer(v),
-                        try !q.remove(v)
-                        catch
-                            case _: UnsupportedOperationException =>
-                                // TODO the race repair should use '!q.remove(v)' but JCTools doesn't support the operation.
-                                // In rare cases, items may be left in the queue permanently after closing due to this limitation.
-                                // The item will only be removed when the queue object itself is garbage collected.
-                                !q.contains(v)
+                        q.poll() match
+                            case Maybe.Present(polled) => !(polled.asInstanceOf[AnyRef] eq v.asInstanceOf[AnyRef])
+                            case _                     => true
                     )
-                def poll()(using AllowUnsafe) = pollOp(Maybe(q.poll()))
-                def peek()(using AllowUnsafe) = op(Maybe(q.peek()))
+                def poll()(using AllowUnsafe) = pollOp(q.poll())
+                def peek()(using AllowUnsafe) = op(q.peek())
                 def _drain(max: Maybe[Int] = Maybe.Absent) =
                     val b = Chunk.newBuilder[A]
-                    @tailrec def loop(i: Int): Unit =
-                        if max.forall(i < _) then
-                            val value = q.poll()
-                            if !isNull(value) then
-                                b.addOne(value)
-                                loop(i + 1)
-                    end loop
-                    loop(0)
+                    max match
+                        case Maybe.Present(limit) => discard(q.drain(b.addOne(_), limit))
+                        case _                    => discard(q.drain(b.addOne(_)))
                     b.result()
                 end _drain
                 def _isEmpty() = q.isEmpty()

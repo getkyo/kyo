@@ -310,8 +310,7 @@ lazy val `kyo-kernel` =
         .in(file("kyo-kernel"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.jctools"   % "jctools-core" % "4.0.6",
-            libraryDependencies += "org.javassist" % "javassist"    % "3.30.2-GA" % Test,
+            libraryDependencies += "org.javassist" % "javassist" % "3.30.2-GA" % Test,
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
@@ -584,14 +583,13 @@ lazy val `kyo-caliban` =
         .crossType(CrossType.Pure)
         .in(file("kyo-caliban"))
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-tapir`)
+        .dependsOn(`kyo-http`)
         .dependsOn(`kyo-zio`)
         .dependsOn(`kyo-zio-test`)
-        .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "3.0.0",
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "3.0.0"
+            libraryDependencies += "com.github.ghostdogpr"                 %% "caliban"               % "3.0.0",
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.28.2" % "provided"
         )
         .jvmSettings(mimaCheck(false))
 
