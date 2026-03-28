@@ -292,6 +292,7 @@ lazy val `kyo-data` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
+        .dependsOn(`kyo-stats-registry`)
         .in(file("kyo-data"))
         .settings(
             `kyo-settings`,

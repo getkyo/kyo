@@ -27,6 +27,9 @@ jobs:
         jvm: corretto:24
         apps: sbt
 
+    - name: Clean Native targets
+      run: sbt 'kyoNative/clean'
+
     - name: Build Native
       run: ./scripts/native-test.sh
 

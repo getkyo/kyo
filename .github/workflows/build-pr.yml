@@ -38,5 +38,9 @@ jobs:
         jvm: corretto:24
         apps: sbt
 
+    - name: Clean Native targets
+      if: matrix.target.name == 'Native'
+      run: sbt 'kyoNative/clean'
+
     - name: Build ${{ matrix.target.name }}
       run: ${{ matrix.target.command }}
