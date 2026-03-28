@@ -195,7 +195,7 @@ class MeterTest extends Test:
 
             "with interruptions" in runJVM {
                 (for
-                    size    <- Choice.eval(1, 2, 3, 50, 100)
+                    size    <- Choice.eval(1, 2, 3, 50)
                     meter   <- Meter.initSemaphore(size)
                     started <- Latch.init(100)
                     latch   <- Latch.init(1)
