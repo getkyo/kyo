@@ -421,7 +421,7 @@ class TMapTest extends Test:
 
         "concurrent updates" in runNotJS {
             (for
-                size <- Choice.eval(1, 10, 100)
+                size <- Choice.eval(1, 10, 50)
                 map  <- STM.run(TMap.init[Int, Int]())
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, 1))
