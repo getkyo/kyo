@@ -313,3 +313,11 @@ case class HttpWebSocketHandshakeException private (url: String, status: Int)(us
 object HttpWebSocketHandshakeException:
     def apply(url: String, status: Int)(using Frame): HttpWebSocketHandshakeException =
         new HttpWebSocketHandshakeException(HttpException.stripQuery(url), status)
+
+// --- Protocol wire-level failures ---
+
+/** HTTP wire protocol parse error (malformed request line, status line, headers, or body framing). */
+case class HttpProtocolException private[kyo] (detail: String)(using Frame)
+    extends HttpDecodeException(
+        s"HTTP protocol error: $detail"
+    )
