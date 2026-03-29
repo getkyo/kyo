@@ -116,12 +116,21 @@ static void on_accept(h2o_socket_t *listener, const char *err) {
 
 /* ── Handler callback ──────────────────────────────────────────────── */
 
+static __thread int in_handler = 0;
 static int on_req(h2o_handler_t *self, h2o_req_t *req) {
+    if (in_handler) {
+        fprintf(stderr, "[WS-C] RECURSIVE HANDLER CALL!\n");
+        return -1;
+    }
+    in_handler = 1;
     kyo_h2o_handler *h = (kyo_h2o_handler *)self;
     kyo_h2o_server *server = h->server;
     if (server && server->handler_fn) {
-        return server->handler_fn(server, req);
+        int ret = server->handler_fn(server, req);
+        in_handler = 0;
+        return ret;
     }
+    in_handler = 0;
     /* No handler registered — 500 */
     req->res.status = 500;
     req->res.reason = "Internal Server Error";
@@ -526,9 +535,8 @@ void kyo_h2o_wake(kyo_h2o_server *server) {
     write(server->response_pipe[1], &c, 1);
 }
 
-/* ── WebSocket support (requires libwslay) ─────────────────────────── */
+/* ── WebSocket support ─────────────────────────────────────────────── */
 
-#if __has_include(<wslay/wslay.h>)
 #include <h2o/websocket.h>
 
 /* WebSocket message callback — forwards frame data to Scala via function pointer. */
@@ -560,22 +568,28 @@ static void kyo_ws_on_msg(h2o_websocket_conn_t *conn, const struct wslay_event_o
 /* Check if a request is a WebSocket upgrade. Returns 1 if yes, 0 if no. */
 int kyo_h2o_is_websocket(h2o_req_t *req) {
     const char *key;
-    return h2o_is_websocket_handshake(req, &key);
+    h2o_is_websocket_handshake(req, &key);
+    return key != NULL ? 1 : 0;
 }
 
 /* Upgrade a request to WebSocket. Returns the connection pointer (as void*). */
 void *kyo_h2o_upgrade_websocket(h2o_req_t *req, void *user_data,
                                  kyo_ws_msg_fn msg_fn, kyo_ws_close_fn close_fn) {
     const char *key;
-    if (!h2o_is_websocket_handshake(req, &key)) return NULL;
+    h2o_is_websocket_handshake(req, &key);
+    fprintf(stderr, "[WS-C] upgrade: key=%s\n", key ? key : "NULL");
+    if (key == NULL) return NULL;
 
     kyo_ws_state *state = malloc(sizeof(kyo_ws_state));
     state->user_data = user_data;
     state->msg_fn = msg_fn;
     state->close_fn = close_fn;
 
+    fprintf(stderr, "[WS-C] calling h2o_upgrade_to_websocket...\n");
     h2o_websocket_conn_t *conn = h2o_upgrade_to_websocket(req, key, state, kyo_ws_on_msg);
+    fprintf(stderr, "[WS-C] upgrade returned conn=%p\n", (void*)conn);
     state->conn = conn;
+    fprintf(stderr, "[WS-C] returning conn to Scala\n");
     return conn;
 }
 
@@ -597,11 +611,226 @@ void kyo_h2o_ws_close(void *conn_ptr) {
     h2o_websocket_close(conn);
 }
 
-#else
-/* Stub implementations when wslay is not available */
-int kyo_h2o_is_websocket(void *req) { return 0; }
-void *kyo_h2o_upgrade_websocket(void *req, void *ud, void *mfn, void *cfn) { return NULL; }
-void kyo_h2o_ws_send(void *conn, int op, const char *d, int l) {}
-void kyo_h2o_ws_close(void *conn) {}
-#endif
+/* ── WebSocket client (wslay + POSIX sockets) ──────────────────────── */
+
+#include <wslay/wslay.h>
+#include <sys/socket.h>
+#include <netdb.h>
+/* openssl/sha.h not needed — client doesn't validate Sec-WebSocket-Accept */
+
+/* Client state */
+typedef struct {
+    int fd;
+    wslay_event_context_ptr ctx;
+    kyo_ws_msg_fn msg_fn;
+    kyo_ws_close_fn close_fn;
+    void *user_data;
+    int closed;
+} kyo_ws_client;
+
+/* wslay recv callback — reads from TCP socket */
+static ssize_t ws_client_recv(wslay_event_context_ptr ctx,
+                               uint8_t *buf, size_t len,
+                               int flags, void *user_data) {
+    kyo_ws_client *c = (kyo_ws_client *)user_data;
+    ssize_t r;
+    while ((r = recv(c->fd, buf, len, 0)) == -1 && errno == EINTR);
+    if (r == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            wslay_event_set_error(ctx, WSLAY_ERR_WOULDBLOCK);
+            return -1;
+        }
+        wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
+        return -1;
+    }
+    return r;
+}
+
+/* wslay send callback — writes to TCP socket */
+static ssize_t ws_client_send(wslay_event_context_ptr ctx,
+                               const uint8_t *data, size_t len,
+                               int flags, void *user_data) {
+    kyo_ws_client *c = (kyo_ws_client *)user_data;
+    ssize_t r;
+    while ((r = send(c->fd, data, len, 0)) == -1 && errno == EINTR);
+    if (r == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            wslay_event_set_error(ctx, WSLAY_ERR_WOULDBLOCK);
+            return -1;
+        }
+        wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
+        return -1;
+    }
+    return r;
+}
+
+/* wslay message callback — delivers frames to Scala */
+static void ws_client_on_msg(wslay_event_context_ptr ctx,
+                              const struct wslay_event_on_msg_recv_arg *arg,
+                              void *user_data) {
+    kyo_ws_client *c = (kyo_ws_client *)user_data;
+    if (arg->opcode == WSLAY_CONNECTION_CLOSE) {
+        c->closed = 1;
+        if (c->close_fn) c->close_fn(c->user_data);
+    } else if (c->msg_fn) {
+        c->msg_fn(c->user_data, (int)arg->opcode, (const char *)arg->msg, (int)arg->msg_length);
+    }
+}
+
+/* Base64-encode for Sec-WebSocket-Key */
+static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static void base64_encode(const unsigned char *in, int len, char *out) {
+    int i, j;
+    for (i = 0, j = 0; i < len; i += 3) {
+        unsigned int val = in[i] << 16;
+        if (i + 1 < len) val |= in[i+1] << 8;
+        if (i + 2 < len) val |= in[i+2];
+        out[j++] = b64[(val >> 18) & 63];
+        out[j++] = b64[(val >> 12) & 63];
+        out[j++] = (i + 1 < len) ? b64[(val >> 6) & 63] : '=';
+        out[j++] = (i + 2 < len) ? b64[val & 63] : '=';
+    }
+    out[j] = '\0';
+}
+
+/**
+ * Connect to a WebSocket server. Performs TCP connect + HTTP upgrade + wslay init.
+ * Returns NULL on failure, otherwise a kyo_ws_client pointer.
+ */
+void *kyo_ws_client_connect(const char *host, int port, const char *path,
+                             const char *extra_headers,
+                             void *user_data,
+                             kyo_ws_msg_fn msg_fn,
+                             kyo_ws_close_fn close_fn) {
+    /* Resolve host */
+    struct addrinfo hints = {0}, *res;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    char port_str[8];
+    snprintf(port_str, sizeof(port_str), "%d", port);
+    if (getaddrinfo(host, port_str, &hints, &res) != 0) return NULL;
+
+    int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (fd < 0) { freeaddrinfo(res); return NULL; }
+    if (connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
+        close(fd); freeaddrinfo(res); return NULL;
+    }
+    freeaddrinfo(res);
+
+    /* Generate Sec-WebSocket-Key (16 random bytes, base64-encoded) */
+    unsigned char key_bytes[16];
+    FILE *urand = fopen("/dev/urandom", "r");
+    if (!urand || fread(key_bytes, 1, 16, urand) != 16) {
+        if (urand) fclose(urand);
+        close(fd); return NULL;
+    }
+    fclose(urand);
+    char key_b64[25];
+    base64_encode(key_bytes, 16, key_b64);
+
+    /* Send HTTP upgrade request */
+    char req[4096];
+    int rlen = snprintf(req, sizeof(req),
+        "GET %s HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Key: %s\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "%s"
+        "\r\n",
+        path, host, port, key_b64,
+        extra_headers ? extra_headers : "");
+    if (send(fd, req, rlen, 0) != rlen) { close(fd); return NULL; }
+
+    /* Read HTTP response (up to \r\n\r\n) */
+    char resp[4096];
+    int resp_len = 0;
+    while (resp_len < (int)sizeof(resp) - 1) {
+        ssize_t n = recv(fd, resp + resp_len, 1, 0);
+        if (n <= 0) { close(fd); return NULL; }
+        resp_len++;
+        if (resp_len >= 4 &&
+            resp[resp_len-4] == '\r' && resp[resp_len-3] == '\n' &&
+            resp[resp_len-2] == '\r' && resp[resp_len-1] == '\n')
+            break;
+    }
+    resp[resp_len] = '\0';
+
+    /* Verify 101 status */
+    if (!strstr(resp, "101")) { close(fd); return NULL; }
+
+    /* Init wslay client context */
+    kyo_ws_client *c = calloc(1, sizeof(kyo_ws_client));
+    c->fd = fd;
+    c->msg_fn = msg_fn;
+    c->close_fn = close_fn;
+    c->user_data = user_data;
+
+    struct wslay_event_callbacks cbs = {
+        .recv_callback = ws_client_recv,
+        .send_callback = ws_client_send,
+        .on_msg_recv_callback = ws_client_on_msg,
+    };
+    if (wslay_event_context_client_init(&c->ctx, &cbs, c) != 0) {
+        close(fd); free(c); return NULL;
+    }
+
+    return c;
+}
+
+/** Pump the wslay event loop — call recv then send. Returns 0 on success, -1 on close/error. */
+int kyo_ws_client_service(void *client_ptr) {
+    kyo_ws_client *c = (kyo_ws_client *)client_ptr;
+    if (c->closed) return -1;
+    if (wslay_event_recv(c->ctx) != 0) return -1;
+    if (wslay_event_send(c->ctx) != 0) return -1;
+    return 0;
+}
+
+/** Queue a message for sending. opcode: 1=text, 2=binary. */
+int kyo_ws_client_send(void *client_ptr, int opcode, const char *data, int len) {
+    kyo_ws_client *c = (kyo_ws_client *)client_ptr;
+    struct wslay_event_msg msg = {
+        .opcode = (uint8_t)opcode,
+        .msg = (const uint8_t *)data,
+        .msg_length = (size_t)len
+    };
+    if (wslay_event_queue_msg(c->ctx, &msg) != 0) return -1;
+    return wslay_event_send(c->ctx);
+}
+
+/** Queue a close frame and send it. */
+int kyo_ws_client_close(void *client_ptr, int code) {
+    kyo_ws_client *c = (kyo_ws_client *)client_ptr;
+    uint8_t payload[2] = { (code >> 8) & 0xff, code & 0xff };
+    struct wslay_event_msg msg = {
+        .opcode = WSLAY_CONNECTION_CLOSE,
+        .msg = payload,
+        .msg_length = 2
+    };
+    wslay_event_queue_msg(c->ctx, &msg);
+    wslay_event_send(c->ctx);
+    return 0;
+}
+
+/** Free client resources. */
+void kyo_ws_client_free(void *client_ptr) {
+    kyo_ws_client *c = (kyo_ws_client *)client_ptr;
+    if (c->ctx) wslay_event_context_free(c->ctx);
+    if (c->fd >= 0) close(c->fd);
+    free(c);
+}
+
+/** Check if the client wants to read (for polling). */
+int kyo_ws_client_want_read(void *client_ptr) {
+    kyo_ws_client *c = (kyo_ws_client *)client_ptr;
+    return wslay_event_want_read(c->ctx);
+}
+
+/** Get the socket fd for polling. */
+int kyo_ws_client_fd(void *client_ptr) {
+    kyo_ws_client *c = (kyo_ws_client *)client_ptr;
+    return c->fd;
+}
 

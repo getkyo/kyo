@@ -573,8 +573,14 @@ lazy val `kyo-http` =
                 val curlLinkFlags =
                     try "pkg-config --libs libcurl".!!.trim.split("\\s+").toSeq
                     catch { case _: Exception => Seq("-lcurl") }
-                c.withCompileOptions(c.compileOptions ++ Seq("-DH2O_USE_LIBUV=0") ++ h2oCompileFlags)
-                    .withLinkingOptions(c.linkingOptions ++ curlLinkFlags ++ h2oLinkFlags)
+                val wslayCompileFlags =
+                    try "pkg-config --cflags libwslay".!!.trim.split("\\s+").toSeq
+                    catch { case _: Exception => Seq.empty }
+                val wslayLinkFlags =
+                    try "pkg-config --libs libwslay".!!.trim.split("\\s+").toSeq
+                    catch { case _: Exception => Seq("-lwslay") }
+                c.withCompileOptions(c.compileOptions ++ Seq("-DH2O_USE_LIBUV=0") ++ h2oCompileFlags ++ wslayCompileFlags)
+                    .withLinkingOptions(c.linkingOptions ++ curlLinkFlags ++ h2oLinkFlags ++ wslayLinkFlags)
             }
         )
 

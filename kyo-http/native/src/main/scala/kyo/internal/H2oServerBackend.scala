@@ -11,6 +11,7 @@ import kyo.internal.H2oBindings.H2oReq
 import kyo.internal.H2oBindings.H2oServer
 import kyo.internal.HttpRouter.*
 import scala.compiletime.uninitialized
+import scala.scalanative.runtime.fromRawPtr
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
 
@@ -276,8 +277,10 @@ private[kyo] object H2oServerBackend:
         H2oBindings.acceptStart(newServer)
 
         ss.evloopThread = new Thread(
+            null,
             () => while H2oBindings.evloopRunOnce(newServer) == 0 do (),
-            "kyo-h2o-evloop"
+            "kyo-h2o-evloop",
+            16 * 1024 * 1024 // 16MB stack for event loop thread
         )
         ss.evloopThread.setDaemon(true)
         ss.evloopThread.start()
@@ -321,54 +324,59 @@ private[kyo] object H2oServerBackend:
 
         ss.router.find(method, path) match
             case Result.Success(routeMatch) =>
-                val headers = readHeaders(req)
-                val body    = readBody(req)
+                routeMatch.endpoint match
+                    case wsHandler: WebSocketHttpHandler =>
+                        handleWebSocketUpgrade(ss, req, wsHandler, path, fullPath, queryAt)
+                    case _ =>
+                        val headers = readHeaders(req)
+                        val body    = readBody(req)
 
-                val endpoint = routeMatch.endpoint
-                val route    = endpoint.route
+                        val endpoint = routeMatch.endpoint
+                        val route    = endpoint.route
 
-                val queryFn: Maybe[HttpUrl] =
-                    if queryAt < 0 then Absent
-                    else Present(HttpUrl.fromUri(fullPath))
+                        val queryFn: Maybe[HttpUrl] =
+                            if queryAt < 0 then Absent
+                            else Present(HttpUrl.fromUri(fullPath))
 
-                val methodOvr = Present(method)
-                val decoded =
-                    if routeMatch.isStreamingRequest then
-                        val bodyStream =
-                            if body.isEmpty then Stream.empty[Span[Byte]]
-                            else Stream(Emit.value(Chunk(body)))
-                        RouteUtil.decodeStreamingRequest(
-                            route,
-                            routeMatch.pathCaptures,
-                            queryFn,
-                            headers,
-                            bodyStream,
-                            path,
-                            methodOvr
-                        )
-                    else
-                        RouteUtil.decodeBufferedRequest(
-                            route,
-                            routeMatch.pathCaptures,
-                            queryFn,
-                            headers,
-                            body,
-                            path,
-                            methodOvr
-                        )
+                        val methodOvr = Present(method)
+                        val decoded =
+                            if routeMatch.isStreamingRequest then
+                                val bodyStream =
+                                    if body.isEmpty then Stream.empty[Span[Byte]]
+                                    else Stream(Emit.value(Chunk(body)))
+                                RouteUtil.decodeStreamingRequest(
+                                    route,
+                                    routeMatch.pathCaptures,
+                                    queryFn,
+                                    headers,
+                                    bodyStream,
+                                    path,
+                                    methodOvr
+                                )
+                            else
+                                RouteUtil.decodeBufferedRequest(
+                                    route,
+                                    routeMatch.pathCaptures,
+                                    queryFn,
+                                    headers,
+                                    body,
+                                    path,
+                                    methodOvr
+                                )
 
-                decoded match
-                    case Result.Success(request) =>
-                        launchHandlerFiber(ss, req, endpoint, route, request, isHead = method == HttpMethod.HEAD)
-                    case Result.Failure(_: HttpUnsupportedMediaTypeException) =>
-                        sendImmediateError(req, 415, HttpHeaders.empty)
-                        discard(ss.inFlight.decrementAndGet())
-                    case Result.Failure(_) =>
-                        sendImmediateError(req, 400, HttpHeaders.empty)
-                        discard(ss.inFlight.decrementAndGet())
-                    case Result.Panic(_) =>
-                        sendImmediateError(req, 500, HttpHeaders.empty)
-                        discard(ss.inFlight.decrementAndGet())
+                        decoded match
+                            case Result.Success(request) =>
+                                launchHandlerFiber(ss, req, endpoint, route, request, isHead = method == HttpMethod.HEAD)
+                            case Result.Failure(_: HttpUnsupportedMediaTypeException) =>
+                                sendImmediateError(req, 415, HttpHeaders.empty)
+                                discard(ss.inFlight.decrementAndGet())
+                            case Result.Failure(_) =>
+                                sendImmediateError(req, 400, HttpHeaders.empty)
+                                discard(ss.inFlight.decrementAndGet())
+                            case Result.Panic(_) =>
+                                sendImmediateError(req, 500, HttpHeaders.empty)
+                                discard(ss.inFlight.decrementAndGet())
+                        end match
                 end match
 
             case Result.Failure(FindError.Options(headers)) =>
@@ -393,6 +401,125 @@ private[kyo] object H2oServerBackend:
                 discard(ss.inFlight.decrementAndGet())
         end match
     end handleRequest
+
+    // ── Request parsing helpers ─────────────────────────────────────────
+
+    // ── WebSocket upgrade ───────────────────────────────────────────────
+
+    private def handleWebSocketUpgrade(
+        ss: ServerState,
+        req: H2oBindings.H2oReq,
+        wsHandler: WebSocketHttpHandler,
+        path: String,
+        fullPath: String,
+        queryAt: Int
+    )(using AllowUnsafe, Frame): Unit =
+        // Perform h2o upgrade on the event loop thread (required by h2o)
+        val connPtr = H2oBindings.upgradeWebSocket(req, null, WsRegistry.msgCallback, WsRegistry.closeCallback)
+        if connPtr == null then
+            sendImmediateError(req, 500, HttpHeaders.empty)
+            discard(ss.inFlight.decrementAndGet())
+        else
+            // Capture state needed by the session thread — keep stack usage minimal
+            // because h2o's event loop call chain is deep
+            val config   = wsHandler.wsConfig
+            val server   = ss.server
+            val inFlight = ss.inFlight
+            val kyoUrl   = if queryAt < 0 then HttpUrl(Absent, "", 0, path, Absent) else HttpUrl.fromUri(fullPath)
+            val kyoReq   = HttpRequest(HttpMethod.GET, kyoUrl, HttpHeaders.empty, Record.empty)
+            val f        = summon[Frame]
+
+            // Launch WebSocket session on a separate thread — h2o's event loop stack
+            // is too deep for Channel/Fiber initialization
+            new Thread(() => startWsSession(connPtr, wsHandler, kyoReq, config, server, inFlight, f), "kyo-ws").start()
+        end if
+    end handleWebSocketUpgrade
+
+    private def startWsSession(
+        connPtr: H2oBindings.H2oWsConn,
+        wsHandler: WebSocketHttpHandler,
+        kyoReq: HttpRequest[Any],
+        config: WebSocketConfig,
+        server: H2oBindings.H2oServer,
+        inFlight: AtomicInteger,
+        f: Frame
+    ): Unit =
+        import AllowUnsafe.embrace.danger
+        import scala.scalanative.unsafe.*
+        given Frame = f
+
+        val inbound  = Channel.Unsafe.init[WebSocketFrame](config.bufferSize)
+        val outbound = Channel.Unsafe.init[WebSocketFrame](config.bufferSize)
+        val closeRef = AtomicRef.Unsafe.init[Maybe[(Int, String)]](Absent)
+        val wsId     = WsRegistry.register(inbound, outbound, closeRef)
+
+        val closeFn: (Int, String) => Unit < Async = (code, reason) =>
+            Sync.Unsafe.defer {
+                discard(closeRef.set(Present((code, reason))))
+                H2oBindings.wsClose(connPtr)
+            }
+
+        val ws = new WebSocket(inbound.safe, outbound.safe, closeRef.safe, closeFn)
+
+        // Drain fiber for outbound messages
+        val drainFiber = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
+            Sync.Unsafe.ensure {
+                discard(inbound.close())
+                discard(outbound.close())
+            } {
+                Loop.foreach {
+                    outbound.safe.takeWith { frame =>
+                        Sync.defer {
+                            import AllowUnsafe.embrace.danger
+                            Zone {
+                                frame match
+                                    case WebSocketFrame.Text(data) =>
+                                        val bytes = data.getBytes("UTF-8")
+                                        if bytes.length > 0 then
+                                            val ptr = stackalloc[Byte](bytes.length)
+                                            var i   = 0
+                                            while i < bytes.length do
+                                                ptr(i) = bytes(i)
+                                                i += 1
+                                            discard(H2oBindings.wsSend(connPtr, 1, ptr, bytes.length))
+                                        end if
+                                    case WebSocketFrame.Binary(data) =>
+                                        val arr = data.toArrayUnsafe
+                                        if arr.length > 0 then
+                                            val ptr = stackalloc[Byte](arr.length)
+                                            var i   = 0
+                                            while i < arr.length do
+                                                ptr(i) = arr(i)
+                                                i += 1
+                                            discard(H2oBindings.wsSend(connPtr, 2, ptr, arr.length))
+                                        end if
+                                end match
+                                H2oBindings.wake(server)
+                            }
+                        }.andThen(Loop.continue)
+                    }
+                }.handle(Abort.run[Closed]).unit
+            }
+        })
+
+        // Handler fiber
+        discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
+            Sync.ensure {
+                Sync.defer {
+                    import AllowUnsafe.embrace.danger
+                    discard(outbound.close())
+                    discard(inbound.close())
+                    H2oBindings.wsClose(connPtr)
+                    H2oBindings.wake(server)
+                    discard(drainFiber.unsafe.interrupt(Result.Panic(new Exception("handler done"))))
+                    discard(inFlight.decrementAndGet())
+                    WsRegistry.unregister(wsId)
+                }
+            } {
+                wsHandler.wsHandler(kyoReq, ws).handle(Abort.run[Any]).unit
+            }
+        }))
+    end startWsSession
 
     // ── Request parsing helpers ─────────────────────────────────────────
 

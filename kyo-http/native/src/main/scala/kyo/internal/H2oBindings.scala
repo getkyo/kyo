@@ -178,4 +178,37 @@ private[kyo] object H2oBindings:
     @extern @name("kyo_h2o_ws_close")
     def wsClose(conn: H2oWsConn): Unit = extern
 
+    // ── WebSocket client (wslay + POSIX sockets) ─────────────────────────
+
+    type WsClient = Ptr[Byte]
+
+    @extern @name("kyo_ws_client_connect")
+    def wsClientConnect(
+        host: CString,
+        port: CInt,
+        path: CString,
+        extraHeaders: CString,
+        userData: Ptr[Byte],
+        msgFn: WsMsgFn,
+        closeFn: WsCloseFn
+    ): WsClient = extern
+
+    @extern @name("kyo_ws_client_service")
+    def wsClientService(client: WsClient): CInt = extern
+
+    @extern @name("kyo_ws_client_send")
+    def wsClientSend(client: WsClient, opcode: CInt, data: Ptr[Byte], len: CInt): CInt = extern
+
+    @extern @name("kyo_ws_client_close")
+    def wsClientClose(client: WsClient, code: CInt): CInt = extern
+
+    @extern @name("kyo_ws_client_free")
+    def wsClientFree(client: WsClient): Unit = extern
+
+    @extern @name("kyo_ws_client_fd")
+    def wsClientFd(client: WsClient): CInt = extern
+
+    @extern @name("kyo_ws_client_want_read")
+    def wsClientWantRead(client: WsClient): CInt = extern
+
 end H2oBindings
