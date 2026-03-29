@@ -526,3 +526,82 @@ void kyo_h2o_wake(kyo_h2o_server *server) {
     write(server->response_pipe[1], &c, 1);
 }
 
+/* ── WebSocket support (requires libwslay) ─────────────────────────── */
+
+#if __has_include(<wslay/wslay.h>)
+#include <h2o/websocket.h>
+
+/* WebSocket message callback — forwards frame data to Scala via function pointer. */
+typedef void (*kyo_ws_msg_fn)(void *user_data, int opcode, const char *data, int len);
+typedef void (*kyo_ws_close_fn)(void *user_data);
+
+typedef struct {
+    h2o_websocket_conn_t *conn;
+    void *user_data;
+    kyo_ws_msg_fn msg_fn;
+    kyo_ws_close_fn close_fn;
+} kyo_ws_state;
+
+static void kyo_ws_on_msg(h2o_websocket_conn_t *conn, const struct wslay_event_on_msg_recv_arg *arg) {
+    kyo_ws_state *state = (kyo_ws_state *)conn->data;
+    if (arg == NULL) {
+        /* Connection closed */
+        if (state->close_fn) {
+            state->close_fn(state->user_data);
+        }
+        free(state);
+        return;
+    }
+    if (state->msg_fn) {
+        state->msg_fn(state->user_data, (int)arg->opcode, (const char *)arg->msg, (int)arg->msg_length);
+    }
+}
+
+/* Check if a request is a WebSocket upgrade. Returns 1 if yes, 0 if no. */
+int kyo_h2o_is_websocket(h2o_req_t *req) {
+    const char *key;
+    return h2o_is_websocket_handshake(req, &key);
+}
+
+/* Upgrade a request to WebSocket. Returns the connection pointer (as void*). */
+void *kyo_h2o_upgrade_websocket(h2o_req_t *req, void *user_data,
+                                 kyo_ws_msg_fn msg_fn, kyo_ws_close_fn close_fn) {
+    const char *key;
+    if (!h2o_is_websocket_handshake(req, &key)) return NULL;
+
+    kyo_ws_state *state = malloc(sizeof(kyo_ws_state));
+    state->user_data = user_data;
+    state->msg_fn = msg_fn;
+    state->close_fn = close_fn;
+
+    h2o_websocket_conn_t *conn = h2o_upgrade_to_websocket(req, key, state, kyo_ws_on_msg);
+    state->conn = conn;
+    return conn;
+}
+
+/* Send a WebSocket frame. opcode: 1=text, 2=binary. */
+void kyo_h2o_ws_send(void *conn_ptr, int opcode, const char *data, int len) {
+    h2o_websocket_conn_t *conn = (h2o_websocket_conn_t *)conn_ptr;
+    struct wslay_event_msg msg = {
+        .opcode = (uint8_t)opcode,
+        .msg = (const uint8_t *)data,
+        .msg_length = (size_t)len
+    };
+    wslay_event_queue_msg(conn->ws_ctx, &msg);
+    h2o_websocket_proceed(conn);
+}
+
+/* Close a WebSocket connection. */
+void kyo_h2o_ws_close(void *conn_ptr) {
+    h2o_websocket_conn_t *conn = (h2o_websocket_conn_t *)conn_ptr;
+    h2o_websocket_close(conn);
+}
+
+#else
+/* Stub implementations when wslay is not available */
+int kyo_h2o_is_websocket(void *req) { return 0; }
+void *kyo_h2o_upgrade_websocket(void *req, void *ud, void *mfn, void *cfn) { return NULL; }
+void kyo_h2o_ws_send(void *conn, int op, const char *d, int l) {}
+void kyo_h2o_ws_close(void *conn) {}
+#endif
+

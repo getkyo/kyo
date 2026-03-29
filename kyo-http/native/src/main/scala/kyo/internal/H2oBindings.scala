@@ -149,4 +149,33 @@ private[kyo] object H2oBindings:
     @extern @name("kyo_h2o_wake")
     def wake(server: H2oServer): Unit = extern
 
+    // ── WebSocket ────────────────────────────────────────────────────────
+
+    type H2oWsConn = Ptr[Byte]
+
+    // Callback types for WebSocket events
+    type WsMsgFn   = CFuncPtr4[Ptr[Byte], CInt, Ptr[Byte], CInt, Unit]
+    type WsCloseFn = CFuncPtr1[Ptr[Byte], Unit]
+
+    /** Check if a request is a WebSocket upgrade. Returns non-zero if yes. */
+    @extern @name("kyo_h2o_is_websocket")
+    def isWebSocket(req: H2oReq): CInt = extern
+
+    /** Upgrade a request to WebSocket. Returns the connection pointer. */
+    @extern @name("kyo_h2o_upgrade_websocket")
+    def upgradeWebSocket(
+        req: H2oReq,
+        userData: Ptr[Byte],
+        msgFn: WsMsgFn,
+        closeFn: WsCloseFn
+    ): H2oWsConn = extern
+
+    /** Send a WebSocket frame. opcode: 1=text, 2=binary. */
+    @extern @name("kyo_h2o_ws_send")
+    def wsSend(conn: H2oWsConn, opcode: CInt, data: Ptr[Byte], len: CInt): Unit = extern
+
+    /** Close a WebSocket connection. */
+    @extern @name("kyo_h2o_ws_close")
+    def wsClose(conn: H2oWsConn): Unit = extern
+
 end H2oBindings

@@ -22,6 +22,11 @@ trait NodeHttpServerJs extends js.Object:
     def closeIdleConnections(): Unit                                                                  = js.native
     def address(): js.Dynamic                                                                         = js.native
     def on(event: String, listener: js.Function1[js.Dynamic, Unit]): NodeHttpServerJs                 = js.native
+    @JSName("on")
+    def onUpgrade(
+        event: String,
+        listener: js.Function3[IncomingMessage, NetSocket, Uint8Array, Unit]
+    ): NodeHttpServerJs = js.native
 end NodeHttpServerJs
 
 /** Node.js http.IncomingMessage (request). Extends Readable stream. */
@@ -48,3 +53,20 @@ trait ServerResponse extends js.Object:
     def on(event: String, listener: js.Function0[Unit]): ServerResponse   = js.native
     def once(event: String, listener: js.Function0[Unit]): ServerResponse = js.native
 end ServerResponse
+
+/** Node.js net.Socket — raw TCP socket from HTTP upgrade events. */
+@js.native
+trait NetSocket extends js.Object:
+    def write(data: String): Boolean                               = js.native
+    def write(data: Uint8Array): Boolean                           = js.native
+    def end(): Unit                                                = js.native
+    def destroy(): Unit                                            = js.native
+    def on(event: String, listener: js.Function0[Unit]): NetSocket = js.native
+    @JSName("on")
+    def onData(event: String, listener: js.Function1[Uint8Array, Unit]): NetSocket = js.native
+    def pause(): NetSocket                                                         = js.native
+    def resume(): NetSocket                                                        = js.native
+    def setNoDelay(noDelay: Boolean): NetSocket                                    = js.native
+    def setTimeout(timeout: Int): NetSocket                                        = js.native
+    def unshift(chunk: Uint8Array): Unit                                           = js.native
+end NetSocket

@@ -29,14 +29,39 @@ final class NodeServerBackend extends HttpBackend.Server:
                 keepAlive = config.keepAlive
             )
 
-            val requestListener = (req: IncomingMessage, res: ServerResponse) =>
+            // Build WebSocket handler map for upgrade detection in handleRequest
+            val wsHandlerMap: Map[String, WebSocketHttpHandler] =
+                handlers.collect { case ws: WebSocketHttpHandler =>
+                    val p = ws.route.request.path match
+                        case HttpPath.Literal(value) => value
+                        case other                   => other.toString
+                    val normalized = if p.startsWith("/") then p else s"/$p"
+                    normalized -> ws
+                }.toMap
+
+            val requestListener: js.Function2[IncomingMessage, ServerResponse, Unit] = (req: IncomingMessage, res: ServerResponse) =>
                 import AllowUnsafe.embrace.danger
-                guardResponse(res)(handleRequest(req, res, router, config.maxContentLength))
+                guardResponse(res)(handleRequest(req, res, router, config.maxContentLength, wsHandlerMap))
 
             val nodeServer = NodeHttp.createServer(
                 options.asInstanceOf[js.Object],
                 requestListener
             )
+
+            // Register WebSocket upgrade handler via JS eval to ensure correct registration
+            if wsHandlerMap.nonEmpty then
+                val crypto = js.Dynamic.global.require("crypto")
+                val onUpgrade: js.Function3[js.Dynamic, js.Dynamic, js.Dynamic, Unit] =
+                    (req: js.Dynamic, socket: js.Dynamic, head: js.Dynamic) =>
+                        import AllowUnsafe.embrace.danger
+                        NodeWebSocketServer.handleUpgrade(
+                            req.asInstanceOf[IncomingMessage],
+                            socket.asInstanceOf[NetSocket],
+                            head.asInstanceOf[Uint8Array],
+                            wsHandlerMap
+                        )
+                discard(nodeServer.asInstanceOf[js.Dynamic].on("upgrade", onUpgrade))
+            end if
 
             discard(nodeServer.on(
                 "error",
@@ -93,7 +118,8 @@ final class NodeServerBackend extends HttpBackend.Server:
         req: IncomingMessage,
         res: ServerResponse,
         router: HttpRouter,
-        maxContentLength: Int
+        maxContentLength: Int,
+        wsHandlerMap: Map[String, WebSocketHttpHandler]
     )(using AllowUnsafe, Frame): Unit =
         val method  = HttpMethod.unsafe(req.method)
         val uri     = req.url
@@ -126,10 +152,15 @@ final class NodeServerBackend extends HttpBackend.Server:
                 ))
 
             case Result.Success(routeMatch) =>
-                if routeMatch.isStreamingRequest then
-                    handleStreaming(req, res, router, routeMatch, uri, path, pathEnd, headers, method)
-                else
-                    handleBuffered(req, res, router, routeMatch, uri, path, pathEnd, headers, maxContentLength, method)
+                routeMatch.endpoint match
+                    case _: WebSocketHttpHandler =>
+                        // WebSocket — handled by upgrade event. Do nothing here.
+                        ()
+                    case _ =>
+                        if routeMatch.isStreamingRequest then
+                            handleStreaming(req, res, router, routeMatch, uri, path, pathEnd, headers, method)
+                        else
+                            handleBuffered(req, res, router, routeMatch, uri, path, pathEnd, headers, maxContentLength, method)
 
             case Result.Panic(_) =>
                 sendErrorResponse(res, HttpStatus.InternalServerError, HttpHeaders.empty)

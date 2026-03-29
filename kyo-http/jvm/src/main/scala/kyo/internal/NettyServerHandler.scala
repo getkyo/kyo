@@ -14,6 +14,7 @@ import io.netty.handler.codec.http.HttpResponseStatus
 import io.netty.handler.codec.http.HttpUtil
 import io.netty.handler.codec.http.HttpVersion
 import io.netty.handler.codec.http.LastHttpContent
+import io.netty.handler.codec.http.websocketx.*
 import io.netty.util.ReferenceCountUtil
 import kyo.*
 import kyo.internal.HttpRouter.*
@@ -87,7 +88,6 @@ final private[kyo] class NettyServerHandler(
         val method    = HttpMethod.unsafe(nettyReq.method().name())
         val uri       = nettyReq.uri()
         val keepAlive = HttpUtil.isKeepAlive(nettyReq)
-        val headers   = NettyUtil.nettyHeadersToKyo(nettyReq.headers())
 
         val pathEnd = uri.indexOf('?')
         val path    = if pathEnd >= 0 then uri.substring(0, pathEnd) else uri
@@ -127,74 +127,16 @@ final private[kyo] class NettyServerHandler(
                 end if
 
             case Result.Success(routeMatch) =>
-                handleExpectContinue(ctx, nettyReq)
-
-                if routeMatch.isStreamingRequest then
-                    state = STATE_STREAMING
-                    pendingKeepAlive = keepAlive
-
-                    val byteChannel = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
-                    streamingChannel = Present(byteChannel)
-                    val bodyStream = Stream[Span[Byte], Async] {
-                        Loop.foreach {
-                            byteChannel.safe.takeWith {
-                                case Present(bytes) =>
-                                    Emit.valueWith(Chunk(bytes))(Loop.continue)
-                                case Absent =>
-                                    Loop.done(())
-                            }
-                        }.handle(Abort.run[Closed]).unit
-                    }
-
-                    val queryFn  = makeQueryParam(uri, pathEnd)
-                    val endpoint = routeMatch.endpoint
-                    val route    = endpoint.route
-
-                    RouteUtil.decodeStreamingRequest(
-                        route,
-                        routeMatch.pathCaptures,
-                        queryFn,
-                        headers,
-                        bodyStream,
-                        path,
-                        Present(method)
-                    ) match
-                        case Result.Success(request) =>
-                            invokeHandler(ctx, endpoint, route, request, keepAlive, method == HttpMethod.HEAD)
-                        case Result.Failure(_: HttpUnsupportedMediaTypeException) =>
-                            streamingChannel.foreach(ch => discard(ch.close()))
-                            streamingChannel = Absent
-                            state = STATE_IDLE
-                            sendErrorResponse(ctx, HttpStatus.UnsupportedMediaType, HttpHeaders.empty, keepAlive)
-                        case Result.Failure(err) =>
-                            streamingChannel.foreach(ch => discard(ch.close()))
-                            streamingChannel = Absent
-                            state = STATE_IDLE
-                            sendErrorResponse(ctx, HttpStatus.BadRequest, HttpHeaders.empty, keepAlive)
-                        case Result.Panic(e) =>
-                            streamingChannel.foreach(ch => discard(ch.close()))
-                            streamingChannel = Absent
-                            state = STATE_IDLE
-                            sendErrorResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, keepAlive)
-                    end match
-
-                    if nettyReq.isInstanceOf[HttpContent] then // Body in initial message; rest arrives via STATE_STREAMING
-                        deliverStreamingContent(ctx, nettyReq.asInstanceOf[HttpContent])
-                else
-                    state = STATE_BUFFERING
-                    pendingRouteMatch = Present(routeMatch)
-                    pendingUri = uri
-                    pendingPath = path
-                    pendingPathEnd = pathEnd
-                    pendingHeaders = headers
-                    pendingKeepAlive = keepAlive
-                    pendingIsHead = method == HttpMethod.HEAD
-                    pendingMethod = method
-                    bodyBuf = Present(ctx.alloc().compositeBuffer())
-
-                    if nettyReq.isInstanceOf[HttpContent] then
-                        handleBufferingContent(ctx, nettyReq.asInstanceOf[HttpContent])
-                end if
+                routeMatch.endpoint match
+                    case wsHandler: WebSocketHttpHandler =>
+                        // WebSocket: perform handshake FIRST (needs raw Netty headers),
+                        // then convert headers to kyo format for the handler
+                        handleWebSocketUpgrade(ctx, nettyReq, wsHandler, uri, path, pathEnd)
+                    case _ =>
+                        // Normal HTTP: convert headers (releases FlatNettyHttpHeaders back to pool)
+                        val kyoHeaders = NettyUtil.nettyHeadersToKyo(nettyReq.headers())
+                        handleHttpRouteMatch(ctx, nettyReq, routeMatch, kyoHeaders, uri, path, pathEnd, keepAlive, method)
+                end match
 
             case Result.Panic(_) =>
                 sendErrorResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, keepAlive)
@@ -421,6 +363,152 @@ final private[kyo] class NettyServerHandler(
                 sendBufferedResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, body, keepAlive)
         end try
     end invokeHandler
+
+    private def handleHttpRouteMatch(
+        ctx: ChannelHandlerContext,
+        nettyReq: NettyHttpRequest,
+        routeMatch: RouteMatch,
+        headers: HttpHeaders,
+        uri: String,
+        path: String,
+        pathEnd: Int,
+        keepAlive: Boolean,
+        method: HttpMethod
+    )(using AllowUnsafe): Unit =
+        handleExpectContinue(ctx, nettyReq)
+
+        if routeMatch.isStreamingRequest then
+            state = STATE_STREAMING
+            pendingKeepAlive = keepAlive
+
+            val byteChannel = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
+            streamingChannel = Present(byteChannel)
+            val bodyStream = Stream[Span[Byte], Async] {
+                Loop.foreach {
+                    byteChannel.safe.takeWith {
+                        case Present(bytes) =>
+                            Emit.valueWith(Chunk(bytes))(Loop.continue)
+                        case Absent =>
+                            Loop.done(())
+                    }
+                }.handle(Abort.run[Closed]).unit
+            }
+
+            val queryFn  = makeQueryParam(uri, pathEnd)
+            val endpoint = routeMatch.endpoint
+            val route    = endpoint.route
+
+            RouteUtil.decodeStreamingRequest(
+                route,
+                routeMatch.pathCaptures,
+                queryFn,
+                headers,
+                bodyStream,
+                path,
+                Present(method)
+            ) match
+                case Result.Success(request) =>
+                    invokeHandler(ctx, endpoint, route, request, keepAlive, method == HttpMethod.HEAD)
+                case Result.Failure(_: HttpUnsupportedMediaTypeException) =>
+                    streamingChannel.foreach(ch => discard(ch.close()))
+                    streamingChannel = Absent
+                    state = STATE_IDLE
+                    sendErrorResponse(ctx, HttpStatus.UnsupportedMediaType, HttpHeaders.empty, keepAlive)
+                case Result.Failure(err) =>
+                    streamingChannel.foreach(ch => discard(ch.close()))
+                    streamingChannel = Absent
+                    state = STATE_IDLE
+                    sendErrorResponse(ctx, HttpStatus.BadRequest, HttpHeaders.empty, keepAlive)
+                case Result.Panic(e) =>
+                    streamingChannel.foreach(ch => discard(ch.close()))
+                    streamingChannel = Absent
+                    state = STATE_IDLE
+                    sendErrorResponse(ctx, HttpStatus.InternalServerError, HttpHeaders.empty, keepAlive)
+            end match
+
+            if nettyReq.isInstanceOf[HttpContent] then
+                deliverStreamingContent(ctx, nettyReq.asInstanceOf[HttpContent])
+        else
+            state = STATE_BUFFERING
+            pendingRouteMatch = Present(routeMatch)
+            pendingUri = uri
+            pendingPath = path
+            pendingPathEnd = pathEnd
+            pendingHeaders = headers
+            pendingKeepAlive = keepAlive
+            pendingIsHead = method == HttpMethod.HEAD
+            pendingMethod = method
+            bodyBuf = Present(ctx.alloc().compositeBuffer())
+
+            if nettyReq.isInstanceOf[HttpContent] then
+                handleBufferingContent(ctx, nettyReq.asInstanceOf[HttpContent])
+        end if
+    end handleHttpRouteMatch
+
+    private def handleWebSocketUpgrade(
+        ctx: ChannelHandlerContext,
+        nettyReq: NettyHttpRequest,
+        wsHandler: WebSocketHttpHandler,
+        uri: String,
+        path: String,
+        pathEnd: Int
+    )(using AllowUnsafe): Unit =
+        val config = wsHandler.wsConfig
+        val ch     = ctx.channel()
+        val p      = ch.pipeline()
+
+        val subprotocols =
+            if config.subprotocols.isEmpty then null
+            else config.subprotocols.mkString(",")
+        val wsPath = if path.startsWith("/") then path else s"/$path"
+
+        // Copy headers to kyo format WITHOUT releasing the FlatNettyHttpHeaders pool.
+        // nettyReq.headers() is needed intact for the WebSocket handshake.
+        val kyoHeaders =
+            val builder = ChunkBuilder.init[String]
+            val iter    = nettyReq.headers().iteratorAsString()
+            while iter.hasNext do
+                val entry = iter.next()
+                discard(builder += entry.getKey)
+                discard(builder += entry.getValue)
+            end while
+            HttpHeaders.fromChunk(builder.result())
+        end kyoHeaders
+        val queryFn    = makeQueryParam(uri, pathEnd)
+        val kyoUrl     = queryFn.getOrElse(HttpUrl(Absent, "", 0, path, Absent))
+        val kyoRequest = HttpRequest(HttpMethod.GET, kyoUrl, kyoHeaders, Record.empty)
+
+        val frameHandler = new NettyWebSocketFrameHandler(wsHandler, kyoRequest, config)
+
+        // Replace the pipeline: remove this handler, add standard WS handlers.
+        // HttpObjectAggregator produces FullHttpRequest for WebSocketServerProtocolHandler.
+        // WebSocketServerProtocolHandler handles handshake, ping/pong, close, codec swap.
+        p.addAfter(ctx.name(), "ws-aggregator", new io.netty.handler.codec.http.HttpObjectAggregator(8192))
+        p.addAfter(
+            "ws-aggregator",
+            "ws-protocol",
+            new WebSocketServerProtocolHandler(
+                WebSocketServerProtocolConfig.newBuilder()
+                    .websocketPath(wsPath)
+                    .subprotocols(subprotocols)
+                    .allowExtensions(true)
+                    .maxFramePayloadLength(config.maxFrameSize)
+                    .checkStartsWith(true)
+                    .handshakeTimeoutMillis(10000L)
+                    .build()
+            )
+        )
+        p.addAfter("ws-protocol", "ws-frames", frameHandler)
+        discard(p.remove(this))
+
+        // Forward the HttpRequest to the aggregator. The LastHttpContent will follow
+        // naturally from HttpServerCodec on the next event loop iteration.
+        // Use HttpServerCodec's context so fireChannelRead goes to ws-aggregator.
+        // Retain because channelRead's finally block will release the original.
+        val codecCtx = p.context(classOf[io.netty.handler.codec.http.HttpServerCodec])
+        if codecCtx != null then
+            discard(codecCtx.fireChannelRead(io.netty.util.ReferenceCountUtil.retain(nettyReq)))
+    end handleWebSocketUpgrade
 
     private def sendBufferedResponse(
         ctx: ChannelHandlerContext,

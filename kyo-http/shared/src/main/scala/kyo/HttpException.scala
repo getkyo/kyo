@@ -292,3 +292,24 @@ case class HttpMissingBoundaryException private (method: String, url: String)(us
 object HttpMissingBoundaryException:
     def apply(method: String, url: String)(using Frame): HttpMissingBoundaryException =
         new HttpMissingBoundaryException(method, HttpException.stripQuery(url))
+
+// --- WebSocket failures ---
+
+/** WebSocket-specific failures.
+  *
+  * @see
+  *   [[kyo.HttpWebSocketHandshakeException]] Server rejected the WebSocket upgrade
+  */
+sealed abstract class HttpWebSocketException(message: Text, cause: Text | Throwable = "")(using Frame)
+    extends HttpException(message, cause)
+
+/** WebSocket handshake rejected by the server. */
+case class HttpWebSocketHandshakeException private (url: String, status: Int)(using Frame)
+    extends HttpWebSocketException(
+        s"""WebSocket handshake failed for $url.
+           |
+           |  Server responded with status $status.""".stripMargin
+    )
+object HttpWebSocketHandshakeException:
+    def apply(url: String, status: Int)(using Frame): HttpWebSocketHandshakeException =
+        new HttpWebSocketHandshakeException(HttpException.stripQuery(url), status)

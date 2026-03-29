@@ -401,6 +401,34 @@ object HttpClient:
     ): Stream[V, Async & Abort[HttpException]] =
         Stream(sendUrl(url, HttpRoute.getRaw("").response(_.bodyNdjson[V]))(_.fields.body).map(_.emit))
 
+    // ==================== WebSocket methods ====================
+
+    /** Connects to a WebSocket endpoint. The connection closes when `f` returns. */
+    def webSocket[A, S](url: String)(
+        f: WebSocket => A < S
+    )(using Frame): A < (S & Async & Abort[HttpException]) =
+        webSocket(url, HttpHeaders.empty, WebSocketConfig())(f)
+
+    /** Connects to a WebSocket endpoint with custom headers and configuration. */
+    def webSocket[A, S](url: String, headers: HttpHeaders, config: WebSocketConfig)(
+        f: WebSocket => A < S
+    )(using Frame): A < (S & Async & Abort[HttpException]) =
+        HttpUrl.parse(url) match
+            case Result.Success(parsed) => webSocket(parsed, headers, config)(f)
+            case Result.Failure(err)    => Abort.fail(err)
+
+    /** Connects to a WebSocket endpoint from a parsed URL. */
+    def webSocket[A, S](url: HttpUrl)(
+        f: WebSocket => A < S
+    )(using Frame): A < (S & Async & Abort[HttpException]) =
+        webSocket(url, HttpHeaders.empty, WebSocketConfig())(f)
+
+    /** Connects to a WebSocket endpoint from a parsed URL with custom headers and configuration. */
+    def webSocket[A, S](url: HttpUrl, headers: HttpHeaders, config: WebSocketConfig)(
+        f: WebSocket => A < S
+    )(using Frame): A < (S & Async & Abort[HttpException]) =
+        HttpPlatformBackend.wsClient.connect(url.host, url.port, url.path, url.ssl, headers, config)(f)
+
     // --- Internal ---
 
     private def sendUrl[Out, A](

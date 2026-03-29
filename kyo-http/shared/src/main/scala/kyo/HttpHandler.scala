@@ -32,6 +32,18 @@ sealed abstract class HttpHandler[In, Out, +E](val route: HttpRoute[In, Out, E])
 
 end HttpHandler
 
+/** A WebSocket endpoint handler. Extends HttpHandler so it can be registered with HttpServer.init alongside normal HTTP handlers. The
+  * backend detects this type and performs a WebSocket upgrade instead of normal request-response dispatch.
+  */
+final private[kyo] class WebSocketHttpHandler(
+    route: HttpRoute[Any, Any, Nothing],
+    private[kyo] val wsHandler: (HttpRequest[Any], WebSocket) => Unit < (Async & Abort[Closed]),
+    private[kyo] val wsConfig: WebSocketConfig
+) extends HttpHandler[Any, Any, Nothing](route):
+    def apply(request: HttpRequest[Any])(using Frame) =
+        HttpResponse(HttpStatus.SwitchingProtocols)
+end WebSocketHttpHandler
+
 object HttpHandler:
 
     def init[In, Out, E](
@@ -279,5 +291,21 @@ object HttpHandler:
         val route = HttpRoute.getRaw(path).response(_.bodyNdjson[V])
         route.handler(req => f(req).map(stream => HttpResponse.ok.addField("body", stream)))
     end getNdJson
+
+    // ==================== WebSocket methods ====================
+
+    /** Creates a WebSocket endpoint at the given path. The handler function receives the upgrade request (for auth, cookies, subprotocol
+      * negotiation) and a WebSocket handle. The handler runs for the lifetime of the connection — when it returns, the connection closes.
+      */
+    def webSocket(path: String)(
+        f: (HttpRequest[Any], WebSocket) => Unit < (Async & Abort[Closed])
+    )(using Frame): HttpHandler[Any, Any, Nothing] =
+        new WebSocketHttpHandler(HttpRoute.getRaw(path), f, WebSocketConfig())
+
+    /** Creates a WebSocket endpoint with custom configuration. */
+    def webSocket(path: String, config: WebSocketConfig)(
+        f: (HttpRequest[Any], WebSocket) => Unit < (Async & Abort[Closed])
+    )(using Frame): HttpHandler[Any, Any, Nothing] =
+        new WebSocketHttpHandler(HttpRoute.getRaw(path), f, config)
 
 end HttpHandler

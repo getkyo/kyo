@@ -67,4 +67,22 @@ object HttpBackend:
         def await(using Frame): Unit < Async
     end Binding
 
+    /** Platform abstraction for WebSocket client connections.
+      *
+      * Separate from `Client` because WebSocket has a fundamentally different lifecycle — it upgrades an HTTP connection to a persistent
+      * bidirectional channel rather than following request-response semantics.
+      */
+    trait WebSocketClient:
+        def connect[A, S](
+            host: String,
+            port: Int,
+            path: String,
+            ssl: Boolean,
+            headers: HttpHeaders,
+            config: WebSocketConfig
+        )(
+            f: WebSocket => A < S
+        )(using Frame): A < (S & Async & Abort[HttpException])
+    end WebSocketClient
+
 end HttpBackend
