@@ -17,7 +17,7 @@ class ArrowEffectNestedTest extends Test:
 
     def flatten[A, B, C](v: A < B < C): A < (B & C) = v.map(a => a)
 
-    "handle on Nested (unsafeGet path)" - {
+    "not handle Nested" - {
 
         def handle[A, S](v: A < (S & TestEffect)): A < S =
             ArrowEffect.handle(tag, v):
