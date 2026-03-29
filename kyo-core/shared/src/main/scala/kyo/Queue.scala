@@ -681,8 +681,13 @@ object Queue:
                     offerOp(
                         q.offer(v),
                         q.poll() match
-                            case Maybe.Present(polled) => !(polled.asInstanceOf[AnyRef] eq v.asInstanceOf[AnyRef])
-                            case _                     => true
+                            case Maybe.Present(polled) =>
+                                val isOurs = polled.asInstanceOf[AnyRef] eq v.asInstanceOf[AnyRef]
+                                if !isOurs then
+                                    // Polled someone else's element — put it back
+                                    discard(q.offer(polled))
+                                !isOurs
+                            case _ => true
                     )
                 def poll()(using AllowUnsafe) = pollOp(q.poll())
                 def peek()(using AllowUnsafe) = op(q.peek())

@@ -637,7 +637,7 @@ class ChannelTest extends Test:
                 .andThen(succeed)
         }
 
-        "offer and poll" in runNotNative {
+        "offer and poll" in run {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -657,7 +657,7 @@ class ChannelTest extends Test:
                 .andThen(succeed)
         }
 
-        "put and take" in runNotNative {
+        "put and take" in run {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
