@@ -20,7 +20,7 @@ final class NodeServerBackend extends HttpBackend.Server:
     def bind(
         handlers: Seq[HttpHandler[?, ?, ?]],
         config: HttpServerConfig
-    )(using Frame): HttpBackend.Binding < Async =
+    )(using Frame): HttpBackend.Binding < (Async & Scope) =
         Sync.Unsafe.defer {
             val router = HttpRouter(handlers, config.cors)
             val p      = Promise.Unsafe.init[HttpBackend.Binding, Any]()

@@ -9,7 +9,7 @@ import kyo.*
   *
   * Scope management: bind() creates an internal Scope that owns the server socket and accept loop fiber. A Promise gates close/await.
   */
-class HttpTransportServer(transport: Transport, protocol: Protocol) extends HttpBackend2.Server:
+class HttpTransportServer(transport: Transport, protocol: Protocol) extends HttpBackend.Server:
 
     private val Utf8 = StandardCharsets.UTF_8
 

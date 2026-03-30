@@ -37,20 +37,20 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
         conn: Connection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
+        onRelease: Maybe[Result.Error[Any]] => Unit < Sync
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
         if RouteUtil.isStreamingResponse(route) then
-            sendStreaming(conn, route, request, onReleaseUnsafe)(f)
+            sendStreaming(conn, route, request, onRelease)(f)
         else
-            sendBuffered(conn, route, request, onReleaseUnsafe)(f)
+            sendBuffered(conn, route, request, onRelease)(f)
 
     private def sendBuffered[In, Out, A](
         conn: Connection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
+        onRelease: Maybe[Result.Error[Any]] => Unit < Sync
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
@@ -58,7 +58,7 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
             val transferId = CurlClientBackend.nextTransferId.getAndIncrement()
             Sync.ensure { error =>
                 Sync.Unsafe.defer {
-                    onReleaseUnsafe(error)
+                    Sync.Unsafe.evalOrThrow(onRelease(error))
                     if error.nonEmpty then
                         eventLoop.cancel(transferId)
                 }
@@ -95,7 +95,7 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
         conn: Connection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
+        onRelease: Maybe[Result.Error[Any]] => Unit < Sync
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
@@ -106,7 +106,7 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
             Sync.ensure { error =>
                 Sync.Unsafe.defer {
                     if !phase2Started.get() then
-                        onReleaseUnsafe(error)
+                        Sync.Unsafe.evalOrThrow(onRelease(error))
                     if error.nonEmpty then
                         eventLoop.cancel(transferId)
                 }
@@ -132,9 +132,9 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
                                     Sync.ensure { error =>
                                         Sync.Unsafe.defer {
                                             if !streamFullyConsumed.get() then
-                                                onReleaseUnsafe(Maybe(Result.Panic(new Exception("stream not fully consumed"))))
+                                                Sync.Unsafe.evalOrThrow(onRelease(Maybe(Result.Panic(new Exception("stream not fully consumed")))))
                                             else
-                                                onReleaseUnsafe(error)
+                                                Sync.Unsafe.evalOrThrow(onRelease(error))
                                         }
                                     } {
                                         Loop.foreach {
@@ -278,9 +278,9 @@ final class CurlClientBackend(daemon: Boolean) extends HttpBackend.Client:
         discard(curl_easy_setopt(handle, CURLOPT_HEADERDATA, idPtr))
     end configureCommon
 
-    def isAlive(conn: Connection)(using AllowUnsafe): Boolean = true
+    def isAlive(conn: Connection)(using Frame): Boolean < Sync = Sync.defer(true)
 
-    def closeNowUnsafe(conn: Connection)(using AllowUnsafe): Unit = ()
+    def closeNow(conn: Connection)(using Frame): Unit < Sync = Kyo.unit
 
     def close(conn: Connection, gracePeriod: Duration)(using Frame): Unit < Async = ()
 

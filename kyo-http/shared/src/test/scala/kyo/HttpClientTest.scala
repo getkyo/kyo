@@ -23,7 +23,7 @@ class HttpClientTest extends Test:
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
         client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-            Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+            Sync.ensure(client.closeNow(conn)) {
                 client.sendWith(conn, route, request)(identity)
             }
         }
@@ -436,7 +436,7 @@ class HttpClientTest extends Test:
             var called = false
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/stream"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             resp.fields.body.run.map { chunks =>
@@ -471,7 +471,7 @@ class HttpClientTest extends Test:
                 val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
                     .addField("body", bodyStream)
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, request) { resp =>
                             called = true
                             assert(resp.status == HttpStatus.OK)
@@ -500,7 +500,7 @@ class HttpClientTest extends Test:
                 val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
                     .addField("body", bodyStream)
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, request) { resp =>
                             called = true
                             assert(resp.fields.body == User(1, "alice"))
@@ -1871,7 +1871,7 @@ class HttpClientTest extends Test:
             withServer(ep) { port =>
                 Async.timeout(5.seconds) {
                     client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                        Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/infinite"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
                                 // Read just the first chunk, then let scope close — should not hang
@@ -1899,7 +1899,7 @@ class HttpClientTest extends Test:
             withServer(ep) { port =>
                 Async.timeout(5.seconds) {
                     client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                        Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/fail-stream"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
                                 // Stream should either deliver partial data or error, but not hang
@@ -1938,7 +1938,7 @@ class HttpClientTest extends Test:
             }
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
                             Span.fromUnsafe("hello ".getBytes("UTF-8")),
                             Span.fromUnsafe("world".getBytes("UTF-8"))

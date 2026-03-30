@@ -157,31 +157,33 @@ final class HttpClient private (
         filter[In, Out, HttpException](
             request,
             (filteredReq: HttpRequest[In]) =>
-                Sync.Unsafe.defer {
-                    val key = HostKey(filteredReq.url.host, filteredReq.url.port)
-                    def onReleaseUnsafe(conn: backend.Connection): Maybe[Result.Error[Any]] => Unit =
-                        error =>
-                            pool.untrack(key, conn)
+                val key = HostKey(filteredReq.url.host, filteredReq.url.port)
+                def onRelease(conn: backend.Connection): Maybe[Result.Error[Any]] => Unit < Sync =
+                    error =>
+                        pool.untrack(key, conn).andThen {
                             error match
                                 case Absent => pool.release(key, conn)
                                 case _      => pool.discard(conn)
-                    end onReleaseUnsafe
-                    pool.poll(key) match
-                        case Present(conn) =>
-                            pool.track(key, conn)
-                            backend.sendWith(conn, route, filteredReq, onReleaseUnsafe(conn))(f)
-                        case _ =>
-                            if pool.tryReserve(key) then
+                        }
+                end onRelease
+                pool.poll(key).map {
+                    case Present(conn) =>
+                        pool.track(key, conn).andThen {
+                            backend.sendWith(conn, route, filteredReq, onRelease(conn))(f)
+                        }
+                    case _ =>
+                        pool.tryReserve(key).map { reserved =>
+                            if reserved then
                                 Sync.ensure(pool.unreserve(key)) {
                                     backend.connectWith(
                                         filteredReq.url.host,
                                         filteredReq.url.port,
                                         filteredReq.url.ssl,
                                         config.connectTimeout
-                                    ) {
-                                        conn =>
-                                            pool.track(key, conn)
-                                            backend.sendWith(conn, route, filteredReq, onReleaseUnsafe(conn))(f)
+                                    ) { conn =>
+                                        pool.track(key, conn).andThen {
+                                            backend.sendWith(conn, route, filteredReq, onRelease(conn))(f)
+                                        }
                                     }
                                 }
                             else
@@ -191,14 +193,13 @@ final class HttpClient private (
                                     maxConnectionsPerHost,
                                     clientFrame
                                 ))
-                    end match
+                        }
                 }.asInstanceOf[HttpResponse[Out] < (Async & Abort[HttpException | HttpResponse.Halt])]
         ).asInstanceOf[A < (Async & Abort[HttpException])]
     end poolWith
 
     def close(gracePeriod: Duration)(using Frame): Unit < Async =
-        Sync.Unsafe.defer {
-            val conns = pool.close()
+        pool.close().map { conns =>
             Kyo.foreachDiscard(conns)(conn => backend.close(conn, gracePeriod))
         }
     end close
@@ -211,16 +212,17 @@ object HttpClient:
 
     // --- Default client ---
 
+    // Bootstrap boundary: lazy val requires eager evaluation of the suspended pool init.
     private lazy val defaultClient: HttpClient =
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
         val backend = HttpPlatformBackend.client
-        val pool = ConnectionPool.init[backend.Connection](
+        val pool = Sync.Unsafe.evalOrThrow(ConnectionPool.init[backend.Connection](
             100,
             60.seconds,
             conn => backend.isAlive(conn),
-            conn => backend.closeNowUnsafe(conn)
-        )
+            conn => backend.closeNow(conn)
+        ))
         new HttpClient(backend, pool, 100, Frame.internal)
     end defaultClient
 
@@ -274,13 +276,12 @@ object HttpClient:
     )(using frame: Frame): HttpClient < Sync =
         require(maxConnectionsPerHost > 0, s"maxConnectionsPerHost must be positive: $maxConnectionsPerHost")
         require(idleConnectionTimeout > Duration.Zero, s"idleConnectionTimeout must be positive: $idleConnectionTimeout")
-        Sync.Unsafe.defer {
-            val pool = ConnectionPool.init[backend.Connection](
-                maxConnectionsPerHost,
-                idleConnectionTimeout,
-                conn => backend.isAlive(conn),
-                conn => backend.closeNowUnsafe(conn)
-            )
+        ConnectionPool.init[backend.Connection](
+            maxConnectionsPerHost,
+            idleConnectionTimeout,
+            conn => backend.isAlive(conn),
+            conn => backend.closeNow(conn)
+        ).map { pool =>
             new HttpClient(backend, pool, maxConnectionsPerHost, frame)
         }
     end initUnscoped

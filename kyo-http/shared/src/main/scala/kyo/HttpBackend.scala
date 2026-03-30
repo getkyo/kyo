@@ -35,20 +35,18 @@ object HttpBackend:
             conn: Connection,
             route: HttpRoute[In, Out, ?],
             request: HttpRequest[In],
-            onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit = _ => ()
+            onRelease: Maybe[Result.Error[Any]] => Unit < Sync = _ => Kyo.unit
         )(
             f: HttpResponse[Out] => A < (Async & Abort[HttpException])
         )(using Frame): A < (Async & Abort[HttpException])
 
-        def isAlive(conn: Connection)(using AllowUnsafe): Boolean
-        def closeNowUnsafe(conn: Connection)(using AllowUnsafe): Unit
+        def isAlive(conn: Connection)(using Frame): Boolean < Sync
+        def closeNow(conn: Connection)(using Frame): Unit < Sync
         def close(conn: Connection, gracePeriod: Duration)(using Frame): Unit < Async
-        def close(conn: Connection)(using Frame): Unit < Async    = close(conn, 30.seconds)
-        def closeNow(conn: Connection)(using Frame): Unit < Async = close(conn, Duration.Zero)
+        def close(conn: Connection)(using Frame): Unit < Async = close(conn, 30.seconds)
 
         def close(gracePeriod: Duration)(using Frame): Unit < Async
-        def close(using Frame): Unit < Async    = close(30.seconds)
-        def closeNow(using Frame): Unit < Async = close(Duration.Zero)
+        def close(using Frame): Unit < Async = close(30.seconds)
     end Client
 
     trait Server:

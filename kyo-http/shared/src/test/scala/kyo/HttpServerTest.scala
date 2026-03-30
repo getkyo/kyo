@@ -28,7 +28,7 @@ class HttpServerTest extends Test:
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
         client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-            Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+            Sync.ensure(client.closeNow(conn)) {
                 client.sendWith(conn, route, request)(identity)
             }
         }
@@ -757,7 +757,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/stream"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             resp.fields.body.run.map { chunks =>
@@ -782,7 +782,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/events"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             resp.fields.body.run.map { chunks =>
@@ -808,7 +808,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             resp.fields.body.run.map { chunks =>
@@ -838,7 +838,7 @@ class HttpServerTest extends Test:
             }
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
                             Span.fromUnsafe("part1 ".getBytes("UTF-8")),
                             Span.fromUnsafe("part2".getBytes("UTF-8"))
@@ -865,7 +865,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/many"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             resp.fields.body.run.map { chunks =>
@@ -1088,7 +1088,7 @@ class HttpServerTest extends Test:
             val ep    = route.handler(_ => HttpResponse.ok("pong"))
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         Kyo.foreach(1 to 5) { i =>
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ping")))(identity)
                         }.map { responses =>
@@ -1232,7 +1232,7 @@ class HttpServerTest extends Test:
                         Fiber.initUnscoped(
                             latch.await.andThen {
                                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                                    Sync.ensure(client.closeNow(conn)) {
                                         client.sendWith(
                                             conn,
                                             route,
@@ -1580,7 +1580,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
                             resp.fields.body.run.map { chunks =>
                                 called = true
@@ -1610,7 +1610,7 @@ class HttpServerTest extends Test:
             var called   = false
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
                             resp.fields.body.run.map { chunks =>
                                 called = true
@@ -1942,7 +1942,7 @@ class HttpServerTest extends Test:
             }
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
                             kyo.Emit.valueWith(Chunk(Span.fromUnsafe("a".getBytes("UTF-8")))) {
                                 Async.sleep(50.millis).andThen {
@@ -1992,7 +1992,7 @@ class HttpServerTest extends Test:
                 }
                 withServer(ep) { port =>
                     client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                        Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        Sync.ensure(client.closeNow(conn)) {
                             val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
                                 kyo.Emit.valueWith(Chunk(Span.fromUnsafe("hello".getBytes("UTF-8"))))(())
                             }
@@ -2031,7 +2031,7 @@ class HttpServerTest extends Test:
             }
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/many-chunks"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             resp.fields.body.run.map { chunks =>
@@ -2059,7 +2059,7 @@ class HttpServerTest extends Test:
             }
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/err-stream"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             Abort.run[Throwable](Abort.catching[Throwable] {
@@ -2485,7 +2485,7 @@ class HttpServerTest extends Test:
             var called = false
             withCorsServer(HttpServerConfig.Cors.allowAll, ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-sse-get2"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
@@ -2545,7 +2545,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-sse-get"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
@@ -2612,7 +2612,7 @@ class HttpServerTest extends Test:
             withServer(ep) { port =>
                 Async.timeout(10.seconds) {
                     client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                        Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-repeat"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
                                 resp.fields.body.take(2).run.map { chunks =>
@@ -2642,7 +2642,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delayed"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             resp.fields.body.run.map { chunks =>
@@ -2679,7 +2679,7 @@ class HttpServerTest extends Test:
             withServer(ep) { port =>
                 Async.timeout(10.seconds) {
                     client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                        Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-repeat"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
                                 resp.fields.body.take(2).run.map { chunks =>
@@ -2709,7 +2709,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-delayed"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             resp.fields.body.run.map { chunks =>
@@ -2734,7 +2734,7 @@ class HttpServerTest extends Test:
             withServer(ep) { port =>
                 Async.timeout(5.seconds) {
                     client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                        Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-empty"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
                                 resp.fields.body.run.map { chunks =>
@@ -2767,7 +2767,7 @@ class HttpServerTest extends Test:
             withServer(ep) { port =>
                 Async.timeout(5.seconds) {
                     client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                        Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-gaps"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
                                 resp.fields.body.run.map { chunks =>
@@ -2799,7 +2799,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-map-delay"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             resp.fields.body.run.map { chunks =>
@@ -2827,7 +2827,7 @@ class HttpServerTest extends Test:
             withServer(ep) { port =>
                 Async.timeout(10.seconds) {
                     client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                        Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-map"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
                                 resp.fields.body.take(2).run.map { chunks =>
@@ -2861,7 +2861,7 @@ class HttpServerTest extends Test:
             withServer(ep) { port =>
                 Async.timeout(10.seconds) {
                     client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                        Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-loop-delay"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
                                 resp.fields.body.take(2).run.map { chunks =>
@@ -2892,7 +2892,7 @@ class HttpServerTest extends Test:
             withServer(ep) { port =>
                 Async.timeout(5.seconds) {
                     client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                        Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                        Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-first"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
                                 resp.fields.body.run.map { chunks =>
@@ -3338,7 +3338,7 @@ class HttpServerTest extends Test:
                         // Read from both servers concurrently to trigger stream ID collision
                         Async.zip(
                             client.connectWith("localhost", port1, ssl = false, Absent) { conn =>
-                                Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                                Sync.ensure(client.closeNow(conn)) {
                                     client.sendWith(conn, route1, HttpRequest.getRaw(HttpUrl.fromUri("/stream1"))) { resp =>
                                         resp.fields.body.take(2).run.map { chunks =>
                                             val events = chunks.toSeq
@@ -3349,7 +3349,7 @@ class HttpServerTest extends Test:
                                 }
                             },
                             client.connectWith("localhost", port2, ssl = false, Absent) { conn =>
-                                Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                                Sync.ensure(client.closeNow(conn)) {
                                     client.sendWith(conn, route2, HttpRequest.getRaw(HttpUrl.fromUri("/stream2"))) { resp =>
                                         resp.fields.body.take(2).run.map { chunks =>
                                             val events = chunks.toSeq
@@ -3457,7 +3457,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-                    Sync.Unsafe.ensure(client.closeNowUnsafe(conn)) {
+                    Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-empty"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             resp.fields.body.run.map { chunks =>

@@ -12,7 +12,7 @@ import kyo.*
   *
   * Client frames are masked (mask=true) per RFC 6455 §5.3.
   */
-class WsTransportClient(transport: Transport) extends HttpBackend2.WebSocketClient:
+class WsTransportClient(transport: Transport) extends HttpBackend.WebSocketClient:
 
     def connect[A, S](
         host: String,

@@ -25,14 +25,14 @@ class HttpBackendTest extends Test:
             conn: Connection,
             route: HttpRoute[In, Out, ?],
             request: HttpRequest[In],
-            onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
+            onRelease: Maybe[Result.Error[Any]] => Unit < Sync
         )(
             f: HttpResponse[Out] => A < (Async & Abort[HttpException])
         )(using Frame): A < (Async & Abort[HttpException]) =
             Abort.fail(HttpJsonDecodeException("stub", "TEST", "/test"))
 
-        def isAlive(conn: Connection)(using AllowUnsafe): Boolean                     = true
-        def closeNowUnsafe(conn: Connection)(using AllowUnsafe): Unit                 = ()
+        def isAlive(conn: Connection)(using Frame): Boolean < Sync                    = Sync.defer(true)
+        def closeNow(conn: Connection)(using Frame): Unit < Sync                      = Kyo.unit
         def close(conn: Connection, gracePeriod: Duration)(using Frame): Unit < Async = ()
         def close(gracePeriod: Duration)(using Frame): Unit < Async                   = ()
 
@@ -40,7 +40,7 @@ class HttpBackendTest extends Test:
         def bind(
             handlers: Seq[HttpHandler[?, ?, ?]],
             config: HttpServerConfig
-        )(using Frame): HttpBackend.Binding < Async =
+        )(using Frame): HttpBackend.Binding < (Async & Scope) =
             new HttpBackend.Binding:
                 val port: Int                                               = config.port
                 val host: String                                            = config.host

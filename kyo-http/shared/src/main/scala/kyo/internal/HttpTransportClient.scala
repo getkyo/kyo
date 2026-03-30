@@ -5,10 +5,10 @@ import kyo.*
 
 /** Protocol-agnostic HTTP client. Pure — zero AllowUnsafe.
   *
-  * Implements HttpBackend2.Client. The onRelease callback uses suspended effects for connection pooling: Absent on success → pool returns
+  * Implements HttpBackend.Client. The onRelease callback uses suspended effects for connection pooling: Absent on success → pool returns
   * connection, Present(error) → pool discards.
   */
-class HttpTransportClient(private[kyo] val transport: Transport, protocol: Protocol) extends HttpBackend2.Client:
+class HttpTransportClient(private[kyo] val transport: Transport, protocol: Protocol) extends HttpBackend.Client:
 
     type Connection = transport.Connection
 

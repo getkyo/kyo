@@ -28,7 +28,7 @@ final class H2oServerBackend extends HttpBackend.Server:
     def bind(
         handlers: Seq[HttpHandler[?, ?, ?]],
         config: HttpServerConfig
-    )(using Frame): HttpBackend.Binding < Async =
+    )(using Frame): HttpBackend.Binding < (Async & Scope) =
         Sync.defer {
             H2oServerBackend.startServer(HttpRouter(handlers, config.cors), config)
         }

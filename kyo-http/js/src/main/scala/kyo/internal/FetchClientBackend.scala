@@ -36,17 +36,17 @@ final class FetchClientBackend extends HttpBackend.Client:
         conn: Connection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
+        onRelease: Maybe[Result.Error[Any]] => Unit < Sync
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
-        Sync.ensure(onReleaseUnsafe) {
+        Sync.ensure(onRelease) {
             conn.send(route, request).map(f)
         }
 
-    def isAlive(conn: Connection)(using AllowUnsafe): Boolean = false
+    def isAlive(conn: Connection)(using Frame): Boolean < Sync = Sync.defer(false)
 
-    def closeNowUnsafe(conn: Connection)(using AllowUnsafe): Unit = ()
+    def closeNow(conn: Connection)(using Frame): Unit < Sync = Kyo.unit
 
     def close(conn: Connection, gracePeriod: Duration)(using Frame): Unit < Async = ()
 
