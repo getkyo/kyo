@@ -91,7 +91,7 @@ class HttpTransportClient(private[kyo] val transport: Transport, protocol: Proto
         route: HttpRoute[?, Out, ?],
         request: HttpRequest[?]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        protocol.readResponse(stream, 65536, request.method).map { (status, headers, body) =>
+        protocol.readResponse(stream, Int.MaxValue, request.method).map { (status, headers, body) =>
             val bodyBytes = body match
                 case HttpBody.Empty          => Span.empty[Byte]
                 case HttpBody.Buffered(data) => data
@@ -112,7 +112,7 @@ class HttpTransportClient(private[kyo] val transport: Transport, protocol: Proto
         route: HttpRoute[?, Out, ?],
         request: HttpRequest[?]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        protocol.readResponse(stream, 65536, request.method).map { (status, headers, body) =>
+        protocol.readResponse(stream, Int.MaxValue, request.method).map { (status, headers, body) =>
             val bodyStream = body match
                 case HttpBody.Streamed(chunks) => chunks
                 case HttpBody.Buffered(data)   => Stream.init(Seq(data))
