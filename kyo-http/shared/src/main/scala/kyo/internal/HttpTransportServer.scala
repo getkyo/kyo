@@ -125,7 +125,7 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                                 }
                             ,
                             onStreaming = (status, hdrs, responseStream) =>
-                                protocol.writeResponseHead(stream, status, hdrs).andThen {
+                                protocol.writeResponseHead(stream, status, hdrs.add("Transfer-Encoding", "chunked")).andThen {
                                     if isHead then Kyo.unit
                                     else protocol.writeStreamingBody(stream, responseStream)
                                 }
