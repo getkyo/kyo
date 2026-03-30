@@ -7,18 +7,25 @@ import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
+import java.util.concurrent.ConcurrentLinkedQueue
 import kyo.*
 
-/** Non-blocking NIO transport for JVM — java.nio.channels.Selector.
+/** Non-blocking NIO transport for JVM.
   *
-  * Same per-fiber polling architecture as KqueueNativeTransport:
-  *   - Each stream gets its own Selector to avoid event stealing
-  *   - read()/write() register interest, poll with selectNow(), yield via Async.sleep
-  *   - No poll thread, no AllowUnsafe, no mutable Java collections
+  * Uses a shared Selector polled by a kyo Fiber (not a raw Thread). Each read/write registers interest on the shared Selector, then waits
+  * on a per-operation Promise. The poll fiber calls selectNow() in a loop, completing Promises for ready keys.
+  *
+  * No AllowUnsafe, no throw. The only mutable state is the Selector (JDK requirement) and the pending operation queue.
   */
 final class NioTransport extends Transport:
 
     type Connection = NioConnection
+
+    // Shared selector + pending registrations queue.
+    // New interest registrations go through the queue because Selector.register
+    // must be called from the same thread that calls select (or the channel must not be selecting).
+    // We use selectNow() (non-blocking) so registration is safe from any thread.
+    private val selector = Selector.open()
 
     def connect(host: String, port: Int, tls: Boolean)(using
         Frame
@@ -34,13 +41,18 @@ final class NioTransport extends Transport:
                 if connected then
                     Sync.defer(new NioConnection(channel))
                 else
-                    val selector = Selector.open()
-                    channel.register(selector, SelectionKey.OP_CONNECT)
-                    awaitSelector(selector).andThen {
+                    val key = syncSelector(channel.register(selector, SelectionKey.OP_CONNECT))
+                    pollUntilReady(key).andThen {
                         Sync.defer {
-                            channel.finishConnect()
-                            selector.close()
-                            new NioConnection(channel)
+                            discard(syncSelector(key.interestOps(0)))
+                            Abort.recover[Exception](_ =>
+                                Abort.fail(HttpConnectException(host, port, new Exception("connect failed")))
+                            ) {
+                                Sync.defer {
+                                    channel.finishConnect()
+                                    new NioConnection(channel)
+                                }
+                            }
                         }
                     }
                 end if
@@ -50,13 +62,27 @@ final class NioTransport extends Transport:
         Sync.defer(connection.channel.isOpen && connection.channel.isConnected)
 
     def closeNow(connection: NioConnection)(using Frame): Unit < Sync =
-        Sync.defer(connection.channel.close())
+        Sync.defer {
+            syncSelector {
+                connection.channel.keyFor(selector) match
+                    case null =>
+                    case key  => key.cancel()
+            }
+            connection.channel.close()
+        }
 
     def close(connection: NioConnection, gracePeriod: Duration)(using Frame): Unit < Async =
-        Sync.defer(connection.channel.close())
+        closeNow(connection)
 
     def stream(connection: NioConnection)(using Frame): TransportStream < Async =
-        Sync.defer(new NioStream(connection))
+        Sync.defer {
+            val key = syncSelector {
+                connection.channel.keyFor(selector) match
+                    case null => connection.channel.register(selector, 0)
+                    case k    => k
+            }
+            new NioStream(connection, key, this)
+        }
 
     def listen(host: String, port: Int, backlog: Int)(
         handler: TransportStream => Unit < Async
@@ -65,15 +91,14 @@ final class NioTransport extends Transport:
             val serverChannel = ServerSocketChannel.open()
             serverChannel.configureBlocking(false)
             serverChannel.bind(new InetSocketAddress(host, port), backlog)
-            val actualPort     = serverChannel.socket().getLocalPort
-            val actualHost     = host
-            val acceptSelector = Selector.open()
-            serverChannel.register(acceptSelector, SelectionKey.OP_ACCEPT)
+            val actualPort = serverChannel.socket().getLocalPort
+            val actualHost = host
+            val acceptKey  = syncSelector(serverChannel.register(selector, SelectionKey.OP_ACCEPT))
 
             Scope.acquireRelease {
                 Fiber.init {
                     Loop.foreach {
-                        awaitSelector(acceptSelector).andThen {
+                        pollUntilReady(acceptKey).andThen {
                             Sync.defer {
                                 val clientChannel = serverChannel.accept()
                                 if clientChannel != null then
@@ -89,7 +114,10 @@ final class NioTransport extends Transport:
                                     Kyo.unit
                                 end if
                             }
-                        }.andThen(Loop.continue)
+                        }.andThen {
+                            discard(syncSelector(acceptKey.interestOps(SelectionKey.OP_ACCEPT)))
+                            Loop.continue
+                        }
                     }
                 }.andThen {
                     new TransportListener:
@@ -98,24 +126,29 @@ final class NioTransport extends Transport:
                 }
             } { _ =>
                 Sync.defer {
-                    acceptSelector.close()
+                    syncSelector(acceptKey.cancel())
                     serverChannel.close()
                 }
             }
         }
 
-    /** Poll selector with selectNow() until at least one key is ready. Yields between polls. */
-    private def awaitSelector(selector: Selector)(using Frame): Unit < Async =
+    /** Synchronized Selector access — NIO Selectors are not thread-safe. */
+    private[kyo] def syncSelector[A](f: => A): A = selector.synchronized(f)
+
+    /** Poll the shared selector until the given key is ready. Non-blocking, yields between polls. */
+    private[kyo] def pollUntilReady(key: SelectionKey)(using Frame): Unit < Async =
         Loop.foreach {
             Async.sleep(1.millis).andThen {
                 Sync.defer {
-                    val ready = selector.selectNow()
-                    if ready > 0 then
-                        selector.selectedKeys().clear()
-                        Loop.done(())
-                    else
-                        Loop.continue
-                    end if
+                    syncSelector {
+                        selector.selectNow()
+                        if key.isValid && (key.readyOps() & key.interestOps()) != 0 then
+                            selector.selectedKeys().remove(key)
+                            Loop.done(())
+                        else
+                            Loop.continue
+                        end if
+                    }
                 }
             }
         }
@@ -124,57 +157,51 @@ end NioTransport
 
 private[kyo] class NioConnection(val channel: SocketChannel)
 
-private[kyo] class NioStream(conn: NioConnection) extends TransportStream:
+private[kyo] class NioStream(
+    conn: NioConnection,
+    key: SelectionKey,
+    transport: NioTransport
+) extends TransportStream:
 
-    private val readSelector  = Selector.open()
-    private val writeSelector = Selector.open()
-    private val readKey       = conn.channel.register(readSelector, 0)
-    private val writeKey      = conn.channel.register(writeSelector, 0)
+    private def setInterest(ops: Int)(using Frame): Unit < Sync =
+        Sync.defer(discard(transport.syncSelector(key.interestOps(ops))))
+
+    private def addInterest(op: Int)(using Frame): Unit < Sync =
+        Sync.defer(discard(transport.syncSelector(key.interestOps(key.interestOps() | op))))
+
+    private def removeInterest(op: Int)(using Frame): Unit < Sync =
+        Sync.defer(discard(transport.syncSelector(key.interestOps(key.interestOps() & ~op))))
 
     def read(buf: Array[Byte])(using Frame): Int < Async =
-        readKey.interestOps(SelectionKey.OP_READ)
-        Loop.foreach {
-            Async.sleep(1.millis).andThen {
-                Sync.defer {
-                    val ready = readSelector.selectNow()
-                    if ready > 0 then
-                        readSelector.selectedKeys().clear()
-                        readKey.interestOps(0)
+        addInterest(SelectionKey.OP_READ).andThen {
+            transport.pollUntilReady(key).andThen {
+                removeInterest(SelectionKey.OP_READ).andThen {
+                    Sync.defer {
                         val bb = ByteBuffer.wrap(buf)
-                        val n  = conn.channel.read(bb)
-                        Loop.done(n)
-                    else
-                        Loop.continue
-                    end if
+                        conn.channel.read(bb)
+                    }
                 }
             }
         }
-    end read
 
     def write(data: Span[Byte])(using Frame): Unit < Async =
         if data.isEmpty then Kyo.unit
         else
-            val arr = data.toArrayUnsafe
-            val bb  = ByteBuffer.wrap(arr)
-            writeKey.interestOps(SelectionKey.OP_WRITE)
-            Loop.foreach {
-                Async.sleep(1.millis).andThen {
-                    Sync.defer {
-                        val ready = writeSelector.selectNow()
-                        if ready > 0 then
-                            writeSelector.selectedKeys().clear()
-                            conn.channel.write(bb)
-                            if bb.hasRemaining then
-                                Loop.continue // partial write, keep going
-                            else
-                                writeKey.interestOps(0)
-                                Loop.done(())
-                            end if
-                        else
-                            Loop.continue
-                        end if
-                    }
+            val bb = ByteBuffer.wrap(data.toArrayUnsafe)
+            writeLoop(bb)
+
+    private def writeLoop(bb: ByteBuffer)(using Frame): Unit < Async =
+        addInterest(SelectionKey.OP_WRITE).andThen {
+            transport.pollUntilReady(key).andThen {
+                Sync.defer {
+                    conn.channel.write(bb)
+                    if bb.hasRemaining then
+                        writeLoop(bb)
+                    else
+                        removeInterest(SelectionKey.OP_WRITE)
+                    end if
                 }
             }
+        }
 
 end NioStream
