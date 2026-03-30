@@ -548,16 +548,10 @@ lazy val `kyo-http` =
             libraryDependencies += "dev.zio" %%% "zio-schema-derivation" % "1.6.4"
         )
         .jvmSettings(
-            mimaCheck(false),
-            libraryDependencies += "io.netty" % "netty-codec-http"              % "4.2.1.Final",
-            libraryDependencies += "io.netty" % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-x86_64",
-            libraryDependencies += "io.netty" % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-aarch_64",
-            libraryDependencies += "io.netty" % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-x86_64",
-            libraryDependencies += "io.netty" % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-aarch_64"
+            mimaCheck(false)
         )
         .jsSettings(
             `js-settings`,
-            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
         .nativeSettings(

@@ -64,12 +64,7 @@ final class NioTransport extends Transport:
         closeNow(connection)
 
     def stream(connection: NioConnection)(using Frame): TransportStream < Async =
-        Sync.defer {
-            val key = connection.channel.keyFor(connection.selector) match
-                case null => connection.channel.register(connection.selector, 0)
-                case k    => discard(k.interestOps(0)); k
-            new NioStream(connection, key)
-        }
+        Sync.defer(new NioStream(connection))
 
     def listen(host: String, port: Int, backlog: Int)(
         handler: TransportStream => Unit < Async
@@ -77,7 +72,13 @@ final class NioTransport extends Transport:
         Sync.defer {
             val serverChannel = ServerSocketChannel.open()
             serverChannel.configureBlocking(false)
-            serverChannel.bind(new InetSocketAddress(host, port), backlog)
+            try
+                serverChannel.bind(new InetSocketAddress(host, port), backlog)
+            catch
+                case e: java.net.BindException =>
+                    serverChannel.close()
+                    throw HttpBindException(host, port, e)
+            end try
             val actualPort     = serverChannel.socket().getLocalPort
             val actualHost     = host
             val acceptSelector = Selector.open()
@@ -137,28 +138,40 @@ end NioTransport
 
 private[kyo] class NioConnection(val channel: SocketChannel, val selector: Selector)
 
-private[kyo] class NioStream(conn: NioConnection, key: SelectionKey) extends TransportStream:
+/** NIO stream using the connection's selector with synchronized interestOps.
+  *
+  * Read and write may be called concurrently (e.g., WebSocket read/write loops). The selector and key are shared but interestOps
+  * modifications are synchronized to prevent race conditions.
+  */
+private[kyo] class NioStream(conn: NioConnection) extends TransportStream:
 
-    private def pollKey()(using Frame): Unit < Async =
+    private val key  = conn.channel.register(conn.selector, 0)
+    private val lock = new AnyRef // guards interestOps modifications
+
+    private def pollFor(op: Int)(using Frame): Unit < Async =
         Loop.foreach {
             Async.sleep(1.millis).andThen {
                 Sync.defer {
-                    conn.selector.selectNow()
-                    if key.isValid && (key.readyOps() & key.interestOps()) != 0 then
-                        conn.selector.selectedKeys().remove(key)
-                        Loop.done(())
-                    else
-                        Loop.continue
-                    end if
+                    lock.synchronized {
+                        conn.selector.selectNow()
+                        if key.isValid && (key.readyOps() & op) != 0 then
+                            conn.selector.selectedKeys().remove(key)
+                            true
+                        else false
+                        end if
+                    }
+                }.map { ready =>
+                    if ready then Loop.done(())
+                    else Loop.continue
                 }
             }
         }
 
     def read(buf: Array[Byte])(using Frame): Int < Async =
-        Sync.defer(discard(key.interestOps(key.interestOps() | SelectionKey.OP_READ))).andThen {
-            pollKey().andThen {
+        Sync.defer(lock.synchronized(discard(key.interestOps(key.interestOps() | SelectionKey.OP_READ)))).andThen {
+            pollFor(SelectionKey.OP_READ).andThen {
                 Sync.defer {
-                    discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_READ))
+                    lock.synchronized(discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_READ)))
                     val bb = ByteBuffer.wrap(buf)
                     conn.channel.read(bb)
                 }
@@ -170,14 +183,14 @@ private[kyo] class NioStream(conn: NioConnection, key: SelectionKey) extends Tra
         else writeLoop(ByteBuffer.wrap(data.toArrayUnsafe))
 
     private def writeLoop(bb: ByteBuffer)(using Frame): Unit < Async =
-        Sync.defer(discard(key.interestOps(key.interestOps() | SelectionKey.OP_WRITE))).andThen {
-            pollKey().andThen {
+        Sync.defer(lock.synchronized(discard(key.interestOps(key.interestOps() | SelectionKey.OP_WRITE)))).andThen {
+            pollFor(SelectionKey.OP_WRITE).andThen {
                 Sync.defer {
                     conn.channel.write(bb)
                     if bb.hasRemaining then
                         writeLoop(bb)
                     else
-                        discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_WRITE))
+                        lock.synchronized(discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_WRITE)))
                         Kyo.unit
                     end if
                 }

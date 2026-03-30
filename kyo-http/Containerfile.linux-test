@@ -1,0 +1,31 @@
+# Linux container for testing epoll-based native transport
+# Build: podman build -f kyo-http/Containerfile.linux-test -t kyo-native-test .
+# Run:   podman run --rm kyo-native-test
+FROM eclipse-temurin:21-jdk
+
+# Install Scala Native prerequisites
+RUN apt-get update && apt-get install -y \
+    clang \
+    libstdc++-12-dev \
+    libgc-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install sbt
+RUN curl -fsSL "https://github.com/sbt/sbt/releases/download/v1.12.5/sbt-1.12.5.tgz" | tar xz -C /opt && \
+    ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt
+
+WORKDIR /kyo
+
+# Copy build files first for caching
+COPY build.sbt .
+COPY project/ project/
+
+# Pre-download dependencies
+RUN sbt 'kyo-httpNative/update' || true
+
+# Copy source
+COPY . .
+
+# Build and test native
+CMD ["sbt", "kyo-httpNative/test"]

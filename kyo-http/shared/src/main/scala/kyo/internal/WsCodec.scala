@@ -33,19 +33,16 @@ object WsCodec:
                 case OpText   => WebSocketFrame.Text(new String(payload.toArrayUnsafe, Utf8))
                 case OpBinary => WebSocketFrame.Binary(payload)
                 case OpClose  => Abort.fail(new Closed("WebSocket", summon[Frame], "Close frame received"))
-                case OpPing   =>
-                    // Auto-respond with Pong, then read next frame
+                case OpPing =>
                     writeRawFrame(stream, OpPong, payload, mask = false).andThen(readFrame(stream))
                 case OpPong =>
-                    // Ignore pong, read next
                     readFrame(stream)
                 case other =>
-                    // RFC 6455 §5.2: unknown opcodes cause connection failure
                     Abort.fail(new Closed("WebSocket", summon[Frame], s"Unknown opcode: $other"))
         }
 
     /** Write one data frame (Text or Binary). */
-    def writeFrame(stream: TransportStream, frame: WebSocketFrame, mask: Boolean)(using Frame): Unit < (Async & Abort[Closed]) =
+    def writeFrame(stream: TransportStream, frame: WebSocketFrame, mask: Boolean)(using Frame): Unit < Async =
         frame match
             case WebSocketFrame.Text(data) =>
                 writeRawFrame(stream, OpText, Span.fromUnsafe(data.getBytes(Utf8)), mask)
@@ -231,7 +228,8 @@ object WsCodec:
                 else
                     val buf = new Array[Byte](n - offset)
                     stream.read(buf).map { read =>
-                        if read <= 0 then Loop.done(())
+                        if read < 0 then Loop.done(())       // EOF
+                        else if read == 0 then Loop.continue // no data yet (NIO spurious wakeup)
                         else
                             java.lang.System.arraycopy(buf, 0, result, offset, read)
                             offset += read

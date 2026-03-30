@@ -1,10 +1,13 @@
 /**
- * Minimal TCP + kqueue wrappers for Scala Native.
+ * Minimal TCP + I/O multiplexing wrappers for Scala Native.
  * Avoids struct layout issues by exposing simple int/pointer functions.
+ *
+ * Platform detection:
+ *   - macOS/BSD: kqueue (sys/event.h)
+ *   - Linux: epoll (sys/epoll.h)
  */
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/event.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <netdb.h>
@@ -13,6 +16,14 @@
 #include <string.h>
 #include <errno.h>
 #include <stdio.h>
+
+#ifdef __APPLE__
+#include <sys/event.h>
+#endif
+
+#ifdef __linux__
+#include <sys/epoll.h>
+#endif
 
 /* ── TCP connect ────────────────────────────────────────── */
 
@@ -147,7 +158,9 @@ int kyo_tcp_is_alive(int fd) {
     return fcntl(fd, F_GETFD) != -1 ? 1 : 0;
 }
 
-/* ── kqueue ─────────────────────────────────────────────── */
+/* ── kqueue (macOS/BSD) ────────────────────────────────── */
+
+#ifdef __APPLE__
 
 int kyo_kqueue_create(void) {
     return kqueue();
@@ -185,3 +198,82 @@ int kyo_kqueue_wait(int kq, int *out_fds, int *out_filters, int max_events) {
     }
     return n < 0 ? 0 : n;
 }
+
+#endif /* __APPLE__ */
+
+/* ── epoll (Linux) ─────────────────────────────────────── */
+
+#ifdef __linux__
+
+int kyo_epoll_create(void) {
+    return epoll_create1(0);
+}
+
+/**
+ * Register interest on an epoll fd.
+ * mode: 1=read (EPOLLIN), 2=write (EPOLLOUT), 3=read+write
+ * Uses EPOLLONESHOT so each event fires at most once.
+ * If the fd is already registered, re-arms it with EPOLL_CTL_MOD.
+ */
+int kyo_epoll_register(int epfd, int fd, int mode) {
+    struct epoll_event ev;
+    ev.data.fd = fd;
+    ev.events = EPOLLONESHOT;
+    if (mode & 1) ev.events |= EPOLLIN;
+    if (mode & 2) ev.events |= EPOLLOUT;
+    int rc = epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
+    if (rc < 0 && errno == EEXIST) {
+        rc = epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev);
+    }
+    return rc;
+}
+
+/** Remove fd from epoll. */
+int kyo_epoll_deregister(int epfd, int fd) {
+    return epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
+}
+
+/** Non-blocking poll (zero timeout). Returns number of ready fds. */
+int kyo_epoll_wait_nonblock(int epfd, int *out_fds, int *out_events, int max_events) {
+    struct epoll_event events[64];
+    int actual_max = max_events < 64 ? max_events : 64;
+    int n = epoll_wait(epfd, events, actual_max, 0);
+    for (int i = 0; i < n; i++) {
+        out_fds[i] = events[i].data.fd;
+        out_events[i] = (int)events[i].events;
+    }
+    return n < 0 ? 0 : n;
+}
+
+/** Wait for events with 100ms timeout. Returns number of ready events. */
+int kyo_epoll_wait_timeout(int epfd, int *out_fds, int *out_events, int max_events) {
+    struct epoll_event events[64];
+    int actual_max = max_events < 64 ? max_events : 64;
+    int n = epoll_wait(epfd, events, actual_max, 100); /* 100ms */
+    for (int i = 0; i < n; i++) {
+        out_fds[i] = events[i].data.fd;
+        out_events[i] = (int)events[i].events;
+    }
+    return n < 0 ? 0 : n;
+}
+
+#endif /* __linux__ */
+
+/* ── Stubs for cross-compilation ──────────────────────── */
+
+#ifndef __linux__
+/* Epoll stubs for macOS — never called at runtime (auto-detection picks kqueue). */
+int kyo_epoll_create(void) { return -1; }
+int kyo_epoll_register(int epfd, int fd, int mode) { return -1; }
+int kyo_epoll_deregister(int epfd, int fd) { return -1; }
+int kyo_epoll_wait_nonblock(int epfd, int *out_fds, int *out_events, int max_events) { return 0; }
+int kyo_epoll_wait_timeout(int epfd, int *out_fds, int *out_events, int max_events) { return 0; }
+#endif
+
+#ifndef __APPLE__
+/* Kqueue stubs for Linux — never called at runtime (auto-detection picks epoll). */
+int kyo_kqueue_create(void) { return -1; }
+int kyo_kqueue_register(int kq, int fd, int filter) { return -1; }
+int kyo_kqueue_wait_nonblock(int kq, int *out_fds, int *out_filters, int max_events) { return 0; }
+int kyo_kqueue_wait(int kq, int *out_fds, int *out_filters, int max_events) { return 0; }
+#endif

@@ -53,4 +53,25 @@ private[kyo] object PosixBindings:
     @extern @name("kyo_kqueue_wait_nonblock")
     def kqueueWaitNonBlock(kq: CInt, outFds: Ptr[CInt], outFilters: Ptr[CInt], maxEvents: CInt): CInt = extern
 
+    // ── epoll (Linux) ───────────────────────────────────────
+
+    @extern @name("kyo_epoll_create")
+    def epollCreate(): CInt = extern
+
+    /** Register interest. mode: 1=read, 2=write, 3=read+write. Uses EPOLLONESHOT. */
+    @extern @name("kyo_epoll_register")
+    def epollRegister(epfd: CInt, fd: CInt, mode: CInt): CInt = extern
+
+    /** Remove fd from epoll. */
+    @extern @name("kyo_epoll_deregister")
+    def epollDeregister(epfd: CInt, fd: CInt): CInt = extern
+
+    /** Non-blocking poll (zero timeout). Returns number of ready fds. */
+    @extern @name("kyo_epoll_wait_nonblock")
+    def epollWaitNonBlock(epfd: CInt, outFds: Ptr[CInt], outEvents: Ptr[CInt], maxEvents: CInt): CInt = extern
+
+    /** Wait for events with 100ms timeout. */
+    @extern @blocking @name("kyo_epoll_wait_timeout")
+    def epollWaitTimeout(epfd: CInt, outFds: Ptr[CInt], outEvents: Ptr[CInt], maxEvents: CInt): CInt = extern
+
 end PosixBindings

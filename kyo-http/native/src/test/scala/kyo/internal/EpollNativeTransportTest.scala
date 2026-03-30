@@ -3,23 +3,23 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.*
 
-/** Kqueue transport tests — only meaningful on macOS/BSD. On Linux, tests pass trivially (succeed). */
-class KqueueNativeTransportTest extends kyo.Test:
+/** Epoll transport tests — only meaningful on Linux. On macOS, tests pass trivially (succeed). */
+class EpollNativeTransportTest extends kyo.Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
     private val Utf8    = StandardCharsets.UTF_8
-    private val isMacOS = java.lang.System.getProperty("os.name", "").toLowerCase.contains("mac")
+    private val isLinux = java.lang.System.getProperty("os.name", "").toLowerCase.contains("linux")
 
-    private def onMacOS(f: KqueueNativeTransport => Assertion < (Async & Abort[HttpException | Closed] & Scope))(using
+    private def onLinux(f: EpollNativeTransport => Assertion < (Async & Abort[HttpException | Closed] & Scope))(using
         Frame
     ): Assertion < (Async & Abort[HttpException | Closed] & Scope) =
-        if !isMacOS then succeed
-        else f(new KqueueNativeTransport)
+        if !isLinux then succeed
+        else f(new EpollNativeTransport)
 
     "connect to listening server" in run {
         Scope.run {
-            onMacOS { transport =>
+            onLinux { transport =>
                 transport.listen("127.0.0.1", 0, 5) { stream =>
                     val buf = new Array[Byte](1024)
                     stream.read(buf).map { n =>
@@ -47,7 +47,7 @@ class KqueueNativeTransportTest extends kyo.Test:
 
     "connect to non-existent host fails" in run {
         Scope.run {
-            onMacOS { transport =>
+            onLinux { transport =>
                 Abort.run[HttpException] {
                     transport.connect("127.0.0.1", 1, tls = false)
                 }.map { result =>
@@ -59,7 +59,7 @@ class KqueueNativeTransportTest extends kyo.Test:
 
     "listen on port 0 assigns a port" in run {
         Scope.run {
-            onMacOS { transport =>
+            onLinux { transport =>
                 transport.listen("127.0.0.1", 0, 5) { _ => Kyo.unit }.map { listener =>
                     assert(listener.port > 0)
                     assert(listener.host == "127.0.0.1")
@@ -74,7 +74,7 @@ class KqueueNativeTransportTest extends kyo.Test:
         java.util.Arrays.fill(data, 42.toByte)
 
         Scope.run {
-            onMacOS { transport =>
+            onLinux { transport =>
                 transport.listen("127.0.0.1", 0, 5) { stream =>
                     val accum = new java.io.ByteArrayOutputStream()
                     val buf   = new Array[Byte](8192)
@@ -118,7 +118,7 @@ class KqueueNativeTransportTest extends kyo.Test:
 
     "isAlive after close" in run {
         Scope.run {
-            onMacOS { transport =>
+            onLinux { transport =>
                 transport.listen("127.0.0.1", 0, 5) { _ => Kyo.unit }.map { listener =>
                     transport.connect("127.0.0.1", listener.port, tls = false).map { conn =>
                         transport.isAlive(conn).map { alive =>
@@ -135,4 +135,67 @@ class KqueueNativeTransportTest extends kyo.Test:
         }
     }
 
-end KqueueNativeTransportTest
+    "full HTTP roundtrip via HttpTransportServer" in run {
+        Scope.run {
+            onLinux { transport =>
+                val route   = HttpRoute.getRaw("hello").response(_.bodyText)
+                val handler = route.handler(_ => HttpResponse.ok.addField("body", "world"))
+                val server  = new HttpTransportServer(transport, Http1Protocol)
+                server.bind(Seq(handler), HttpServerConfig.default).map { binding =>
+                    transport.connect("127.0.0.1", binding.port, tls = false).map { conn =>
+                        transport.stream(conn).map { stream =>
+                            val hdrs = HttpHeaders.empty
+                                .add("Host", "localhost")
+                                .add("Content-Length", "0")
+                            Http1Protocol.writeRequestHead(stream, HttpMethod.GET, "/hello", hdrs).andThen {
+                                Http1Protocol.readResponse(stream, Int.MaxValue, HttpMethod.GET).map { (status, _, body) =>
+                                    assert(status.code == 200)
+                                    body match
+                                        case HttpBody.Buffered(d) =>
+                                            assert(new String(d.toArrayUnsafe, Utf8).contains("world"))
+                                        case _ => fail("Expected Buffered")
+                                    end match
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "full WebSocket echo via WsTransportClient" in run {
+        Scope.run {
+            onLinux { transport =>
+                val wsHandler = HttpHandler.webSocket("ws/echo") { (_, ws) =>
+                    Loop.foreach {
+                        ws.take().map { frame =>
+                            ws.put(frame).andThen(Loop.continue)
+                        }
+                    }.handle(Abort.run[Closed]).unit
+                }
+                val server = new HttpTransportServer(transport, Http1Protocol)
+                server.bind(Seq(wsHandler), HttpServerConfig.default).map { binding =>
+                    val wsClient = new WsTransportClient(transport)
+                    wsClient.connect(
+                        "127.0.0.1",
+                        binding.port,
+                        "/ws/echo",
+                        ssl = false,
+                        HttpHeaders.empty,
+                        WebSocketConfig()
+                    ) { ws =>
+                        ws.put(WebSocketFrame.Text("hello-epoll")).andThen {
+                            ws.take().map { frame =>
+                                frame match
+                                    case WebSocketFrame.Text(text) => assert(text == "hello-epoll")
+                                    case other                     => fail(s"Expected Text, got $other")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+end EpollNativeTransportTest

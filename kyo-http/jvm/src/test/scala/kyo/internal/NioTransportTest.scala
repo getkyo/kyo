@@ -304,4 +304,106 @@ class NioTransportTest extends kyo.Test:
         }
     }
 
+    "WebSocket handshake over NIO" in run {
+        val wsHandler = HttpHandler.webSocket("ws/test") { (_, ws) =>
+            // Just accept and wait
+            ws.take().handle(Abort.run[Closed]).unit
+        }
+        val server = new HttpTransportServer(transport, Http1Protocol)
+        Scope.run {
+            server.bind(Seq(wsHandler), HttpServerConfig.default).map { binding =>
+                val wsClient = new WsTransportClient(transport)
+                wsClient.connect("127.0.0.1", binding.port, "/ws/test", ssl = false, HttpHeaders.empty, WebSocketConfig()) {
+                    ws =>
+                        // Just verify we got here (handshake succeeded)
+                        succeed
+                }
+            }
+        }
+    }
+
+    "raw bytes after WS handshake over NIO" in run {
+        // Raw test: server WS handler writes to stream, client reads from stream
+        // to verify NIO stream works after WS upgrade
+        transport.listen("127.0.0.1", 0, 5) { stream =>
+            Abort.run[HttpException] {
+                Http1Protocol.readRequest(stream, 65536).map { (method, path, headers, body) =>
+                    // Write WS accept response
+                    WsCodec.acceptUpgrade(stream, headers, WebSocketConfig()).andThen {
+                        // Write a raw WS text frame manually (unmasked, "test")
+                        // opcode=1 (text), FIN=1, len=4, no mask
+                        val frame = Array[Byte](0x81.toByte, 0x04.toByte, 't'.toByte, 'e'.toByte, 's'.toByte, 't'.toByte)
+                        stream.write(Span.fromUnsafe(frame))
+                    }
+                }
+            }.unit
+        }.map { listener =>
+            transport.connect("127.0.0.1", listener.port, tls = false).map { conn =>
+                transport.stream(conn).map { clientStream =>
+                    WsCodec.requestUpgrade(clientStream, "127.0.0.1", "/ws/raw", HttpHeaders.empty, WebSocketConfig()).andThen {
+                        // Read the raw WS frame
+                        val buf = new Array[Byte](100)
+                        clientStream.read(buf).map { n =>
+                            java.lang.System.err.println(s"[DEBUG] client read $n bytes after WS handshake")
+                            assert(n > 0, s"Expected bytes, got $n")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "WebSocket client send over NIO" in run {
+        // Server just reads one frame, doesn't echo
+        val wsHandler = HttpHandler.webSocket("ws/recv") { (_, ws) =>
+            ws.take().map { frame =>
+                java.lang.System.err.println(s"[DEBUG-SERVER] received frame: $frame")
+            }.handle(Abort.run[Closed]).unit
+        }
+        val server = new HttpTransportServer(transport, Http1Protocol)
+        Scope.run {
+            server.bind(Seq(wsHandler), HttpServerConfig.default).map { binding =>
+                val wsClient = new WsTransportClient(transport)
+                wsClient.connect("127.0.0.1", binding.port, "/ws/recv", ssl = false, HttpHeaders.empty, WebSocketConfig()) {
+                    ws =>
+                        java.lang.System.err.println("[DEBUG-CLIENT] putting frame")
+                        ws.put(WebSocketFrame.Text("hello")).andThen {
+                            java.lang.System.err.println("[DEBUG-CLIENT] put done, sleeping")
+                            Async.sleep(100.millis).andThen(succeed)
+                        }
+                }
+            }
+        }
+    }
+
+    "WebSocket direct frame exchange over NIO" in run {
+        // Bypass WsTransportClient channels — write/read frames directly on the stream
+        transport.listen("127.0.0.1", 0, 5) { serverStream =>
+            Abort.run[Any] {
+                Http1Protocol.readRequest(serverStream, 65536).map { (_, _, headers, _) =>
+                    WsCodec.acceptUpgrade(serverStream, headers, WebSocketConfig()).andThen {
+                        // Read one frame from client (masked), echo it back (unmasked)
+                        Abort.run[Closed](WsCodec.readFrame(serverStream)).map {
+                            case Result.Success(frame) => WsCodec.writeFrame(serverStream, frame, mask = false)
+                            case _                     => Kyo.unit
+                        }
+                    }
+                }
+            }.unit
+        }.map { listener =>
+            transport.connect("127.0.0.1", listener.port, tls = false).map { conn =>
+                transport.stream(conn).map { clientStream =>
+                    WsCodec.requestUpgrade(clientStream, "127.0.0.1", "/ws/direct", HttpHeaders.empty, WebSocketConfig()).andThen {
+                        WsCodec.writeFrame(clientStream, WebSocketFrame.Text("hello"), mask = true).andThen {
+                            Abort.run[Closed](WsCodec.readFrame(clientStream)).map {
+                                case Result.Success(WebSocketFrame.Text(text)) => assert(text == "hello")
+                                case other                                     => fail(s"Expected Text, got $other")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end NioTransportTest

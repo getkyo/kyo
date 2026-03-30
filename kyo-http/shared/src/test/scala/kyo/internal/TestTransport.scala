@@ -113,6 +113,13 @@ class ChannelStream(
             }
 
     def write(data: Span[Byte])(using Frame): Unit < Async =
-        Abort.recover[Closed](_ => Kyo.unit)(writeCh.put(data))
+        // Match real transport behavior: writing to a closed connection
+        // fails with an unrecoverable error (like IOException: Broken pipe on NIO).
+        // Abort.run converts Closed to a Result, then we re-raise as Panic to match
+        // the contract that TransportStream.write returns Unit < Async.
+        Abort.run[Closed](writeCh.put(data)).map {
+            case Result.Success(_) => Kyo.unit
+            case Result.Error(e)   => Abort.panic(new java.io.IOException("Broken pipe (test transport)"))
+        }
 
 end ChannelStream

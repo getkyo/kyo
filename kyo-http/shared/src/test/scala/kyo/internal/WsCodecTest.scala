@@ -295,7 +295,6 @@ class WsCodecTest extends kyo.Test:
         Abort.run[Closed](WsCodec.readFrame(readStream)).map {
             case Result.Success(WebSocketFrame.Text(text)) =>
                 assert(text == "after-ping")
-                // Verify pong was written
                 val written = readStream.written
                 assert(written.nonEmpty) // Pong frame was auto-sent
             case other =>

@@ -1,6 +1,10 @@
 package kyo.internal
 
 import java.nio.charset.StandardCharsets
+import java.time.ZonedDateTime
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kyo.*
 
 /** Protocol-agnostic HTTP server. Works with Http1Protocol, Http2Protocol, etc.
@@ -12,6 +16,16 @@ import kyo.*
 class HttpTransportServer(transport: Transport, protocol: Protocol) extends HttpBackend.Server:
 
     private val Utf8 = StandardCharsets.UTF_8
+
+    /** RFC 9110 §6.6.1: Date header in IMF-fixdate format. */
+    private val httpDateFormat = DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.ENGLISH)
+
+    private def withDate(headers: HttpHeaders): HttpHeaders =
+        headers.add("Date", ZonedDateTime.now(ZoneOffset.UTC).format(httpDateFormat))
+
+    /** Write response head with Date header added automatically. */
+    private def writeHead(stream: TransportStream, status: HttpStatus, headers: HttpHeaders)(using Frame): Unit < Async =
+        protocol.writeResponseHead(stream, status, withDate(headers))
 
     def bind(
         handlers: Seq[HttpHandler[?, ?, ?]],
@@ -50,8 +64,8 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                         case Result.Success(routeMatch) =>
                             routeMatch.endpoint match
                                 case wsHandler: WebSocketHttpHandler =>
-                                    WsCodec.acceptUpgrade(stream, headers, wsHandler.wsConfig).andThen {
-                                        serveWebSocket(stream, wsHandler, headers, path)
+                                    WsCodec.acceptUpgrade(buffered, headers, wsHandler.wsConfig).andThen {
+                                        serveWebSocket(buffered, wsHandler, headers, path)
                                     }.andThen(Loop.done(()))
                                 case _ =>
                                     serveHttpRequest(stream, routeMatch, method, rawPath, headers, body, config).andThen {
@@ -71,7 +85,19 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                     end match
                 }
             }
-        }.unit
+        }.map {
+            case Result.Success(_) => Kyo.unit
+            case Result.Failure(error) =>
+                error match
+                    case _: HttpConnectionClosedException =>
+                        Kyo.unit
+                    case _: HttpPayloadTooLargeException =>
+                        Abort.run[Any](writeDecodeErrorResponse(stream, HttpStatus(413), error)).unit
+                    case _ =>
+                        Abort.run[Any](writeDecodeErrorResponse(stream, HttpStatus(400), error)).unit
+                end match
+            case Result.Panic(_) => Kyo.unit
+        }
     end serveConnection
 
     /** Decode request → invoke handler → encode response → write. */
@@ -104,8 +130,11 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                 endpoint.serveBuffered(routeMatch.pathCaptures, queryFn, headers, bodyBytes, path, method)
 
         serveResult match
-            case Result.Failure(_) =>
-                writeErrorResponse(stream, HttpStatus(400), HttpHeaders.empty)
+            case Result.Failure(error) =>
+                val status = error match
+                    case _: HttpUnsupportedMediaTypeException => HttpStatus(415)
+                    case _                                    => HttpStatus(400)
+                writeDecodeErrorResponse(stream, status, error)
             case Result.Panic(e) =>
                 writeErrorResponse(stream, HttpStatus(500), HttpHeaders.empty)
             case Result.Success(handlerComputation) =>
@@ -113,12 +142,12 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                     case Result.Success(response) =>
                         endpoint.encodeResponse(response)(
                             onEmpty = (status, hdrs) =>
-                                protocol.writeResponseHead(stream, status, hdrs.add("Content-Length", "0")).andThen {
+                                writeHead(stream, status, hdrs.add("Content-Length", "0")).andThen {
                                     protocol.writeBody(stream, Span.empty)
                                 },
                             onBuffered = (status, hdrs, responseBody) =>
                                 val finalBody = if isHead then Span.empty[Byte] else responseBody
-                                protocol.writeResponseHead(
+                                writeHead(
                                     stream,
                                     status,
                                     hdrs.add("Content-Length", responseBody.size.toString)
@@ -127,7 +156,7 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                                 }
                             ,
                             onStreaming = (status, hdrs, responseStream) =>
-                                protocol.writeResponseHead(stream, status, hdrs.add("Transfer-Encoding", "chunked")).andThen {
+                                writeHead(stream, status, hdrs.add("Transfer-Encoding", "chunked")).andThen {
                                     if isHead then Kyo.unit
                                     else protocol.writeStreamingBody(stream, responseStream)
                                 }
@@ -137,7 +166,7 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                             case halt: HttpResponse.Halt =>
                                 RouteUtil.encodeHalt(halt) { (status, hdrs, haltBody) =>
                                     val withLen = hdrs.add("Content-Length", haltBody.size.toString)
-                                    protocol.writeResponseHead(stream, status, withLen).andThen {
+                                    writeHead(stream, status, withLen).andThen {
                                         protocol.writeBody(stream, if isHead then Span.empty else haltBody)
                                     }
                                 }
@@ -145,7 +174,7 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                                 endpoint.encodeError(error) match
                                     case Present((status, hdrs, errorBody)) =>
                                         val withLen = hdrs.add("Content-Length", errorBody.size.toString)
-                                        protocol.writeResponseHead(stream, status, withLen).andThen {
+                                        writeHead(stream, status, withLen).andThen {
                                             protocol.writeBody(stream, if isHead then Span.empty else errorBody)
                                         }
                                     case Absent =>
@@ -164,10 +193,29 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
         val bodyBytes = RouteUtil.encodeErrorBody(status)
         val headers = extraHeaders.add("Content-Type", "application/json")
             .add("Content-Length", bodyBytes.size.toString)
-        protocol.writeResponseHead(stream, status, headers).andThen {
+        writeHead(stream, status, headers).andThen {
             protocol.writeBody(stream, bodyBytes)
         }
     end writeErrorResponse
+
+    /** Write an error response that includes the decode error message. */
+    private def writeDecodeErrorResponse(
+        stream: TransportStream,
+        status: HttpStatus,
+        error: Any
+    )(using Frame): Unit < Async =
+        val message = error match
+            case e: HttpException => e.getMessage
+            case e: Throwable     => e.getMessage
+            case other            => other.toString
+        val bodyBytes = RouteUtil.encodeErrorBodyWithMessage(status, message)
+        val headers = HttpHeaders.empty
+            .add("Content-Type", "application/json")
+            .add("Content-Length", bodyBytes.size.toString)
+        writeHead(stream, status, headers).andThen {
+            protocol.writeBody(stream, bodyBytes)
+        }
+    end writeDecodeErrorResponse
 
     /** Three concurrent fibers: read loop, write loop, user handler. Server does NOT mask (RFC 6455 §5.1). */
     private def serveWebSocket(
@@ -176,39 +224,53 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
         headers: HttpHeaders,
         path: String
     )(using Frame): Unit < Async =
-        Scope.run {
-            Channel.init[WebSocketFrame](wsHandler.wsConfig.bufferSize).map { inbound =>
-                Channel.init[WebSocketFrame](wsHandler.wsConfig.bufferSize).map { outbound =>
-                    AtomicRef.init[Maybe[(Int, String)]](Absent).map { closeReasonRef =>
-                        val closeFn: (Int, String) => Unit < Async = (code, reason) =>
-                            closeReasonRef.set(Present((code, reason))).andThen {
-                                WsCodec.writeClose(stream, code, reason, mask = false)
-                            }
-                        val ws = new WebSocket(inbound, outbound, closeReasonRef, closeFn)
-                        val wsUrl = HttpUrl.parse(path) match
-                            case Result.Success(u) => u
-                            case _                 => HttpUrl.parse("/").getOrThrow
-                        val request = HttpRequest(HttpMethod.GET, wsUrl, headers, Record.empty)
+        Channel.initUnscoped[WebSocketFrame](wsHandler.wsConfig.bufferSize).map { inbound =>
+            Channel.initUnscoped[WebSocketFrame](wsHandler.wsConfig.bufferSize).map { outbound =>
+                AtomicRef.init[Maybe[(Int, String)]](Absent).map { closeReasonRef =>
+                    val closeFn: (Int, String) => Unit < Async = (code, reason) =>
+                        closeReasonRef.set(Present((code, reason))).andThen {
+                            WsCodec.writeClose(stream, code, reason, mask = false)
+                        }
+                    val ws = new WebSocket(inbound, outbound, closeReasonRef, closeFn)
+                    val wsUrl = HttpUrl.parse(path) match
+                        case Result.Success(u) => u
+                        case _                 => HttpUrl.parse("/").getOrThrow
+                    val request = HttpRequest(HttpMethod.GET, wsUrl, headers, Record.empty)
 
-                        Sync.ensure(inbound.close.unit.andThen(outbound.close.unit)) {
-                            // Read loop: transport → inbound
-                            Fiber.init {
-                                Loop.foreach {
-                                    WsCodec.readFrame(stream).map { frame =>
-                                        inbound.put(frame).andThen(Loop.continue)
-                                    }
-                                }.handle(Abort.run[Closed]).unit
-                            }.andThen {
-                                // Write loop: outbound → transport (no mask for server)
-                                Fiber.init {
+                    Fiber.initUnscoped {
+                        Loop.foreach {
+                            WsCodec.readFrame(stream).map { frame =>
+                                inbound.put(frame).andThen(Loop.continue)
+                            }
+                        }
+                    }.map { readFiber =>
+                        Fiber.initUnscoped {
+                            readFiber.getResult.map { _ =>
+                                inbound.close.unit
+                            }
+                        }.map { monitorFiber =>
+                            Fiber.initUnscoped {
+                                Abort.run[Closed] {
                                     Loop.foreach {
                                         outbound.take.map { frame =>
                                             WsCodec.writeFrame(stream, frame, mask = false).andThen(Loop.continue)
                                         }
-                                    }.handle(Abort.run[Closed]).unit
-                                }.andThen {
-                                    // User handler
-                                    Abort.run[Any](wsHandler.wsHandler(request, ws)).unit
+                                    }
+                                }.andThen(outbound.close).unit
+                            }.map { writeFiber =>
+                                Sync.ensure(
+                                    readFiber.interrupt.unit
+                                        .andThen(writeFiber.interrupt.unit)
+                                        .andThen(monitorFiber.interrupt.unit)
+                                        .andThen(outbound.close.unit)
+                                ) {
+                                    Abort.run[Any](wsHandler.wsHandler(request, ws)).andThen {
+                                        closeReasonRef.get.map {
+                                            case Absent =>
+                                                Abort.run[Any](WsCodec.writeClose(stream, 1000, "", mask = false)).unit
+                                            case _ => Kyo.unit
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -225,10 +287,17 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
             case HttpRouter.FindError.NotFound =>
                 writeErrorResponse(stream, HttpStatus(404), HttpHeaders.empty)
             case HttpRouter.FindError.MethodNotAllowed(allowed) =>
-                val allow = allowed.map(_.name).mkString(", ")
+                // RFC 9110 §15.5.6: HEAD is implicitly allowed when GET is registered,
+                // OPTIONS is always allowed
+                val augmented =
+                    val base     = allowed.toSet
+                    val withHead = if base.contains(HttpMethod.GET) then base + HttpMethod.HEAD else base
+                    withHead + HttpMethod.OPTIONS
+                end augmented
+                val allow = augmented.map(_.name).mkString(", ")
                 writeErrorResponse(stream, HttpStatus(405), HttpHeaders.empty.add("Allow", allow))
             case HttpRouter.FindError.Options(headers) =>
-                protocol.writeResponseHead(stream, HttpStatus(204), headers).andThen {
+                writeHead(stream, HttpStatus(204), headers).andThen {
                     protocol.writeBody(stream, Span.empty)
                 }
 

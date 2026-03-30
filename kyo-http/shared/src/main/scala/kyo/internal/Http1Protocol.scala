@@ -200,6 +200,9 @@ object Http1Protocol extends Protocol:
     /** Read bytes until \r\n\r\n. Returns (header bytes, leftover body bytes). The leftover bytes are any data read past the \r\n\r\n
       * boundary.
       */
+    /** Max header block size (separate from content length). */
+    private val MaxHeaderSize = 65536
+
     private def readHeaderBlock(stream: TransportStream, maxSize: Int)(using
         Frame
     )
@@ -212,11 +215,11 @@ object Http1Protocol extends Protocol:
             stream.read(buf).map { n =>
                 if n == 0 then Loop.continue // NIO spurious wakeup, retry
                 else if n < 0 then
-                    if accum.size() == 0 then Abort.fail(HttpProtocolException("Connection closed before headers"))
+                    if accum.size() == 0 then Abort.fail(HttpConnectionClosedException())
                     else Loop.done(())
                 else
                     accum.write(buf, 0, n)
-                    if accum.size() > maxSize then
+                    if accum.size() > MaxHeaderSize then
                         Abort.fail(HttpProtocolException("Headers exceed max size"))
                     else
                         val bytes   = accum.toByteArray
@@ -317,7 +320,7 @@ object Http1Protocol extends Protocol:
         Frame
     )
         : Span[Byte] < (Async & Abort[HttpException]) =
-        if len > maxSize then Abort.fail(HttpProtocolException(s"Body size $len exceeds max $maxSize"))
+        if len > maxSize then Abort.fail(HttpPayloadTooLargeException(len, maxSize))
         else
             val result = new Array[Byte](len)
             var offset = 0
@@ -338,7 +341,7 @@ object Http1Protocol extends Protocol:
 
     /** Create a Stream that reads chunked transfer encoding. */
     private def readChunkedStream(stream: TransportStream)(using Frame): Stream[Span[Byte], Async] =
-        Stream.unfold(()) { _ =>
+        Stream.unfold((), chunkSize = 1) { _ =>
             readLine(stream).map { line =>
                 parseChunkHeader(line) match
                     case Result.Success(size) =>

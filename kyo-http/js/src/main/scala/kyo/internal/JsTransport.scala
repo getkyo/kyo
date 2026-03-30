@@ -3,7 +3,12 @@ package kyo.internal
 import kyo.*
 import scala.scalajs.js
 
-/** Node.js net-based transport for Scala.js. */
+/** Node.js net-based transport for Scala.js.
+  *
+  * AllowUnsafe is used ONLY in Node.js event callbacks (the OS boundary). These callbacks fire from the Node.js event loop, outside the kyo
+  * fiber system. Promise.unsafe.complete bridges from the callback into kyo. This is analogous to the kqueue poll thread on Native — the
+  * minimum unsafe boundary required to bridge OS events to kyo fibers.
+  */
 final class JsTransport extends Transport:
 
     type Connection = JsConnection
@@ -54,14 +59,14 @@ final class JsTransport extends Transport:
 
     def listen(host: String, port: Int, backlog: Int)(
         handler: TransportStream => Unit < Async
-    )(using Frame): TransportListener < (Async & Scope) =
+    )(using frame: Frame): TransportListener < (Async & Scope) =
         Promise.init[TransportListener, Any].map { ready =>
             val server = net.createServer()
             discard(server.on(
                 "connection",
                 { (socket: js.Dynamic) =>
                     import AllowUnsafe.embrace.danger
-                    given Frame = Frame.internal
+                    given Frame = frame
                     discard(socket.pause())
                     discard(socket.setNoDelay(true))
                     val conn = new JsConnection(socket)
