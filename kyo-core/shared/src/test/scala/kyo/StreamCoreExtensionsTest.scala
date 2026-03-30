@@ -768,4 +768,73 @@ class StreamCoreExtensionsTest extends Test:
         }
     }
 
+    "mapPar Closed error propagation (#1387)" - {
+        "should not deadlock when f fails with Abort[Closed]" in run {
+            val failure = Closed("fail", summon[Frame])
+            val stream  = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+            val stream2 = stream.mapPar(2)(i => if i == 5 then Abort.fail(failure) else i + 1)
+            Abort.run(stream2.run).map(res => assert(res.isError))
+        }
+
+        "should not deadlock with various parallelism" in run {
+            val failure = Closed("fail", summon[Frame])
+            Choice.run {
+                for
+                    par <- Choice.eval(1, 2, 4, 8)
+                    stream  = Stream.init(1 to 12)
+                    stream2 = stream.mapPar(par)(i => if i == 5 then Abort.fail(failure) else i + 1)
+                    res <- Abort.run(stream2.run)
+                yield assert(res.isError)
+            }.andThen(succeed)
+        }
+
+        "should propagate non-Closed errors as Failure" in run {
+            val stream  = Stream.init(1 to 12)
+            val stream2 = stream.mapPar(2)(i => if i == 5 then Abort.fail("failure") else i + 1)
+            Abort.run(stream2.run).map(res => assert(res == Result.Failure("failure")))
+        }
+
+        "should propagate non-Closed errors in mapParUnordered as Failure" in run {
+            val stream  = Stream.init(1 to 12)
+            val stream2 = stream.mapParUnordered(4)(i => if i == 5 then Abort.fail("failure") else i + 1)
+            Abort.run(stream2.run).map(res => assert(res == Result.Failure("failure")))
+        }
+
+        "should not deadlock in mapParUnordered with Abort[Closed]" in run {
+            val failure = Closed("fail", summon[Frame])
+            val stream  = Stream.init(1 to 12)
+            val stream2 = stream.mapParUnordered(4)(i => if i == 5 then Abort.fail(failure) else i + 1)
+            Abort.run(stream2.run).map(res => assert(res.isError))
+        }
+
+        "should still work after early error" in run {
+            val stream  = Stream.init(1 to 4)
+            val stream2 = stream.mapPar(2)(i => i + 1)
+            stream2.run.map(res => assert(res == Chunk(2, 3, 4, 5)))
+        }
+    }
+
+    "mapParUnordered buffer closed (#1328)" - {
+        "should not throw buffer closed unexpectedly" in run {
+            val stream = Stream
+                .init(1 to 500, 1)
+                .mapParUnordered(10) { v =>
+                    Random.nextInt(10).map: sleep =>
+                        Async.sleep(sleep.millis).andThen(v)
+                }
+            stream.run.map: result =>
+                assert(result.toSet == (1 to 500).toSet)
+        }
+
+        "should handle Closed from channel operations gracefully" in run {
+            val stream = Stream
+                .init(1 to 100, 1)
+                .mapParUnordered(4) { v =>
+                    Async.sleep(1.millis).andThen(v)
+                }
+            stream.run.map: result =>
+                assert(result.toSet == (1 to 100).toSet)
+        }
+    }
+
 end StreamCoreExtensionsTest
