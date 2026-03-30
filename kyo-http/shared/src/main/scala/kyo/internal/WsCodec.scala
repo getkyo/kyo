@@ -1,7 +1,6 @@
 package kyo.internal
 
 import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
 import java.util.Base64
 import kyo.*
 
@@ -104,8 +103,7 @@ object WsCodec:
     // ── Pure functions (unit testable) ──────────────────────────
 
     private[internal] def computeAcceptKey(clientKey: String): String =
-        val sha1 = MessageDigest.getInstance("SHA-1")
-        val hash = sha1.digest((clientKey + WsGuid).getBytes(Utf8))
+        val hash = Sha1.hash((clientKey + WsGuid).getBytes(Utf8))
         Base64.getEncoder.encodeToString(hash)
     end computeAcceptKey
 

@@ -67,7 +67,7 @@ class Http1ProtocolTest extends kyo.Test:
                     val result = Http1Protocol.parseRequestLine(s"$m /test HTTP/1.1")
                     assert(result.isSuccess, s"$m should parse successfully")
                 }
-                assert(true)
+                succeed
             }
         }
 
@@ -344,7 +344,7 @@ class Http1ProtocolTest extends kyo.Test:
                         assert(arr(i) == i.toByte, s"byte $i mismatch")
                         i += 1
                     end while
-                    assert(true)
+                    succeed
                 case other =>
                     fail(s"Expected Buffered, got $other")
         }

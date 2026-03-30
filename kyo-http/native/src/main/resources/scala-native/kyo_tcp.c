@@ -1,0 +1,165 @@
+/**
+ * Minimal TCP + kqueue wrappers for Scala Native.
+ * Avoids struct layout issues by exposing simple int/pointer functions.
+ */
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/event.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
+#include <errno.h>
+#include <stdio.h>
+
+/* ── TCP connect ────────────────────────────────────────── */
+
+/**
+ * Non-blocking TCP connect.
+ * Returns: fd (>=0) on success.
+ * *out_pending = 1 if connection is async (EINPROGRESS), 0 if connected immediately.
+ * Returns -1 on error.
+ */
+int kyo_tcp_connect(const char *host, int port, int *out_pending) {
+    *out_pending = 0;
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char port_str[8];
+    snprintf(port_str, sizeof(port_str), "%d", port);
+
+    if (getaddrinfo(host, port_str, &hints, &res) != 0)
+        return -1;
+
+    int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (fd < 0) {
+        freeaddrinfo(res);
+        return -1;
+    }
+
+    /* Set non-blocking */
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    /* Set TCP_NODELAY */
+    int one = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+
+    int rc = connect(fd, res->ai_addr, res->ai_addrlen);
+    freeaddrinfo(res);
+
+    if (rc == 0) return fd;           /* connected immediately */
+    if (errno == EINPROGRESS) {
+        *out_pending = 1;
+        return fd;                    /* async — wait for writability */
+    }
+    close(fd);
+    return -1;
+}
+
+/* ── TCP listen ─────────────────────────────────────────── */
+
+/** Bind + listen. Returns server fd, or -1 on error. actualPort written to *out_port. */
+int kyo_tcp_listen(const char *host, int port, int backlog, int *out_port) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+    /* Non-blocking */
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        close(fd);
+        return -1;
+    }
+
+    if (listen(fd, backlog) != 0) {
+        close(fd);
+        return -1;
+    }
+
+    /* Get actual port */
+    struct sockaddr_in bound;
+    socklen_t len = sizeof(bound);
+    getsockname(fd, (struct sockaddr *)&bound, &len);
+    *out_port = ntohs(bound.sin_port);
+
+    return fd;
+}
+
+/** Accept a connection. Returns client fd, or -1. Sets non-blocking + TCP_NODELAY. */
+int kyo_tcp_accept(int server_fd) {
+    int client_fd = accept(server_fd, NULL, NULL);
+    if (client_fd < 0) return -1;
+
+    int flags = fcntl(client_fd, F_GETFL, 0);
+    fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
+
+    int one = 1;
+    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+
+    return client_fd;
+}
+
+/* ── TCP read/write ─────────────────────────────────────── */
+
+int kyo_tcp_read(int fd, char *buf, int len) {
+    return (int)read(fd, buf, (size_t)len);
+}
+
+int kyo_tcp_write(int fd, const char *buf, int len) {
+    return (int)write(fd, buf, (size_t)len);
+}
+
+/* ── Socket lifecycle ───────────────────────────────────── */
+
+void kyo_tcp_close(int fd) {
+    close(fd);
+}
+
+void kyo_tcp_shutdown(int fd) {
+    shutdown(fd, SHUT_RDWR);
+    close(fd);
+}
+
+int kyo_tcp_is_alive(int fd) {
+    return fcntl(fd, F_GETFD) != -1 ? 1 : 0;
+}
+
+/* ── kqueue ─────────────────────────────────────────────── */
+
+int kyo_kqueue_create(void) {
+    return kqueue();
+}
+
+/** Register one-shot interest (EV_ADD | EV_ONESHOT). filter: -1=read, -2=write. */
+int kyo_kqueue_register(int kq, int fd, int filter) {
+    struct kevent ev;
+    EV_SET(&ev, fd, filter, EV_ADD | EV_ONESHOT, 0, 0, NULL);
+    return kevent(kq, &ev, 1, NULL, 0, NULL);
+}
+
+/** Wait for events. Returns number of ready events. events is an int array: [fd0, filter0, fd1, filter1, ...] */
+int kyo_kqueue_wait(int kq, int *out_fds, int *out_filters, int max_events) {
+    struct kevent events[64];
+    int actual_max = max_events < 64 ? max_events : 64;
+    int n = kevent(kq, NULL, 0, events, actual_max, NULL);
+    for (int i = 0; i < n; i++) {
+        out_fds[i] = (int)events[i].ident;
+        out_filters[i] = events[i].filter;
+    }
+    return n;
+}
