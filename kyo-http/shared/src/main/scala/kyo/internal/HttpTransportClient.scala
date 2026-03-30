@@ -113,18 +113,12 @@ class HttpTransportClient(private[kyo] val transport: Transport, protocol: Proto
         request: HttpRequest[?]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
         protocol.readResponse(stream, Int.MaxValue, request.method).map { (status, headers, body) =>
-            java.lang.System.err.println(
-                s"[DEBUG-CLIENT] readStreamingResponse: status=$status, body=${body.getClass.getSimpleName}, headers=${headers.get("Transfer-Encoding")}"
-            )
             val bodyStream = body match
                 case HttpBody.Streamed(chunks) =>
-                    java.lang.System.err.println("[DEBUG-CLIENT] Body is Streamed")
                     chunks
                 case HttpBody.Buffered(data) =>
-                    java.lang.System.err.println(s"[DEBUG-CLIENT] Body is Buffered, size=${data.size}")
                     Stream.init(Seq(data))
                 case HttpBody.Empty =>
-                    java.lang.System.err.println("[DEBUG-CLIENT] Body is Empty")
                     Stream.empty[Span[Byte]]
             Abort.get(RouteUtil.decodeStreamingResponse(
                 route,

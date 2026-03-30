@@ -160,10 +160,7 @@ private[kyo] class NioStream(conn: NioConnection, key: SelectionKey) extends Tra
                 Sync.defer {
                     discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_READ))
                     val bb = ByteBuffer.wrap(buf)
-                    val n  = conn.channel.read(bb)
-                    if n <= 0 then
-                        java.lang.System.err.println(s"[DEBUG-NIO-READ] n=$n, ch=${conn.channel.isOpen}/${conn.channel.isConnected}")
-                    n
+                    conn.channel.read(bb)
                 }
             }
         }
