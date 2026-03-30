@@ -195,6 +195,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                         .andThen(latchPub.release).andThen(Async.never)
                 )))
                 _ <- latchPub.await
+                _ <- Async.sleep(50.millis)
                 _ <- publisherFiber.interrupt.unit
                 _ <- fiber1.getResult
                 _ <- fiber2.getResult
