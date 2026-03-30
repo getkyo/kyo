@@ -134,14 +134,16 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                         error match
                             case halt: HttpResponse.Halt =>
                                 RouteUtil.encodeHalt(halt) { (status, hdrs, haltBody) =>
-                                    protocol.writeResponseHead(stream, status, hdrs).andThen {
+                                    val withLen = hdrs.add("Content-Length", haltBody.size.toString)
+                                    protocol.writeResponseHead(stream, status, withLen).andThen {
                                         protocol.writeBody(stream, if isHead then Span.empty else haltBody)
                                     }
                                 }
                             case _ =>
                                 endpoint.encodeError(error) match
                                     case Present((status, hdrs, errorBody)) =>
-                                        protocol.writeResponseHead(stream, status, hdrs).andThen {
+                                        val withLen = hdrs.add("Content-Length", errorBody.size.toString)
+                                        protocol.writeResponseHead(stream, status, withLen).andThen {
                                             protocol.writeBody(stream, if isHead then Span.empty else errorBody)
                                         }
                                     case Absent =>
