@@ -12,8 +12,8 @@ import scala.scalanative.unsafe.*
   *   - One kqueue fd per transport, polled by a daemon thread
   *   - read()/write() register kqueue interest and suspend the fiber via Channel.take
   *   - Poll thread: kqueueWait() → perform I/O → put results into per-fd result channels
-  *   - No AllowUnsafe in the API layer. The poll thread uses Sync.Unsafe internally
-  *     (genuine OS boundary bridge — the only place unsafe is acceptable).
+  *   - No AllowUnsafe in the API layer. The poll thread uses Sync.Unsafe internally (genuine OS boundary bridge — the only place unsafe is
+  *     acceptable).
   */
 final class KqueueNativeTransport extends Transport:
 
@@ -48,7 +48,7 @@ final class KqueueNativeTransport extends Transport:
                 val fdsPtr     = alloc[CInt](maxEvents)
                 val filtersPtr = alloc[CInt](maxEvents)
                 val count      = kqueueWait(kqfd, fdsPtr, filtersPtr, maxEvents)
-                var i = 0
+                var i          = 0
                 while i < count do
                     outFds(i) = fdsPtr(i)
                     outFilters(i) = filtersPtr(i)
@@ -111,10 +111,13 @@ final class KqueueNativeTransport extends Transport:
                 i += 1
             end while
         end while
+    end pollLoop
 
     // ── Transport implementation ────────────────────────────────
 
-    def connect(host: String, port: Int, tls: Boolean)(using Frame)
+    def connect(host: String, port: Int, tls: Boolean)(using
+        Frame
+    )
         : KqueueConnection < (Async & Abort[HttpException]) =
         if tls then Abort.fail(HttpConnectException(host, port, new Exception("TLS not yet supported on native")))
         else
@@ -230,6 +233,7 @@ private[kyo] class KqueueStream(
                 else Loop.continue
             }
         }
+    end read
 
     def write(data: Span[Byte])(using Frame): Unit < Async =
         if data.isEmpty then Kyo.unit
@@ -247,7 +251,9 @@ private[kyo] class KqueueStream(
                             write(data.slice(written, data.size)).andThen(Loop.done(()))
                         else
                             Loop.done(())
+                        end if
                     else Loop.continue
+                    end if
                 }
             }
 
