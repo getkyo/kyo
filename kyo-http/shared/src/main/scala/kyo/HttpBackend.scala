@@ -55,7 +55,7 @@ object HttpBackend:
         def bind(
             handlers: Seq[HttpHandler[?, ?, ?]],
             config: HttpServerConfig
-        )(using Frame): Binding < Async
+        )(using Frame): Binding < (Async & Scope)
     end Server
 
     abstract class Binding:

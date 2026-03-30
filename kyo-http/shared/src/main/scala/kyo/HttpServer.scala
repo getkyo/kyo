@@ -70,23 +70,23 @@ object HttpServer:
     )(using Frame): A < (S & Async & Scope) =
         init(backend, port, host)(handlers*).map(f)
 
-    def initUnscoped(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
+    def initUnscoped(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
         initUnscoped(HttpServerConfig.default)(handlers*)
 
-    def initUnscoped(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
+    def initUnscoped(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
         initUnscoped(HttpServerConfig.default.port(port).host(host))(handlers*)
 
-    def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
+    def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
         initUnscoped(HttpPlatformBackend.server, config)(handlers*)
 
     def initUnscoped(backend: HttpBackend.Server, port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
-    ): HttpServer < Async =
+    ): HttpServer < (Async & Scope) =
         initUnscoped(backend, HttpServerConfig.default.port(port).host(host))(handlers*)
 
     def initUnscoped(backend: HttpBackend.Server, config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
-    ): HttpServer < Async =
+    ): HttpServer < (Async & Scope) =
         val allHandlers = config.openApi match
             case Present(ep) =>
                 val spec = OpenApiGenerator.generate(

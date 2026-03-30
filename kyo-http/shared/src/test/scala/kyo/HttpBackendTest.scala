@@ -98,10 +98,10 @@ class HttpBackendTest extends Test:
     "Server" - {
 
         "bind accepts handlers and returns binding" in {
-            val route                          = HttpRoute.getRaw("users").response(_.bodyText)
-            val handler                        = route.handler(_ => HttpResponse.ok.addField("body", "hello"))
-            val result                         = stubServer.bind(Seq(handler), HttpServerConfig.default.port(8080).host("0.0.0.0"))
-            val _: HttpBackend.Binding < Async = result
+            val route   = HttpRoute.getRaw("users").response(_.bodyText)
+            val handler = route.handler(_ => HttpResponse.ok.addField("body", "hello"))
+            val result  = stubServer.bind(Seq(handler), HttpServerConfig.default.port(8080).host("0.0.0.0"))
+            val _: HttpBackend.Binding < (Async & Scope) = result
             succeed
         }
 
@@ -127,7 +127,7 @@ class HttpBackendTest extends Test:
             val handler2 = route2.handler(req => HttpResponse.ok.addField("body", req.fields.body))
 
             val result = stubServer.bind(Seq(handler1, handler2), HttpServerConfig.default.port(8080).host("0.0.0.0"))
-            val _: HttpBackend.Binding < Async = result
+            val _: HttpBackend.Binding < (Async & Scope) = result
             succeed
         }
     }

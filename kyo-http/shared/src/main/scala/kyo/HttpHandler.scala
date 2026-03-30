@@ -30,6 +30,44 @@ sealed abstract class HttpHandler[In, Out, +E](val route: HttpRoute[In, Out, E])
 
     def apply(request: HttpRequest[In])(using Frame): HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])
 
+    /** Decode a buffered request from raw wire data and invoke the handler. No casts needed — this method has access to the concrete types
+      * In, Out, E through `this`. Used by HttpTransportServer to serve requests without type erasure issues.
+      */
+    private[kyo] def serveBuffered(
+        pathCaptures: Dict[String, String],
+        queryParam: Maybe[HttpUrl],
+        headers: HttpHeaders,
+        body: Span[Byte],
+        path: String,
+        method: HttpMethod
+    )(using Frame): Result[HttpException, HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])] =
+        internal.RouteUtil.decodeBufferedRequest(route, pathCaptures, queryParam, headers, body, path, Present(method))
+            .map(request => this(request))
+
+    /** Decode a streaming request from raw wire data and invoke the handler. */
+    private[kyo] def serveStreaming(
+        pathCaptures: Dict[String, String],
+        queryParam: Maybe[HttpUrl],
+        headers: HttpHeaders,
+        body: Stream[Span[Byte], Async],
+        path: String,
+        method: HttpMethod
+    )(using Frame): Result[HttpException, HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])] =
+        internal.RouteUtil.decodeStreamingRequest(route, pathCaptures, queryParam, headers, body, path, Present(method))
+            .map(request => this(request))
+
+    /** Encode a successful response to wire format using RouteUtil callbacks. */
+    private[kyo] def encodeResponse[A](response: HttpResponse[Out])(
+        onEmpty: (HttpStatus, HttpHeaders) => A,
+        onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A,
+        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A
+    )(using Frame): A =
+        internal.RouteUtil.encodeResponse(route, response)(onEmpty, onBuffered, onStreaming)
+
+    /** Try to encode a typed error via the route's error mappings. */
+    private[kyo] def encodeError(error: Any)(using Frame): Maybe[(HttpStatus, HttpHeaders, Span[Byte])] =
+        internal.RouteUtil.encodeError(route, error)
+
 end HttpHandler
 
 /** A WebSocket endpoint handler. Extends HttpHandler so it can be registered with HttpServer.init alongside normal HTTP handlers. The
