@@ -258,4 +258,50 @@ class NioTransportTest extends kyo.Test:
         }
     }
 
+    "chunked streaming response" in run {
+        Scope.run {
+            transport.listen("127.0.0.1", 0, 5) { stream =>
+                Abort.run[HttpException] {
+                    Http1Protocol.readRequest(stream, 65536).map { (_, _, _, _) =>
+                        val body = Stream.init(Seq(
+                            Span.fromUnsafe("line1\n".getBytes(Utf8)),
+                            Span.fromUnsafe("line2\n".getBytes(Utf8))
+                        ))
+                        Http1Protocol.writeResponseHead(
+                            stream,
+                            HttpStatus(200),
+                            HttpHeaders.empty.add("Transfer-Encoding", "chunked").add("Content-Type", "text/plain")
+                        ).andThen {
+                            Http1Protocol.writeStreamingBody(stream, body)
+                        }
+                    }
+                }.unit
+            }.map { listener =>
+                transport.connect("127.0.0.1", listener.port, tls = false).map { conn =>
+                    transport.stream(conn).map { stream =>
+                        Http1Protocol.writeRequestHead(
+                            stream,
+                            HttpMethod.GET,
+                            "/stream",
+                            HttpHeaders.empty.add("Host", "localhost").add("Content-Length", "0")
+                        ).andThen {
+                            Http1Protocol.readResponse(stream, Int.MaxValue, HttpMethod.GET).map { (status, headers, body) =>
+                                assert(status.code == 200)
+                                body match
+                                    case HttpBody.Streamed(chunks) =>
+                                        chunks.run.map { spans =>
+                                            val text = spans.map(s => new String(s.toArrayUnsafe, Utf8)).mkString
+                                            assert(text == "line1\nline2\n")
+                                        }
+                                    case other =>
+                                        fail(s"Expected Streamed, got $other")
+                                end match
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end NioTransportTest

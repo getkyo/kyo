@@ -137,4 +137,39 @@ class HttpTransportServerTest extends kyo.Test:
         }
     }
 
+    "streaming response via HttpTransportServer" in run {
+        val route = HttpRoute.getRaw("stream").response(_.bodyStream)
+        val handler = route.handler { _ =>
+            val body = Stream.init(Seq(Span.fromUnsafe("hello".getBytes(java.nio.charset.StandardCharsets.UTF_8))))
+            HttpResponse.ok.addField("body", body)
+        }
+        withServer(handler) { (transport, binding) =>
+            transport.connect("127.0.0.1", binding.port, tls = false).map { conn =>
+                transport.stream(conn).map { stream =>
+                    Http1Protocol.writeRequestHead(
+                        stream,
+                        HttpMethod.GET,
+                        "/stream",
+                        HttpHeaders.empty.add("Host", "localhost").add("Content-Length", "0")
+                    ).andThen {
+                        Http1Protocol.readResponse(stream, Int.MaxValue, HttpMethod.GET).map { (status, headers, body) =>
+                            assert(status.code == 200)
+                            body match
+                                case HttpBody.Streamed(chunks) =>
+                                    chunks.run.map { spans =>
+                                        val text = spans.map(s => new String(s.toArrayUnsafe, Utf8)).mkString
+                                        assert(text.contains("hello"))
+                                    }
+                                case HttpBody.Buffered(data) =>
+                                    assert(new String(data.toArrayUnsafe, Utf8).contains("hello"))
+                                case other =>
+                                    fail(s"Expected Streamed or Buffered, got $other")
+                            end match
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end HttpTransportServerTest
