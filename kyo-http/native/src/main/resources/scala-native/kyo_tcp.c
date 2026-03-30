@@ -114,6 +114,14 @@ int kyo_tcp_accept(int server_fd) {
     return client_fd;
 }
 
+/** Check if a non-blocking connect succeeded. Returns 0 on success, errno on failure. */
+int kyo_tcp_connect_error(int fd) {
+    int error = 0;
+    socklen_t len = sizeof(error);
+    getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len);
+    return error;
+}
+
 /* ── TCP read/write ─────────────────────────────────────── */
 
 int kyo_tcp_read(int fd, char *buf, int len) {
@@ -150,6 +158,19 @@ int kyo_kqueue_register(int kq, int fd, int filter) {
     struct kevent ev;
     EV_SET(&ev, fd, filter, EV_ADD | EV_ONESHOT, 0, 0, NULL);
     return kevent(kq, &ev, 1, NULL, 0, NULL);
+}
+
+/** Non-blocking poll (zero timeout). */
+int kyo_kqueue_wait_nonblock(int kq, int *out_fds, int *out_filters, int max_events) {
+    struct kevent events[64];
+    int actual_max = max_events < 64 ? max_events : 64;
+    struct timespec timeout = { .tv_sec = 0, .tv_nsec = 0 };
+    int n = kevent(kq, NULL, 0, events, actual_max, &timeout);
+    for (int i = 0; i < n; i++) {
+        out_fds[i] = (int)events[i].ident;
+        out_filters[i] = events[i].filter;
+    }
+    return n < 0 ? 0 : n;
 }
 
 /** Wait for events with 100ms timeout. Returns number of ready events. */

@@ -41,7 +41,8 @@ class KqueueNativeTransportTest extends kyo.Test:
     "connect to non-existent host fails" in run {
         Scope.run {
             Abort.run[HttpException] {
-                transport.connect("192.0.2.1", 12345, tls = false) // TEST-NET, guaranteed unreachable
+                // Port 1 on localhost — should get ECONNREFUSED immediately
+                transport.connect("127.0.0.1", 1, tls = false)
             }.map { result =>
                 assert(result.isFailure)
             }

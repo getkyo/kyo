@@ -17,6 +17,10 @@ private[kyo] object PosixBindings:
     @extern @name("kyo_tcp_accept")
     def tcpAccept(serverFd: CInt): CInt = extern
 
+    /** Check if non-blocking connect succeeded. Returns 0 on success, errno on failure. */
+    @extern @name("kyo_tcp_connect_error")
+    def tcpConnectError(fd: CInt): CInt = extern
+
     /** Read up to len bytes. Returns bytes read, 0 on EOF, -1 on error/EAGAIN. */
     @extern @name("kyo_tcp_read")
     def tcpRead(fd: CInt, buf: Ptr[Byte], len: CInt): CInt = extern
@@ -41,8 +45,12 @@ private[kyo] object PosixBindings:
     @extern @name("kyo_kqueue_register")
     def kqueueRegister(kq: CInt, fd: CInt, filter: CInt): CInt = extern
 
-    /** Wait for events. Fills outFds/outFilters arrays. Returns count. Blocks until events ready. */
+    /** Wait for events with 100ms timeout. Blocks until events or timeout. */
     @extern @blocking @name("kyo_kqueue_wait")
     def kqueueWait(kq: CInt, outFds: Ptr[CInt], outFilters: Ptr[CInt], maxEvents: CInt): CInt = extern
+
+    /** Non-blocking poll (zero timeout). */
+    @extern @name("kyo_kqueue_wait_nonblock")
+    def kqueueWaitNonBlock(kq: CInt, outFds: Ptr[CInt], outFilters: Ptr[CInt], maxEvents: CInt): CInt = extern
 
 end PosixBindings
