@@ -103,6 +103,7 @@ final class KqueueNativeTransport extends Transport:
                                 discard(pw.promise.complete(Result.Panic(new java.io.IOException(s"write failed on fd $fd"))))
                             else
                                 discard(pw.promise.complete(Result.succeed(())))
+                            end if
                         end if
                     end if
                 end if

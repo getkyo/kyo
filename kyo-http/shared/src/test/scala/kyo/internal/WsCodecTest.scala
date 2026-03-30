@@ -268,4 +268,73 @@ class WsCodecTest extends kyo.Test:
         }
     }
 
+    // ── Ping/Pong handling ────────────────────────────────────
+
+    "ping auto-sends pong and returns next data frame" in run {
+        // Build a stream with: Ping frame, then Text frame
+        val pingStream = new MockStream(Array.empty[Byte])
+        // Write a ping frame
+        WsCodec.writeClose(pingStream, 0, "", mask = false) // abuse writeClose for raw frame building
+        // Actually, let's build raw frames manually
+        val textPayload = "after-ping".getBytes(Utf8)
+        val pingPayload = "pingdata".getBytes(Utf8)
+
+        // Ping frame: FIN=1, opcode=9, no mask
+        val pingFrame = Array[Byte](
+            (0x80 | 0x09).toByte, // FIN + Ping
+            pingPayload.length.toByte
+        ) ++ pingPayload
+
+        // Text frame: FIN=1, opcode=1, no mask
+        val textFrame = Array[Byte](
+            (0x80 | 0x01).toByte, // FIN + Text
+            textPayload.length.toByte
+        ) ++ textPayload
+
+        val readStream = new MockStream(pingFrame ++ textFrame)
+        Abort.run[Closed](WsCodec.readFrame(readStream)).map {
+            case Result.Success(WebSocketFrame.Text(text)) =>
+                assert(text == "after-ping")
+                // Verify pong was written
+                val written = readStream.written
+                assert(written.nonEmpty) // Pong frame was auto-sent
+            case other =>
+                fail(s"Expected Text after Ping, got $other")
+        }
+    }
+
+    "pong is ignored, returns next data frame" in run {
+        val textPayload = "afterpong".getBytes(Utf8)
+        val pongPayload = "pongdata".getBytes(Utf8)
+
+        val pongFrame = Array[Byte](
+            (0x80 | 0x0a).toByte, // FIN + Pong
+            pongPayload.length.toByte
+        ) ++ pongPayload
+
+        val textFrame = Array[Byte](
+            (0x80 | 0x01).toByte, // FIN + Text
+            textPayload.length.toByte
+        ) ++ textPayload
+
+        val readStream = new MockStream(pongFrame ++ textFrame)
+        Abort.run[Closed](WsCodec.readFrame(readStream)).map {
+            case Result.Success(WebSocketFrame.Text(text)) =>
+                assert(text == "afterpong")
+            case other =>
+                fail(s"Expected Text after Pong, got $other")
+        }
+    }
+
+    "unknown opcode causes Abort[Closed]" in run {
+        val unknownFrame = Array[Byte](
+            (0x80 | 0x0f).toByte, // FIN + opcode 15 (unknown)
+            0x00.toByte           // no payload
+        )
+        val readStream = new MockStream(unknownFrame)
+        Abort.run[Closed](WsCodec.readFrame(readStream)).map { result =>
+            assert(result.isFailure)
+        }
+    }
+
 end WsCodecTest

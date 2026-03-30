@@ -409,4 +409,94 @@ class Http1ProtocolTest extends kyo.Test:
         }
     }
 
+    // ── Missing tests from plan ──────────────────────────────
+
+    "POST with chunked body" in run {
+        val chunked = "3\r\nabc\r\n4\r\ndefg\r\n0\r\n\r\n"
+        val request = s"POST /upload HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n"
+        val input   = request.getBytes(Utf8) ++ chunked.getBytes(Utf8)
+        val stream  = new MockStream(input)
+        Http1Protocol.readRequest(stream, 65536).map { (method, path, headers, body) =>
+            assert(method == HttpMethod.POST)
+            body match
+                case HttpBody.Streamed(_) => succeed
+                case other                => fail(s"Expected Streamed, got $other")
+        }
+    }
+
+    "chunked wins over Content-Length when both present" in run {
+        val chunked = "5\r\nhello\r\n0\r\n\r\n"
+        val request = s"POST /test HTTP/1.1\r\nContent-Length: 99\r\nTransfer-Encoding: chunked\r\n\r\n"
+        val input   = request.getBytes(Utf8) ++ chunked.getBytes(Utf8)
+        val stream  = new MockStream(input)
+        Http1Protocol.readRequest(stream, 65536).map { (_, _, _, body) =>
+            body match
+                case HttpBody.Streamed(_) => succeed
+                case other                => fail(s"Expected Streamed (chunked wins), got $other")
+        }
+    }
+
+    "200 response with chunked body" in run {
+        val chunked  = "5\r\nhello\r\n0\r\n\r\n"
+        val response = s"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+        val input    = response.getBytes(Utf8) ++ chunked.getBytes(Utf8)
+        val stream   = new MockStream(input)
+        Http1Protocol.readResponse(stream, 65536).map { (status, _, body) =>
+            assert(status.code == 200)
+            body match
+                case HttpBody.Streamed(_) => succeed
+                case other                => fail(s"Expected Streamed, got $other")
+        }
+    }
+
+    "case-insensitive header lookup" in run {
+        Sync.defer {
+            val headers = Http1Protocol.parseHeaders(
+                Array("Content-Type: text/plain", "X-Custom: value"),
+                startIndex = 0
+            )
+            assert(headers.get("content-type") == Present("text/plain"))
+            assert(headers.get("CONTENT-TYPE") == Present("text/plain"))
+            assert(headers.get("x-custom") == Present("value"))
+        }
+    }
+
+    "unicode headers preserved" in run {
+        val stream       = mockStream("")
+        val unicodeValue = "café-résumé"
+        Http1Protocol.writeRequestHead(
+            stream,
+            HttpMethod.GET,
+            "/test",
+            HttpHeaders.empty.add("X-Unicode", unicodeValue).add("Content-Length", "0")
+        ).andThen {
+            val readBack = new MockStream(stream.written ++ "\r\n".getBytes(Utf8))
+            Http1Protocol.readRequest(readBack, 65536).map { (_, _, headers, _) =>
+                assert(headers.get("X-Unicode") == Present(unicodeValue))
+            }
+        }
+    }
+
+    "multiple Content-Length same value accepted" in run {
+        val input  = "GET /test HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello".getBytes(Utf8)
+        val stream = new MockStream(input)
+        Http1Protocol.readRequest(stream, 65536).map { (_, _, _, body) =>
+            body match
+                case HttpBody.Buffered(data) =>
+                    assert(new String(data.toArrayUnsafe, Utf8) == "hello")
+                case other =>
+                    fail(s"Expected Buffered, got $other")
+        }
+    }
+
+    "invalid Content-Length aborts" in run {
+        val input  = "POST /test HTTP/1.1\r\nContent-Length: abc\r\n\r\n".getBytes(Utf8)
+        val stream = new MockStream(input)
+        Abort.run[HttpException] {
+            Http1Protocol.readRequest(stream, 65536)
+        }.map { result =>
+            assert(result.isFailure)
+        }
+    }
+
 end Http1ProtocolTest
