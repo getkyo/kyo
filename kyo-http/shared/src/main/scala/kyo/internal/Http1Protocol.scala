@@ -258,11 +258,13 @@ object Http1Protocol extends Protocol:
         else
             headers.get("Content-Length") match
                 case Present(lenStr) =>
-                    val len =
-                        try lenStr.trim.toInt
-                        catch case _: NumberFormatException => 0
-                    if len <= 0 then Sync.defer(HttpBody.Empty)
-                    else readExactly(stream, len, maxSize).map(HttpBody.Buffered(_))
+                    Abort.get(
+                        Result.catching[NumberFormatException](lenStr.trim.toInt)
+                            .mapFailure(_ => HttpProtocolException(s"Invalid Content-Length: $lenStr"))
+                    ).map { len =>
+                        if len <= 0 then Sync.defer(HttpBody.Empty)
+                        else readExactly(stream, len, maxSize).map(HttpBody.Buffered(_))
+                    }
                 case Absent => Sync.defer(HttpBody.Empty)
         end if
     end readBody
@@ -302,9 +304,18 @@ object Http1Protocol extends Protocol:
                             Abort.run[HttpException](readExactly(stream, size, Int.MaxValue)).map {
                                 case Result.Success(data) =>
                                     readLine(stream).andThen(Maybe((data, ())))
-                                case _ => Maybe.empty
+                                case Result.Failure(error) =>
+                                    // Chunk read failed (EOF mid-chunk, size exceeded) — terminate stream.
+                                    // Consumer sees truncated data. Error details in `error`.
+                                    Maybe.empty
+                                case Result.Panic(ex) =>
+                                    throw ex // Don't swallow panics
                             }
-                    case _ => Maybe.empty
+                    case Result.Failure(error) =>
+                        // Malformed chunk header — terminate stream.
+                        Maybe.empty
+                    case Result.Panic(ex) =>
+                        throw ex
             }
         }
 

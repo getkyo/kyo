@@ -89,7 +89,7 @@ final class KqueueNativeTransport extends Transport:
                     else
                         val pw = writes.remove(fd)
                         if pw != null then
-                            Zone {
+                            val written = Zone {
                                 val arr = pw.data.toArrayUnsafe
                                 val ptr = alloc[Byte](arr.length)
                                 var j   = 0
@@ -97,9 +97,12 @@ final class KqueueNativeTransport extends Transport:
                                     ptr(j) = arr(j)
                                     j += 1
                                 end while
-                                discard(tcpWrite(fd, ptr, arr.length))
+                                tcpWrite(fd, ptr, arr.length)
                             }
-                            discard(pw.promise.complete(Result.succeed(())))
+                            if written < 0 then
+                                discard(pw.promise.complete(Result.Panic(new java.io.IOException(s"write failed on fd $fd"))))
+                            else
+                                discard(pw.promise.complete(Result.succeed(())))
                         end if
                     end if
                 end if

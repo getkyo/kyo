@@ -39,9 +39,9 @@ object WsCodec:
                 case OpPong =>
                     // Ignore pong, read next
                     readFrame(stream)
-                case _ =>
-                    // Unknown opcode, skip
-                    readFrame(stream)
+                case other =>
+                    // RFC 6455 §5.2: unknown opcodes cause connection failure
+                    Abort.fail(new Closed("WebSocket", summon[Frame], s"Unknown opcode: $other"))
         }
 
     /** Write one data frame (Text or Binary). */
