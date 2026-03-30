@@ -176,9 +176,7 @@ final class HttpClient private (
                             if reserved then
                                 Sync.ensure(pool.unreserve(key)) {
                                     backend.connectWith(
-                                        filteredReq.url.host,
-                                        filteredReq.url.port,
-                                        filteredReq.url.ssl,
+                                        filteredReq.url,
                                         config.connectTimeout
                                     ) { conn =>
                                         pool.track(key, conn).andThen {
@@ -428,7 +426,7 @@ object HttpClient:
     def webSocket[A, S](url: HttpUrl, headers: HttpHeaders, config: WebSocketConfig)(
         f: WebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        HttpPlatformBackend.wsClient.connect(url.host, url.port, url.path, url.ssl, headers, config)(f)
+        HttpPlatformBackend.wsClient.connect(url, headers, config)(f)
 
     // --- Internal ---
 

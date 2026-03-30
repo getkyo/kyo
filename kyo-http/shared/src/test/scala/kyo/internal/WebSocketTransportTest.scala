@@ -50,7 +50,7 @@ class WebSocketTransportTest extends kyo.Test:
     "client sends text, server echoes" in run {
         withWsEchoServer { (transport, port) =>
             val wsClient = new WsTransportClient(transport)
-            wsClient.connect("127.0.0.1", port, "/ws/echo", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:$port/ws/echo").getOrThrow, HttpHeaders.empty, WebSocketConfig()) { ws =>
                 ws.put(WebSocketFrame.Text("hello")).andThen {
                     ws.take().map { frame =>
                         frame match
@@ -66,7 +66,7 @@ class WebSocketTransportTest extends kyo.Test:
         withWsEchoServer { (transport, port) =>
             val wsClient = new WsTransportClient(transport)
             val data     = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
-            wsClient.connect("127.0.0.1", port, "/ws/echo", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:$port/ws/echo").getOrThrow, HttpHeaders.empty, WebSocketConfig()) { ws =>
                 ws.put(WebSocketFrame.Binary(data)).andThen {
                     ws.take().map { frame =>
                         frame match
@@ -82,7 +82,7 @@ class WebSocketTransportTest extends kyo.Test:
     "multiple messages in sequence" in run {
         withWsEchoServer { (transport, port) =>
             val wsClient = new WsTransportClient(transport)
-            wsClient.connect("127.0.0.1", port, "/ws/echo", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:$port/ws/echo").getOrThrow, HttpHeaders.empty, WebSocketConfig()) { ws =>
                 ws.put(WebSocketFrame.Text("one")).andThen {
                     ws.take().map { f1 =>
                         assert(f1 == WebSocketFrame.Text("one"))
@@ -100,7 +100,7 @@ class WebSocketTransportTest extends kyo.Test:
     "five messages round-trip" in run {
         withWsEchoServer { (transport, port) =>
             val wsClient = new WsTransportClient(transport)
-            wsClient.connect("127.0.0.1", port, "/ws/echo", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:$port/ws/echo").getOrThrow, HttpHeaders.empty, WebSocketConfig()) { ws =>
                 ws.put(WebSocketFrame.Text("m1")).andThen {
                     ws.take().map { f1 =>
                         assert(f1 == WebSocketFrame.Text("m1"))
@@ -135,7 +135,7 @@ class WebSocketTransportTest extends kyo.Test:
     "empty text message" in run {
         withWsEchoServer { (transport, port) =>
             val wsClient = new WsTransportClient(transport)
-            wsClient.connect("127.0.0.1", port, "/ws/echo", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:$port/ws/echo").getOrThrow, HttpHeaders.empty, WebSocketConfig()) { ws =>
                 ws.put(WebSocketFrame.Text("")).andThen {
                     ws.take().map { frame =>
                         assert(frame == WebSocketFrame.Text(""))
@@ -148,7 +148,7 @@ class WebSocketTransportTest extends kyo.Test:
     "empty binary message" in run {
         withWsEchoServer { (transport, port) =>
             val wsClient = new WsTransportClient(transport)
-            wsClient.connect("127.0.0.1", port, "/ws/echo", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:$port/ws/echo").getOrThrow, HttpHeaders.empty, WebSocketConfig()) { ws =>
                 ws.put(WebSocketFrame.Binary(Span.empty[Byte])).andThen {
                     ws.take().map { frame =>
                         frame match
@@ -164,7 +164,7 @@ class WebSocketTransportTest extends kyo.Test:
         withWsEchoServer { (transport, port) =>
             val wsClient = new WsTransportClient(transport)
             val binData  = Span.fromUnsafe(Array[Byte](0x42, 0x43))
-            wsClient.connect("127.0.0.1", port, "/ws/echo", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:$port/ws/echo").getOrThrow, HttpHeaders.empty, WebSocketConfig()) { ws =>
                 ws.put(WebSocketFrame.Text("text1")).andThen {
                     ws.take().map { f1 =>
                         assert(f1 == WebSocketFrame.Text("text1"))
@@ -202,13 +202,14 @@ class WebSocketTransportTest extends kyo.Test:
         val server = new HttpTransportServer(transport, Http1Protocol)
         server.bind(Seq(wsHandler), HttpServerConfig.default).map { binding =>
             val wsClient = new WsTransportClient(transport)
-            wsClient.connect("127.0.0.1", binding.port, "/ws/close", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
-                ws.put(WebSocketFrame.Text("hi")).andThen {
-                    ws.take().map { frame =>
-                        assert(frame == WebSocketFrame.Text("hi"))
-                        ws.close(1000, "bye").andThen(succeed)
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:${binding.port}/ws/close").getOrThrow, HttpHeaders.empty, WebSocketConfig()) {
+                ws =>
+                    ws.put(WebSocketFrame.Text("hi")).andThen {
+                        ws.take().map { frame =>
+                            assert(frame == WebSocketFrame.Text("hi"))
+                            ws.close(1000, "bye").andThen(succeed)
+                        }
                     }
-                }
             }
         }
     }
@@ -219,7 +220,7 @@ class WebSocketTransportTest extends kyo.Test:
         val largeText = "x" * 65536
         withWsEchoServer { (transport, port) =>
             val wsClient = new WsTransportClient(transport)
-            wsClient.connect("127.0.0.1", port, "/ws/echo", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:$port/ws/echo").getOrThrow, HttpHeaders.empty, WebSocketConfig()) { ws =>
                 ws.put(WebSocketFrame.Text(largeText)).andThen {
                     ws.take().map { frame =>
                         frame match
@@ -235,7 +236,7 @@ class WebSocketTransportTest extends kyo.Test:
         val largeData = Span.fromUnsafe(Array.tabulate[Byte](32768)(i => (i % 256).toByte))
         withWsEchoServer { (transport, port) =>
             val wsClient = new WsTransportClient(transport)
-            wsClient.connect("127.0.0.1", port, "/ws/echo", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:$port/ws/echo").getOrThrow, HttpHeaders.empty, WebSocketConfig()) { ws =>
                 ws.put(WebSocketFrame.Binary(largeData)).andThen {
                     ws.take().map { frame =>
                         frame match
@@ -253,7 +254,7 @@ class WebSocketTransportTest extends kyo.Test:
         val unicode = "café-日本語-🎉"
         withWsEchoServer { (transport, port) =>
             val wsClient = new WsTransportClient(transport)
-            wsClient.connect("127.0.0.1", port, "/ws/echo", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:$port/ws/echo").getOrThrow, HttpHeaders.empty, WebSocketConfig()) { ws =>
                 ws.put(WebSocketFrame.Text(unicode)).andThen {
                     ws.take().map { frame =>
                         frame match
@@ -269,7 +270,7 @@ class WebSocketTransportTest extends kyo.Test:
         val emojis = "🎉🎊🎈🎁🎂"
         withWsEchoServer { (transport, port) =>
             val wsClient = new WsTransportClient(transport)
-            wsClient.connect("127.0.0.1", port, "/ws/echo", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:$port/ws/echo").getOrThrow, HttpHeaders.empty, WebSocketConfig()) { ws =>
                 ws.put(WebSocketFrame.Text(emojis)).andThen {
                     ws.take().map { frame =>
                         frame match
@@ -295,7 +296,7 @@ class WebSocketTransportTest extends kyo.Test:
             }
         } { (transport, port) =>
             val wsClient = new WsTransportClient(transport)
-            wsClient.connect("127.0.0.1", port, "/ws/greet", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:$port/ws/greet").getOrThrow, HttpHeaders.empty, WebSocketConfig()) { ws =>
                 ws.take().map { greeting =>
                     assert(greeting == WebSocketFrame.Text("welcome"))
                 }
@@ -309,7 +310,7 @@ class WebSocketTransportTest extends kyo.Test:
         val allBytes = Span.fromUnsafe(Array.tabulate[Byte](256)(_.toByte))
         withWsEchoServer { (transport, port) =>
             val wsClient = new WsTransportClient(transport)
-            wsClient.connect("127.0.0.1", port, "/ws/echo", ssl = false, HttpHeaders.empty, WebSocketConfig()) { ws =>
+            wsClient.connect(HttpUrl.parse(s"ws://127.0.0.1:$port/ws/echo").getOrThrow, HttpHeaders.empty, WebSocketConfig()) { ws =>
                 ws.put(WebSocketFrame.Binary(allBytes)).andThen {
                     ws.take().map { frame =>
                         frame match

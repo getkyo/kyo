@@ -13,9 +13,7 @@ class HttpBackendTest extends Test:
         type Connection = Unit
 
         def connectWith[A](
-            host: String,
-            port: Int,
-            ssl: Boolean,
+            url: HttpUrl,
             connectTimeout: Maybe[Duration]
         )(
             f: Connection => A < (Async & Abort[HttpException])

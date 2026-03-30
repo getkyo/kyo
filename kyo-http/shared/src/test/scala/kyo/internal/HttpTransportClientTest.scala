@@ -70,7 +70,7 @@ class HttpTransportClientTest extends kyo.Test:
         val route = HttpRoute.getRaw("test").response(_.bodyText)
         withEchoServer(responseBody = "hello") { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 client.sendWith(
                     conn,
                     route,
@@ -87,7 +87,7 @@ class HttpTransportClientTest extends kyo.Test:
         val route = HttpRoute.postText("echo")
         withBodyEchoServer { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 client.sendWith(
                     conn,
                     route,
@@ -109,7 +109,7 @@ class HttpTransportClientTest extends kyo.Test:
         val route = HttpRoute.putRaw("data").response(_.bodyText)
         withBodyEchoServer { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 client.sendWith(
                     conn,
                     route,
@@ -131,7 +131,7 @@ class HttpTransportClientTest extends kyo.Test:
         val route = HttpRoute.deleteRaw("item").response(_.bodyText)
         withBodyEchoServer { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 client.sendWith(
                     conn,
                     route,
@@ -153,7 +153,7 @@ class HttpTransportClientTest extends kyo.Test:
         val route = HttpRoute.patchRaw("update").response(_.bodyText)
         withBodyEchoServer { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 client.sendWith(
                     conn,
                     route,
@@ -178,7 +178,7 @@ class HttpTransportClientTest extends kyo.Test:
         val client    = makeClient(transport)
         Scope.run {
             Abort.run[HttpException] {
-                client.connectWith("127.0.0.1", 1, ssl = false, Absent) { _ =>
+                client.connectWith(HttpUrl.parse("http://127.0.0.1:1").getOrThrow, Absent) { _ =>
                     fail("should not connect")
                 }
             }.map { result =>
@@ -192,7 +192,7 @@ class HttpTransportClientTest extends kyo.Test:
         val client    = makeClient(transport)
         Scope.run {
             Abort.run[HttpException] {
-                client.connectWith("127.0.0.1", 443, ssl = true, Absent) { _ =>
+                client.connectWith(HttpUrl.parse("https://127.0.0.1:443").getOrThrow, Absent) { _ =>
                     fail("should not connect")
                 }
             }.map { result =>
@@ -207,7 +207,7 @@ class HttpTransportClientTest extends kyo.Test:
         val route = HttpRoute.getRaw("missing").response(_.bodyText)
         withEchoServer(responseStatus = 404, responseBody = "not found") { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 Abort.run[HttpException] {
                     client.sendWith(
                         conn,
@@ -237,7 +237,7 @@ class HttpTransportClientTest extends kyo.Test:
         val route = HttpRoute.getRaw("error").response(_.bodyText)
         withEchoServer(responseStatus = 500, responseBody = "server error") { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 Abort.run[HttpException] {
                     client.sendWith(
                         conn,
@@ -270,7 +270,7 @@ class HttpTransportClientTest extends kyo.Test:
             responseHeaders = HttpHeaders.empty.add("Location", "/new")
         ) { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 Abort.run[HttpException] {
                     client.sendWith(
                         conn,
@@ -299,7 +299,7 @@ class HttpTransportClientTest extends kyo.Test:
         val route = HttpRoute.getRaw("empty")
         withEchoServer(responseStatus = 204, responseBody = "") { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 client.sendWith(
                     conn,
                     route,
@@ -328,7 +328,7 @@ class HttpTransportClientTest extends kyo.Test:
                 .add("X-Custom-Two", "value2")
         ) { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 client.sendWith(
                     conn,
                     route,
@@ -353,7 +353,7 @@ class HttpTransportClientTest extends kyo.Test:
     "isAlive and closeNow" in run {
         withEchoServer() { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 client.isAlive(conn).map { alive =>
                     assert(alive)
                     client.closeNow(conn).map { _ =>
@@ -369,7 +369,7 @@ class HttpTransportClientTest extends kyo.Test:
     "close with grace period" in run {
         withEchoServer() { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 client.isAlive(conn).map { alive =>
                     assert(alive)
                     client.close(conn, 1.second).andThen {
@@ -389,7 +389,7 @@ class HttpTransportClientTest extends kyo.Test:
         withEchoServer(responseBody = "hello") { (transport, port) =>
             val client = makeClient(transport)
             AtomicRef.init[Maybe[Maybe[Result.Error[Any]]]](Absent).map { releaseRef =>
-                client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                     client.sendWith(
                         conn,
                         route,
@@ -419,7 +419,7 @@ class HttpTransportClientTest extends kyo.Test:
         val route     = HttpRoute.getRaw("large").response(_.bodyText)
         withEchoServer(responseBody = largeBody) { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 client.sendWith(
                     conn,
                     route,
@@ -438,7 +438,7 @@ class HttpTransportClientTest extends kyo.Test:
         val route = HttpRoute.getRaw("empty").response(_.bodyText)
         withEchoServer(responseBody = "") { (transport, port) =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:$port").getOrThrow, Absent) { conn =>
                 client.sendWith(
                     conn,
                     route,
@@ -480,7 +480,7 @@ class HttpTransportClientTest extends kyo.Test:
             }.unit
         }.map { listener =>
             val client = makeClient(transport)
-            client.connectWith("127.0.0.1", listener.port, ssl = false, Absent) { conn =>
+            client.connectWith(HttpUrl.parse(s"http://127.0.0.1:${listener.port}").getOrThrow, Absent) { conn =>
                 client.sendWith(
                     conn,
                     route,

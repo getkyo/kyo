@@ -4,8 +4,8 @@ import kyo.*
 
 /** Platform abstraction layer for HTTP client and server implementations.
   *
-  * `HttpBackend` defines the traits that JVM (Netty), JS (Fetch/Node), and Native (libcurl/H2O) backends implement. Users typically don't
-  * interact with backends directly — `HttpClient` and `HttpServer` use the platform-appropriate backend automatically.
+  * `HttpBackend` defines the traits that platform backends implement. Users typically don't interact with backends directly — `HttpClient`
+  * and `HttpServer` use the platform-appropriate backend automatically.
   *
   * The `Client` trait is connection-oriented: `connectWith` establishes a connection, `sendWith` sends a request through it. This design
   * lets `HttpClient` manage connection pooling independently of the backend.
@@ -23,9 +23,7 @@ object HttpBackend:
         type Connection
 
         def connectWith[A](
-            host: String,
-            port: Int,
-            ssl: Boolean,
+            url: HttpUrl,
             connectTimeout: Maybe[Duration]
         )(
             f: Connection => A < (Async & Abort[HttpException])
@@ -72,10 +70,7 @@ object HttpBackend:
       */
     trait WebSocketClient:
         def connect[A, S](
-            host: String,
-            port: Int,
-            path: String,
-            ssl: Boolean,
+            url: HttpUrl,
             headers: HttpHeaders,
             config: WebSocketConfig
         )(

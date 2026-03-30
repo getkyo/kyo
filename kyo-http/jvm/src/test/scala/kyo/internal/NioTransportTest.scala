@@ -313,7 +313,11 @@ class NioTransportTest extends kyo.Test:
         Scope.run {
             server.bind(Seq(wsHandler), HttpServerConfig.default).map { binding =>
                 val wsClient = new WsTransportClient(transport)
-                wsClient.connect("127.0.0.1", binding.port, "/ws/test", ssl = false, HttpHeaders.empty, WebSocketConfig()) {
+                wsClient.connect(
+                    HttpUrl.parse(s"ws://127.0.0.1:${binding.port}/ws/test").getOrThrow,
+                    HttpHeaders.empty,
+                    WebSocketConfig()
+                ) {
                     ws =>
                         // Just verify we got here (handshake succeeded)
                         succeed
@@ -364,7 +368,11 @@ class NioTransportTest extends kyo.Test:
         Scope.run {
             server.bind(Seq(wsHandler), HttpServerConfig.default).map { binding =>
                 val wsClient = new WsTransportClient(transport)
-                wsClient.connect("127.0.0.1", binding.port, "/ws/recv", ssl = false, HttpHeaders.empty, WebSocketConfig()) {
+                wsClient.connect(
+                    HttpUrl.parse(s"ws://127.0.0.1:${binding.port}/ws/recv").getOrThrow,
+                    HttpHeaders.empty,
+                    WebSocketConfig()
+                ) {
                     ws =>
                         java.lang.System.err.println("[DEBUG-CLIENT] putting frame")
                         ws.put(WebSocketFrame.Text("hello")).andThen {

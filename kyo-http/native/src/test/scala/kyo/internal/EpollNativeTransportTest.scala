@@ -178,10 +178,7 @@ class EpollNativeTransportTest extends kyo.Test:
                 server.bind(Seq(wsHandler), HttpServerConfig.default).map { binding =>
                     val wsClient = new WsTransportClient(transport)
                     wsClient.connect(
-                        "127.0.0.1",
-                        binding.port,
-                        "/ws/echo",
-                        ssl = false,
+                        HttpUrl.parse(s"ws://127.0.0.1:${binding.port}/ws/echo").getOrThrow,
                         HttpHeaders.empty,
                         WebSocketConfig()
                     ) { ws =>

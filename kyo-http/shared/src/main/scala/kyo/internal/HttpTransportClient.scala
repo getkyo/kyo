@@ -19,14 +19,14 @@ class HttpTransportClient(private[kyo] val transport: Transport, protocol: Proto
 
     type Connection = transport.Connection
 
-    def connectWith[A](host: String, port: Int, ssl: Boolean, connectTimeout: Maybe[Duration])(
+    def connectWith[A](url: HttpUrl, connectTimeout: Maybe[Duration])(
         f: Connection => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
-        val base = transport.connect(host, port, ssl).map(f)
+        val base = transport.connect(url.host, url.port, url.ssl).map(f)
         connectTimeout match
             case Present(t) =>
                 Abort.recover[Timeout](_ =>
-                    Abort.fail(HttpTimeoutException(t, "CONNECT", s"$host:$port"))
+                    Abort.fail(HttpTimeoutException(t, "CONNECT", s"${url.host}:${url.port}"))
                 )(Async.timeout(t)(base))
             case Absent => base
         end match

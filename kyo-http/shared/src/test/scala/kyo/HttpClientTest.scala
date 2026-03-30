@@ -22,7 +22,7 @@ class HttpClientTest extends Test:
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+        client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
             Sync.ensure(client.closeNow(conn)) {
                 client.sendWith(conn, route, request)(identity)
             }
@@ -435,7 +435,7 @@ class HttpClientTest extends Test:
             }
             var called = false
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/stream"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
@@ -470,7 +470,7 @@ class HttpClientTest extends Test:
                 ))
                 val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
                     .addField("body", bodyStream)
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, request) { resp =>
                             called = true
@@ -499,7 +499,7 @@ class HttpClientTest extends Test:
                 ))
                 val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
                     .addField("body", bodyStream)
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, request) { resp =>
                             called = true
@@ -1870,7 +1870,7 @@ class HttpClientTest extends Test:
             }
             withServer(ep) { port =>
                 Async.timeout(5.seconds) {
-                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                         Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/infinite"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
@@ -1898,7 +1898,7 @@ class HttpClientTest extends Test:
             }
             withServer(ep) { port =>
                 Async.timeout(5.seconds) {
-                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                         Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/fail-stream"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
@@ -1937,7 +1937,7 @@ class HttpClientTest extends Test:
                 }
             }
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
                             Span.fromUnsafe("hello ".getBytes("UTF-8")),

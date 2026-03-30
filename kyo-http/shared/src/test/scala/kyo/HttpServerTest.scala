@@ -27,7 +27,7 @@ class HttpServerTest extends Test:
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+        client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
             Sync.ensure(client.closeNow(conn)) {
                 client.sendWith(conn, route, request)(identity)
             }
@@ -756,7 +756,7 @@ class HttpServerTest extends Test:
             }
             var called = false
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/stream"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
@@ -781,7 +781,7 @@ class HttpServerTest extends Test:
             }
             var called = false
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/events"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
@@ -807,7 +807,7 @@ class HttpServerTest extends Test:
             }
             var called = false
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
@@ -837,7 +837,7 @@ class HttpServerTest extends Test:
                 }
             }
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
                             Span.fromUnsafe("part1 ".getBytes("UTF-8")),
@@ -864,7 +864,7 @@ class HttpServerTest extends Test:
             }
             var called = false
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/many"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
@@ -1087,7 +1087,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("ping").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("pong"))
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         Kyo.foreach(1 to 5) { i =>
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ping")))(identity)
@@ -1231,7 +1231,7 @@ class HttpServerTest extends Test:
                     fibers <- Kyo.foreach(0 until size) { i =>
                         Fiber.initUnscoped(
                             latch.await.andThen {
-                                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                                     Sync.ensure(client.closeNow(conn)) {
                                         client.sendWith(
                                             conn,
@@ -1579,7 +1579,7 @@ class HttpServerTest extends Test:
             }
             var called = false
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
                             resp.fields.body.run.map { chunks =>
@@ -1609,7 +1609,7 @@ class HttpServerTest extends Test:
             val rawRoute = HttpRoute.getRaw("sse").response(_.bodyStream)
             var called   = false
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
                             resp.fields.body.run.map { chunks =>
@@ -1881,7 +1881,7 @@ class HttpServerTest extends Test:
                     }
                 }
                 withServer(ep) { port =>
-                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/infinite"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             resp.fields.body.take(1).run.map { chunks =>
@@ -1914,7 +1914,7 @@ class HttpServerTest extends Test:
                     HttpResponse.ok.addField("body", hangStream)
                 }
                 withServer(ep) { port =>
-                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/hang"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             // Read the first chunk, then disconnect
@@ -1941,7 +1941,7 @@ class HttpServerTest extends Test:
                 }
             }
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
                             kyo.Emit.valueWith(Chunk(Span.fromUnsafe("a".getBytes("UTF-8")))) {
@@ -1991,7 +1991,7 @@ class HttpServerTest extends Test:
                     }
                 }
                 withServer(ep) { port =>
-                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                         Sync.ensure(client.closeNow(conn)) {
                             val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
                                 kyo.Emit.valueWith(Chunk(Span.fromUnsafe("hello".getBytes("UTF-8"))))(())
@@ -2030,7 +2030,7 @@ class HttpServerTest extends Test:
                 HttpResponse.ok.addField("body", manyChunks)
             }
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/many-chunks"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
@@ -2058,7 +2058,7 @@ class HttpServerTest extends Test:
                 HttpResponse.ok.addField("body", failingStream)
             }
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/err-stream"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
@@ -2484,7 +2484,7 @@ class HttpServerTest extends Test:
             }
             var called = false
             withCorsServer(HttpServerConfig.Cors.allowAll, ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-sse-get2"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
@@ -2544,7 +2544,7 @@ class HttpServerTest extends Test:
             }
             var called = false
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-sse-get"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
@@ -2611,7 +2611,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 Async.timeout(10.seconds) {
-                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                         Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-repeat"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
@@ -2641,7 +2641,7 @@ class HttpServerTest extends Test:
             }
             var called = false
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delayed"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
@@ -2678,7 +2678,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 Async.timeout(10.seconds) {
-                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                         Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-repeat"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
@@ -2708,7 +2708,7 @@ class HttpServerTest extends Test:
             }
             var called = false
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-delayed"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
@@ -2733,7 +2733,7 @@ class HttpServerTest extends Test:
             }
             withServer(ep) { port =>
                 Async.timeout(5.seconds) {
-                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                         Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-empty"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
@@ -2766,7 +2766,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 Async.timeout(5.seconds) {
-                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                         Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-gaps"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
@@ -2798,7 +2798,7 @@ class HttpServerTest extends Test:
             }
             var called = false
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-map-delay"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
@@ -2826,7 +2826,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 Async.timeout(10.seconds) {
-                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                         Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-map"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
@@ -2860,7 +2860,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 Async.timeout(10.seconds) {
-                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                         Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-loop-delay"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
@@ -2891,7 +2891,7 @@ class HttpServerTest extends Test:
             var called = false
             withServer(ep) { port =>
                 Async.timeout(5.seconds) {
-                    client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                    client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                         Sync.ensure(client.closeNow(conn)) {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-first"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
@@ -3337,7 +3337,7 @@ class HttpServerTest extends Test:
                     Async.timeout(10.seconds) {
                         // Read from both servers concurrently to trigger stream ID collision
                         Async.zip(
-                            client.connectWith("localhost", port1, ssl = false, Absent) { conn =>
+                            client.connectWith(HttpUrl.parse(s"http://localhost:$port1").getOrThrow, Absent) { conn =>
                                 Sync.ensure(client.closeNow(conn)) {
                                     client.sendWith(conn, route1, HttpRequest.getRaw(HttpUrl.fromUri("/stream1"))) { resp =>
                                         resp.fields.body.take(2).run.map { chunks =>
@@ -3348,7 +3348,7 @@ class HttpServerTest extends Test:
                                     }
                                 }
                             },
-                            client.connectWith("localhost", port2, ssl = false, Absent) { conn =>
+                            client.connectWith(HttpUrl.parse(s"http://localhost:$port2").getOrThrow, Absent) { conn =>
                                 Sync.ensure(client.closeNow(conn)) {
                                     client.sendWith(conn, route2, HttpRequest.getRaw(HttpUrl.fromUri("/stream2"))) { resp =>
                                         resp.fields.body.take(2).run.map { chunks =>
@@ -3456,7 +3456,7 @@ class HttpServerTest extends Test:
             }
             var called = false
             withServer(ep) { port =>
-                client.connectWith("localhost", port, ssl = false, Absent) { conn =>
+                client.connectWith(HttpUrl.parse(s"http://localhost:$port").getOrThrow, Absent) { conn =>
                     Sync.ensure(client.closeNow(conn)) {
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-empty"))) { resp =>
                             assert(resp.status == HttpStatus.OK)

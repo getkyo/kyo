@@ -16,19 +16,16 @@ import kyo.*
 class WsTransportClient(transport: Transport) extends HttpBackend.WebSocketClient:
 
     def connect[A, S](
-        host: String,
-        port: Int,
-        path: String,
-        ssl: Boolean,
+        url: HttpUrl,
         headers: HttpHeaders,
         config: WebSocketConfig
     )(
         f: WebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        transport.connect(host, port, ssl).map { connection =>
+        transport.connect(url.host, url.port, url.ssl).map { connection =>
             Sync.ensure(transport.closeNow(connection)) {
                 transport.stream(connection).map { stream =>
-                    WsCodec.requestUpgrade(stream, host, path, headers, config).andThen {
+                    WsCodec.requestUpgrade(stream, url.host, url.path, headers, config).andThen {
                         Channel.initUnscoped[WebSocketFrame](config.bufferSize).map { inbound =>
                             Channel.initUnscoped[WebSocketFrame](config.bufferSize).map { outbound =>
                                 AtomicRef.init[Maybe[(Int, String)]](Absent).map { closeReasonRef =>
