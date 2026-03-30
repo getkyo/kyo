@@ -18,18 +18,20 @@ class TestTransport extends Transport:
                 case Absent =>
                     Abort.fail(HttpConnectException(host, port, new Exception("No server listening")))
                 case Present(ch) =>
-                    // Channels represent TCP kernel buffers — they must outlive any scope.
-                    // This is test infrastructure, not user code, so Unsafe is justified here.
+                    // Create channels via Unsafe (they represent TCP buffers, outlive any scope).
+                    // Then deliver server connection via normal effect system.
                     Sync.Unsafe.defer {
                         val clientToServer = Channel.Unsafe.init[Span[Byte]](64)
                         val serverToClient = Channel.Unsafe.init[Span[Byte]](64)
-                        val clientStream   = new ChannelStream(serverToClient.safe, clientToServer.safe)
-                        val serverStream   = new ChannelStream(clientToServer.safe, serverToClient.safe)
-                        val serverConn     = new TestConnection(serverStream)
-                        val clientConn     = new TestConnection(clientStream)
+                        val cs             = new ChannelStream(serverToClient.safe, clientToServer.safe)
+                        val ss             = new ChannelStream(clientToServer.safe, serverToClient.safe)
+                        (new TestConnection(cs), new TestConnection(ss))
+                    }.map { (clientConn, serverConn) =>
                         Abort.run[Closed](ch.put(serverConn)).map {
                             case Result.Success(_) => clientConn
-                            case _                 => Abort.fail(HttpConnectException(host, port, new Exception("Server closed")))
+                            case Result.Failure(closed) =>
+                                Abort.fail(HttpConnectException(host, port, new Exception("Server closed", closed)))
+                            case Result.Panic(ex) => throw ex
                         }
                     }
 
