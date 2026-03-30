@@ -127,4 +127,54 @@ class NioTlsTest extends kyo.Test:
         }
     }
 
+    // ── Server TLS (self-signed, in-memory certs) ────────
+
+    "TLS server + client roundtrip" in run {
+        val serverTransport = new NioTransport(serverSslContext = Present(TlsTestHelper.serverSslContext))
+        val clientTransport = new NioTransport(clientSslContext = Present(TlsTestHelper.trustAllSslContext))
+        val server          = new HttpTransportServer(serverTransport, Http1Protocol)
+        val client          = new HttpTransportClient(clientTransport, Http1Protocol)
+        val route           = HttpRoute.getRaw("hello").response(_.bodyText)
+        val handler         = route.handler(_ => HttpResponse.ok.addField("body", "world"))
+        Scope.run {
+            server.bind(
+                Seq(handler),
+                HttpServerConfig.default.port(0).host("localhost").tls(TlsConfig.default)
+            ).map { binding =>
+                val url = HttpUrl.parse(s"https://localhost:${binding.port}").getOrThrow
+                client.connectWith(url, Absent) { conn =>
+                    client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/hello"))) { resp =>
+                        assert(resp.status.code == 200)
+                        assert(resp.fields.body == "world")
+                    }
+                }
+            }
+        }
+    }
+
+    "TLS server + client keep-alive" in run {
+        val serverTransport = new NioTransport(serverSslContext = Present(TlsTestHelper.serverSslContext))
+        val clientTransport = new NioTransport(clientSslContext = Present(TlsTestHelper.trustAllSslContext))
+        val server          = new HttpTransportServer(serverTransport, Http1Protocol)
+        val client          = new HttpTransportClient(clientTransport, Http1Protocol)
+        val route           = HttpRoute.getRaw("ping").response(_.bodyText)
+        val handler         = route.handler(_ => HttpResponse.ok.addField("body", "pong"))
+        Scope.run {
+            server.bind(
+                Seq(handler),
+                HttpServerConfig.default.port(0).host("localhost").tls(TlsConfig.default)
+            ).map { binding =>
+                val url = HttpUrl.parse(s"https://localhost:${binding.port}").getOrThrow
+                client.connectWith(url, Absent) { conn =>
+                    client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ping"))) { resp1 =>
+                        assert(resp1.status.code == 200)
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ping"))) { resp2 =>
+                            assert(resp2.status.code == 200)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end NioTlsTest

@@ -8,17 +8,19 @@ class WebSocketTest extends Test:
         ws.stream.foreach(ws.put)
 
     def withWsServer[A, S](handlers: HttpHandler[?, ?, ?]*)(
-        test: Int => A < (S & Async & Abort[HttpException])
+        test: HttpUrl => A < (S & Async & Abort[HttpException])
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
-        HttpServer.init(0, "localhost")(handlers*).map(server => test(server.port))
+        HttpServer.init(0, "localhost")(handlers*).map(server =>
+            test(HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow)
+        )
 
     // ==================== Basic connectivity ====================
 
     "basic connectivity" - {
 
         "text echo" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Text("hello")).andThen {
                         ws.take().map(f => discard(assert(f == WebSocketFrame.Text("hello"))))
                     }
@@ -28,8 +30,8 @@ class WebSocketTest extends Test:
 
         "binary echo" in run {
             val bytes = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Binary(bytes)).andThen {
                         ws.take().map {
                             case WebSocketFrame.Binary(data) =>
@@ -44,8 +46,8 @@ class WebSocketTest extends Test:
         }
 
         "multiple messages in order" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     Kyo.foreach(1 to 10)(i => ws.put(WebSocketFrame.Text(s"msg$i"))).andThen {
                         Kyo.foreach(1 to 10)(i =>
                             ws.take().map(f => discard(assert(f == WebSocketFrame.Text(s"msg$i"))))
@@ -56,8 +58,8 @@ class WebSocketTest extends Test:
         }
 
         "empty text frame" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Text("")).andThen {
                         ws.take().map(f => discard(assert(f == WebSocketFrame.Text(""))))
                     }
@@ -67,8 +69,8 @@ class WebSocketTest extends Test:
 
         "large text frame" in run {
             val text = "x" * 65000
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Text(text)).andThen {
                         ws.take().map(f => discard(assert(f == WebSocketFrame.Text(text))))
                     }
@@ -78,8 +80,8 @@ class WebSocketTest extends Test:
 
         "large binary frame" in run {
             val data = Span.fromUnsafe(Array.tabulate[Byte](65000)(i => (i % 256).toByte))
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Binary(data)).andThen {
                         ws.take().map {
                             case WebSocketFrame.Binary(d) => discard(assert(d.size == 65000))
@@ -91,8 +93,8 @@ class WebSocketTest extends Test:
         }
 
         "interleaved text and binary" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Text("a"))
                         .andThen(ws.put(WebSocketFrame.Binary(Span.fromUnsafe(Array[Byte](1)))))
                         .andThen(ws.put(WebSocketFrame.Text("b")))
@@ -108,8 +110,8 @@ class WebSocketTest extends Test:
 
         "unicode text roundtrip" in run {
             val text = "Hello \uD83D\uDE00 \u4F60\u597D"
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Text(text)).andThen {
                         ws.take().map(f => discard(assert(f == WebSocketFrame.Text(text))))
                     }
@@ -119,8 +121,8 @@ class WebSocketTest extends Test:
 
         "binary all byte values" in run {
             val allBytes = Span.fromUnsafe(Array.tabulate[Byte](256)(_.toByte))
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Binary(allBytes)).andThen {
                         ws.take().map {
                             case WebSocketFrame.Binary(d) =>
@@ -138,8 +140,8 @@ class WebSocketTest extends Test:
         }
 
         "single byte binary" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Binary(Span.fromUnsafe(Array[Byte](42)))).andThen {
                         ws.take().map {
                             case WebSocketFrame.Binary(d) =>
@@ -153,8 +155,8 @@ class WebSocketTest extends Test:
         }
 
         "single char text" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Text("x")).andThen {
                         ws.take().map(f => discard(assert(f == WebSocketFrame.Text("x"))))
                     }
@@ -168,8 +170,8 @@ class WebSocketTest extends Test:
     "close handshake" - {
 
         "client initiates close" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Text("hi")).andThen(ws.take()).andThen(ws.close())
                 }
             }.andThen(succeed)
@@ -178,8 +180,8 @@ class WebSocketTest extends Test:
         "server initiates close" in run {
             withWsServer(HttpHandler.webSocket("ws/close") { (_, ws) =>
                 ws.take().andThen(ws.close())
-            }) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/close") { ws =>
+            }) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/close") { ws =>
                     ws.put(WebSocketFrame.Text("trigger")).andThen {
                         Abort.run[Closed](ws.take()).map(result =>
                             discard(assert(result.isFailure || result.isPanic))
@@ -192,8 +194,8 @@ class WebSocketTest extends Test:
         "close code preserved" in run {
             withWsServer(HttpHandler.webSocket("ws/closecode") { (_, ws) =>
                 ws.take().andThen(ws.close(4000, "app error"))
-            }) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/closecode") { ws =>
+            }) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/closecode") { ws =>
                     ws.put(WebSocketFrame.Text("trigger")).andThen {
                         Abort.run[Closed](ws.take()).andThen {
                             ws.closeReason.map(_ => ())
@@ -206,8 +208,8 @@ class WebSocketTest extends Test:
         "take after server close fails with Closed" in run {
             withWsServer(HttpHandler.webSocket("ws/close-fast") { (_, ws) =>
                 ws.close()
-            }) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/close-fast") { ws =>
+            }) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/close-fast") { ws =>
                     // take blocks until close arrives
                     Abort.run[Closed](ws.take()).map(r =>
                         discard(assert(r.isFailure || r.isPanic))
@@ -217,8 +219,8 @@ class WebSocketTest extends Test:
         }
 
         "close after exchange" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Text("a")).andThen(ws.take())
                         .andThen(ws.put(WebSocketFrame.Text("b"))).andThen(ws.take())
                         .andThen(ws.close())
@@ -232,8 +234,8 @@ class WebSocketTest extends Test:
     "backpressure" - {
 
         "bidirectional concurrent exchange" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     val count = 100
                     Abort.run[Closed] {
                         Async.gather(
@@ -252,8 +254,8 @@ class WebSocketTest extends Test:
                 Kyo.foreach(1 to 5)(i => ws.put(WebSocketFrame.Text(s"server$i"))).andThen {
                     Abort.run[Closed](ws.take()).unit
                 }
-            }) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/send-only") { ws =>
+            }) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/send-only") { ws =>
                     Kyo.foreach(1 to 5)(i =>
                         ws.take().map(f => discard(assert(f == WebSocketFrame.Text(s"server$i"))))
                     ).unit
@@ -265,8 +267,8 @@ class WebSocketTest extends Test:
             withWsServer(HttpHandler.webSocket("ws/read-only") { (_, ws) =>
                 // Read 3 messages without sending any response
                 Kyo.foreach(1 to 3)(_ => ws.take()).unit
-            }) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/read-only") { ws =>
+            }) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/read-only") { ws =>
                     Kyo.foreach(1 to 3)(i => ws.put(WebSocketFrame.Text(s"msg$i"))).andThen {
                         // Server consumed all, now it returns → connection closes
                         Abort.run[Closed](ws.take()).unit
@@ -283,9 +285,9 @@ class WebSocketTest extends Test:
         "server handler throws" in run {
             withWsServer(HttpHandler.webSocket("ws/bad") { (_, _) =>
                 throw new RuntimeException("server boom")
-            }) { port =>
+            }) { url =>
                 Abort.run[HttpException] {
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/bad") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/bad") { ws =>
                         Abort.run[Closed](ws.take()).unit
                     }
                 }.unit
@@ -295,8 +297,8 @@ class WebSocketTest extends Test:
         "server handler returns immediately" in run {
             withWsServer(HttpHandler.webSocket("ws/empty") { (_, _) =>
                 ()
-            }) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/empty") { ws =>
+            }) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/empty") { ws =>
                     Abort.run[Closed](ws.take()).map(r =>
                         discard(assert(r.isFailure || r.isPanic))
                     )
@@ -307,8 +309,8 @@ class WebSocketTest extends Test:
         "server handler Abort.fails with Closed" in run {
             withWsServer(HttpHandler.webSocket("ws/abort") { (_, _) =>
                 Abort.fail(Closed("test", Frame.internal))
-            }) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/abort") { ws =>
+            }) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/abort") { ws =>
                     Abort.run[Closed](ws.take()).map(r =>
                         discard(assert(r.isFailure || r.isPanic))
                     )
@@ -317,15 +319,15 @@ class WebSocketTest extends Test:
         }
 
         "multiple client connections" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Async.gather(
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                         ws.put(WebSocketFrame.Text("a")).andThen(ws.take()).map(f => discard(assert(f == WebSocketFrame.Text("a"))))
                     },
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                         ws.put(WebSocketFrame.Text("b")).andThen(ws.take()).map(f => discard(assert(f == WebSocketFrame.Text("b"))))
                     },
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                         ws.put(WebSocketFrame.Text("c")).andThen(ws.take()).map(f => discard(assert(f == WebSocketFrame.Text("c"))))
                     }
                 ).unit
@@ -333,9 +335,9 @@ class WebSocketTest extends Test:
         }
 
         "5 concurrent clients" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Async.foreach(1 to 5) { i =>
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                         ws.put(WebSocketFrame.Text(s"client$i")).andThen(ws.take()).map(f =>
                             discard(assert(f == WebSocketFrame.Text(s"client$i")))
                         )
@@ -345,10 +347,10 @@ class WebSocketTest extends Test:
         }
 
         "rapid connect disconnect cycles" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Kyo.foreach(1 to 10) { i =>
                     Abort.run[HttpException] {
-                        HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                        HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                             ws.put(WebSocketFrame.Text(s"cycle$i")).andThen {
                                 ws.take().map(f => discard(assert(f == WebSocketFrame.Text(s"cycle$i"))))
                             }
@@ -366,8 +368,8 @@ class WebSocketTest extends Test:
                             ws.put(WebSocketFrame.Text("tick")).andThen(Loop.continue)
                         }
                     }
-                }) { port =>
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/infinite") { ws =>
+                }) { url =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/infinite") { ws =>
                         Kyo.foreach(1 to 3)(_ => ws.take()).unit
                     }.andThen {
                         serverDone.await.andThen(succeed)
@@ -377,16 +379,16 @@ class WebSocketTest extends Test:
         }
 
         "client closes before reading anything" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.close()
                 }
             }.andThen(succeed)
         }
 
         "client sends then immediately closes" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Text("bye")).andThen(ws.close())
                 }
             }.andThen(succeed)
@@ -399,11 +401,11 @@ class WebSocketTest extends Test:
 
         "websocket alongside http handlers" in run {
             val httpHandler = HttpHandler.getText("api/hello") { _ => "world" }
-            withWsServer(httpHandler, HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.getText(s"http://localhost:$port/api/hello").map(text =>
+            withWsServer(httpHandler, HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/api/hello").map(text =>
                     discard(assert(text == "world"))
                 ).andThen {
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                         ws.put(WebSocketFrame.Text("test")).andThen {
                             ws.take().map(f => discard(assert(f == WebSocketFrame.Text("test"))))
                         }
@@ -414,11 +416,11 @@ class WebSocketTest extends Test:
 
         "http after websocket on same server" in run {
             val httpHandler = HttpHandler.getText("api/ping") { _ => "pong" }
-            withWsServer(httpHandler, HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(httpHandler, HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Text("a")).andThen(ws.take()).unit
                 }.andThen {
-                    HttpClient.getText(s"http://localhost:$port/api/ping").map(text =>
+                    HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/api/ping").map(text =>
                         discard(assert(text == "pong"))
                     )
                 }
@@ -427,15 +429,15 @@ class WebSocketTest extends Test:
 
         "multiple http and ws requests interleaved" in run {
             val httpHandler = HttpHandler.getText("api/count") { _ => "ok" }
-            withWsServer(httpHandler, HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.getText(s"http://localhost:$port/api/count").andThen {
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(httpHandler, HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/api/count").andThen {
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                         ws.put(WebSocketFrame.Text("1")).andThen(ws.take()).unit
                     }
                 }.andThen {
-                    HttpClient.getText(s"http://localhost:$port/api/count")
+                    HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/api/count")
                 }.andThen {
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                         ws.put(WebSocketFrame.Text("2")).andThen(ws.take()).unit
                     }
                 }
@@ -451,13 +453,13 @@ class WebSocketTest extends Test:
                         case other                     => other
                     }.foreach(ws.put)
                 }
-            ) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo1") { ws =>
+            ) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo1") { ws =>
                     ws.put(WebSocketFrame.Text("a")).andThen(ws.take()).map(f =>
                         discard(assert(f == WebSocketFrame.Text("a")))
                     )
                 }.andThen {
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/echo2") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo2") { ws =>
                         ws.put(WebSocketFrame.Text("b")).andThen(ws.take()).map(f =>
                             discard(assert(f == WebSocketFrame.Text("echo2:b")))
                         )
@@ -480,19 +482,19 @@ class WebSocketTest extends Test:
                     ws.take().andThen(ws.put(WebSocketFrame.Text("from-c")))
                         .andThen(Abort.run[Closed](ws.take()).unit)
                 }
-            ) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/a") { ws =>
+            ) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/a") { ws =>
                     ws.put(WebSocketFrame.Text("x")).andThen(ws.take()).map(f =>
                         discard(assert(f == WebSocketFrame.Text("from-a")))
                     )
                 }.andThen {
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/b") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/b") { ws =>
                         ws.put(WebSocketFrame.Text("x")).andThen(ws.take()).map(f =>
                             discard(assert(f == WebSocketFrame.Text("from-b")))
                         )
                     }
                 }.andThen {
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/c") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/c") { ws =>
                         ws.put(WebSocketFrame.Text("x")).andThen(ws.take()).map(f =>
                             discard(assert(f == WebSocketFrame.Text("from-c")))
                         )
@@ -507,9 +509,9 @@ class WebSocketTest extends Test:
                 ws.put(WebSocketFrame.Text(auth)).andThen {
                     Abort.run[Closed](ws.take()).unit
                 }
-            }) { port =>
+            }) { url =>
                 HttpClient.webSocket(
-                    s"ws://localhost:$port/ws/auth",
+                    s"ws://${url.host}:${url.port}/ws/auth",
                     HttpHeaders.empty.add("Authorization", "Bearer token123"),
                     WebSocketConfig()
                 ) { ws =>
@@ -529,8 +531,8 @@ class WebSocketTest extends Test:
                     case WebSocketFrame.Text(data) => WebSocketFrame.Text(data.toUpperCase)
                     case other                     => other
                 }.foreach(ws.put)
-            }) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/upper") { ws =>
+            }) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/upper") { ws =>
                     ws.put(WebSocketFrame.Text("hello")).andThen {
                         ws.take().map(f => discard(assert(f == WebSocketFrame.Text("HELLO"))))
                     }
@@ -543,8 +545,8 @@ class WebSocketTest extends Test:
                 ws.put(WebSocketFrame.Text("welcome")).andThen {
                     ws.stream.foreach(ws.put)
                 }
-            }) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/greet") { ws =>
+            }) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/greet") { ws =>
                     ws.take().map(f => discard(assert(f == WebSocketFrame.Text("welcome")))).andThen {
                         ws.put(WebSocketFrame.Text("hi")).andThen {
                             ws.take().map(f => discard(assert(f == WebSocketFrame.Text("hi"))))
@@ -563,8 +565,8 @@ class WebSocketTest extends Test:
                         }
                     }
                 }
-            }) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/count") { ws =>
+            }) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/count") { ws =>
                     ws.put(WebSocketFrame.Text("a")).andThen(ws.take()).map(f =>
                         discard(assert(f == WebSocketFrame.Text("count:0")))
                     ).andThen {
@@ -586,13 +588,13 @@ class WebSocketTest extends Test:
     "server lifecycle" - {
 
         "server handles connection after previous ws closed" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Text("first")).andThen(ws.take()).map(f =>
                         discard(assert(f == WebSocketFrame.Text("first")))
                     )
                 }.andThen {
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                         ws.put(WebSocketFrame.Text("second")).andThen(ws.take()).map(f =>
                             discard(assert(f == WebSocketFrame.Text("second")))
                         )
@@ -602,9 +604,9 @@ class WebSocketTest extends Test:
         }
 
         "three sequential connections" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Kyo.foreach(1 to 3) { i =>
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                         ws.put(WebSocketFrame.Text(s"conn$i")).andThen(ws.take()).map(f =>
                             discard(assert(f == WebSocketFrame.Text(s"conn$i")))
                         )
@@ -614,17 +616,17 @@ class WebSocketTest extends Test:
         }
 
         "sequential then concurrent" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 // Sequential first
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Text("seq")).andThen(ws.take()).unit
                 }.andThen {
                     // Then concurrent
                     Async.gather(
-                        HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                        HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                             ws.put(WebSocketFrame.Text("par1")).andThen(ws.take()).unit
                         },
-                        HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                        HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                             ws.put(WebSocketFrame.Text("par2")).andThen(ws.take()).unit
                         }
                     ).unit
@@ -645,8 +647,8 @@ class WebSocketTest extends Test:
                     .andThen(ws.put(WebSocketFrame.Text("eager2")))
                     .andThen(ws.put(WebSocketFrame.Text("eager3")))
                     .andThen(Abort.run[Closed](ws.take()).unit) // wait for client
-            }) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/eager") { ws =>
+            }) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/eager") { ws =>
                     ws.take().map(f => discard(assert(f == WebSocketFrame.Text("eager1"))))
                         .andThen(ws.take().map(f => discard(assert(f == WebSocketFrame.Text("eager2")))))
                         .andThen(ws.take().map(f => discard(assert(f == WebSocketFrame.Text("eager3")))))
@@ -658,8 +660,8 @@ class WebSocketTest extends Test:
         "large unicode payload" in run {
             // 3500 emoji chars × 4 bytes each = ~14000 bytes
             val text = "\uD83D\uDE00" * 3500
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Text(text)).andThen {
                         ws.take().map(f => discard(assert(f == WebSocketFrame.Text(text))))
                     }
@@ -674,8 +676,8 @@ class WebSocketTest extends Test:
                     Sync.ensure(cleanupDone.release) {
                         ws.stream.foreach(ws.put)
                     }
-                }) { port =>
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/cleanup") { ws =>
+                }) { url =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/cleanup") { ws =>
                         ws.put(WebSocketFrame.Text("hi")).andThen(ws.take()).unit
                     }.andThen {
                         cleanupDone.await.andThen(succeed)
@@ -693,9 +695,9 @@ class WebSocketTest extends Test:
                             throw new RuntimeException("handler error")
                         }
                     }
-                }) { port =>
+                }) { url =>
                     Abort.run[HttpException] {
-                        HttpClient.webSocket(s"ws://localhost:$port/ws/cleanup-err") { ws =>
+                        HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/cleanup-err") { ws =>
                             ws.put(WebSocketFrame.Text("trigger")).andThen {
                                 Abort.run[Closed](ws.take()).unit
                             }
@@ -714,8 +716,8 @@ class WebSocketTest extends Test:
                     .andThen(ws.put(WebSocketFrame.Text("msg2")))
                     .andThen(ws.put(WebSocketFrame.Text("msg3")))
                     .andThen(Abort.run[Closed](ws.take()).unit) // wait for client to read
-            }) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/send-then-close") { ws =>
+            }) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/send-then-close") { ws =>
                     ws.take().map(f => discard(assert(f == WebSocketFrame.Text("msg1"))))
                         .andThen(ws.take().map(f => discard(assert(f == WebSocketFrame.Text("msg2")))))
                         .andThen(ws.take().map(f => discard(assert(f == WebSocketFrame.Text("msg3")))))
@@ -725,9 +727,9 @@ class WebSocketTest extends Test:
 
         // zio-http #623: many concurrent connections must all succeed
         "10 concurrent connections" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Async.foreach(1 to 10) { i =>
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                         ws.put(WebSocketFrame.Text(s"c$i")).andThen(ws.take()).map(f =>
                             discard(assert(f == WebSocketFrame.Text(s"c$i")))
                         )
@@ -738,9 +740,9 @@ class WebSocketTest extends Test:
 
         // zio-http #623: many concurrent connections with multi-message exchange
         "10 concurrent connections with multiple messages each" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Async.foreach(1 to 10) { i =>
-                    HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                         Kyo.foreach(1 to 5) { j =>
                             ws.put(WebSocketFrame.Text(s"c${i}m$j")).andThen(ws.take()).map(f =>
                                 discard(assert(f == WebSocketFrame.Text(s"c${i}m$j")))
@@ -757,8 +759,8 @@ class WebSocketTest extends Test:
             val data1 = Span.fromUnsafe(Array.fill[Byte](100)(0x7f.toByte))
             val data2 = Span.fromUnsafe(Array.fill[Byte](200)(0x80.toByte))
             val data3 = Span.fromUnsafe(Array.fill[Byte](50)(0xff.toByte))
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(WebSocketFrame.Binary(data1))
                         .andThen(ws.put(WebSocketFrame.Binary(data2)))
                         .andThen(ws.put(WebSocketFrame.Binary(data3)))
@@ -787,14 +789,14 @@ class WebSocketTest extends Test:
         // Derived from zio-http #2977: WS and HTTP on same server must not interfere
         "interleaved ws and http requests under load" in run {
             val httpHandler = HttpHandler.getText("api/v") { _ => "ok" }
-            withWsServer(httpHandler, HttpHandler.webSocket("ws/echo")(echo)) { port =>
+            withWsServer(httpHandler, HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Async.foreach(1 to 5) { i =>
                     if i % 2 == 0 then
-                        HttpClient.getText(s"http://localhost:$port/api/v").map(t =>
+                        HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/api/v").map(t =>
                             discard(assert(t == "ok"))
                         )
                     else
-                        HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { ws =>
+                        HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                             ws.put(WebSocketFrame.Text(s"ws$i")).andThen(ws.take()).map(f =>
                                 discard(assert(f == WebSocketFrame.Text(s"ws$i")))
                             )
@@ -805,10 +807,10 @@ class WebSocketTest extends Test:
 
         // Regression: rapid open/close without any data exchange
         "rapid open close no data" in run {
-            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { port =>
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Kyo.foreach(1 to 20) { _ =>
                     Abort.run[HttpException] {
-                        HttpClient.webSocket(s"ws://localhost:$port/ws/echo") { _ =>
+                        HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { _ =>
                             () // connect and immediately return (triggers close)
                         }
                     }.unit
@@ -821,8 +823,8 @@ class WebSocketTest extends Test:
             withWsServer(HttpHandler.webSocket("ws/ack") { (_, ws) =>
                 ws.take().andThen(ws.put(WebSocketFrame.Text("ack")))
                     .andThen(Abort.run[Closed](ws.take()).unit)
-            }) { port =>
-                HttpClient.webSocket(s"ws://localhost:$port/ws/ack") { ws =>
+            }) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/ack") { ws =>
                     ws.put(WebSocketFrame.Text("msg")).andThen {
                         ws.take().map(f => discard(assert(f == WebSocketFrame.Text("ack"))))
                     }

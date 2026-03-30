@@ -15,7 +15,10 @@ import kyo.*
   * Each connection gets its own Selector — avoids all thread-safety issues. read()/write() register interest, poll with selectNow(), yield
   * via Async.sleep. No shared mutable state between connections. No AllowUnsafe, no throw.
   */
-final class NioTransport extends Transport:
+final class NioTransport(
+    clientSslContext: Maybe[SSLContext] = Absent,
+    serverSslContext: Maybe[SSLContext] = Absent
+) extends Transport:
 
     type Connection = NioConnection
 
@@ -29,7 +32,9 @@ final class NioTransport extends Transport:
     private def connectTls(host: String, port: Int)(using Frame): NioConnection < (Async & Abort[HttpException]) =
         connectPlain(host, port).map { conn =>
             Sync.defer {
-                val ctx    = SSLContext.getDefault
+                val ctx = clientSslContext match
+                    case Present(c) => c
+                    case Absent     => SSLContext.getDefault
                 val engine = ctx.createSSLEngine(host, port)
                 engine.setUseClientMode(true)
                 val params = engine.getSSLParameters
@@ -145,7 +150,9 @@ final class NioTransport extends Transport:
         handler: TransportStream => Unit < Async
     )(using Frame): TransportListener < (Async & Scope) =
         Sync.defer {
-            val sslCtx        = createServerSslContext(tlsConfig)
+            val sslCtx = serverSslContext match
+                case Present(c) => c
+                case Absent     => createServerSslContext(tlsConfig)
             val serverChannel = ServerSocketChannel.open()
             serverChannel.configureBlocking(false)
             try
