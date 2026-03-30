@@ -53,20 +53,21 @@ class TestTransport extends Transport:
         Channel.init[TestConnection](backlog).map { ch =>
             acceptCh = Present(ch)
             Scope.acquireRelease {
-                discard(Fiber.init {
+                Fiber.init {
                     Loop.foreach {
                         ch.take.map { serverConn =>
-                            discard(Fiber.init {
+                            Fiber.init {
                                 Sync.ensure(Sync.defer { serverConn.closed = true }) {
                                     handler(serverConn.stream)
                                 }
-                            })
+                            }.unit
                         }.andThen(Loop.continue)
                     }.handle(Abort.run[Closed]).unit
-                })
-                new TransportListener:
-                    val port = if port == 0 then 12345 else port
-                    val host = host
+                }.andThen {
+                    new TransportListener:
+                        val port = if port == 0 then 12345 else port
+                        val host = host
+                }
             } { _ =>
                 ch.close.unit
             }

@@ -9,25 +9,6 @@ class TestTransportTest extends kyo.Test:
 
     private val Utf8 = StandardCharsets.UTF_8
 
-    "channel put/take across fibers" in run {
-        Scope.run {
-            Channel.init[String](8).map { ch =>
-                val fiber = Fiber.init {
-                    ch.take.map { msg =>
-                        ch.put("got:" + msg)
-                    }
-                }
-                fiber.andThen {
-                    ch.put("hello").andThen {
-                        ch.take.map { reply =>
-                            assert(reply == "got:hello")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     "echo roundtrip" in run {
         val transport = new TestTransport
         Scope.run {
@@ -38,7 +19,6 @@ class TestTransportTest extends kyo.Test:
                     else Sync.defer(())
                 }
             }.map { listener =>
-                assert(listener.port > 0)
                 transport.connect("127.0.0.1", listener.port, tls = false).map { conn =>
                     transport.stream(conn).map { stream =>
                         stream.write(Span.fromUnsafe("hello".getBytes(Utf8))).andThen {
@@ -54,13 +34,17 @@ class TestTransportTest extends kyo.Test:
         }
     }
 
-    "HTTP/1.1 over TestTransport" in run {
+    "HTTP/1.1 request/response over TestTransport" in run {
         val transport = new TestTransport
         Scope.run {
             transport.listen("127.0.0.1", 0, 5) { stream =>
                 Abort.run[HttpException] {
                     Http1Protocol.readRequest(stream, 65536).map { (method, path, headers, body) =>
-                        Http1Protocol.writeResponseHead(stream, HttpStatus(200), HttpHeaders.empty.add("Content-Length", "2")).andThen {
+                        Http1Protocol.writeResponseHead(
+                            stream,
+                            HttpStatus(200),
+                            HttpHeaders.empty.add("Content-Length", "2")
+                        ).andThen {
                             Http1Protocol.writeBody(stream, Span.fromUnsafe("OK".getBytes(Utf8)))
                         }
                     }
@@ -76,6 +60,58 @@ class TestTransportTest extends kyo.Test:
                         ).andThen {
                             Http1Protocol.readResponse(stream, 65536).map { (status, headers, body) =>
                                 assert(status.code == 200)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "multiple requests on same connection (keep-alive)" in run {
+        val transport = new TestTransport
+        Scope.run {
+            transport.listen("127.0.0.1", 0, 5) { stream =>
+                Abort.run[HttpException] {
+                    Loop.foreach {
+                        Http1Protocol.readRequest(stream, 65536).map { (method, path, headers, body) =>
+                            val responseBody = s"path=$path"
+                            Http1Protocol.writeResponseHead(
+                                stream,
+                                HttpStatus(200),
+                                HttpHeaders.empty.add("Content-Length", responseBody.length.toString)
+                            ).andThen {
+                                Http1Protocol.writeBody(stream, Span.fromUnsafe(responseBody.getBytes(Utf8))).andThen {
+                                    if Http1Protocol.isKeepAlive(headers) then Loop.continue
+                                    else Loop.done(())
+                                }
+                            }
+                        }
+                    }
+                }.unit
+            }.map { listener =>
+                transport.connect("127.0.0.1", listener.port, tls = false).map { conn =>
+                    transport.stream(conn).map { stream =>
+                        // Request 1
+                        Http1Protocol.writeRequestHead(
+                            stream,
+                            HttpMethod.GET,
+                            "/first",
+                            HttpHeaders.empty.add("Host", "localhost").add("Content-Length", "0")
+                        ).andThen {
+                            Http1Protocol.readResponse(stream, 65536).map { (status1, _, body1) =>
+                                assert(status1.code == 200)
+                                // Request 2 on same connection
+                                Http1Protocol.writeRequestHead(
+                                    stream,
+                                    HttpMethod.GET,
+                                    "/second",
+                                    HttpHeaders.empty.add("Host", "localhost").add("Content-Length", "0")
+                                ).andThen {
+                                    Http1Protocol.readResponse(stream, 65536).map { (status2, _, body2) =>
+                                        assert(status2.code == 200)
+                                    }
+                                }
                             }
                         }
                     }

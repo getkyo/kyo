@@ -166,7 +166,7 @@ final class KqueueNativeTransport extends Transport:
             val boundHost = host
 
             Scope.acquireRelease {
-                discard(Fiber.init {
+                Fiber.init {
                     Loop.foreach {
                         Promise.init[Int, Any].map { accepted =>
                             import AllowUnsafe.embrace.danger
@@ -175,19 +175,20 @@ final class KqueueNativeTransport extends Transport:
                             accepted.get.map { clientFd =>
                                 if clientFd >= 0 then
                                     val conn = new KqueueConnection(clientFd)
-                                    discard(Fiber.init {
+                                    Fiber.init {
                                         Sync.ensure(Sync.defer(tcpClose(clientFd))) {
                                             handler(new KqueueStream(conn, KqueueNativeTransport.this))
                                         }
-                                    })
+                                    }.unit
                                 end if
                             }.andThen(Loop.continue)
                         }
                     }
-                })
-                new TransportListener:
-                    val port = boundPort
-                    val host = boundHost
+                }.andThen {
+                    new TransportListener:
+                        val port = boundPort
+                        val host = boundHost
+                }
             } { _ => Sync.defer(tcpClose(serverFd)) }
         }
 
