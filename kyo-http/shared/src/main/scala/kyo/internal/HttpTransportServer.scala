@@ -31,11 +31,13 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
         handlers: Seq[HttpHandler[?, ?, ?]],
         config: HttpServerConfig
     )(using Frame): HttpBackend.Binding < (Async & Scope) =
-        val router = HttpRouter(handlers, config.cors)
+        val router  = HttpRouter(handlers, config.cors)
+        val handler = (stream: TransportStream) => serveConnection(stream, router, config)
         Promise.init[Unit, Any].map { done =>
-            transport.listen(config.host, config.port, config.backlog) { stream =>
-                serveConnection(stream, router, config)
-            }.map { listener =>
+            val listenOp = config.tls match
+                case Present(tlsConfig) => transport.listenTls(config.host, config.port, config.backlog, tlsConfig)(handler)
+                case Absent             => transport.listen(config.host, config.port, config.backlog)(handler)
+            listenOp.map { listener =>
                 new HttpBackend.Binding:
                     val port: Int    = listener.port
                     val host: String = listener.host

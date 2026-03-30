@@ -13,26 +13,35 @@ final class JsTransport extends Transport:
 
     type Connection = JsConnection
 
-    private val net = js.Dynamic.global.require("net")
+    private val net     = js.Dynamic.global.require("net")
+    private val tlsMod  = js.Dynamic.global.require("tls")
 
     def connect(host: String, port: Int, tls: Boolean)(using
         Frame
     )
         : JsConnection < (Async & Abort[HttpException]) =
-        if tls then Abort.fail(HttpConnectException(host, port, new Exception("TLS not yet supported on JS")))
-        else
-            Promise.init[JsConnection, Any].map { promise =>
-                Sync.defer {
-                    val socket = net.connect(port, host)
-                    discard(socket.setNoDelay(true))
-                    discard(socket.pause())
-                    discard(socket.on(
-                        "connect",
-                        { () =>
-                            import AllowUnsafe.embrace.danger
-                            discard(promise.unsafe.complete(Result.succeed(new JsConnection(socket))))
-                        }: js.Function0[Unit]
-                    ))
+        Promise.init[JsConnection, Any].map { promise =>
+            Sync.defer {
+                val (socket, connectEvent) =
+                    if tls then
+                        val opts = js.Dynamic.literal(
+                            host = host,
+                            port = port,
+                            servername = host, // SNI
+                            rejectUnauthorized = true
+                        )
+                        (tlsMod.connect(opts), "secureConnect")
+                    else
+                        (net.connect(port, host), "connect")
+                discard(socket.setNoDelay(true))
+                discard(socket.pause())
+                discard(socket.on(
+                    connectEvent,
+                    { () =>
+                        import AllowUnsafe.embrace.danger
+                        discard(promise.unsafe.complete(Result.succeed(new JsConnection(socket))))
+                    }: js.Function0[Unit]
+                ))
                     discard(socket.on(
                         "error",
                         { (err: js.Dynamic) =>

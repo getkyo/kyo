@@ -59,6 +59,12 @@ trait Transport:
         handler: TransportStream => Unit < Async
     )(using Frame): TransportListener < (Async & Scope)
 
+    /** Listen with TLS. Override in platform transports that support server TLS. Default delegates to non-TLS listen. */
+    def listenTls(host: String, port: Int, backlog: Int, tlsConfig: TlsConfig)(
+        handler: TransportStream => Unit < Async
+    )(using Frame): TransportListener < (Async & Scope) =
+        listen(host, port, backlog)(handler)
+
 end Transport
 
 /** Bidirectional byte stream. Protocol code reads/writes through this.

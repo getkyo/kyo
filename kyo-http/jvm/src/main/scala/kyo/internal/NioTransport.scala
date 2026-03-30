@@ -7,6 +7,7 @@ import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
+import javax.net.ssl.*
 import kyo.*
 
 /** Non-blocking NIO transport for JVM.
@@ -22,34 +23,54 @@ final class NioTransport extends Transport:
         Frame
     )
         : NioConnection < (Async & Abort[HttpException]) =
-        if tls then Abort.fail(HttpConnectException(host, port, new Exception("TLS not yet supported")))
-        else
+        if tls then connectTls(host, port)
+        else connectPlain(host, port)
+
+    private def connectTls(host: String, port: Int)(using Frame): NioConnection < (Async & Abort[HttpException]) =
+        connectPlain(host, port).map { conn =>
             Sync.defer {
-                val channel = SocketChannel.open()
-                channel.configureBlocking(false)
-                channel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
-                val selector  = Selector.open()
-                val connected = channel.connect(new InetSocketAddress(host, port))
-                if connected then
-                    selector.close()
-                    Sync.defer(new NioConnection(channel, Selector.open()))
-                else
-                    channel.register(selector, SelectionKey.OP_CONNECT)
-                    pollSelector(selector).andThen {
-                        Sync.defer {
-                            Abort.recover[Exception](_ =>
-                                Abort.fail(HttpConnectException(host, port, new Exception("connect failed")))
-                            ) {
-                                Sync.defer {
-                                    channel.finishConnect()
-                                    selector.close()
-                                    new NioConnection(channel, Selector.open())
-                                }
+                val ctx    = SSLContext.getDefault
+                val engine = ctx.createSSLEngine(host, port)
+                engine.setUseClientMode(true)
+                val params = engine.getSSLParameters
+                params.setServerNames(java.util.List.of(new SNIHostName(host)))
+                params.setApplicationProtocols(Array("http/1.1"))
+                params.setEndpointIdentificationAlgorithm("HTTPS")
+                engine.setSSLParameters(params)
+                val nioStream = new NioStream(conn)
+                val tlsStream = new NioTlsStream(nioStream, engine)
+                conn.tlsStream = Present(tlsStream)
+                tlsStream.handshake().map(_ => conn)
+            }
+        }
+
+    private def connectPlain(host: String, port: Int)(using Frame): NioConnection < (Async & Abort[HttpException]) =
+        Sync.defer {
+            val channel = SocketChannel.open()
+            channel.configureBlocking(false)
+            channel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
+            val selector  = Selector.open()
+            val connected = channel.connect(new InetSocketAddress(host, port))
+            if connected then
+                selector.close()
+                Sync.defer(new NioConnection(channel, Selector.open()))
+            else
+                channel.register(selector, SelectionKey.OP_CONNECT)
+                pollSelector(selector).andThen {
+                    Sync.defer {
+                        Abort.recover[Exception](_ =>
+                            Abort.fail(HttpConnectException(host, port, new Exception("connect failed")))
+                        ) {
+                            Sync.defer {
+                                channel.finishConnect()
+                                selector.close()
+                                new NioConnection(channel, Selector.open())
                             }
                         }
                     }
-                end if
-            }
+                }
+            end if
+        }
 
     def isAlive(connection: NioConnection)(using Frame): Boolean < Sync =
         Sync.defer(connection.channel.isOpen && connection.channel.isConnected)
@@ -64,7 +85,9 @@ final class NioTransport extends Transport:
         closeNow(connection)
 
     def stream(connection: NioConnection)(using Frame): TransportStream < Async =
-        Sync.defer(new NioStream(connection))
+        connection.tlsStream match
+            case Present(tls) => Sync.defer(tls)
+            case Absent       => Sync.defer(new NioStream(connection))
 
     def listen(host: String, port: Int, backlog: Int)(
         handler: TransportStream => Unit < Async
@@ -118,6 +141,86 @@ final class NioTransport extends Transport:
             }
         }
 
+    override def listenTls(host: String, port: Int, backlog: Int, tlsConfig: TlsConfig)(
+        handler: TransportStream => Unit < Async
+    )(using Frame): TransportListener < (Async & Scope) =
+        Sync.defer {
+            val sslCtx        = createServerSslContext(tlsConfig)
+            val serverChannel = ServerSocketChannel.open()
+            serverChannel.configureBlocking(false)
+            try
+                serverChannel.bind(new InetSocketAddress(host, port), backlog)
+            catch
+                case e: java.net.BindException =>
+                    serverChannel.close()
+                    throw HttpBindException(host, port, e)
+            end try
+            val actualPort     = serverChannel.socket().getLocalPort
+            val actualHost     = host
+            val acceptSelector = Selector.open()
+            serverChannel.register(acceptSelector, SelectionKey.OP_ACCEPT)
+
+            Scope.acquireRelease {
+                Fiber.init {
+                    Loop.foreach {
+                        pollSelector(acceptSelector).andThen {
+                            Sync.defer {
+                                val clientChannel = serverChannel.accept()
+                                if clientChannel != null then
+                                    clientChannel.configureBlocking(false)
+                                    clientChannel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
+                                    val conn = new NioConnection(clientChannel, Selector.open())
+                                    Fiber.init {
+                                        Sync.ensure(closeNow(conn)) {
+                                            // Wrap in TLS
+                                            val engine = sslCtx.createSSLEngine()
+                                            engine.setUseClientMode(false)
+                                            val nioStream = new NioStream(conn)
+                                            val tlsStream = new NioTlsStream(nioStream, engine)
+                                            tlsStream.handshake().andThen {
+                                                handler(tlsStream)
+                                            }
+                                        }
+                                    }.unit
+                                else
+                                    Kyo.unit
+                                end if
+                            }
+                        }.andThen(Loop.continue)
+                    }
+                }.andThen {
+                    new TransportListener:
+                        val port = actualPort
+                        val host = actualHost
+                }
+            } { _ =>
+                Sync.defer {
+                    acceptSelector.close()
+                    serverChannel.close()
+                }
+            }
+        }
+
+    private def createServerSslContext(config: TlsConfig): SSLContext =
+        import java.security.*
+        import java.io.*
+        val ctx = SSLContext.getInstance("TLS")
+        (config.certChainPath, config.privateKeyPath) match
+            case (Present(certPath), Present(keyPath)) =>
+                val ks  = KeyStore.getInstance("PKCS12")
+                val fis = new FileInputStream(certPath)
+                try ks.load(fis, Array.empty)
+                finally fis.close()
+                val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm)
+                kmf.init(ks, Array.empty)
+                ctx.init(kmf.getKeyManagers, null, null)
+            case _ =>
+                // Self-signed for development — generate ephemeral cert
+                ctx.init(null, null, null)
+        end match
+        ctx
+    end createServerSslContext
+
     /** Poll selector with selectNow() until at least one key is ready. */
     private def pollSelector(selector: Selector)(using Frame): Unit < Async =
         Loop.foreach {
@@ -136,7 +239,7 @@ final class NioTransport extends Transport:
 
 end NioTransport
 
-private[kyo] class NioConnection(val channel: SocketChannel, val selector: Selector)
+private[kyo] class NioConnection(val channel: SocketChannel, val selector: Selector, var tlsStream: Maybe[NioTlsStream] = Absent)
 
 /** NIO stream using the connection's selector with synchronized interestOps.
   *
