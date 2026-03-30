@@ -32,8 +32,8 @@ trait Protocol:
     )
         : Unit < Async
 
-    /** Read a response from the stream (client side). */
-    def readResponse(stream: TransportStream, maxSize: Int)(using
+    /** Read a response from the stream (client side). requestMethod needed to skip body for HEAD. */
+    def readResponse(stream: TransportStream, maxSize: Int, requestMethod: HttpMethod = HttpMethod.GET)(using
         Frame
     )
         : (HttpStatus, HttpHeaders, HttpBody) < (Async & Abort[HttpException])

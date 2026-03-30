@@ -33,7 +33,7 @@ object Http1Protocol extends Protocol:
             end if
         }
 
-    def readResponse(stream: TransportStream, maxSize: Int)(using
+    def readResponse(stream: TransportStream, maxSize: Int, requestMethod: HttpMethod)(using
         Frame
     )
         : (HttpStatus, HttpHeaders, HttpBody) < (Async & Abort[HttpException]) =
@@ -45,7 +45,8 @@ object Http1Protocol extends Protocol:
                 Abort.get(parseStatusLine(lines(0))).map { status =>
                     val headers    = parseHeaders(lines, startIndex = 1)
                     val bodyStream = new PrefixedStream(leftover, stream)
-                    if status.code == 204 || status.code == 304 || (status.code >= 100 && status.code < 200) then
+                    if status.code == 204 || status.code == 304 || (status.code >= 100 && status.code < 200) || requestMethod == HttpMethod.HEAD
+                    then
                         (status, headers, HttpBody.Empty)
                     else
                         readBody(bodyStream, headers, maxSize).map { body =>
