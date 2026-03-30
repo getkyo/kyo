@@ -14,6 +14,9 @@ import kyo.*
   */
 trait Protocol:
 
+    /** Wrap a stream for keep-alive buffering. Call once per connection, pass to readRequest. */
+    def buffered(stream: TransportStream): TransportStream = stream
+
     /** Read a request from the stream (server side). */
     def readRequest(stream: TransportStream, maxSize: Int)(using
         Frame

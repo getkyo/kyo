@@ -147,4 +147,115 @@ class NioTransportTest extends kyo.Test:
         }
     }
 
+    "HTTP/1.1 keep-alive POST with body" in run {
+        Scope.run {
+            transport.listen("127.0.0.1", 0, 5) { stream =>
+                Abort.run[HttpException] {
+                    val bs = Http1Protocol.buffered(stream)
+                    Loop.foreach {
+                        Http1Protocol.readRequest(bs, 65536).map { (method, path, headers, body) =>
+                            val respBody = body match
+                                case HttpBody.Buffered(d) => new String(d.toArrayUnsafe, Utf8)
+                                case _                    => "no-body"
+                            Http1Protocol.writeResponseHead(
+                                stream,
+                                HttpStatus(200),
+                                HttpHeaders.empty.add("Content-Length", respBody.length.toString)
+                            ).andThen {
+                                Http1Protocol.writeBody(stream, Span.fromUnsafe(respBody.getBytes(Utf8))).andThen {
+                                    if Http1Protocol.isKeepAlive(headers) then Loop.continue
+                                    else Loop.done(())
+                                }
+                            }
+                        }
+                    }
+                }.unit
+            }.map { listener =>
+                transport.connect("127.0.0.1", listener.port, tls = false).map { conn =>
+                    transport.stream(conn).map { stream =>
+                        val hdrs = HttpHeaders.empty.add("Host", "localhost")
+                        // Request 1 with body
+                        val body1 = "data-0"
+                        Http1Protocol.writeRequestHead(
+                            stream,
+                            HttpMethod.POST,
+                            "/echo",
+                            hdrs.add("Content-Length", body1.length.toString)
+                        ).andThen {
+                            Http1Protocol.writeBody(stream, Span.fromUnsafe(body1.getBytes(Utf8))).andThen {
+                                Http1Protocol.readResponse(stream, Int.MaxValue, HttpMethod.POST).map { (s1, _, b1) =>
+                                    assert(s1.code == 200)
+                                    val rb1 = b1 match
+                                        case HttpBody.Buffered(d) => new String(d.toArrayUnsafe, Utf8);
+                                        case _                    => ""
+                                    assert(rb1 == "data-0")
+                                    // Request 2 with different body
+                                    val body2 = "data-1"
+                                    Http1Protocol.writeRequestHead(
+                                        stream,
+                                        HttpMethod.POST,
+                                        "/echo",
+                                        hdrs.add("Content-Length", body2.length.toString)
+                                    ).andThen {
+                                        Http1Protocol.writeBody(stream, Span.fromUnsafe(body2.getBytes(Utf8))).andThen {
+                                            Http1Protocol.readResponse(stream, Int.MaxValue, HttpMethod.POST).map { (s2, _, b2) =>
+                                                assert(s2.code == 200)
+                                                val rb2 = b2 match
+                                                    case HttpBody.Buffered(d) => new String(d.toArrayUnsafe, Utf8);
+                                                    case _                    => ""
+                                                assert(rb2 == "data-1")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "HTTP/1.1 keep-alive (2 requests on same connection)" in run {
+        Scope.run {
+            transport.listen("127.0.0.1", 0, 5) { stream =>
+                Abort.run[HttpException] {
+                    Loop.foreach {
+                        Http1Protocol.readRequest(stream, 65536).map { (method, path, headers, body) =>
+                            val resp = s"path=$path"
+                            Http1Protocol.writeResponseHead(
+                                stream,
+                                HttpStatus(200),
+                                HttpHeaders.empty.add("Content-Length", resp.length.toString)
+                            ).andThen {
+                                Http1Protocol.writeBody(stream, Span.fromUnsafe(resp.getBytes(Utf8))).andThen {
+                                    if Http1Protocol.isKeepAlive(headers) then Loop.continue
+                                    else Loop.done(())
+                                }
+                            }
+                        }
+                    }
+                }.unit
+            }.map { listener =>
+                transport.connect("127.0.0.1", listener.port, tls = false).map { conn =>
+                    transport.stream(conn).map { stream =>
+                        val hdrs = HttpHeaders.empty.add("Host", "localhost").add("Content-Length", "0")
+                        // Request 1
+                        Http1Protocol.writeRequestHead(stream, HttpMethod.GET, "/first", hdrs).andThen {
+                            Http1Protocol.readResponse(stream, Int.MaxValue, HttpMethod.GET).map { (s1, _, b1) =>
+                                assert(s1.code == 200)
+                                // Request 2 on same connection
+                                Http1Protocol.writeRequestHead(stream, HttpMethod.GET, "/second", hdrs).andThen {
+                                    Http1Protocol.readResponse(stream, Int.MaxValue, HttpMethod.GET).map { (s2, _, b2) =>
+                                        assert(s2.code == 200)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end NioTransportTest

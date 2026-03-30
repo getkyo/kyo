@@ -39,9 +39,10 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
         router: HttpRouter,
         config: HttpServerConfig
     )(using Frame): Unit < Async =
+        val buffered = protocol.buffered(stream)
         Abort.run[HttpException] {
             Loop.foreach {
-                protocol.readRequest(stream, config.maxContentLength).map { (method, rawPath, headers, body) =>
+                protocol.readRequest(buffered, config.maxContentLength).map { (method, rawPath, headers, body) =>
                     val path = rawPath.indexOf('?') match
                         case -1 => rawPath;
                         case i  => rawPath.substring(0, i)
@@ -71,6 +72,7 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                 }
             }
         }.unit
+    end serveConnection
 
     /** Decode request → invoke handler → encode response → write. */
     private def serveHttpRequest(

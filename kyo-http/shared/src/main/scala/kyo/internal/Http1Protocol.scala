@@ -14,48 +14,59 @@ object Http1Protocol extends Protocol:
 
     // ── Protocol implementation ──────────────────────────────────
 
+    override def buffered(stream: TransportStream): TransportStream =
+        new BufferedStream(stream)
+
     def readRequest(stream: TransportStream, maxSize: Int)(using
         Frame
     )
         : (HttpMethod, String, HttpHeaders, HttpBody) < (Async & Abort[HttpException]) =
-        readHeaderBlock(stream, maxSize).map { case (headerBytes, leftover) =>
+        val bs = stream match
+            case b: BufferedStream => b
+            case _                 => new BufferedStream(stream)
+        readHeaderBlock(bs, maxSize).map { case (headerBytes, leftover) =>
             val headerStr = new String(headerBytes.toArrayUnsafe, Utf8)
             val lines     = headerStr.split("\r\n")
             if lines.isEmpty then Abort.fail(HttpProtocolException("Empty request"))
             else
                 Abort.get(parseRequestLine(lines(0))).map { (method, path) =>
-                    val headers    = parseHeaders(lines, startIndex = 1)
-                    val bodyStream = new PrefixedStream(leftover, stream)
-                    readBody(bodyStream, headers, maxSize).map { body =>
+                    val headers = parseHeaders(lines, startIndex = 1)
+                    bs.pushBack(leftover)
+                    readBody(bs, headers, maxSize).map { body =>
                         (method, path, headers, body)
                     }
                 }
             end if
         }
+    end readRequest
 
-    def readResponse(stream: TransportStream, maxSize: Int, requestMethod: HttpMethod)(using
+    def readResponse(stream: TransportStream, maxSize: Int, requestMethod: HttpMethod = HttpMethod.GET)(using
         Frame
     )
         : (HttpStatus, HttpHeaders, HttpBody) < (Async & Abort[HttpException]) =
-        readHeaderBlock(stream, maxSize).map { case (headerBytes, leftover) =>
+        val buffered = stream match
+            case b: BufferedStream => b
+            case _                 => new BufferedStream(stream)
+        readHeaderBlock(buffered, maxSize).map { case (headerBytes, leftover) =>
             val headerStr = new String(headerBytes.toArrayUnsafe, Utf8)
             val lines     = headerStr.split("\r\n")
             if lines.isEmpty then Abort.fail(HttpProtocolException("Empty response"))
             else
                 Abort.get(parseStatusLine(lines(0))).map { status =>
-                    val headers    = parseHeaders(lines, startIndex = 1)
-                    val bodyStream = new PrefixedStream(leftover, stream)
+                    val headers = parseHeaders(lines, startIndex = 1)
+                    buffered.pushBack(leftover)
                     if status.code == 204 || status.code == 304 || (status.code >= 100 && status.code < 200) || requestMethod == HttpMethod.HEAD
                     then
                         (status, headers, HttpBody.Empty)
                     else
-                        readBody(bodyStream, headers, maxSize).map { body =>
+                        readBody(buffered, headers, maxSize).map { body =>
                             (status, headers, body)
                         }
                     end if
                 }
             end if
         }
+    end readResponse
 
     def writeResponseHead(stream: TransportStream, status: HttpStatus, headers: HttpHeaders)(using
         Frame
@@ -226,6 +237,36 @@ object Http1Protocol extends Protocol:
             end if
         }
     end readHeaderBlock
+
+    /** A TransportStream with pushBack support. Leftover bytes from header parsing are pushed back and re-read before the underlying
+      * stream. Survives across keep-alive iterations.
+      */
+    class BufferedStream(underlying: TransportStream) extends TransportStream:
+        private var buffer: Span[Byte] = Span.empty[Byte]
+        private var bufPos: Int        = 0
+
+        def pushBack(data: Span[Byte]): Unit =
+            if data.nonEmpty then
+                buffer = data
+                bufPos = 0
+
+        def read(buf: Array[Byte])(using Frame): Int < Async =
+            if bufPos < buffer.size then
+                Sync.defer {
+                    val available = math.min(buf.length, buffer.size - bufPos)
+                    discard(buffer.slice(bufPos, bufPos + available).copyToArray(buf))
+                    bufPos += available
+                    if bufPos >= buffer.size then
+                        buffer = Span.empty[Byte]
+                        bufPos = 0
+                    available
+                }
+            else
+                underlying.read(buf)
+
+        def write(data: Span[Byte])(using Frame): Unit < Async =
+            underlying.write(data)
+    end BufferedStream
 
     /** A TransportStream that first yields prefix bytes, then delegates to the underlying stream. */
     private class PrefixedStream(prefix: Span[Byte], underlying: TransportStream) extends TransportStream:
