@@ -41,7 +41,10 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
     )(using Frame): Unit < Async =
         Abort.run[HttpException] {
             Loop.foreach {
-                protocol.readRequest(stream, config.maxContentLength).map { (method, path, headers, body) =>
+                protocol.readRequest(stream, config.maxContentLength).map { (method, rawPath, headers, body) =>
+                    val path = rawPath.indexOf('?') match
+                        case -1 => rawPath;
+                        case i  => rawPath.substring(0, i)
                     router.find(method, path) match
                         case Result.Success(routeMatch) =>
                             routeMatch.endpoint match
@@ -50,14 +53,21 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                                         serveWebSocket(stream, wsHandler, headers, path)
                                     }.andThen(Loop.done(()))
                                 case _ =>
-                                    serveHttpRequest(stream, routeMatch, method, path, headers, body, config).andThen {
+                                    serveHttpRequest(stream, routeMatch, method, rawPath, headers, body, config).andThen {
                                         if protocol.isKeepAlive(headers) then Loop.continue
                                         else Loop.done(())
                                     }
                         case Result.Failure(error) =>
-                            writeRouterError(stream, error).andThen(Loop.done(()))
+                            writeRouterError(stream, error).andThen {
+                                error match
+                                    case HttpRouter.FindError.Options(_) =>
+                                        if protocol.isKeepAlive(headers) then Loop.continue
+                                        else Loop.done(())
+                                    case _ => Loop.done(())
+                            }
                         case Result.Panic(ex) =>
                             writeErrorResponse(stream, HttpStatus(500), HttpHeaders.empty).andThen(Loop.done(()))
+                    end match
                 }
             }
         }.unit

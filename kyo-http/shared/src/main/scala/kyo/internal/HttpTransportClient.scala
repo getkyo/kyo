@@ -66,21 +66,21 @@ class HttpTransportClient(private[kyo] val transport: Transport, protocol: Proto
             onEmpty = (path, headers) =>
                 protocol.writeRequestHead(
                     stream,
-                    route.method,
+                    request.method,
                     path,
                     headers.add("Content-Length", "0")
                 ),
             onBuffered = (path, headers, body) =>
                 protocol.writeRequestHead(
                     stream,
-                    route.method,
+                    request.method,
                     path,
                     headers.add("Content-Length", body.size.toString)
                 ).andThen {
                     protocol.writeBody(stream, body)
                 },
             onStreaming = (path, headers, bodyStream) =>
-                protocol.writeRequestHead(stream, route.method, path, headers).andThen {
+                protocol.writeRequestHead(stream, request.method, path, headers).andThen {
                     protocol.writeStreamingBody(stream, bodyStream)
                 }
         )
