@@ -18,7 +18,7 @@ class KqueueNativeTransportTest extends kyo.Test:
                 val buf = new Array[Byte](1024)
                 stream.read(buf).map { n =>
                     if n > 0 then stream.write(Span.fromUnsafe(buf).slice(0, n))
-                    else Sync.defer(())
+                    else Kyo.unit
                 }
             }.map { listener =>
                 transport.connect("127.0.0.1", listener.port, tls = false).map { conn =>
@@ -38,10 +38,10 @@ class KqueueNativeTransportTest extends kyo.Test:
         }
     }
 
-    "connect to non-existent port fails" in run {
+    "connect to non-existent host fails" in run {
         Scope.run {
             Abort.run[HttpException] {
-                transport.connect("127.0.0.1", 1, tls = false)
+                transport.connect("192.0.2.1", 12345, tls = false) // TEST-NET, guaranteed unreachable
             }.map { result =>
                 assert(result.isFailure)
             }
@@ -50,7 +50,7 @@ class KqueueNativeTransportTest extends kyo.Test:
 
     "listen on port 0 assigns a port" in run {
         Scope.run {
-            transport.listen("127.0.0.1", 0, 5) { _ => Sync.defer(()) }.map { listener =>
+            transport.listen("127.0.0.1", 0, 5) { _ => Kyo.unit }.map { listener =>
                 assert(listener.port > 0)
                 assert(listener.host == "127.0.0.1")
             }
@@ -106,12 +106,16 @@ class KqueueNativeTransportTest extends kyo.Test:
 
     "isAlive after close" in run {
         Scope.run {
-            transport.listen("127.0.0.1", 0, 5) { _ => Sync.defer(()) }.map { listener =>
+            transport.listen("127.0.0.1", 0, 5) { _ => Kyo.unit }.map { listener =>
                 transport.connect("127.0.0.1", listener.port, tls = false).map { conn =>
-                    import AllowUnsafe.embrace.danger
-                    assert(transport.isAlive(conn))
-                    transport.closeNowUnsafe(conn)
-                    assert(!transport.isAlive(conn))
+                    transport.isAlive(conn).map { alive =>
+                        assert(alive)
+                        transport.closeNow(conn).map { _ =>
+                            transport.isAlive(conn).map { alive2 =>
+                                assert(!alive2)
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -259,7 +259,7 @@ class WsCodecTest extends kyo.Test:
             val stream   = new MockStream(response.getBytes(Utf8))
             // Override write to capture then read the 400
             val combined = new MockStream(response.getBytes(Utf8)):
-                override def write(data: Span[Byte])(using Frame): Unit < Async = Sync.defer(())
+                override def write(data: Span[Byte])(using Frame): Unit < Async = Kyo.unit
             Abort.run[HttpException] {
                 WsCodec.requestUpgrade(combined, "localhost", "/ws", HttpHeaders.empty, WebSocketConfig())
             }.map { result =>

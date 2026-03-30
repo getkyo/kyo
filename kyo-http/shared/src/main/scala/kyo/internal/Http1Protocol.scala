@@ -86,7 +86,7 @@ object Http1Protocol extends Protocol:
         Frame
     )
         : Unit < Async =
-        if data.isEmpty then Sync.defer(())
+        if data.isEmpty then Kyo.unit
         else stream.write(data)
 
     def writeStreamingBody(stream: TransportStream, body: Stream[Span[Byte], Async])(using
@@ -304,18 +304,13 @@ object Http1Protocol extends Protocol:
                             Abort.run[HttpException](readExactly(stream, size, Int.MaxValue)).map {
                                 case Result.Success(data) =>
                                     readLine(stream).andThen(Maybe((data, ())))
-                                case Result.Failure(error) =>
-                                    // Chunk read failed (EOF mid-chunk, size exceeded) — terminate stream.
-                                    // Consumer sees truncated data. Error details in `error`.
+                                case Result.Error(_) =>
+                                    // Chunk read failed or panicked — terminate stream.
                                     Maybe.empty
-                                case Result.Panic(ex) =>
-                                    throw ex // Don't swallow panics
                             }
-                    case Result.Failure(error) =>
+                    case Result.Error(_) =>
                         // Malformed chunk header — terminate stream.
                         Maybe.empty
-                    case Result.Panic(ex) =>
-                        throw ex
             }
         }
 

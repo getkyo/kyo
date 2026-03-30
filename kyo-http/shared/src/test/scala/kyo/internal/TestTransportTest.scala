@@ -16,7 +16,7 @@ class TestTransportTest extends kyo.Test:
                 val buf = new Array[Byte](1024)
                 stream.read(buf).map { n =>
                     if n > 0 then stream.write(Span.fromUnsafe(buf).slice(0, n))
-                    else Sync.defer(())
+                    else Kyo.unit
                 }
             }.map { listener =>
                 transport.connect("127.0.0.1", listener.port, tls = false).map { conn =>

@@ -29,10 +29,10 @@ trait Transport:
     def connect(host: String, port: Int, tls: Boolean)(using Frame): Connection < (Async & Abort[HttpException])
 
     /** Check if a connection is still usable (for pool health checks). */
-    def isAlive(connection: Connection)(using AllowUnsafe): Boolean
+    def isAlive(connection: Connection)(using Frame): Boolean < Sync
 
     /** Force-close a connection (for pool eviction). */
-    def closeNowUnsafe(connection: Connection)(using AllowUnsafe): Unit
+    def closeNow(connection: Connection)(using Frame): Unit < Sync
 
     /** Graceful close with timeout. */
     def close(connection: Connection, gracePeriod: Duration)(using Frame): Unit < Async

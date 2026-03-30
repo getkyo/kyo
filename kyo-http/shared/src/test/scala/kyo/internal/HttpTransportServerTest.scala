@@ -34,7 +34,7 @@ class HttpTransportServerTest extends kyo.Test:
                     .add("Content-Length", body.length.toString)
                 Http1Protocol.writeRequestHead(stream, method, path, hdrs).andThen {
                     (if body.nonEmpty then Http1Protocol.writeBody(stream, Span.fromUnsafe(body.getBytes(Utf8)))
-                     else Sync.defer(())).andThen {
+                     else Kyo.unit).andThen {
                         Http1Protocol.readResponse(stream, 65536)
                     }
                 }

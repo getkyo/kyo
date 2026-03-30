@@ -1,6 +1,7 @@
 package kyo.internal
 
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import kyo.*
 import scala.scalanative.unsafe.*
@@ -9,9 +10,10 @@ import scala.scalanative.unsafe.*
   *
   * Architecture:
   *   - One kqueue fd per transport, polled by a daemon thread
-  *   - All socket fds set to O_NONBLOCK by the C layer
-  *   - read()/write() register EVFILT_READ/EVFILT_WRITE (one-shot), suspend fiber via Promise
-  *   - Poll thread: kqueueWait() → perform I/O → complete Promises
+  *   - read()/write() register kqueue interest and suspend the fiber via Channel.take
+  *   - Poll thread: kqueueWait() → perform I/O → put results into per-fd result channels
+  *   - No AllowUnsafe in the API layer. The poll thread uses Sync.Unsafe internally
+  *     (genuine OS boundary bridge — the only place unsafe is acceptable).
   */
 final class KqueueNativeTransport extends Transport:
 
@@ -22,22 +24,22 @@ final class KqueueNativeTransport extends Transport:
     private val kqfd    = kqueueCreate()
     private val stopped = new AtomicBoolean(false)
 
-    private val reads    = new ConcurrentHashMap[Int, PendingRead]()
-    private val writes   = new ConcurrentHashMap[Int, PendingWrite]()
-    private val accepts  = new ConcurrentHashMap[Int, PendingAccept]()
-    private val connects = new ConcurrentHashMap[Int, PendingConnect]()
+    // Per-fd result queues — the poll thread puts results here, fibers take from here.
+    // Using ConcurrentLinkedQueue (thread-safe, non-blocking) to avoid AllowUnsafe in the API.
+    private val readResults    = new ConcurrentHashMap[Int, ConcurrentLinkedQueue[Int]]()
+    private val writeResults   = new ConcurrentHashMap[Int, ConcurrentLinkedQueue[Int]]()
+    private val acceptResults  = new ConcurrentHashMap[Int, ConcurrentLinkedQueue[Int]]()
+    private val connectResults = new ConcurrentHashMap[Int, ConcurrentLinkedQueue[Boolean]]()
 
-    private class PendingRead(val promise: Promise.Unsafe[Int, Any], val buf: Array[Byte])
-    private class PendingWrite(val promise: Promise.Unsafe[Unit, Any], val data: Span[Byte])
-    private class PendingAccept(val promise: Promise.Unsafe[Int, Any])
-    private class PendingConnect(val promise: Promise.Unsafe[Unit, Any])
+    // Pending I/O data — stored here so poll thread can access without AllowUnsafe
+    private val pendingReadBufs  = new ConcurrentHashMap[Int, Array[Byte]]()
+    private val pendingWriteData = new ConcurrentHashMap[Int, Span[Byte]]()
 
     private val pollThread = new Thread(() => pollLoop(), "kqueue-poll")
     pollThread.setDaemon(true)
     pollThread.start()
 
     private def pollLoop(): Unit =
-        import AllowUnsafe.embrace.danger
         val maxEvents  = 64
         val outFds     = new Array[Int](maxEvents)
         val outFilters = new Array[Int](maxEvents)
@@ -46,7 +48,7 @@ final class KqueueNativeTransport extends Transport:
                 val fdsPtr     = alloc[CInt](maxEvents)
                 val filtersPtr = alloc[CInt](maxEvents)
                 val count      = kqueueWait(kqfd, fdsPtr, filtersPtr, maxEvents)
-                var i          = 0
+                var i = 0
                 while i < count do
                     outFds(i) = fdsPtr(i)
                     outFilters(i) = filtersPtr(i)
@@ -60,37 +62,40 @@ final class KqueueNativeTransport extends Transport:
                 val filter = outFilters(i)
 
                 if filter == -1 then // EVFILT_READ
-                    val pa = accepts.remove(fd)
-                    if pa != null then
+                    val aq = acceptResults.get(fd)
+                    if aq != null then
                         val clientFd = tcpAccept(fd)
-                        discard(pa.promise.complete(Result.succeed(clientFd)))
+                        discard(aq.offer(clientFd))
                     else
-                        val pr = reads.remove(fd)
-                        if pr != null then
+                        val buf = pendingReadBufs.remove(fd)
+                        val rq  = readResults.get(fd)
+                        if buf != null && rq != null then
                             val bytesRead = Zone {
-                                val ptr = alloc[Byte](pr.buf.length)
-                                val n   = tcpRead(fd, ptr, pr.buf.length)
+                                val ptr = alloc[Byte](buf.length)
+                                val n   = tcpRead(fd, ptr, buf.length)
                                 if n > 0 then
                                     var j = 0
                                     while j < n do
-                                        pr.buf(j) = ptr(j)
+                                        buf(j) = ptr(j)
                                         j += 1
                                     end while
                                 end if
                                 n
                             }
-                            discard(pr.promise.complete(Result.succeed(bytesRead)))
+                            discard(rq.offer(bytesRead))
                         end if
                     end if
                 else if filter == -2 then // EVFILT_WRITE
-                    val pc = connects.remove(fd)
-                    if pc != null then
-                        discard(pc.promise.complete(Result.succeed(())))
+                    val cq = connectResults.get(fd)
+                    if cq != null then
+                        discard(connectResults.remove(fd))
+                        discard(cq.offer(true))
                     else
-                        val pw = writes.remove(fd)
-                        if pw != null then
+                        val data = pendingWriteData.remove(fd)
+                        val wq   = writeResults.get(fd)
+                        if data != null && wq != null then
                             val written = Zone {
-                                val arr = pw.data.toArrayUnsafe
+                                val arr = data.toArrayUnsafe
                                 val ptr = alloc[Byte](arr.length)
                                 var j   = 0
                                 while j < arr.length do
@@ -99,24 +104,17 @@ final class KqueueNativeTransport extends Transport:
                                 end while
                                 tcpWrite(fd, ptr, arr.length)
                             }
-                            if written < 0 then
-                                discard(pw.promise.complete(Result.Panic(new java.io.IOException(s"write failed on fd $fd"))))
-                            else
-                                discard(pw.promise.complete(Result.succeed(())))
-                            end if
+                            discard(wq.offer(written))
                         end if
                     end if
                 end if
                 i += 1
             end while
         end while
-    end pollLoop
 
     // ── Transport implementation ────────────────────────────────
 
-    def connect(host: String, port: Int, tls: Boolean)(using
-        Frame
-    )
+    def connect(host: String, port: Int, tls: Boolean)(using Frame)
         : KqueueConnection < (Async & Abort[HttpException]) =
         if tls then Abort.fail(HttpConnectException(host, port, new Exception("TLS not yet supported on native")))
         else
@@ -129,61 +127,76 @@ final class KqueueNativeTransport extends Transport:
                 if fd < 0 then
                     Abort.fail(HttpConnectException(host, port, new Exception("connect failed")))
                 else if pending == 1 then
-                    Promise.init[Unit, Any].map { ready =>
-                        import AllowUnsafe.embrace.danger
-                        connects.put(fd, new PendingConnect(ready.unsafe))
-                        discard(kqueueRegister(kqfd, fd, -2))
-                        ready.get.andThen(Sync.defer(new KqueueConnection(fd)))
+                    // Wait for connect completion by polling
+                    val q = new ConcurrentLinkedQueue[Boolean]()
+                    connectResults.put(fd, q)
+                    discard(kqueueRegister(kqfd, fd, -2))
+                    Loop.foreach {
+                        Async.sleep(1.millis).andThen {
+                            val result = q.poll()
+                            if result != null then Loop.done(new KqueueConnection(fd))
+                            else Loop.continue
+                        }
                     }
                 else
                     Sync.defer(new KqueueConnection(fd))
                 end if
             }
 
-    def isAlive(connection: KqueueConnection)(using AllowUnsafe): Boolean =
-        tcpIsAlive(connection.fd) == 1
+    def isAlive(connection: KqueueConnection)(using Frame): Boolean < Sync =
+        Sync.defer(tcpIsAlive(connection.fd) == 1)
 
-    def closeNowUnsafe(connection: KqueueConnection)(using AllowUnsafe): Unit =
-        tcpClose(connection.fd)
+    def closeNow(connection: KqueueConnection)(using Frame): Unit < Sync =
+        Sync.defer(tcpClose(connection.fd))
 
     def close(connection: KqueueConnection, gracePeriod: Duration)(using Frame): Unit < Async =
         Sync.defer(tcpShutdown(connection.fd))
 
     def stream(connection: KqueueConnection)(using Frame): TransportStream < Async =
-        Sync.defer(new KqueueStream(connection, this))
+        Sync.defer {
+            val rq = new ConcurrentLinkedQueue[Int]()
+            val wq = new ConcurrentLinkedQueue[Int]()
+            readResults.put(connection.fd, rq)
+            writeResults.put(connection.fd, wq)
+            new KqueueStream(connection, this, rq, wq)
+        }
 
     def listen(host: String, port: Int, backlog: Int)(
         handler: TransportStream => Unit < Async
     )(using Frame): TransportListener < (Async & Scope) =
         Sync.defer {
-            val actualPort = Zone {
+            val (serverFd, boundPort) = Zone {
                 val outPort = alloc[CInt]()
                 val fd      = tcpListen(toCString(host), port, backlog, outPort)
-                if fd < 0 then throw HttpBindException(host, port, new Exception("bind/listen failed"))
+                if fd < 0 then Abort.fail(HttpBindException(host, port, new Exception("bind/listen failed")))
                 (fd, !outPort)
             }
-            val serverFd  = actualPort._1
-            val boundPort = actualPort._2
             val boundHost = host
+            val aq        = new ConcurrentLinkedQueue[Int]()
+            acceptResults.put(serverFd, aq)
 
             Scope.acquireRelease {
                 Fiber.init {
                     Loop.foreach {
-                        Promise.init[Int, Any].map { accepted =>
-                            import AllowUnsafe.embrace.danger
-                            accepts.put(serverFd, new PendingAccept(accepted.unsafe))
-                            discard(kqueueRegister(kqfd, serverFd, -1)) // EVFILT_READ
-                            accepted.get.map { clientFd =>
-                                if clientFd >= 0 then
-                                    val conn = new KqueueConnection(clientFd)
-                                    Fiber.init {
-                                        Sync.ensure(Sync.defer(tcpClose(clientFd))) {
-                                            handler(new KqueueStream(conn, KqueueNativeTransport.this))
-                                        }
-                                    }.unit
-                                end if
-                            }.andThen(Loop.continue)
-                        }
+                        // Register for accept and poll
+                        discard(kqueueRegister(kqfd, serverFd, -1))
+                        Loop.foreach {
+                            Async.sleep(1.millis).andThen {
+                                val clientFd = aq.poll()
+                                if clientFd != null then Loop.done(clientFd.intValue)
+                                else Loop.continue
+                            }
+                        }.map { clientFd =>
+                            if clientFd >= 0 then
+                                val conn = new KqueueConnection(clientFd)
+                                Fiber.init {
+                                    Sync.ensure(Sync.defer(tcpClose(clientFd))) {
+                                        stream(conn).map(handler)
+                                    }
+                                }.unit
+                            else
+                                Kyo.unit
+                        }.andThen(Loop.continue)
                     }
                 }.andThen {
                     new TransportListener:
@@ -193,32 +206,49 @@ final class KqueueNativeTransport extends Transport:
             } { _ => Sync.defer(tcpClose(serverFd)) }
         }
 
-    // Exposed for KqueueStream
-    private[kyo] def doRegisterRead(fd: Int, promise: Promise.Unsafe[Int, Any], buf: Array[Byte]): Unit =
-        reads.put(fd, new PendingRead(promise, buf))
-        discard(kqueueRegister(kqfd, fd, -1)) // EVFILT_READ
-
-    private[kyo] def doRegisterWrite(fd: Int, promise: Promise.Unsafe[Unit, Any], data: Span[Byte]): Unit =
-        writes.put(fd, new PendingWrite(promise, data))
-        discard(kqueueRegister(kqfd, fd, -2)) // EVFILT_WRITE
-
 end KqueueNativeTransport
 
 private[kyo] class KqueueConnection(val fd: Int)
 
-private[kyo] class KqueueStream(conn: KqueueConnection, transport: KqueueNativeTransport) extends TransportStream:
+private[kyo] class KqueueStream(
+    conn: KqueueConnection,
+    transport: KqueueNativeTransport,
+    readQueue: ConcurrentLinkedQueue[Int],
+    writeQueue: ConcurrentLinkedQueue[Int]
+) extends TransportStream:
+
+    import PosixBindings.*
 
     def read(buf: Array[Byte])(using Frame): Int < Async =
-        Promise.init[Int, Any].map { ready =>
-            import AllowUnsafe.embrace.danger
-            transport.doRegisterRead(conn.fd, ready.unsafe, buf)
-            ready.get
+        transport.pendingReadBufs.put(conn.fd, buf)
+        discard(kqueueRegister(transport.kqfd, conn.fd, -1))
+        // Poll until result available
+        Loop.foreach {
+            Async.sleep(1.millis).andThen {
+                val result = readQueue.poll()
+                if result != null then Loop.done(result.intValue)
+                else Loop.continue
+            }
         }
 
     def write(data: Span[Byte])(using Frame): Unit < Async =
-        Promise.init[Unit, Any].map { ready =>
-            import AllowUnsafe.embrace.danger
-            transport.doRegisterWrite(conn.fd, ready.unsafe, data)
-            ready.get
-        }
+        if data.isEmpty then Kyo.unit
+        else
+            transport.pendingWriteData.put(conn.fd, data)
+            discard(kqueueRegister(transport.kqfd, conn.fd, -2))
+            Loop.foreach {
+                Async.sleep(1.millis).andThen {
+                    val result = writeQueue.poll()
+                    if result != null then
+                        val written = result.intValue
+                        if written < 0 then Abort.fail(new java.io.IOException(s"write failed on fd ${conn.fd}"))
+                        else if written < data.size then
+                            // Partial write — write remainder
+                            write(data.slice(written, data.size)).andThen(Loop.done(()))
+                        else
+                            Loop.done(())
+                    else Loop.continue
+                }
+            }
+
 end KqueueStream

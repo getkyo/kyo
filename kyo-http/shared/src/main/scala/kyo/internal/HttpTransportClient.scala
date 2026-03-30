@@ -3,12 +3,12 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.*
 
-/** Protocol-agnostic HTTP client. Integrates with ConnectionPool via HttpBackend.Client.
+/** Protocol-agnostic HTTP client. Pure — zero AllowUnsafe.
   *
-  * The onReleaseUnsafe callback is critical for connection pooling. Sync.ensure has an error-aware overload that natively passes the error:
-  * Absent on success → pool returns connection to idle set, Present(error) on failure → pool discards connection.
+  * Implements HttpBackend2.Client. The onRelease callback uses suspended effects for connection pooling: Absent on success → pool returns
+  * connection, Present(error) → pool discards.
   */
-class HttpTransportClient(private[kyo] val transport: Transport, protocol: Protocol) extends HttpBackend.Client:
+class HttpTransportClient(private[kyo] val transport: Transport, protocol: Protocol) extends HttpBackend2.Client:
 
     type Connection = transport.Connection
 
@@ -18,12 +18,9 @@ class HttpTransportClient(private[kyo] val transport: Transport, protocol: Proto
         val base = transport.connect(host, port, ssl).map(f)
         connectTimeout match
             case Present(t) =>
-                Abort.run[Timeout](Async.timeout(t)(base)).map {
-                    case Result.Failure(_: Timeout) =>
-                        Abort.fail(HttpTimeoutException(t, "CONNECT", s"$host:$port"))
-                    case Result.Success(a) => a
-                    case Result.Panic(e)   => throw e
-                }
+                Abort.recover[Timeout](_ =>
+                    Abort.fail(HttpTimeoutException(t, "CONNECT", s"$host:$port"))
+                )(Async.timeout(t)(base))
             case Absent => base
         end match
     end connectWith
@@ -32,11 +29,11 @@ class HttpTransportClient(private[kyo] val transport: Transport, protocol: Proto
         connection: Connection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
+        onRelease: Maybe[Result.Error[Any]] => Unit < Sync
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
-        Sync.ensure(onReleaseUnsafe) {
+        Sync.ensure(onRelease) {
             transport.stream(connection).map { stream =>
                 writeRequest(stream, route, request).andThen {
                     if RouteUtil.isStreamingResponse(route) then
@@ -47,17 +44,17 @@ class HttpTransportClient(private[kyo] val transport: Transport, protocol: Proto
             }
         }
 
-    def isAlive(connection: Connection)(using AllowUnsafe): Boolean =
+    def isAlive(connection: Connection)(using Frame): Boolean < Sync =
         transport.isAlive(connection)
 
-    def closeNowUnsafe(connection: Connection)(using AllowUnsafe): Unit =
-        transport.closeNowUnsafe(connection)
+    def closeNow(connection: Connection)(using Frame): Unit < Sync =
+        transport.closeNow(connection)
 
     def close(connection: Connection, gracePeriod: Duration)(using Frame): Unit < Async =
         transport.close(connection, gracePeriod)
 
     def close(gracePeriod: Duration)(using Frame): Unit < Async =
-        Sync.defer(())
+        Kyo.unit
 
     /** Encode request via RouteUtil callbacks, write to stream. */
     private def writeRequest[In, Out](

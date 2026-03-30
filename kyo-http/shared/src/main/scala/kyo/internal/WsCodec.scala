@@ -215,7 +215,7 @@ object WsCodec:
             stream.write(header).andThen(stream.write(masked))
         else
             stream.write(header).andThen(
-                if payload.isEmpty then Sync.defer(()) else stream.write(payload)
+                if payload.isEmpty then Kyo.unit else stream.write(payload)
             )
         end if
     end writeRawFrame
@@ -267,7 +267,7 @@ object WsCodec:
                 if !responseStr.contains(expectedAccept) then
                     Abort.fail(HttpProtocolException("WebSocket upgrade: invalid Sec-WebSocket-Accept"))
                 else
-                    Sync.defer(())
+                    Kyo.unit
                 end if
             end if
         }

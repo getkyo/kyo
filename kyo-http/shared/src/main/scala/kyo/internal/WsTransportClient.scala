@@ -12,7 +12,7 @@ import kyo.*
   *
   * Client frames are masked (mask=true) per RFC 6455 §5.3.
   */
-class WsTransportClient(transport: Transport) extends HttpBackend.WebSocketClient:
+class WsTransportClient(transport: Transport) extends HttpBackend2.WebSocketClient:
 
     def connect[A, S](
         host: String,
@@ -25,7 +25,7 @@ class WsTransportClient(transport: Transport) extends HttpBackend.WebSocketClien
         f: WebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
         transport.connect(host, port, ssl).map { connection =>
-            Sync.Unsafe.ensure(transport.closeNowUnsafe(connection)) {
+            Sync.ensure(transport.closeNow(connection)) {
                 transport.stream(connection).map { stream =>
                     WsCodec.requestUpgrade(stream, host, path, headers, config).andThen {
                         // Scope owns the channels — cleaned up when scope exits

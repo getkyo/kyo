@@ -9,7 +9,7 @@ import kyo.*
   *
   * Scope management: bind() creates an internal Scope that owns the server socket and accept loop fiber. A Promise gates close/await.
   */
-class HttpTransportServer(transport: Transport, protocol: Protocol) extends HttpBackend.Server:
+class HttpTransportServer(transport: Transport, protocol: Protocol) extends HttpBackend2.Server:
 
     private val Utf8 = StandardCharsets.UTF_8
 
@@ -116,7 +116,7 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                             ,
                             onStreaming = (status, hdrs, responseStream) =>
                                 protocol.writeResponseHead(stream, status, hdrs).andThen {
-                                    if isHead then Sync.defer(())
+                                    if isHead then Kyo.unit
                                     else protocol.writeStreamingBody(stream, responseStream)
                                 }
                         )

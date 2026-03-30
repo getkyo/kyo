@@ -2,44 +2,39 @@ package kyo.internal
 
 import kyo.*
 
-/** In-memory Transport for testing. No real TCP — connects client and server via paired channels. All safe APIs, no AllowUnsafe. */
+/** In-memory Transport for testing. Pure — zero AllowUnsafe, zero throw.
+  *
+  * Architecture: connect() puts a request into a pending channel. The accept loop (in listen scope) creates the channel pairs (in listen's
+  * scope), delivers the server stream to the handler, and delivers the client connection back via a response channel.
+  */
 class TestTransport extends Transport:
 
     type Connection = TestConnection
 
-    // Server accept channel — created by listen(), used by connect() to deliver new connections.
-    // Wrapped in Maybe because listen() hasn't been called yet at construction time.
-    private var acceptCh: Maybe[Channel[TestConnection]] = Absent
+    // Request channel: connect() puts a Promise here, accept loop completes it
+    private var requestCh: Maybe[Channel[Promise[TestConnection, Any]]] = Absent
 
     def connect(host: String, port: Int, tls: Boolean)(using Frame): TestConnection < (Async & Abort[HttpException]) =
         if tls then Abort.fail(HttpConnectException(host, port, new Exception("TLS not supported in test")))
         else
-            acceptCh match
+            requestCh match
                 case Absent =>
                     Abort.fail(HttpConnectException(host, port, new Exception("No server listening")))
-                case Present(ch) =>
-                    // Create channels via Unsafe (they represent TCP buffers, outlive any scope).
-                    // Then deliver server connection via normal effect system.
-                    Sync.Unsafe.defer {
-                        val clientToServer = Channel.Unsafe.init[Span[Byte]](64)
-                        val serverToClient = Channel.Unsafe.init[Span[Byte]](64)
-                        val cs             = new ChannelStream(serverToClient.safe, clientToServer.safe)
-                        val ss             = new ChannelStream(clientToServer.safe, serverToClient.safe)
-                        (new TestConnection(cs), new TestConnection(ss))
-                    }.map { (clientConn, serverConn) =>
-                        Abort.run[Closed](ch.put(serverConn)).map {
-                            case Result.Success(_) => clientConn
-                            case Result.Failure(closed) =>
-                                Abort.fail(HttpConnectException(host, port, new Exception("Server closed", closed)))
-                            case Result.Panic(ex) => throw ex
+                case Present(reqCh) =>
+                    // Create a Promise to receive the client connection (no Scope needed)
+                    Promise.init[TestConnection, Any].map { promise =>
+                        Abort.recover[Closed](_ =>
+                            Abort.fail(HttpConnectException(host, port, new Exception("Server closed")))
+                        )(reqCh.put(promise)).andThen {
+                            promise.get
                         }
                     }
 
-    def isAlive(connection: TestConnection)(using AllowUnsafe): Boolean =
-        !connection.closed
+    def isAlive(connection: TestConnection)(using Frame): Boolean < Sync =
+        Sync.defer(!connection.closed)
 
-    def closeNowUnsafe(connection: TestConnection)(using AllowUnsafe): Unit =
-        connection.closed = true
+    def closeNow(connection: TestConnection)(using Frame): Unit < Sync =
+        Sync.defer { connection.closed = true }
 
     def close(connection: TestConnection, gracePeriod: Duration)(using Frame): Unit < Async =
         Sync.defer { connection.closed = true }
@@ -50,17 +45,24 @@ class TestTransport extends Transport:
     def listen(host: String, port: Int, backlog: Int)(
         handler: TransportStream => Unit < Async
     )(using Frame): TransportListener < (Async & Scope) =
-        Channel.init[TestConnection](backlog).map { ch =>
-            acceptCh = Present(ch)
+        Channel.init[Promise[TestConnection, Any]](backlog).map { reqCh =>
+            requestCh = Present(reqCh)
             Scope.acquireRelease {
                 Fiber.init {
                     Loop.foreach {
-                        ch.take.map { serverConn =>
-                            Fiber.init {
-                                Sync.ensure(Sync.defer { serverConn.closed = true }) {
-                                    handler(serverConn.stream)
+                        reqCh.take.map { promise =>
+                            Channel.init[Span[Byte]](64).map { clientToServer =>
+                                Channel.init[Span[Byte]](64).map { serverToClient =>
+                                    val clientStream = new ChannelStream(serverToClient, clientToServer)
+                                    val serverStream = new ChannelStream(clientToServer, serverToClient)
+                                    val clientConn   = new TestConnection(clientStream)
+                                    promise.completeDiscard(Result.succeed(clientConn)).andThen {
+                                        Fiber.init {
+                                            handler(serverStream)
+                                        }.unit
+                                    }
                                 }
-                            }.unit
+                            }
                         }.andThen(Loop.continue)
                     }.handle(Abort.run[Closed]).unit
                 }.andThen {
@@ -69,7 +71,7 @@ class TestTransport extends Transport:
                         val host = host
                 }
             } { _ =>
-                ch.close.unit
+                reqCh.close.unit
             }
         }
 
@@ -77,7 +79,6 @@ end TestTransport
 
 class TestConnection(val stream: ChannelStream, var closed: Boolean = false)
 
-/** Bidirectional stream backed by two channels. */
 class ChannelStream(
     readCh: Channel[Span[Byte]],
     writeCh: Channel[Span[Byte]]
@@ -98,8 +99,8 @@ class ChannelStream(
                 available
             }
         else
-            Abort.run[Closed](readCh.take).map {
-                case Result.Success(data) =>
+            Abort.recover[Closed](_ => -1) {
+                readCh.take.map { data =>
                     if data.isEmpty then -1
                     else
                         val available = math.min(buf.length, data.size)
@@ -108,19 +109,10 @@ class ChannelStream(
                             readBuf = data
                             readPos = available
                         available
-                case Result.Failure(_: Closed) =>
-                    -1 // Channel closed = TCP EOF
-                case Result.Panic(ex) =>
-                    throw ex
+                }
             }
 
     def write(data: Span[Byte])(using Frame): Unit < Async =
-        Abort.run[Closed](writeCh.put(data)).map {
-            case Result.Failure(_: Closed) =>
-                throw new java.io.IOException("Write to closed connection")
-            case Result.Panic(ex) =>
-                throw ex
-            case _ => ()
-        }
+        Abort.recover[Closed](_ => Kyo.unit)(writeCh.put(data))
 
 end ChannelStream

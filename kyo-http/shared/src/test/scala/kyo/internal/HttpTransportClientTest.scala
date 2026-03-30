@@ -116,15 +116,18 @@ class HttpTransportClientTest extends kyo.Test:
 
     // ── Connection lifecycle ────────────────────────────────────
 
-    "isAlive and closeNowUnsafe" in run {
+    "isAlive and closeNow" in run {
         withEchoServer() { (transport, port) =>
             val client = makeClient(transport)
             client.connectWith("127.0.0.1", port, ssl = false, Absent) { conn =>
-                import AllowUnsafe.embrace.danger
-                assert(client.isAlive(conn))
-                client.closeNowUnsafe(conn)
-                assert(!client.isAlive(conn))
-                succeed
+                client.isAlive(conn).map { alive =>
+                    assert(alive)
+                    client.closeNow(conn).map { _ =>
+                        client.isAlive(conn).map { alive2 =>
+                            assert(!alive2)
+                        }
+                    }
+                }
             }
         }
     }
