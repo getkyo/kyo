@@ -16,7 +16,7 @@ class HttpTransportClientTest extends kyo.Test:
         responseHeaders: HttpHeaders = HttpHeaders.empty
     )(
         f: (TestTransport, Int) => Assertion < (Async & Abort[HttpException])
-    )(using Frame): Assertion < (Async & Abort[Any] & Scope) =
+    )(using Frame): Assertion < (Async & Abort[HttpException | Closed] & Scope) =
         val transport = new TestTransport
         transport.listen("127.0.0.1", 0, 5) { stream =>
             Abort.run[HttpException] {

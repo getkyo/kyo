@@ -11,7 +11,7 @@ class HttpTransportServerTest extends kyo.Test:
 
     private def withServer(handlers: HttpHandler[?, ?, ?]*)(
         f: (TestTransport, HttpBackend.Binding) => Assertion < (Async & Abort[HttpException])
-    )(using Frame): Assertion < (Async & Abort[Any] & Scope) =
+    )(using Frame): Assertion < (Async & Abort[HttpException] & Scope) =
         val transport = new TestTransport
         val server    = new HttpTransportServer(transport, Http1Protocol)
         server.bind(handlers, HttpServerConfig.default).map { binding =>

@@ -44,10 +44,16 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                 protocol.readRequest(stream, config.maxContentLength).map { (method, path, headers, body) =>
                     router.find(method, path) match
                         case Result.Success(routeMatch) =>
-                            serveHttpRequest(stream, routeMatch, method, path, headers, body, config).andThen {
-                                if protocol.isKeepAlive(headers) then Loop.continue
-                                else Loop.done(())
-                            }
+                            routeMatch.endpoint match
+                                case wsHandler: WebSocketHttpHandler =>
+                                    WsCodec.acceptUpgrade(stream, headers, wsHandler.wsConfig).andThen {
+                                        serveWebSocket(stream, wsHandler, headers, path)
+                                    }.andThen(Loop.done(()))
+                                case _ =>
+                                    serveHttpRequest(stream, routeMatch, method, path, headers, body, config).andThen {
+                                        if protocol.isKeepAlive(headers) then Loop.continue
+                                        else Loop.done(())
+                                    }
                         case Result.Failure(error) =>
                             writeRouterError(stream, error).andThen(Loop.done(()))
                         case Result.Panic(ex) =>
@@ -148,6 +154,54 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
             protocol.writeBody(stream, bodyBytes)
         }
     end writeErrorResponse
+
+    /** Three concurrent fibers: read loop, write loop, user handler. Server does NOT mask (RFC 6455 §5.1). */
+    private def serveWebSocket(
+        stream: TransportStream,
+        wsHandler: WebSocketHttpHandler,
+        headers: HttpHeaders,
+        path: String
+    )(using Frame): Unit < Async =
+        Scope.run {
+            Channel.init[WebSocketFrame](wsHandler.wsConfig.bufferSize).map { inbound =>
+                Channel.init[WebSocketFrame](wsHandler.wsConfig.bufferSize).map { outbound =>
+                    AtomicRef.init[Maybe[(Int, String)]](Absent).map { closeReasonRef =>
+                        val closeFn: (Int, String) => Unit < Async = (code, reason) =>
+                            closeReasonRef.set(Present((code, reason))).andThen {
+                                WsCodec.writeClose(stream, code, reason, mask = false)
+                            }
+                        val ws = new WebSocket(inbound, outbound, closeReasonRef, closeFn)
+                        val wsUrl = HttpUrl.parse(path) match
+                            case Result.Success(u) => u
+                            case _                 => HttpUrl.parse("/").getOrThrow
+                        val request = HttpRequest(HttpMethod.GET, wsUrl, headers, Record.empty)
+
+                        Sync.ensure(inbound.close.unit.andThen(outbound.close.unit)) {
+                            // Read loop: transport → inbound
+                            Fiber.init {
+                                Loop.foreach {
+                                    WsCodec.readFrame(stream).map { frame =>
+                                        inbound.put(frame).andThen(Loop.continue)
+                                    }
+                                }.handle(Abort.run[Closed]).unit
+                            }.andThen {
+                                // Write loop: outbound → transport (no mask for server)
+                                Fiber.init {
+                                    Loop.foreach {
+                                        outbound.take.map { frame =>
+                                            WsCodec.writeFrame(stream, frame, mask = false).andThen(Loop.continue)
+                                        }
+                                    }.handle(Abort.run[Closed]).unit
+                                }.andThen {
+                                    // User handler
+                                    Abort.run[Any](wsHandler.wsHandler(request, ws)).unit
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
     private def writeRouterError(
         stream: TransportStream,
