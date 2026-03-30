@@ -54,6 +54,9 @@ object Http1Protocol extends Protocol:
             else
                 Abort.get(parseStatusLine(lines(0))).map { status =>
                     val headers = parseHeaders(lines, startIndex = 1)
+                    java.lang.System.err.println(
+                        s"[DEBUG-RESP] leftover size=${leftover.size}, isChunked=${headers.get("Transfer-Encoding")}"
+                    )
                     buffered.pushBack(leftover)
                     if status.code == 204 || status.code == 304 || (status.code >= 100 && status.code < 200) || requestMethod == HttpMethod.HEAD
                     then
@@ -210,7 +213,8 @@ object Http1Protocol extends Protocol:
 
         Loop.foreach {
             stream.read(buf).map { n =>
-                if n <= 0 then
+                if n == 0 then Loop.continue // NIO spurious wakeup, retry
+                else if n < 0 then
                     if accum.size() == 0 then Abort.fail(HttpProtocolException("Connection closed before headers"))
                     else Loop.done(())
                 else
@@ -326,7 +330,8 @@ object Http1Protocol extends Protocol:
                     val remaining = len - offset
                     val readBuf   = new Array[Byte](math.min(remaining, 8192))
                     stream.read(readBuf).map { n =>
-                        if n <= 0 then Abort.fail(HttpProtocolException(s"Unexpected EOF, read $offset of $len bytes"))
+                        if n == 0 then Loop.continue // NIO spurious wakeup
+                        else if n < 0 then Abort.fail(HttpProtocolException(s"Unexpected EOF, read $offset of $len bytes"))
                         else
                             java.lang.System.arraycopy(readBuf, 0, result, offset, n)
                             offset += n
@@ -338,6 +343,7 @@ object Http1Protocol extends Protocol:
     private def readChunkedStream(stream: TransportStream)(using Frame): Stream[Span[Byte], Async] =
         Stream.unfold(()) { _ =>
             readLine(stream).map { line =>
+                java.lang.System.err.println(s"[DEBUG-CHUNK] readLine='$line', len=${line.length}")
                 parseChunkHeader(line) match
                     case Result.Success(size) =>
                         if size == 0 then
@@ -353,17 +359,23 @@ object Http1Protocol extends Protocol:
                     case Result.Error(_) =>
                         // Malformed chunk header — terminate stream.
                         Maybe.empty
+                end match
             }
         }
 
     /** Read a single line (up to \r\n). */
     private def readLine(stream: TransportStream)(using Frame): String < Async =
-        val accum  = new java.io.ByteArrayOutputStream(128)
-        val buf    = new Array[Byte](1)
-        var prevCr = false
+        val accum   = new java.io.ByteArrayOutputStream(128)
+        val buf     = new Array[Byte](1)
+        var prevCr  = false
+        var readCnt = 0
         Loop.foreach {
             stream.read(buf).map { n =>
-                if n <= 0 then Loop.done(())
+                readCnt += 1
+                if n < 0 then
+                    Loop.done(()) // EOF
+                else if n == 0 then
+                    Loop.continue // no data yet, retry
                 else
                     val b = buf(0)
                     if prevCr && b == '\n'.toByte then Loop.done(())
@@ -372,6 +384,7 @@ object Http1Protocol extends Protocol:
                         if !prevCr then accum.write(b.toInt)
                         Loop.continue
                     end if
+                end if
             }
         }.andThen(new String(accum.toByteArray, Utf8))
     end readLine

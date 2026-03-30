@@ -127,9 +127,16 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                                 }
                             ,
                             onStreaming = (status, hdrs, responseStream) =>
+                                java.lang.System.err.println(s"[DEBUG] onStreaming called, status=$status")
                                 protocol.writeResponseHead(stream, status, hdrs.add("Transfer-Encoding", "chunked")).andThen {
                                     if isHead then Kyo.unit
-                                    else protocol.writeStreamingBody(stream, responseStream)
+                                    else
+                                        Abort.run[Throwable](protocol.writeStreamingBody(stream, responseStream)).map {
+                                            case Result.Error(e) =>
+                                                java.lang.System.err.println(s"[DEBUG] writeStreamingBody error: $e")
+                                                e.printStackTrace(java.lang.System.err)
+                                            case _ => ()
+                                        }
                                 }
                         )
                     case Result.Failure(error) =>
