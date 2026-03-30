@@ -152,14 +152,15 @@ int kyo_kqueue_register(int kq, int fd, int filter) {
     return kevent(kq, &ev, 1, NULL, 0, NULL);
 }
 
-/** Wait for events. Returns number of ready events. events is an int array: [fd0, filter0, fd1, filter1, ...] */
+/** Wait for events with 100ms timeout. Returns number of ready events. */
 int kyo_kqueue_wait(int kq, int *out_fds, int *out_filters, int max_events) {
     struct kevent events[64];
     int actual_max = max_events < 64 ? max_events : 64;
-    int n = kevent(kq, NULL, 0, events, actual_max, NULL);
+    struct timespec timeout = { .tv_sec = 0, .tv_nsec = 100000000 }; /* 100ms */
+    int n = kevent(kq, NULL, 0, events, actual_max, &timeout);
     for (int i = 0; i < n; i++) {
         out_fds[i] = (int)events[i].ident;
         out_filters[i] = events[i].filter;
     }
-    return n;
+    return n < 0 ? 0 : n;
 }
