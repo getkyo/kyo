@@ -1,0 +1,33 @@
+// Copyright 2024 Golem Cloud
+//
+// gRPC example service definition
+//
+// This is an example protobuf file for testing the kyo-grpc module.
+
+syntax = "proto3";
+
+package helloworld;
+
+option java_package = "io.getkyo.grpc.helloworld";
+option java_multiple_files = true;
+
+// The greeting service definition.
+service Greeter {
+    // Sends a greeting
+    rpc SayHello (HelloRequest) returns (HelloReply) {}
+    
+    // Sends a streaming greeting
+    rpc SayHelloStreaming (HelloRequest) returns (stream HelloReply) {}
+}
+
+// The request message containing the user's name.
+message HelloRequest {
+    string name = 1;
+    int32 age = 2;
+}
+
+// The response message containing the greeting.
+message HelloReply {
+    string message = 1;
+    string timestamp = 2;
+}

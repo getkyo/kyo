@@ -116,6 +116,7 @@ lazy val kyoJVM = project
         `kyo-aeron`.jvm,
         `kyo-sttp`.jvm,
         `kyo-tapir`.jvm,
+        `kyo-grpc`.jvm,
         `kyo-http`.jvm,
         `kyo-caliban`.jvm,
         `kyo-bench`.jvm,
@@ -532,6 +533,31 @@ lazy val `kyo-tapir` =
             `kyo-settings`,
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.13.11",
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.13.11"
+        )
+        .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-grpc` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-grpc"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            name := "kyo-grpc",
+            // ScalaPB for protobuf code generation
+            libraryDependencies ++= Seq(
+                "com.thesamet.scalapb" %% "scalapbc"         % "0.12.0",
+                "com.thesamet.scalapb" %% "scalapb-runtime"  % "0.12.0" % "protobuf",
+                // gRPC Netty transport
+                "io.grpc"               % "grpc-netty"        % "1.70.0",
+                // Netty for HTTP/2 transport
+                "io.netty"              % "netty-handler"      % "4.1.115.Final",
+                "io.netty"              % "netty-codec-http2"  % "4.1.115.Final",
+                "io.netty"              % "netty-handler-proxy" % "4.1.115.Final",
+                // Testing
+                "org.scalatest"        %% "scalatest"         % "3.2.19" % Test
+            )
         )
         .jvmSettings(mimaCheck(false))
 
