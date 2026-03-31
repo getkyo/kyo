@@ -13,8 +13,8 @@ final class JsTransport extends Transport:
 
     type Connection = JsConnection
 
-    private val net     = js.Dynamic.global.require("net")
-    private val tlsMod  = js.Dynamic.global.require("tls")
+    private val net    = js.Dynamic.global.require("net")
+    private val tlsMod = js.Dynamic.global.require("tls")
 
     def connect(host: String, port: Int, tls: Boolean)(using
         Frame
@@ -42,17 +42,17 @@ final class JsTransport extends Transport:
                         discard(promise.unsafe.complete(Result.succeed(new JsConnection(socket))))
                     }: js.Function0[Unit]
                 ))
-                    discard(socket.on(
-                        "error",
-                        { (err: js.Dynamic) =>
-                            import AllowUnsafe.embrace.danger
-                            discard(promise.unsafe.complete(Result.Panic(
-                                HttpConnectException(host, port, new Exception(err.message.toString))
-                            )))
-                        }: js.Function1[js.Dynamic, Unit]
-                    ))
-                }.andThen(promise.get)
-            }
+                discard(socket.on(
+                    "error",
+                    { (err: js.Dynamic) =>
+                        import AllowUnsafe.embrace.danger
+                        discard(promise.unsafe.complete(Result.Panic(
+                            HttpConnectException(host, port, new Exception(err.message.toString))
+                        )))
+                    }: js.Function1[js.Dynamic, Unit]
+                ))
+            }.andThen(promise.get)
+        }
 
     def isAlive(connection: JsConnection)(using Frame): Boolean < Sync =
         Sync.defer(!connection.socket.destroyed.asInstanceOf[Boolean])

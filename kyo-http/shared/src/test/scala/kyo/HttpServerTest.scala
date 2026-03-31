@@ -17,18 +17,26 @@ class HttpServerTest extends Test:
         test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
     )(using Frame): Unit =
         "plain" in run {
-            HttpServer.init(0, "localhost")(handlers*).map(s =>
-                test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
-            )
+            HttpClient.init(client).map { httpClient =>
+                HttpServer.init(0, "localhost")(handlers*).map(s =>
+                    HttpClient.let(httpClient) {
+                        test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                    }
+                )
+            }
         }
         if internal.HttpTestPlatformBackend.tlsServerAvailable then
             "tls" in run {
-                HttpServer.init(
-                    internal.HttpTestPlatformBackend.server,
-                    HttpServerConfig.default.port(0).host("localhost").tls(internal.TlsConfig.default)
-                )(handlers*).map(s =>
-                    test(HttpUrl.parse(s"https://localhost:${s.port}").getOrThrow)
-                )
+                HttpClient.init(internal.HttpTestPlatformBackend.client).map { httpClient =>
+                    HttpServer.init(
+                        internal.HttpTestPlatformBackend.server,
+                        HttpServerConfig.default.port(0).host("localhost").tls(internal.TlsConfig.default)
+                    )(handlers*).map(s =>
+                        HttpClient.let(httpClient) {
+                            test(HttpUrl.parse(s"https://localhost:${s.port}").getOrThrow)
+                        }
+                    )
+                }
             }
         end if
     end runServer
@@ -37,24 +45,36 @@ class HttpServerTest extends Test:
         test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
     )(using Frame): Unit =
         "plain" in run {
-            HttpServer.init(HttpServerConfig.default.port(0).host("localhost").cors(cors))(handlers*).map(s =>
-                test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
-            )
+            HttpClient.init(client).map { httpClient =>
+                HttpServer.init(HttpServerConfig.default.port(0).host("localhost").cors(cors))(handlers*).map(s =>
+                    HttpClient.let(httpClient) {
+                        test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                    }
+                )
+            }
         }
 
     def withServer(handlers: HttpHandler[?, ?, ?]*)(
         test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
     )(using Frame): Assertion < (Scope & Async & Abort[Any]) =
-        HttpServer.init(0, "localhost")(handlers*).map(s =>
-            test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
-        )
+        HttpClient.init(client).map { httpClient =>
+            HttpServer.init(0, "localhost")(handlers*).map(s =>
+                HttpClient.let(httpClient) {
+                    test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                }
+            )
+        }
 
     def withCorsServer(cors: HttpServerConfig.Cors, handlers: HttpHandler[?, ?, ?]*)(
         test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
     )(using Frame): Assertion < (Scope & Async & Abort[Any]) =
-        HttpServer.init(HttpServerConfig.default.port(0).host("localhost").cors(cors))(handlers*).map(s =>
-            test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
-        )
+        HttpClient.init(client).map { httpClient =>
+            HttpServer.init(HttpServerConfig.default.port(0).host("localhost").cors(cors))(handlers*).map(s =>
+                HttpClient.let(httpClient) {
+                    test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                }
+            )
+        }
 
     def send[In, Out](
         url: HttpUrl,
@@ -3460,7 +3480,7 @@ class HttpServerTest extends Test:
 
     "expanded coverage" - {
 
-        "server recovers after 500 error" - {
+        "server recovers after 500 error" in run {
             val route   = HttpRoute.getRaw("maybe-fail").response(_.bodyText)
             var counter = 0
             val ep = route.handler { _ =>
@@ -3468,7 +3488,7 @@ class HttpServerTest extends Test:
                 if counter == 1 then throw new RuntimeException("first request fails")
                 else HttpResponse.ok("recovered")
             }
-            runServer(ep) { url =>
+            withServer(ep) { url =>
                 // First request -> 500
                 sendRaw(url, HttpMethod.GET, "/maybe-fail").map { resp =>
                     assert(resp.status == HttpStatus.InternalServerError)

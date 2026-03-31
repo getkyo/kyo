@@ -209,7 +209,9 @@ object WsCodec:
             // Extract mask key from last 4 bytes of header, apply to payload
             val maskKey = header.slice(header.size - 4, header.size)
             val masked  = unmask(payload, maskKey) // XOR is symmetric
-            stream.write(header).andThen(stream.write(masked))
+            stream.write(header).andThen(
+                if masked.isEmpty then Kyo.unit else stream.write(masked)
+            )
         else
             stream.write(header).andThen(
                 if payload.isEmpty then Kyo.unit else stream.write(payload)

@@ -16,18 +16,26 @@ class HttpClientTest extends Test:
         test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
     )(using Frame): Unit =
         "plain" in run {
-            HttpServer.init(0, "localhost")(handlers*).map(s =>
-                test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
-            )
+            HttpClient.init(client).map { httpClient =>
+                HttpServer.init(0, "localhost")(handlers*).map(s =>
+                    HttpClient.let(httpClient) {
+                        test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                    }
+                )
+            }
         }
         if internal.HttpTestPlatformBackend.tlsServerAvailable then
             "tls" in run {
-                HttpServer.init(
-                    internal.HttpTestPlatformBackend.server,
-                    HttpServerConfig.default.port(0).host("localhost").tls(internal.TlsConfig.default)
-                )(handlers*).map(s =>
-                    test(HttpUrl.parse(s"https://localhost:${s.port}").getOrThrow)
-                )
+                HttpClient.init(internal.HttpTestPlatformBackend.client).map { httpClient =>
+                    HttpServer.init(
+                        internal.HttpTestPlatformBackend.server,
+                        HttpServerConfig.default.port(0).host("localhost").tls(internal.TlsConfig.default)
+                    )(handlers*).map(s =>
+                        HttpClient.let(httpClient) {
+                            test(HttpUrl.parse(s"https://localhost:${s.port}").getOrThrow)
+                        }
+                    )
+                }
             }
         end if
     end runServer
@@ -35,9 +43,13 @@ class HttpClientTest extends Test:
     def withServer(handlers: HttpHandler[?, ?, ?]*)(
         test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
     )(using Frame): Assertion < (Scope & Async & Abort[Any]) =
-        HttpServer.init(0, "localhost")(handlers*).map(s =>
-            test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
-        )
+        HttpClient.init(client).map { httpClient =>
+            HttpServer.init(0, "localhost")(handlers*).map(s =>
+                HttpClient.let(httpClient) {
+                    test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
+                }
+            )
+        }
 
     def send[In, Out](
         url: HttpUrl,
@@ -50,13 +62,15 @@ class HttpClientTest extends Test:
             }
         }
 
-    def withClient[A, S](f: HttpClient => A < (S & Async & Abort[HttpException]))(using Frame): A < (S & Async & Abort[HttpException]) =
-        HttpClient.initUnscoped(client).map(f)
+    def withClient[A, S](f: HttpClient => A < (S & Async & Abort[HttpException]))(using
+        Frame
+    ): A < (S & Async & Abort[HttpException] & Scope) =
+        HttpClient.init(client).map(f)
 
     def withClient[A, S](maxConnectionsPerHost: Int)(f: HttpClient => A < (S & Async & Abort[HttpException]))(using
         Frame
-    ): A < (S & Async & Abort[HttpException]) =
-        HttpClient.initUnscoped(client, maxConnectionsPerHost).map(f)
+    ): A < (S & Async & Abort[HttpException] & Scope) =
+        HttpClient.init(client, maxConnectionsPerHost).map(f)
 
     val noTimeout = HttpClientConfig(timeout = Maybe.empty)
 
@@ -872,7 +886,7 @@ class HttpClientTest extends Test:
 
     "retry" - {
 
-        "on server error" - {
+        "on server error" in run {
             var attempts = 0
             val route    = HttpRoute.getRaw("flaky").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -880,7 +894,7 @@ class HttpClientTest extends Test:
                 if attempts < 3 then HttpResponse.serverError.addField("body", "error")
                 else HttpResponse.ok("recovered")
             }
-            runServer(ep) { url =>
+            withServer(ep) { url =>
                 var called = false
                 HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.fixed(1.millis).take(5)))) {
                     withClient { client =>
@@ -896,14 +910,14 @@ class HttpClientTest extends Test:
             }
         }
 
-        "no retry on client error" - {
+        "no retry on client error" in run {
             var attempts = 0
             val route    = HttpRoute.getRaw("bad").response(_.bodyText)
             val ep = route.handler { _ =>
                 attempts += 1
                 HttpResponse.notFound.addField("body", "nope")
             }
-            runServer(ep) { url =>
+            withServer(ep) { url =>
                 var called = false
                 HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.fixed(1.millis).take(5)))) {
                     withClient { client =>
@@ -918,14 +932,14 @@ class HttpClientTest extends Test:
             }
         }
 
-        "no retry after success" - {
+        "no retry after success" in run {
             var attempts = 0
             val route    = HttpRoute.getRaw("ok").response(_.bodyText)
             val ep = route.handler { _ =>
                 attempts += 1
                 HttpResponse.ok("immediate")
             }
-            runServer(ep) { url =>
+            withServer(ep) { url =>
                 var called = false
                 HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.fixed(1.millis).take(5)))) {
                     withClient { client =>
@@ -940,7 +954,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "custom predicate" - {
+        "custom predicate" in run {
             var attempts = 0
             val route    = HttpRoute.getRaw("custom").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -949,7 +963,7 @@ class HttpClientTest extends Test:
                 else if attempts == 2 then HttpResponse.serverError.addField("body", "500")
                 else HttpResponse.ok("done")
             }
-            runServer(ep) { url =>
+            withServer(ep) { url =>
                 var called = false
                 val config = noTimeout.copy(
                     retrySchedule = Present(Schedule.fixed(1.millis).take(5)),
@@ -969,7 +983,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "exponential backoff" - {
+        "exponential backoff" in run {
             var attempts   = 0
             var timestamps = List.empty[Long]
             val route      = HttpRoute.getRaw("slow").response(_.bodyText)
@@ -979,7 +993,7 @@ class HttpClientTest extends Test:
                 if attempts < 3 then HttpResponse.serverError.addField("body", "wait")
                 else HttpResponse.ok("done")
             }
-            runServer(ep) { url =>
+            withServer(ep) { url =>
                 var called = false
                 HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.exponential(50.millis, 2.0).take(5)))) {
                     withClient { client =>
@@ -998,7 +1012,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "retry after redirect to flaky endpoint" - {
+        "retry after redirect to flaky endpoint" in run {
             var attempts   = 0
             val flakyRoute = HttpRoute.getRaw("flaky").response(_.bodyText)
             val flakyEp = flakyRoute.handler { _ =>
@@ -1010,7 +1024,7 @@ class HttpClientTest extends Test:
             val redirectEp = redirectRoute.handler { _ =>
                 HttpResponse.redirect("/flaky").addField("body", "redirect")
             }
-            runServer(redirectEp, flakyEp) { url =>
+            withServer(redirectEp, flakyEp) { url =>
                 var called = false
                 HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.fixed(1.millis).take(5)))) {
                     withClient { client =>
@@ -1026,7 +1040,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "retry gets redirect then succeeds" - {
+        "retry gets redirect then succeeds" in run {
             var attempts    = 0
             val route       = HttpRoute.getRaw("ep").response(_.bodyText)
             val targetRoute = HttpRoute.getRaw("target").response(_.bodyText)
@@ -1038,7 +1052,7 @@ class HttpClientTest extends Test:
             val targetEp = targetRoute.handler { _ =>
                 HttpResponse.ok("final destination")
             }
-            runServer(ep, targetEp) { url =>
+            withServer(ep, targetEp) { url =>
                 var called = false
                 HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.fixed(1.millis).take(5)))) {
                     withClient { client =>
@@ -1067,14 +1081,14 @@ class HttpClientTest extends Test:
             }
         }
 
-        "exhausted returns last response" - {
+        "exhausted returns last response" in run {
             var attempts = 0
             val route    = HttpRoute.getRaw("fail").response(_.bodyText)
             val ep = route.handler { _ =>
                 attempts += 1
                 HttpResponse.serverError.addField("body", "always fails")
             }
-            runServer(ep) { url =>
+            withServer(ep) { url =>
                 var called = false
                 HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.fixed(1.millis).take(3)))) {
                     withClient { client =>
@@ -1142,7 +1156,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "works after error responses" - {
+        "works after error responses" in run {
             var count = 0
             val route = HttpRoute.getRaw("maybe").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -1150,7 +1164,7 @@ class HttpClientTest extends Test:
                 if count <= 3 then HttpResponse.serverError.addField("body", "fail")
                 else HttpResponse.ok("recovered")
             }
-            runServer(ep) { url =>
+            withServer(ep) { url =>
                 var called = false
                 HttpClient.withConfig(noTimeout) {
                     withClient(2) { c =>
@@ -1217,7 +1231,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size <- sizes
-                    c    <- HttpClient.initUnscoped(client, size)
+                    c    <- HttpClient.init(client, size)
                     // Sequentially send 10 requests with different body data through a small pool
                     // Each reuses a connection — tests mutable var reset in backend
                     results <- Kyo.foreach(0 until 10) { i =>
@@ -1253,7 +1267,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size <- sizes
-                    c    <- HttpClient.initUnscoped(client, size)
+                    c    <- HttpClient.init(client, size)
                     streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream-reuse", Absent))
                     textReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/text-reuse", Absent))
                     // Stream response, fully consume
@@ -1282,7 +1296,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
                     size  <- sizes
-                    c     <- HttpClient.initUnscoped(client, size * 2)
+                    c     <- HttpClient.init(client, size * 2)
                     latch <- Latch.init(1)
                     slowReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
                     fastReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/fast", Absent))
@@ -1314,7 +1328,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
                     size  <- sizes
-                    c     <- HttpClient.initUnscoped(client, size)
+                    c     <- HttpClient.init(client, size)
                     latch <- Latch.init(1)
                     slowReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow2", Absent))
                     fastReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/fast2", Absent))
@@ -1359,7 +1373,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size  <- sizes
-                    c     <- HttpClient.initUnscoped(client, size)
+                    c     <- HttpClient.init(client, size)
                     latch <- Latch.init(1)
                     streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream", Absent))
                     fastReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/fast3", Absent))
@@ -1400,7 +1414,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size  <- sizes
-                    c     <- HttpClient.initUnscoped(client, size)
+                    c     <- HttpClient.init(client, size)
                     latch <- Latch.init(1)
                     fastReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/fast4", Absent))
                     fibers <- Kyo.fill(size)(Fiber.initUnscoped {
@@ -1442,7 +1456,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
                     size  <- sizes
-                    c     <- HttpClient.initUnscoped(client, size)
+                    c     <- HttpClient.init(client, size)
                     latch <- Latch.init(1)
                     badReq   = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", 1, "/nope", Absent))
                     fastReq  = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/fast5", Absent))
@@ -1469,7 +1483,7 @@ class HttpClientTest extends Test:
     "close" - {
 
         "idempotent" in run {
-            HttpClient.initUnscoped(client).map { c =>
+            HttpClient.init(client).map { c =>
                 c.closeNow.andThen(c.closeNow).andThen(succeed)
             }
         }
@@ -1547,7 +1561,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
                     size  <- sizes
-                    c     <- HttpClient.initUnscoped(client, size)
+                    c     <- HttpClient.init(client, size)
                     latch <- Latch.init(1)
                     request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/ping", Absent))
                     fibers <- Kyo.fill(size * 3)(Fiber.initUnscoped(
@@ -1578,7 +1592,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
                     size  <- sizes
-                    c     <- HttpClient.initUnscoped(client, size)
+                    c     <- HttpClient.init(client, size)
                     latch <- Latch.init(1)
                     request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/burst", Absent))
                     fibers <- Kyo.fill(size)(Fiber.initUnscoped(
@@ -1604,7 +1618,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(4, 8)
                 (for
                     size <- sizes
-                    c    <- HttpClient.initUnscoped(client, size)
+                    c    <- HttpClient.init(client, size)
                     request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stress", Absent))
                     // Run 5 batches, each batch fires `size` concurrent requests with a latch
                     _ <- Kyo.foreach(1 to 5) { _ =>
@@ -1643,7 +1657,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size  <- sizes
-                    c     <- HttpClient.initUnscoped(client, size * 2)
+                    c     <- HttpClient.init(client, size * 2)
                     latch <- Latch.init(1)
                     textReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/text", Absent))
                     streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream-mix", Absent))
@@ -1696,7 +1710,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size  <- sizes
-                    c     <- HttpClient.initUnscoped(client, size)
+                    c     <- HttpClient.init(client, size)
                     latch <- Latch.init(1)
                     fibers <- Kyo.foreach(0 until size) { i =>
                         Fiber.initUnscoped {
@@ -1986,7 +2000,7 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size  <- sizes
-                    c     <- HttpClient.initUnscoped(client, size)
+                    c     <- HttpClient.init(client, size)
                     latch <- Latch.init(1)
                     slowReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow-close", Absent))
                     fibers <- Kyo.fill(size)(Fiber.initUnscoped(
@@ -2520,7 +2534,7 @@ class HttpClientTest extends Test:
             val route = HttpRoute.getRaw("ctx").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("via-let"))
             runServer(ep) { url =>
-                HttpClient.initUnscoped(client).map { customClient =>
+                HttpClient.init(client).map { customClient =>
                     HttpClient.let(customClient) {
                         HttpClient.withConfig(noTimeout) {
                             HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/ctx").map { body =>
@@ -2536,8 +2550,8 @@ class HttpClientTest extends Test:
             val route = HttpRoute.getRaw("ctx").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("ok"))
             runServer(ep) { url =>
-                HttpClient.initUnscoped(client).map { outerClient =>
-                    HttpClient.initUnscoped(client).map { innerClient =>
+                HttpClient.init(client).map { outerClient =>
+                    HttpClient.init(client).map { innerClient =>
                         HttpClient.let(outerClient) {
                             HttpClient.use { c1 =>
                                 assert(c1 eq outerClient)
@@ -2557,7 +2571,7 @@ class HttpClientTest extends Test:
 
     "config stacking" - {
 
-        "nested withConfig composes" - {
+        "nested withConfig composes" in run {
             val route    = HttpRoute.getRaw("stack").response(_.bodyText)
             var attempts = 0
             val ep = route.handler { _ =>
@@ -2565,7 +2579,7 @@ class HttpClientTest extends Test:
                 if attempts < 2 then HttpResponse.serverError.addField("body", "fail")
                 else HttpResponse.ok("ok")
             }
-            runServer(ep) { url =>
+            withServer(ep) { url =>
                 val base = HttpUrl(url.scheme, url.host, url.port, "/", Absent)
                 // Outer sets baseUrl, inner adds retry — both should apply
                 HttpClient.withConfig(noTimeout.copy(baseUrl = Present(base))) {

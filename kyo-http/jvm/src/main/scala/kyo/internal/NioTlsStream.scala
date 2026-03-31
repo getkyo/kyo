@@ -60,7 +60,11 @@ class NioTlsStream(
                 }.andThen(handshakeLoop())
         }
 
-    /** Wrap appData into netOutBuf and flush to underlying stream. */
+    /** Wrap appData into netOutBuf and flush to underlying stream.
+      *
+      * Always calls engine.wrap (even for empty appData — required for handshake messages). Loops until all appData bytes are consumed,
+      * since TLS records are limited to ~16KB each.
+      */
     private def doWrap(appData: ByteBuffer)(using Frame): Unit < Async =
         Sync.defer {
             discard(netOutBuf.clear())
@@ -69,12 +73,17 @@ class NioTlsStream(
             result.getStatus match
                 case SSLEngineResult.Status.OK | SSLEngineResult.Status.CLOSED =>
                     discard(netOutBuf.flip())
-                    if netOutBuf.hasRemaining then
-                        val arr = new Array[Byte](netOutBuf.remaining)
-                        discard(netOutBuf.get(arr))
-                        underlying.write(Span.fromUnsafe(arr))
-                    else Kyo.unit
-                    end if
+                    val writeResult =
+                        if netOutBuf.hasRemaining then
+                            val arr = new Array[Byte](netOutBuf.remaining)
+                            discard(netOutBuf.get(arr))
+                            underlying.write(Span.fromUnsafe(arr))
+                        else Kyo.unit
+                    // Loop if there are more plaintext bytes to encrypt (TLS records are ~16KB max)
+                    writeResult.andThen(
+                        if appData.hasRemaining then doWrap(appData)
+                        else Kyo.unit
+                    )
                 case SSLEngineResult.Status.BUFFER_OVERFLOW =>
                     netOutBuf = ByteBuffer.allocate(netOutBuf.capacity * 2)
                     doWrap(appData)
@@ -164,6 +173,7 @@ class NioTlsStream(
                 }.map { (result, appBuf) =>
                     handleUnwrapResult(result, appBuf, buf)
                 }
+            end if
         }
     end readAndUnwrapApp
 
