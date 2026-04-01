@@ -116,7 +116,7 @@ end ProtobufMethodDescriptor
 private class GrpcServerImpl(
     config: GrpcServerConfig,
     services: Seq[GrpcService]
-) extends ServerBinding(config.address, () => ()):
+):
 
     // TODO: Implement actual Netty HTTP/2 + gRPC framing server
     // This is a stub implementation - the full implementation requires:
@@ -125,9 +125,12 @@ private class GrpcServerImpl(
     // 3. Kyo fiber integration for request handling
     // 4. ScalaPB message serialization/deserialization
 
+    @volatile private var running = false
+
     def start(): ServerBinding =
-        // Placeholder - actual implementation uses Netty ServerBootstrap
-        // with Http2MultiplexCodec and GrpcProtocolFrameHandler
-        this
+        running = true
+        new ServerBinding(s"${config.host}:${config.port}", () => running = false)
+
+    def isRunning: Boolean = running
 
 end GrpcServerImpl

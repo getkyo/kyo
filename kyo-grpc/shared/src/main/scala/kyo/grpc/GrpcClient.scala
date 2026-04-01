@@ -35,6 +35,15 @@ case class GrpcClientConfig(
 /** A gRPC client for making calls. */
 class GrpcClient(config: GrpcClientConfig):
 
+    private val unaryHandlers = scala.collection.concurrent.TrieMap.empty[String, Any => Any]
+
+    /** Registers a local unary handler for a method path.
+     *  This enables in-process testing without wiring network transport.
+     */
+    def registerUnary[Req, Res](method: String)(f: Req => Res): Unit =
+        unaryHandlers.put(method, (in: Any) => f(in.asInstanceOf[Req]))
+        ()
+
     /** Makes a unary call to a gRPC method.
      *
      *  @param method The full method name (e.g., "helloworld.Greeter/SayHello")
@@ -44,17 +53,23 @@ class GrpcClient(config: GrpcClientConfig):
      *  @return A fiber containing the response
      */
     def call[Req, Res](method: String, request: Req): Call[Req, Res] =
-        new Call(method, request)
+        new Call(method, request, unaryHandlers.get(method).map(_.asInstanceOf[Any => Res]))
 
 end GrpcClient
 
 /** A pending gRPC call. */
-class Call[Req, Res](method: String, request: Req):
+class Call[Req, Res](method: String, request: Req, localHandler: Option[Any => Res]):
 
     /** Executes the call and returns the response.
      *
      *  @return The response message
      */
-    def run: Any = ???
+    def run: Res =
+        localHandler match
+            case Some(handler) => handler(request)
+            case None =>
+                throw new UnsupportedOperationException(
+                    s"No registered unary handler for method '$method'. Transport-backed calls are not implemented yet."
+                )
 
 end Call

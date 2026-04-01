@@ -24,4 +24,13 @@ class GrpcTest extends AsyncWordSpec:
             assert(config.target == "localhost:8080")
             succeed
 
+        "run a registered in-process unary call" in:
+            import kyo.grpc.client.*
+            val cfg = GrpcClient.newClient("inproc")
+            val client = GrpcClient(cfg)
+            client.registerUnary[String, String]("helloworld.Greeter/SayHello")(name => s"Hello, $name")
+            val out = client.call[String, String]("helloworld.Greeter/SayHello", "Kyo").run
+            assert(out == "Hello, Kyo")
+            succeed
+
 end GrpcTest
