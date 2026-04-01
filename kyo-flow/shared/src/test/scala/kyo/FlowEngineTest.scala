@@ -2196,12 +2196,9 @@ class FlowEngineTest extends Test:
         }
     }
 
-    // =========================================================================
-    // BUG reproduction tests
-    // =========================================================================
-    "bug reproduction" - {
+    "regression" - {
 
-        "BUG-6: zero-duration sleep not recorded — subsequent steps re-execute on replay" in run {
+        "zero-duration sleep does not execute and does not affect replay" in run {
             withEngine { (engine, store, tc) =>
                 var afterCount = 0
                 val flow = Flow.input[Int]("x")
@@ -2228,7 +2225,7 @@ class FlowEngineTest extends Test:
                 end for
             }
         }
-        "BUG-1.2: compensation error propagates as Failure not Panic" in run {
+        "compensation error propagates as Failure" in run {
             withEngine { (engine, store, tc) =>
                 var compFired = false
                 val flow = Flow.input[Int]("x")
@@ -2255,7 +2252,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "BUG-1.3: compensation handler sees only fields from registration point" in run {
+        "compensation handler sees only fields present at registration" in run {
             withEngine { (engine, store, tc) =>
                 var capturedKeys = Set.empty[String]
                 val flow = Flow.input[Int]("x")

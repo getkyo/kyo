@@ -58,8 +58,7 @@ private[kyo] class MemoryFlowStore(
 
                     data.copy(executions = data.executions ++ claimed)
                 }.map { oldData =>
-                    // Diff: find executions that were unclaimed in old data
-                    // but are now claimed by us (the update already happened)
+                    // Return only executions newly claimed by this call (were not already owned by us)
                     ref.use { newData =>
                         newData.executions.values.filter { ex =>
                             ex.executor == Maybe(executorId) &&
@@ -153,7 +152,7 @@ private[kyo] class MemoryFlowStore(
             ref.getAndUpdate { data =>
                 data.executions.get(executionId) match
                     case Some(ex) if ex.status.isTerminal =>
-                        // I5: terminal irreversibility — only append the event
+                        // Terminal status is irreversible — only append the event
                         val events = data.events.getOrElse(executionId, Chunk.empty)
                         data.copy(events = data.events + (executionId -> (events :+ event)))
                     case Some(ex) =>

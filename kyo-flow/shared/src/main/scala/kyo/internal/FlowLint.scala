@@ -2,7 +2,6 @@ package kyo.internal
 
 import kyo.*
 
-// TODO do we have comprehensive tests for this?
 private[kyo] object FlowLint:
 
     case class Warning(message: String, location: String) derives CanEqual

@@ -225,11 +225,7 @@ final class FlowEngine private (
         def cancelAll(wfId: Maybe[Flow.Id.Workflow] = Maybe.empty)(using Frame): Int < Async =
             val wfIds: Seq[Flow.Id.Workflow] < Sync = wfId match
                 case Present(id) => Seq(id)
-                case _ => defs.use { d =>
-                        var ids = Seq.empty[Flow.Id.Workflow]
-                        d.foreach((k, _) => ids = ids :+ k) // TODO migrate to a new dict.keys
-                        ids
-                    }
+                case _ => defs.use(_.keys.toSeq)
             wfIds.map { ids =>
                 Kyo.foreach(ids) { id =>
                     store.listExecutions(id, Maybe.empty, Int.MaxValue, 0).map { execs =>
@@ -276,17 +272,14 @@ final class FlowEngine private (
             val results = wfId match
                 case Present(id) => store.listExecutions(id, status, limit, offset)
                 case _ =>
-                    defs.use { d =>
-                        var ids = Seq.empty[Flow.Id.Workflow]
-                        d.foreach((k, _) => ids = ids :+ k) // TODO Let's add dict.keys
+                    defs.use(_.keys.toSeq).map(ids =>
                         Kyo.foreach(ids)(id =>
                             store.listExecutions(id, status, limit, offset)
-                        )
+                        ))
                             .map(_.foldLeft(Chunk.empty[FlowStore.ExecutionState])(_ ++ _)
                                 .toSeq.sortBy(_.created)(using Ordering[Instant]).reverse
                                 .drop(offset).take(limit))
                             .map(Chunk.from)
-                    }
             results.map(r => FlowEngine.SearchResult(r.toSeq, r.length))
         end search
 
@@ -334,11 +327,7 @@ final class FlowEngine private (
         batchSize: Int,
         pollTimeout: Duration
     )(using Frame): Unit < (Async & Scope) =
-        defs.use { d =>
-            var ids = Set.empty[Flow.Id.Workflow]
-            d.foreach((k, _) => ids = ids + k) // TODO use the new dict.keys
-            ids
-        }.map { wfIds =>
+        defs.use(_.keys.toSet).map { wfIds =>
             if wfIds.isEmpty then Async.sleep(pollTimeout).andThen(worker(lease, renewEvery, batchSize, pollTimeout))
             else
                 store.claimReady(wfIds, executorId, lease, batchSize, pollTimeout).map { batch =>

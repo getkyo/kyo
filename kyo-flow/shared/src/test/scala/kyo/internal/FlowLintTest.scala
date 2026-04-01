@@ -41,6 +41,23 @@ class FlowLintTest extends Test:
             assert(warnings.exists(_.message.contains("3 times")))
             succeed
         }
+
+        "detects duplicate between input and forEach" in run {
+            val flow     = Flow.input[Int]("items").foreach("items")(ctx => Seq(1, 2))(i => i)
+            val warnings = FlowLint.duplicateNames(flow)
+            assert(warnings.size == 1)
+            assert(warnings(0).message.contains("'items'"))
+            succeed
+        }
+
+        "detects duplicate between input and subflow" in run {
+            val child    = Flow.input[Int]("a").output("b")(ctx => ctx.a)
+            val flow     = Flow.input[Int]("result").subflow("result", child)(ctx => "a" ~ ctx.result)
+            val warnings = FlowLint.duplicateNames(flow)
+            assert(warnings.size == 1)
+            assert(warnings(0).message.contains("'result'"))
+            succeed
+        }
     }
 
     "emptyBranches" - {
@@ -131,6 +148,21 @@ class FlowLintTest extends Test:
             assert(names == Seq("a", "b", "c", "d"))
             succeed
         }
+
+        "extracts name from forEach" in run {
+            val flow  = Flow.input[Int]("count").foreach("items")(ctx => Seq(1, 2))(i => i * 2)
+            val names = FlowLint.nodeNames(flow)
+            assert(names == Seq("count", "items"))
+            succeed
+        }
+
+        "extracts name from subflow (child nodes excluded)" in run {
+            val child = Flow.input[Int]("a").output("b")(ctx => ctx.a)
+            val flow  = Flow.input[Int]("x").subflow("result", child)(ctx => "a" ~ ctx.x)
+            val names = FlowLint.nodeNames(flow)
+            assert(names == Seq("x", "result"))
+            succeed
+        }
     }
 
     "inputNames" - {
@@ -200,6 +232,21 @@ class FlowLintTest extends Test:
                 .sleep("z", 1.second)
             val outputs = FlowLint.outputNames(flow)
             assert(outputs == Seq("y"))
+            succeed
+        }
+
+        "includes forEach as output" in run {
+            val flow    = Flow.input[Int]("count").foreach("items")(ctx => Seq(1, 2))(i => i * 2)
+            val outputs = FlowLint.outputNames(flow)
+            assert(outputs == Seq("items"))
+            succeed
+        }
+
+        "includes subflow as output" in run {
+            val child   = Flow.input[Int]("a").output("b")(ctx => ctx.a)
+            val flow    = Flow.input[Int]("x").subflow("result", child)(ctx => "a" ~ ctx.x)
+            val outputs = FlowLint.outputNames(flow)
+            assert(outputs == Seq("result"))
             succeed
         }
     }

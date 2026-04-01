@@ -163,7 +163,7 @@ class WorkflowSchemaTest extends Test:
             }
         }
 
-        "BUG-5: hash mismatch should fail execution, not release indefinitely" in run {
+        "structural hash mismatch marks execution as failed" in run {
             withEngine { (engine, store, tc) =>
                 val flowV1 = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 val flowV2 = Flow.input[Int]("x").output("y")(ctx => ctx.x).output("z")(ctx => 0)
@@ -190,8 +190,6 @@ class WorkflowSchemaTest extends Test:
                     _     <- pump(tc, store, stuckEid, s => s.isTerminal || s == Flow.Status.Running, 50)
                     state <- store.getExecution(stuckEid)
                 yield
-                    // Currently this execution just gets released repeatedly.
-                    // It SHOULD be failed with a clear error message.
                     assert(
                         state.get.status match
                             case Flow.Status.Failed(_) => true;

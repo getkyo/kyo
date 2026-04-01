@@ -9,7 +9,7 @@ abstract private[kyo] class FlowInterpreter[S]:
 
     def onOutput[V](name: String, computation: V < Sync, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]): V < S
 
-    /** Read a previously stored field by name. Used by scheduled repeat to recover iteration results on replay. */
+    /** Read a stored field by name. Returns Absent if the field does not exist. */
     def getField[V](name: String)(using Tag[V], Json[V]): Maybe[V] < S
 
     def onStep(name: String, computation: Unit < Sync, frame: Frame, meta: Flow.Meta): Unit < S

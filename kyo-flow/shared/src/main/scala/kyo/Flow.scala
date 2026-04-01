@@ -938,8 +938,8 @@ object Flow:
                                                 val iterName  = IterationName.step(nameStr, iterNum)
                                                 val sleepName = IterationName.sleep(nameStr, iterNum)
                                                 if eventCompleted(iterName) then
-                                                    // Iteration already completed on a previous execution
-                                                    // Check if it stored a done value (output) or was a continue (step)
+                                                    // Resuming from checkpoint — this iteration was already recorded
+                                                    // If a field was stored the iteration completed with a final value; otherwise it was a continue
                                                     interpreter.getField[Any](iterName)(using r.tag, r.json).map {
                                                         case Present(result) =>
                                                             // Done iteration — result is stored, this is the final value
