@@ -1108,6 +1108,84 @@ object StreamCoreExtensions:
 
     end extension
 
+    extension [S](stream: Stream[Byte, S])
+        /** Writes each byte of the stream to `path`, creating parent directories as needed.
+          *
+          * The write channel is acquired in a `Scope` and released when the stream completes or fails. If the stream fails, the
+          * partially-written file is deleted before re-raising the error.
+          */
+        def writeTo(path: Path)(using Frame): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+            Scope
+                .acquireRelease(
+                    Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append = false, createFolders = true)))
+                )(handle => Sync.Unsafe.defer(handle.close()))
+                .map { handle =>
+                    Abort.run[FileWriteException] {
+                        stream.foreachChunk { chunk =>
+                            Sync.Unsafe.defer(Abort.get(handle.writeBytes(chunk)))
+                        }
+                    }.map {
+                        case Result.Failure(e) =>
+                            // Remove the partial/empty file, then re-raise
+                            Sync.Unsafe.defer(path.unsafe.remove()).andThen(Abort.fail(e))
+                        case ok => Abort.get(ok)
+                    }
+                }
+    end extension
+
+    extension [S](stream: Stream[String, S])
+        /** Writes each string chunk of the stream to `path` using the given charset (default UTF-8).
+          *
+          * The write channel is acquired in a `Scope` and released when the stream completes or fails.
+          */
+        def writeTo(
+            path: Path,
+            charset: java.nio.charset.Charset = java.nio.charset.StandardCharsets.UTF_8
+        )(using Frame): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+            Scope
+                .acquireRelease(
+                    Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append = false, createFolders = true)))
+                )(handle => Sync.Unsafe.defer(handle.close()))
+                .map { handle =>
+                    Abort.run[FileWriteException] {
+                        stream.foreach { s =>
+                            Sync.Unsafe.defer(Abort.get(handle.writeString(s, charset)))
+                        }
+                    }.map {
+                        case Result.Failure(e) =>
+                            // Remove the partial/empty file, then re-raise
+                            Sync.Unsafe.defer(path.unsafe.remove()).andThen(Abort.fail(e))
+                        case ok => Abort.get(ok)
+                    }
+                }
+
+        /** Writes each string element as a separate line to `path` using the given charset.
+          *
+          * The write channel is acquired in a `Scope` and released when the stream completes or fails. If the stream fails, the
+          * partially-written file is deleted before re-raising the error.
+          */
+        def writeLinesTo(
+            path: Path,
+            charset: java.nio.charset.Charset = java.nio.charset.StandardCharsets.UTF_8
+        )(using Frame): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+            Scope
+                .acquireRelease(
+                    Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append = false, createFolders = true)))
+                )(handle => Sync.Unsafe.defer(handle.close()))
+                .map { handle =>
+                    Abort.run[FileWriteException] {
+                        stream.foreach { s =>
+                            Sync.Unsafe.defer(Abort.get(handle.writeString(s + java.lang.System.lineSeparator(), charset)))
+                        }
+                    }.map {
+                        case Result.Failure(e) =>
+                            // Remove the partial/empty file, then re-raise
+                            Sync.Unsafe.defer(path.unsafe.remove()).andThen(Abort.fail(e))
+                        case ok => Abort.get(ok)
+                    }
+                }
+    end extension
+
 end StreamCoreExtensions
 
 export StreamCoreExtensions.*
