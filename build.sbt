@@ -556,7 +556,7 @@ lazy val `kyo-http` =
         )
         .nativeSettings(
             `native-settings`,
-            // No external native dependencies — pure Scala transport with kqueue syscalls
+            nativeConfig ~= { c => c.withLinkingOptions(c.linkingOptions ++ Seq("-lssl", "-lcrypto")) }
         )
 
 lazy val `kyo-caliban` =

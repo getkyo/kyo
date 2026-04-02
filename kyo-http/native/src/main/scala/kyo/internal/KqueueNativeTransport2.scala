@@ -260,34 +260,40 @@ private[kyo] class KqueueConnection2(
         }
 
     private def readPlain()(using Frame): Maybe[(Span[Byte], Unit)] < Async =
+        discard(kqueueRegister(readKq, fd, -1))
         Loop.foreach {
-            discard(kqueueRegister(readKq, fd, -1))
-            Sync.defer {
-                Zone {
+            Async.sleep(1.millis).andThen {
+                val ready = Zone {
                     val outFd     = alloc[CInt](1)
                     val outFilter = alloc[CInt](1)
-                    kqueueWait(readKq, outFd, outFilter, 1)
+                    kqueueWaitNonBlock(readKq, outFd, outFilter, 1) > 0
                 }
-            }.andThen {
-                Sync.defer {
-                    Zone {
-                        val ptr = alloc[Byte](ChunkSize)
-                        val n   = tcpRead(fd, ptr, ChunkSize)
-                        if n > 0 then
-                            val arr = new Array[Byte](n)
+                if ready then
+                    var buf: Array[Byte] = null
+                    val n = Zone {
+                        val ptr  = alloc[Byte](ChunkSize)
+                        val read = tcpRead(fd, ptr, ChunkSize)
+                        if read > 0 then
+                            val arr = new Array[Byte](read)
                             var i   = 0
-                            while i < n do
+                            while i < read do
                                 arr(i) = ptr(i)
                                 i += 1
                             end while
-                            Loop.done(Maybe((Span.fromUnsafe(arr), ())))
-                        else if n == 0 then
-                            Loop.done(Maybe.empty[(Span[Byte], Unit)]) // EOF: peer closed
-                        else
-                            Loop.continue // EAGAIN / spurious wakeup
+                            buf = arr
                         end if
+                        read
                     }
-                }
+                    if n > 0 then
+                        Loop.done(Maybe((Span.fromUnsafe(buf), ())))
+                    else if n == 0 then
+                        Loop.done(Maybe.empty[(Span[Byte], Unit)]) // EOF: peer closed
+                    else
+                        Loop.continue // EAGAIN / spurious wakeup
+                    end if
+                else
+                    Loop.continue
+                end if
             }
         }
     end readPlain
@@ -314,31 +320,33 @@ private[kyo] class KqueueConnection2(
 
     private def writePlain(data: Span[Byte])(using Frame): Unit < Async =
         discard(kqueueRegister(writeKq, fd, -2))
-        Sync.defer {
-            Zone {
-                val outFd     = alloc[CInt](1)
-                val outFilter = alloc[CInt](1)
-                kqueueWait(writeKq, outFd, outFilter, 1)
-            }
-        }.andThen {
-            Sync.defer {
-                Zone {
-                    val arr = data.toArrayUnsafe
-                    val ptr = alloc[Byte](arr.length)
-                    var i   = 0
-                    while i < arr.length do
-                        ptr(i) = arr(i)
-                        i += 1
-                    end while
-                    tcpWrite(fd, ptr, arr.length)
+        Loop.foreach {
+            Async.sleep(1.millis).andThen {
+                val ready = Zone {
+                    val outFd     = alloc[CInt](1)
+                    val outFilter = alloc[CInt](1)
+                    kqueueWaitNonBlock(writeKq, outFd, outFilter, 1) > 0
                 }
-            }.map { written =>
-                if written < 0 then
-                    Abort.panic(HttpProtocolException(s"write failed on fd $fd"))
-                else if written < data.size then
-                    writePlain(data.slice(written, data.size))
+                if ready then
+                    val written = Zone {
+                        val arr = data.toArrayUnsafe
+                        val ptr = alloc[Byte](arr.length)
+                        var i   = 0
+                        while i < arr.length do
+                            ptr(i) = arr(i)
+                            i += 1
+                        end while
+                        tcpWrite(fd, ptr, arr.length)
+                    }
+                    if written < 0 then
+                        Abort.panic(HttpProtocolException(s"write failed on fd $fd"))
+                    else if written < data.size then
+                        writePlain(data.slice(written, data.size)).andThen(Loop.done(()))
+                    else
+                        Loop.done(())
+                    end if
                 else
-                    Kyo.unit
+                    Loop.continue
                 end if
             }
         }
@@ -359,26 +367,30 @@ private[kyo] class KqueueStream2TlsBridge(conn: KqueueConnection2) extends Trans
 
     def read(buf: Array[Byte])(using Frame): Int < Async =
         discard(kqueueRegister(conn.readKq, conn.fd, -1))
-        Sync.defer {
-            Zone {
-                val outFd     = alloc[CInt](1)
-                val outFilter = alloc[CInt](1)
-                kqueueWait(conn.readKq, outFd, outFilter, 1)
-            }
-        }.andThen {
-            Sync.defer {
-                Zone {
-                    val ptr       = alloc[Byte](buf.length)
-                    val bytesRead = tcpRead(conn.fd, ptr, buf.length)
-                    if bytesRead > 0 then
-                        var i = 0
-                        while i < bytesRead do
-                            buf(i) = ptr(i)
-                            i += 1
-                        end while
-                    end if
-                    if bytesRead == 0 then -1 else bytesRead // 0 = EOF on POSIX, map to -1
+        Loop.foreach {
+            Async.sleep(1.millis).andThen {
+                val ready = Zone {
+                    val outFd     = alloc[CInt](1)
+                    val outFilter = alloc[CInt](1)
+                    kqueueWaitNonBlock(conn.readKq, outFd, outFilter, 1) > 0
                 }
+                if ready then
+                    val n = Zone {
+                        val ptr       = alloc[Byte](buf.length)
+                        val bytesRead = tcpRead(conn.fd, ptr, buf.length)
+                        if bytesRead > 0 then
+                            var i = 0
+                            while i < bytesRead do
+                                buf(i) = ptr(i)
+                                i += 1
+                            end while
+                        end if
+                        if bytesRead == 0 then -1 else bytesRead // 0 = EOF on POSIX, map to -1
+                    }
+                    Loop.done(n)
+                else
+                    Loop.continue
+                end if
             }
         }
     end read
@@ -387,31 +399,33 @@ private[kyo] class KqueueStream2TlsBridge(conn: KqueueConnection2) extends Trans
         if data.isEmpty then Kyo.unit
         else
             discard(kqueueRegister(conn.writeKq, conn.fd, -2))
-            Sync.defer {
-                Zone {
-                    val outFd     = alloc[CInt](1)
-                    val outFilter = alloc[CInt](1)
-                    kqueueWait(conn.writeKq, outFd, outFilter, 1)
-                }
-            }.andThen {
-                Sync.defer {
-                    Zone {
-                        val arr = data.toArrayUnsafe
-                        val ptr = alloc[Byte](arr.length)
-                        var i   = 0
-                        while i < arr.length do
-                            ptr(i) = arr(i)
-                            i += 1
-                        end while
-                        tcpWrite(conn.fd, ptr, arr.length)
+            Loop.foreach {
+                Async.sleep(1.millis).andThen {
+                    val ready = Zone {
+                        val outFd     = alloc[CInt](1)
+                        val outFilter = alloc[CInt](1)
+                        kqueueWaitNonBlock(conn.writeKq, outFd, outFilter, 1) > 0
                     }
-                }.map { written =>
-                    if written < 0 then
-                        Abort.panic(HttpProtocolException(s"write failed on fd ${conn.fd}"))
-                    else if written < data.size then
-                        write(data.slice(written, data.size))
+                    if ready then
+                        val written = Zone {
+                            val arr = data.toArrayUnsafe
+                            val ptr = alloc[Byte](arr.length)
+                            var i   = 0
+                            while i < arr.length do
+                                ptr(i) = arr(i)
+                                i += 1
+                            end while
+                            tcpWrite(conn.fd, ptr, arr.length)
+                        }
+                        if written < 0 then
+                            Abort.panic(HttpProtocolException(s"write failed on fd ${conn.fd}"))
+                        else if written < data.size then
+                            write(data.slice(written, data.size)).andThen(Loop.done(()))
+                        else
+                            Loop.done(())
+                        end if
                     else
-                        Kyo.unit
+                        Loop.continue
                     end if
                 }
             }

@@ -75,6 +75,26 @@ object Http1Protocol2:
         Frame
     )
         : ((HttpStatus, HttpHeaders, HttpBody), Stream[Span[Byte], Async]) < (Async & Abort[HttpException]) =
+        readResponseImpl(src, maxSize, requestMethod, streaming = false)
+
+    /** Read response with chunked bodies returned as HttpBody.Streamed (lazy stream). Used by the client for streaming response routes
+      * (SSE, NDJSON, byte streams).
+      */
+    def readResponseStreaming(src: Stream[Span[Byte], Async], maxSize: Int, requestMethod: HttpMethod = HttpMethod.GET)(using
+        Frame
+    )
+        : ((HttpStatus, HttpHeaders, HttpBody), Stream[Span[Byte], Async]) < (Async & Abort[HttpException]) =
+        readResponseImpl(src, maxSize, requestMethod, streaming = true)
+
+    private def readResponseImpl(
+        src: Stream[Span[Byte], Async],
+        maxSize: Int,
+        requestMethod: HttpMethod,
+        streaming: Boolean
+    )(using
+        Frame
+    )
+        : ((HttpStatus, HttpHeaders, HttpBody), Stream[Span[Byte], Async]) < (Async & Abort[HttpException]) =
         ByteStream.readUntil(src, ByteStream.CRLF_CRLF, MaxHeaderSize).map { case (headerBytes, remaining) =>
             val headerStr = new String(headerBytes.toArrayUnsafe, Utf8)
             val lines     = headerStr.split("\r\n")
@@ -86,14 +106,23 @@ object Http1Protocol2:
                     then
                         ((status, headers, HttpBody.Empty), remaining)
                     else
-                        readBody(remaining, headers, maxSize).map { case (body, remaining2) =>
-                            ((status, headers, body), remaining2)
-                        }
+                        val isChunked = headers.get("Transfer-Encoding") match
+                            case Present(v) => v.toLowerCase.contains("chunked")
+                            case Absent     => false
+                        if streaming && isChunked then
+                            readChunkedBodyStreaming(remaining).map { case (body, remaining2) =>
+                                ((status, headers, body), remaining2)
+                            }
+                        else
+                            readBody(remaining, headers, maxSize).map { case (body, remaining2) =>
+                                ((status, headers, body), remaining2)
+                            }
+                        end if
                     end if
                 }
             end if
         }
-    end readResponse
+    end readResponseImpl
 
     def writeRequest(stream: TransportStream2, method: HttpMethod, path: String, headers: HttpHeaders, body: HttpBody)(using
         Frame

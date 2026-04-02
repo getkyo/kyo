@@ -134,7 +134,7 @@ class HttpTransportClient2(private[kyo] val transport: Transport2) extends HttpB
         phase2Started: AtomicRef[Boolean],
         safeRelease: Maybe[Result.Error[Any]] => Unit < Sync
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        Http1Protocol2.readResponse(connection.currentStream, Int.MaxValue, request.method).map {
+        Http1Protocol2.readResponseStreaming(connection.currentStream, Int.MaxValue, request.method).map {
             case ((status, headers, body), remaining) =>
                 connection.updateStream(remaining)
                 val rawStream = body match

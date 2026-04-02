@@ -248,7 +248,7 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                     }.map { readFiber =>
                         Fiber.initUnscoped {
                             readFiber.getResult.map { _ =>
-                                inbound.close.unit
+                                inbound.close.unit.andThen(outbound.close.unit)
                             }
                         }.map { monitorFiber =>
                             Fiber.initUnscoped {
@@ -266,7 +266,7 @@ class HttpTransportServer(transport: Transport, protocol: Protocol) extends Http
                                         .andThen(monitorFiber.interrupt.unit)
                                         .andThen(outbound.close.unit)
                                 ) {
-                                    Abort.run[Any](wsHandler.wsHandler(request, ws)).andThen {
+                                    Abort.run[Any](wsHandler.wsHandler(request, ws)).map { _ =>
                                         closeReasonRef.get.map {
                                             case Absent =>
                                                 Abort.run[Any](WsCodec.writeClose(stream, 1000, "", mask = false)).unit

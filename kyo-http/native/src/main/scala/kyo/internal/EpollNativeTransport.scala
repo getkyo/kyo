@@ -8,6 +8,7 @@ import scala.scalanative.unsafe.*
   * Same architecture as KqueueNativeTransport: per-operation epoll fd to avoid event stealing between concurrent fibers. Each read/write
   * creates its own epoll instance, registers EPOLLONESHOT interest, polls until ready, then performs the I/O.
   */
+// TODO isn't this very expensive? we should reuse a single or a few fibers to handle multiple operations no?
 final class EpollNativeTransport extends Transport:
 
     import PosixBindings.*
@@ -18,33 +19,63 @@ final class EpollNativeTransport extends Transport:
         Frame
     )
         : EpollConnection < (Async & Abort[HttpException]) =
-        if tls then Abort.fail(HttpConnectException(host, port, new Exception("TLS not yet supported on native")))
-        else
-            Sync.defer {
-                val (fd, pending) = Zone {
-                    val outPending = alloc[CInt]()
-                    val f          = tcpConnect(toCString(host), port, outPending)
-                    (f, !outPending)
-                }
-                if fd < 0 then
-                    Abort.fail(HttpConnectException(host, port, new Exception("connect failed")))
-                else if pending == 1 then
-                    val epfd = epollCreate()
-                    discard(epollRegister(epfd, fd, 2)) // wait for write-ready = connect complete
-                    awaitReady(epfd).andThen {
-                        tcpClose(epfd)
-                        val err = tcpConnectError(fd)
-                        if err != 0 then
-                            tcpClose(fd)
-                            Abort.fail(HttpConnectException(host, port, new Exception(s"connect failed: errno=$err")))
-                        else
-                            Sync.defer(new EpollConnection(fd))
-                        end if
-                    }
-                else
-                    Sync.defer(new EpollConnection(fd))
-                end if
+        connectPlain(host, port).map { conn =>
+            if tls then connectTls(host, conn)
+            else conn
+        }
+
+    private def connectPlain(host: String, port: Int)(using
+        Frame
+    ): EpollConnection < (Async & Abort[HttpException]) =
+        Sync.defer {
+            val (fd, pending) = Zone {
+                val outPending = alloc[CInt]()
+                val f          = tcpConnect(toCString(host), port, outPending)
+                (f, !outPending)
             }
+            if fd < 0 then
+                Abort.fail(HttpConnectException(host, port, new Exception("connect failed")))
+            else if pending == 1 then
+                val epfd = epollCreate()
+                discard(epollRegister(epfd, fd, 2)) // wait for write-ready = connect complete
+                awaitReady(epfd).andThen {
+                    tcpClose(epfd)
+                    val err = tcpConnectError(fd)
+                    if err != 0 then
+                        tcpClose(fd)
+                        Abort.fail(HttpConnectException(host, port, new Exception(s"connect failed: errno=$err")))
+                    else
+                        Sync.defer(new EpollConnection(fd))
+                    end if
+                }
+            else
+                Sync.defer(new EpollConnection(fd))
+            end if
+        }
+
+    private def connectTls(host: String, conn: EpollConnection)(using
+        Frame
+    ): EpollConnection < (Async & Abort[HttpException]) =
+        import TlsBindings.*
+        Sync.defer {
+            val ctx = tlsCtxNew(0)
+            if ctx == 0 then
+                Abort.fail(HttpConnectException(host, 0, new Exception("Failed to create TLS context")))
+            else
+                val ssl = Zone { tlsNew(ctx, toCString(host)) }
+                if ssl == 0 then
+                    tlsCtxFree(ctx)
+                    Abort.fail(HttpConnectException(host, 0, new Exception("Failed to create TLS session")))
+                else
+                    tlsSetConnectState(ssl)
+                    val tcpStream = new EpollStream(conn)
+                    val tlsStream = new NativeTlsStream(ssl, ctx, tcpStream)
+                    conn.tlsStream = Present(tlsStream)
+                    tlsStream.handshake().map(_ => conn)
+                end if
+            end if
+        }
+    end connectTls
 
     def isAlive(connection: EpollConnection)(using Frame): Boolean < Sync =
         Sync.defer(!connection.closed && tcpIsAlive(connection.fd) == 1)
@@ -52,14 +83,28 @@ final class EpollNativeTransport extends Transport:
     def closeNow(connection: EpollConnection)(using Frame): Unit < Sync =
         Sync.defer {
             connection.closed = true
+            connection.tlsStream match
+                case Present(tls) =>
+                    import TlsBindings.*
+                    tlsFree(tls.sslPtr)
+                    tlsCtxFree(tls.ctxPtr)
+                    connection.tlsStream = Absent
+                case Absent =>
+            end match
             tcpClose(connection.fd)
+            tcpClose(connection.readEpfd)
+            tcpClose(connection.writeEpfd)
         }
 
     def close(connection: EpollConnection, gracePeriod: Duration)(using Frame): Unit < Async =
         Sync.defer(tcpShutdown(connection.fd))
 
     def stream(connection: EpollConnection)(using Frame): TransportStream < Async =
-        Sync.defer(new EpollStream(connection))
+        Sync.defer {
+            connection.tlsStream match
+                case Present(tls) => tls
+                case Absent       => new EpollStream(connection)
+        }
 
     def listen(host: String, port: Int, backlog: Int)(
         handler: TransportStream => Unit < Async
@@ -75,8 +120,9 @@ final class EpollNativeTransport extends Transport:
             else
                 val boundHost  = host
                 val acceptEpfd = epollCreate()
+                val connFibers = new java.util.concurrent.ConcurrentLinkedQueue[Fiber[Unit, Any]]()
                 Scope.acquireRelease {
-                    Fiber.init {
+                    Fiber.initUnscoped {
                         Loop.foreach {
                             discard(epollRegister(acceptEpfd, serverFd, 1)) // read-ready = accept-ready
                             awaitReady(acceptEpfd).andThen {
@@ -84,28 +130,51 @@ final class EpollNativeTransport extends Transport:
                                     val clientFd = tcpAccept(serverFd)
                                     if clientFd >= 0 then
                                         val conn = new EpollConnection(clientFd)
-                                        Fiber.init {
+                                        Fiber.initUnscoped {
                                             Sync.ensure(closeNow(conn)) {
                                                 stream(conn).map(handler)
                                             }
-                                        }.unit
+                                        }.map { fiber =>
+                                            connFibers.add(fiber)
+                                            Kyo.unit
+                                        }
                                     else
                                         Kyo.unit
                                     end if
                                 }
                             }.andThen(Loop.continue)
                         }
-                    }.andThen {
-                        new TransportListener:
-                            val port = boundPort
-                            val host = boundHost
+                    }.map { acceptFiber =>
+                        (
+                            acceptFiber,
+                            new TransportListener:
+                                val port = boundPort
+                                val host = boundHost
+                        )
                     }
-                } { _ =>
-                    Sync.defer {
-                        tcpClose(acceptEpfd)
-                        tcpClose(serverFd)
+                } { case (acceptFiber, _) =>
+                    acceptFiber.interrupt.andThen(Abort.run(acceptFiber.get)).andThen {
+                        // Snapshot all active connection fibers, then interrupt and await each.
+                        // This prevents fd exhaustion from accumulated sleeping server-side fibers
+                        // when tests create many short-lived client connections.
+                        Sync.defer {
+                            val buf  = new java.util.ArrayList[Fiber[Unit, Any]]()
+                            val iter = connFibers.iterator()
+                            while iter.hasNext do discard(buf.add(iter.next()))
+                            buf
+                        }.map { fiberList =>
+                            Kyo.foreach((0 until fiberList.size()).toSeq) { i =>
+                                val f = fiberList.get(i)
+                                f.interrupt.andThen(Abort.run(f.get))
+                            }.andThen {
+                                Sync.defer {
+                                    tcpClose(acceptEpfd)
+                                    tcpClose(serverFd)
+                                }
+                            }
+                        }
                     }
-                }
+                }.map(_._2)
             end if
         }
 
@@ -123,26 +192,71 @@ final class EpollNativeTransport extends Transport:
             }
         }
 
+    override def listenTls(host: String, port: Int, backlog: Int, tlsConfig: TlsConfig)(
+        handler: TransportStream => Unit < Async
+    )(using Frame): TransportListener < (Async & Scope) =
+        import TlsBindings.*
+        val ctx = tlsCtxNew(1)
+        if ctx == 0 then
+            Abort.panic(HttpBindException(host, port, new Exception("Failed to create TLS context")))
+        else
+            val certResult = Zone {
+                tlsCtxSetCert(
+                    ctx,
+                    toCString(tlsConfig.certChainPath.getOrElse("")),
+                    toCString(tlsConfig.privateKeyPath.getOrElse(""))
+                )
+            }
+            if certResult != 0 then
+                tlsCtxFree(ctx)
+                Abort.panic(HttpBindException(host, port, new Exception("Failed to load TLS certificate/key")))
+            else
+                listen(host, port, backlog) { tcpStream =>
+                    val ssl = Zone { tlsNew(ctx, null) }
+                    if ssl == 0 then
+                        Abort.panic(HttpProtocolException("Failed to create TLS session for accepted connection"))
+                    else
+                        tlsSetAcceptState(ssl)
+                        val tlsStream = new NativeTlsStream(ssl, ctx, tcpStream)
+                        Sync.ensure(Sync.defer { tlsFree(ssl) }) {
+                            Abort.run[HttpException](tlsStream.handshake()).map {
+                                case Result.Success(_) => handler(tlsStream)
+                                case _                 => Kyo.unit
+                            }
+                        }
+                    end if
+                }
+            end if
+        end if
+    end listenTls
+
 end EpollNativeTransport
 
-private[kyo] class EpollConnection(val fd: Int, var closed: Boolean = false)
+private[kyo] class EpollConnection(
+    val fd: Int,
+    var closed: Boolean = false,
+    var tlsStream: Maybe[NativeTlsStream] = Absent
+):
+    import PosixBindings.*
+    // Per-connection epoll fds — separate for read and write to avoid event stealing.
+    // Closed in closeNow (safe because Fiber.initUnscoped ensures closeNow fires only after
+    // all I/O on this connection has finished).
+    val readEpfd: Int  = epollCreate()
+    val writeEpfd: Int = epollCreate()
+end EpollConnection
 
 private[kyo] class EpollStream(conn: EpollConnection) extends TransportStream:
 
     import PosixBindings.*
 
-    // Per-stream epoll fds — avoids event stealing between read and write fibers
-    private val readEpfd  = epollCreate()
-    private val writeEpfd = epollCreate()
-
     def read(buf: Array[Byte])(using Frame): Int < Async =
-        discard(epollRegister(readEpfd, conn.fd, 1)) // EPOLLIN
+        discard(epollRegister(conn.readEpfd, conn.fd, 1)) // EPOLLIN
         Loop.foreach {
             Async.sleep(1.millis).andThen {
                 val ready = Zone {
                     val outFd     = alloc[CInt](1)
                     val outEvents = alloc[CInt](1)
-                    epollWaitNonBlock(readEpfd, outFd, outEvents, 1) > 0
+                    epollWaitNonBlock(conn.readEpfd, outFd, outEvents, 1) > 0
                 }
                 if ready then
                     val n = Zone {
@@ -155,7 +269,7 @@ private[kyo] class EpollStream(conn: EpollConnection) extends TransportStream:
                                 i += 1
                             end while
                         end if
-                        bytesRead
+                        if bytesRead == 0 then -1 else bytesRead // 0 = EOF on POSIX, map to -1
                     }
                     Loop.done(n)
                 else
@@ -168,13 +282,13 @@ private[kyo] class EpollStream(conn: EpollConnection) extends TransportStream:
     def write(data: Span[Byte])(using Frame): Unit < Async =
         if data.isEmpty then Kyo.unit
         else
-            discard(epollRegister(writeEpfd, conn.fd, 2)) // EPOLLOUT
+            discard(epollRegister(conn.writeEpfd, conn.fd, 2)) // EPOLLOUT
             Loop.foreach {
                 Async.sleep(1.millis).andThen {
                     val ready = Zone {
                         val outFd     = alloc[CInt](1)
                         val outEvents = alloc[CInt](1)
-                        epollWaitNonBlock(writeEpfd, outFd, outEvents, 1) > 0
+                        epollWaitNonBlock(conn.writeEpfd, outFd, outEvents, 1) > 0
                     }
                     if ready then
                         val written = Zone {
