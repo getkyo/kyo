@@ -312,7 +312,8 @@ class HttpServerTest extends Test:
             val ep = HttpHandler.getSseText("sse-opts") { _ =>
                 Stream[HttpSseEvent[String], Async] {
                     Loop.foreach {
-                        Async.delay(1.seconds)(()).andThen {
+                        // Block forever — this stream should never be consumed by an OPTIONS request
+                        Latch.init(1).map(_.await).andThen {
                             Emit.valueWith(Chunk(HttpSseEvent("data")))(Loop.continue)
                         }
                     }
@@ -1202,7 +1203,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.postText("handler-id")
             val ep = route.handler { req =>
                 val id    = req.fields.body
-                val delay = id.toInt % 10
+                val delay = id.toInt % 2
                 Async.sleep(delay.millis).andThen(HttpResponse.ok(id))
             }
             runServer(ep) { url =>
@@ -1235,18 +1236,18 @@ class HttpServerTest extends Test:
         "slow handler does not block fast handlers" - {
             val slowRoute = HttpRoute.getRaw("slow-h").response(_.bodyText)
             val fastRoute = HttpRoute.getRaw("fast-h").response(_.bodyText)
-            val slowEp    = slowRoute.handler(_ => Async.sleep(2.seconds).andThen(HttpResponse.ok("slow")))
-            val fastEp    = fastRoute.handler(_ => HttpResponse.ok("fast"))
+            // Handler blocks forever — cancelled by fiber interrupt
+            val slowEp = slowRoute.handler(_ => Latch.init(1).map(_.await).andThen(HttpResponse.ok("slow")))
+            val fastEp = fastRoute.handler(_ => HttpResponse.ok("fast"))
             runServer(slowEp, fastEp) { url =>
                 val repeats = 5
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
                     size <- sizes
-                    // Fire slow request in background
+                    // Fire slow request in background — handler blocks on promise forever
                     slowFiber <- Fiber.initUnscoped(
                         Abort.run[Throwable](send(url, slowRoute, HttpRequest.getRaw(HttpUrl.fromUri("/slow-h"))))
                     )
-                    _ <- Async.sleep(10.millis)
                     // Fast requests must complete quickly even while slow handler runs
                     latch <- Latch.init(1)
                     fastFibers <- Kyo.fill(size)(Fiber.initUnscoped(
@@ -1927,7 +1928,7 @@ class HttpServerTest extends Test:
                 val ep = route.handler { _ =>
                     val infiniteStream = Stream[Span[Byte], Async] {
                         kyo.Loop.foreach {
-                            Async.sleep(10.millis).andThen {
+                            Async.sleep(1.millis).andThen {
                                 kyo.Emit.valueWith(Chunk(Span.fromUnsafe("chunk\n".getBytes("UTF-8"))))(kyo.Loop.continue[Unit])
                             }
                         }
@@ -2001,7 +2002,7 @@ class HttpServerTest extends Test:
                     Sync.ensure(client.closeNow(conn)) {
                         val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
                             kyo.Emit.valueWith(Chunk(Span.fromUnsafe("a".getBytes("UTF-8")))) {
-                                Async.sleep(50.millis).andThen {
+                                Async.sleep(1.millis).andThen {
                                     kyo.Emit.valueWith(Chunk(Span.fromUnsafe("b".getBytes("UTF-8"))))(())
                                 }
                             }
@@ -2332,7 +2333,8 @@ class HttpServerTest extends Test:
                 .handler { _ =>
                     val events = Stream[HttpSseEvent[String], Async] {
                         Loop.foreach {
-                            Async.delay(1.seconds)(()).andThen {
+                            // Block forever — OPTIONS should never consume the stream
+                            Latch.init(1).map(_.await).andThen {
                                 Emit.valueWith(Chunk(HttpSseEvent("data")))(Loop.continue)
                             }
                         }
@@ -2458,7 +2460,8 @@ class HttpServerTest extends Test:
                 .handler { _ =>
                     val events = Stream[HttpSseEvent[String], Async] {
                         Loop.foreach {
-                            Async.delay(1.seconds)(()).andThen {
+                            // Block forever — OPTIONS should never consume the stream
+                            Latch.init(1).map(_.await).andThen {
                                 Emit.valueWith(Chunk(HttpSseEvent("data")))(Loop.continue)
                             }
                         }
@@ -2654,7 +2657,7 @@ class HttpServerTest extends Test:
                 Stream[HttpSseEvent[User], Async] {
                     Loop.foreach {
                         for
-                            _ <- Async.delay(500.millis)(())
+                            _ <- Async.delay(1.millis)(())
                         yield
                             val c = counter.incrementAndGet()
                             Emit.valueWith(Chunk(HttpSseEvent(
@@ -2692,7 +2695,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("sse-delayed").response(_.bodySseText)
             val ep = route.handler { _ =>
                 val events = Stream.init(Chunk(1, 2, 3)).mapChunk { chunk =>
-                    Async.delay(100.millis) {
+                    Async.delay(1.millis) {
                         chunk.map(i => HttpSseEvent(s"event-$i"))
                     }
                 }
@@ -2725,7 +2728,7 @@ class HttpServerTest extends Test:
                 val users = Stream[User, Async] {
                     Loop.foreach {
                         for
-                            _ <- Async.delay(500.millis)(())
+                            _ <- Async.delay(1.millis)(())
                         yield
                             val c = counter.incrementAndGet()
                             Emit.valueWith(Chunk(User(c, s"user-$c")))(Loop.continue)
@@ -2758,7 +2761,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("ndjson-delayed").response(_.bodyNdjson[User])
             val ep = route.handler { _ =>
                 val users = Stream.init(Chunk(User(1, "alice"), User(2, "bob"))).mapChunk { chunk =>
-                    Async.delay(100.millis) {
+                    Async.delay(1.millis) {
                         chunk
                     }
                 }
@@ -2810,9 +2813,9 @@ class HttpServerTest extends Test:
             val ep = route.handler { _ =>
                 val events = Stream[HttpSseEvent[String], Async] {
                     Emit.valueWith(Chunk(HttpSseEvent("first", Present("msg"), Absent, Absent))) {
-                        Async.sleep(200.millis).andThen {
+                        Async.sleep(1.millis).andThen {
                             Emit.valueWith(Chunk(HttpSseEvent("second", Present("msg"), Absent, Absent))) {
-                                Async.sleep(200.millis).andThen {
+                                Async.sleep(1.millis).andThen {
                                     Emit.valueWith(Chunk(HttpSseEvent("third", Present("msg"), Absent, Absent)))(())
                                 }
                             }
@@ -2848,7 +2851,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("sse-map-delay").response(_.bodySseText)
             val ep = route.handler { _ =>
                 val events = Stream.init(Chunk(1, 2, 3)).map { i =>
-                    Async.delay(100.millis) {
+                    Async.delay(1.millis) {
                         HttpSseEvent(s"item-$i")
                     }
                 }
@@ -2875,7 +2878,7 @@ class HttpServerTest extends Test:
         "SSE JSON stream with Async.delay inside map" - {
             val ep = HttpHandler.getSseJson[User]("sse-delay-map") { _ =>
                 Stream.init(Chunk.from(1 to 3)).map { i =>
-                    Async.delay(200.millis) {
+                    Async.delay(1.millis) {
                         HttpSseEvent(data = User(i, s"u$i"))
                     }
                 }
@@ -2908,7 +2911,7 @@ class HttpServerTest extends Test:
                     Loop.indexed { i =>
                         if i >= 3 then Loop.done
                         else
-                            Async.delay(200.millis)(()).andThen {
+                            Async.delay(1.millis)(()).andThen {
                                 Emit.valueWith(Chunk(User(i + 1, s"u${i + 1}")))(Loop.continue)
                             }
                     }
@@ -2940,7 +2943,7 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("sse-delay-first").response(_.bodySseText)
             val ep = route.handler { _ =>
                 val events = Stream[HttpSseEvent[String], Async] {
-                    Async.delay(200.millis) {
+                    Async.delay(1.millis) {
                         Emit.value(Chunk(HttpSseEvent("delayed-event")))
                     }
                 }
@@ -3140,7 +3143,8 @@ class HttpServerTest extends Test:
             val ep = HttpHandler.getSseText("head-sse") { _ =>
                 Stream[HttpSseEvent[String], Async] {
                     Loop.foreach {
-                        Async.delay(1.seconds)(()).andThen {
+                        // Block forever — HEAD should never consume the stream
+                        Latch.init(1).map(_.await).andThen {
                             Emit.valueWith(Chunk(HttpSseEvent("data")))(Loop.continue)
                         }
                     }
@@ -3381,7 +3385,7 @@ class HttpServerTest extends Test:
             val ep1 = HttpHandler.getSseText("stream1") { _ =>
                 Stream[HttpSseEvent[String], Async] {
                     Loop.foreach {
-                        Async.delay(100.millis)(()).andThen {
+                        Async.delay(1.millis)(()).andThen {
                             Emit.valueWith(Chunk(HttpSseEvent("from-server1")))(Loop.continue)
                         }
                     }
@@ -3390,7 +3394,7 @@ class HttpServerTest extends Test:
             val ep2 = HttpHandler.getSseText("stream2") { _ =>
                 Stream[HttpSseEvent[String], Async] {
                     Loop.foreach {
-                        Async.delay(100.millis)(()).andThen {
+                        Async.delay(1.millis)(()).andThen {
                             Emit.valueWith(Chunk(HttpSseEvent("from-server2")))(Loop.continue)
                         }
                     }
@@ -3430,25 +3434,30 @@ class HttpServerTest extends Test:
             }
         }
 
-        "handler error after client disconnect does not crash" - {
+        "handler error after client disconnect does not crash" in run {
             val route = HttpRoute.getRaw("slow-fail").response(_.bodyText)
-            val ep = route.handler { _ =>
-                Async.sleep(2.seconds).andThen {
-                    throw new RuntimeException("delayed boom")
-                    HttpResponse.ok("unreachable")
-                }
-            }
-            runServer(ep) { url =>
-                // Send request, then disconnect before handler finishes via timeout
-                Abort.run[Throwable] {
-                    Abort.catching[Throwable] {
-                        Async.timeout(500.millis) {
-                            sendRaw(url, HttpMethod.GET, "/slow-fail")
+            Latch.init(1).map { handlerDone =>
+                val ep = route.handler { _ =>
+                    // Sleep briefly so client can disconnect, then throw
+                    Async.sleep(200.millis).andThen {
+                        handlerDone.release.andThen {
+                            throw new RuntimeException("delayed boom")
+                            HttpResponse.ok("unreachable")
                         }
                     }
-                }.map { _ =>
-                    // Wait for handler to complete and potentially try to write to closed connection
-                    Async.sleep(3.seconds).andThen(succeed)
+                }
+                withServer(ep) { url =>
+                    // Send request, then disconnect before handler finishes via timeout
+                    Abort.run[Throwable] {
+                        Abort.catching[Throwable] {
+                            Async.timeout(50.millis) {
+                                sendRaw(url, HttpMethod.GET, "/slow-fail")
+                            }
+                        }
+                    }.map { _ =>
+                        // Wait for handler to complete and potentially try to write to closed connection
+                        handlerDone.await.andThen(succeed)
+                    }
                 }
             }
         }

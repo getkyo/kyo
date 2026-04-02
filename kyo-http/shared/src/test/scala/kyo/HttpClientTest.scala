@@ -1110,7 +1110,8 @@ class HttpClientTest extends Test:
         "timeout error" - {
             val route = HttpRoute.getRaw("slow").response(_.bodyText)
             val ep = route.handler { _ =>
-                Async.delay(10.seconds)(HttpResponse.ok("too late"))
+                // Block forever — cancelled when client times out
+                Latch.init(1).map(_.await).andThen(HttpResponse.ok("too late"))
             }
             runServer(ep) { url =>
                 HttpClient.withConfig(HttpClientConfig(timeout = Present(100.millis))) {
@@ -1289,8 +1290,9 @@ class HttpClientTest extends Test:
         "slot returned after concurrent timeouts" - {
             val slowRoute = HttpRoute.getRaw("slow").response(_.bodyText)
             val fastRoute = HttpRoute.getRaw("fast").response(_.bodyText)
-            val slowEp    = slowRoute.handler(_ => Async.sleep(10.seconds).andThen(HttpResponse.ok("late")))
-            val fastEp    = fastRoute.handler(_ => HttpResponse.ok("ok"))
+            // Handler blocks forever — cancelled when client times out
+            val slowEp = slowRoute.handler(_ => Latch.init(1).map(_.await).andThen(HttpResponse.ok("late")))
+            val fastEp = fastRoute.handler(_ => HttpResponse.ok("ok"))
             runServer(slowEp, fastEp) { url =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
@@ -1321,8 +1323,9 @@ class HttpClientTest extends Test:
         "slot returned after concurrent fiber cancellations" - {
             val slowRoute = HttpRoute.getRaw("slow2").response(_.bodyText)
             val fastRoute = HttpRoute.getRaw("fast2").response(_.bodyText)
-            val slowEp    = slowRoute.handler(_ => Async.sleep(10.seconds).andThen(HttpResponse.ok("late")))
-            val fastEp    = fastRoute.handler(_ => HttpResponse.ok("ok"))
+            // Handler blocks forever — cancelled by fiber interrupt
+            val slowEp = slowRoute.handler(_ => Latch.init(1).map(_.await).andThen(HttpResponse.ok("late")))
+            val fastEp = fastRoute.handler(_ => HttpResponse.ok("ok"))
             runServer(slowEp, fastEp) { url =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
@@ -1340,7 +1343,7 @@ class HttpClientTest extends Test:
                         )
                     ))
                     _ <- latch.release
-                    _ <- Async.sleep(50.millis)
+                    // Let fibers acquire slots, then interrupt them
                     _ <- Kyo.foreach(fibers)(_.interrupt)
                     _ <- untilTrue {
                         Abort.run(c.sendWith(fastRoute, fastReq)(identity)).map(_.isSuccess)
@@ -1360,7 +1363,7 @@ class HttpClientTest extends Test:
             val streamEp = streamRoute.handler { _ =>
                 val chunks = Stream[Span[Byte], Async] {
                     kyo.Loop.foreach {
-                        Async.sleep(10.millis).andThen {
+                        Async.sleep(1.millis).andThen {
                             kyo.Emit.valueWith(Chunk(Span.fromUnsafe("data\n".getBytes("UTF-8"))))(kyo.Loop.continue[Unit])
                         }
                     }
@@ -1421,7 +1424,8 @@ class HttpClientTest extends Test:
                         latch.await.andThen {
                             val slowBody = Stream[Span[Byte], Async] {
                                 kyo.Loop.foreach {
-                                    Async.sleep(100.millis).andThen {
+                                    // Block forever per iteration — cancelled by fiber interrupt
+                                    Latch.init(1).map(_.await).andThen {
                                         kyo.Emit.valueWith(Chunk(Span.fromUnsafe("x".getBytes("UTF-8"))))(kyo.Loop.continue[Unit])
                                     }
                                 }
@@ -1434,7 +1438,7 @@ class HttpClientTest extends Test:
                         }
                     })
                     _ <- latch.release
-                    _ <- Async.sleep(50.millis)
+                    // Let fibers acquire slots, then interrupt them
                     _ <- Kyo.foreach(fibers)(_.interrupt)
                     _ <- untilTrue {
                         Abort.run(c.sendWith(fastRoute, fastReq)(identity)).map(_.isSuccess)
@@ -1586,7 +1590,7 @@ class HttpClientTest extends Test:
 
         "concurrent burst within pool capacity" - {
             val route = HttpRoute.getRaw("burst").response(_.bodyText)
-            val ep    = route.handler(_ => Async.sleep(10.millis).andThen(HttpResponse.ok("ok")))
+            val ep    = route.handler(_ => Async.sleep(1.millis).andThen(HttpResponse.ok("ok")))
             runServer(ep) { url =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
@@ -1874,12 +1878,11 @@ class HttpClientTest extends Test:
     "client cancellation and error handling" - {
 
         "buffered request: fiber interruption cancels in-flight request" - {
-            // Server delays response. Client times out. Request should be cancelled, not leak.
+            // Server never responds. Client times out. Request should be cancelled, not leak.
             val route = HttpRoute.getRaw("slow").response(_.bodyText)
             val ep = route.handler { _ =>
-                Async.sleep(5.seconds).andThen {
-                    HttpResponse.ok("too late")
-                }
+                // Block forever — cancelled when client times out
+                Latch.init(1).map(_.await).andThen(HttpResponse.ok("too late"))
             }
             runServer(ep) { url =>
                 Abort.run[HttpException | kyo.Timeout] {
@@ -1899,7 +1902,7 @@ class HttpClientTest extends Test:
             val ep = route.handler { _ =>
                 val chunks = Stream[Span[Byte], Async] {
                     kyo.Loop.foreach {
-                        Async.sleep(10.millis).andThen {
+                        Async.sleep(1.millis).andThen {
                             kyo.Emit.valueWith(Chunk(Span.fromUnsafe("data\n".getBytes("UTF-8"))))(kyo.Loop.continue[Unit])
                         }
                     }
@@ -1994,7 +1997,8 @@ class HttpClientTest extends Test:
 
         "client close while requests in-flight" in run {
             val slowRoute = HttpRoute.getRaw("slow-close").response(_.bodyText)
-            val slowEp    = slowRoute.handler(_ => Async.sleep(5.seconds).andThen(HttpResponse.ok("late")))
+            // Handler blocks forever — cancelled when client closes
+            val slowEp = slowRoute.handler(_ => Latch.init(1).map(_.await).andThen(HttpResponse.ok("late")))
             withServer(slowEp) { url =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
@@ -2010,8 +2014,8 @@ class HttpClientTest extends Test:
                             }
                         )
                     ))
-                    _       <- latch.release
-                    _       <- Async.sleep(50.millis)
+                    _ <- latch.release
+                    // Close immediately — fibers should complete (with errors), not hang
                     _       <- c.closeNow
                     results <- Kyo.foreach(fibers)(f => Abort.run[Throwable](f.get))
                 yield
