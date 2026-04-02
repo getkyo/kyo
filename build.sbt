@@ -125,7 +125,8 @@ lazy val kyoJVM = project
         `kyo-combinators`.jvm,
         `kyo-playwright`.jvm,
         `kyo-examples`.jvm,
-        `kyo-actor`.jvm
+        `kyo-actor`.jvm,
+        `kyo-grpc`.jvm
     )
 
 lazy val kyoJS = project
@@ -506,6 +507,38 @@ lazy val `kyo-aeron` =
             )
         )
         .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-grpc` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-grpc"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            fork := true,
+            javaOptions ++= Seq(
+                "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
+                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                "--add-opens=java.base/java.nio=ALL-UNNAMED",
+                "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+            ),
+            libraryDependencies ++= Seq(
+                "io.grpc" % "grpc-netty" % "1.70.0",
+                "io.grpc" % "grpc-protobuf" % "1.70.0",
+                "io.grpc" % "grpc-stub" % "1.70.0",
+                "io.grpc" % "grpc-api" % "1.70.0",
+                "io.netty" % "netty-handler" % "4.2.1.Final",
+                "com.google.protobuf" % "protobuf-java" % "3.25.5",
+                "com.google.protobuf" % "protobuf-java-util" % "3.25.5",
+                "javax.annotation" % "javax.annotation-api" % "1.3.2"
+            )
+        )
+        .jvmSettings(mimaCheck(false))
+        .settings(
+            // Enable protobuf generation via sbt-scalapb if available, otherwise rely on external generation
+            // For now, we include pre-generated sources or use grpc-java's builtin codegen
+        )
 
 lazy val `kyo-sttp` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
