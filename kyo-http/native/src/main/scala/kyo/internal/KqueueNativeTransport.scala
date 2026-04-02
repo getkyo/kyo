@@ -3,15 +3,95 @@ package kyo.internal
 import kyo.*
 import scala.scalanative.unsafe.*
 
+/** Shared kqueue-based I/O event loop for macOS/BSD (Scala Native).
+  *
+  * A single kqueue fd is shared across all connections. The poller fiber calls the @blocking kqueueWait once, dispatches all ready events
+  * to their per-fd Promises, then loops. This eliminates per-connection kqueue fds and 1ms polling.
+  *
+  * Thread safety: ConcurrentHashMap for the pending table. The poller is the only reader of ready events; writers only add/replace entries
+  * before registering with the kernel.
+  *
+  * AllowUnsafe is confined to the single point where poller completes Promises.
+  */
+private[kyo] class KqueueIoLoop extends IoLoop:
+
+    import PosixBindings.*
+
+    private val kq = kqueueCreate()
+
+    // fd → (readPromise, writePromise)
+    private val pending =
+        new java.util.concurrent.ConcurrentHashMap[Int, (Maybe[Promise.Unsafe[Unit, Any]], Maybe[Promise.Unsafe[Unit, Any]])]()
+
+    /** Start the shared poller fiber. Must be called once before any awaitReadable/awaitWritable. */
+    def start()(using Frame): Unit < Async =
+        Fiber.initUnscoped {
+            Loop.foreach {
+                Sync.defer {
+                    Zone {
+                        val outFds     = alloc[CInt](64)
+                        val outFilters = alloc[CInt](64)
+                        // @blocking: OS thread blocks here; Kyo scheduler spawns workers as needed
+                        val n = kqueueWait(kq, outFds, outFilters, 64)
+                        Loop.indexed { i =>
+                            if i < n then
+                                val fd     = outFds(i)
+                                val filter = outFilters(i)
+                                Maybe(pending.get(fd)).foreach { entry =>
+                                    import AllowUnsafe.embrace.danger
+                                    if filter == -1 then // EVFILT_READ
+                                        entry._1 match
+                                            case Present(p) =>
+                                                pending.put(fd, (Absent, entry._2))
+                                                p.completeUnitDiscard()
+                                            case Absent =>
+                                    else if filter == -2 then // EVFILT_WRITE
+                                        entry._2 match
+                                            case Present(p) =>
+                                                pending.put(fd, (entry._1, Absent))
+                                                p.completeUnitDiscard()
+                                            case Absent =>
+                                    end if
+                                }
+                                Loop.continue
+                            else
+                                Loop.done(())
+                            end if
+                        }
+                    }
+                }.andThen(Loop.continue)
+            }
+        }.unit
+
+    def awaitReadable(fd: Int)(using Frame): Unit < Async =
+        Promise.init[Unit, Any].map { promise =>
+            Sync.defer {
+                import AllowUnsafe.embrace.danger
+                val writeSlot = Maybe(pending.get(fd)).map(_._2).getOrElse(Absent)
+                pending.put(fd, (Present(promise.unsafe), writeSlot))
+                discard(kqueueRegister(kq, fd, -1)) // EVFILT_READ, EV_ONESHOT
+            }.andThen(promise.get)
+        }
+
+    def awaitWritable(fd: Int)(using Frame): Unit < Async =
+        Promise.init[Unit, Any].map { promise =>
+            Sync.defer {
+                import AllowUnsafe.embrace.danger
+                val readSlot = Maybe(pending.get(fd)).map(_._1).getOrElse(Absent)
+                pending.put(fd, (readSlot, Present(promise.unsafe)))
+                discard(kqueueRegister(kq, fd, -2)) // EVFILT_WRITE, EV_ONESHOT
+            }.andThen(promise.get)
+        }
+
+    def close(): Unit =
+        tcpClose(kq)
+
+end KqueueIoLoop
+
 /** Kqueue-based non-blocking TCP Transport for macOS/BSD (Scala Native).
   *
-  * Stream-first variant of KqueueNativeTransport. Each connection exposes a pull-based `Stream[Span[Byte], Async]` for reads instead of a
-  * callback-based `read(buf): Int`. Server listen returns a `TransportListener` whose `connections` stream yields accepted connections.
-  *
-  * Design follows KqueueNativeTransport closely:
-  *   - Per-connection kqueue fds for read and write to avoid event stealing between concurrent fibers.
-  *   - Blocking kqueueWait (awaitReady) — OS thread blocks but Kyo's preemptive scheduler keeps other fibers running.
-  *   - TLS via NativeTlsStream wrapping an inner KqueueStream (RawStream), so the TLS layer is unchanged.
+  * All connections share one KqueueIoLoop. The poller fiber calls @blocking kqueueWait and dispatches readiness to per-fd Promises.
+  * Eliminates per-connection kqueue fds and 1ms polling.
   */
 final class KqueueNativeTransport extends Transport:
 
@@ -19,13 +99,24 @@ final class KqueueNativeTransport extends Transport:
 
     type Connection = KqueueConnection
 
+    private val loop = new KqueueIoLoop
+
+    // Lazy start: loop is started on the first connect/listen call via this atomic flag.
+    private val loopStarted = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private def ensureLoopStarted()(using Frame): Unit < Async =
+        if loopStarted.compareAndSet(false, true) then loop.start()
+        else Kyo.unit
+
     def connect(host: String, port: Int, tls: Maybe[TlsConfig])(using
         Frame
     ): KqueueConnection < (Async & Abort[HttpException]) =
-        connectPlain(host, port).map { conn =>
-            tls match
-                case Present(tlsCfg) => connectTls(host, conn, tlsCfg)
-                case Absent          => conn
+        ensureLoopStarted().andThen {
+            connectPlain(host, port).map { conn =>
+                tls match
+                    case Present(tlsCfg) => connectTls(host, conn, tlsCfg)
+                    case Absent          => conn
+            }
         }
 
     private def connectPlain(host: String, port: Int)(using
@@ -40,20 +131,17 @@ final class KqueueNativeTransport extends Transport:
             if fd < 0 then
                 Abort.fail(HttpConnectException(host, port, new Exception("connect failed")))
             else if pending == 1 then
-                val kq = kqueueCreate()
-                discard(kqueueRegister(kq, fd, -2))
-                awaitReady(kq).andThen {
-                    tcpClose(kq)
+                loop.awaitWritable(fd).andThen {
                     val err = tcpConnectError(fd)
                     if err != 0 then
                         tcpClose(fd)
                         Abort.fail(HttpConnectException(host, port, new Exception(s"connect failed: errno=$err")))
                     else
-                        Sync.defer(new KqueueConnection(fd))
+                        Sync.defer(new KqueueConnection(fd, loop))
                     end if
                 }
             else
-                Sync.defer(new KqueueConnection(fd))
+                Sync.defer(new KqueueConnection(fd, loop))
             end if
         }
 
@@ -96,8 +184,6 @@ final class KqueueNativeTransport extends Transport:
                 case Absent =>
             end match
             tcpClose(c.fd)
-            tcpClose(c.readKq)
-            tcpClose(c.writeKq)
         }
 
     def close(c: KqueueConnection, gracePeriod: Duration)(using Frame): Unit < Async =
@@ -106,144 +192,123 @@ final class KqueueNativeTransport extends Transport:
     def listen(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using
         Frame
     ): TransportListener[KqueueConnection] < (Async & Scope) =
-        Sync.defer {
-            val (serverFd, boundPort) = Zone {
-                val outPort = alloc[CInt]()
-                val fd      = tcpListen(toCString(host), port, backlog, outPort)
-                (fd, !outPort)
-            }
-            if serverFd < 0 then
-                Abort.panic(HttpBindException(host, port, new Exception("bind/listen failed")))
-            else
-                val boundHost = host
-                val acceptKq  = kqueueCreate()
-                tls match
-                    case Absent =>
-                        Scope.acquireRelease {
-                            val connStream: Stream[KqueueConnection, Async] =
-                                Stream.unfold((), chunkSize = 1) { _ =>
-                                    discard(kqueueRegister(acceptKq, serverFd, -1))
-                                    awaitReady(acceptKq).andThen {
-                                        Sync.defer {
-                                            val clientFd = tcpAccept(serverFd)
-                                            if clientFd >= 0 then
-                                                Maybe((new KqueueConnection(clientFd), ()))
-                                            else
-                                                Maybe.empty
-                                            end if
-                                        }
-                                    }
-                                }
-                            new TransportListener(
-                                boundPort,
-                                boundHost,
-                                connStream,
-                                close = Sync.defer(tcpClose(acceptKq))
-                            )
-                        } { _ =>
-                            Sync.defer {
-                                tcpClose(acceptKq)
-                                tcpClose(serverFd)
-                            }
-                        }
-                    case Present(tlsCfg) =>
-                        import TlsBindings.*
-                        val ctx = tlsCtxNew(1)
-                        if ctx == 0 then
-                            tcpClose(acceptKq)
-                            tcpClose(serverFd)
-                            Abort.panic(HttpBindException(host, port, new Exception("Failed to create TLS context")))
-                        else
-                            val certResult = Zone {
-                                tlsCtxSetCert(
-                                    ctx,
-                                    toCString(tlsCfg.certChainPath.getOrElse("")),
-                                    toCString(tlsCfg.privateKeyPath.getOrElse(""))
-                                )
-                            }
-                            if certResult != 0 then
-                                tlsCtxFree(ctx)
-                                tcpClose(acceptKq)
-                                tcpClose(serverFd)
-                                Abort.panic(HttpBindException(
-                                    host,
-                                    port,
-                                    new Exception("Failed to load TLS certificate/key")
-                                ))
-                            else
-                                Scope.acquireRelease {
-                                    val connStream: Stream[KqueueConnection, Async] =
-                                        Stream.unfold((), chunkSize = 1) { _ =>
-                                            discard(kqueueRegister(acceptKq, serverFd, -1))
-                                            awaitReady(acceptKq).andThen {
-                                                Sync.defer {
-                                                    val clientFd = tcpAccept(serverFd)
-                                                    if clientFd >= 0 then
-                                                        val conn = new KqueueConnection(clientFd)
-                                                        val ssl  = Zone { tlsNew(ctx, null) }
-                                                        if ssl == 0 then
-                                                            tcpClose(clientFd)
-                                                            Maybe.empty
-                                                        else
-                                                            tlsSetAcceptState(ssl)
-                                                            val bridge    = new KqueueStreamTlsBridge(conn)
-                                                            val tlsStream = new NativeTlsStream(ssl, ctx, bridge)
-                                                            conn.tlsStream = Present(tlsStream)
-                                                            Maybe((conn, ()))
-                                                        end if
-                                                    else
-                                                        Maybe.empty
-                                                    end if
-                                                }
+        ensureLoopStarted().andThen {
+            Sync.defer {
+                val (serverFd, boundPort) = Zone {
+                    val outPort = alloc[CInt]()
+                    val fd      = tcpListen(toCString(host), port, backlog, outPort)
+                    (fd, !outPort)
+                }
+                if serverFd < 0 then
+                    Abort.panic(HttpBindException(host, port, new Exception("bind/listen failed")))
+                else
+                    val boundHost = host
+                    tls match
+                        case Absent =>
+                            Scope.acquireRelease {
+                                val connStream: Stream[KqueueConnection, Async] =
+                                    Stream.unfold((), chunkSize = 1) { _ =>
+                                        loop.awaitReadable(serverFd).andThen {
+                                            Sync.defer {
+                                                val clientFd = tcpAccept(serverFd)
+                                                if clientFd >= 0 then
+                                                    Maybe((new KqueueConnection(clientFd, loop), ()))
+                                                else
+                                                    Maybe.empty
+                                                end if
                                             }
                                         }
-                                    new TransportListener(
-                                        boundPort,
-                                        boundHost,
-                                        connStream,
-                                        close = Sync.defer(tcpClose(acceptKq))
-                                    )
-                                } { _ =>
-                                    Sync.defer {
-                                        tlsCtxFree(ctx)
-                                        tcpClose(acceptKq)
-                                        tcpClose(serverFd)
                                     }
+                                new TransportListener(
+                                    boundPort,
+                                    boundHost,
+                                    connStream,
+                                    close = Sync.defer(tcpClose(serverFd))
+                                )
+                            } { _ =>
+                                Sync.defer(tcpClose(serverFd))
+                            }
+                        case Present(tlsCfg) =>
+                            import TlsBindings.*
+                            val ctx = tlsCtxNew(1)
+                            if ctx == 0 then
+                                tcpClose(serverFd)
+                                Abort.panic(HttpBindException(host, port, new Exception("Failed to create TLS context")))
+                            else
+                                val certResult = Zone {
+                                    tlsCtxSetCert(
+                                        ctx,
+                                        toCString(tlsCfg.certChainPath.getOrElse("")),
+                                        toCString(tlsCfg.privateKeyPath.getOrElse(""))
+                                    )
                                 }
+                                if certResult != 0 then
+                                    tlsCtxFree(ctx)
+                                    tcpClose(serverFd)
+                                    Abort.panic(HttpBindException(
+                                        host,
+                                        port,
+                                        new Exception("Failed to load TLS certificate/key")
+                                    ))
+                                else
+                                    Scope.acquireRelease {
+                                        val connStream: Stream[KqueueConnection, Async] =
+                                            Stream.unfold((), chunkSize = 1) { _ =>
+                                                loop.awaitReadable(serverFd).andThen {
+                                                    Sync.defer {
+                                                        val clientFd = tcpAccept(serverFd)
+                                                        if clientFd >= 0 then
+                                                            val conn = new KqueueConnection(clientFd, loop)
+                                                            val ssl  = Zone { tlsNew(ctx, null) }
+                                                            if ssl == 0 then
+                                                                tcpClose(clientFd)
+                                                                Maybe.empty
+                                                            else
+                                                                tlsSetAcceptState(ssl)
+                                                                val bridge    = new KqueueStreamTlsBridge(conn)
+                                                                val tlsStream = new NativeTlsStream(ssl, ctx, bridge)
+                                                                conn.tlsStream = Present(tlsStream)
+                                                                Maybe((conn, ()))
+                                                            end if
+                                                        else
+                                                            Maybe.empty
+                                                        end if
+                                                    }
+                                                }
+                                            }
+                                        new TransportListener(
+                                            boundPort,
+                                            boundHost,
+                                            connStream,
+                                            close = Sync.defer(tcpClose(serverFd))
+                                        )
+                                    } { _ =>
+                                        Sync.defer {
+                                            tlsCtxFree(ctx)
+                                            tcpClose(serverFd)
+                                        }
+                                    }
+                                end if
                             end if
-                        end if
-                end match
-            end if
-        }
-
-    /** Block the OS thread until at least one event fires. Kyo's preemptive scheduler handles this. */
-    private[internal] def awaitReady(kq: Int)(using Frame): Unit < Async =
-        Sync.defer {
-            Zone {
-                val outFd     = alloc[CInt](1)
-                val outFilter = alloc[CInt](1)
-                kqueueWait(kq, outFd, outFilter, 1)
+                    end match
+                end if
             }
-        }.unit
+        }
 
 end KqueueNativeTransport
 
 /** A kqueue-backed connection that implements TransportStream (stream-based reads).
   *
-  * Holds per-connection kqueue fds for read and write, matching the pattern of KqueueConnection. TLS is stored as a NativeTlsStream when
-  * the connection is TLS-upgraded.
+  * Uses the shared KqueueIoLoop for all read/write readiness. No per-connection kqueue fds.
   */
 private[kyo] class KqueueConnection(
     val fd: Int,
+    private[internal] val loop: KqueueIoLoop,
     var closed: Boolean = false,
     var tlsStream: Maybe[NativeTlsStream] = Absent
 ) extends TransportStream:
 
     import PosixBindings.*
-
-    // Per-connection kqueue fds — separate for read and write to avoid event stealing.
-    val readKq: Int  = kqueueCreate()
-    val writeKq: Int = kqueueCreate()
 
     private val ChunkSize = 8192
 
@@ -255,40 +320,25 @@ private[kyo] class KqueueConnection(
         }
 
     private def readPlain()(using Frame): Maybe[(Span[Byte], Unit)] < Async =
-        discard(kqueueRegister(readKq, fd, -1))
-        Loop.foreach {
-            Async.sleep(1.millis).andThen {
-                val ready = Zone {
-                    val outFd     = alloc[CInt](1)
-                    val outFilter = alloc[CInt](1)
-                    kqueueWaitNonBlock(readKq, outFd, outFilter, 1) > 0
-                }
-                if ready then
-                    var buf: Array[Byte] = null
-                    val n = Zone {
-                        val ptr  = alloc[Byte](ChunkSize)
-                        val read = tcpRead(fd, ptr, ChunkSize)
-                        if read > 0 then
-                            val arr = new Array[Byte](read)
-                            var i   = 0
-                            while i < read do
-                                arr(i) = ptr(i)
-                                i += 1
-                            end while
-                            buf = arr
-                        end if
-                        read
-                    }
+        loop.awaitReadable(fd).andThen {
+            Sync.defer {
+                Zone {
+                    val ptr = alloc[Byte](ChunkSize)
+                    val n   = tcpRead(fd, ptr, ChunkSize)
                     if n > 0 then
-                        Loop.done(Maybe((Span.fromUnsafe(buf), ())))
+                        val arr = new Array[Byte](n)
+                        var i   = 0
+                        while i < n do
+                            arr(i) = ptr(i)
+                            i += 1
+                        end while
+                        Maybe((Span.fromUnsafe(arr), ()))
                     else if n == 0 then
-                        Loop.done(Maybe.empty[(Span[Byte], Unit)]) // EOF: peer closed
+                        Maybe.empty[(Span[Byte], Unit)] // EOF: peer closed
                     else
-                        Loop.continue // EAGAIN / spurious wakeup
+                        Maybe.empty[(Span[Byte], Unit)] // EAGAIN / error — treat as EOF
                     end if
-                else
-                    Loop.continue
-                end if
+                }
             }
         }
     end readPlain
@@ -313,36 +363,26 @@ private[kyo] class KqueueConnection(
                 case Present(tls) => tls.write(data)
                 case Absent       => writePlain(data)
 
-    private def writePlain(data: Span[Byte])(using Frame): Unit < Async =
-        discard(kqueueRegister(writeKq, fd, -2))
-        Loop.foreach {
-            Async.sleep(1.millis).andThen {
-                val ready = Zone {
-                    val outFd     = alloc[CInt](1)
-                    val outFilter = alloc[CInt](1)
-                    kqueueWaitNonBlock(writeKq, outFd, outFilter, 1) > 0
-                }
-                if ready then
-                    val written = Zone {
-                        val arr = data.toArrayUnsafe
-                        val ptr = alloc[Byte](arr.length)
-                        var i   = 0
-                        while i < arr.length do
-                            ptr(i) = arr(i)
-                            i += 1
-                        end while
-                        tcpWrite(fd, ptr, arr.length)
-                    }
+    private[kyo] def writePlain(data: Span[Byte])(using Frame): Unit < Async =
+        loop.awaitWritable(fd).andThen {
+            Sync.defer {
+                Zone {
+                    val arr = data.toArrayUnsafe
+                    val ptr = alloc[Byte](arr.length)
+                    var i   = 0
+                    while i < arr.length do
+                        ptr(i) = arr(i)
+                        i += 1
+                    end while
+                    val written = tcpWrite(fd, ptr, arr.length)
                     if written < 0 then
                         Abort.panic(HttpProtocolException(s"write failed on fd $fd"))
                     else if written < data.size then
-                        writePlain(data.slice(written, data.size)).andThen(Loop.done(()))
+                        writePlain(data.slice(written, data.size))
                     else
-                        Loop.done(())
+                        Kyo.unit
                     end if
-                else
-                    Loop.continue
-                end if
+                }
             }
         }
     end writePlain
@@ -351,79 +391,31 @@ end KqueueConnection
 
 /** Bridges a KqueueConnection to the RawStream API, so NativeTlsStream can use it for TLS I/O.
   *
-  * NativeTlsStream requires a RawStream with `read(buf): Int < Async`. This bridge delegates to the kqueue-backed raw I/O of a
-  * KqueueConnection without going through the TLS layer (avoids recursion).
+  * Delegates to the connection's raw I/O using the shared KqueueIoLoop.
   */
 private[kyo] class KqueueStreamTlsBridge(conn: KqueueConnection) extends RawStream:
 
-    import PosixBindings.*
-
-    private val ChunkSize = 8192
-
     def read(buf: Array[Byte])(using Frame): Int < Async =
-        discard(kqueueRegister(conn.readKq, conn.fd, -1))
-        Loop.foreach {
-            Async.sleep(1.millis).andThen {
-                val ready = Zone {
-                    val outFd     = alloc[CInt](1)
-                    val outFilter = alloc[CInt](1)
-                    kqueueWaitNonBlock(conn.readKq, outFd, outFilter, 1) > 0
+        conn.loop.awaitReadable(conn.fd).andThen {
+            Sync.defer {
+                import PosixBindings.*
+                Zone {
+                    val ptr       = alloc[Byte](buf.length)
+                    val bytesRead = tcpRead(conn.fd, ptr, buf.length)
+                    if bytesRead > 0 then
+                        var i = 0
+                        while i < bytesRead do
+                            buf(i) = ptr(i)
+                            i += 1
+                        end while
+                    end if
+                    if bytesRead == 0 then -1 else bytesRead // 0 = EOF on POSIX, map to -1
                 }
-                if ready then
-                    val n = Zone {
-                        val ptr       = alloc[Byte](buf.length)
-                        val bytesRead = tcpRead(conn.fd, ptr, buf.length)
-                        if bytesRead > 0 then
-                            var i = 0
-                            while i < bytesRead do
-                                buf(i) = ptr(i)
-                                i += 1
-                            end while
-                        end if
-                        if bytesRead == 0 then -1 else bytesRead // 0 = EOF on POSIX, map to -1
-                    }
-                    Loop.done(n)
-                else
-                    Loop.continue
-                end if
             }
         }
     end read
 
     def write(data: Span[Byte])(using Frame): Unit < Async =
-        if data.isEmpty then Kyo.unit
-        else
-            discard(kqueueRegister(conn.writeKq, conn.fd, -2))
-            Loop.foreach {
-                Async.sleep(1.millis).andThen {
-                    val ready = Zone {
-                        val outFd     = alloc[CInt](1)
-                        val outFilter = alloc[CInt](1)
-                        kqueueWaitNonBlock(conn.writeKq, outFd, outFilter, 1) > 0
-                    }
-                    if ready then
-                        val written = Zone {
-                            val arr = data.toArrayUnsafe
-                            val ptr = alloc[Byte](arr.length)
-                            var i   = 0
-                            while i < arr.length do
-                                ptr(i) = arr(i)
-                                i += 1
-                            end while
-                            tcpWrite(conn.fd, ptr, arr.length)
-                        }
-                        if written < 0 then
-                            Abort.panic(HttpProtocolException(s"write failed on fd ${conn.fd}"))
-                        else if written < data.size then
-                            write(data.slice(written, data.size)).andThen(Loop.done(()))
-                        else
-                            Loop.done(())
-                        end if
-                    else
-                        Loop.continue
-                    end if
-                }
-            }
-    end write
+        conn.writePlain(data)
 
 end KqueueStreamTlsBridge
