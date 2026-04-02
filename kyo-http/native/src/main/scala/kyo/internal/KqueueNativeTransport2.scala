@@ -259,6 +259,46 @@ private[kyo] class KqueueConnection2(
                 case Absent       => readPlain()
         }
 
+    /** Overrides the default stream-based bridge with a direct call to readPlain/readTls.
+      *
+      * The default implementation in TransportStream2 uses read.take(1).run, which creates stream effect machinery on every call. On Scala
+      * Native's cooperative scheduler this adds overhead that can cause cascading test failures. This override calls readPlain/readTls
+      * directly, matching the behaviour of the old KqueueStream.read(buf) implementation.
+      */
+    override def asTransportStream(using Frame): TransportStream < Sync =
+        Sync.defer {
+            new TransportStream:
+                private var leftover: Span[Byte] = Span.empty[Byte]
+
+                def read(out: Array[Byte])(using Frame): Int < Async =
+                    if leftover.nonEmpty then
+                        val take = math.min(leftover.size, out.length)
+                        discard(leftover.copyToArray(out, 0, take))
+                        leftover = leftover.slice(take, leftover.size)
+                        take
+                    else
+                        val readNext: Maybe[(Span[Byte], Unit)] < Async =
+                            tlsStream match
+                                case Present(tls) => readTls(tls)
+                                case Absent       => readPlain()
+                        readNext.map {
+                            case Maybe.Absent => -1
+                            case Maybe.Present((span, _)) =>
+                                if span.isEmpty then read(out)
+                                else
+                                    val take = math.min(span.size, out.length)
+                                    discard(span.copyToArray(out, 0, take))
+                                    if take < span.size then
+                                        leftover = span.slice(take, span.size)
+                                    take
+                                end if
+                        }
+
+                def write(data: Span[Byte])(using Frame): Unit < Async =
+                    KqueueConnection2.this.write(data)
+        }
+    end asTransportStream
+
     private def readPlain()(using Frame): Maybe[(Span[Byte], Unit)] < Async =
         discard(kqueueRegister(readKq, fd, -1))
         Loop.foreach {
