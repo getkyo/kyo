@@ -2099,11 +2099,11 @@ import kyo.*
 val path: Path = Path("tmp", "file.txt")
 
 // Read the entire contents of a file as a String
-val content: String < Sync =
+val content: String < (Sync & Abort[FileReadException]) =
     path.read
 
 // Write a String to a file
-val writeResult: Unit < Sync =
+val writeResult: Unit < (Sync & Abort[FileWriteException]) =
     path.write("Hello, world!")
 
 // Check if a path exists
@@ -2111,7 +2111,7 @@ val exists: Boolean < Sync =
     path.exists
 
 // Create a directory
-val createDir: Unit < Sync =
+val createDir: Unit < (Sync & Abort[FileFsException]) =
     Path("tmp", "test").mkDir
 ```
 
@@ -2127,28 +2127,27 @@ All methods that perform side effects are suspended using the `Sync` effect, ens
 
 ```scala
 import kyo.*
-import java.io.IOException
 
 val path: Path = Path("tmp", "file.txt")
 
 // Read a file as a stream of lines
-val lines: Stream[String, Scope & Sync] =
-    path.readLinesStream()
+val lines: Stream[String, Scope & Sync & Abort[FileReadException]] =
+    path.readLinesStream
 
 // Process the stream
-val result: Unit < (Scope & Console & Async & Abort[IOException]) =
+val result: Unit < (Scope & Console & Async & Abort[FileReadException]) =
     lines.map(line => Console.printLine(line)).discard
 
 // Walk a directory tree
-val tree: Stream[Path, Sync] =
+val tree: Stream[Path, Sync & Scope & Abort[FileFsException]] =
     Path("tmp").walk
 
 // Process each file in the tree
-val processedTree: Unit < (Console & Async & Abort[IOException]) =
+val processedTree: Unit < (Console & Scope & Async & Abort[FileFsException | FileReadException]) =
     tree.map(file => file.read.map(content => Console.printLine(s"File: ${file}, Content: $content"))).discard
 ```
 
-`Path` integrates with Kyo's `Stream` API, allowing for efficient processing of file contents using streams. The `sink` and `sinkLines` extension methods on `Stream` enable writing streams of data back to files.
+`Path` integrates with Kyo's `Stream` API, allowing for efficient processing of file contents using streams. The `writeTo` and `writeLinesTo` extension methods on `Stream` enable writing streams of data back to files.
 
 ```scala
 import kyo.*
@@ -2157,81 +2156,62 @@ import kyo.*
 val bytes: Stream[Byte, Sync] = Stream.init(Seq[Byte](1, 2, 3))
 
 // Write the stream to a file
-val sinkResult: Unit < (Scope & Sync) =
-    bytes.sink(Path("path", "to", "file.bin"))
+val sinkResult: Unit < (Scope & Sync & Abort[FileWriteException]) =
+    bytes.writeTo(Path("path", "to", "file.bin"))
 ```
 
-### Process: Process Execution
+### Command & Process: Process Execution
 
-`Process` provides a way to spawn and interact with external processes from within Kyo. It offers a purely functional interface for process creation, execution, and management.
+`Command` and `Process` provide a way to spawn and interact with external processes from within Kyo. `Command` is an immutable builder that describes what to run, and `Process` is the handle to a running process.
 
 ```scala
 import kyo.*
 
 // Create a simple command
-val command: Process.Command = Process.Command("echo", "Hello, World!")
+val command: Command = Command("echo", "Hello, World!")
 
 // Spawn the process and obtain the result
-val result: String < Sync = command.text
+val result: String < (Async & Abort[CommandException]) = command.text
 ```
 
-The core of `Process` is the `Process.Command` type, which represents a command to be executed. It can be created using the `Process.Command.apply` method, which takes a variable number of arguments representing the command and its arguments.
+`Command` is created using `Command.apply`, which takes the program name and its arguments. Arguments are passed as-is to the OS — no shell interpretation — avoiding shell injection vulnerabilities.
 
-The `Process` object also provides a `jvm` sub-object for spawning JVM processes directly.
+Once a `Command` is created, it can be executed using various methods:
 
-```scala
-import kyo.*
+- `spawn`: Spawns the process and returns a `Process` instance (scope-managed).
+- `text`: Spawns the process, waits for it to complete, and returns stdout as a string.
+- `stream`: Spawns the process and returns a `Stream[Byte, ...]` of stdout.
+- `waitFor`: Spawns the process, waits for it to complete, and returns the `ExitCode`.
+- `waitForSuccess`: Like `waitFor`, but aborts on non-zero exit codes.
 
-class MyClass extends KyoApp:
-    run {
-        Console.printLine(s"Executed with args: $args")
-    }
-end MyClass
-
-// Spawn a new JVM process
-val jvmProcess: Process < Sync =
-    Process.jvm.spawn(classOf[MyClass], List("arg1", "arg2"))
-```
-
-Once a `Process.Command` is created, it can be executed using various methods:
-
-- `spawn`: Spawns the process and returns a `Process` instance.
-- `text`: Spawns the process, waits for it to complete, and returns the standard output as a string.
-- `stream`: Spawns the process and returns an `InputStream` of the standard output.
-- `exitValue`: Spawns the process, waits for it to complete, and returns the exit code.
-- `waitFor`: Spawns the process, waits for it to complete, and returns the exit code.
-
-`Process.Command` instances can be transformed and combined using methods like `pipe`, `andThen`, `+`, `map`, and `cwd`, `env`, `stdin`, `stdout`, `stderr` for modifying the process's properties.
+`Command` instances can be configured and composed using builder methods like `andThen` (piping), `cwd`, `envAppend`, `stdin`, `stdoutToFile`, and `stderrToFile`.
 
 ```scala
-import java.io.File
-import java.nio.file.Path
 import kyo.*
 
 // Create a piped command
-val pipedCommand = Process.Command("echo", "Hello, World!").pipe(Process.Command("wc", "-w"))
+val pipedCommand = Command("echo", "Hello, World!").andThen(Command("wc", "-w"))
 
 // Modify the command's environment and working directory
-val modifiedCommand = pipedCommand.env(Map("VAR" -> "value")).cwd(Path.of("/path/to/dir"))
+val modifiedCommand = pipedCommand.envAppend(Map("VAR" -> "value")).cwd(Path("path", "to", "dir"))
 
 // Spawn the modified command
-val modifiedResult: String < Sync = modifiedCommand.text
+val modifiedResult: String < (Async & Abort[CommandException]) = modifiedCommand.text
 ```
 
-`Process` also provides `Input` and `Output` types for fine-grained control over the process's standard input, output, and error streams.
+`Command` provides methods for fine-grained control over the process's standard input, output, and error streams.
 
 ```scala
-import java.io.File
 import kyo.*
 
-// Create a command with custom input and output
-val command = Process.Command("my-command")
-    .stdin(Process.Input.fromString("input data"))
-    .stdout(Process.Output.FileRedirect(new File("output.txt")))
-    .stderr(Process.Output.Inherit)
+// Create a command with custom input and file output
+val command = Command("my-command")
+    .stdin("input data")
+    .stdoutToFile(Path("output.txt"))
+    .inheritStderr
 ```
 
-The `Process` type returned by `spawn` provides methods for interacting with the spawned process, such as `waitFor`, `exitValue`, `destroy`, and `isAlive`.
+The `Process` type returned by `spawn` provides methods for interacting with the running process, such as `waitFor`, `exitCode`, `destroy`, `destroyForcibly`, and `isAlive`.
 
 ### Parse: Syntactic and lexical analysis
 
