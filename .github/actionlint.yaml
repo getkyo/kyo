@@ -1,4 +1,5 @@
 self-hosted-runner:
   labels:
-    - build
+    - build-windows-x64
+    - build-windows-arm
     - bench

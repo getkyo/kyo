@@ -18,7 +18,7 @@ object TestKyo {
     def command: Command = Command.args("testKyo", "") { (state, args) =>
         val isAll           = args.contains("--all")
         val scalaIdx        = args.indexOf("--scala")
-        val scalaVersionOpt = if (scalaIdx >= 0 && scalaIdx + 1 < args.length) Some(args(scalaIdx + 1)) else None
+        val scalaVersionArg = if (scalaIdx >= 0 && scalaIdx + 1 < args.length) Some(args(scalaIdx + 1)) else None
 
         val remaining = args
             .filterNot(_ == "--all")
@@ -28,20 +28,23 @@ object TestKyo {
         val platform                = platformArgs.headOption.map(a => platformNames.find(_.equalsIgnoreCase(a)).get)
         val baseRef                 = refArgs.headOption.getOrElse("origin/main")
 
-        val extracted    = Project.extract(state)
-        val scala3       = extracted.get(scalaVersion)
-        val runBothScala = scalaVersionOpt.isEmpty // no --scala flag = run both 2 and 3
+        val extracted = Project.extract(state)
+        val scala3    = extracted.get(scalaVersion)
 
-        log(s"scala: ${scalaVersionOpt.getOrElse(s"$scala3 + 2.13")}, platform: ${platform.getOrElse("all")}, mode: ${if (isAll) "all"
+        // Resolve --scala 2 / --scala 3 to actual versions from the build
+        val scalaVersionOpt = scalaVersionArg.map(resolveScalaVersion(_, extracted))
+        val runBothScala    = scalaVersionOpt.isEmpty
+
+        log(s"scala: ${scalaVersionOpt.getOrElse(s"$scala3 + 2.x")}, platform: ${platform.getOrElse("all")}, mode: ${if (isAll) "all"
             else s"diff vs $baseRef"}")
 
         // Run for the specified or primary Scala version
         val targetScala = scalaVersionOpt.getOrElse(scala3)
         val state1 = scalaVersionOpt match {
-            case Some(v) =>
+            case Some(v) if v != scala3 =>
                 log(s"switching to Scala $v")
                 Command.process(s"++$v", state, msg => state.log.error(msg))
-            case None => state
+            case _ => state
         }
 
         // When a specific --scala version is set, always use runAll (filters by version).
@@ -50,12 +53,18 @@ object TestKyo {
             if (isAll || scalaVersionOpt.isDefined) runAll(state1, platform, targetScala)
             else runDiff(state1, baseRef, platform)
 
-        // If no --scala specified, also run Scala 2.13 cross-build modules
+        // If no --scala specified, also run Scala 2.x cross-build modules
         if (runBothScala) {
-            log("switching to Scala 2.13 for cross-build modules")
-            val state3 = Command.process("++2.13.18", state2, msg => state2.log.error(msg))
-            // Always use runAll for 2.13 — it discovers which modules support it
-            runAll(state3, platform, "2.13.18")
+            val scala2 = findScala2Version(extracted)
+            scala2 match {
+                case Some(v) =>
+                    log(s"switching to Scala $v for cross-build modules")
+                    val state3 = Command.process(s"++$v", state2, msg => state2.log.error(msg))
+                    runAll(state3, platform, v)
+                case None =>
+                    log("no Scala 2.x cross-build modules found")
+                    state2
+            }
         } else {
             state2
         }
@@ -68,12 +77,12 @@ object TestKyo {
         val structure = extracted.structure
         val allRefs   = structure.allProjectRefs
 
-        // JVM projects have no suffix (.withoutSuffixFor(JVMPlatform)), JS/Native are suffixed
-        val aggregates = Set("kyoJVM", "kyoJS", "kyoNative")
+        // Exclude aggregate projects
+        val excluded = Set("kyoJVM", "kyoJS", "kyoNative")
         val testable = allRefs.filter { ref =>
             val name        = ref.project
             val versions    = (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
-            val isAggregate = aggregates.contains(name)
+            val isAggregate = excluded.contains(name)
             val matchesPlatform = if (isAggregate) false
             else platform match {
                 case Some("JVM")    => !name.endsWith("JS") && !name.endsWith("Native")
@@ -229,5 +238,24 @@ object TestKyo {
         }
 
         allRefs.map(ref => ref -> closure(ref, Set(ref))).toMap
+    }
+
+    /** Resolve shorthand scala versions: "2" → "2.13.18", "3" → "3.8.2", or pass through exact versions. */
+    private def resolveScalaVersion(input: String, extracted: Extracted): String =
+        input match {
+            case "2" =>
+                findScala2Version(extracted).getOrElse(
+                    sys.error("No Scala 2.x version found in crossScalaVersions")
+                )
+            case "3" => extracted.get(scalaVersion)
+            case v   => v
+        }
+
+    /** Find the Scala 2.x version used in crossScalaVersions across all projects. */
+    private def findScala2Version(extracted: Extracted): Option[String] = {
+        val structure = extracted.structure
+        structure.allProjectRefs.flatMap { ref =>
+            (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
+        }.find(_.startsWith("2."))
     }
 }
