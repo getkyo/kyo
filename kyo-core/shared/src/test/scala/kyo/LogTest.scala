@@ -55,7 +55,7 @@ class LogTest extends Test:
                     }
                 yield ()
             }
-            val logs = output.toString.trim.split("\n")
+            val logs = output.toString.trim.split("\\r?\\n")
             assert(logs.length == 3)
             assert(logs(0).matches("DEBUG test.logger -- \\[.*\\] test message"))
             assert(logs(1).matches("INFO test.logger -- \\[.*\\] info message"))

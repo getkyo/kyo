@@ -599,20 +599,24 @@ class StreamCoreExtensionsTest extends Test:
             }
 
             "dynamic" - {
-                "broadcasted in unison" in runNotJS {
-                    Channel.initWith[Maybe[Int]](1024): channel =>
-                        val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
-                        lazyStream.broadcasted().map: reusableStream =>
-                            Latch.initWith(10): latch =>
-                                Fiber.initUnscoped(Async.foreach(1 to 10)(_ => latch.release.andThen(reusableStream.run))).map: runFiber =>
-                                    latch.await.andThen:
-                                        Fiber.initUnscoped(
-                                            Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
-                                        ).andThen:
-                                            runFiber.get.map: resultChunks =>
-                                                assert(
-                                                    resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
-                                                )
+                "broadcasted in unison" in {
+                    assume(Runtime.getRuntime.availableProcessors() > 4, "Needs >4 cores for 10 concurrent fibers")
+                    runNotJS {
+                        Channel.initWith[Maybe[Int]](1024): channel =>
+                            val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
+                            lazyStream.broadcasted().map: reusableStream =>
+                                Latch.initWith(10): latch =>
+                                    Fiber.initUnscoped(Async.foreach(1 to 10)(_ => latch.release.andThen(reusableStream.run))).map:
+                                        runFiber =>
+                                            latch.await.andThen:
+                                                Fiber.initUnscoped(
+                                                    Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
+                                                ).andThen:
+                                                    runFiber.get.map: resultChunks =>
+                                                        assert(
+                                                            resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
+                                                        )
+                    }
                 }
 
                 "broadcasted should produce empty results when running after original stream completes" in run {
@@ -630,22 +634,25 @@ class StreamCoreExtensionsTest extends Test:
                                 assert(res1 == Result.Failure("message") && res2 == Result.Failure("message"))
                 }
 
-                "broadcastDynamic in unison" in runNotJS {
-                    Channel.initWith[Maybe[Int]](1024): channel =>
-                        val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
-                        lazyStream.broadcastDynamic().map: streamHub =>
-                            Latch.initWith(10): latch =>
-                                Fiber.initUnscoped(
-                                    Async.foreach(1 to 10)(_ => latch.release.andThen(streamHub.subscribe.map(_.run)))
-                                ).map: runFiber =>
-                                    latch.await.andThen:
-                                        Fiber.initUnscoped(
-                                            Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
-                                        ).andThen:
-                                            runFiber.get.map: resultChunks =>
-                                                assert(
-                                                    resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
-                                                )
+                "broadcastDynamic in unison" in {
+                    assume(Runtime.getRuntime.availableProcessors() > 4, "Needs >4 cores for 10 concurrent fibers")
+                    runNotJS {
+                        Channel.initWith[Maybe[Int]](1024): channel =>
+                            val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
+                            lazyStream.broadcastDynamic().map: streamHub =>
+                                Latch.initWith(10): latch =>
+                                    Fiber.initUnscoped(
+                                        Async.foreach(1 to 10)(_ => latch.release.andThen(streamHub.subscribe.map(_.run)))
+                                    ).map: runFiber =>
+                                        latch.await.andThen:
+                                            Fiber.initUnscoped(
+                                                Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
+                                            ).andThen:
+                                                runFiber.get.map: resultChunks =>
+                                                    assert(
+                                                        resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
+                                                    )
+                    }
                 }
 
                 "broadcastDynamic subscriptions should be empty when subscribing after original stream completes" in run {

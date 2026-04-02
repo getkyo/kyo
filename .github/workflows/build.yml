@@ -1,0 +1,88 @@
+name: build
+on:
+  workflow_call:
+    inputs:
+      os-matrix:
+        type: string
+        required: true
+      test-command:
+        type: string
+        required: true
+
+jobs:
+  build:
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.os-matrix) }}
+        target: [JVM, JS, Native]
+        scala: [3, 2]
+        exclude:
+          - os: windows
+            target: Native
+    runs-on: ${{ matrix.os == 'linux' && 'build' || matrix.os == 'macos' && 'macos-latest' || 'windows-latest' }}
+    env:
+      JAVA_OPTS: >-
+        ${{ matrix.os == 'linux'
+        && '-Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+        || matrix.os == 'windows'
+        && '-Xms4G -Xmx8G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+        || '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8' }}
+      JVM_OPTS: >-
+        ${{ matrix.os == 'linux'
+        && '-Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+        || matrix.os == 'windows'
+        && '-Xms4G -Xmx8G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+        || '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8' }}
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6.3.0
+        if: matrix.target == 'JS'
+        with:
+          node-version: '22'
+
+      - uses: coursier/cache-action@v8.1.0
+        with:
+          ignoreMatrix: true
+
+      - name: Install Dependencies (Linux)
+        if: matrix.os == 'linux' && matrix.target == 'Native'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
+
+      - name: Install Dependencies (macOS)
+        if: matrix.os == 'macos' && matrix.target == 'Native'
+        run: brew install h2o libidn2
+
+      - uses: coursier/setup-action@v3.0.0
+        with:
+          jvm: corretto:24
+          apps: sbt
+
+      - name: Test ${{ matrix.target }} (Scala ${{ matrix.scala }})
+        shell: bash
+        run: |
+          # Limit sbt parallelism on resource-constrained runners
+          # macOS JS/Native: Scala.js linker OOMs with parallel tasks in 7GB
+          # Windows: OverlappingFileLockException with parallel dependency resolution
+          if [ "${{ matrix.os }}" = "windows" ] || { [ "${{ matrix.os }}" = "macos" ] && [ "${{ matrix.target }}" != "JVM" ]; }; then
+            export SBT_TASK_LIMIT=1
+          fi
+
+          # Build testKyo command
+          mode="${{ inputs.test-command == 'test' && '--all' || '' }}"
+          scala_flag="${{ matrix.scala == '2' && '--scala 2.13.18' || '--scala 3.8.2' }}"
+          cmd="testKyo $mode $scala_flag ${{ matrix.target }}"
+
+          if [ "${{ matrix.target }}" = "Native" ]; then
+            # Native tests need retry wrapper for libunwind crash tolerance
+            ./scripts/native-test.sh "$cmd"
+          else
+            sbt "$cmd"
+          fi

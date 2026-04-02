@@ -90,8 +90,8 @@ class ConsoleTest extends Test:
                         yield (r1, r2, r3, r4)
                     }
                 assert(r1.isSuccess && r2.isSuccess && r3.isSuccess && r4.isSuccess)
-                assert(output.toString == "test message\n")
-                assert(error.toString == "error message\n")
+                assert(output.toString.replace("\r\n", "\n") == "test message\n")
+                assert(error.toString.replace("\r\n", "\n") == "error message\n")
             }
         }
     }

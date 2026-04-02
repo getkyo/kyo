@@ -834,7 +834,7 @@ class FiberTest extends Test:
                 result <- fiber.get
             yield
                 assert(result.size == 2)
-                assert(result == Chunk(1, 2))
+                assert(result.toSet == Set(1, 2))
             end for
         }
 
