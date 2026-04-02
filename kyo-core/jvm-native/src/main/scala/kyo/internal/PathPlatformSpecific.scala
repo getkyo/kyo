@@ -55,9 +55,9 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
         if followLinks then Files.exists(jpath)
         else Files.exists(jpath, LinkOption.NOFOLLOW_LINKS)
 
-    def isDir()(using AllowUnsafe): Boolean  = Files.isDirectory(jpath)
-    def isFile()(using AllowUnsafe): Boolean = Files.isRegularFile(jpath)
-    def isLink()(using AllowUnsafe): Boolean = Files.isSymbolicLink(jpath)
+    def isDirectory()(using AllowUnsafe): Boolean    = Files.isDirectory(jpath)
+    def isRegularFile()(using AllowUnsafe): Boolean  = Files.isRegularFile(jpath)
+    def isSymbolicLink()(using AllowUnsafe): Boolean = Files.isSymbolicLink(jpath)
 
     // -- Read --
 
@@ -363,9 +363,9 @@ end NioWriteHandle
 /** Concrete read handle backed by a `java.nio.channels.FileChannel`. */
 final private[kyo] class NioReadHandle(channel: FileChannel) extends Path.ReadHandle:
 
-    def readChunk(buffer: Array[Byte])(using AllowUnsafe): Int =
+    def readChunk(buffer: Array[Byte])(using AllowUnsafe): Path.ReadResult =
         val bb = java.nio.ByteBuffer.wrap(buffer)
-        channel.read(bb)
+        Path.ReadResult(channel.read(bb))
 
     def position(offset: Long)(using AllowUnsafe): Unit =
         discard(channel.position(offset))

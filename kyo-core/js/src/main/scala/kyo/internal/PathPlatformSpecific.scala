@@ -157,15 +157,15 @@ final private[kyo] class NodePathUnsafe(val pathStr: String) extends Path.Unsafe
                 true
             catch case _: js.JavaScriptException => false
 
-    def isDir()(using AllowUnsafe): Boolean =
+    def isDirectory()(using AllowUnsafe): Boolean =
         try NodeFs.statSync(pathStr).isDirectory()
         catch case _: js.JavaScriptException => false
 
-    def isFile()(using AllowUnsafe): Boolean =
+    def isRegularFile()(using AllowUnsafe): Boolean =
         try NodeFs.statSync(pathStr).isFile()
         catch case _: js.JavaScriptException => false
 
-    def isLink()(using AllowUnsafe): Boolean =
+    def isSymbolicLink()(using AllowUnsafe): Boolean =
         try NodeFs.lstatSync(pathStr).isSymbolicLink()
         catch case _: js.JavaScriptException => false
 
@@ -444,17 +444,17 @@ final private[kyo] class NodeReadHandle(fd: Int) extends Path.ReadHandle:
     // Current read position (Node.js readSync with explicit position)
     private var pos: Long = 0L
 
-    def readChunk(buffer: Array[Byte])(using AllowUnsafe): Int =
+    def readChunk(buffer: Array[Byte])(using AllowUnsafe): Path.ReadResult =
         val uint8 = new Uint8Array(buffer.length)
         val n     = NodeFs.readSync(fd, uint8, 0, buffer.length, pos.toDouble)
-        if n == 0 then -1
+        if n == 0 then Path.ReadResult.Eof
         else
             var i = 0
             while i < n do
                 buffer(i) = uint8(i).toByte
                 i += 1
             pos += n
-            n
+            Path.ReadResult(n)
         end if
     end readChunk
 

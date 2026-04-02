@@ -37,7 +37,7 @@ class PathJvmTest extends Test:
     // Symlink tests (require JFiles.createSymbolicLink)
     // =========================================================================
 
-    "isLink returns true for a symbolic link" in run {
+    "isSymbolicLink returns true for a symbolic link" in run {
         val tmp    = JFiles.createTempDirectory("kyo-test")
         val target = tmp.resolve("target.txt")
         val link   = tmp.resolve("link.txt")
@@ -45,7 +45,7 @@ class PathJvmTest extends Test:
         JFiles.createSymbolicLink(link, target)
         val p = Path(link.toString)
         for
-            result <- p.isLink
+            result <- p.isSymbolicLink
             _      <- (Path(tmp.toString)).removeAll
         yield assert(result)
         end for
@@ -128,10 +128,10 @@ class PathJvmTest extends Test:
         val src = Path(link.toString)
         val dst = Path(tmp.resolve("copy-of-link.txt").toString)
         for
-            _      <- src.copy(dst, followLinks = false)
-            isLink <- dst.isLink
-            _      <- Path(tmp.toString).removeAll
-        yield assert(isLink)
+            _              <- src.copy(dst, followLinks = false)
+            isSymbolicLink <- dst.isSymbolicLink
+            _              <- Path(tmp.toString).removeAll
+        yield assert(isSymbolicLink)
         end for
     }
 

@@ -48,15 +48,15 @@ object Process:
           *
           * The underlying `InputStream` is registered with the enclosing `Scope` and closed when the scope ends.
           */
-        def stdout(using Frame): Stream[Byte, Sync & Async & Scope] =
-            Stream(Sync.Unsafe.defer(streamFromJavaInputStream(self.unsafe.stdoutJava).emit))
+        def stdout(using Frame): Stream[Byte, Sync & Scope] =
+            Stream(Sync.Unsafe.defer(StreamCoreExtensions.streamFromJavaInputStream(self.unsafe.stdoutJava).emit))
 
         /** Returns the process's standard error as a byte stream.
           *
           * The underlying `InputStream` is registered with the enclosing `Scope` and closed when the scope ends.
           */
-        def stderr(using Frame): Stream[Byte, Sync & Async & Scope] =
-            Stream(Sync.Unsafe.defer(streamFromJavaInputStream(self.unsafe.stderrJava).emit))
+        def stderr(using Frame): Stream[Byte, Sync & Scope] =
+            Stream(Sync.Unsafe.defer(StreamCoreExtensions.streamFromJavaInputStream(self.unsafe.stderrJava).emit))
 
         /** Suspends the current fiber until the process exits, then returns its `ExitCode`.
           *
@@ -186,32 +186,6 @@ object Process:
         case object Inherit                        extends Input
         case class FromStream(stream: InputStream) extends Input
     end Input
-
-    /** Wraps a Java `InputStream` in a `Stream[Byte, Async & Scope]`.
-      *
-      * The stream reads the input in chunks of `bufferSize` bytes. The `InputStream` is registered with the enclosing `Scope` and closed
-      * when the scope ends (whether by normal completion, `Abort`, or cancellation).
-      *
-      * When `stream.read(buf)` returns 0 (no data yet, stream not ended), the fiber yields to the scheduler before retrying.
-      */
-    private[kyo] def streamFromJavaInputStream(is: InputStream, bufferSize: Int = 8192)(using Frame): Stream[Byte, Async & Scope] =
-        Stream {
-            Scope.acquireRelease(is)(_.close()).map { stream =>
-                Loop.foreach {
-                    Sync.Unsafe.defer {
-                        val buf = new Array[Byte](bufferSize)
-                        val n   = stream.read(buf)
-                        if n < 0 then Loop.done
-                        else if n == 0 then Async.sleep(1.millis).andThen(Loop.continue)
-                        else if n == bufferSize then
-                            Emit.valueWith(Chunk.fromNoCopy(buf))(Loop.continue)
-                        else
-                            Emit.valueWith(Chunk.fromNoCopy(java.util.Arrays.copyOf(buf, n)))(Loop.continue)
-                        end if
-                    }
-                }
-            }
-        }
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:

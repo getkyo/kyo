@@ -55,17 +55,7 @@ final private[kyo] class JvmProcessUnsafe(private[internal] val jp: JProcess) ex
 
 end JvmProcessUnsafe
 
-// -----------------------------------------------------------------------
-// EnvMode — how the child process environment is composed
-// -----------------------------------------------------------------------
-
-private[kyo] enum EnvMode derives CanEqual:
-    case Inherit
-    case Append(vars: Map[String, String])
-    case Replace(vars: Map[String, String])
-    case Clear
-    case ClearThenAppend(vars: Map[String, String])
-end EnvMode
+import Command.EnvMode
 
 // -----------------------------------------------------------------------
 // StdioSink — destination for stdout / stderr

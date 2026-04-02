@@ -2120,7 +2120,7 @@ val createDir: Unit < (Sync & Abort[FileFsException]) =
 - Reading: `read`, `readBytes`, `readLines`, `readStream`, `readLinesStream`, `readBytesStream`
 - Writing: `write`, `writeBytes`, `writeLines`, `append`, `appendBytes`, `appendLines`
 - Directory operations: `list`, `walk`
-- File metadata: `exists`, `isDir`, `isFile`, `isLink`
+- File metadata: `exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink`
 - File manipulation: `mkDir`, `mkFile`, `move`, `copy`, `remove`, `removeAll`
 
 All methods that perform side effects are suspended using the `Sync` effect, ensuring referential transparency. Methods that work with streams of data, such as `readStream` and `walk`, return a `Stream` of the appropriate type, suspended using the `Scope` effect to ensure proper resource handling.
@@ -2156,7 +2156,7 @@ import kyo.*
 val bytes: Stream[Byte, Sync] = Stream.init(Seq[Byte](1, 2, 3))
 
 // Write the stream to a file
-val sinkResult: Unit < (Scope & Sync & Abort[FileWriteException]) =
+val sinkResult: Unit < (Scope & Sync & Abort[FileException]) =
     bytes.writeTo(Path("path", "to", "file.bin"))
 ```
 

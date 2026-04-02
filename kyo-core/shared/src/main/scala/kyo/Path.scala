@@ -22,8 +22,8 @@ import kyo.internal.PathPlatformSpecific
   * val lines: Stream[String, Scope & Sync & Abort[FileReadException]] = config.readLinesStream
   * }}}
   *
-  * Inspection methods (`exists`, `isDir`, `isFile`, `isLink`) return `false` for inaccessible paths rather than failing — they require only
-  * `Sync`, not `Abort`.
+  * Inspection methods (`exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink`) return `false` for inaccessible paths rather than
+  * failing — they require only `Sync`, not `Abort`.
   *
   * '''Streaming operations''' (`readStream`, `readBytesStream`, `readLinesStream`, `walk`, `tail`) return `Stream` values that carry
   * `Scope` in their effect type. The underlying OS resource (file handle, directory handle) is acquired when the stream starts and released
@@ -119,16 +119,16 @@ object Path extends PathPlatformSpecific:
             Sync.Unsafe.defer(self.unsafe.exists(followLinks))
 
         /** Returns `true` if this path is a directory. */
-        def isDir(using Frame): Boolean < Sync =
-            Sync.Unsafe.defer(self.unsafe.isDir())
+        def isDirectory(using Frame): Boolean < Sync =
+            Sync.Unsafe.defer(self.unsafe.isDirectory())
 
         /** Returns `true` if this path is a regular file. */
-        def isFile(using Frame): Boolean < Sync =
-            Sync.Unsafe.defer(self.unsafe.isFile())
+        def isRegularFile(using Frame): Boolean < Sync =
+            Sync.Unsafe.defer(self.unsafe.isRegularFile())
 
         /** Returns `true` if this path is a symbolic link. */
-        def isLink(using Frame): Boolean < Sync =
-            Sync.Unsafe.defer(self.unsafe.isLink())
+        def isSymbolicLink(using Frame): Boolean < Sync =
+            Sync.Unsafe.defer(self.unsafe.isSymbolicLink())
 
         // -- Read --
 
@@ -174,8 +174,8 @@ object Path extends PathPlatformSpecific:
                     val outBuf = java.nio.CharBuffer.allocate(math.ceil(bufferSize * decoder.maxCharsPerByte()).toInt)
                     Loop.foreach {
                         Sync.Unsafe.defer {
-                            val n = handle.readChunk(rawBuf)
-                            if n < 0 then
+                            val result = handle.readChunk(rawBuf)
+                            if result.isEof then
                                 // End of file — flush any bytes still held in inBuf
                                 inBuf.flip()
                                 outBuf.clear()
@@ -187,7 +187,7 @@ object Path extends PathPlatformSpecific:
                                 else Loop.done
                             else
                                 // Append new bytes after any leftover bytes from the previous read
-                                inBuf.put(rawBuf, 0, n)
+                                inBuf.put(rawBuf, 0, result.bytesRead)
                                 inBuf.flip()
                                 outBuf.clear()
                                 // false = not end-of-input; decoder leaves incomplete trailing sequences in inBuf
@@ -215,13 +215,13 @@ object Path extends PathPlatformSpecific:
                 )(handle => Sync.Unsafe.defer(handle.close())).map { handle =>
                     Loop.foreach {
                         Sync.Unsafe.defer {
-                            val buf = new Array[Byte](bufferSize)
-                            val n   = handle.readChunk(buf)
-                            if n < 0 then Loop.done
-                            else if n == bufferSize then
+                            val buf    = new Array[Byte](bufferSize)
+                            val result = handle.readChunk(buf)
+                            if result.isEof then Loop.done
+                            else if result.bytesRead == bufferSize then
                                 Emit.valueWith(Chunk.fromNoCopy(buf))(Loop.continue)
                             else
-                                Emit.valueWith(Chunk.fromNoCopy(java.util.Arrays.copyOf(buf, n)))(Loop.continue)
+                                Emit.valueWith(Chunk.fromNoCopy(java.util.Arrays.copyOf(buf, result.bytesRead)))(Loop.continue)
                             end if
                         }
                     }
@@ -273,8 +273,8 @@ object Path extends PathPlatformSpecific:
                                 val emptyBytes = new Array[Byte](0)
                                 Loop((fileSize, emptyBytes, "")) { case (pos, leftover, pending) =>
                                     Sync.Unsafe.defer {
-                                        val n = handle.readChunk(buf)
-                                        if n <= 0 then
+                                        val result = handle.readChunk(buf)
+                                        if result.isEof then
                                             Sync.Unsafe.defer {
                                                 Abort.get(self.unsafe.size()).map { currentSize =>
                                                     if currentSize < pos then
@@ -287,6 +287,7 @@ object Path extends PathPlatformSpecific:
                                                 }
                                             }
                                         else
+                                            val n = result.bytesRead
                                             // Combine leftover bytes from previous read with new bytes
                                             val allBytes =
                                                 if leftover.isEmpty then java.util.Arrays.copyOf(buf, n)
@@ -534,9 +535,9 @@ object Path extends PathPlatformSpecific:
 
         def exists()(using AllowUnsafe): Boolean
         def exists(followLinks: Boolean)(using AllowUnsafe): Boolean
-        def isDir()(using AllowUnsafe): Boolean
-        def isFile()(using AllowUnsafe): Boolean
-        def isLink()(using AllowUnsafe): Boolean
+        def isDirectory()(using AllowUnsafe): Boolean
+        def isRegularFile()(using AllowUnsafe): Boolean
+        def isSymbolicLink()(using AllowUnsafe): Boolean
 
         // -- Read --
 
@@ -629,10 +630,29 @@ object Path extends PathPlatformSpecific:
     // Read handles — returned by Path.Unsafe.openRead / openReadLines
     // -----------------------------------------------------------------------
 
+    /** The result of a `ReadHandle.readChunk` call — either a positive byte count or EOF. */
+    opaque type ReadResult = Int
+
+    object ReadResult:
+        /** End of file — no more data will be produced. */
+        val Eof: ReadResult = -1
+
+        /** Wraps a raw byte count (from `InputStream.read` or `FileChannel.read`) into a `ReadResult`. */
+        def apply(n: Int): ReadResult = n
+
+        extension (self: ReadResult)
+            /** `true` when the stream has reached end-of-file. */
+            def isEof: Boolean = self <= 0
+
+            /** The number of bytes read, or 0 if EOF. */
+            def bytesRead: Int = if self <= 0 then 0 else self
+        end extension
+    end ReadResult
+
     /** An open read channel returned by `Path.Unsafe.openRead`. Platform implementations provide the concrete class. */
     abstract private[kyo] class ReadHandle:
-        /** Reads up to `buffer.length` bytes into `buffer`. Returns the number of bytes read, or -1 at EOF. */
-        def readChunk(buffer: Array[Byte])(using AllowUnsafe): Int
+        /** Reads up to `buffer.length` bytes into `buffer`. Returns a `ReadResult` — either `Eof` or a positive byte count. */
+        def readChunk(buffer: Array[Byte])(using AllowUnsafe): ReadResult
 
         /** Sets the channel position to `offset` bytes from the start of the file. */
         def position(offset: Long)(using AllowUnsafe): Unit

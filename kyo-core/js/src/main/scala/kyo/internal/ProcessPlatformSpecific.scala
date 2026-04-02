@@ -265,16 +265,10 @@ final private[kyo] class NodeProcessUnsafe(
 end NodeProcessUnsafe
 
 // -----------------------------------------------------------------------
-// EnvMode / StdioSink — mirrors of the JVM counterparts
-// -----------------------------------------------------------------------
+import Command.EnvMode
 
-private[kyo] enum NodeEnvMode derives CanEqual:
-    case Inherit
-    case Append(vars: Map[String, String])
-    case Replace(vars: Map[String, String])
-    case Clear
-    case ClearThenAppend(vars: Map[String, String])
-end NodeEnvMode
+// StdioSink
+// -----------------------------------------------------------------------
 
 private[kyo] enum NodeStdioSink derives CanEqual:
     case Pipe
@@ -289,7 +283,7 @@ end NodeStdioSink
 final private[kyo] class NodeCommandUnsafe(
     val args: Chunk[String],
     val workDir: Maybe[kyo.Path] = Absent,
-    val envMode: NodeEnvMode = NodeEnvMode.Inherit,
+    val envMode: EnvMode = EnvMode.Inherit,
     val stdinSource: Process.Input = Process.Input.Inherit,
     val stdinStream: Maybe[Stream[Byte, Sync]] = Absent,
     val stdoutSink: NodeStdioSink = NodeStdioSink.Pipe,
@@ -305,13 +299,13 @@ final private[kyo] class NodeCommandUnsafe(
     def withCwd(path: kyo.Path): NodeCommandUnsafe = copy(workDir = Present(path))
     def withEnvAppend(vars: Map[String, String]): NodeCommandUnsafe =
         val newMode = envMode match
-            case NodeEnvMode.Clear                 => NodeEnvMode.ClearThenAppend(vars)
-            case NodeEnvMode.ClearThenAppend(prev) => NodeEnvMode.ClearThenAppend(prev ++ vars)
-            case _                                 => NodeEnvMode.Append(vars)
+            case EnvMode.Clear                 => EnvMode.ClearThenAppend(vars)
+            case EnvMode.ClearThenAppend(prev) => EnvMode.ClearThenAppend(prev ++ vars)
+            case _                             => EnvMode.Append(vars)
         copy(envMode = newMode)
     end withEnvAppend
-    def withEnvReplace(vars: Map[String, String]): NodeCommandUnsafe = copy(envMode = NodeEnvMode.Replace(vars))
-    def withEnvClear: NodeCommandUnsafe                              = copy(envMode = NodeEnvMode.Clear)
+    def withEnvReplace(vars: Map[String, String]): NodeCommandUnsafe = copy(envMode = EnvMode.Replace(vars))
+    def withEnvClear: NodeCommandUnsafe                              = copy(envMode = EnvMode.Clear)
 
     def withStdin(input: Process.Input): NodeCommandUnsafe =
         copy(stdinSource = input, stdinStream = Absent)
@@ -355,21 +349,21 @@ final private[kyo] class NodeCommandUnsafe(
         workDir.foreach { path => opts.cwd = path.unsafe.show }
 
         envMode match
-            case NodeEnvMode.Inherit => ()
-            case NodeEnvMode.Append(vars) =>
+            case EnvMode.Inherit => ()
+            case EnvMode.Append(vars) =>
                 val env = js.Dynamic.global.Object.assign(
                     js.Dynamic.literal(),
                     js.Dynamic.global.process.env
                 )
                 vars.foreach { (k, v) => env.updateDynamic(k)(v) }
                 opts.env = env
-            case NodeEnvMode.Replace(vars) =>
+            case EnvMode.Replace(vars) =>
                 val env = js.Dynamic.literal()
                 vars.foreach { (k, v) => env.updateDynamic(k)(v) }
                 opts.env = env
-            case NodeEnvMode.Clear =>
+            case EnvMode.Clear =>
                 opts.env = js.Dynamic.literal()
-            case NodeEnvMode.ClearThenAppend(vars) =>
+            case EnvMode.ClearThenAppend(vars) =>
                 val env = js.Dynamic.literal()
                 vars.foreach { (k, v) => env.updateDynamic(k)(v) }
                 opts.env = env
@@ -569,21 +563,21 @@ final private[kyo] class NodeCommandUnsafe(
                     val opts = js.Dynamic.literal()
                     cmd.workDir.foreach { path => opts.cwd = path.unsafe.show }
                     cmd.envMode match
-                        case NodeEnvMode.Inherit => ()
-                        case NodeEnvMode.Append(vars) =>
+                        case EnvMode.Inherit => ()
+                        case EnvMode.Append(vars) =>
                             val env = js.Dynamic.global.Object.assign(
                                 js.Dynamic.literal(),
                                 js.Dynamic.global.process.env
                             )
                             vars.foreach { (k, v) => env.updateDynamic(k)(v) }
                             opts.env = env
-                        case NodeEnvMode.Replace(vars) =>
+                        case EnvMode.Replace(vars) =>
                             val env = js.Dynamic.literal()
                             vars.foreach { (k, v) => env.updateDynamic(k)(v) }
                             opts.env = env
-                        case NodeEnvMode.Clear =>
+                        case EnvMode.Clear =>
                             opts.env = js.Dynamic.literal()
-                        case NodeEnvMode.ClearThenAppend(vars) =>
+                        case EnvMode.ClearThenAppend(vars) =>
                             val env = js.Dynamic.literal()
                             vars.foreach { (k, v) => env.updateDynamic(k)(v) }
                             opts.env = env
@@ -756,7 +750,7 @@ final private[kyo] class NodeCommandUnsafe(
     private def copy(
         args: Chunk[String] = this.args,
         workDir: Maybe[kyo.Path] = this.workDir,
-        envMode: NodeEnvMode = this.envMode,
+        envMode: EnvMode = this.envMode,
         stdinSource: Process.Input = this.stdinSource,
         stdinStream: Maybe[Stream[Byte, Sync]] = this.stdinStream,
         stdoutSink: NodeStdioSink = this.stdoutSink,

@@ -113,25 +113,25 @@ class PathTest extends Test:
         end for
     }
 
-    "isDir returns true for directory and false for file" in run {
+    "isDirectory returns true for directory and false for file" in run {
         for
             dir <- Path.tempDir("kyo-test")
             file = dir / "test-isdir.txt"
             _          <- file.mkFile
-            dirResult  <- dir.isDir
-            fileResult <- file.isDir
+            dirResult  <- dir.isDirectory
+            fileResult <- file.isDirectory
             _          <- dir.removeAll
         yield assert(dirResult && !fileResult)
         end for
     }
 
-    "isFile returns false for directory and true for file" in run {
+    "isRegularFile returns false for directory and true for file" in run {
         for
             dir <- Path.tempDir("kyo-test")
             file = dir / "test-isfile.txt"
             _          <- file.mkFile
-            dirResult  <- dir.isFile
-            fileResult <- file.isFile
+            dirResult  <- dir.isRegularFile
+            fileResult <- file.isRegularFile
             _          <- dir.removeAll
         yield assert(!dirResult && fileResult)
         end for
@@ -639,12 +639,12 @@ class PathTest extends Test:
     // Directory
     // =========================================================================
 
-    "mkDir creates a directory and isDir returns true" in run {
+    "mkDir creates a directory and isDirectory returns true" in run {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             subdir = dir / "mkdir-subdir"
             _      <- subdir.mkDir
-            result <- subdir.isDir
+            result <- subdir.isDirectory
             _      <- dir.removeAll
         yield assert(result)
         end for
@@ -661,12 +661,12 @@ class PathTest extends Test:
         end for
     }
 
-    "mkFile creates a regular file and isFile returns true" in run {
+    "mkFile creates a regular file and isRegularFile returns true" in run {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             file = dir / "mkfile.txt"
             _      <- file.mkFile
-            result <- file.isFile
+            result <- file.isRegularFile
             _      <- dir.removeAll
         yield assert(result)
         end for
@@ -1122,7 +1122,7 @@ class PathTest extends Test:
             _           <- src.mkDir
             _           <- (src / "child.txt").write("hello")
             _           <- src.copy(dst)
-            dstIsDir    <- dst.isDir
+            dstIsDir    <- dst.isDirectory
             childExists <- (dst / "child.txt").exists
             _           <- dir.removeAll
         yield
@@ -1138,7 +1138,7 @@ class PathTest extends Test:
             dst = dir / "empty-dst-dir"
             _      <- src.mkDir
             _      <- src.copy(dst)
-            result <- dst.isDir
+            result <- dst.isDirectory
             _      <- dir.removeAll
         yield assert(result)
         end for
@@ -1153,7 +1153,7 @@ class PathTest extends Test:
             _ <- (src / "a" / "b.txt").write("nested")
             dst = dir / "nested-copy-dst"
             _         <- src.copy(dst)
-            dstIsDir  <- dst.isDir
+            dstIsDir  <- dst.isDirectory
             subExists <- (dst / "a").exists
             _         <- dir.removeAll
         yield
@@ -1548,10 +1548,10 @@ class PathTest extends Test:
 
     "Path.tempDir creates a directory" in run {
         for
-            p     <- Path.tempDir("kyotestdir")
-            isDir <- p.isDir
-            _     <- p.removeAll
-        yield assert(isDir)
+            p           <- Path.tempDir("kyotestdir")
+            isDirectory <- p.isDirectory
+            _           <- p.removeAll
+        yield assert(isDirectory)
     }
 
     "Path.tempScoped auto-deletes on scope close" in run {
