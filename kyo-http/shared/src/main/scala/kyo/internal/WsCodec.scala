@@ -6,7 +6,8 @@ import kyo.*
 
 /** WebSocket frame codec — pure functions + deferred I/O.
   *
-  * Works on any TransportStream. Independent of HTTP version (WebSocket upgrade happens at protocol level, framing is version-independent).
+  * Works on Stream[Span[Byte], Async] for reads and TransportStream for writes. Independent of HTTP version (WebSocket upgrade happens at
+  * protocol level, framing is version-independent).
   *
   * Frame types (RFC 6455 §5.2): 0x1 = Text, 0x2 = Binary, 0x8 = Close, 0x9 = Ping, 0xA = Pong, 0x0 = Continuation
   *
@@ -26,35 +27,40 @@ object WsCodec:
 
     // ── Public API ──────────────────────────────────────────────
 
-    /** Read one complete frame. Reassembles fragmented messages. Handles Ping by auto-sending Pong. On Close frame: Abort[Closed]. */
-    def readFrame(stream: TransportStream)(using Frame): WebSocketFrame < (Async & Abort[Closed]) =
-        readRawFrame(stream).map { (opcode, payload) =>
-            opcode match
-                case OpText   => WebSocketFrame.Text(new String(payload.toArrayUnsafe, Utf8))
-                case OpBinary => WebSocketFrame.Binary(payload)
-                case OpClose  => Abort.fail(new Closed("WebSocket", summon[Frame], "Close frame received"))
-                case OpPing =>
-                    writeRawFrame(stream, OpPong, payload, mask = false).andThen(readFrame(stream))
-                case OpPong =>
-                    readFrame(stream)
-                case other =>
-                    Abort.fail(new Closed("WebSocket", summon[Frame], s"Unknown opcode: $other"))
+    /** Read one complete frame. Returns (frame, remainingStream). Handles Ping by auto-sending Pong. On Close frame: Abort[Closed]. */
+    def readFrame(src: Stream[Span[Byte], Async], dst: TransportStream)(using
+        Frame
+    )
+        : (WebSocketFrame, Stream[Span[Byte], Async]) < (Async & Abort[Closed]) =
+        Abort.recover[HttpException](_ => Abort.fail(new Closed("WebSocket", summon[Frame]))) {
+            readRawFrame(src).map { case ((opcode, payload), remaining) =>
+                opcode match
+                    case OpText   => (WebSocketFrame.Text(new String(payload.toArrayUnsafe, Utf8)), remaining)
+                    case OpBinary => (WebSocketFrame.Binary(payload), remaining)
+                    case OpClose  => Abort.fail(new Closed("WebSocket", summon[Frame], "Close frame received"))
+                    case OpPing =>
+                        writeRawFrame(dst, OpPong, payload, mask = false).andThen(readFrame(remaining, dst))
+                    case OpPong =>
+                        readFrame(remaining, dst)
+                    case other =>
+                        Abort.fail(new Closed("WebSocket", summon[Frame], s"Unknown opcode: $other"))
+            }
         }
 
     /** Write one data frame (Text or Binary). */
-    def writeFrame(stream: TransportStream, frame: WebSocketFrame, mask: Boolean)(using Frame): Unit < Async =
+    def writeFrame(dst: TransportStream, frame: WebSocketFrame, mask: Boolean)(using Frame): Unit < Async =
         frame match
             case WebSocketFrame.Text(data) =>
-                writeRawFrame(stream, OpText, Span.fromUnsafe(data.getBytes(Utf8)), mask)
+                writeRawFrame(dst, OpText, Span.fromUnsafe(data.getBytes(Utf8)), mask)
             case WebSocketFrame.Binary(data) =>
-                writeRawFrame(stream, OpBinary, data, mask)
+                writeRawFrame(dst, OpBinary, data, mask)
 
     /** Write a Close frame (opcode 0x8). */
-    def writeClose(stream: TransportStream, code: Int, reason: String, mask: Boolean)(using Frame): Unit < Async =
-        writeRawFrame(stream, OpClose, encodeClosePayload(code, reason), mask)
+    def writeClose(dst: TransportStream, code: Int, reason: String, mask: Boolean)(using Frame): Unit < Async =
+        writeRawFrame(dst, OpClose, encodeClosePayload(code, reason), mask)
 
     /** Server: validate upgrade headers, write 101 response. */
-    def acceptUpgrade(stream: TransportStream, headers: HttpHeaders, config: WebSocketConfig)(using
+    def acceptUpgrade(dst: TransportStream, headers: HttpHeaders, config: WebSocketConfig)(using
         Frame
     )
         : Unit < (Async & Abort[HttpException]) =
@@ -69,16 +75,16 @@ object WsCodec:
                 discard(response.append("Connection: Upgrade\r\n"))
                 discard(response.append("Sec-WebSocket-Accept: ").append(acceptKey).append("\r\n"))
                 discard(response.append("\r\n"))
-                stream.write(Span.fromUnsafe(response.toString.getBytes(Utf8)))
+                dst.write(Span.fromUnsafe(response.toString.getBytes(Utf8)))
 
-    /** Client: send upgrade request, validate 101 response. */
+    /** Client: send upgrade request, validate 101 response, return remaining stream after headers. */
     def requestUpgrade(
-        stream: TransportStream,
+        conn: TransportStream,
         host: String,
         path: String,
         headers: HttpHeaders,
         config: WebSocketConfig
-    )(using Frame): Unit < (Async & Abort[HttpException]) =
+    )(using Frame): Stream[Span[Byte], Async] < (Async & Abort[HttpException]) =
         val clientKey = Base64.getEncoder.encodeToString(randomBytes(16))
         val request   = new StringBuilder
         discard(request.append("GET ").append(path).append(" HTTP/1.1\r\n"))
@@ -91,9 +97,20 @@ object WsCodec:
             discard(request.append(name).append(": ").append(value).append("\r\n"))
         }
         discard(request.append("\r\n"))
-        stream.write(Span.fromUnsafe(request.toString.getBytes(Utf8))).andThen {
-            // Read 101 response
-            readUpgradeResponse(stream, clientKey)
+        conn.write(Span.fromUnsafe(request.toString.getBytes(Utf8))).andThen {
+            ByteStream.readUntil(conn.read, "\r\n\r\n".getBytes(Utf8), 4096).map { case (headerBytes, remaining) =>
+                val responseStr = new String(headerBytes.toArrayUnsafe, Utf8)
+                if !responseStr.startsWith("HTTP/1.1 101") then
+                    Abort.fail(HttpProtocolException(s"WebSocket upgrade failed: expected 101, got: ${responseStr.take(40)}"))
+                else
+                    val expectedAccept = computeAcceptKey(clientKey)
+                    if !responseStr.contains(expectedAccept) then
+                        Abort.fail(HttpProtocolException("WebSocket upgrade: invalid Sec-WebSocket-Accept"))
+                    else
+                        remaining
+                    end if
+                end if
+            }
         }
     end requestUpgrade
 
@@ -165,133 +182,69 @@ object WsCodec:
 
     // ── Internal I/O ────────────────────────────────────────────
 
-    /** Read a single raw frame (handles extended length + masking). */
-    private def readRawFrame(stream: TransportStream)(using Frame): (Int, Span[Byte]) < Async =
-        readBytes(stream, 2).map { header =>
+    /** Read a single raw frame (handles extended length + masking). Returns ((opcode, payload), remainingStream). */
+    private def readRawFrame(src: Stream[Span[Byte], Async])(using
+        Frame
+    )
+        : ((Int, Span[Byte]), Stream[Span[Byte], Async]) < (Async & Abort[HttpException]) =
+        ByteStream.readExact(src, 2).map { case (header, rem1) =>
             val fh          = parseFrameHeader(header(0), header(1))
             val payloadLen  = fh.payloadLen
             val extLenBytes = if payloadLen == 126 then 2 else if payloadLen == 127 then 8 else 0
 
-            val readExtLen =
-                if extLenBytes == 0 then Sync.defer(payloadLen.toLong)
+            val readExtLen: (Long, Stream[Span[Byte], Async]) < (Async & Abort[HttpException]) =
+                if extLenBytes == 0 then (payloadLen.toLong, rem1)
                 else
-                    readBytes(stream, extLenBytes).map { ext =>
-                        if extLenBytes == 2 then
-                            ((ext(0) & 0xff) << 8) | (ext(1) & 0xff).toLong
-                        else
-                            var len = 0L
-                            var i   = 0
-                            while i < 8 do
-                                len = (len << 8) | (ext(i) & 0xff)
-                                i += 1
-                            end while
-                            len
+                    ByteStream.readExact(rem1, extLenBytes).map { case (ext, rem2) =>
+                        val len =
+                            if extLenBytes == 2 then ((ext(0) & 0xff) << 8) | (ext(1) & 0xff).toLong
+                            else
+                                var l = 0L
+                                var i = 0
+                                while i < 8 do
+                                    l = (l << 8) | (ext(i) & 0xff)
+                                    i += 1
+                                end while
+                                l
+                        (len, rem2)
                     }
 
-            readExtLen.map { actualLen =>
-                val readMask =
-                    if fh.masked then readBytes(stream, 4)
-                    else Sync.defer(Span.empty[Byte])
+            readExtLen.map { case (actualLen, rem2) =>
+                val readMask: (Span[Byte], Stream[Span[Byte], Async]) < (Async & Abort[HttpException]) =
+                    if fh.masked then ByteStream.readExact(rem2, 4)
+                    else (Span.empty[Byte], rem2)
 
-                readMask.map { maskKey =>
-                    readBytes(stream, actualLen.toInt).map { payload =>
+                readMask.map { case (maskKey, rem3) =>
+                    ByteStream.readExact(rem3, actualLen.toInt).map { case (payload, rem4) =>
                         val unmasked = if fh.masked then unmask(payload, maskKey) else payload
-                        (fh.opcode, unmasked)
+                        ((fh.opcode, unmasked), rem4)
                     }
                 }
             }
         }
+    end readRawFrame
 
     /** Write a raw frame with header + optional masking. */
-    private def writeRawFrame(stream: TransportStream, opcode: Int, payload: Span[Byte], mask: Boolean)(using Frame): Unit < Async =
+    private def writeRawFrame(dst: TransportStream, opcode: Int, payload: Span[Byte], mask: Boolean)(using Frame): Unit < Async =
         val header = encodeFrameHeader(opcode, payload.size.toLong, mask)
         if mask then
             // Extract mask key from last 4 bytes of header, apply to payload
             val maskKey = header.slice(header.size - 4, header.size)
             val masked  = unmask(payload, maskKey) // XOR is symmetric
-            stream.write(header).andThen(
-                if masked.isEmpty then Kyo.unit else stream.write(masked)
+            dst.write(header).andThen(
+                if masked.isEmpty then Kyo.unit else dst.write(masked)
             )
         else
-            stream.write(header).andThen(
-                if payload.isEmpty then Kyo.unit else stream.write(payload)
+            dst.write(header).andThen(
+                if payload.isEmpty then Kyo.unit else dst.write(payload)
             )
         end if
     end writeRawFrame
-
-    /** Read exactly n bytes from the stream. */
-    private def readBytes(stream: TransportStream, n: Int)(using Frame): Span[Byte] < Async =
-        if n == 0 then Sync.defer(Span.empty[Byte])
-        else
-            val result = new Array[Byte](n)
-            var offset = 0
-            Loop.foreach {
-                if offset >= n then Loop.done(())
-                else
-                    val buf = new Array[Byte](n - offset)
-                    stream.read(buf).map { read =>
-                        if read < 0 then Loop.done(())       // EOF
-                        else if read == 0 then Loop.continue // no data yet (NIO spurious wakeup)
-                        else
-                            java.lang.System.arraycopy(buf, 0, result, offset, read)
-                            offset += read
-                            Loop.continue
-                    }
-            }.andThen(Span.fromUnsafe(result))
-
-    /** Read upgrade response, validate 101 + Sec-WebSocket-Accept. */
-    private def readUpgradeResponse(stream: TransportStream, clientKey: String)(using
-        Frame
-    )
-        : Unit < (Async & Abort[HttpException]) =
-        // Read response headers (reuse Http1Protocol's header reader pattern)
-        val buf   = new Array[Byte](4096)
-        val accum = new java.io.ByteArrayOutputStream(512)
-        val sep   = "\r\n\r\n".getBytes(Utf8)
-
-        Loop.foreach {
-            stream.read(buf).map { n =>
-                if n <= 0 then Loop.done(())
-                else
-                    accum.write(buf, 0, n)
-                    val bytes = accum.toByteArray
-                    if indexOf(bytes, sep) >= 0 then Loop.done(())
-                    else Loop.continue
-            }
-        }.andThen {
-            val responseStr = new String(accum.toByteArray, Utf8)
-            if !responseStr.startsWith("HTTP/1.1 101") then
-                Abort.fail(HttpProtocolException(s"WebSocket upgrade failed: expected 101, got: ${responseStr.take(40)}"))
-            else
-                val expectedAccept = computeAcceptKey(clientKey)
-                if !responseStr.contains(expectedAccept) then
-                    Abort.fail(HttpProtocolException("WebSocket upgrade: invalid Sec-WebSocket-Accept"))
-                else
-                    Kyo.unit
-                end if
-            end if
-        }
-    end readUpgradeResponse
 
     private def randomBytes(n: Int): Array[Byte] =
         val bytes = new Array[Byte](n)
         java.util.concurrent.ThreadLocalRandom.current().nextBytes(bytes)
         bytes
     end randomBytes
-
-    private def indexOf(haystack: Array[Byte], needle: Array[Byte]): Int =
-        val limit = haystack.length - needle.length
-        var i     = 0
-        while i <= limit do
-            var j     = 0
-            var found = true
-            while j < needle.length && found do
-                if haystack(i + j) != needle(j) then found = false
-                j += 1
-            if found then return i
-            i += 1
-        end while
-        -1
-    end indexOf
 
 end WsCodec

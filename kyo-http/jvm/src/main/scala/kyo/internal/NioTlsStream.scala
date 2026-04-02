@@ -18,9 +18,9 @@ import kyo.*
   *   - BUFFER_UNDERFLOW → read more from TCP
   */
 class NioTlsStream(
-    underlying: TransportStream,
+    underlying: RawStream,
     engine: SSLEngine
-) extends TransportStream:
+) extends RawStream:
 
     given CanEqual[SSLEngineResult.Status, SSLEngineResult.Status]                   = CanEqual.derived
     given CanEqual[SSLEngineResult.HandshakeStatus, SSLEngineResult.HandshakeStatus] = CanEqual.derived
@@ -137,7 +137,7 @@ class NioTlsStream(
         }
     end doUnwrap
 
-    // ── TransportStream implementation ──────────────────
+    // ── RawStream implementation ──────────────────
 
     // Leftover decrypted bytes from previous unwrap
     private var appReadBuf: ByteBuffer = ByteBuffer.allocate(0)

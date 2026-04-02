@@ -3,8 +3,8 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.*
 
-/** KqueueNativeTransport2 tests — only meaningful on macOS/BSD. On Linux, tests pass trivially (succeed). */
-class KqueueTransport2Test extends kyo.Test:
+/** KqueueNativeTransport tests — only meaningful on macOS/BSD. On Linux, tests pass trivially (succeed). */
+class KqueueTransportTest extends kyo.Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -12,22 +12,22 @@ class KqueueTransport2Test extends kyo.Test:
     private val isMacOS = java.lang.System.getProperty("os.name", "").toLowerCase.contains("mac")
 
     private def onMacOS(
-        f: KqueueNativeTransport2 => Assertion < (Async & Abort[HttpException] & Scope)
+        f: KqueueNativeTransport => Assertion < (Async & Abort[HttpException] & Scope)
     )(using Frame): Assertion < (Async & Abort[HttpException] & Scope) =
         if !isMacOS then succeed
-        else f(new KqueueNativeTransport2)
+        else f(new KqueueNativeTransport)
 
     // ── withServer helper ──────────────────────────────────────────
 
     private def withServer(
-        transport: KqueueNativeTransport2
-    )(using Frame): TransportListener2[KqueueConnection2] < (Async & Scope) =
+        transport: KqueueNativeTransport
+    )(using Frame): TransportListener[KqueueConnection] < (Async & Scope) =
         transport.listen("127.0.0.1", 0, 128, Absent)
 
     /** Accept a single connection from the listener's stream and return it. */
     private def acceptOne(
-        listener: TransportListener2[KqueueConnection2]
-    )(using Frame): KqueueConnection2 < (Async & Abort[HttpException]) =
+        listener: TransportListener[KqueueConnection]
+    )(using Frame): KqueueConnection < (Async & Abort[HttpException]) =
         listener.connections.take(1).run.map { chunk =>
             if chunk.isEmpty then
                 Abort.panic(new Exception("No connection accepted"))
@@ -39,7 +39,7 @@ class KqueueTransport2Test extends kyo.Test:
       * ends.
       */
     private def readN(
-        conn: KqueueConnection2,
+        conn: KqueueConnection,
         limit: Int
     )(using Frame): Array[Byte] < Async =
         val acc = new java.io.ByteArrayOutputStream()
@@ -531,14 +531,14 @@ class KqueueTransport2Test extends kyo.Test:
         }
     }
 
-    "each accepted is TransportStream2" in run {
+    "each accepted is TransportStream" in run {
         Scope.run {
             onMacOS { transport =>
                 withServer(transport).map { listener =>
                     val serverFiber = Fiber.initUnscoped {
                         acceptOne(listener).map { serverConn =>
-                            // KqueueConnection2 must be a TransportStream2
-                            val ts: TransportStream2 = serverConn
+                            // KqueueConnection must be a TransportStream
+                            val ts: TransportStream = serverConn
                             discard(ts)
                             transport.closeNow(serverConn)
                         }
@@ -612,7 +612,7 @@ class KqueueTransport2Test extends kyo.Test:
 
     "Scope exit → connections cleaned" in run {
         onMacOS { transport =>
-            val connRef = new java.util.concurrent.atomic.AtomicReference[KqueueConnection2]()
+            val connRef = new java.util.concurrent.atomic.AtomicReference[KqueueConnection]()
             Scope.run {
                 transport.listen("127.0.0.1", 0, 128, Absent).map { listener =>
                     transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
@@ -660,4 +660,4 @@ class KqueueTransport2Test extends kyo.Test:
         }
     }
 
-end KqueueTransport2Test
+end KqueueTransportTest

@@ -3,25 +3,25 @@ package kyo.internal
 import kyo.*
 import scala.scalanative.unsafe.*
 
-/** Kqueue-based non-blocking TCP Transport2 for macOS/BSD (Scala Native).
+/** Kqueue-based non-blocking TCP Transport for macOS/BSD (Scala Native).
   *
   * Stream-first variant of KqueueNativeTransport. Each connection exposes a pull-based `Stream[Span[Byte], Async]` for reads instead of a
-  * callback-based `read(buf): Int`. Server listen returns a `TransportListener2` whose `connections` stream yields accepted connections.
+  * callback-based `read(buf): Int`. Server listen returns a `TransportListener` whose `connections` stream yields accepted connections.
   *
   * Design follows KqueueNativeTransport closely:
   *   - Per-connection kqueue fds for read and write to avoid event stealing between concurrent fibers.
   *   - Blocking kqueueWait (awaitReady) — OS thread blocks but Kyo's preemptive scheduler keeps other fibers running.
-  *   - TLS via NativeTlsStream wrapping an inner KqueueStream (old-style TransportStream), so the TLS layer is unchanged.
+  *   - TLS via NativeTlsStream wrapping an inner KqueueStream (RawStream), so the TLS layer is unchanged.
   */
-final class KqueueNativeTransport2 extends Transport2:
+final class KqueueNativeTransport extends Transport:
 
     import PosixBindings.*
 
-    type Connection = KqueueConnection2
+    type Connection = KqueueConnection
 
     def connect(host: String, port: Int, tls: Maybe[TlsConfig])(using
         Frame
-    ): KqueueConnection2 < (Async & Abort[HttpException]) =
+    ): KqueueConnection < (Async & Abort[HttpException]) =
         connectPlain(host, port).map { conn =>
             tls match
                 case Present(tlsCfg) => connectTls(host, conn, tlsCfg)
@@ -30,7 +30,7 @@ final class KqueueNativeTransport2 extends Transport2:
 
     private def connectPlain(host: String, port: Int)(using
         Frame
-    ): KqueueConnection2 < (Async & Abort[HttpException]) =
+    ): KqueueConnection < (Async & Abort[HttpException]) =
         Sync.defer {
             val (fd, pending) = Zone {
                 val outPending = alloc[CInt]()
@@ -49,17 +49,17 @@ final class KqueueNativeTransport2 extends Transport2:
                         tcpClose(fd)
                         Abort.fail(HttpConnectException(host, port, new Exception(s"connect failed: errno=$err")))
                     else
-                        Sync.defer(new KqueueConnection2(fd))
+                        Sync.defer(new KqueueConnection(fd))
                     end if
                 }
             else
-                Sync.defer(new KqueueConnection2(fd))
+                Sync.defer(new KqueueConnection(fd))
             end if
         }
 
-    private def connectTls(host: String, conn: KqueueConnection2, tlsCfg: TlsConfig)(using
+    private def connectTls(host: String, conn: KqueueConnection, tlsCfg: TlsConfig)(using
         Frame
-    ): KqueueConnection2 < (Async & Abort[HttpException]) =
+    ): KqueueConnection < (Async & Abort[HttpException]) =
         import TlsBindings.*
         Sync.defer {
             val ctx = tlsCtxNew(0)
@@ -72,7 +72,7 @@ final class KqueueNativeTransport2 extends Transport2:
                     Abort.fail(HttpConnectException(host, 0, new Exception("Failed to create TLS session")))
                 else
                     tlsSetConnectState(ssl)
-                    val tcpStream = new KqueueStream2TlsBridge(conn)
+                    val tcpStream = new KqueueStreamTlsBridge(conn)
                     val tlsStream = new NativeTlsStream(ssl, ctx, tcpStream)
                     conn.tlsStream = Present(tlsStream)
                     tlsStream.handshake().map(_ => conn)
@@ -81,10 +81,10 @@ final class KqueueNativeTransport2 extends Transport2:
         }
     end connectTls
 
-    def isAlive(c: KqueueConnection2)(using Frame): Boolean < Sync =
+    def isAlive(c: KqueueConnection)(using Frame): Boolean < Sync =
         Sync.defer(!c.closed && tcpIsAlive(c.fd) == 1)
 
-    def closeNow(c: KqueueConnection2)(using Frame): Unit < Sync =
+    def closeNow(c: KqueueConnection)(using Frame): Unit < Sync =
         Sync.defer {
             c.closed = true
             c.tlsStream match
@@ -100,12 +100,12 @@ final class KqueueNativeTransport2 extends Transport2:
             tcpClose(c.writeKq)
         }
 
-    def close(c: KqueueConnection2, gracePeriod: Duration)(using Frame): Unit < Async =
+    def close(c: KqueueConnection, gracePeriod: Duration)(using Frame): Unit < Async =
         Sync.defer(tcpShutdown(c.fd))
 
     def listen(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using
         Frame
-    ): TransportListener2[KqueueConnection2] < (Async & Scope) =
+    ): TransportListener[KqueueConnection] < (Async & Scope) =
         Sync.defer {
             val (serverFd, boundPort) = Zone {
                 val outPort = alloc[CInt]()
@@ -120,21 +120,21 @@ final class KqueueNativeTransport2 extends Transport2:
                 tls match
                     case Absent =>
                         Scope.acquireRelease {
-                            val connStream: Stream[KqueueConnection2, Async] =
+                            val connStream: Stream[KqueueConnection, Async] =
                                 Stream.unfold((), chunkSize = 1) { _ =>
                                     discard(kqueueRegister(acceptKq, serverFd, -1))
                                     awaitReady(acceptKq).andThen {
                                         Sync.defer {
                                             val clientFd = tcpAccept(serverFd)
                                             if clientFd >= 0 then
-                                                Maybe((new KqueueConnection2(clientFd), ()))
+                                                Maybe((new KqueueConnection(clientFd), ()))
                                             else
                                                 Maybe.empty
                                             end if
                                         }
                                     }
                                 }
-                            new TransportListener2(
+                            new TransportListener(
                                 boundPort,
                                 boundHost,
                                 connStream,
@@ -172,21 +172,21 @@ final class KqueueNativeTransport2 extends Transport2:
                                 ))
                             else
                                 Scope.acquireRelease {
-                                    val connStream: Stream[KqueueConnection2, Async] =
+                                    val connStream: Stream[KqueueConnection, Async] =
                                         Stream.unfold((), chunkSize = 1) { _ =>
                                             discard(kqueueRegister(acceptKq, serverFd, -1))
                                             awaitReady(acceptKq).andThen {
                                                 Sync.defer {
                                                     val clientFd = tcpAccept(serverFd)
                                                     if clientFd >= 0 then
-                                                        val conn = new KqueueConnection2(clientFd)
+                                                        val conn = new KqueueConnection(clientFd)
                                                         val ssl  = Zone { tlsNew(ctx, null) }
                                                         if ssl == 0 then
                                                             tcpClose(clientFd)
                                                             Maybe.empty
                                                         else
                                                             tlsSetAcceptState(ssl)
-                                                            val bridge    = new KqueueStream2TlsBridge(conn)
+                                                            val bridge    = new KqueueStreamTlsBridge(conn)
                                                             val tlsStream = new NativeTlsStream(ssl, ctx, bridge)
                                                             conn.tlsStream = Present(tlsStream)
                                                             Maybe((conn, ()))
@@ -197,7 +197,7 @@ final class KqueueNativeTransport2 extends Transport2:
                                                 }
                                             }
                                         }
-                                    new TransportListener2(
+                                    new TransportListener(
                                         boundPort,
                                         boundHost,
                                         connStream,
@@ -226,18 +226,18 @@ final class KqueueNativeTransport2 extends Transport2:
             }
         }.unit
 
-end KqueueNativeTransport2
+end KqueueNativeTransport
 
-/** A kqueue-backed connection that implements TransportStream2 (stream-based reads).
+/** A kqueue-backed connection that implements TransportStream (stream-based reads).
   *
   * Holds per-connection kqueue fds for read and write, matching the pattern of KqueueConnection. TLS is stored as a NativeTlsStream when
   * the connection is TLS-upgraded.
   */
-private[kyo] class KqueueConnection2(
+private[kyo] class KqueueConnection(
     val fd: Int,
     var closed: Boolean = false,
     var tlsStream: Maybe[NativeTlsStream] = Absent
-) extends TransportStream2:
+) extends TransportStream:
 
     import PosixBindings.*
 
@@ -253,46 +253,6 @@ private[kyo] class KqueueConnection2(
                 case Present(tls) => readTls(tls)
                 case Absent       => readPlain()
         }
-
-    /** Overrides the default stream-based bridge with a direct call to readPlain/readTls.
-      *
-      * The default implementation in TransportStream2 uses read.take(1).run, which creates stream effect machinery on every call. On Scala
-      * Native's cooperative scheduler this adds overhead that can cause cascading test failures. This override calls readPlain/readTls
-      * directly, matching the behaviour of the old KqueueStream.read(buf) implementation.
-      */
-    override def asTransportStream(using Frame): TransportStream < Sync =
-        Sync.defer {
-            new TransportStream:
-                private var leftover: Span[Byte] = Span.empty[Byte]
-
-                def read(out: Array[Byte])(using Frame): Int < Async =
-                    if leftover.nonEmpty then
-                        val take = math.min(leftover.size, out.length)
-                        discard(leftover.copyToArray(out, 0, take))
-                        leftover = leftover.slice(take, leftover.size)
-                        take
-                    else
-                        val readNext: Maybe[(Span[Byte], Unit)] < Async =
-                            tlsStream match
-                                case Present(tls) => readTls(tls)
-                                case Absent       => readPlain()
-                        readNext.map {
-                            case Maybe.Absent => -1
-                            case Maybe.Present((span, _)) =>
-                                if span.isEmpty then read(out)
-                                else
-                                    val take = math.min(span.size, out.length)
-                                    discard(span.copyToArray(out, 0, take))
-                                    if take < span.size then
-                                        leftover = span.slice(take, span.size)
-                                    take
-                                end if
-                        }
-
-                def write(data: Span[Byte])(using Frame): Unit < Async =
-                    KqueueConnection2.this.write(data)
-        }
-    end asTransportStream
 
     private def readPlain()(using Frame): Maybe[(Span[Byte], Unit)] < Async =
         discard(kqueueRegister(readKq, fd, -1))
@@ -387,14 +347,14 @@ private[kyo] class KqueueConnection2(
         }
     end writePlain
 
-end KqueueConnection2
+end KqueueConnection
 
-/** Bridges a KqueueConnection2 to the old-style TransportStream API, so NativeTlsStream can use it for TLS I/O.
+/** Bridges a KqueueConnection to the RawStream API, so NativeTlsStream can use it for TLS I/O.
   *
-  * NativeTlsStream requires a TransportStream with `read(buf): Int < Async`. This bridge delegates to the kqueue-backed raw I/O of a
-  * KqueueConnection2 without going through the TLS layer (avoids recursion).
+  * NativeTlsStream requires a RawStream with `read(buf): Int < Async`. This bridge delegates to the kqueue-backed raw I/O of a
+  * KqueueConnection without going through the TLS layer (avoids recursion).
   */
-private[kyo] class KqueueStream2TlsBridge(conn: KqueueConnection2) extends TransportStream:
+private[kyo] class KqueueStreamTlsBridge(conn: KqueueConnection) extends RawStream:
 
     import PosixBindings.*
 
@@ -466,4 +426,4 @@ private[kyo] class KqueueStream2TlsBridge(conn: KqueueConnection2) extends Trans
             }
     end write
 
-end KqueueStream2TlsBridge
+end KqueueStreamTlsBridge

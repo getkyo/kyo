@@ -11,26 +11,26 @@ import scala.scalajs.js
   */
 final class JsTransport extends Transport:
 
+    private val net = js.Dynamic.global.require("net")
+    private val tls = js.Dynamic.global.require("tls")
+
     type Connection = JsConnection
 
-    private val net    = js.Dynamic.global.require("net")
-    private val tlsMod = js.Dynamic.global.require("tls")
-
-    def connect(host: String, port: Int, tls: Boolean)(using
+    def connect(host: String, port: Int, tlsConfig: Maybe[TlsConfig])(using
         Frame
     )
         : JsConnection < (Async & Abort[HttpException]) =
         Promise.init[JsConnection, Async & Abort[HttpException]].map { promise =>
             Sync.defer {
                 val (socket, connectEvent) =
-                    if tls then
+                    if tlsConfig.isDefined then
                         val opts = js.Dynamic.literal(
                             host = host,
                             port = port,
-                            servername = host, // SNI
+                            servername = host,
                             rejectUnauthorized = true
                         )
-                        (tlsMod.connect(opts), "secureConnect")
+                        (tls.connect(opts), "secureConnect")
                     else
                         (net.connect(port, host), "connect")
                 discard(socket.setNoDelay(true))
@@ -39,7 +39,8 @@ final class JsTransport extends Transport:
                     connectEvent,
                     { () =>
                         import AllowUnsafe.embrace.danger
-                        discard(promise.unsafe.complete(Result.succeed(new JsConnection(socket))))
+                        val conn = new JsRawConnection(socket)
+                        discard(promise.unsafe.complete(Result.succeed(new JsConnection(conn, new JsStream(conn)))))
                     }: js.Function0[Unit]
                 ))
                 discard(socket.on(
@@ -54,28 +55,29 @@ final class JsTransport extends Transport:
             }.andThen(promise.get)
         }
 
-    def isAlive(connection: JsConnection)(using Frame): Boolean < Sync =
-        Sync.defer(!connection.socket.destroyed.asInstanceOf[Boolean])
+    def isAlive(c: JsConnection)(using Frame): Boolean < Sync =
+        Sync.defer(!c.conn.socket.destroyed.asInstanceOf[Boolean])
 
-    def closeNow(connection: JsConnection)(using Frame): Unit < Sync =
-        Sync.defer(discard(connection.socket.destroy()))
+    def closeNow(c: JsConnection)(using Frame): Unit < Sync =
+        Sync.defer(discard(c.conn.socket.destroy()))
 
-    def close(connection: JsConnection, gracePeriod: Duration)(using Frame): Unit < Async =
-        Sync.defer(discard(connection.socket.end()))
+    def close(c: JsConnection, gracePeriod: Duration)(using Frame): Unit < Async =
+        Sync.defer(discard(c.conn.socket.end()))
 
-    def stream(connection: JsConnection)(using Frame): TransportStream < Async =
-        Sync.defer(new JsStream(connection))
-
-    def listen(host: String, port: Int, backlog: Int)(
-        handler: TransportStream => Unit < Async
-    )(using frame: Frame): TransportListener < (Async & Scope) =
-        Promise.init[TransportListener, Any].map { ready =>
-            val server     = net.createServer()
-            val listenHost = host
-            // Track active connection sockets so we can destroy them when the server closes.
-            // JavaScript is single-threaded so a plain js.Array is safe here.
+    def listen(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using
+        frame: Frame
+    )
+        : TransportListener[JsConnection] < (Async & Scope) =
+        Promise.init[TransportListener[JsConnection], Any].map { ready =>
+            val server        = net.createServer()
+            val listenHost    = host
             val activeSockets = js.Array[js.Dynamic]()
-            // Propagate server errors (e.g. EADDRINUSE) so Node.js doesn't crash with an unhandled event.
+
+            // Single-threaded JS queue: incoming connections are buffered here.
+            // pendingPull holds a waiting stream consumer's promise (at most one at a time).
+            val connQueue                                              = scala.collection.mutable.Queue.empty[JsConnection]
+            var pendingPull: Option[Promise.Unsafe[JsConnection, Any]] = None
+
             discard(server.on(
                 "error",
                 { (err: js.Dynamic) =>
@@ -85,27 +87,38 @@ final class JsTransport extends Transport:
                     )))
                 }: js.Function1[js.Dynamic, Unit]
             ))
+
             discard(server.on(
                 "connection",
                 { (socket: js.Dynamic) =>
                     import AllowUnsafe.embrace.danger
-                    given Frame = frame
                     discard(socket.pause())
                     discard(socket.setNoDelay(true))
                     discard(activeSockets.push(socket))
-                    val conn = new JsConnection(socket)
-                    discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped {
-                        Sync.ensure(
-                            Sync.defer {
-                                val idx = activeSockets.indexOf(socket)
-                                if idx >= 0 then discard(activeSockets.splice(idx, 1))
-                            }.andThen(closeNow(conn))
-                        ) {
-                            handler(new JsStream(conn))
-                        }
-                    }))
+                    val jsConn = new JsRawConnection(socket)
+                    val conn   = new JsConnection(jsConn, new JsStream(jsConn))
+                    pendingPull match
+                        case Some(p) =>
+                            pendingPull = None
+                            discard(p.complete(Result.succeed(conn)))
+                        case None =>
+                            connQueue.enqueue(conn)
+                    end match
                 }: js.Function1[js.Dynamic, Unit]
             ))
+
+            val connStream: Stream[JsConnection, Async] =
+                Stream.unfold((), chunkSize = 1) { _ =>
+                    given Frame = frame
+                    if connQueue.nonEmpty then
+                        Maybe((connQueue.dequeue(), ()))
+                    else
+                        Promise.init[JsConnection, Any].map { p =>
+                            pendingPull = Some(p.unsafe)
+                            p.get.map(c => Maybe((c, ())))
+                        }
+                    end if
+                }
 
             Scope.acquireRelease {
                 Sync.defer {
@@ -114,18 +127,15 @@ final class JsTransport extends Transport:
                         host,
                         { () =>
                             import AllowUnsafe.embrace.danger
-                            val addr = server.address()
-                            discard(ready.unsafe.complete(Result.succeed(new TransportListener:
-                                val port = addr.port.asInstanceOf[Int]
-                                val host = listenHost)))
+                            val addr       = server.address()
+                            val actualPort = addr.port.asInstanceOf[Int]
+                            discard(ready.unsafe.complete(Result.succeed(
+                                new TransportListener(actualPort, listenHost, connStream)
+                            )))
                         }: js.Function0[Unit]
                     ))
                 }.andThen(ready.get)
-
             } { _ =>
-                // Destroy all active connections so pending read promises complete (via the
-                // permanent "close" handler in JsStream) and their fibers can exit.
-                // Without this the Node.js event loop stays alive indefinitely.
                 Sync.defer {
                     var i = 0
                     while i < activeSockets.length do
@@ -139,7 +149,7 @@ final class JsTransport extends Transport:
 
 end JsTransport
 
-private[kyo] class JsConnection(val socket: js.Dynamic)
+private[kyo] class JsRawConnection(val socket: js.Dynamic)
 
 /** Node.js stream with permanent socket listeners.
   *
@@ -148,7 +158,7 @@ private[kyo] class JsConnection(val socket: js.Dynamic)
   * the race window that existed when using per-read once() registration: if "close" or "error" fired between read() calls (after the
   * previous once-handlers had self-removed but before new ones were registered), the pending Promise would never complete.
   */
-private[kyo] class JsStream(conn: JsConnection) extends TransportStream:
+private[kyo] class JsStream(conn: JsRawConnection) extends RawStream:
 
     // Leftover bytes from a Node.js "data" chunk that didn't fit in the last buf.
     // Served before issuing another socket.resume().
@@ -302,3 +312,27 @@ private[kyo] class JsStream(conn: JsConnection) extends TransportStream:
             }
 
 end JsStream
+
+/** TransportStream adapter for JsRawConnection. Exposes `Stream[Span[Byte], Async]` reads by delegating to JsStream.read(buf).
+  *
+  * Used by JsTransport and WsTransportClient.
+  */
+private[kyo] class JsConnection(val conn: JsRawConnection, private val stream: JsStream) extends TransportStream:
+    private val ChunkSize = 4096
+
+    def read(using Frame): Stream[Span[Byte], Async] =
+        Stream.unfold((), chunkSize = 1) { _ =>
+            val buf = new Array[Byte](ChunkSize)
+            stream.read(buf).map { n =>
+                if n <= 0 then Maybe.empty
+                else
+                    val arr = new Array[Byte](n)
+                    java.lang.System.arraycopy(buf, 0, arr, 0, n)
+                    Maybe((Span.fromUnsafe(arr), ()))
+            }
+        }
+
+    def write(data: Span[Byte])(using Frame): Unit < Async =
+        stream.write(data)
+
+end JsConnection

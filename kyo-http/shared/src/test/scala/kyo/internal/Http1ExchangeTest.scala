@@ -42,9 +42,9 @@ class Http1ExchangeTest extends kyo.Test:
         responseStatus: HttpStatus,
         responseBody: String
     )(using Frame): Unit < (Async & Abort[HttpException]) =
-        Http1Protocol2.readRequest(server.read, 65536).map { case (_, _) =>
+        Http1Protocol.readRequest(server.read, 65536).map { case (_, _) =>
             val body = HttpBody.Buffered(bytes(responseBody))
-            Http1Protocol2.writeResponse(server, responseStatus, HttpHeaders.empty, body)
+            Http1Protocol.writeResponse(server, responseStatus, HttpHeaders.empty, body)
         }
 
     /** Multi-request server: reads `n` requests and echoes back numbered responses. */
@@ -55,9 +55,9 @@ class Http1ExchangeTest extends kyo.Test:
         Loop(server.read, 0) { (stream, i) =>
             if i >= n then Loop.done(())
             else
-                Http1Protocol2.readRequest(stream, 65536).map { case ((method, path, headers, reqBody), rest) =>
+                Http1Protocol.readRequest(stream, 65536).map { case ((method, path, headers, reqBody), rest) =>
                     val respBody = HttpBody.Buffered(bytes(s"response-$i"))
-                    Http1Protocol2.writeResponse(server, HttpStatus(200), HttpHeaders.empty, respBody).andThen {
+                    Http1Protocol.writeResponse(server, HttpStatus(200), HttpHeaders.empty, respBody).andThen {
                         Loop.continue(rest, i + 1)
                     }
                 }
@@ -79,11 +79,11 @@ class Http1ExchangeTest extends kyo.Test:
         // Test 2: POST /submit with body
         "exchange(POST /submit) with body" in run {
             withExchange { server =>
-                Http1Protocol2.readRequest(server.read, 65536).map { case ((method, path, _, reqBody), _) =>
+                Http1Protocol.readRequest(server.read, 65536).map { case ((method, path, _, reqBody), _) =>
                     assert(method == HttpMethod.POST)
                     assert(path == "/submit")
                     val respBody = HttpBody.Buffered(bytes("Submitted"))
-                    Http1Protocol2.writeResponse(server, HttpStatus(201), HttpHeaders.empty, respBody)
+                    Http1Protocol.writeResponse(server, HttpStatus(201), HttpHeaders.empty, respBody)
                 }
             } { exchange =>
                 val reqBody = HttpBody.Buffered(bytes("payload"))
@@ -231,10 +231,10 @@ class Http1ExchangeTest extends kyo.Test:
         "write-then-signal ordering" in run {
             withExchange { server =>
                 // Server verifies request was received before responding
-                Http1Protocol2.readRequest(server.read, 65536).map { case ((method, path, _, _), _) =>
+                Http1Protocol.readRequest(server.read, 65536).map { case ((method, path, _, _), _) =>
                     assert(method == HttpMethod.GET)
                     assert(path == "/order")
-                    Http1Protocol2.writeResponse(server, HttpStatus(200), HttpHeaders.empty, HttpBody.Empty)
+                    Http1Protocol.writeResponse(server, HttpStatus(200), HttpHeaders.empty, HttpBody.Empty)
                 }
             } { exchange =>
                 val req = RawHttpRequest(HttpMethod.GET, "/order", HttpHeaders.empty, HttpBody.Empty)
@@ -248,9 +248,9 @@ class Http1ExchangeTest extends kyo.Test:
         "reader blocks until request sent" in run {
             withExchange { server =>
                 // Server expects to receive the request before sending back a response
-                Http1Protocol2.readRequest(server.read, 65536).map { case ((_, path, _, _), _) =>
+                Http1Protocol.readRequest(server.read, 65536).map { case ((_, path, _, _), _) =>
                     val body = HttpBody.Buffered(bytes(path))
-                    Http1Protocol2.writeResponse(server, HttpStatus(200), HttpHeaders.empty, body)
+                    Http1Protocol.writeResponse(server, HttpStatus(200), HttpHeaders.empty, body)
                 }
             } { exchange =>
                 val req = RawHttpRequest(HttpMethod.GET, "/echo-path", HttpHeaders.empty, HttpBody.Empty)
@@ -279,9 +279,9 @@ class Http1ExchangeTest extends kyo.Test:
             val largeContent = "X" * (100 * 1024)
             withExchange(
                 handler = server =>
-                    Http1Protocol2.readRequest(server.read, 65536).map { _ =>
+                    Http1Protocol.readRequest(server.read, 65536).map { _ =>
                         val body = HttpBody.Buffered(bytes(largeContent))
-                        Http1Protocol2.writeResponse(server, HttpStatus(200), HttpHeaders.empty, body)
+                        Http1Protocol.writeResponse(server, HttpStatus(200), HttpHeaders.empty, body)
                     },
                 maxSize = 200 * 1024
             ) { exchange =>
@@ -296,8 +296,8 @@ class Http1ExchangeTest extends kyo.Test:
         // Test 14: empty response body (204 No Content)
         "empty response body" in run {
             withExchange { server =>
-                Http1Protocol2.readRequest(server.read, 65536).map { _ =>
-                    Http1Protocol2.writeResponse(server, HttpStatus(204), HttpHeaders.empty, HttpBody.Empty)
+                Http1Protocol.readRequest(server.read, 65536).map { _ =>
+                    Http1Protocol.writeResponse(server, HttpStatus(204), HttpHeaders.empty, HttpBody.Empty)
                 }
             } { exchange =>
                 val req = RawHttpRequest(HttpMethod.DELETE, "/resource", HttpHeaders.empty, HttpBody.Empty)

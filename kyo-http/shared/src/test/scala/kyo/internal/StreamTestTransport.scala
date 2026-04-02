@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-/** In-memory Transport2 for testing. Uses Channel pairs to simulate bidirectional streams.
+/** In-memory Transport for testing. Uses Channel pairs to simulate bidirectional streams.
   *
   * Architecture: each `StreamTestConnection` wraps a read channel and a write channel. The `withPair` helper creates two connections with
   * swapped channel pairs so that writing from one end is readable from the other.
@@ -11,7 +11,7 @@ class StreamTestConnection(
     readCh: Channel[Span[Byte]],
     writeCh: Channel[Span[Byte]],
     var closed: Boolean = false
-) extends TransportStream2:
+) extends TransportStream:
 
     def read(using Frame): Stream[Span[Byte], Async] =
         Stream.unfold((), chunkSize = 1) { _ =>

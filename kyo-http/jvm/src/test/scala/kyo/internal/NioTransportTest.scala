@@ -3,22 +3,22 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.*
 
-class NioTransport2Test extends kyo.Test:
+class NioTransportTest extends kyo.Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
     private val Utf8      = StandardCharsets.UTF_8
-    private val transport = new NioTransport2
+    private val transport = new NioTransport
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private def withServer(using Frame): TransportListener2[NioConnection2] < (Async & Scope) =
+    private def withServer(using Frame): TransportListener[NioConnection] < (Async & Scope) =
         transport.listen("127.0.0.1", 0, 128, Absent)
 
     /** Accept a single connection from the listener's stream and return it. */
     private def acceptOne(
-        listener: TransportListener2[NioConnection2]
-    )(using Frame): NioConnection2 < (Async & Abort[HttpException]) =
+        listener: TransportListener[NioConnection]
+    )(using Frame): NioConnection < (Async & Abort[HttpException]) =
         listener.connections.take(1).run.map { chunk =>
             if chunk.isEmpty then
                 Abort.panic(new Exception("No connection accepted"))
@@ -28,7 +28,7 @@ class NioTransport2Test extends kyo.Test:
 
     /** Read at least `limit` bytes from a connection's read stream. Stops when `limit` is reached or the stream ends. */
     private def readN(
-        conn: NioConnection2,
+        conn: NioConnection,
         limit: Int
     )(using Frame): Array[Byte] < Async =
         val acc = new java.io.ByteArrayOutputStream()
@@ -323,13 +323,13 @@ class NioTransport2Test extends kyo.Test:
         }
     }
 
-    "each accepted is TransportStream2" in run {
+    "each accepted is TransportStream" in run {
         Scope.run {
             withServer.map { listener =>
                 val serverFiber = Fiber.initUnscoped {
                     acceptOne(listener).map { serverConn =>
-                        // NioConnection2 must be a TransportStream2
-                        val ts: TransportStream2 = serverConn
+                        // NioConnection must be a TransportStream
+                        val ts: TransportStream = serverConn
                         discard(ts)
                         transport.closeNow(serverConn)
                     }
@@ -343,4 +343,4 @@ class NioTransport2Test extends kyo.Test:
         }
     }
 
-end NioTransport2Test
+end NioTransportTest

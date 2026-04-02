@@ -8,7 +8,7 @@ import scala.scalanative.unsafe.*
   * Architecture (BIO_s_mem based): write(plaintext) → SSL_write(plaintext) → BIO_read(wbio) → ciphertext → underlying.write underlying.read
   * → ciphertext → BIO_write(rbio) → SSL_read → plaintext → read(buf)
   *
-  * OpenSSL never touches file descriptors. All network I/O goes through the underlying TransportStream (KqueueStream or EpollStream). This
+  * OpenSSL never touches file descriptors. All network I/O goes through the underlying RawStream (KqueueStreamTlsBridge or similar). This
   * makes the TLS layer portable across both kqueue (macOS) and epoll (Linux) without any platform-specific code here.
   *
   * sslPtr: opaque SSL* from kyo_tls_new (must have connect/accept state set before handshake). ctxPtr: opaque SSL_CTX* — kept alive here so
@@ -17,8 +17,8 @@ import scala.scalanative.unsafe.*
 private[kyo] class NativeTlsStream(
     val sslPtr: CLong,
     val ctxPtr: CLong,
-    underlying: TransportStream
-) extends TransportStream:
+    underlying: RawStream
+) extends RawStream:
 
     import TlsBindings.*
 
@@ -92,7 +92,7 @@ private[kyo] class NativeTlsStream(
         else Kyo.unit
     end flushOutput
 
-    // ── TransportStream implementation ──────────────────
+    // ── RawStream implementation ──────────────────
 
     def read(buf: Array[Byte])(using Frame): Int < Async =
         // Try to read buffered plaintext from OpenSSL first

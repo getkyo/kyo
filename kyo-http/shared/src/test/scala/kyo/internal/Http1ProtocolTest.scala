@@ -3,7 +3,7 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.*
 
-class Http1Protocol2Test extends kyo.Test:
+class Http1ProtocolTest extends kyo.Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -16,15 +16,15 @@ class Http1Protocol2Test extends kyo.Test:
     private def streamOf(s: String): Stream[Span[Byte], Async] =
         streamOf(s.getBytes(Utf8))
 
-    "Http1Protocol2" - {
+    "Http1Protocol" - {
 
         "request parsing" - {
 
             // Test 1: GET no body → HttpBody.Empty
             "GET no body" in run {
                 StreamTestTransport.withPair { (client, server) =>
-                    Http1Protocol2.writeRequest(client, HttpMethod.GET, "/path", HttpHeaders.empty, HttpBody.Empty).andThen {
-                        Http1Protocol2.readRequest(server.read, 65536).map { case ((method, path, headers, body), _) =>
+                    Http1Protocol.writeRequest(client, HttpMethod.GET, "/path", HttpHeaders.empty, HttpBody.Empty).andThen {
+                        Http1Protocol.readRequest(server.read, 65536).map { case ((method, path, headers, body), _) =>
                             assert(method == HttpMethod.GET)
                             assert(path == "/path")
                             assert(body == HttpBody.Empty)
@@ -37,14 +37,14 @@ class Http1Protocol2Test extends kyo.Test:
             "POST with Content-Length body" in run {
                 StreamTestTransport.withPair { (client, server) =>
                     val bodyData = Span.fromUnsafe("hello world".getBytes(Utf8))
-                    Http1Protocol2.writeRequest(
+                    Http1Protocol.writeRequest(
                         client,
                         HttpMethod.POST,
                         "/submit",
                         HttpHeaders.empty,
                         HttpBody.Buffered(bodyData)
                     ).andThen {
-                        Http1Protocol2.readRequest(server.read, 65536).map { case ((method, path, headers, body), _) =>
+                        Http1Protocol.readRequest(server.read, 65536).map { case ((method, path, headers, body), _) =>
                             assert(method == HttpMethod.POST)
                             assert(path == "/submit")
                             body match
@@ -63,7 +63,7 @@ class Http1Protocol2Test extends kyo.Test:
                 // Write raw chunked wire format directly
                 val chunkedWire = "POST /upload HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n4\r\ndefg\r\n0\r\n\r\n"
                 val src         = streamOf(chunkedWire)
-                Http1Protocol2.readRequest(src, 65536).map { case ((method, path, headers, body), _) =>
+                Http1Protocol.readRequest(src, 65536).map { case ((method, path, headers, body), _) =>
                     assert(method == HttpMethod.POST)
                     assert(path == "/upload")
                     body match
@@ -79,8 +79,8 @@ class Http1Protocol2Test extends kyo.Test:
             "PUT binary body no corruption" in run {
                 StreamTestTransport.withPair { (client, server) =>
                     val allBytes = Span.fromUnsafe(Array.tabulate[Byte](256)(_.toByte))
-                    Http1Protocol2.writeRequest(client, HttpMethod.PUT, "/binary", HttpHeaders.empty, HttpBody.Buffered(allBytes)).andThen {
-                        Http1Protocol2.readRequest(server.read, 65536).map { case ((_, _, _, body), _) =>
+                    Http1Protocol.writeRequest(client, HttpMethod.PUT, "/binary", HttpHeaders.empty, HttpBody.Buffered(allBytes)).andThen {
+                        Http1Protocol.readRequest(server.read, 65536).map { case ((_, _, _, body), _) =>
                             body match
                                 case HttpBody.Buffered(data) =>
                                     val arr = data.toArrayUnsafe
@@ -112,8 +112,8 @@ class Http1Protocol2Test extends kyo.Test:
                 )
                 Kyo.foreach(methods) { method =>
                     StreamTestTransport.withPair { (client, server) =>
-                        Http1Protocol2.writeRequest(client, method, "/test", HttpHeaders.empty, HttpBody.Empty).andThen {
-                            Http1Protocol2.readRequest(server.read, 65536).map { case ((parsed, _, _, _), _) =>
+                        Http1Protocol.writeRequest(client, method, "/test", HttpHeaders.empty, HttpBody.Empty).andThen {
+                            Http1Protocol.readRequest(server.read, 65536).map { case ((parsed, _, _, _), _) =>
                                 assert(parsed == method, s"$method should roundtrip")
                             }
                         }
@@ -124,8 +124,8 @@ class Http1Protocol2Test extends kyo.Test:
             // Test 6: Query string preserved
             "query string preserved" in run {
                 StreamTestTransport.withPair { (client, server) =>
-                    Http1Protocol2.writeRequest(client, HttpMethod.GET, "/path?a=1&b=2", HttpHeaders.empty, HttpBody.Empty).andThen {
-                        Http1Protocol2.readRequest(server.read, 65536).map { case ((_, path, _, _), _) =>
+                    Http1Protocol.writeRequest(client, HttpMethod.GET, "/path?a=1&b=2", HttpHeaders.empty, HttpBody.Empty).andThen {
+                        Http1Protocol.readRequest(server.read, 65536).map { case ((_, path, _, _), _) =>
                             assert(path == "/path?a=1&b=2")
                         }
                     }
@@ -136,8 +136,8 @@ class Http1Protocol2Test extends kyo.Test:
             "multiple same-name headers preserved" in run {
                 StreamTestTransport.withPair { (client, server) =>
                     val headers = HttpHeaders.empty.add("X-Custom", "val1").add("X-Custom", "val2")
-                    Http1Protocol2.writeRequest(client, HttpMethod.GET, "/test", headers, HttpBody.Empty).andThen {
-                        Http1Protocol2.readRequest(server.read, 65536).map { case ((_, _, parsedHeaders, _), _) =>
+                    Http1Protocol.writeRequest(client, HttpMethod.GET, "/test", headers, HttpBody.Empty).andThen {
+                        Http1Protocol.readRequest(server.read, 65536).map { case ((_, _, parsedHeaders, _), _) =>
                             val all = parsedHeaders.getAll("X-Custom")
                             assert(all.size == 2)
                             assert(all.contains("val1"))
@@ -151,8 +151,8 @@ class Http1Protocol2Test extends kyo.Test:
             "empty header value" in run {
                 StreamTestTransport.withPair { (client, server) =>
                     val headers = HttpHeaders.empty.add("X-Empty", "")
-                    Http1Protocol2.writeRequest(client, HttpMethod.GET, "/test", headers, HttpBody.Empty).andThen {
-                        Http1Protocol2.readRequest(server.read, 65536).map { case ((_, _, parsedHeaders, _), _) =>
+                    Http1Protocol.writeRequest(client, HttpMethod.GET, "/test", headers, HttpBody.Empty).andThen {
+                        Http1Protocol.readRequest(server.read, 65536).map { case ((_, _, parsedHeaders, _), _) =>
                             assert(parsedHeaders.get("X-Empty") == Present(""))
                         }
                     }
@@ -165,8 +165,8 @@ class Http1Protocol2Test extends kyo.Test:
                 val bigValue = "x" * 60000
                 StreamTestTransport.withPair { (client, server) =>
                     val headers = HttpHeaders.empty.add("X-Big", bigValue)
-                    Http1Protocol2.writeRequest(client, HttpMethod.GET, "/test", headers, HttpBody.Empty).andThen {
-                        Http1Protocol2.readRequest(server.read, 65536).map { case ((_, _, parsedHeaders, _), _) =>
+                    Http1Protocol.writeRequest(client, HttpMethod.GET, "/test", headers, HttpBody.Empty).andThen {
+                        Http1Protocol.readRequest(server.read, 65536).map { case ((_, _, parsedHeaders, _), _) =>
                             assert(parsedHeaders.get("X-Big") == Present(bigValue))
                         }
                     }
@@ -179,7 +179,7 @@ class Http1Protocol2Test extends kyo.Test:
                 val bigValue = "x" * 70000
                 val wire     = s"GET /test HTTP/1.1\r\nX-Big: $bigValue\r\n\r\n"
                 val src      = streamOf(wire)
-                Abort.run[HttpException](Http1Protocol2.readRequest(src, 65536)).map { result =>
+                Abort.run[HttpException](Http1Protocol.readRequest(src, 65536)).map { result =>
                     assert(result.isFailure, "Expected failure for oversized headers")
                 }
             }
@@ -189,8 +189,8 @@ class Http1Protocol2Test extends kyo.Test:
                 val unicodeValue = "café-résumé"
                 StreamTestTransport.withPair { (client, server) =>
                     val headers = HttpHeaders.empty.add("X-Unicode", unicodeValue)
-                    Http1Protocol2.writeRequest(client, HttpMethod.GET, "/test", headers, HttpBody.Empty).andThen {
-                        Http1Protocol2.readRequest(server.read, 65536).map { case ((_, _, parsedHeaders, _), _) =>
+                    Http1Protocol.writeRequest(client, HttpMethod.GET, "/test", headers, HttpBody.Empty).andThen {
+                        Http1Protocol.readRequest(server.read, 65536).map { case ((_, _, parsedHeaders, _), _) =>
                             assert(parsedHeaders.get("X-Unicode") == Present(unicodeValue))
                         }
                     }
@@ -204,8 +204,8 @@ class Http1Protocol2Test extends kyo.Test:
                         .add("X-Request-Id", "abc-123")
                         .add("X-Client-Version", "2.0")
                         .add("Authorization", "Bearer token123")
-                    Http1Protocol2.writeRequest(client, HttpMethod.GET, "/api", headers, HttpBody.Empty).andThen {
-                        Http1Protocol2.readRequest(server.read, 65536).map { case ((_, _, parsedHeaders, _), _) =>
+                    Http1Protocol.writeRequest(client, HttpMethod.GET, "/api", headers, HttpBody.Empty).andThen {
+                        Http1Protocol.readRequest(server.read, 65536).map { case ((_, _, parsedHeaders, _), _) =>
                             assert(parsedHeaders.get("X-Request-Id") == Present("abc-123"))
                             assert(parsedHeaders.get("X-Client-Version") == Present("2.0"))
                             assert(parsedHeaders.get("Authorization") == Present("Bearer token123"))
@@ -222,8 +222,8 @@ class Http1Protocol2Test extends kyo.Test:
             "200 OK with body" in run {
                 StreamTestTransport.withPair { (client, server) =>
                     val bodyData = Span.fromUnsafe("response body".getBytes(Utf8))
-                    Http1Protocol2.writeResponse(server, HttpStatus(200), HttpHeaders.empty, HttpBody.Buffered(bodyData)).andThen {
-                        Http1Protocol2.readResponse(client.read, 65536).map { case ((status, headers, body), _) =>
+                    Http1Protocol.writeResponse(server, HttpStatus(200), HttpHeaders.empty, HttpBody.Buffered(bodyData)).andThen {
+                        Http1Protocol.readResponse(client.read, 65536).map { case ((status, headers, body), _) =>
                             assert(status.code == 200)
                             body match
                                 case HttpBody.Buffered(data) =>
@@ -239,8 +239,8 @@ class Http1Protocol2Test extends kyo.Test:
             // Test 14: 204 No Content → no body
             "204 No Content has no body" in run {
                 StreamTestTransport.withPair { (client, server) =>
-                    Http1Protocol2.writeResponse(server, HttpStatus(204), HttpHeaders.empty, HttpBody.Empty).andThen {
-                        Http1Protocol2.readResponse(client.read, 65536).map { case ((status, _, body), _) =>
+                    Http1Protocol.writeResponse(server, HttpStatus(204), HttpHeaders.empty, HttpBody.Empty).andThen {
+                        Http1Protocol.readResponse(client.read, 65536).map { case ((status, _, body), _) =>
                             assert(status.code == 204)
                             assert(body == HttpBody.Empty)
                         }
@@ -251,8 +251,8 @@ class Http1Protocol2Test extends kyo.Test:
             // Test 15: 304 Not Modified → no body
             "304 Not Modified has no body" in run {
                 StreamTestTransport.withPair { (client, server) =>
-                    Http1Protocol2.writeResponse(server, HttpStatus(304), HttpHeaders.empty, HttpBody.Empty).andThen {
-                        Http1Protocol2.readResponse(client.read, 65536).map { case ((status, _, body), _) =>
+                    Http1Protocol.writeResponse(server, HttpStatus(304), HttpHeaders.empty, HttpBody.Empty).andThen {
+                        Http1Protocol.readResponse(client.read, 65536).map { case ((status, _, body), _) =>
                             assert(status.code == 304)
                             assert(body == HttpBody.Empty)
                         }
@@ -265,7 +265,7 @@ class Http1Protocol2Test extends kyo.Test:
                 // Wire: write 200 with Content-Length, read with HEAD method
                 val wire = "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nhello world"
                 val src  = streamOf(wire)
-                Http1Protocol2.readResponse(src, 65536, requestMethod = HttpMethod.HEAD).map { case ((status, headers, body), _) =>
+                Http1Protocol.readResponse(src, 65536, requestMethod = HttpMethod.HEAD).map { case ((status, headers, body), _) =>
                     assert(status.code == 200)
                     assert(body == HttpBody.Empty)
                 }
@@ -275,7 +275,7 @@ class Http1Protocol2Test extends kyo.Test:
             "1xx informational has no body" in run {
                 val wire = "HTTP/1.1 100 Continue\r\n\r\n"
                 val src  = streamOf(wire)
-                Http1Protocol2.readResponse(src, 65536).map { case ((status, _, body), _) =>
+                Http1Protocol.readResponse(src, 65536).map { case ((status, _, body), _) =>
                     assert(status.code == 100)
                     assert(body == HttpBody.Empty)
                 }
@@ -285,7 +285,7 @@ class Http1Protocol2Test extends kyo.Test:
             "chunked response reassembled" in run {
                 val wire = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"
                 val src  = streamOf(wire)
-                Http1Protocol2.readResponse(src, 65536).map { case ((status, _, body), _) =>
+                Http1Protocol.readResponse(src, 65536).map { case ((status, _, body), _) =>
                     assert(status.code == 200)
                     body match
                         case HttpBody.Buffered(data) =>
@@ -300,7 +300,7 @@ class Http1Protocol2Test extends kyo.Test:
             "multi-chunk 3 chunks concatenation" in run {
                 val wire = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n4\r\ndefg\r\n3\r\nhij\r\n0\r\n\r\n"
                 val src  = streamOf(wire)
-                Http1Protocol2.readResponse(src, 65536).map { case ((_, _, body), _) =>
+                Http1Protocol.readResponse(src, 65536).map { case ((_, _, body), _) =>
                     body match
                         case HttpBody.Buffered(data) =>
                             assert(new String(data.toArrayUnsafe, Utf8) == "abcdefghij")
@@ -314,7 +314,7 @@ class Http1Protocol2Test extends kyo.Test:
             "chunk extension ignored data correct" in run {
                 val wire = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5;ext=val\r\nhello\r\n0\r\n\r\n"
                 val src  = streamOf(wire)
-                Http1Protocol2.readResponse(src, 65536).map { case ((_, _, body), _) =>
+                Http1Protocol.readResponse(src, 65536).map { case ((_, _, body), _) =>
                     body match
                         case HttpBody.Buffered(data) =>
                             assert(new String(data.toArrayUnsafe, Utf8) == "hello")
@@ -332,7 +332,7 @@ class Http1Protocol2Test extends kyo.Test:
             "empty chunked body" in run {
                 val wire = "GET /empty HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
                 val src  = streamOf(wire)
-                Http1Protocol2.readRequest(src, 65536).map { case ((_, _, _, body), _) =>
+                Http1Protocol.readRequest(src, 65536).map { case ((_, _, _, body), _) =>
                     body match
                         case HttpBody.Buffered(data) =>
                             assert(data.isEmpty, "Expected empty buffered body from empty chunked")
@@ -348,12 +348,12 @@ class Http1Protocol2Test extends kyo.Test:
             "3 GETs same stream" in run {
                 StreamTestTransport.withPair { (client, server) =>
                     val headers = HttpHeaders.empty
-                    Http1Protocol2.writeRequest(client, HttpMethod.GET, "/a", headers, HttpBody.Empty).andThen {
-                        Http1Protocol2.writeRequest(client, HttpMethod.GET, "/b", headers, HttpBody.Empty).andThen {
-                            Http1Protocol2.writeRequest(client, HttpMethod.GET, "/c", headers, HttpBody.Empty).andThen {
-                                Http1Protocol2.readRequest(server.read, 65536).map { case ((m1, p1, _, _), rem1) =>
-                                    Http1Protocol2.readRequest(rem1, 65536).map { case ((m2, p2, _, _), rem2) =>
-                                        Http1Protocol2.readRequest(rem2, 65536).map { case ((m3, p3, _, _), _) =>
+                    Http1Protocol.writeRequest(client, HttpMethod.GET, "/a", headers, HttpBody.Empty).andThen {
+                        Http1Protocol.writeRequest(client, HttpMethod.GET, "/b", headers, HttpBody.Empty).andThen {
+                            Http1Protocol.writeRequest(client, HttpMethod.GET, "/c", headers, HttpBody.Empty).andThen {
+                                Http1Protocol.readRequest(server.read, 65536).map { case ((m1, p1, _, _), rem1) =>
+                                    Http1Protocol.readRequest(rem1, 65536).map { case ((m2, p2, _, _), rem2) =>
+                                        Http1Protocol.readRequest(rem2, 65536).map { case ((m3, p3, _, _), _) =>
                                             assert(m1 == HttpMethod.GET)
                                             assert(m2 == HttpMethod.GET)
                                             assert(m3 == HttpMethod.GET)
@@ -373,9 +373,9 @@ class Http1Protocol2Test extends kyo.Test:
             "POST then GET same stream" in run {
                 StreamTestTransport.withPair { (client, server) =>
                     val bodyData = Span.fromUnsafe("hello".getBytes(Utf8))
-                    Http1Protocol2.writeRequest(client, HttpMethod.POST, "/post", HttpHeaders.empty, HttpBody.Buffered(bodyData)).andThen {
-                        Http1Protocol2.writeRequest(client, HttpMethod.GET, "/get", HttpHeaders.empty, HttpBody.Empty).andThen {
-                            Http1Protocol2.readRequest(server.read, 65536).map { case ((m1, p1, _, body1), rem1) =>
+                    Http1Protocol.writeRequest(client, HttpMethod.POST, "/post", HttpHeaders.empty, HttpBody.Buffered(bodyData)).andThen {
+                        Http1Protocol.writeRequest(client, HttpMethod.GET, "/get", HttpHeaders.empty, HttpBody.Empty).andThen {
+                            Http1Protocol.readRequest(server.read, 65536).map { case ((m1, p1, _, body1), rem1) =>
                                 assert(m1 == HttpMethod.POST)
                                 assert(p1 == "/post")
                                 body1 match
@@ -384,7 +384,7 @@ class Http1Protocol2Test extends kyo.Test:
                                     case other =>
                                         fail(s"Expected Buffered for POST body, got $other")
                                 end match
-                                Http1Protocol2.readRequest(rem1, 65536).map { case ((m2, p2, _, body2), _) =>
+                                Http1Protocol.readRequest(rem1, 65536).map { case ((m2, p2, _, body2), _) =>
                                     assert(m2 == HttpMethod.GET)
                                     assert(p2 == "/get")
                                     assert(body2 == HttpBody.Empty, s"Body bytes leaked into GET: $body2")
@@ -398,13 +398,13 @@ class Http1Protocol2Test extends kyo.Test:
             // Test 24: Connection: close → isKeepAlive returns false
             "Connection close isKeepAlive false" in run {
                 val headers = HttpHeaders.empty.add("Connection", "close")
-                assert(!Http1Protocol2.isKeepAlive(headers))
+                assert(!Http1Protocol.isKeepAlive(headers))
             }
 
             // Test 25: Default (no Connection header) → isKeepAlive returns true
             "default isKeepAlive true" in run {
                 val headers = HttpHeaders.empty
-                assert(Http1Protocol2.isKeepAlive(headers))
+                assert(Http1Protocol.isKeepAlive(headers))
             }
 
         } // keep-alive
@@ -420,13 +420,13 @@ class Http1Protocol2Test extends kyo.Test:
                         Span.fromUnsafe("world".getBytes(Utf8))
                     )
                     val bodyStream = Stream.init(spans)
-                    Http1Protocol2.writeStreamingBody(client, bodyStream).andThen {
+                    Http1Protocol.writeStreamingBody(client, bodyStream).andThen {
                         // Read the raw chunked bytes from server side and decode them
                         val wire = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
                         // We prepend a fake response header so readResponse can parse the chunked body
                         val headerStream = streamOf(wire)
                         val combined     = headerStream.concat(server.read)
-                        Http1Protocol2.readResponse(combined, 65536).map { case ((_, _, body), _) =>
+                        Http1Protocol.readResponse(combined, 65536).map { case ((_, _, body), _) =>
                             body match
                                 case HttpBody.Buffered(data) =>
                                     assert(new String(data.toArrayUnsafe, Utf8) == "hello world")
@@ -447,11 +447,11 @@ class Http1Protocol2Test extends kyo.Test:
                         Span.fromUnsafe("def".getBytes(Utf8))
                     )
                     val bodyStream = Stream.init(spans)
-                    Http1Protocol2.writeStreamingBody(client, bodyStream).andThen {
+                    Http1Protocol.writeStreamingBody(client, bodyStream).andThen {
                         val wire         = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
                         val headerStream = streamOf(wire)
                         val combined     = headerStream.concat(server.read)
-                        Http1Protocol2.readResponse(combined, 65536).map { case ((_, _, body), _) =>
+                        Http1Protocol.readResponse(combined, 65536).map { case ((_, _, body), _) =>
                             body match
                                 case HttpBody.Buffered(data) =>
                                     val result = new String(data.toArrayUnsafe, Utf8)
@@ -471,10 +471,10 @@ class Http1Protocol2Test extends kyo.Test:
                 StreamTestTransport.withPair { (client, server) =>
                     val spans      = Seq(Span.fromUnsafe("payload".getBytes(Utf8)))
                     val bodyStream = Stream.init(spans)
-                    Http1Protocol2.writeStreamingBody(client, bodyStream).andThen {
+                    Http1Protocol.writeStreamingBody(client, bodyStream).andThen {
                         val header   = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
                         val combined = streamOf(header).concat(server.read)
-                        Http1Protocol2.readResponse(combined, 65536).map { case ((_, _, body), _) =>
+                        Http1Protocol.readResponse(combined, 65536).map { case ((_, _, body), _) =>
                             body match
                                 case HttpBody.Buffered(data) =>
                                     assert(new String(data.toArrayUnsafe, Utf8) == "payload")
@@ -492,8 +492,8 @@ class Http1Protocol2Test extends kyo.Test:
             "writeResponseHead format" in run {
                 StreamTestTransport.withPair { (server, client) =>
                     val headers = HttpHeaders.empty.add("X-Custom", "TestValue")
-                    Http1Protocol2.writeResponse(server, HttpStatus(201), headers, HttpBody.Empty).andThen {
-                        Http1Protocol2.readResponse(client.read, 65536).map { case ((status, parsedHeaders, _), _) =>
+                    Http1Protocol.writeResponse(server, HttpStatus(201), headers, HttpBody.Empty).andThen {
+                        Http1Protocol.readResponse(client.read, 65536).map { case ((status, parsedHeaders, _), _) =>
                             assert(status.code == 201, s"Expected status 201, got ${status.code}")
                             assert(
                                 parsedHeaders.get("X-Custom") == Present("TestValue"),
@@ -511,7 +511,7 @@ class Http1Protocol2Test extends kyo.Test:
             // Test 30: malformed request line → Abort with HttpProtocolException
             "malformed request line" in run {
                 val src = streamOf("GARBAGE\r\n\r\n")
-                Abort.run[HttpException](Http1Protocol2.readRequest(src, 65536)).map { result =>
+                Abort.run[HttpException](Http1Protocol.readRequest(src, 65536)).map { result =>
                     result match
                         case Result.Failure(e: HttpProtocolException) => succeed
                         case Result.Failure(e)                        => fail(s"Expected HttpProtocolException, got $e")
@@ -524,7 +524,7 @@ class Http1Protocol2Test extends kyo.Test:
             // Test 31: malformed status line → Abort with HttpProtocolException
             "malformed status line" in run {
                 val src = streamOf("GARBAGE\r\n\r\n")
-                Abort.run[HttpException](Http1Protocol2.readResponse(src, 65536)).map { result =>
+                Abort.run[HttpException](Http1Protocol.readResponse(src, 65536)).map { result =>
                     result match
                         case Result.Failure(e: HttpProtocolException) => succeed
                         case Result.Failure(e)                        => fail(s"Expected HttpProtocolException, got $e")
@@ -537,7 +537,7 @@ class Http1Protocol2Test extends kyo.Test:
             // Test 32: invalid Content-Length → Abort with HttpProtocolException
             "invalid Content-Length" in run {
                 val src = streamOf("POST /upload HTTP/1.1\r\nContent-Length: abc\r\n\r\n")
-                Abort.run[HttpException](Http1Protocol2.readRequest(src, 65536)).map { result =>
+                Abort.run[HttpException](Http1Protocol.readRequest(src, 65536)).map { result =>
                     result match
                         case Result.Failure(e: HttpProtocolException) => succeed
                         case Result.Failure(e)                        => fail(s"Expected HttpProtocolException, got $e")
@@ -550,7 +550,7 @@ class Http1Protocol2Test extends kyo.Test:
             // Test 33: Content-Length exceeds maxSize → Abort with HttpPayloadTooLargeException
             "Content-Length exceeds maxSize" in run {
                 val src = streamOf("POST /upload HTTP/1.1\r\nContent-Length: 1000\r\n\r\n")
-                Abort.run[HttpException](Http1Protocol2.readRequest(src, 100)).map { result =>
+                Abort.run[HttpException](Http1Protocol.readRequest(src, 100)).map { result =>
                     result match
                         case Result.Failure(e: HttpPayloadTooLargeException) => succeed
                         case Result.Failure(e)                               => fail(s"Expected HttpPayloadTooLargeException, got $e")
@@ -564,7 +564,7 @@ class Http1Protocol2Test extends kyo.Test:
             "connection closed mid-headers" in run {
                 // Stream ends before \r\n\r\n is found
                 val src = streamOf("GET /path HTTP/1.1\r\nHost: localhost\r\n")
-                Abort.run[HttpException](Http1Protocol2.readRequest(src, 65536)).map { result =>
+                Abort.run[HttpException](Http1Protocol.readRequest(src, 65536)).map { result =>
                     result match
                         case Result.Failure(e: HttpConnectionClosedException) => succeed
                         case Result.Failure(e)                                => fail(s"Expected HttpConnectionClosedException, got $e")
@@ -578,7 +578,7 @@ class Http1Protocol2Test extends kyo.Test:
             "connection closed mid-body" in run {
                 // Headers say Content-Length: 10 but only 5 body bytes follow before stream ends
                 val src = streamOf("POST /upload HTTP/1.1\r\nContent-Length: 10\r\n\r\nhello")
-                Abort.run[HttpException](Http1Protocol2.readRequest(src, 65536)).map { result =>
+                Abort.run[HttpException](Http1Protocol.readRequest(src, 65536)).map { result =>
                     result match
                         case Result.Failure(e: HttpConnectionClosedException) => succeed
                         case Result.Failure(e)                                => fail(s"Expected HttpConnectionClosedException, got $e")
@@ -590,6 +590,6 @@ class Http1Protocol2Test extends kyo.Test:
 
         } // error cases
 
-    } // Http1Protocol2
+    } // Http1Protocol
 
-end Http1Protocol2Test
+end Http1ProtocolTest

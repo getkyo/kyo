@@ -10,33 +10,33 @@ import java.nio.channels.SocketChannel
 import javax.net.ssl.*
 import kyo.*
 
-/** Non-blocking NIO Transport2 for JVM.
+/** Non-blocking NIO Transport for JVM.
   *
   * Stream-first variant of NioTransport. Each connection exposes a pull-based `Stream[Span[Byte], Async]` for reads instead of a
-  * callback-based `read(buf): Int`. Server listen returns a `TransportListener2` whose `connections` stream yields accepted connections.
+  * callback-based `read(buf): Int`. Server listen returns a `TransportListener` whose `connections` stream yields accepted connections.
   *
   * Design follows NioTransport closely:
   *   - Per-connection Selector to avoid all thread-safety issues.
   *   - Blocking selector.select() (pollFor/pollSelector) — Kyo's preemptive scheduler handles other fibers while blocked.
-  *   - TLS via NioTlsStream wrapping a NioStream2TlsBridge (old-style TransportStream), so TLS layer is unchanged.
+  *   - TLS via NioTlsStream wrapping a NioStreamTlsBridge (RawStream), so TLS layer is unchanged.
   */
-final class NioTransport2(
+final class NioTransport(
     clientSslContext: Maybe[SSLContext] = Absent,
     serverSslContext: Maybe[SSLContext] = Absent
-) extends Transport2:
+) extends Transport:
 
-    type Connection = NioConnection2
+    type Connection = NioConnection
 
     def connect(host: String, port: Int, tls: Maybe[TlsConfig])(using
         Frame
-    ): NioConnection2 < (Async & Abort[HttpException]) =
+    ): NioConnection < (Async & Abort[HttpException]) =
         tls match
             case Present(tlsCfg) => connectTls(host, port, tlsCfg)
             case Absent          => connectPlain(host, port)
 
     private def connectTls(host: String, port: Int, tlsCfg: TlsConfig)(using
         Frame
-    ): NioConnection2 < (Async & Abort[HttpException]) =
+    ): NioConnection < (Async & Abort[HttpException]) =
         connectPlain(host, port).map { conn =>
             Sync.defer {
                 val ctx = clientSslContext match
@@ -57,7 +57,7 @@ final class NioTransport2(
                 if alpn.nonEmpty then params.setApplicationProtocols(alpn)
                 if !tlsCfg.trustAll then params.setEndpointIdentificationAlgorithm("HTTPS")
                 engine.setSSLParameters(params)
-                val bridge    = new NioStream2TlsBridge(conn)
+                val bridge    = new NioStreamTlsBridge(conn)
                 val tlsStream = new NioTlsStream(bridge, engine)
                 conn.tlsStream = Present(tlsStream)
                 tlsStream.handshake().map(_ => conn)
@@ -66,7 +66,7 @@ final class NioTransport2(
 
     private def connectPlain(host: String, port: Int)(using
         Frame
-    ): NioConnection2 < (Async & Abort[HttpException]) =
+    ): NioConnection < (Async & Abort[HttpException]) =
         Sync.defer {
             val channel = SocketChannel.open()
             channel.configureBlocking(false)
@@ -75,7 +75,7 @@ final class NioTransport2(
             val connected = channel.connect(new InetSocketAddress(host, port))
             if connected then
                 selector.close()
-                Sync.defer(new NioConnection2(channel, Selector.open()))
+                Sync.defer(new NioConnection(channel, Selector.open()))
             else
                 channel.register(selector, SelectionKey.OP_CONNECT)
                 pollSelector(selector).andThen {
@@ -86,7 +86,7 @@ final class NioTransport2(
                             Sync.defer {
                                 channel.finishConnect()
                                 selector.close()
-                                new NioConnection2(channel, Selector.open())
+                                new NioConnection(channel, Selector.open())
                             }
                         }
                     }
@@ -94,21 +94,21 @@ final class NioTransport2(
             end if
         }
 
-    def isAlive(c: NioConnection2)(using Frame): Boolean < Sync =
+    def isAlive(c: NioConnection)(using Frame): Boolean < Sync =
         Sync.defer(c.channel.isOpen && c.channel.isConnected)
 
-    def closeNow(c: NioConnection2)(using Frame): Unit < Sync =
+    def closeNow(c: NioConnection)(using Frame): Unit < Sync =
         Sync.defer {
             c.selector.close()
             c.channel.close()
         }
 
-    def close(c: NioConnection2, gracePeriod: Duration)(using Frame): Unit < Async =
+    def close(c: NioConnection, gracePeriod: Duration)(using Frame): Unit < Async =
         closeNow(c)
 
     def listen(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using
         Frame
-    ): TransportListener2[NioConnection2] < (Async & Scope) =
+    ): TransportListener[NioConnection] < (Async & Scope) =
         Sync.defer {
             val serverChannel = ServerSocketChannel.open()
             serverChannel.configureBlocking(false)
@@ -127,7 +127,7 @@ final class NioTransport2(
             tls match
                 case Absent =>
                     Scope.acquireRelease {
-                        val connStream: Stream[NioConnection2, Async] =
+                        val connStream: Stream[NioConnection, Async] =
                             Stream.unfold((), chunkSize = 1) { _ =>
                                 pollAcceptSelector(acceptSelector).map {
                                     case false => Maybe.empty
@@ -139,13 +139,13 @@ final class NioTransport2(
                                                 StandardSocketOptions.TCP_NODELAY,
                                                 java.lang.Boolean.TRUE
                                             )
-                                            Maybe((new NioConnection2(clientChannel, Selector.open()), ()))
+                                            Maybe((new NioConnection(clientChannel, Selector.open()), ()))
                                         else
                                             Maybe.empty
                                         end if
                                 }
                             }
-                        new TransportListener2(
+                        new TransportListener(
                             actualPort,
                             actualHost,
                             connStream,
@@ -163,7 +163,7 @@ final class NioTransport2(
                         case Present(c) => c
                         case Absent     => createServerSslContext(tlsCfg)
                     Scope.acquireRelease {
-                        val connStream: Stream[NioConnection2, Async] =
+                        val connStream: Stream[NioConnection, Async] =
                             Stream.unfold((), chunkSize = 1) { _ =>
                                 pollAcceptSelector(acceptSelector).map {
                                     case false => Maybe.empty
@@ -175,10 +175,10 @@ final class NioTransport2(
                                                 StandardSocketOptions.TCP_NODELAY,
                                                 java.lang.Boolean.TRUE
                                             )
-                                            val conn   = new NioConnection2(clientChannel, Selector.open())
+                                            val conn   = new NioConnection(clientChannel, Selector.open())
                                             val engine = sslCtx.createSSLEngine()
                                             engine.setUseClientMode(false)
-                                            val bridge    = new NioStream2TlsBridge(conn)
+                                            val bridge    = new NioStreamTlsBridge(conn)
                                             val tlsStream = new NioTlsStream(bridge, engine)
                                             conn.tlsStream = Present(tlsStream)
                                             Maybe((conn, ()))
@@ -187,7 +187,7 @@ final class NioTransport2(
                                         end if
                                 }
                             }
-                        new TransportListener2(
+                        new TransportListener(
                             actualPort,
                             actualHost,
                             connStream,
@@ -245,18 +245,18 @@ final class NioTransport2(
         ctx
     end createServerSslContext
 
-end NioTransport2
+end NioTransport
 
-/** NIO-backed connection that implements TransportStream2 (stream-based reads).
+/** NIO-backed connection that implements TransportStream (stream-based reads).
   *
   * Uses a per-connection Selector to register OP_READ / OP_WRITE interest ops and block with select(). TLS is stored as a NioTlsStream when
   * the connection is TLS-upgraded.
   */
-private[kyo] class NioConnection2(
+private[kyo] class NioConnection(
     val channel: SocketChannel,
     val selector: Selector,
     var tlsStream: Maybe[NioTlsStream] = Absent
-) extends TransportStream2:
+) extends TransportStream:
 
     private val key       = channel.register(selector, 0)
     private val lock      = new AnyRef
@@ -350,14 +350,14 @@ private[kyo] class NioConnection2(
             }
         }
 
-end NioConnection2
+end NioConnection
 
-/** Bridges a NioConnection2 to the old-style TransportStream API, so NioTlsStream can use it for TLS I/O.
+/** Bridges a NioConnection to the RawStream API, so NioTlsStream can use it for TLS I/O.
   *
-  * NioTlsStream requires a TransportStream (NioStream) with `read(buf): Int < Async`. This bridge delegates to the NIO-backed raw I/O of a
-  * NioConnection2 without going through the TLS layer (avoids recursion).
+  * NioTlsStream requires a RawStream with `read(buf): Int < Async`. This bridge delegates to the NIO-backed raw I/O of a NioConnection
+  * without going through the TLS layer (avoids recursion).
   */
-private[kyo] class NioStream2TlsBridge(conn: NioConnection2) extends TransportStream:
+private[kyo] class NioStreamTlsBridge(conn: NioConnection) extends RawStream:
 
     private val key  = conn.channel.register(conn.selector, 0)
     private val lock = new AnyRef
@@ -395,4 +395,4 @@ private[kyo] class NioStream2TlsBridge(conn: NioConnection2) extends TransportSt
     def write(data: Span[Byte])(using Frame): Unit < Async =
         conn.writePlain(data)
 
-end NioStream2TlsBridge
+end NioStreamTlsBridge

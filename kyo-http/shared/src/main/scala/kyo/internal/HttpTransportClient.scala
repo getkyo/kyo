@@ -3,12 +3,12 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.*
 
-/** Stream-first HTTP client backend. Uses Transport2 + Http1Protocol2 directly.
+/** Stream-first HTTP client backend. Uses Transport + Http1Protocol directly.
   *
   * Implements HttpBackend.Client. The onRelease callback uses suspended effects for connection pooling: Absent on success → pool returns
   * connection, Present(error) → pool discards.
   *
-  * Stream state: the connection wraps the underlying transport connection plus the "current" byte stream. Http1Protocol2 returns a (result,
+  * Stream state: the connection wraps the underlying transport connection plus the "current" byte stream. Http1Protocol returns a (result,
   * remainingStream) pair — the remaining stream is stored in the Conn for use by the next request. This threads stream state safely because
   * HTTP/1.1 serializes requests on a single connection (connection pool enforces this).
   *
@@ -19,7 +19,7 @@ import kyo.*
   *   - fullyConsumed flag ensures partial consumption discards the connection (dirty chunked data).
   *   - onRelease is made idempotent so double-fire from both phases is safe.
   */
-class HttpTransportClient2(private[kyo] val transport: Transport2) extends HttpBackend.Client:
+class HttpTransportClient(private[kyo] val transport: Transport) extends HttpBackend.Client:
 
     /** Wraps the transport connection with mutable stream state for keep-alive.
       *
@@ -134,7 +134,7 @@ class HttpTransportClient2(private[kyo] val transport: Transport2) extends HttpB
         phase2Started: AtomicRef[Boolean],
         safeRelease: Maybe[Result.Error[Any]] => Unit < Sync
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        Http1Protocol2.readResponseStreaming(connection.currentStream, Int.MaxValue, request.method).map {
+        Http1Protocol.readResponseStreaming(connection.currentStream, Int.MaxValue, request.method).map {
             case ((status, headers, body), remaining) =>
                 connection.updateStream(remaining)
                 val rawStream = body match
@@ -179,7 +179,7 @@ class HttpTransportClient2(private[kyo] val transport: Transport2) extends HttpB
     )(using Frame): Unit < Async =
         RouteUtil.encodeRequest(route, request)(
             onEmpty = (path, headers) =>
-                Http1Protocol2.writeRequest(
+                Http1Protocol.writeRequest(
                     connection.tc,
                     request.method,
                     path,
@@ -187,7 +187,7 @@ class HttpTransportClient2(private[kyo] val transport: Transport2) extends HttpB
                     HttpBody.Empty
                 ),
             onBuffered = (path, headers, body) =>
-                Http1Protocol2.writeRequest(
+                Http1Protocol.writeRequest(
                     connection.tc,
                     request.method,
                     path,
@@ -195,7 +195,7 @@ class HttpTransportClient2(private[kyo] val transport: Transport2) extends HttpB
                     HttpBody.Buffered(body)
                 ),
             onStreaming = (path, headers, bodyStream) =>
-                Http1Protocol2.writeRequest(
+                Http1Protocol.writeRequest(
                     connection.tc,
                     request.method,
                     path,
@@ -210,7 +210,7 @@ class HttpTransportClient2(private[kyo] val transport: Transport2) extends HttpB
         route: HttpRoute[?, Out, ?],
         request: HttpRequest[?]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        Http1Protocol2.readResponse(connection.currentStream, Int.MaxValue, request.method).map {
+        Http1Protocol.readResponse(connection.currentStream, Int.MaxValue, request.method).map {
             case ((status, headers, body), remaining) =>
                 connection.updateStream(remaining)
                 val bodyBytes = body match
@@ -227,4 +227,4 @@ class HttpTransportClient2(private[kyo] val transport: Transport2) extends HttpB
                 ))
         }
 
-end HttpTransportClient2
+end HttpTransportClient

@@ -10,7 +10,7 @@ import kyo.*
   *
   * Pure parsing functions are shared with Http1Protocol (copied here as private[internal] for testing).
   */
-object Http1Protocol2:
+object Http1Protocol:
 
     private val Utf8          = StandardCharsets.UTF_8
     private val MaxHeaderSize = 65536
@@ -124,7 +124,7 @@ object Http1Protocol2:
         }
     end readResponseImpl
 
-    def writeRequest(stream: TransportStream2, method: HttpMethod, path: String, headers: HttpHeaders, body: HttpBody)(using
+    def writeRequest(stream: TransportStream, method: HttpMethod, path: String, headers: HttpHeaders, body: HttpBody)(using
         Frame
     )
         : Unit < Async =
@@ -140,7 +140,7 @@ object Http1Protocol2:
         }
     end writeRequest
 
-    def writeResponse(stream: TransportStream2, status: HttpStatus, headers: HttpHeaders, body: HttpBody)(using
+    def writeResponse(stream: TransportStream, status: HttpStatus, headers: HttpHeaders, body: HttpBody)(using
         Frame
     )
         : Unit < Async =
@@ -157,7 +157,7 @@ object Http1Protocol2:
     end writeResponse
 
     /** Write a streaming body using chunked transfer encoding. */
-    def writeStreamingBody(stream: TransportStream2, body: Stream[Span[Byte], Async])(using Frame): Unit < Async =
+    def writeStreamingBody(stream: TransportStream, body: Stream[Span[Byte], Async])(using Frame): Unit < Async =
         body.foreachChunk { chunk =>
             Loop.indexed { i =>
                 if i >= chunk.size then Loop.done(())
@@ -398,10 +398,10 @@ object Http1Protocol2:
             case HttpBody.Streamed(_)    => headers.set("Transfer-Encoding", "chunked")
 
     /** Write the body payload to the stream (headers already sent). */
-    private def writeBodyPayload(stream: TransportStream2, body: HttpBody)(using Frame): Unit < Async =
+    private def writeBodyPayload(stream: TransportStream, body: HttpBody)(using Frame): Unit < Async =
         body match
             case HttpBody.Empty            => Kyo.unit
             case HttpBody.Buffered(data)   => stream.write(data)
             case HttpBody.Streamed(chunks) => writeStreamingBody(stream, chunks)
 
-end Http1Protocol2
+end Http1Protocol

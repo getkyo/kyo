@@ -9,27 +9,23 @@ class WsCodecTest extends kyo.Test:
 
     private val Utf8 = StandardCharsets.UTF_8
 
-    /** Mock TransportStream backed by byte arrays. */
-    class MockStream(input: Array[Byte]) extends TransportStream:
-        private var readPos = 0
-        private val output  = new java.io.ByteArrayOutputStream()
+    /** Mock TransportStream backed by byte arrays for testing WsCodec.
+      *
+      * Each call to read() returns the entire remaining input as a single-span stream. Writes are captured in an output buffer.
+      */
+    class MockConn(input: Array[Byte]) extends TransportStream:
+        private val output = new java.io.ByteArrayOutputStream()
 
-        def read(buf: Array[Byte])(using Frame): Int < Async =
-            Sync.defer {
-                if readPos >= input.length then -1
-                else
-                    val available = math.min(buf.length, input.length - readPos)
-                    java.lang.System.arraycopy(input, readPos, buf, 0, available)
-                    readPos += available
-                    available
-            }
+        def read(using Frame): Stream[Span[Byte], Async] =
+            if input.isEmpty then Stream.empty[Span[Byte]]
+            else Stream.init(Seq(Span.fromUnsafe(input)))
 
         def write(data: Span[Byte])(using Frame): Unit < Async =
             Sync.defer(output.write(data.toArrayUnsafe))
 
         def written: Array[Byte]  = output.toByteArray
         def writtenString: String = new String(output.toByteArray, Utf8)
-    end MockStream
+    end MockConn
 
     // ── Accept key ──────────────────────────────────────────────
 
@@ -171,10 +167,10 @@ class WsCodecTest extends kyo.Test:
 
     "writeFrame → readFrame roundtrip" - {
         "text unmasked" in run {
-            val stream = new MockStream(Array.empty[Byte])
-            WsCodec.writeFrame(stream, WebSocketFrame.Text("hello"), mask = false).andThen {
-                val readStream = new MockStream(stream.written)
-                Abort.run[Closed](WsCodec.readFrame(readStream)).map { result =>
+            val writeConn = new MockConn(Array.empty[Byte])
+            WsCodec.writeFrame(writeConn, WebSocketFrame.Text("hello"), mask = false).andThen {
+                val readConn = new MockConn(writeConn.written)
+                Abort.run[Closed](WsCodec.readFrame(readConn.read, readConn).map(_._1)).map { result =>
                     result match
                         case Result.Success(WebSocketFrame.Text(text)) =>
                             assert(text == "hello")
@@ -185,11 +181,11 @@ class WsCodecTest extends kyo.Test:
         }
 
         "binary masked" in run {
-            val data   = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
-            val stream = new MockStream(Array.empty[Byte])
-            WsCodec.writeFrame(stream, WebSocketFrame.Binary(data), mask = true).andThen {
-                val readStream = new MockStream(stream.written)
-                Abort.run[Closed](WsCodec.readFrame(readStream)).map { result =>
+            val data      = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
+            val writeConn = new MockConn(Array.empty[Byte])
+            WsCodec.writeFrame(writeConn, WebSocketFrame.Binary(data), mask = true).andThen {
+                val readConn = new MockConn(writeConn.written)
+                Abort.run[Closed](WsCodec.readFrame(readConn.read, readConn).map(_._1)).map { result =>
                     result match
                         case Result.Success(WebSocketFrame.Binary(received)) =>
                             assert(received.toArrayUnsafe.sameElements(data.toArrayUnsafe))
@@ -200,10 +196,10 @@ class WsCodecTest extends kyo.Test:
         }
 
         "close frame aborts" in run {
-            val stream = new MockStream(Array.empty[Byte])
-            WsCodec.writeClose(stream, 1000, "bye", mask = false).andThen {
-                val readStream = new MockStream(stream.written)
-                Abort.run[Closed](WsCodec.readFrame(readStream)).map { result =>
+            val writeConn = new MockConn(Array.empty[Byte])
+            WsCodec.writeClose(writeConn, 1000, "bye", mask = false).andThen {
+                val readConn = new MockConn(writeConn.written)
+                Abort.run[Closed](WsCodec.readFrame(readConn.read, readConn).map(_._1)).map { result =>
                     assert(result.isFailure)
                 }
             }
@@ -214,10 +210,10 @@ class WsCodecTest extends kyo.Test:
 
     "acceptUpgrade" - {
         "writes 101 with correct accept key" in run {
-            val stream  = new MockStream(Array.empty[Byte])
+            val conn    = new MockConn(Array.empty[Byte])
             val headers = HttpHeaders.empty.add("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
-            WsCodec.acceptUpgrade(stream, headers, WebSocketConfig()).andThen {
-                val response = stream.writtenString
+            WsCodec.acceptUpgrade(conn, headers, WebSocketConfig()).andThen {
+                val response = conn.writtenString
                 assert(response.contains("101 Switching Protocols"))
                 assert(response.contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="))
                 assert(response.contains("Upgrade: websocket"))
@@ -225,9 +221,9 @@ class WsCodecTest extends kyo.Test:
         }
 
         "fails on missing key" in run {
-            val stream = new MockStream(Array.empty[Byte])
+            val conn = new MockConn(Array.empty[Byte])
             Abort.run[HttpException] {
-                WsCodec.acceptUpgrade(stream, HttpHeaders.empty, WebSocketConfig())
+                WsCodec.acceptUpgrade(conn, HttpHeaders.empty, WebSocketConfig())
             }.map { result =>
                 assert(result.isFailure)
             }
@@ -236,17 +232,14 @@ class WsCodecTest extends kyo.Test:
 
     "requestUpgrade" - {
         "writes correct upgrade request" in run {
-            // Create a mock that returns a 101 response when read
-            val acceptKey   = WsCodec.computeAcceptKey("testkey")
-            val response101 = s"HTTP/1.1 101 Switching Protocols\r\nSec-WebSocket-Accept: PLACEHOLDER\r\n\r\n"
-            // We can't predict the exact key since requestUpgrade generates a random one,
-            // so we test the write side only
-            val stream = new MockStream(Array.empty[Byte])
-            // This will fail because the mock has no response to read, but we can check what was written
+            // Create a mock that returns a 101 response when read.
+            // We can't predict the exact accept key since requestUpgrade generates a random client key,
+            // so we test the write side only by examining what was written before the read fails.
+            val conn = new MockConn(Array.empty[Byte])
             Abort.run[HttpException] {
-                WsCodec.requestUpgrade(stream, "localhost", "/ws", HttpHeaders.empty, WebSocketConfig())
+                WsCodec.requestUpgrade(conn, "localhost", "/ws", HttpHeaders.empty, WebSocketConfig())
             }.map { _ =>
-                val written = stream.writtenString
+                val written = conn.writtenString
                 assert(written.contains("GET /ws HTTP/1.1"))
                 assert(written.contains("Upgrade: websocket"))
                 assert(written.contains("Sec-WebSocket-Key:"))
@@ -256,12 +249,11 @@ class WsCodecTest extends kyo.Test:
 
         "fails on non-101 response" in run {
             val response = "HTTP/1.1 400 Bad Request\r\n\r\n"
-            val stream   = new MockStream(response.getBytes(Utf8))
-            // Override write to capture then read the 400
-            val combined = new MockStream(response.getBytes(Utf8)):
+            // A conn that discards writes and serves a 400 response on read
+            val conn = new MockConn(response.getBytes(Utf8)):
                 override def write(data: Span[Byte])(using Frame): Unit < Async = Kyo.unit
             Abort.run[HttpException] {
-                WsCodec.requestUpgrade(combined, "localhost", "/ws", HttpHeaders.empty, WebSocketConfig())
+                WsCodec.requestUpgrade(conn, "localhost", "/ws", HttpHeaders.empty, WebSocketConfig())
             }.map { result =>
                 assert(result.isFailure)
             }
@@ -271,11 +263,6 @@ class WsCodecTest extends kyo.Test:
     // ── Ping/Pong handling ────────────────────────────────────
 
     "ping auto-sends pong and returns next data frame" in run {
-        // Build a stream with: Ping frame, then Text frame
-        val pingStream = new MockStream(Array.empty[Byte])
-        // Write a ping frame
-        WsCodec.writeClose(pingStream, 0, "", mask = false) // abuse writeClose for raw frame building
-        // Actually, let's build raw frames manually
         val textPayload = "after-ping".getBytes(Utf8)
         val pingPayload = "pingdata".getBytes(Utf8)
 
@@ -291,11 +278,11 @@ class WsCodecTest extends kyo.Test:
             textPayload.length.toByte
         ) ++ textPayload
 
-        val readStream = new MockStream(pingFrame ++ textFrame)
-        Abort.run[Closed](WsCodec.readFrame(readStream)).map {
+        val conn = new MockConn(pingFrame ++ textFrame)
+        Abort.run[Closed](WsCodec.readFrame(conn.read, conn).map(_._1)).map {
             case Result.Success(WebSocketFrame.Text(text)) =>
                 assert(text == "after-ping")
-                val written = readStream.written
+                val written = conn.written
                 assert(written.nonEmpty) // Pong frame was auto-sent
             case other =>
                 fail(s"Expected Text after Ping, got $other")
@@ -316,8 +303,8 @@ class WsCodecTest extends kyo.Test:
             textPayload.length.toByte
         ) ++ textPayload
 
-        val readStream = new MockStream(pongFrame ++ textFrame)
-        Abort.run[Closed](WsCodec.readFrame(readStream)).map {
+        val conn = new MockConn(pongFrame ++ textFrame)
+        Abort.run[Closed](WsCodec.readFrame(conn.read, conn).map(_._1)).map {
             case Result.Success(WebSocketFrame.Text(text)) =>
                 assert(text == "afterpong")
             case other =>
@@ -330,8 +317,8 @@ class WsCodecTest extends kyo.Test:
             (0x80 | 0x0f).toByte, // FIN + opcode 15 (unknown)
             0x00.toByte           // no payload
         )
-        val readStream = new MockStream(unknownFrame)
-        Abort.run[Closed](WsCodec.readFrame(readStream)).map { result =>
+        val conn = new MockConn(unknownFrame)
+        Abort.run[Closed](WsCodec.readFrame(conn.read, conn).map(_._1)).map { result =>
             assert(result.isFailure)
         }
     }

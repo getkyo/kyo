@@ -25,7 +25,7 @@ case class RawHttpResponse(
     body: HttpBody
 )
 
-/** Exchange factory for HTTP/1.1 over a `TransportStream2` connection.
+/** Exchange factory for HTTP/1.1 over a `TransportStream` connection.
   *
   * Creates an `Exchange[RawHttpRequest, RawHttpResponse, Nothing, HttpException]` that serialises request/response pairs over a single
   * keep-alive connection.
@@ -46,7 +46,7 @@ object Http1Exchange:
     private case class OutReq(id: Int, req: RawHttpRequest)   extends Http1Wire
     private case class InResp(id: Int, resp: RawHttpResponse) extends Http1Wire
 
-    def init(conn: TransportStream2, maxSize: Int)(using
+    def init(conn: TransportStream, maxSize: Int)(using
         Frame
     )
         : Exchange[RawHttpRequest, RawHttpResponse, Nothing, HttpException] < (Sync & Scope) =
@@ -55,7 +55,7 @@ object Http1Exchange:
                 encode = (id, req) => OutReq(id, req),
                 send = {
                     case OutReq(id, req) =>
-                        Http1Protocol2.writeRequest(conn, req.method, req.path, req.headers, req.body).andThen {
+                        Http1Protocol.writeRequest(conn, req.method, req.path, req.headers, req.body).andThen {
                             // If inflight channel is closed (exchange shutting down), silently ignore —
                             // the exchange will fail the pending request via its done promise.
                             Abort.run[Closed](inflight.put((id, req.method))).unit
@@ -68,7 +68,7 @@ object Http1Exchange:
                         Abort.run[Closed](inflight.take).map {
                             case Result.Failure(_) => Loop.done(())
                             case Result.Success((id, method)) =>
-                                Http1Protocol2.readResponse(stream, maxSize, method).map {
+                                Http1Protocol.readResponse(stream, maxSize, method).map {
                                     case ((status, headers, body), rest) =>
                                         val wire: Http1Wire = InResp(id, RawHttpResponse(status, headers, body))
                                         Emit.valueWith(Chunk(wire))(Loop.continue(rest))

@@ -7,14 +7,14 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kyo.*
 
-/** Stream-first HTTP server backend. Uses Transport2 + Http1Protocol2.
+/** Stream-first HTTP server backend. Uses Transport + Http1Protocol.
   *
   * One fiber per accepted connection. Keep-alive loop threads the remaining byte stream through each request-response cycle. WebSocket
-  * upgrade supported via a buffered adapter from TransportStream2 to TransportStream.
+  * upgrade threads the remaining byte stream directly into WsCodec (no adapter layer).
   *
   * Scope management: bind() creates an internal Scope that owns the server socket and accept loop fiber. A Promise gates close/await.
   */
-class HttpTransportServer2(private[kyo] val transport: Transport2)(using
+class HttpTransportServer(private[kyo] val transport: Transport)(using
     Tag[transport.Connection],
     Tag[Emit[Chunk[transport.Connection]]]
 ) extends HttpBackend.Server:
@@ -31,7 +31,7 @@ class HttpTransportServer2(private[kyo] val transport: Transport2)(using
     private def writeResponse(conn: transport.Connection, status: HttpStatus, headers: HttpHeaders, body: HttpBody)(using
         Frame
     ): Unit < Async =
-        Http1Protocol2.writeResponse(conn, status, withDate(headers), body)
+        Http1Protocol.writeResponse(conn, status, withDate(headers), body)
 
     def bind(
         handlers: Seq[HttpHandler[?, ?, ?]],
@@ -71,7 +71,7 @@ class HttpTransportServer2(private[kyo] val transport: Transport2)(using
     )(using Frame): Unit < Async =
         Abort.run[HttpException] {
             Loop(conn.read) { stream =>
-                Http1Protocol2.readRequestStreaming(stream, config.maxContentLength).map {
+                Http1Protocol.readRequestStreaming(stream, config.maxContentLength).map {
                     case ((method, rawPath, headers, body), remaining) =>
                         val path = rawPath.indexOf('?') match
                             case -1 => rawPath
@@ -81,19 +81,16 @@ class HttpTransportServer2(private[kyo] val transport: Transport2)(using
                             case Result.Success(routeMatch) =>
                                 routeMatch.endpoint match
                                     case wsHandler: WebSocketHttpHandler =>
-                                        // Bridge remaining stream to TransportStream for WsCodec
-                                        makeWsAdapter(conn, remaining).map { wsAdapter =>
-                                            WsCodec.acceptUpgrade(wsAdapter, headers, wsHandler.wsConfig).andThen {
-                                                serveWebSocket(wsAdapter, wsHandler, headers, path)
-                                            }.andThen(Loop.done(()))
-                                        }
+                                        WsCodec.acceptUpgrade(conn, headers, wsHandler.wsConfig).andThen {
+                                            serveWebSocket(conn, remaining, wsHandler, headers, path)
+                                        }.andThen(Loop.done(()))
                                     case _ =>
                                         // If the route is not streaming but we got a Streamed body (chunked transfer),
                                         // buffer it first so non-streaming routes receive the full body bytes.
                                         bufferBodyIfNeeded(body, routeMatch.isStreamingRequest, config.maxContentLength).map {
                                             bufferedBody =>
                                                 serveHttpRequest(conn, routeMatch, method, rawPath, headers, bufferedBody, config).andThen {
-                                                    if Http1Protocol2.isKeepAlive(headers) then Loop.continue(remaining)
+                                                    if Http1Protocol.isKeepAlive(headers) then Loop.continue(remaining)
                                                     else Loop.done(())
                                                 }
                                         }
@@ -101,7 +98,7 @@ class HttpTransportServer2(private[kyo] val transport: Transport2)(using
                                 writeRouterError(conn, error).andThen {
                                     error match
                                         case HttpRouter.FindError.Options(_) =>
-                                            if Http1Protocol2.isKeepAlive(headers) then Loop.continue(remaining)
+                                            if Http1Protocol.isKeepAlive(headers) then Loop.continue(remaining)
                                             else Loop.done(())
                                         case _ => Loop.done(())
                                 }
@@ -247,59 +244,10 @@ class HttpTransportServer2(private[kyo] val transport: Transport2)(using
         writeResponse(conn, status, headers, HttpBody.Buffered(bodyBytes))
     end writeDecodeErrorResponse
 
-    /** Create a TransportStream adapter bridging the remaining byte stream and connection write.
-      *
-      * Starts a background fiber that drains the remaining stream into a Channel, so WsCodec can read frames byte-by-byte. The channel is
-      * unbounded to avoid blocking the feeder fiber.
-      */
-    private def makeWsAdapter(
-        conn: transport.Connection,
-        remaining: Stream[Span[Byte], Async]
-    )(using Frame): TransportStream < Async =
-        Channel.initUnscoped[Maybe[Span[Byte]]](4096).map { ch =>
-            Fiber.initUnscoped {
-                Abort.run[Any] {
-                    remaining.foreach { span =>
-                        ch.put(Present(span))
-                    }
-                }.andThen {
-                    ch.put(Absent).unit
-                }
-            }.map { _ =>
-                new TransportStream:
-                    // Leftover bytes from a partially-consumed span
-                    private var leftover: Span[Byte] = Span.empty[Byte]
-
-                    def read(buf: Array[Byte])(using Frame): Int < Async =
-                        if leftover.nonEmpty then
-                            val take = math.min(leftover.size, buf.length)
-                            discard(leftover.copyToArray(buf, 0, take))
-                            leftover = leftover.slice(take, leftover.size)
-                            take
-                        else
-                            Abort.run[Closed](ch.take).map {
-                                case Result.Failure(_)      => -1 // channel closed = EOF
-                                case Result.Panic(_)        => -1
-                                case Result.Success(Absent) => -1 // EOF sentinel
-                                case Result.Success(Present(span)) =>
-                                    if span.isEmpty then read(buf)
-                                    else
-                                        val take = math.min(span.size, buf.length)
-                                        discard(span.copyToArray(buf, 0, take))
-                                        if take < span.size then
-                                            leftover = span.slice(take, span.size)
-                                        take
-                            }
-
-                    def write(data: Span[Byte])(using Frame): Unit < Async =
-                        conn.write(data)
-            }
-        }
-    end makeWsAdapter
-
     /** Three concurrent fibers: read loop, write loop, user handler. Server does NOT mask (RFC 6455 §5.1). */
     private def serveWebSocket(
-        stream: TransportStream,
+        conn: transport.Connection,
+        wsStream: Stream[Span[Byte], Async],
         wsHandler: WebSocketHttpHandler,
         headers: HttpHeaders,
         path: String
@@ -309,7 +257,7 @@ class HttpTransportServer2(private[kyo] val transport: Transport2)(using
                 AtomicRef.init[Maybe[(Int, String)]](Absent).map { closeReasonRef =>
                     val closeFn: (Int, String) => Unit < Async = (code, reason) =>
                         closeReasonRef.set(Present((code, reason))).andThen {
-                            WsCodec.writeClose(stream, code, reason, mask = false)
+                            WsCodec.writeClose(conn, code, reason, mask = false)
                         }
                     val ws = new WebSocket(inbound, outbound, closeReasonRef, closeFn)
                     val wsUrl = HttpUrl.parse(path) match
@@ -318,9 +266,9 @@ class HttpTransportServer2(private[kyo] val transport: Transport2)(using
                     val request = HttpRequest(HttpMethod.GET, wsUrl, headers, Record.empty)
 
                     Fiber.initUnscoped {
-                        Loop.foreach {
-                            WsCodec.readFrame(stream).map { frame =>
-                                inbound.put(frame).andThen(Loop.continue)
+                        Loop(wsStream) { stream =>
+                            WsCodec.readFrame(stream, conn).map { case (frame, remaining) =>
+                                inbound.put(frame).andThen(Loop.continue(remaining))
                             }
                         }
                     }.map { readFiber =>
@@ -333,7 +281,7 @@ class HttpTransportServer2(private[kyo] val transport: Transport2)(using
                                 Abort.run[Closed] {
                                     Loop.foreach {
                                         outbound.take.map { frame =>
-                                            WsCodec.writeFrame(stream, frame, mask = false).andThen(Loop.continue)
+                                            WsCodec.writeFrame(conn, frame, mask = false).andThen(Loop.continue)
                                         }
                                     }
                                 }.andThen(outbound.close).unit
@@ -347,7 +295,7 @@ class HttpTransportServer2(private[kyo] val transport: Transport2)(using
                                     Abort.run[Any](wsHandler.wsHandler(request, ws)).map { _ =>
                                         closeReasonRef.get.map {
                                             case Absent =>
-                                                Abort.run[Any](WsCodec.writeClose(stream, 1000, "", mask = false)).unit
+                                                Abort.run[Any](WsCodec.writeClose(conn, 1000, "", mask = false)).unit
                                             case _ => Kyo.unit
                                         }
                                     }
@@ -389,4 +337,4 @@ class HttpTransportServer2(private[kyo] val transport: Transport2)(using
         end if
     end parseQueryParam
 
-end HttpTransportServer2
+end HttpTransportServer

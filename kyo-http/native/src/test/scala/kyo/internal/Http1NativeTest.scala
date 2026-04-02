@@ -3,7 +3,7 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.*
 
-/** Integration tests for Http1Protocol2 wired with KqueueNativeTransport2 over real TCP.
+/** Integration tests for Http1Protocol wired with KqueueNativeTransport over real TCP.
   *
   * Only meaningful on macOS/BSD. On Linux, all tests pass trivially (succeed).
   */
@@ -15,10 +15,10 @@ class Http1NativeTest extends kyo.Test:
     private val isMacOS = java.lang.System.getProperty("os.name", "").toLowerCase.contains("mac")
 
     private def onMacOS(
-        f: KqueueNativeTransport2 => Assertion < (Async & Abort[HttpException] & Scope)
+        f: KqueueNativeTransport => Assertion < (Async & Abort[HttpException] & Scope)
     )(using Frame): Assertion < (Async & Abort[HttpException] & Scope) =
         if !isMacOS then succeed
-        else f(new KqueueNativeTransport2)
+        else f(new KqueueNativeTransport)
 
     // ── Helper: start a server that handles one connection ─────────────────────
 
@@ -28,11 +28,11 @@ class Http1NativeTest extends kyo.Test:
       * errors.
       */
     private def withServerClient[A](
-        transport: KqueueNativeTransport2
+        transport: KqueueNativeTransport
     )(
-        handler: KqueueConnection2 => Unit < (Async & Abort[HttpException])
+        handler: KqueueConnection => Unit < (Async & Abort[HttpException])
     )(
-        client: (KqueueConnection2, Int) => A < (Async & Abort[HttpException])
+        client: (KqueueConnection, Int) => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException] & Scope) =
         transport.listen("127.0.0.1", 0, 128, Absent).map { listener =>
             Fiber.initUnscoped {
@@ -58,13 +58,13 @@ class Http1NativeTest extends kyo.Test:
         Scope.run {
             onMacOS { transport =>
                 withServerClient(transport) { serverConn =>
-                    Http1Protocol2.readRequest(serverConn.read, 65536).map { case ((_, path, _, _), _) =>
+                    Http1Protocol.readRequest(serverConn.read, 65536).map { case ((_, path, _, _), _) =>
                         val responseBody = HttpBody.Buffered(Span.fromUnsafe(s"Hello from $path".getBytes(Utf8)))
-                        Http1Protocol2.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, responseBody)
+                        Http1Protocol.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, responseBody)
                     }
                 } { (clientConn, _) =>
-                    Http1Protocol2.writeRequest(clientConn, HttpMethod.GET, "/hello", HttpHeaders.empty, HttpBody.Empty).andThen {
-                        Http1Protocol2.readResponse(clientConn.read, 65536).map { case ((status, _, body), _) =>
+                    Http1Protocol.writeRequest(clientConn, HttpMethod.GET, "/hello", HttpHeaders.empty, HttpBody.Empty).andThen {
+                        Http1Protocol.readResponse(clientConn.read, 65536).map { case ((status, _, body), _) =>
                             assert(status.code == 200)
                             body match
                                 case HttpBody.Buffered(data) =>
@@ -84,15 +84,15 @@ class Http1NativeTest extends kyo.Test:
             onMacOS { transport =>
                 val jsonBody = "{\"key\":\"" + ("x" * 1000) + "\"}"
                 withServerClient(transport) { serverConn =>
-                    Http1Protocol2.readRequest(serverConn.read, 65536).map { case ((_, _, _, body), _) =>
-                        Http1Protocol2.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, body)
+                    Http1Protocol.readRequest(serverConn.read, 65536).map { case ((_, _, _, body), _) =>
+                        Http1Protocol.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, body)
                     }
                 } { (clientConn, _) =>
                     val bodySpan = Span.fromUnsafe(jsonBody.getBytes(Utf8))
-                    Http1Protocol2
+                    Http1Protocol
                         .writeRequest(clientConn, HttpMethod.POST, "/data", HttpHeaders.empty, HttpBody.Buffered(bodySpan))
                         .andThen {
-                            Http1Protocol2.readResponse(clientConn.read, 65536).map { case ((status, _, body), _) =>
+                            Http1Protocol.readResponse(clientConn.read, 65536).map { case ((status, _, body), _) =>
                                 assert(status.code == 200)
                                 body match
                                     case HttpBody.Buffered(data) =>
@@ -112,15 +112,15 @@ class Http1NativeTest extends kyo.Test:
             onMacOS { transport =>
                 val allBytes = Array.tabulate[Byte](256)(_.toByte)
                 withServerClient(transport) { serverConn =>
-                    Http1Protocol2.readRequest(serverConn.read, 65536).map { case ((_, _, _, body), _) =>
-                        Http1Protocol2.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, body)
+                    Http1Protocol.readRequest(serverConn.read, 65536).map { case ((_, _, _, body), _) =>
+                        Http1Protocol.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, body)
                     }
                 } { (clientConn, _) =>
                     val bodySpan = Span.fromUnsafe(allBytes)
-                    Http1Protocol2
+                    Http1Protocol
                         .writeRequest(clientConn, HttpMethod.PUT, "/binary", HttpHeaders.empty, HttpBody.Buffered(bodySpan))
                         .andThen {
-                            Http1Protocol2.readResponse(clientConn.read, 65536).map { case ((status, _, body), _) =>
+                            Http1Protocol.readResponse(clientConn.read, 65536).map { case ((status, _, body), _) =>
                                 assert(status.code == 200)
                                 body match
                                     case HttpBody.Buffered(data) =>
@@ -146,15 +146,15 @@ class Http1NativeTest extends kyo.Test:
         Scope.run {
             onMacOS { transport =>
                 withServerClient(transport) { serverConn =>
-                    Http1Protocol2.readRequest(serverConn.read, 65536).map { case ((_, _, _, _), _) =>
+                    Http1Protocol.readRequest(serverConn.read, 65536).map { case ((_, _, _, _), _) =>
                         // Server sends 200 with a body (Content-Length will be set automatically)
                         val responseBody = HttpBody.Buffered(Span.fromUnsafe("some content".getBytes(Utf8)))
-                        Http1Protocol2.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, responseBody)
+                        Http1Protocol.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, responseBody)
                     }
                 } { (clientConn, _) =>
-                    Http1Protocol2.writeRequest(clientConn, HttpMethod.HEAD, "/resource", HttpHeaders.empty, HttpBody.Empty).andThen {
+                    Http1Protocol.writeRequest(clientConn, HttpMethod.HEAD, "/resource", HttpHeaders.empty, HttpBody.Empty).andThen {
                         // readResponse with HEAD → body must be Empty regardless of Content-Length
-                        Http1Protocol2.readResponse(clientConn.read, 65536, requestMethod = HttpMethod.HEAD).map {
+                        Http1Protocol.readResponse(clientConn.read, 65536, requestMethod = HttpMethod.HEAD).map {
                             case ((status, headers, body), _) =>
                                 assert(status.code == 200)
                                 assert(body == HttpBody.Empty)
@@ -184,11 +184,11 @@ class Http1NativeTest extends kyo.Test:
                                 Loop(serverConn.read, 0) { (stream, count) =>
                                     if count >= 5 then Loop.done(())
                                     else
-                                        Http1Protocol2.readRequest(stream, 65536).map { case ((_, _, _, _), remaining) =>
+                                        Http1Protocol.readRequest(stream, 65536).map { case ((_, _, _, _), remaining) =>
                                             val respBody = HttpBody.Buffered(
                                                 Span.fromUnsafe(s"response-$count".getBytes(Utf8))
                                             )
-                                            Http1Protocol2
+                                            Http1Protocol
                                                 .writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, respBody)
                                                 .andThen {
                                                     Loop.continue(remaining, count + 1)
@@ -204,7 +204,7 @@ class Http1NativeTest extends kyo.Test:
                                 Loop(clientConn.read, 0) { (stream, i) =>
                                     if i >= 5 then Loop.done(succeed)
                                     else
-                                        Http1Protocol2
+                                        Http1Protocol
                                             .writeRequest(
                                                 clientConn,
                                                 HttpMethod.GET,
@@ -213,7 +213,7 @@ class Http1NativeTest extends kyo.Test:
                                                 HttpBody.Empty
                                             )
                                             .andThen {
-                                                Http1Protocol2.readResponse(stream, 65536).map {
+                                                Http1Protocol.readResponse(stream, 65536).map {
                                                     case ((status, _, body), remaining) =>
                                                         assert(status.code == 200)
                                                         body match
@@ -249,7 +249,7 @@ class Http1NativeTest extends kyo.Test:
                                 Loop(serverConn.read, 0) { (stream, count) =>
                                     if count >= 2 then Loop.done(())
                                     else
-                                        Http1Protocol2.readRequest(stream, 65536).map {
+                                        Http1Protocol.readRequest(stream, 65536).map {
                                             case ((method, _, _, body), remaining) =>
                                                 val bodyStr = body match
                                                     case HttpBody.Buffered(d) => d.size.toString
@@ -258,7 +258,7 @@ class Http1NativeTest extends kyo.Test:
                                                 val respBody = HttpBody.Buffered(
                                                     Span.fromUnsafe(s"$method:$bodyStr".getBytes(Utf8))
                                                 )
-                                                Http1Protocol2
+                                                Http1Protocol
                                                     .writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, respBody)
                                                     .andThen {
                                                         Loop.continue(remaining, count + 1)
@@ -271,7 +271,7 @@ class Http1NativeTest extends kyo.Test:
                         transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
                             Sync.ensure(transport.closeNow(clientConn)) {
                                 val postBody = Span.fromUnsafe("hello-post".getBytes(Utf8))
-                                Http1Protocol2
+                                Http1Protocol
                                     .writeRequest(
                                         clientConn,
                                         HttpMethod.POST,
@@ -280,7 +280,7 @@ class Http1NativeTest extends kyo.Test:
                                         HttpBody.Buffered(postBody)
                                     )
                                     .andThen {
-                                        Http1Protocol2
+                                        Http1Protocol
                                             .writeRequest(
                                                 clientConn,
                                                 HttpMethod.GET,
@@ -289,14 +289,14 @@ class Http1NativeTest extends kyo.Test:
                                                 HttpBody.Empty
                                             )
                                             .andThen {
-                                                Http1Protocol2.readResponse(clientConn.read, 65536).map {
+                                                Http1Protocol.readResponse(clientConn.read, 65536).map {
                                                     case ((_, _, body1), remaining1) =>
                                                         body1 match
                                                             case HttpBody.Buffered(d) =>
                                                                 assert(new String(d.toArrayUnsafe, Utf8) == "POST:10")
                                                             case other => fail(s"Expected Buffered for POST, got $other")
                                                         end match
-                                                        Http1Protocol2.readResponse(remaining1, 65536).map {
+                                                        Http1Protocol.readResponse(remaining1, 65536).map {
                                                             case ((_, _, body2), _) =>
                                                                 body2 match
                                                                     case HttpBody.Buffered(d) =>
@@ -326,17 +326,17 @@ class Http1NativeTest extends kyo.Test:
         Scope.run {
             onMacOS { transport =>
                 withServerClient(transport) { serverConn =>
-                    Http1Protocol2.readRequest(serverConn.read, 65536).map { case (_, _) =>
+                    Http1Protocol.readRequest(serverConn.read, 65536).map { case (_, _) =>
                         val chunks = Stream.init(Seq(
                             Span.fromUnsafe("chunk1".getBytes(Utf8)),
                             Span.fromUnsafe("-chunk2".getBytes(Utf8)),
                             Span.fromUnsafe("-chunk3".getBytes(Utf8))
                         ))
-                        Http1Protocol2.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, HttpBody.Streamed(chunks))
+                        Http1Protocol.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, HttpBody.Streamed(chunks))
                     }
                 } { (clientConn, _) =>
-                    Http1Protocol2.writeRequest(clientConn, HttpMethod.GET, "/chunked", HttpHeaders.empty, HttpBody.Empty).andThen {
-                        Http1Protocol2.readResponse(clientConn.read, 65536).map { case ((status, _, body), _) =>
+                    Http1Protocol.writeRequest(clientConn, HttpMethod.GET, "/chunked", HttpHeaders.empty, HttpBody.Empty).andThen {
+                        Http1Protocol.readResponse(clientConn.read, 65536).map { case ((status, _, body), _) =>
                             assert(status.code == 200)
                             body match
                                 case HttpBody.Buffered(data) =>
@@ -355,9 +355,9 @@ class Http1NativeTest extends kyo.Test:
         Scope.run {
             onMacOS { transport =>
                 withServerClient(transport) { serverConn =>
-                    Http1Protocol2.readRequest(serverConn.read, 65536).map { case ((_, _, _, body), _) =>
+                    Http1Protocol.readRequest(serverConn.read, 65536).map { case ((_, _, _, body), _) =>
                         // Echo back the reassembled body
-                        Http1Protocol2.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, body)
+                        Http1Protocol.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, body)
                     }
                 } { (clientConn, _) =>
                     val chunks = Stream.init(Seq(
@@ -365,10 +365,10 @@ class Http1NativeTest extends kyo.Test:
                         Span.fromUnsafe("|part2".getBytes(Utf8)),
                         Span.fromUnsafe("|part3".getBytes(Utf8))
                     ))
-                    Http1Protocol2
+                    Http1Protocol
                         .writeRequest(clientConn, HttpMethod.POST, "/upload", HttpHeaders.empty, HttpBody.Streamed(chunks))
                         .andThen {
-                            Http1Protocol2.readResponse(clientConn.read, 65536).map { case ((status, _, body), _) =>
+                            Http1Protocol.readResponse(clientConn.read, 65536).map { case ((status, _, body), _) =>
                                 assert(status.code == 200)
                                 body match
                                     case HttpBody.Buffered(data) =>
@@ -404,11 +404,11 @@ class Http1NativeTest extends kyo.Test:
                                         val serverConn = chunk(0)
                                         // Start per-connection handler fiber (fire and forget)
                                         Fiber.initUnscoped {
-                                            Http1Protocol2.readRequest(serverConn.read, 65536).map {
+                                            Http1Protocol.readRequest(serverConn.read, 65536).map {
                                                 case ((_, path, _, _), _) =>
                                                     val respBody =
                                                         HttpBody.Buffered(Span.fromUnsafe(s"echo:$path".getBytes(Utf8)))
-                                                    Http1Protocol2
+                                                    Http1Protocol
                                                         .writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, respBody)
                                                         .andThen {
                                                             transport.closeNow(serverConn)
@@ -425,10 +425,10 @@ class Http1NativeTest extends kyo.Test:
                         Kyo.foreach((0 until n).toSeq) { id =>
                             transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
                                 Sync.ensure(transport.closeNow(conn)) {
-                                    Http1Protocol2
+                                    Http1Protocol
                                         .writeRequest(conn, HttpMethod.GET, s"/client$id", HttpHeaders.empty, HttpBody.Empty)
                                         .andThen {
-                                            Http1Protocol2.readResponse(conn.read, 65536).map { case ((status, _, body), _) =>
+                                            Http1Protocol.readResponse(conn.read, 65536).map { case ((status, _, body), _) =>
                                                 assert(status.code == 200)
                                                 body match
                                                     case HttpBody.Buffered(data) =>
@@ -462,9 +462,9 @@ class Http1NativeTest extends kyo.Test:
                                         val serverConn = chunk(0)
                                         // Start per-connection handler fiber (fire and forget)
                                         Fiber.initUnscoped {
-                                            Http1Protocol2.readRequest(serverConn.read, 65536).map { case ((_, _, _, body), _) =>
+                                            Http1Protocol.readRequest(serverConn.read, 65536).map { case ((_, _, _, body), _) =>
                                                 // Echo request body back
-                                                Http1Protocol2
+                                                Http1Protocol
                                                     .writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, body)
                                                     .andThen {
                                                         transport.closeNow(serverConn)
@@ -481,10 +481,10 @@ class Http1NativeTest extends kyo.Test:
                             transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
                                 Sync.ensure(transport.closeNow(conn)) {
                                     val reqBody = Span.fromUnsafe(s"payload-$id".getBytes(Utf8))
-                                    Http1Protocol2
+                                    Http1Protocol
                                         .writeRequest(conn, HttpMethod.POST, "/echo", HttpHeaders.empty, HttpBody.Buffered(reqBody))
                                         .andThen {
-                                            Http1Protocol2.readResponse(conn.read, 65536).map { case ((status, _, body), _) =>
+                                            Http1Protocol.readResponse(conn.read, 65536).map { case ((status, _, body), _) =>
                                                 assert(status.code == 200)
                                                 body match
                                                     case HttpBody.Buffered(data) =>
@@ -519,7 +519,7 @@ class Http1NativeTest extends kyo.Test:
                             else
                                 val serverConn = chunk(0)
                                 Abort.run[HttpException] {
-                                    Http1Protocol2.readRequest(serverConn.read, 65536)
+                                    Http1Protocol.readRequest(serverConn.read, 65536)
                                 }.map { result =>
                                     // Client disconnected mid-request → should fail
                                     assert(result.isFailure || result.isPanic, s"Expected failure, got $result")
@@ -555,7 +555,7 @@ class Http1NativeTest extends kyo.Test:
                             else
                                 val serverConn = chunk(0)
                                 // Wait for request, then send partial response (body shorter than Content-Length)
-                                Http1Protocol2.readRequest(serverConn.read, 65536).map { case (_, _) =>
+                                Http1Protocol.readRequest(serverConn.read, 65536).map { case (_, _) =>
                                     serverConn
                                         .write(Span.fromUnsafe(
                                             "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\npartial".getBytes(Utf8)
@@ -569,11 +569,11 @@ class Http1NativeTest extends kyo.Test:
                     serverFiber.andThen {
                         transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
                             Sync.ensure(transport.closeNow(clientConn)) {
-                                Http1Protocol2
+                                Http1Protocol
                                     .writeRequest(clientConn, HttpMethod.GET, "/test", HttpHeaders.empty, HttpBody.Empty)
                                     .andThen {
                                         Abort.run[HttpException] {
-                                            Http1Protocol2.readResponse(clientConn.read, 65536)
+                                            Http1Protocol.readResponse(clientConn.read, 65536)
                                         }.map { result =>
                                             // Server closed mid-body → should fail
                                             assert(result.isFailure || result.isPanic, s"Expected failure, got $result")
@@ -598,7 +598,7 @@ class Http1NativeTest extends kyo.Test:
                             else
                                 val serverConn = chunk(0)
                                 // Wait for request, then send garbage (not valid HTTP)
-                                Http1Protocol2.readRequest(serverConn.read, 65536).map { case (_, _) =>
+                                Http1Protocol.readRequest(serverConn.read, 65536).map { case (_, _) =>
                                     serverConn
                                         .write(Span.fromUnsafe("GARBAGE RESPONSE DATA\r\n\r\n".getBytes(Utf8)))
                                         .andThen {
@@ -610,11 +610,11 @@ class Http1NativeTest extends kyo.Test:
                     serverFiber.andThen {
                         transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
                             Sync.ensure(transport.closeNow(clientConn)) {
-                                Http1Protocol2
+                                Http1Protocol
                                     .writeRequest(clientConn, HttpMethod.GET, "/test", HttpHeaders.empty, HttpBody.Empty)
                                     .andThen {
                                         Abort.run[HttpException] {
-                                            Http1Protocol2.readResponse(clientConn.read, 65536)
+                                            Http1Protocol.readResponse(clientConn.read, 65536)
                                         }.map { result =>
                                             result match
                                                 case Result.Failure(_: HttpProtocolException) => succeed
@@ -644,15 +644,15 @@ class Http1NativeTest extends kyo.Test:
                 val size = 1024 * 1024
                 val data = Array.fill[Byte](size)(0x42.toByte) // all 'B'
                 withServerClient(transport) { serverConn =>
-                    Http1Protocol2.readRequest(serverConn.read, size + 1024).map { case ((_, _, _, body), _) =>
-                        Http1Protocol2.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, body)
+                    Http1Protocol.readRequest(serverConn.read, size + 1024).map { case ((_, _, _, body), _) =>
+                        Http1Protocol.writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, body)
                     }
                 } { (clientConn, _) =>
                     val bodySpan = Span.fromUnsafe(data)
-                    Http1Protocol2
+                    Http1Protocol
                         .writeRequest(clientConn, HttpMethod.POST, "/large", HttpHeaders.empty, HttpBody.Buffered(bodySpan))
                         .andThen {
-                            Http1Protocol2.readResponse(clientConn.read, size + 1024).map { case ((status, _, body), _) =>
+                            Http1Protocol.readResponse(clientConn.read, size + 1024).map { case ((status, _, body), _) =>
                                 assert(status.code == 200)
                                 body match
                                     case HttpBody.Buffered(respData) =>
@@ -680,10 +680,10 @@ class Http1NativeTest extends kyo.Test:
                             if chunk.isEmpty then Abort.panic(new Exception("No connection"))
                             else
                                 val serverConn = chunk(0)
-                                Http1Protocol2.readRequest(serverConn.read, 65536).map { case (_, _) =>
+                                Http1Protocol.readRequest(serverConn.read, 65536).map { case (_, _) =>
                                     val bigBody =
                                         HttpBody.Buffered(Span.fromUnsafe(Array.fill[Byte](bodySize)(0x41.toByte)))
-                                    Http1Protocol2
+                                    Http1Protocol
                                         .writeResponse(serverConn, HttpStatus(200), HttpHeaders.empty, bigBody)
                                         .andThen {
                                             transport.closeNow(serverConn)
@@ -694,11 +694,11 @@ class Http1NativeTest extends kyo.Test:
                     serverFiber.andThen {
                         transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
                             Sync.ensure(transport.closeNow(clientConn)) {
-                                Http1Protocol2
+                                Http1Protocol
                                     .writeRequest(clientConn, HttpMethod.GET, "/big", HttpHeaders.empty, HttpBody.Empty)
                                     .andThen {
                                         Abort.run[HttpException] {
-                                            Http1Protocol2.readResponse(clientConn.read, maxSize)
+                                            Http1Protocol.readResponse(clientConn.read, maxSize)
                                         }.map { result =>
                                             result match
                                                 case Result.Failure(e: HttpPayloadTooLargeException) => succeed
