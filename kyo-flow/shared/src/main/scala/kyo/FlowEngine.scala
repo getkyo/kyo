@@ -225,7 +225,7 @@ final class FlowEngine private (
         def cancelAll(wfId: Maybe[Flow.Id.Workflow] = Maybe.empty)(using Frame): Int < Async =
             val wfIds: Seq[Flow.Id.Workflow] < Sync = wfId match
                 case Present(id) => Seq(id)
-                case _ => defs.use(_.keys.toSeq)
+                case _           => defs.use(_.keys.toArray.toSeq)
             wfIds.map { ids =>
                 Kyo.foreach(ids) { id =>
                     store.listExecutions(id, Maybe.empty, Int.MaxValue, 0).map { execs =>
@@ -272,14 +272,17 @@ final class FlowEngine private (
             val results = wfId match
                 case Present(id) => store.listExecutions(id, status, limit, offset)
                 case _ =>
-                    defs.use(_.keys.toSeq).map(ids =>
+                    defs.use(_.keys.toArray.toSeq).map { ids =>
                         Kyo.foreach(ids)(id =>
                             store.listExecutions(id, status, limit, offset)
-                        ))
-                            .map(_.foldLeft(Chunk.empty[FlowStore.ExecutionState])(_ ++ _)
-                                .toSeq.sortBy(_.created)(using Ordering[Instant]).reverse
-                                .drop(offset).take(limit))
-                            .map(Chunk.from)
+                        ).map { chunks =>
+                            Chunk.from(
+                                chunks.foldLeft(Chunk.empty[FlowStore.ExecutionState])(_ ++ _)
+                                    .toSeq.sortBy(_.created)(using Ordering[Instant]).reverse
+                                    .drop(offset).take(limit)
+                            )
+                        }
+                    }
             results.map(r => FlowEngine.SearchResult(r.toSeq, r.length))
         end search
 
@@ -306,15 +309,32 @@ final class FlowEngine private (
 
     end executions
 
-    // --- Registration (private) ---
+    // --- Registration ---
 
-    private[kyo] def register(id: Flow.Id.Workflow, flow: Flow[?, ?, ?])(using Frame): Unit < Async =
+    /** Register a workflow whose step bodies use only effects the engine already handles. */
+    def register(id: Flow.Id.Workflow, flow: Flow[?, ?, ?])(using Frame): Unit < Async =
+        registerImpl(id, flow, Maybe.empty)
+
+    /** Register a workflow whose step bodies use custom effects.
+      *
+      * The runner wraps the entire flow execution, providing effect handlers that step bodies need.
+      *
+      * {{{
+      * engine.register(wfId, flow)([v] => c => Env.run(config)(c))
+      * }}}
+      */
+    def register[S](id: Flow.Id.Workflow, flow: Flow[?, ?, S])(
+        runner: [V] => V < S => V < (Async & Scope & Abort[FlowException])
+    )(using Frame): Unit < Async =
+        registerImpl(id, flow, Maybe(FlowRunner[S](runner)))
+
+    private[kyo] def registerImpl(id: Flow.Id.Workflow, flow: Flow[?, ?, ?], runner: Maybe[FlowRunner])(using Frame): Unit < Async =
         val meta   = FlowEngine.WorkflowInfo.of(id.value, flow)
         val schema = WorkflowSchema.of(flow)
         val inputs = kyo.internal.FlowLint.inputMetas(flow)
-        val defn   = FlowDefinition(id, flow, inputs, meta, schema)
+        val defn   = FlowDefinition(id, flow, runner, inputs, meta, schema)
         defs.getAndUpdate(_.update(id, defn)).unit.andThen(store.putWorkflow(meta))
-    end register
+    end registerImpl
 
     // --- Internal ---
 
@@ -327,7 +347,7 @@ final class FlowEngine private (
         batchSize: Int,
         pollTimeout: Duration
     )(using Frame): Unit < (Async & Scope) =
-        defs.use(_.keys.toSet).map { wfIds =>
+        defs.use(_.keys.toArray.toSet).map { wfIds =>
             if wfIds.isEmpty then Async.sleep(pollTimeout).andThen(worker(lease, renewEvery, batchSize, pollTimeout))
             else
                 store.claimReady(wfIds, executorId, lease, batchSize, pollTimeout).map { batch =>
@@ -347,9 +367,20 @@ final class FlowEngine private (
                                             }
                                         renew
                                     }.map { renewFiber =>
-                                        executeOne(eid).map { _ =>
-                                            renewFiber.interrupt.andThen {
-                                                withEvent(eid, ts => Flow.Event.ExecutionReleased(state.flowId, eid, executorId, ts)) {
+                                        Sync.ensure(renewFiber.interrupt) {
+                                            Abort.recover[Throwable] { ex =>
+                                                Clock.nowWith { ts =>
+                                                    store.updateStatus(
+                                                        eid,
+                                                        Flow.Status.Failed(ex.getMessage),
+                                                        Flow.Event.Failed(state.flowId, eid, ex.getMessage, ts)
+                                                    )
+                                                }
+                                            }(executeOne(eid)).andThen {
+                                                withEvent(
+                                                    eid,
+                                                    ts => Flow.Event.ExecutionReleased(state.flowId, eid, executorId, ts)
+                                                ) {
                                                     store.releaseClaim(eid, executorId)
                                                 }
                                             }
@@ -386,10 +417,14 @@ final class FlowEngine private (
                                     record    = rebuildRecord(fields, defn.schema)
                                     completed = deriveCompleted(history)
                                     interp    = new StoreInterpreter(store, eid, state.flowId, executorId, defn)
+                                    flowExec = Flow.run(defn.flow, record, completed)(interp)
+                                        .map(_.asInstanceOf[Record[Any]])
+                                    wrappedExec = defn.runner match
+                                        case Present(r) => r.erased(flowExec)
+                                        case _          => flowExec
                                     result <- Abort.run[FlowSuspension] {
                                         Abort.run[FlowException] {
-                                            Flow.run(defn.flow, record, completed)(interp)
-                                                .map(_.asInstanceOf[Record[Any]])
+                                            wrappedExec
                                         }
                                     }
                                     _ <- handleResult(eid, state.flowId, result)
@@ -485,6 +520,12 @@ object FlowEngine:
     )(using Frame): FlowEngine < (Async & Scope) =
         init(store, flows = flows)
 
+    def init[S](
+        store: FlowStore,
+        flows: Flow[?, ?, S]*
+    )(runner: [V] => V < S => V < (Async & Scope & Abort[FlowException]))(using Frame): FlowEngine < (Async & Scope) =
+        initImpl(store, flows = flows, runner = Maybe(FlowRunner[S](runner)))
+
     def init(
         store: FlowStore,
         workerCount: Int = 2,
@@ -493,6 +534,18 @@ object FlowEngine:
         batchSize: Int = 4,
         pollTimeout: Duration = 30.seconds,
         flows: Seq[Flow[?, ?, ?]] = Seq.empty
+    )(using Frame): FlowEngine < (Async & Scope) =
+        initImpl(store, workerCount, lease, renewEvery, batchSize, pollTimeout, flows, Maybe.empty)
+
+    private[kyo] def initImpl(
+        store: FlowStore,
+        workerCount: Int = 2,
+        lease: Duration = 30.seconds,
+        renewEvery: Duration = 10.seconds,
+        batchSize: Int = 4,
+        pollTimeout: Duration = 30.seconds,
+        flows: Seq[Flow[?, ?, ?]] = Seq.empty,
+        runner: Maybe[FlowRunner] = Maybe.empty
     )(using Frame): FlowEngine < (Async & Scope) =
         for
             defs <- AtomicRef.init(Dict.empty[Flow.Id.Workflow, FlowDefinition])
@@ -505,7 +558,7 @@ object FlowEngine:
                     )).getOrElse(
                     throw new IllegalArgumentException("Flow must have a name — use Flow.init(\"name\") to create named workflows")
                 )
-                engine.register(Flow.Id.Workflow(name), flow)
+                engine.registerImpl(Flow.Id.Workflow(name), flow, runner)
             }
             _ <- Kyo.foreachDiscard(1 to workerCount) { _ =>
                 Fiber.init(engine.worker(lease, renewEvery, batchSize, pollTimeout))

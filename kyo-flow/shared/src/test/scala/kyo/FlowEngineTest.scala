@@ -3175,4 +3175,142 @@ class FlowEngineTest extends Test:
         }
     }
 
+    "runner" - {
+
+        "runner handles Env effect in step body" in run {
+            withEngine { (engine, store, tc) =>
+                val flow = Flow.input[Int]("x")
+                    .output("y") { ctx =>
+                        Env.use[String](s => s.length + ctx.x)
+                    }
+                for
+                    _      <- engine.register(wf1, flow)([v] => c => Env.run("hello")(c))
+                    handle <- engine.workflows.start(wf1)
+                    eid = handle.executionId
+                    _      <- engine.executions.signal[Int](eid, "x", 10)
+                    status <- pump(tc, store, eid, _.isTerminal)
+                    y      <- store.getField[Int](eid, "y")
+                yield
+                    assert(status == Flow.Status.Completed, s"Expected Completed, got $status")
+                    // "hello".length = 5, + x = 10, so y = 15
+                    assert(y.get == 15, s"Expected 15, got ${y.get}")
+                end for
+            }
+        }
+
+        "runner handles Var effect in step body" in run {
+            withEngine { (engine, store, tc) =>
+                val flow = Flow.input[Int]("x")
+                    .output("y") { ctx =>
+                        val r: Int < Var[Int] = Var.update[Int](_ + ctx.x).andThen(Var.get[Int])
+                        r
+                    }
+                for
+                    _ <- engine.register(wf1, flow)(
+                        [v] => c => Var.run(10)(c)
+                    )
+                    handle <- engine.workflows.start(wf1)
+                    eid = handle.executionId
+                    _      <- engine.executions.signal[Int](eid, "x", 5)
+                    status <- pump(tc, store, eid, _.isTerminal)
+                    y      <- store.getField[Int](eid, "y")
+                yield
+                    assert(status == Flow.Status.Completed, s"Expected Completed, got $status")
+                    // Var starts at 10, adds x=5, so result = 15
+                    assert(y.get == 15, s"Expected 15, got ${y.get}")
+                end for
+            }
+        }
+    }
+
+    "isolate in parallel branches" - {
+
+        "zip branches should preserve Var state via Isolate" in run {
+            withEngine { (engine, store, tc) =>
+                val left = Flow.input[Int]("x").output("left") { ctx =>
+                    val r: Int < Var[Int] = Var.update[Int](_ + ctx.x).andThen(Var.get[Int])
+                    r
+                }
+                val right = Flow.input[Int]("x").output("right") { ctx =>
+                    val r: Int < Var[Int] = Var.update[Int](_ * ctx.x).andThen(Var.get[Int])
+                    r
+                }
+                val flow = Var.isolate.update[Int].use { left.zip(right) }
+                for
+                    _ <- engine.register(wf1, flow)(
+                        [v] => c => Var.run(10)(c)
+                    )
+                    handle <- engine.workflows.start(wf1)
+                    eid = handle.executionId
+                    _        <- engine.executions.signal[Int](eid, "x", 5)
+                    status   <- pump(tc, store, eid, _.isTerminal)
+                    leftVal  <- store.getField[Int](eid, "left")
+                    rightVal <- store.getField[Int](eid, "right")
+                yield
+                    assert(status == Flow.Status.Completed, s"Expected Completed, got $status")
+                    // Left branch: 10 + 5 = 15
+                    assert(leftVal.get == 15, s"Left branch should see Var start=10, add x=5, got ${leftVal.get}")
+                    // Right branch: 10 * 5 = 50
+                    assert(rightVal.get == 50, s"Right branch should see Var start=10, mul x=5, got ${rightVal.get}")
+                end for
+            }
+        }
+
+        "race branches should preserve Var state via Isolate" in run {
+            withEngine { (engine, store, tc) =>
+                val fast = Flow.input[Int]("x").output("winner") { ctx =>
+                    val r: Int < Var[Int] = Var.update[Int](_ + 100).andThen(Var.get[Int])
+                    r
+                }
+                val slow = Flow.input[Int]("x")
+                    .sleep("wait", 10.seconds)
+                    .output("winner") { ctx =>
+                        val r: Int < Var[Int] = Var.update[Int](_ + 999).andThen(Var.get[Int])
+                        r
+                    }
+                val flow = Var.isolate.update[Int].use { Flow.input[Int]("x").andThen(Flow.race(fast, slow)) }
+                for
+                    _ <- engine.register(wf1, flow)(
+                        [v] => c => Var.run(0)(c)
+                    )
+                    handle <- engine.workflows.start(wf1)
+                    eid = handle.executionId
+                    _      <- engine.executions.signal[Int](eid, "x", 1)
+                    status <- pump(tc, store, eid, _.isTerminal)
+                    winner <- store.getField[Int](eid, "winner")
+                yield
+                    assert(status == Flow.Status.Completed, s"Expected Completed, got $status")
+                    // The fast branch wins with 0 + 100 = 100
+                    assert(winner.get == 100, s"Winner should be fast branch (100), got ${winner.get}")
+                end for
+            }
+        }
+    }
+
+    "worker fiber resilience" - {
+
+        "step that throws RuntimeException marks execution as Failed" in run {
+            withEngine { (engine, store, tc) =>
+                val flow = Flow.input[Int]("x")
+                    .output("y") { ctx =>
+                        throw new RuntimeException("boom")
+                        ctx.x
+                    }
+                for
+                    _      <- engine.register(wf1, flow)
+                    handle <- engine.workflows.start(wf1)
+                    eid = handle.executionId
+                    _      <- engine.executions.signal[Int](eid, "x", 42)
+                    status <- pump(tc, store, eid, _.isTerminal)
+                yield status match
+                    case Flow.Status.Failed(msg) =>
+                        assert(msg.contains("boom"), s"Error message should contain 'boom', got: '$msg'")
+                    case other =>
+                        fail(s"Expected Failed containing 'boom' but got $other")
+                end for
+            }
+        }
+
+    }
+
 end FlowEngineTest

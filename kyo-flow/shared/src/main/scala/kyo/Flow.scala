@@ -345,13 +345,29 @@ object Flow:
     def runServer(flows: Flow[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
         FlowStore.initMemory.map(store => runServer(store, flows*))
 
+    def runServer[S](flows: Flow[?, ?, S]*)(
+        runner: [V] => V < S => V < (Async & Scope & Abort[FlowException])
+    )(using Frame): HttpServer < (Async & Scope) =
+        FlowStore.initMemory.map(store => runServer(store, flows*)(runner))
+
     /** Start an HTTP server backed by a specific store. */
     def runServer(store: FlowStore, flows: Flow[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
         runHandlers(store, flows*).map(h => HttpServer.init(h.toSeq*))
 
+    def runServer[S](store: FlowStore, flows: Flow[?, ?, S]*)(
+        runner: [V] => V < S => V < (Async & Scope & Abort[FlowException])
+    )(using Frame): HttpServer < (Async & Scope) =
+        runHandlers(store, flows*)(runner).map(h => HttpServer.init(h.toSeq*))
+
     /** Get HTTP handlers without starting a server. Compose with your own endpoints. */
     def runHandlers(store: FlowStore, flows: Flow[?, ?, ?]*)(using Frame): Chunk[HttpHandler[?, ?, ?]] < (Async & Scope) =
-        FlowEngine.init(store, flows = flows).map(engine => kyo.internal.FlowApi.handlers(engine))
+        FlowEngine.initImpl(store, flows = flows).map(engine => kyo.internal.FlowApi.handlers(engine))
+
+    def runHandlers[S](store: FlowStore, flows: Flow[?, ?, S]*)(
+        runner: [V] => V < S => V < (Async & Scope & Abort[FlowException])
+    )(using Frame): Chunk[HttpHandler[?, ?, ?]] < (Async & Scope) =
+        FlowEngine.initImpl(store, flows = flows, runner = Maybe(FlowRunner[S](runner)))
+            .map(engine => kyo.internal.FlowApi.handlers(engine))
 
     /** Get HTTP handlers from an existing engine. */
     def runHandlers(engine: FlowEngine)(using Frame): Chunk[HttpHandler[?, ?, ?]] =
@@ -366,10 +382,34 @@ object Flow:
         flow: Flow[In, Out, ?],
         inputs: Record[In] = Record.empty
     )(using Frame): Record[In & Out] < (Async & Scope & Abort[FlowException]) =
+        runLocalImpl(flow, inputs, Maybe.empty)
+
+    /** Execute a flow locally with a runner that handles custom effects.
+      *
+      * The runner wraps the entire flow execution, providing effect handlers that step bodies need. The compiler infers `S` from the flow,
+      * then requires the runner to handle it.
+      *
+      * {{{
+      * Flow.runLocal(myFlow, "x" ~ 42)([v] => c => Env.run(config)(c))
+      * }}}
+      */
+    def runLocal[In, Out, S](
+        flow: Flow[In, Out, S],
+        inputs: Record[In]
+    )(runner: [V] => V < S => V < (Async & Scope & Abort[FlowException]))(using
+        Frame
+    ): Record[In & Out] < (Async & Scope & Abort[FlowException]) =
+        runLocalImpl(flow, inputs, Maybe(FlowRunner[S](runner)))
+
+    private def runLocalImpl[In, Out](
+        flow: Flow[In, Out, ?],
+        inputs: Record[In],
+        runner: Maybe[FlowRunner]
+    )(using Frame): Record[In & Out] < (Async & Scope & Abort[FlowException]) =
         FlowStore.initMemory.map { store =>
-            FlowEngine.init(store, workerCount = 1, pollTimeout = 100.millis).map { engine =>
+            FlowEngine.initImpl(store, workerCount = 1, pollTimeout = 100.millis).map { engine =>
                 val wfId = Flow.Id.Workflow("_local")
-                engine.register(wfId, flow).map { _ =>
+                engine.registerImpl(wfId, flow, runner).map { _ =>
                     engine.workflows.start(wfId, inputs.asInstanceOf[Record[Any]]).map { handle =>
                         val eid = handle.executionId
                         def await: Record[In & Out] < (Async & Abort[FlowException]) =
@@ -403,7 +443,7 @@ object Flow:
                 }
             }
         }
-    end runLocal
+    end runLocalImpl
 
     // --- Combinators ---
 

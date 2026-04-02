@@ -6,9 +6,25 @@ import kyo.kernel.Isolate
 /** Input metadata extracted from the flow AST at registration time. */
 private[kyo] case class InputMeta(name: String, tag: Tag[Any], json: Json[Any], frame: Frame)
 
+/** Wraps the entire Flow.run computation to handle custom effects.
+  *
+  * The identity-typed `erased` method slots into any effect context. At runtime the implementation handles effects pending inside the
+  * computation via type erasure.
+  */
+abstract private[kyo] class FlowRunner:
+    def erased[V, S](v: V < S)(using Frame): V < S
+
+private[kyo] object FlowRunner:
+    def apply[S](f: [V] => V < S => V < (Async & Scope & Abort[FlowException])): FlowRunner =
+        new FlowRunner:
+            def erased[V, S2](v: V < S2)(using Frame): V < S2 =
+                f(v.asInstanceOf[V < S]).asInstanceOf[V < S2]
+end FlowRunner
+
 private[kyo] case class FlowDefinition(
     id: Flow.Id.Workflow,
     flow: Flow[?, ?, ?],
+    runner: Maybe[FlowRunner],
     inputs: Seq[InputMeta],
     meta: FlowEngine.WorkflowInfo,
     schema: WorkflowSchema
@@ -168,22 +184,30 @@ private[kyo] class StoreInterpreter(
         isolate: Isolate[Any, Abort[FlowException] & Async, Any]
     ): Record[Any] < S =
         type R = Result[FlowSuspension, Result[FlowException, Record[Any]]]
-        Async.zip(
-            Abort.run[FlowSuspension](Abort.run[FlowException](left)): R < Async,
-            Abort.run[FlowSuspension](Abort.run[FlowException](right)): R < Async
-        ).map { (lr, rr) =>
-            (lr, rr) match
-                case (Result.Success(Result.Success(l)), Result.Success(Result.Success(r))) =>
-                    new Record[Any](ctx.toDict ++ l.toDict ++ r.toDict)
-                case (Result.Failure(s), _)                 => Abort.fail[FlowSuspension](s)
-                case (_, Result.Failure(s))                 => Abort.fail[FlowSuspension](s)
-                case (Result.Success(Result.Failure(e)), _) => Abort.fail[FlowException](e)
-                case (_, Result.Success(Result.Failure(e))) => Abort.fail[FlowException](e)
-                case (Result.Panic(e), _)                   => Abort.panic(e)
-                case (_, Result.Panic(e))                   => Abort.panic(e)
-                case (Result.Success(Result.Panic(e)), _)   => Abort.panic(e)
-                case (_, Result.Success(Result.Panic(e)))   => Abort.panic(e)
-                case _                                      => Abort.panic(new RuntimeException("unreachable: zip result"))
+        isolate.capture { state =>
+            val isoLeft  = isolate.isolate(state, Abort.run[FlowSuspension](Abort.run[FlowException](left)))
+            val isoRight = isolate.isolate(state, Abort.run[FlowSuspension](Abort.run[FlowException](right)))
+            Fiber.foreachIndexed(Seq(isoLeft, isoRight))((_, v) => v).map { fiber =>
+                fiber.use { results =>
+                    Kyo.foreach(results)(isolate.restore(_)).map { restored =>
+                        val lr = restored(0).asInstanceOf[R]
+                        val rr = restored(1).asInstanceOf[R]
+                        (lr, rr) match
+                            case (Result.Success(Result.Success(l)), Result.Success(Result.Success(r))) =>
+                                new Record[Any](ctx.toDict ++ l.toDict ++ r.toDict)
+                            case (Result.Failure(s), _)                 => Abort.fail[FlowSuspension](s)
+                            case (_, Result.Failure(s))                 => Abort.fail[FlowSuspension](s)
+                            case (Result.Success(Result.Failure(e)), _) => Abort.fail[FlowException](e)
+                            case (_, Result.Success(Result.Failure(e))) => Abort.fail[FlowException](e)
+                            case (Result.Panic(e), _)                   => Abort.panic(e)
+                            case (_, Result.Panic(e))                   => Abort.panic(e)
+                            case (Result.Success(Result.Panic(e)), _)   => Abort.panic(e)
+                            case (_, Result.Success(Result.Panic(e)))   => Abort.panic(e)
+                            case _                                      => Abort.panic(new RuntimeException("unreachable: zip result"))
+                        end match
+                    }
+                }
+            }
         }
     end onZip
 
@@ -192,7 +216,12 @@ private[kyo] class StoreInterpreter(
         right: Record[Any] < S,
         isolate: Isolate[Any, Abort[FlowException] & Async, Any]
     ): Record[Any] < S =
-        Async.race(left, right)
+        isolate.capture { state =>
+            Fiber.internal.race(Seq(
+                isolate.isolate(state, left),
+                isolate.isolate(state, right)
+            )).map(fiber => isolate.restore(fiber.get))
+        }
 
     override def checkCancelled: Boolean < S =
         store.getExecution(eid).map {

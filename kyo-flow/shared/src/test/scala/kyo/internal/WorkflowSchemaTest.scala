@@ -189,14 +189,13 @@ class WorkflowSchemaTest extends Test:
                     // It should eventually be marked as Failed, not released forever
                     _     <- pump(tc, store, stuckEid, s => s.isTerminal || s == Flow.Status.Running, 50)
                     state <- store.getExecution(stuckEid)
-                yield
-                    assert(
-                        state.get.status match
-                            case Flow.Status.Failed(_) => true;
-                            case _                     => false
-                        ,
-                        s"Expected Failed but got ${state.get.status} — execution stuck on hash mismatch"
-                    )
+                yield assert(
+                    state.get.status match
+                        case Flow.Status.Failed(_) => true;
+                        case _                     => false
+                    ,
+                    s"Expected Failed but got ${state.get.status} — execution stuck on hash mismatch"
+                )
                 end for
             }
         }
