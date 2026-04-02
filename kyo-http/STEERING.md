@@ -1,3 +1,3 @@
 # STEERING
 
-Report the EXACT test count for HttpServerTest and Http1ExchangeTest. Did "convenience methods" pass? Report and finish — do NOT investigate other failures.
+Blocking selector.select() and kevent() is BY DESIGN. Kyo's scheduler compensates for blocked workers. Do NOT flag this as an issue.

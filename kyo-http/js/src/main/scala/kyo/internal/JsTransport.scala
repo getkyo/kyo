@@ -75,8 +75,8 @@ final class JsTransport extends Transport:
 
             // Single-threaded JS queue: incoming connections are buffered here.
             // pendingPull holds a waiting stream consumer's promise (at most one at a time).
-            val connQueue                                              = scala.collection.mutable.Queue.empty[JsConnection]
-            var pendingPull: Option[Promise.Unsafe[JsConnection, Any]] = None
+            val connQueue                                             = scala.collection.mutable.Queue.empty[JsConnection]
+            var pendingPull: Maybe[Promise.Unsafe[JsConnection, Any]] = Absent
 
             discard(server.on(
                 "error",
@@ -98,10 +98,10 @@ final class JsTransport extends Transport:
                     val jsConn = new JsRawConnection(socket)
                     val conn   = new JsConnection(jsConn, new JsStream(jsConn))
                     pendingPull match
-                        case Some(p) =>
-                            pendingPull = None
+                        case Present(p) =>
+                            pendingPull = Absent
                             discard(p.complete(Result.succeed(conn)))
-                        case None =>
+                        case Absent =>
                             connQueue.enqueue(conn)
                     end match
                 }: js.Function1[js.Dynamic, Unit]
@@ -114,7 +114,7 @@ final class JsTransport extends Transport:
                         Maybe((connQueue.dequeue(), ()))
                     else
                         Promise.init[JsConnection, Any].map { p =>
-                            pendingPull = Some(p.unsafe)
+                            pendingPull = Present(p.unsafe)
                             p.get.map(c => Maybe((c, ())))
                         }
                     end if
@@ -140,10 +140,10 @@ final class JsTransport extends Transport:
                     import AllowUnsafe.embrace.danger
                     // Complete any pending pull so the connections stream fiber unblocks
                     pendingPull match
-                        case Some(p) =>
+                        case Present(p) =>
                             discard(p.complete(Result.Panic(new Exception("Server closed"))))
-                            pendingPull = None
-                        case None =>
+                            pendingPull = Absent
+                        case Absent =>
                     end match
                     // Destroy active sockets
                     var i = 0
@@ -171,26 +171,23 @@ private[kyo] class JsStream(conn: JsRawConnection) extends RawStream:
 
     // Leftover bytes from a Node.js "data" chunk that didn't fit in the last buf.
     // Served before issuing another socket.resume().
-    private var leftoverBuf: Array[Byte] = null
-    private var leftoverOff: Int         = 0
-    private var leftoverLen: Int         = 0
+    private var leftover: Maybe[(Array[Byte], Int, Int)] = Absent
 
     // Current pending read state — set in read() before socket.resume(), cleared by whichever
     // handler fires first. JavaScript is single-threaded so plain vars are safe (no concurrent access).
-    // Option avoids null comparison issues with the opaque Promise.Unsafe type.
-    private var pendingReadBuf: Array[Byte]                          = null
-    private var pendingReadPromise: Option[Promise.Unsafe[Int, Any]] = None
+    private var pendingReadBuf: Maybe[Array[Byte]]                  = Absent
+    private var pendingReadPromise: Maybe[Promise.Unsafe[Int, Any]] = Absent
 
     // Completes and clears any pending read promise with EOF (-1).
     // Called from "end", "close", "error" permanent handlers.
     private def completePendingEof(): Unit =
         pendingReadPromise match
-            case Some(p) =>
-                pendingReadPromise = None
-                pendingReadBuf = null
+            case Present(p) =>
+                pendingReadPromise = Absent
+                pendingReadBuf = Absent
                 import AllowUnsafe.embrace.danger
                 discard(p.complete(Result.succeed(-1)))
-            case None =>
+            case Absent =>
 
     // Register permanent listeners once at construction time.
     {
@@ -201,11 +198,11 @@ private[kyo] class JsStream(conn: JsRawConnection) extends RawStream:
             { (chunk: js.Dynamic) =>
                 import AllowUnsafe.embrace.danger
                 pendingReadPromise match
-                    case Some(p) =>
+                    case Present(p) =>
                         discard(conn.socket.pause())
-                        val buf = pendingReadBuf
-                        pendingReadPromise = None
-                        pendingReadBuf = null
+                        val buf = pendingReadBuf.get
+                        pendingReadPromise = Absent
+                        pendingReadBuf = Absent
                         val nodeBuffer = chunk.asInstanceOf[js.typedarray.Uint8Array]
                         val len        = math.min(nodeBuffer.length, buf.length)
                         var i          = 0
@@ -215,16 +212,15 @@ private[kyo] class JsStream(conn: JsRawConnection) extends RawStream:
                         // Buffer excess bytes so they are served on the next read() call.
                         val excess = nodeBuffer.length - len
                         if excess > 0 then
-                            leftoverBuf = new Array[Byte](excess)
-                            var j = 0
+                            val excessBuf = new Array[Byte](excess)
+                            var j         = 0
                             while j < excess do
-                                leftoverBuf(j) = nodeBuffer(len + j).toByte
+                                excessBuf(j) = nodeBuffer(len + j).toByte
                                 j += 1
-                            leftoverOff = 0
-                            leftoverLen = excess
+                            leftover = Present((excessBuf, 0, excess))
                         end if
                         discard(p.complete(Result.succeed(len)))
-                    case None =>
+                    case Absent =>
                 end match
             }: js.Function1[js.Dynamic, Unit]
         ))
@@ -256,28 +252,31 @@ private[kyo] class JsStream(conn: JsRawConnection) extends RawStream:
 
     def read(buf: Array[Byte])(using Frame): Int < Async =
         // Drain leftover from a previous oversized chunk before touching the socket.
-        if leftoverLen > 0 then
-            Sync.defer {
-                val n = math.min(buf.length, leftoverLen)
-                java.lang.System.arraycopy(leftoverBuf, leftoverOff, buf, 0, n)
-                leftoverOff += n
-                leftoverLen -= n
-                if leftoverLen == 0 then
-                    leftoverBuf = null
-                    leftoverOff = 0
-                n
-            }
-        else if conn.socket.destroyed.asInstanceOf[Boolean] then
-            // Socket was already destroyed before we could register a new read.
-            Sync.defer(-1)
-        else
-            Promise.init[Int, Any].map { promise =>
+        leftover match
+            case Present((leftoverBuf, leftoverOff, leftoverLen)) =>
                 Sync.defer {
-                    pendingReadBuf = buf
-                    pendingReadPromise = Some(promise.unsafe)
-                    discard(conn.socket.resume())
-                }.andThen(promise.get)
-            }
+                    val n = math.min(buf.length, leftoverLen)
+                    java.lang.System.arraycopy(leftoverBuf, leftoverOff, buf, 0, n)
+                    val remainingLen = leftoverLen - n
+                    if remainingLen == 0 then
+                        leftover = Absent
+                    else
+                        leftover = Present((leftoverBuf, leftoverOff + n, remainingLen))
+                    end if
+                    n
+                }
+            case Absent =>
+                if conn.socket.destroyed.asInstanceOf[Boolean] then
+                    // Socket was already destroyed before we could register a new read.
+                    Sync.defer(-1)
+                else
+                    Promise.init[Int, Any].map { promise =>
+                        Sync.defer {
+                            pendingReadBuf = Present(buf)
+                            pendingReadPromise = Present(promise.unsafe)
+                            discard(conn.socket.resume())
+                        }.andThen(promise.get)
+                    }
 
     def write(data: Span[Byte])(using Frame): Unit < Async =
         if data.isEmpty then Kyo.unit
@@ -295,6 +294,11 @@ private[kyo] class JsStream(conn: JsRawConnection) extends RawStream:
                         discard(promise.unsafe.complete(Result.succeed(())))
                     else
                         // Backpressured — wait for drain with mutual cleanup to avoid stale listeners.
+                        // null.asInstanceOf is unavoidable here: these three callbacks form a mutual
+                        // cross-reference cycle (each removes the other two), so they must be declared
+                        // as vars before any can be assigned. Scala.js js.Function types are JS interop
+                        // types with no sensible "empty" value, and Maybe would add overhead on every
+                        // callback invocation in a hot path.
                         var drainCb: js.Function0[Unit]             = null.asInstanceOf[js.Function0[Unit]]
                         var closeCb: js.Function0[Unit]             = null.asInstanceOf[js.Function0[Unit]]
                         var errorCb: js.Function1[js.Dynamic, Unit] = null.asInstanceOf[js.Function1[js.Dynamic, Unit]]
