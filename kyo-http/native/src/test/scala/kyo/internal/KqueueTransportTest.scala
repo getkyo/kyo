@@ -660,4 +660,52 @@ class KqueueTransportTest extends kyo.Test:
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // TransportListener.close (2 tests)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    "listener close terminates connections stream" in run {
+        Scope.run {
+            onMacOS { transport =>
+                withServer(transport).map { listener =>
+                    listener.close.andThen {
+                        Abort.run[Timeout](Async.timeout(2.seconds) {
+                            listener.connections.take(1).run.map { chunk =>
+                                assert(chunk.isEmpty)
+                            }
+                        }).map {
+                            case Result.Success(a) => a
+                            case _                 => fail("Timed out waiting for connections stream to terminate")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "listener close while waiting does not hang" in run {
+        Scope.run {
+            onMacOS { transport =>
+                withServer(transport).map { listener =>
+                    Fiber.initUnscoped {
+                        listener.connections.take(1).run
+                    }.map { fiber =>
+                        Async.sleep(50.millis).andThen {
+                            listener.close.andThen {
+                                Abort.run[Timeout](Async.timeout(2.seconds) {
+                                    fiber.get.map { chunk =>
+                                        assert(chunk.isEmpty)
+                                    }
+                                }).map {
+                                    case Result.Success(a) => a
+                                    case _                 => fail("Timed out waiting for connections stream to terminate")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end KqueueTransportTest

@@ -137,6 +137,15 @@ final class JsTransport extends Transport:
                 }.andThen(ready.get)
             } { _ =>
                 Sync.defer {
+                    import AllowUnsafe.embrace.danger
+                    // Complete any pending pull so the connections stream fiber unblocks
+                    pendingPull match
+                        case Some(p) =>
+                            discard(p.complete(Result.Panic(new Exception("Server closed"))))
+                            pendingPull = None
+                        case None =>
+                    end match
+                    // Destroy active sockets
                     var i = 0
                     while i < activeSockets.length do
                         discard(activeSockets(i).destroy())

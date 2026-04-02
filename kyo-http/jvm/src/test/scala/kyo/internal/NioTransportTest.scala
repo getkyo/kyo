@@ -343,4 +343,42 @@ class NioTransportTest extends kyo.Test:
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // TransportListener.close
+    // ─────────────────────────────────────────────────────────────────────────
+
+    "listener close terminates connections stream" in run {
+        Scope.run {
+            withServer.map { listener =>
+                listener.close.andThen {
+                    Async.timeout(2.seconds) {
+                        listener.connections.take(1).run.map { chunk =>
+                            assert(chunk.isEmpty)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "listener close while waiting does not hang" in run {
+        Scope.run {
+            withServer.map { listener =>
+                Fiber.init {
+                    listener.connections.take(1).run
+                }.map { fiber =>
+                    Async.sleep(50.millis).andThen {
+                        listener.close.andThen {
+                            Async.timeout(2.seconds) {
+                                fiber.get.map { chunk =>
+                                    assert(chunk.isEmpty)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end NioTransportTest

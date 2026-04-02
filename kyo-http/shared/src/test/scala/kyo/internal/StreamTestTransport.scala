@@ -50,4 +50,18 @@ object StreamTestTransport:
             }
         }
 
+    /** Simulate a server listener for testing TransportListener.close behavior. */
+    def listen()(using Frame): TransportListener[StreamTestConnection] < (Async & Scope) =
+        Channel.init[StreamTestConnection](16).map { connCh =>
+            Scope.acquireRelease {
+                val connStream = Stream.unfold((), chunkSize = 1) { _ =>
+                    Abort.run[Closed](connCh.take).map {
+                        case Result.Success(conn) => Maybe((conn, ()))
+                        case _                    => Maybe.empty
+                    }
+                }
+                new TransportListener(0, "127.0.0.1", connStream, close = connCh.close.unit)
+            } { _ => connCh.close.unit }
+        }
+
 end StreamTestTransport
