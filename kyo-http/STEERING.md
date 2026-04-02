@@ -1,5 +1,34 @@
-# STEERING — STOP ANALYZING, COMPILE AND TEST
+# STEERING
 
-The 3-4 WS failures are likely flaky under stress on Native. Run the tests 2 more times to confirm. If the same tests fail consistently, fix them. If different tests fail each time, they're flaky stress tests — report the findings and move on.
+In HttpPlatformBackend, do NOT annotate the transport variable with `: Transport`. Let the compiler infer the concrete type so Tag derivation works:
 
-Do NOT spend more than 1 minute analyzing each failure. Try a fix, compile, test.
+```scala
+// WRONG — erases Connection type
+private val transport: Transport = if isLinux then new EpollNativeTransport else new KqueueNativeTransport
+
+// CORRECT — concrete type inferred, separate vals
+private val transport =
+    if isLinux then new EpollNativeTransport else new KqueueNativeTransport
+```
+
+Actually even simpler — use separate lazy vals per platform since they have different Connection types that can't unify:
+
+```scala
+private lazy val (transportForClient, transportForServer, transportForWs) =
+    if isLinux then
+        val t = new EpollNativeTransport
+        (t, t, t)
+    else
+        val t = new KqueueNativeTransport
+        (t, t, t)
+```
+
+Or just use two separate code paths:
+```scala
+if isLinux then
+    lazy val client = new HttpTransportClient(new EpollNativeTransport)
+    ...
+else
+    lazy val client = new HttpTransportClient(new KqueueNativeTransport)
+    ...
+```
