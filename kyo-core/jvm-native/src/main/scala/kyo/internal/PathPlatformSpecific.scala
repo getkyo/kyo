@@ -24,7 +24,7 @@ import scala.jdk.CollectionConverters.*
 /** Concrete `Path.Unsafe` implementation backed by `java.nio.file.Path`. Used on both JVM and Scala Native. */
 final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Path.Unsafe:
 
-    // -- Pure accessors --
+    // --- Pure accessors ---
 
     def parts: Chunk[String] =
         if !jpath.isAbsolute && jpath.getNameCount == 1 && jpath.getName(0).toString.isEmpty then
@@ -46,7 +46,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
 
     override def hashCode(): Int = jpath.hashCode()
 
-    // -- Inspection --
+    // --- Inspection ---
 
     def exists()(using AllowUnsafe): Boolean =
         Files.exists(jpath)
@@ -59,7 +59,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     def isRegularFile()(using AllowUnsafe): Boolean  = Files.isRegularFile(jpath)
     def isSymbolicLink()(using AllowUnsafe): Boolean = Files.isSymbolicLink(jpath)
 
-    // -- Read --
+    // --- Read ---
 
     def read()(using AllowUnsafe, Frame): Result[FileReadException, String] =
         catchRead(Files.readString(jpath))
@@ -76,7 +76,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     def readLines(charset: Charset)(using AllowUnsafe, Frame): Result[FileReadException, Chunk[String]] =
         catchRead(Chunk.from(Files.readAllLines(jpath, charset).asScala))
 
-    // -- Streaming read handles --
+    // --- Streaming read handles ---
 
     def openRead()(using AllowUnsafe, Frame): Result[FileReadException, Path.ReadHandle] =
         catchRead(new NioReadHandle(FileChannel.open(jpath, StandardOpenOption.READ)))
@@ -87,7 +87,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     def size()(using AllowUnsafe, Frame): Result[FileReadException, Long] =
         catchRead(Files.size(jpath))
 
-    // -- Write --
+    // --- Write ---
 
     def write(value: String, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
@@ -158,7 +158,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             finally ch.close()
         }
 
-    // -- Directory / structure --
+    // --- Directory / structure ---
 
     def mkDir()(using AllowUnsafe, Frame): Result[FileFsException, Unit] =
         catchFs(discard(Files.createDirectories(jpath)))
@@ -226,12 +226,12 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
                     override def visitFile(p: java.nio.file.Path, a: BasicFileAttributes): FileVisitResult =
                         Files.delete(p); FileVisitResult.CONTINUE
                     override def postVisitDirectory(p: java.nio.file.Path, e: IOException): FileVisitResult =
-                        if e != null then throw e
+                        if e != null then throw e // Re-throw to propagate through Java's FileVisitor API
                         Files.delete(p); FileVisitResult.CONTINUE
                 discard(Files.walkFileTree(jpath, visitor))
         }
 
-    // -- Walk handle --
+    // --- Walk handle ---
 
     def openWalk(maxDepth: Int, followLinks: Boolean)(using AllowUnsafe, Frame): Result[FileFsException, Path.WalkHandle] =
         val followOpts: Array[FileVisitOption] =
@@ -243,7 +243,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
         }
     end openWalk
 
-    // -- Open write handle --
+    // --- Open write handle ---
 
     def openWrite(append: Boolean, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Path.WriteHandle] =
         catchWrite {
@@ -256,7 +256,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             new NioWriteHandle(FileChannel.open(jpath, opts*), safe)
         }
 
-    // -- Helpers --
+    // --- Helpers ---
 
     private def ensureParent(p: java.nio.file.Path): Unit =
         val parent = p.getParent
@@ -476,7 +476,7 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
     )(using Frame): Path < (Sync & Scope & Abort[FileFsException]) =
         super.tempScoped(prefix, suffix)
 
-    protected def make(parts: Chunk[String]): Path =
+    private[kyo] def make(parts: Chunk[String]): Path =
         val isAbsolute = parts.headOption.contains("")
         val nonEmpty   = parts.filter(_.nonEmpty)
         if nonEmpty.isEmpty then
@@ -492,17 +492,17 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
         end if
     end make
 
-    protected def envOrEmpty(name: String): String =
+    private[kyo] def envOrEmpty(name: String): String =
         val v = java.lang.System.getenv(name)
         if v == null then "" else v
 
-    protected def homePath: Path =
+    private[kyo] def homePath: Path =
         val h = java.lang.System.getProperty("user.home", java.lang.System.getenv("HOME"))
         if h == null || h.isEmpty then make(Chunk(""))
         else make(Chunk(h))
     end homePath
 
-    protected def osPlatform: String =
+    private[kyo] def osPlatform: String =
         val os = java.lang.System.getProperty("os.name", "").toLowerCase
         if os.contains("mac") then "mac"
         else if os.contains("win") then "win"

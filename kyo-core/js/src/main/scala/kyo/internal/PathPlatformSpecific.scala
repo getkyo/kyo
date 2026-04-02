@@ -8,9 +8,7 @@ import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.Uint8Array
 
-// -----------------------------------------------------------------------
-// Node.js facades
-// -----------------------------------------------------------------------
+// --- Node.js facades ---
 
 @js.native
 @JSImport("node:fs", JSImport.Namespace)
@@ -71,9 +69,7 @@ private[kyo] object NodeOs extends js.Object:
     def platform(): String = js.native
 end NodeOs
 
-// -----------------------------------------------------------------------
-// Exception translation helpers
-// -----------------------------------------------------------------------
+// --- Exception translation helpers ---
 
 private[kyo] object NodeError:
 
@@ -109,13 +105,11 @@ private[kyo] object NodeError:
 
 end NodeError
 
-// -----------------------------------------------------------------------
-// NodePathUnsafe
-// -----------------------------------------------------------------------
+// --- NodePathUnsafe ---
 
 final private[kyo] class NodePathUnsafe(val pathStr: String) extends Path.Unsafe:
 
-    // -- Pure accessors --
+    // --- Pure accessors ---
 
     def parts: Chunk[String] =
         val sep = NodePath.sep
@@ -139,7 +133,7 @@ final private[kyo] class NodePathUnsafe(val pathStr: String) extends Path.Unsafe
 
     override def hashCode(): Int = pathStr.hashCode
 
-    // -- Inspection --
+    // --- Inspection ---
 
     def exists()(using AllowUnsafe): Boolean =
         try NodeFs.existsSync(pathStr)
@@ -169,7 +163,7 @@ final private[kyo] class NodePathUnsafe(val pathStr: String) extends Path.Unsafe
         try NodeFs.lstatSync(pathStr).isSymbolicLink()
         catch case _: js.JavaScriptException => false
 
-    // -- Read --
+    // --- Read ---
 
     def read()(using AllowUnsafe, Frame): Result[FileReadException, String] =
         catchRead {
@@ -201,7 +195,7 @@ final private[kyo] class NodePathUnsafe(val pathStr: String) extends Path.Unsafe
             Chunk.from(splitLines(content))
         }
 
-    // -- Streaming read handles --
+    // --- Streaming read handles ---
 
     def openRead()(using AllowUnsafe, Frame): Result[FileReadException, Path.ReadHandle] =
         catchRead {
@@ -222,7 +216,7 @@ final private[kyo] class NodePathUnsafe(val pathStr: String) extends Path.Unsafe
             NodeFs.statSync(pathStr).size.toLong
         }
 
-    // -- Write --
+    // --- Write ---
 
     def write(value: String, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
@@ -269,7 +263,7 @@ final private[kyo] class NodePathUnsafe(val pathStr: String) extends Path.Unsafe
                 NodeFs.truncateSync(pathStr, size.toDouble)
         }
 
-    // -- Directory / structure --
+    // --- Directory / structure ---
 
     def mkDir()(using AllowUnsafe, Frame): Result[FileFsException, Unit] =
         catchFs {
@@ -310,6 +304,7 @@ final private[kyo] class NodePathUnsafe(val pathStr: String) extends Path.Unsafe
             val toStr = to.unsafe.show
             if createFolders then ensureParentOf(toStr)
             if !replaceExisting && NodeFs.existsSync(toStr) then
+                // Throw to trigger catchFs error translation
                 throw js.JavaScriptException(
                     js.Dynamic.literal(code = "EEXIST", message = s"File already exists: $toStr")
                 )
@@ -373,7 +368,7 @@ final private[kyo] class NodePathUnsafe(val pathStr: String) extends Path.Unsafe
                 end if
         }
 
-    // -- Walk handle --
+    // --- Walk handle ---
 
     def openWalk(maxDepth: Int, followLinks: Boolean)(using AllowUnsafe, Frame): Result[FileFsException, Path.WalkHandle] =
         catchFs {
@@ -383,7 +378,7 @@ final private[kyo] class NodePathUnsafe(val pathStr: String) extends Path.Unsafe
             new NodeWalkHandle(pathStr, maxDepth, followLinks)
         }
 
-    // -- Open write handle --
+    // --- Open write handle ---
 
     def openWrite(append: Boolean, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Path.WriteHandle] =
         catchWrite {
@@ -393,7 +388,7 @@ final private[kyo] class NodePathUnsafe(val pathStr: String) extends Path.Unsafe
             new NodeWriteHandle(fd, safe)
         }
 
-    // -- Private helpers --
+    // --- Private helpers ---
 
     /** Splits content by newlines, dropping a single trailing empty element if the content ends with '\n'. This matches the behaviour of
       * java.nio.file.Files.readAllLines.
@@ -435,9 +430,7 @@ final private[kyo] class NodePathUnsafe(val pathStr: String) extends Path.Unsafe
 
 end NodePathUnsafe
 
-// -----------------------------------------------------------------------
-// NodeReadHandle
-// -----------------------------------------------------------------------
+// --- NodeReadHandle ---
 
 final private[kyo] class NodeReadHandle(fd: Int) extends Path.ReadHandle:
 
@@ -466,9 +459,7 @@ final private[kyo] class NodeReadHandle(fd: Int) extends Path.ReadHandle:
 
 end NodeReadHandle
 
-// -----------------------------------------------------------------------
-// NodeLineReadHandle
-// -----------------------------------------------------------------------
+// --- NodeLineReadHandle ---
 
 final private[kyo] class NodeLineReadHandle(lines: Array[String], private var idx: Int) extends Path.LineReadHandle:
 
@@ -483,9 +474,7 @@ final private[kyo] class NodeLineReadHandle(lines: Array[String], private var id
 
 end NodeLineReadHandle
 
-// -----------------------------------------------------------------------
-// NodeWalkHandle
-// -----------------------------------------------------------------------
+// --- NodeWalkHandle ---
 
 final private[kyo] class NodeWalkHandle(root: String, maxDepth: Int, followLinks: Boolean) extends Path.WalkHandle:
 
@@ -528,9 +517,7 @@ final private[kyo] class NodeWalkHandle(root: String, maxDepth: Int, followLinks
 
 end NodeWalkHandle
 
-// -----------------------------------------------------------------------
-// NodeWriteHandle
-// -----------------------------------------------------------------------
+// --- NodeWriteHandle ---
 
 final private[kyo] class NodeWriteHandle(fd: Int, path: Path) extends Path.WriteHandle:
 
@@ -557,9 +544,7 @@ final private[kyo] class NodeWriteHandle(fd: Int, path: Path) extends Path.Write
 
 end NodeWriteHandle
 
-// -----------------------------------------------------------------------
-// Byte / Uint8Array conversion helpers
-// -----------------------------------------------------------------------
+// --- Byte / Uint8Array conversion helpers ---
 
 private[kyo] def uint8ArrayToBytes(arr: Uint8Array): Array[Byte] =
     val result = new Array[Byte](arr.length)
@@ -579,13 +564,11 @@ private[kyo] def bytesToUint8Array(bytes: Array[Byte]): Uint8Array =
     arr
 end bytesToUint8Array
 
-// -----------------------------------------------------------------------
-// PathPlatformSpecific
-// -----------------------------------------------------------------------
+// --- PathPlatformSpecific ---
 
 abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
 
-    protected def make(parts: Chunk[String]): Path =
+    private[kyo] def make(parts: Chunk[String]): Path =
         if parts.isEmpty then new NodePathUnsafe("").safe
         else
             val isAbs    = parts.headOption.contains("")
@@ -658,14 +641,14 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
     private def randomId(): String =
         js.Dynamic.global.require("node:crypto").randomBytes(16).applyDynamic("toString")("hex").asInstanceOf[String]
 
-    protected def envOrEmpty(name: String): String =
+    private[kyo] def envOrEmpty(name: String): String =
         val v = js.Dynamic.global.process.env.selectDynamic(name)
         if js.isUndefined(v) || v == null then "" else v.asInstanceOf[String]
 
-    protected def homePath: Path =
+    private[kyo] def homePath: Path =
         make(Chunk(NodeOs.homedir()))
 
-    protected def osPlatform: String =
+    private[kyo] def osPlatform: String =
         NodeOs.platform() match
             case "darwin" => "mac"
             case "win32"  => "win"

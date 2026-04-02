@@ -58,9 +58,7 @@ object Command:
 
     extension (self: Command)
 
-        // -----------------------------------------------------------------------
-        // Effectful operations
-        // -----------------------------------------------------------------------
+        // --- Effectful operations ---
 
         /** Spawns the process and registers it with the enclosing `Scope` for automatic cleanup.
           *
@@ -128,9 +126,7 @@ object Command:
                 yield (new String(outBytes.toArray, StandardCharsets.UTF_8), code)
             }
 
-        // -----------------------------------------------------------------------
-        // Accessors
-        // -----------------------------------------------------------------------
+        // --- Accessors ---
 
         /** Returns the command arguments (program name followed by its arguments). */
         def args: Chunk[String] = self.unsafe.args
@@ -141,9 +137,7 @@ object Command:
         /** Returns the environment variables that will be appended/replaced, or empty if inheriting. */
         def env: Map[String, String] = self.unsafe.env
 
-        // -----------------------------------------------------------------------
-        // Pure builder methods
-        // -----------------------------------------------------------------------
+        // --- Pure builder methods ---
 
         /** Sets the working directory for the process. */
         def cwd(path: kyo.Path): Command = self.unsafe.withCwd(path).safe
@@ -217,9 +211,9 @@ object Command:
     end EnvMode
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    abstract class Unsafe:
+    abstract class Unsafe extends Serializable:
 
-        // -- Effectful operations --
+        // --- Effectful operations ---
 
         /** Attempts to start the process; returns a typed `CommandException` on pre-launch failure. */
         def spawn()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe]
@@ -233,7 +227,7 @@ object Command:
         /** Spawns the process, waits for exit, and fails with the `ExitCode` if non-zero. */
         def waitForSuccess()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[CommandException | ExitCode]]
 
-        // -- Accessors --
+        // --- Accessors ---
 
         /** Returns the command arguments (program name followed by its arguments). */
         def args: Chunk[String]
@@ -242,7 +236,7 @@ object Command:
         def workDir: Maybe[kyo.Path]
 
         /** Returns the environment mode for this command. */
-        protected def envMode: EnvMode
+        private[kyo] def envMode: EnvMode
 
         /** Returns the environment variables that will be appended/replaced, or empty if inheriting/cleared. */
         final def env: Map[String, String] = envMode match
@@ -252,7 +246,7 @@ object Command:
             case EnvMode.Clear                 => Map.empty
             case EnvMode.ClearThenAppend(vars) => vars
 
-        // -- Pure builder methods (return new Unsafe instances) --
+        // --- Pure builder methods (return new Unsafe instances) ---
 
         def withCwd(path: kyo.Path): Unsafe
         def withEnvAppend(vars: Map[String, String]): Unsafe

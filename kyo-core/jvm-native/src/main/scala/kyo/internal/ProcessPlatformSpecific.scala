@@ -9,9 +9,7 @@ import java.util.concurrent.TimeUnit
 import kyo.*
 import scala.jdk.CollectionConverters.*
 
-// -----------------------------------------------------------------------
-// JvmProcessUnsafe — concrete Process.Unsafe backed by java.lang.Process
-// -----------------------------------------------------------------------
+// --- JvmProcessUnsafe — concrete Process.Unsafe backed by java.lang.Process ---
 
 final private[kyo] class JvmProcessUnsafe(private[internal] val jp: JProcess) extends Process.Unsafe:
 
@@ -57,9 +55,7 @@ end JvmProcessUnsafe
 
 import Command.EnvMode
 
-// -----------------------------------------------------------------------
-// StdioSink — destination for stdout / stderr
-// -----------------------------------------------------------------------
+// --- StdioSink — destination for stdout / stderr ---
 
 private[kyo] enum StdioSink derives CanEqual:
     case Pipe
@@ -67,9 +63,7 @@ private[kyo] enum StdioSink derives CanEqual:
     case ToFile(path: kyo.Path, append: Boolean)
 end StdioSink
 
-// -----------------------------------------------------------------------
-// JvmCommandUnsafe — concrete Command.Unsafe backed by java.lang.ProcessBuilder
-// -----------------------------------------------------------------------
+// --- JvmCommandUnsafe — concrete Command.Unsafe backed by java.lang.ProcessBuilder ---
 
 final private[kyo] class JvmCommandUnsafe(
     val args: Chunk[String],
@@ -83,9 +77,7 @@ final private[kyo] class JvmCommandUnsafe(
     val pipeTo: Maybe[Command.Unsafe] = Absent
 ) extends Command.Unsafe:
 
-    // -----------------------------------------------------------------------
-    // Builder methods — all return new instances
-    // -----------------------------------------------------------------------
+    // --- Builder methods — all return new instances ---
 
     def withCwd(path: kyo.Path): JvmCommandUnsafe =
         copy(workDir = Present(path))
@@ -128,9 +120,7 @@ final private[kyo] class JvmCommandUnsafe(
     def withAndThen(that: Command.Unsafe): JvmCommandUnsafe =
         copy(pipeTo = Present(that))
 
-    // -----------------------------------------------------------------------
-    // Internal helpers
-    // -----------------------------------------------------------------------
+    // --- Internal helpers ---
 
     /** Flattens the pipeline chain into a sequence of commands in order (head = leftmost). */
     private def pipelineChain: Seq[JvmCommandUnsafe] =
@@ -153,90 +143,93 @@ final private[kyo] class JvmCommandUnsafe(
         Frame
     ): Result[CommandException, JProcessBuilder] =
         // Validate working directory up-front
-        workDir match
+        val wdError = workDir match
             case Present(path) =>
                 val nio = path.unsafe match
                     case n: NioPathUnsafe => n.jpath
                     case other            => java.nio.file.Paths.get(other.show)
-                if !java.nio.file.Files.exists(nio) then
-                    return Result.fail(WorkingDirectoryNotFoundException(path))
-            case Absent => ()
-        end match
+                if !java.nio.file.Files.exists(nio) then Present(WorkingDirectoryNotFoundException(path))
+                else Absent
+            case Absent => Absent
 
-        val pb = new JProcessBuilder(args.toSeq.asJava)
+        wdError match
+            case Present(err) => Result.fail(err)
+            case _ =>
+                val pb = new JProcessBuilder(args.toSeq.asJava)
 
-        // Working directory
-        workDir.foreach { path =>
-            val nio = path.unsafe match
-                case n: NioPathUnsafe => n.jpath
-                case other            => java.nio.file.Paths.get(other.show)
-            discard(pb.directory(nio.toFile))
-        }
-
-        // Environment
-        envMode match
-            case EnvMode.Inherit => () // default: inherit parent env
-            case EnvMode.Append(vars) =>
-                pb.environment().putAll(vars.asJava)
-            case EnvMode.Replace(vars) =>
-                pb.environment().clear()
-                pb.environment().putAll(vars.asJava)
-            case EnvMode.Clear =>
-                pb.environment().clear()
-            case EnvMode.ClearThenAppend(vars) =>
-                pb.environment().clear()
-                pb.environment().putAll(vars.asJava)
-        end match
-
-        // stdin
-        // Non-first pipeline stages must use PIPE so startPipeline can wire them.
-        if pipelineIntermediate then
-            discard(pb.redirectInput(JProcessBuilder.Redirect.PIPE))
-        else
-            stdinStream match
-                case Present(_) =>
-                    discard(pb.redirectInput(JProcessBuilder.Redirect.PIPE))
-                case Absent =>
-                    stdinSource match
-                        case Process.Input.Inherit       => discard(pb.redirectInput(JProcessBuilder.Redirect.INHERIT))
-                        case Process.Input.FromStream(_) => discard(pb.redirectInput(JProcessBuilder.Redirect.PIPE))
-                    end match
-            end match
-        end if
-
-        // stdout
-        stdoutSink match
-            case StdioSink.Pipe    => discard(pb.redirectOutput(JProcessBuilder.Redirect.PIPE))
-            case StdioSink.Inherit => discard(pb.redirectOutput(JProcessBuilder.Redirect.INHERIT))
-            case StdioSink.ToFile(path, append) =>
-                val nio = path.unsafe match
-                    case n: NioPathUnsafe => n.jpath
-                    case other            => java.nio.file.Paths.get(other.show)
-                val redirect =
-                    if append then JProcessBuilder.Redirect.appendTo(nio.toFile)
-                    else JProcessBuilder.Redirect.to(nio.toFile)
-                discard(pb.redirectOutput(redirect))
-        end match
-
-        // stderr
-        if redirectError then
-            discard(pb.redirectErrorStream(true))
-        else
-            stderrSink match
-                case StdioSink.Pipe    => discard(pb.redirectError(JProcessBuilder.Redirect.PIPE))
-                case StdioSink.Inherit => discard(pb.redirectError(JProcessBuilder.Redirect.INHERIT))
-                case StdioSink.ToFile(path, append) =>
+                // Working directory
+                workDir.foreach { path =>
                     val nio = path.unsafe match
                         case n: NioPathUnsafe => n.jpath
                         case other            => java.nio.file.Paths.get(other.show)
-                    val redirect =
-                        if append then JProcessBuilder.Redirect.appendTo(nio.toFile)
-                        else JProcessBuilder.Redirect.to(nio.toFile)
-                    discard(pb.redirectError(redirect))
-            end match
-        end if
+                    discard(pb.directory(nio.toFile))
+                }
 
-        Result.succeed(pb)
+                // Environment
+                envMode match
+                    case EnvMode.Inherit => () // default: inherit parent env
+                    case EnvMode.Append(vars) =>
+                        pb.environment().putAll(vars.asJava)
+                    case EnvMode.Replace(vars) =>
+                        pb.environment().clear()
+                        pb.environment().putAll(vars.asJava)
+                    case EnvMode.Clear =>
+                        pb.environment().clear()
+                    case EnvMode.ClearThenAppend(vars) =>
+                        pb.environment().clear()
+                        pb.environment().putAll(vars.asJava)
+                end match
+
+                // stdin
+                // Non-first pipeline stages must use PIPE so startPipeline can wire them.
+                if pipelineIntermediate then
+                    discard(pb.redirectInput(JProcessBuilder.Redirect.PIPE))
+                else
+                    stdinStream match
+                        case Present(_) =>
+                            discard(pb.redirectInput(JProcessBuilder.Redirect.PIPE))
+                        case Absent =>
+                            stdinSource match
+                                case Process.Input.Inherit       => discard(pb.redirectInput(JProcessBuilder.Redirect.INHERIT))
+                                case Process.Input.FromStream(_) => discard(pb.redirectInput(JProcessBuilder.Redirect.PIPE))
+                            end match
+                    end match
+                end if
+
+                // stdout
+                stdoutSink match
+                    case StdioSink.Pipe    => discard(pb.redirectOutput(JProcessBuilder.Redirect.PIPE))
+                    case StdioSink.Inherit => discard(pb.redirectOutput(JProcessBuilder.Redirect.INHERIT))
+                    case StdioSink.ToFile(path, append) =>
+                        val nio = path.unsafe match
+                            case n: NioPathUnsafe => n.jpath
+                            case other            => java.nio.file.Paths.get(other.show)
+                        val redirect =
+                            if append then JProcessBuilder.Redirect.appendTo(nio.toFile)
+                            else JProcessBuilder.Redirect.to(nio.toFile)
+                        discard(pb.redirectOutput(redirect))
+                end match
+
+                // stderr
+                if redirectError then
+                    discard(pb.redirectErrorStream(true))
+                else
+                    stderrSink match
+                        case StdioSink.Pipe    => discard(pb.redirectError(JProcessBuilder.Redirect.PIPE))
+                        case StdioSink.Inherit => discard(pb.redirectError(JProcessBuilder.Redirect.INHERIT))
+                        case StdioSink.ToFile(path, append) =>
+                            val nio = path.unsafe match
+                                case n: NioPathUnsafe => n.jpath
+                                case other            => java.nio.file.Paths.get(other.show)
+                            val redirect =
+                                if append then JProcessBuilder.Redirect.appendTo(nio.toFile)
+                                else JProcessBuilder.Redirect.to(nio.toFile)
+                            discard(pb.redirectError(redirect))
+                    end match
+                end if
+
+                Result.succeed(pb)
+        end match
     end toJProcessBuilder
 
     /** Feeds an InputStream into a process's stdin on a daemon thread, closing when done. */
@@ -295,27 +288,29 @@ final private[kyo] class JvmCommandUnsafe(
       * On Scala Native, ProcessBuilder.start() does not throw IOException for a missing program (unlike the JVM); instead the process exits
       * with code 127. We check for program existence up front so spawn() can return Result.Failure synchronously on all platforms.
       *
-      * Returns Some(CommandException) if the program is definitely not found, or None to proceed.
+      * Returns Present(CommandException) if the program is definitely not found, or Absent to proceed.
       */
-    private def validateProgram()(using Frame): Option[CommandException] =
-        if args.isEmpty then return Some(ProgramNotFoundException(""))
-        val cmd = args.head
-        // Absolute or relative path with separator: check directly.
-        if cmd.startsWith("/") || cmd.contains("/") then
-            if java.nio.file.Files.isExecutable(java.nio.file.Paths.get(cmd)) then None
-            else Some(ProgramNotFoundException(cmd))
+    private def validateProgram()(using Frame): Maybe[CommandException] =
+        if args.isEmpty then Present(ProgramNotFoundException(""))
         else
-            // Bare name: scan PATH
-            val pathEnv = java.lang.System.getenv("PATH")
-            val pathStr = if pathEnv != null then pathEnv else ""
-            val pathSep = java.io.File.pathSeparator
-            val dirs    = pathStr.split(java.util.regex.Pattern.quote(pathSep))
-            val found = dirs.exists { dir =>
-                val full = java.nio.file.Paths.get(dir, cmd)
-                java.nio.file.Files.isExecutable(full)
-            }
-            if found then None
-            else Some(ProgramNotFoundException(cmd))
+            val cmd = args.head
+            // Absolute or relative path with separator: check directly.
+            if cmd.startsWith("/") || cmd.contains("/") then
+                if java.nio.file.Files.isExecutable(java.nio.file.Paths.get(cmd)) then Absent
+                else Present(ProgramNotFoundException(cmd))
+            else
+                // Bare name: scan PATH
+                val pathEnv = java.lang.System.getenv("PATH")
+                val pathStr = if pathEnv != null then pathEnv else ""
+                val pathSep = java.io.File.pathSeparator
+                val dirs    = pathStr.split(java.util.regex.Pattern.quote(pathSep))
+                val found = dirs.exists { dir =>
+                    val full = java.nio.file.Paths.get(dir, cmd)
+                    java.nio.file.Files.isExecutable(full)
+                }
+                if found then Absent
+                else Present(ProgramNotFoundException(cmd))
+            end if
         end if
     end validateProgram
 
@@ -331,80 +326,79 @@ final private[kyo] class JvmCommandUnsafe(
         end if
     end translateIOException
 
-    // -----------------------------------------------------------------------
-    // Effectful operations
-    // -----------------------------------------------------------------------
+    // --- Effectful operations ---
 
     def spawn()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
         // Validate program exists before spawning — on Scala Native, ProcessBuilder.start()
         // does not throw for a missing program (unlike JVM), so we check up front.
         validateProgram() match
-            case Some(err) => return Result.fail(err)
-            case None      => ()
-        val chain = pipelineChain
-        if chain.length == 1 then
-            // Simple (non-piped) spawn
-            toJProcessBuilder() match
-                case Result.Failure(err) => Result.fail(err)
-                case Result.Panic(ex)    => Result.panic(ex)
-                case Result.Success(pb) =>
+            case Present(err) => Result.fail(err)
+            case Absent =>
+                val chain = pipelineChain
+                if chain.length == 1 then
+                    // Simple (non-piped) spawn
+                    toJProcessBuilder() match
+                        case Result.Failure(err) => Result.fail(err)
+                        case Result.Panic(ex)    => Result.panic(ex)
+                        case Result.Success(pb) =>
+                            try
+                                val jp   = pb.start()
+                                val proc = new JvmProcessUnsafe(jp)
+                                // Feed stdin if needed
+                                stdinStream match
+                                    case Present(s) => feedStream(s, jp.getOutputStream)
+                                    case Absent =>
+                                        stdinSource match
+                                            case Process.Input.FromStream(is) => feedInputStream(is, jp.getOutputStream)
+                                            case Process.Input.Inherit        => ()
+                                end match
+                                Result.succeed(proc)
+                            catch
+                                case e: IOException => Result.fail(translateIOException(e, args.headMaybe.getOrElse("")))
+                else
+                    // Pipeline spawn — delegate to `sh -c "cmd1 | cmd2 | ..."` so the OS
+                    // kernel handles inter-process piping directly. This avoids daemon thread
+                    // deadlocks on Scala Native where blocking I/O in threads is unreliable.
+                    def shellEscape(a: String): String = "'" + a.replace("'", "'\\''") + "'"
+                    val shellCmd                       = chain.map(_.args.map(shellEscape).mkString(" ")).mkString(" | ")
+
+                    val firstCmd = chain.head
+                    val pb       = new JProcessBuilder("sh", "-c", shellCmd)
+
+                    firstCmd.envMode match
+                        case EnvMode.Inherit => ()
+                        case EnvMode.Append(vars) =>
+                            vars.foreach { (k, v) => discard(pb.environment().put(k, v)) }
+                        case EnvMode.Replace(vars) =>
+                            pb.environment().clear()
+                            vars.foreach { (k, v) => discard(pb.environment().put(k, v)) }
+                        case EnvMode.Clear =>
+                            pb.environment().clear()
+                        case EnvMode.ClearThenAppend(vars) =>
+                            pb.environment().clear()
+                            vars.foreach { (k, v) => discard(pb.environment().put(k, v)) }
+                    end match
+                    firstCmd.workDir.foreach(path => discard(pb.directory(new java.io.File(path.toString))))
+                    if chain.last.redirectError then discard(pb.redirectErrorStream(true))
+
                     try
                         val jp   = pb.start()
                         val proc = new JvmProcessUnsafe(jp)
-                        // Feed stdin if needed
-                        stdinStream match
+                        firstCmd.stdinStream match
                             case Present(s) => feedStream(s, jp.getOutputStream)
                             case Absent =>
-                                stdinSource match
+                                firstCmd.stdinSource match
                                     case Process.Input.FromStream(is) => feedInputStream(is, jp.getOutputStream)
                                     case Process.Input.Inherit        => ()
+                                end match
                         end match
                         Result.succeed(proc)
                     catch
-                        case e: IOException => Result.fail(translateIOException(e, args.headOption.getOrElse("")))
-        else
-            // Pipeline spawn — delegate to `sh -c "cmd1 | cmd2 | ..."` so the OS
-            // kernel handles inter-process piping directly. This avoids daemon thread
-            // deadlocks on Scala Native where blocking I/O in threads is unreliable.
-            def shellEscape(a: String): String = "'" + a.replace("'", "'\\''") + "'"
-            val shellCmd                       = chain.map(_.args.map(shellEscape).mkString(" ")).mkString(" | ")
-
-            val firstCmd = chain.head
-            val pb       = new JProcessBuilder("sh", "-c", shellCmd)
-
-            firstCmd.envMode match
-                case EnvMode.Inherit => ()
-                case EnvMode.Append(vars) =>
-                    vars.foreach { (k, v) => discard(pb.environment().put(k, v)) }
-                case EnvMode.Replace(vars) =>
-                    pb.environment().clear()
-                    vars.foreach { (k, v) => discard(pb.environment().put(k, v)) }
-                case EnvMode.Clear =>
-                    pb.environment().clear()
-                case EnvMode.ClearThenAppend(vars) =>
-                    pb.environment().clear()
-                    vars.foreach { (k, v) => discard(pb.environment().put(k, v)) }
-            end match
-            firstCmd.workDir.foreach(path => discard(pb.directory(new java.io.File(path.toString))))
-            if chain.last.redirectError then discard(pb.redirectErrorStream(true))
-
-            try
-                val jp   = pb.start()
-                val proc = new JvmProcessUnsafe(jp)
-                firstCmd.stdinStream match
-                    case Present(s) => feedStream(s, jp.getOutputStream)
-                    case Absent =>
-                        firstCmd.stdinSource match
-                            case Process.Input.FromStream(is) => feedInputStream(is, jp.getOutputStream)
-                            case Process.Input.Inherit        => ()
-                        end match
-                end match
-                Result.succeed(proc)
-            catch
-                case e: IOException =>
-                    Result.fail(translateIOException(e, chain.head.args.headOption.getOrElse("")))
-            end try
-        end if
+                        case e: IOException =>
+                            Result.fail(translateIOException(e, chain.head.args.headMaybe.getOrElse("")))
+                    end try
+                end if
+        end match
     end spawn
 
     def text()(using AllowUnsafe, Frame): Fiber.Unsafe[String, Abort[CommandException]] =
@@ -492,9 +486,7 @@ final private[kyo] class JvmCommandUnsafe(
 
 end JvmCommandUnsafe
 
-// -----------------------------------------------------------------------
-// ProcessPlatformSpecific — factory used by Command.apply in shared code
-// -----------------------------------------------------------------------
+// --- ProcessPlatformSpecific — factory used by Command.apply in shared code ---
 
 private[kyo] object ProcessPlatformSpecific:
 

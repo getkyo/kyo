@@ -43,7 +43,7 @@ sealed trait FileFsException extends FileException
   */
 case class FileNotFoundException(path: Path)(using Frame)
     extends FileException(s"File or directory not found: $path. Verify the path exists.")
-    with FileReadException with FileWriteException with FileFsException
+    with FileReadException with FileWriteException with FileFsException derives CanEqual
 
 /** Raised when the process lacks permission to access the given path.
   *
@@ -52,7 +52,7 @@ case class FileNotFoundException(path: Path)(using Frame)
   */
 case class FileAccessDeniedException(path: Path)(using Frame)
     extends FileException(s"Permission denied: $path. Check file permissions and ownership.")
-    with FileReadException with FileWriteException with FileFsException
+    with FileReadException with FileWriteException with FileFsException derives CanEqual
 
 /** Raised when a read or write operation is attempted on a path that is a directory.
   *
@@ -61,7 +61,7 @@ case class FileAccessDeniedException(path: Path)(using Frame)
   */
 case class FileIsADirectoryException(path: Path)(using Frame)
     extends FileException(s"Expected a file but found a directory: $path")
-    with FileReadException with FileWriteException
+    with FileReadException with FileWriteException derives CanEqual
 
 /** Raised when a directory operation is attempted on a path that is not a directory.
   *
@@ -70,7 +70,7 @@ case class FileIsADirectoryException(path: Path)(using Frame)
   */
 case class FileNotADirectoryException(path: Path)(using Frame)
     extends FileException(s"Expected a directory but found a file: $path")
-    with FileFsException
+    with FileFsException derives CanEqual
 
 /** Raised when a create operation targets a path that already exists.
   *
@@ -79,7 +79,7 @@ case class FileNotADirectoryException(path: Path)(using Frame)
   */
 case class FileAlreadyExistsException(path: Path)(using Frame)
     extends FileException(s"Path already exists: $path. Use replaceExisting = true to overwrite.")
-    with FileFsException
+    with FileFsException derives CanEqual
 
 /** Raised when a directory removal is attempted on a non-empty directory.
   *
@@ -88,7 +88,7 @@ case class FileAlreadyExistsException(path: Path)(using Frame)
   */
 case class FileDirectoryNotEmptyException(path: Path)(using Frame)
     extends FileException(s"Cannot remove non-empty directory: $path. Use removeAll for recursive deletion.")
-    with FileFsException
+    with FileFsException derives CanEqual
 
 /** Raised for low-level I/O errors not covered by the more specific subtypes.
   *
@@ -99,4 +99,8 @@ case class FileDirectoryNotEmptyException(path: Path)(using Frame)
   */
 case class FileIOException(path: Path, cause: IOException)(using Frame)
     extends FileException(s"I/O error on $path: ${cause.getMessage}", cause)
-    with FileReadException with FileWriteException with FileFsException
+    with FileReadException with FileWriteException with FileFsException derives CanEqual
+
+object FileException:
+    given Render[FileException] with
+        def asText(value: FileException): Text = Text(value.getMessage)

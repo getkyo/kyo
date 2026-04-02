@@ -1,8 +1,6 @@
 package kyo
 
-// -----------------------------------------------------------------------
-// CommandException — typed failures raised when a Command cannot be launched
-// -----------------------------------------------------------------------
+// --- CommandException — typed failures raised when a Command cannot be launched ---
 
 /** Typed exception hierarchy for command launch failures.
   *
@@ -34,7 +32,7 @@ sealed abstract class CommandException(message: Text, cause: Text | Throwable = 
 case class ProgramNotFoundException(command: String)(using Frame)
     extends CommandException(
         s"Program not found: '$command'. Verify it is installed and on the PATH."
-    )
+    ) derives CanEqual
 
 /** Raised when the caller lacks execute permission for the named program.
   *
@@ -44,7 +42,7 @@ case class ProgramNotFoundException(command: String)(using Frame)
 case class PermissionDeniedException(command: String)(using Frame)
     extends CommandException(
         s"Permission denied to execute: '$command'. Check file permissions."
-    )
+    ) derives CanEqual
 
 /** Raised when the requested working directory does not exist.
   *
@@ -54,4 +52,8 @@ case class PermissionDeniedException(command: String)(using Frame)
 case class WorkingDirectoryNotFoundException(path: kyo.Path)(using Frame)
     extends CommandException(
         s"Working directory does not exist: $path"
-    )
+    ) derives CanEqual
+
+object CommandException:
+    given Render[CommandException] with
+        def asText(value: CommandException): Text = Text(value.getMessage)

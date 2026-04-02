@@ -7,9 +7,7 @@ import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.Uint8Array
 
-// -----------------------------------------------------------------------
-// Node.js child_process facades
-// -----------------------------------------------------------------------
+// --- Node.js child_process facades ---
 
 @js.native
 @JSImport("node:child_process", JSImport.Namespace)
@@ -44,8 +42,7 @@ private[kyo] trait NodeWritableStream extends js.Object:
     def end(): Unit                      = js.native
 end NodeWritableStream
 
-// -----------------------------------------------------------------------
-// NodeInputStream — InputStream backed by a Node.js Readable stream
+// --- NodeInputStream — InputStream backed by a Node.js Readable stream ---
 //
 // Node.js is fundamentally async so a truly blocking read() is not
 // possible.  Instead we buffer all data that arrives via the 'data'
@@ -55,7 +52,6 @@ end NodeWritableStream
 // read() in a Sync.Unsafe.defer loop — each iteration yields back to
 // the event loop, giving Node.js a chance to push more 'data' events
 // into the buffer.
-// -----------------------------------------------------------------------
 
 final private[kyo] class NodeInputStream(readable: NodeReadableStream) extends InputStream:
 
@@ -92,22 +88,24 @@ final private[kyo] class NodeInputStream(readable: NodeReadableStream) extends I
         else -2 // no data yet — see read(byte[],int,int) override
 
     override def read(b: Array[Byte], off: Int, len: Int): Int =
-        if len == 0 then return 0
-        val avail = buffer.length - pos
-        if avail > 0 then
-            val n = math.min(avail, len)
-            var i = 0
-            while i < n do
-                b(off + i) = buffer(pos + i)
-                i += 1
-            pos += n
-            if pos > 4096 && pos > buffer.length / 2 then
-                buffer.remove(0, pos)
-                pos = 0
+        if len == 0 then 0
+        else
+            val avail = buffer.length - pos
+            if avail > 0 then
+                val n = math.min(avail, len)
+                var i = 0
+                while i < n do
+                    b(off + i) = buffer(pos + i)
+                    i += 1
+                pos += n
+                if pos > 4096 && pos > buffer.length / 2 then
+                    buffer.remove(0, pos)
+                    pos = 0
+                end if
+                n
+            else if ended then -1
+            else 0 // no data yet; caller should yield to event loop and retry
             end if
-            n
-        else if ended then -1
-        else 0 // no data yet; caller should yield to event loop and retry
         end if
     end read
 
@@ -123,9 +121,7 @@ private[kyo] object NodeInputStream:
         override def read(): Int = -1
 end NodeInputStream
 
-// -----------------------------------------------------------------------
-// NodeOutputStream — OutputStream backed by a Node.js Writable stream
-// -----------------------------------------------------------------------
+// --- NodeOutputStream — OutputStream backed by a Node.js Writable stream ---
 
 final private[kyo] class NodeOutputStream(writable: NodeWritableStream) extends OutputStream:
 
@@ -148,9 +144,7 @@ final private[kyo] class NodeOutputStream(writable: NodeWritableStream) extends 
 
 end NodeOutputStream
 
-// -----------------------------------------------------------------------
-// NodeProcessUnsafe — Process.Unsafe backed by a NodeChildProcessInstance
-// -----------------------------------------------------------------------
+// --- NodeProcessUnsafe — Process.Unsafe backed by a NodeChildProcessInstance ---
 
 final private[kyo] class NodeProcessUnsafe(
     val child: NodeChildProcessInstance,
@@ -158,7 +152,7 @@ final private[kyo] class NodeProcessUnsafe(
 ) extends Process.Unsafe:
 
     // Stores a spawn error (e.g. ENOENT) so it can be surfaced via waitFor().
-    private var spawnError: js.Any = null.asInstanceOf[js.Any]
+    private var spawnError: js.Any = null
 
     def markError(err: js.Any): Unit = spawnError = err
 
@@ -264,11 +258,9 @@ final private[kyo] class NodeProcessUnsafe(
 
 end NodeProcessUnsafe
 
-// -----------------------------------------------------------------------
 import Command.EnvMode
 
-// StdioSink
-// -----------------------------------------------------------------------
+// --- StdioSink ---
 
 private[kyo] enum NodeStdioSink derives CanEqual:
     case Pipe
@@ -276,9 +268,7 @@ private[kyo] enum NodeStdioSink derives CanEqual:
     case ToFile(path: kyo.Path, append: Boolean)
 end NodeStdioSink
 
-// -----------------------------------------------------------------------
-// NodeCommandUnsafe — Command.Unsafe backed by node:child_process.spawn
-// -----------------------------------------------------------------------
+// --- NodeCommandUnsafe — Command.Unsafe backed by node:child_process.spawn ---
 
 final private[kyo] class NodeCommandUnsafe(
     val args: Chunk[String],
@@ -292,9 +282,7 @@ final private[kyo] class NodeCommandUnsafe(
     val pipeTo: Maybe[Command.Unsafe] = Absent
 ) extends Command.Unsafe:
 
-    // -----------------------------------------------------------------------
-    // Builder methods — all return new instances
-    // -----------------------------------------------------------------------
+    // --- Builder methods — all return new instances ---
 
     def withCwd(path: kyo.Path): NodeCommandUnsafe = copy(workDir = Present(path))
     def withEnvAppend(vars: Map[String, String]): NodeCommandUnsafe =
@@ -338,9 +326,7 @@ final private[kyo] class NodeCommandUnsafe(
             case Present(_) =>
                 Seq(this)
 
-    // -----------------------------------------------------------------------
-    // Internal helpers
-    // -----------------------------------------------------------------------
+    // --- Internal helpers ---
 
     /** Builds the options object for NodeChildProcess.spawn. */
     private def buildOptions()(using AllowUnsafe): js.Dynamic =
@@ -447,42 +433,44 @@ final private[kyo] class NodeCommandUnsafe(
     /** Checks whether the command exists and is executable without running it.
       *
       * For absolute paths: checks the file directly with fs.accessSync. For names without a separator: scans the PATH directories. Returns
-      * Some(CommandException) if the program is definitely not found/accessible, or None to proceed with the real spawn.
+      * Present(CommandException) if the program is definitely not found/accessible, or Absent to proceed with the real spawn.
       */
-    private def checkCommandExists()(using Frame): Option[CommandException] =
-        if args.isEmpty then return Some(ProgramNotFoundException(""))
-        val cmd = args.head
-        try
-            val fs       = js.Dynamic.global.require("node:fs")
-            val nodePath = js.Dynamic.global.require("node:path")
-            val X_OK     = fs.constants.X_OK.asInstanceOf[Int]
-            // Helper: check if a file exists and is executable
-            def isExec(p: String): Boolean =
-                try
-                    discard(fs.accessSync(p, X_OK))
-                    true
-                catch case _: Throwable => false
-            end isExec
-            // Absolute path or relative path with directory separator: check directly.
-            // On Node.js (Unix), the separator is '/'.
-            if cmd.startsWith("/") || cmd.contains("/") then
-                if isExec(cmd) then None
-                else Some(ProgramNotFoundException(cmd))
-            else
-                // Bare command name: scan PATH
-                val pathEnv = js.Dynamic.global.process.env.PATH
-                val pathStr = if js.typeOf(pathEnv) == "string" then pathEnv.asInstanceOf[String] else ""
-                // On Unix (Node.js), PATH entries are separated by ':'.
-                val dirs = pathStr.split(":")
-                val found = dirs.exists { dir =>
-                    val full = nodePath.join(dir, cmd).asInstanceOf[String]
-                    isExec(full)
-                }
-                if found then None
-                else Some(ProgramNotFoundException(cmd))
-            end if
-        catch case _: Throwable => None // If check fails, let spawn() proceed and handle the error
-        end try
+    private def checkCommandExists()(using Frame): Maybe[CommandException] =
+        if args.isEmpty then Present(ProgramNotFoundException(""))
+        else
+            val cmd = args.head
+            try
+                val fs       = js.Dynamic.global.require("node:fs")
+                val nodePath = js.Dynamic.global.require("node:path")
+                val X_OK     = fs.constants.X_OK.asInstanceOf[Int]
+                // Helper: check if a file exists and is executable
+                def isExec(p: String): Boolean =
+                    try
+                        discard(fs.accessSync(p, X_OK))
+                        true
+                    catch case _: Throwable => false
+                end isExec
+                // Absolute path or relative path with directory separator: check directly.
+                // On Node.js (Unix), the separator is '/'.
+                if cmd.startsWith("/") || cmd.contains("/") then
+                    if isExec(cmd) then Absent
+                    else Present(ProgramNotFoundException(cmd))
+                else
+                    // Bare command name: scan PATH
+                    val pathEnv = js.Dynamic.global.process.env.PATH
+                    val pathStr = if js.typeOf(pathEnv) == "string" then pathEnv.asInstanceOf[String] else ""
+                    // On Unix (Node.js), PATH entries are separated by ':'.
+                    val dirs = pathStr.split(":")
+                    val found = dirs.exists { dir =>
+                        val full = nodePath.join(dir, cmd).asInstanceOf[String]
+                        isExec(full)
+                    }
+                    if found then Absent
+                    else Present(ProgramNotFoundException(cmd))
+                end if
+            catch case _: Throwable => Absent // If check fails, let spawn() proceed and handle the error
+            end try
+        end if
     end checkCommandExists
 
     /** Translates a js.JavaScriptException from spawn into a CommandException. */
@@ -490,148 +478,153 @@ final private[kyo] class NodeCommandUnsafe(
         val err  = e.exception.asInstanceOf[js.Dynamic]
         val code = if js.typeOf(err.code) == "string" then err.code.asInstanceOf[String] else ""
         code match
-            case "ENOENT"           => ProgramNotFoundException(args.headOption.getOrElse(""))
-            case "EACCES" | "EPERM" => PermissionDeniedException(args.headOption.getOrElse(""))
-            case _                  => ProgramNotFoundException(args.headOption.getOrElse(""))
+            case "ENOENT"           => ProgramNotFoundException(args.headMaybe.getOrElse(""))
+            case "EACCES" | "EPERM" => PermissionDeniedException(args.headMaybe.getOrElse(""))
+            case _                  => ProgramNotFoundException(args.headMaybe.getOrElse(""))
         end match
     end translateError
 
-    // -----------------------------------------------------------------------
-    // Effectful operations
-    // -----------------------------------------------------------------------
+    // --- Effectful operations ---
 
     def spawn()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
-        if args.isEmpty then return Result.fail(ProgramNotFoundException(""))
-        // Validate program exists synchronously so spawn() can return Result.Failure without
-        // waiting for the async 'error' event (which would prevent synchronous error reporting).
-        checkCommandExists() match
-            case Some(err) => return Result.fail(err)
-            case None      => ()
-        // Validate cwd exists before spawning so we can report WorkingDirectoryNotFoundException
-        // synchronously (Node.js would otherwise fire an asynchronous 'error' event).
-        workDir.foreach { path =>
-            val dirPath = path.unsafe.show
-            val exists  = js.Dynamic.global.require("node:fs").existsSync(dirPath).asInstanceOf[Boolean]
-            if !exists then
-                return Result.fail(WorkingDirectoryNotFoundException(path))
-        }
-        try
-            val chain = pipelineChain
-            if chain.length == 1 then
-                // === Single-process spawn ===
-                val opts   = buildOptions()
-                val jsArgs = js.Array(args.drop(1).toSeq*)
-                val child  = NodeChildProcess.spawn(args.head, jsArgs, opts)
-                val proc   = new NodeProcessUnsafe(child, stderrEnded = redirectError)
-
-                // Register an error handler to prevent Node.js from crashing on unhandled
-                // 'error' events (e.g. ENOENT when the program is not found). The error is
-                // stored on the NodeProcessUnsafe and surfaced via waitFor().
-                discard(child.on(
-                    "error",
-                    { (err: js.Any) =>
-                        proc.markError(err)
+        if args.isEmpty then Result.fail(ProgramNotFoundException(""))
+        else
+            // Validate program exists synchronously so spawn() can return Result.Failure without
+            // waiting for the async 'error' event (which would prevent synchronous error reporting).
+            checkCommandExists() match
+                case Present(err) => Result.fail(err)
+                case Absent       =>
+                    // Validate cwd exists before spawning so we can report WorkingDirectoryNotFoundException
+                    // synchronously (Node.js would otherwise fire an asynchronous 'error' event).
+                    val wdError = workDir.flatMap { path =>
+                        val dirPath = path.unsafe.show
+                        val exists  = js.Dynamic.global.require("node:fs").existsSync(dirPath).asInstanceOf[Boolean]
+                        if !exists then Present(WorkingDirectoryNotFoundException(path))
+                        else Absent
                     }
-                ))
+                    wdError match
+                        case Present(err) => Result.fail(err)
+                        case Absent =>
+                            try
+                                val chain = pipelineChain
+                                if chain.length == 1 then
+                                    // === Single-process spawn ===
+                                    val opts   = buildOptions()
+                                    val jsArgs = js.Array(args.drop(1).toSeq*)
+                                    val child  = NodeChildProcess.spawn(args.head, jsArgs, opts)
+                                    val proc   = new NodeProcessUnsafe(child, stderrEnded = redirectError)
 
-                stdinStream match
-                    case Present(s) => feedStream(s, child.stdin)
-                    case Absent =>
-                        stdinSource match
-                            case Process.Input.FromStream(is) => feedInputStream(is, child.stdin)
-                            case Process.Input.Inherit        => ()
-                        end match
-                end match
+                                    // Register an error handler to prevent Node.js from crashing on unhandled
+                                    // 'error' events (e.g. ENOENT when the program is not found). The error is
+                                    // stored on the NodeProcessUnsafe and surfaced via waitFor().
+                                    discard(child.on(
+                                        "error",
+                                        { (err: js.Any) =>
+                                            proc.markError(err)
+                                        }
+                                    ))
 
-                stdoutSink match
-                    case NodeStdioSink.ToFile(path, ap) => pipeToFile(child.stdout, path, ap)
-                    case _                              => ()
-                end match
+                                    stdinStream match
+                                        case Present(s) => feedStream(s, child.stdin)
+                                        case Absent =>
+                                            stdinSource match
+                                                case Process.Input.FromStream(is) => feedInputStream(is, child.stdin)
+                                                case Process.Input.Inherit        => ()
+                                            end match
+                                    end match
 
-                if !redirectError then
-                    stderrSink match
-                        case NodeStdioSink.ToFile(path, ap) => pipeToFile(child.stderr, path, ap)
-                        case _                              => ()
+                                    stdoutSink match
+                                        case NodeStdioSink.ToFile(path, ap) => pipeToFile(child.stdout, path, ap)
+                                        case _                              => ()
+                                    end match
+
+                                    if !redirectError then
+                                        stderrSink match
+                                            case NodeStdioSink.ToFile(path, ap) => pipeToFile(child.stderr, path, ap)
+                                            case _                              => ()
+                                        end match
+                                    end if
+
+                                    Result.succeed(proc)
+                                else
+                                    // === Pipeline spawn ===
+                                    // Build options that force all stdio to pipe for pipeline stages
+                                    def pipeOpts(cmd: NodeCommandUnsafe): js.Dynamic =
+                                        val opts = js.Dynamic.literal()
+                                        cmd.workDir.foreach { path => opts.cwd = path.unsafe.show }
+                                        cmd.envMode match
+                                            case EnvMode.Inherit => ()
+                                            case EnvMode.Append(vars) =>
+                                                val env = js.Dynamic.global.Object.assign(
+                                                    js.Dynamic.literal(),
+                                                    js.Dynamic.global.process.env
+                                                )
+                                                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
+                                                opts.env = env
+                                            case EnvMode.Replace(vars) =>
+                                                val env = js.Dynamic.literal()
+                                                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
+                                                opts.env = env
+                                            case EnvMode.Clear =>
+                                                opts.env = js.Dynamic.literal()
+                                            case EnvMode.ClearThenAppend(vars) =>
+                                                val env = js.Dynamic.literal()
+                                                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
+                                                opts.env = env
+                                        end match
+                                        opts.stdio = js.Array[js.Any]("pipe", "pipe", "pipe")
+                                        opts
+                                    end pipeOpts
+
+                                    // Spawn all stages
+                                    val children = chain.map { cmd =>
+                                        val opts   = pipeOpts(cmd)
+                                        val jsArgs = js.Array(cmd.args.drop(1).toSeq*)
+                                        NodeChildProcess.spawn(cmd.args.head, jsArgs, opts)
+                                    }
+
+                                    // Wire pipes: stdout of N -> stdin of N+1
+                                    for i <- 0 until children.length - 1 do
+                                        children(i).stdout.pipe(children(i + 1).stdin)
+
+                                    // Feed stdin into the first process if configured
+                                    val firstCmd = chain.head
+                                    firstCmd.stdinStream match
+                                        case Present(s) => feedStream(s, children.head.stdin)
+                                        case Absent =>
+                                            firstCmd.stdinSource match
+                                                case Process.Input.FromStream(is) => feedInputStream(is, children.head.stdin)
+                                                case Process.Input.Inherit        => ()
+                                            end match
+                                    end match
+
+                                    // Return the last process
+                                    val lastChild = children.last
+                                    val lastCmd   = chain.last
+                                    val proc      = new NodeProcessUnsafe(lastChild, stderrEnded = lastCmd.redirectError)
+                                    discard(lastChild.on("error", { (err: js.Any) => proc.markError(err) }))
+
+                                    // Handle stdout/stderr sinks on the last process
+                                    lastCmd.stdoutSink match
+                                        case NodeStdioSink.ToFile(path, ap) => pipeToFile(lastChild.stdout, path, ap)
+                                        case _                              => ()
+                                    end match
+                                    if !lastCmd.redirectError then
+                                        lastCmd.stderrSink match
+                                            case NodeStdioSink.ToFile(path, ap) => pipeToFile(lastChild.stderr, path, ap)
+                                            case _                              => ()
+                                        end match
+                                    end if
+
+                                    Result.succeed(proc)
+                                end if
+                            catch
+                                case e: js.JavaScriptException => Result.fail(translateError(e))
+                                case e: Throwable              => Result.panic(e)
+                            end try
                     end match
-                end if
-
-                Result.succeed(proc)
-            else
-                // === Pipeline spawn ===
-                // Build options that force all stdio to pipe for pipeline stages
-                def pipeOpts(cmd: NodeCommandUnsafe): js.Dynamic =
-                    val opts = js.Dynamic.literal()
-                    cmd.workDir.foreach { path => opts.cwd = path.unsafe.show }
-                    cmd.envMode match
-                        case EnvMode.Inherit => ()
-                        case EnvMode.Append(vars) =>
-                            val env = js.Dynamic.global.Object.assign(
-                                js.Dynamic.literal(),
-                                js.Dynamic.global.process.env
-                            )
-                            vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                            opts.env = env
-                        case EnvMode.Replace(vars) =>
-                            val env = js.Dynamic.literal()
-                            vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                            opts.env = env
-                        case EnvMode.Clear =>
-                            opts.env = js.Dynamic.literal()
-                        case EnvMode.ClearThenAppend(vars) =>
-                            val env = js.Dynamic.literal()
-                            vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                            opts.env = env
-                    end match
-                    opts.stdio = js.Array[js.Any]("pipe", "pipe", "pipe")
-                    opts
-                end pipeOpts
-
-                // Spawn all stages
-                val children = chain.map { cmd =>
-                    val opts   = pipeOpts(cmd)
-                    val jsArgs = js.Array(cmd.args.drop(1).toSeq*)
-                    NodeChildProcess.spawn(cmd.args.head, jsArgs, opts)
-                }
-
-                // Wire pipes: stdout of N -> stdin of N+1
-                for i <- 0 until children.length - 1 do
-                    children(i).stdout.pipe(children(i + 1).stdin)
-
-                // Feed stdin into the first process if configured
-                val firstCmd = chain.head
-                firstCmd.stdinStream match
-                    case Present(s) => feedStream(s, children.head.stdin)
-                    case Absent =>
-                        firstCmd.stdinSource match
-                            case Process.Input.FromStream(is) => feedInputStream(is, children.head.stdin)
-                            case Process.Input.Inherit        => ()
-                        end match
-                end match
-
-                // Return the last process
-                val lastChild = children.last
-                val lastCmd   = chain.last
-                val proc      = new NodeProcessUnsafe(lastChild, stderrEnded = lastCmd.redirectError)
-                discard(lastChild.on("error", { (err: js.Any) => proc.markError(err) }))
-
-                // Handle stdout/stderr sinks on the last process
-                lastCmd.stdoutSink match
-                    case NodeStdioSink.ToFile(path, ap) => pipeToFile(lastChild.stdout, path, ap)
-                    case _                              => ()
-                end match
-                if !lastCmd.redirectError then
-                    lastCmd.stderrSink match
-                        case NodeStdioSink.ToFile(path, ap) => pipeToFile(lastChild.stderr, path, ap)
-                        case _                              => ()
-                    end match
-                end if
-
-                Result.succeed(proc)
-            end if
-        catch
-            case e: js.JavaScriptException => Result.fail(translateError(e))
-            case e: Throwable              => Result.panic(e)
-        end try
+            end match
+        end if
     end spawn
 
     def text()(using AllowUnsafe, Frame): Fiber.Unsafe[String, Abort[CommandException]] =
@@ -772,9 +765,7 @@ final private[kyo] class NodeCommandUnsafe(
 
 end NodeCommandUnsafe
 
-// -----------------------------------------------------------------------
-// ProcessPlatformSpecific — factory used by Command.apply in shared code
-// -----------------------------------------------------------------------
+// --- ProcessPlatformSpecific — factory used by Command.apply in shared code ---
 
 private[kyo] object ProcessPlatformSpecific:
 

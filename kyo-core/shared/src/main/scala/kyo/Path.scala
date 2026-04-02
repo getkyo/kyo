@@ -43,9 +43,7 @@ object Path extends PathPlatformSpecific:
     /** A path segment — either a literal string or another Path whose parts are spliced in. */
     type Part = String | Path
 
-    // -----------------------------------------------------------------------
-    // Construction
-    // -----------------------------------------------------------------------
+    // --- Construction ---
 
     /** Creates a Path from zero or more string-or-Path segments.
       *
@@ -62,9 +60,7 @@ object Path extends PathPlatformSpecific:
     infix def /(part: Path.Part)(using Frame): Path =
         make(flattenParts(Seq(part)))
 
-    // -----------------------------------------------------------------------
-    // Safe extension methods
-    // -----------------------------------------------------------------------
+    // --- Safe extension methods ---
 
     extension (self: Path)
 
@@ -108,7 +104,7 @@ object Path extends PathPlatformSpecific:
         infix def /(part: Path.Part)(using Frame): Path =
             make(self.parts ++ flattenParts(Seq(part)))
 
-        // -- Inspection --
+        // --- Inspection ---
 
         /** Returns `true` if this path exists in the file system (following symbolic links). */
         def exists(using Frame): Boolean < Sync =
@@ -130,7 +126,7 @@ object Path extends PathPlatformSpecific:
         def isSymbolicLink(using Frame): Boolean < Sync =
             Sync.Unsafe.defer(self.unsafe.isSymbolicLink())
 
-        // -- Read --
+        // --- Read ---
 
         /** Reads the entire file contents as a UTF-8 string. */
         def read(using Frame): String < (Sync & Abort[FileReadException]) =
@@ -318,7 +314,7 @@ object Path extends PathPlatformSpecific:
                 }
             }
 
-        // -- Write --
+        // --- Write ---
 
         /** Writes `value` to the file, creating parent directories when `createFolders = true` (the default). */
         def write(value: String, createFolders: Boolean = true)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
@@ -356,7 +352,7 @@ object Path extends PathPlatformSpecific:
         def truncate(size: Long)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
             Sync.Unsafe.defer(Abort.get(self.unsafe.truncate(size)))
 
-        // -- Directory / structure --
+        // --- Directory / structure ---
 
         /** Creates this path as a directory (including all missing parent directories). */
         def mkDir(using Frame): Unit < (Sync & Abort[FileFsException]) =
@@ -432,9 +428,7 @@ object Path extends PathPlatformSpecific:
 
     end extension
 
-    // -----------------------------------------------------------------------
-    // System directories
-    // -----------------------------------------------------------------------
+    // --- System directories ---
 
     /** Well-known base directories for the current OS (cache, config, data, etc.). */
     lazy val basePaths: BasePaths = platformBasePaths
@@ -456,7 +450,7 @@ object Path extends PathPlatformSpecific:
         preference: Path,
         runtime: Path,
         tmp: Path
-    )
+    ) derives CanEqual
 
     /** User home directories. */
     case class UserPaths(
@@ -470,7 +464,7 @@ object Path extends PathPlatformSpecific:
         public: Path,
         template: Path,
         video: Path
-    )
+    ) derives CanEqual
 
     /** Per-application project directories. */
     case class ProjectPaths(
@@ -481,7 +475,7 @@ object Path extends PathPlatformSpecific:
         dataLocal: Path,
         preference: Path,
         runtime: Path
-    )
+    ) derives CanEqual
 
     /** Returns the number of trailing bytes that form an incomplete UTF-8 sequence. */
     private def incompleteUtf8Tail(bytes: Array[Byte], len: Int): Int =
@@ -489,18 +483,20 @@ object Path extends PathPlatformSpecific:
         var i = len - 1
         // Skip continuation bytes (10xxxxxx)
         while i >= 0 && (bytes(i) & 0xc0) == 0x80 do i -= 1
-        if i < 0 then return 0 // all continuation bytes — shouldn't happen, return 0
-        val leading  = bytes(i)
-        val startPos = i
-        val tailLen  = len - startPos
-        // Determine expected sequence length from leading byte
-        val expected =
-            if (leading & 0x80) == 0 then 1         // 0xxxxxxx — ASCII
-            else if (leading & 0xe0) == 0xc0 then 2 // 110xxxxx
-            else if (leading & 0xf0) == 0xe0 then 3 // 1110xxxx
-            else if (leading & 0xf8) == 0xf0 then 4 // 11110xxx
-            else 1                                  // invalid leading byte, treat as complete
-        if tailLen < expected then tailLen else 0
+        if i < 0 then 0 // all continuation bytes — shouldn't happen
+        else
+            val leading  = bytes(i)
+            val startPos = i
+            val tailLen  = len - startPos
+            // Determine expected sequence length from leading byte
+            val expected =
+                if (leading & 0x80) == 0 then 1         // 0xxxxxxx — ASCII
+                else if (leading & 0xe0) == 0xc0 then 2 // 110xxxxx
+                else if (leading & 0xf0) == 0xe0 then 3 // 1110xxxx
+                else if (leading & 0xf8) == 0xf0 then 4 // 11110xxx
+                else 1                                  // invalid leading byte, treat as complete
+            if tailLen < expected then tailLen else 0
+        end if
     end incompleteUtf8Tail
 
     /** Flattens a sequence of `Part` values into a `Chunk[String]`. */
@@ -510,14 +506,12 @@ object Path extends PathPlatformSpecific:
             case p: Path   => p.parts.toSeq
         })
 
-    // -----------------------------------------------------------------------
-    // Abstract Unsafe class
-    // -----------------------------------------------------------------------
+    // --- Abstract Unsafe class ---
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
 
-        // -- Pure accessors (no AllowUnsafe needed) --
+        // --- Pure accessors (no AllowUnsafe needed) ---
 
         /** The individual string components of this path. */
         def parts: Chunk[String]
@@ -531,7 +525,7 @@ object Path extends PathPlatformSpecific:
         /** Returns the human-readable representation; delegates to `show` so Path values display correctly. */
         override def toString: String = show
 
-        // -- Inspection --
+        // --- Inspection ---
 
         def exists()(using AllowUnsafe): Boolean
         def exists(followLinks: Boolean)(using AllowUnsafe): Boolean
@@ -539,7 +533,7 @@ object Path extends PathPlatformSpecific:
         def isRegularFile()(using AllowUnsafe): Boolean
         def isSymbolicLink()(using AllowUnsafe): Boolean
 
-        // -- Read --
+        // --- Read ---
 
         def read()(using AllowUnsafe, Frame): Result[FileReadException, String]
         def read(charset: Charset)(using AllowUnsafe, Frame): Result[FileReadException, String]
@@ -547,13 +541,13 @@ object Path extends PathPlatformSpecific:
         def readLines()(using AllowUnsafe, Frame): Result[FileReadException, Chunk[String]]
         def readLines(charset: Charset)(using AllowUnsafe, Frame): Result[FileReadException, Chunk[String]]
 
-        // -- Streaming read handles (abstract — platform provides the concrete handles) --
+        // --- Streaming read handles (abstract — platform provides the concrete handles) ---
 
         def openRead()(using AllowUnsafe, Frame): Result[FileReadException, Path.ReadHandle]
         def openReadLines(charset: Charset)(using AllowUnsafe, Frame): Result[FileReadException, Path.LineReadHandle]
         def size()(using AllowUnsafe, Frame): Result[FileReadException, Long]
 
-        // -- Write --
+        // --- Write ---
 
         def write(value: String, createFolders: Boolean = true)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
         def writeBytes(value: Span[Byte], createFolders: Boolean = true)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
@@ -575,7 +569,7 @@ object Path extends PathPlatformSpecific:
         def appendLines(value: Chunk[String], createFolders: Boolean = true)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
         def truncate(size: Long)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
 
-        // -- Directory / structure --
+        // --- Directory / structure ---
 
         def list()(using AllowUnsafe, Frame): Result[FileFsException, Chunk[Path]]
         def list(glob: String)(using AllowUnsafe, Frame): Result[FileFsException, Chunk[Path]]
@@ -596,11 +590,11 @@ object Path extends PathPlatformSpecific:
         def removeExisting()(using AllowUnsafe, Frame): Result[FileFsException, Unit]
         def removeAll()(using AllowUnsafe, Frame): Result[FileFsException, Unit]
 
-        // -- Walk handle (abstract — platform provides the resource management) --
+        // --- Walk handle (abstract — platform provides the resource management) ---
 
         def openWalk(maxDepth: Int, followLinks: Boolean)(using AllowUnsafe, Frame): Result[FileFsException, Path.WalkHandle]
 
-        // -- Streaming write handles --
+        // --- Streaming write handles ---
 
         /** Opens a write handle for streaming byte or string output. The caller must close the handle via `Scope.acquireRelease`. */
         def openWrite(append: Boolean, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Path.WriteHandle]
@@ -610,9 +604,7 @@ object Path extends PathPlatformSpecific:
 
     end Unsafe
 
-    // -----------------------------------------------------------------------
-    // WriteHandle — abstraction for open write channels
-    // -----------------------------------------------------------------------
+    // --- WriteHandle — abstraction for open write channels ---
 
     /** An open write channel returned by `Path.Unsafe.openWrite`. Platform implementations provide the concrete class. */
     abstract private[kyo] class WriteHandle:
@@ -626,9 +618,7 @@ object Path extends PathPlatformSpecific:
         def close()(using AllowUnsafe): Unit
     end WriteHandle
 
-    // -----------------------------------------------------------------------
-    // Read handles — returned by Path.Unsafe.openRead / openReadLines
-    // -----------------------------------------------------------------------
+    // --- Read handles — returned by Path.Unsafe.openRead / openReadLines ---
 
     /** The result of a `ReadHandle.readChunk` call — either a positive byte count or EOF. */
     opaque type ReadResult = Int

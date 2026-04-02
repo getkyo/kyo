@@ -42,6 +42,8 @@ export Process.ExitCode
 
 object Process:
 
+    // --- Public API ---
+
     extension (self: Process)
 
         /** Returns the process's standard output as a byte stream.
@@ -113,6 +115,8 @@ object Process:
 
     end extension
 
+    // --- ExitCode ---
+
     /** The exit status of a completed process.
       *
       * An exit code is either:
@@ -174,7 +178,19 @@ object Process:
         val SIGPIPE = Signaled(13)
         val SIGTERM = Signaled(15)
 
+        given Render[ExitCode] with
+            def asText(value: ExitCode): Text =
+                value match
+                    case Success       => Text("ExitCode.Success")
+                    case Failure(code) => Text(s"ExitCode.Failure($code)")
+                    case Signaled(n) =>
+                        val name = value.signalName.getOrElse(s"signal $n")
+                        Text(s"ExitCode.Signaled($n, $name)")
+        end given
+
     end ExitCode
+
+    // --- Input ---
 
     /** The source for a process's standard input.
       *
@@ -187,8 +203,10 @@ object Process:
         case class FromStream(stream: InputStream) extends Input
     end Input
 
+    // --- Unsafe ---
+
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    abstract class Unsafe:
+    abstract class Unsafe extends Serializable:
 
         /** Suspends until the process exits and completes the returned `Fiber.Unsafe` with the exit code. */
         def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Any]
