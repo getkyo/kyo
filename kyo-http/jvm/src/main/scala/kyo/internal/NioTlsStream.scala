@@ -34,10 +34,15 @@ class NioTlsStream(
     end netInBuf
     private var netOutBuf = ByteBuffer.allocate(session.getPacketBufferSize)
 
-    /** Perform TLS handshake. Must be called after construction, before read/write. */
+    // Tracks whether handshake() has been called. Allows lazy server-side handshake on first read/write.
+    private var handshakeDone: Boolean = false
+
+    /** Perform TLS handshake. Must be called before read/write, or will be called lazily on first use. */
     def handshake()(using Frame): Unit < Async =
+        handshakeDone = true
         engine.beginHandshake()
         handshakeLoop()
+    end handshake
 
     private def handshakeLoop()(using Frame): Unit < Async =
         Sync.defer(engine.getHandshakeStatus).map {
@@ -138,6 +143,10 @@ class NioTlsStream(
     private var appReadBuf: ByteBuffer = ByteBuffer.allocate(0)
 
     def read(buf: Array[Byte])(using Frame): Int < Async =
+        if !handshakeDone then handshake().andThen(readApp(buf))
+        else readApp(buf)
+
+    private def readApp(buf: Array[Byte])(using Frame): Int < Async =
         // Check leftover decrypted bytes first
         if appReadBuf.hasRemaining then
             Sync.defer {
@@ -163,7 +172,7 @@ class NioTlsStream(
         val tcpBuf = new Array[Byte](session.getPacketBufferSize)
         underlying.read(tcpBuf).map { n =>
             if n < 0 then -1
-            else if n == 0 then read(buf) // spurious wakeup
+            else if n == 0 then readApp(buf) // spurious wakeup
             else
                 Sync.defer {
                     feedNetIn(tcpBuf, 0, n)
@@ -191,7 +200,7 @@ class NioTlsStream(
                         discard(appReadBuf.flip())
                     end if
                     count
-                else read(buf)
+                else readApp(buf)
                 end if
             case SSLEngineResult.Status.BUFFER_UNDERFLOW =>
                 readAndUnwrapApp(buf)
@@ -202,6 +211,7 @@ class NioTlsStream(
 
     def write(data: Span[Byte])(using Frame): Unit < Async =
         if data.isEmpty then Kyo.unit
+        else if !handshakeDone then handshake().andThen(doWrap(ByteBuffer.wrap(data.toArrayUnsafe)))
         else doWrap(ByteBuffer.wrap(data.toArrayUnsafe))
 
 end NioTlsStream

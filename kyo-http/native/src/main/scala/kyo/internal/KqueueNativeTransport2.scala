@@ -72,11 +72,6 @@ final class KqueueNativeTransport2 extends Transport2:
                     Abort.fail(HttpConnectException(host, 0, new Exception("Failed to create TLS session")))
                 else
                     tlsSetConnectState(ssl)
-                    // NativeTlsStream works with the old-style TransportStream API.
-                    // We wrap an inner KqueueConnection/KqueueStream for TLS I/O.
-                    val innerConn = new KqueueConnection(conn.fd, conn.closed, Absent)
-                    // Share kqueue fds: inner conn uses the same readKq/writeKq as conn
-                    // (safe because TLS read/write goes through innerConn's stream exclusively)
                     val tcpStream = new KqueueStream2TlsBridge(conn)
                     val tlsStream = new NativeTlsStream(ssl, ctx, tcpStream)
                     conn.tlsStream = Present(tlsStream)
