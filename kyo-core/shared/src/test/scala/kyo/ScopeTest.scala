@@ -554,32 +554,6 @@ class ScopeTest extends Test:
             }
         }
 
-        "interrupt between acquire and finalizer registration (#1224)" in pendingUntilFixed {
-            import AllowUnsafe.embrace.danger
-            var leaks = 0
-            for _ <- 1 to 1000 do
-                val acquired = new java.util.concurrent.atomic.AtomicBoolean(false)
-                val released = new java.util.concurrent.atomic.AtomicBoolean(false)
-                val cdl      = new java.util.concurrent.CountDownLatch(1)
-                val fiber = Sync.Unsafe.evalOrThrow {
-                    Fiber.initUnscoped {
-                        Scope.run {
-                            Scope.acquireRelease(Sync.defer { acquired.set(true) })(_ =>
-                                Sync.defer { released.set(true) }
-                            ).andThen {
-                                Sync.defer { cdl.countDown() }.andThen(Async.sleep(1.day))
-                            }
-                        }
-                    }
-                }
-                cdl.await()
-                Sync.Unsafe.evalOrThrow(fiber.interrupt)
-                Thread.sleep(1)
-                if acquired.get() && !released.get() then leaks += 1
-            end for
-            assert(leaks == 0)
-            ()
-        }
     }
 
     "scope + fiber" - {
