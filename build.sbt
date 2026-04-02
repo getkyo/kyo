@@ -362,8 +362,7 @@ lazy val `kyo-core` =
         .dependsOn(`kyo-prelude`)
         .in(file("kyo-core"))
         .settings(
-            `kyo-settings`,
-            libraryDependencies += "dev.dirs" % "directories" % "26"
+            `kyo-settings`
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
