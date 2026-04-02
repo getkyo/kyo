@@ -183,8 +183,8 @@ end NioIoLoop
 
 /** Non-blocking NIO Transport for JVM.
   *
-  * All connections share one NioIoLoop. The poller fiber calls @blocking selector.select() and dispatches readiness to per-channel
-  * Promises. Eliminates per-connection Selectors and 1ms polling.
+  * Connections are distributed across a group of NioIoLoop instances via round-robin for multi-core scaling. Each NioIoLoop has its own
+  * Selector and poller fiber.
   */
 final class NioTransport(
     clientSslContext: Maybe[SSLContext] = Absent,
@@ -193,13 +193,14 @@ final class NioTransport(
 
     type Connection = NioConnection
 
-    private val loop = new NioIoLoop
+    private val groupSize = Math.max(1, Runtime.getRuntime.availableProcessors / 2)
+    private val group     = new IoLoopGroup((0 until groupSize).map(_ => new NioIoLoop))
 
-    // Lazy start via atomic flag
+    // Lazy start via atomic flag — starts all loops in the group
     private val loopStarted = new java.util.concurrent.atomic.AtomicBoolean(false)
 
     private def ensureLoopStarted()(using Frame): Unit < Async =
-        if loopStarted.compareAndSet(false, true) then loop.start()
+        if loopStarted.compareAndSet(false, true) then group.startAll()
         else Kyo.unit
 
     def connect(host: String, port: Int, tls: Maybe[TlsConfig])(using
@@ -245,6 +246,7 @@ final class NioTransport(
         Frame
     ): NioConnection < (Async & Abort[HttpException]) =
         Sync.defer {
+            val loop    = group.next()
             val channel = SocketChannel.open()
             channel.configureBlocking(false)
             channel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
@@ -276,9 +278,9 @@ final class NioTransport(
             // channel closes, then close the channel and wake up the selector so the poller
             // can process the cancelled key on its next iteration.
             import AllowUnsafe.embrace.danger
-            loop.drainClosedChannel(c.channel)
+            c.loop.drainClosedChannel(c.channel)
             c.channel.close()
-            loop.wakeup()
+            c.loop.wakeup()
         }
 
     def close(c: NioConnection, gracePeriod: Duration)(using Frame): Unit < Async =
@@ -321,7 +323,7 @@ final class NioTransport(
                                                     StandardSocketOptions.TCP_NODELAY,
                                                     java.lang.Boolean.TRUE
                                                 )
-                                                (new NioConnection(clientChannel, loop), ())
+                                                (new NioConnection(clientChannel, group.next()), ())
                                             }
                                     }
                                 }
@@ -354,8 +356,9 @@ final class NioTransport(
                                                     StandardSocketOptions.TCP_NODELAY,
                                                     java.lang.Boolean.TRUE
                                                 )
-                                                val conn   = new NioConnection(clientChannel, loop)
-                                                val engine = sslCtx.createSSLEngine()
+                                                val connLoop = group.next()
+                                                val conn     = new NioConnection(clientChannel, connLoop)
+                                                val engine   = sslCtx.createSSLEngine()
                                                 engine.setUseClientMode(false)
                                                 val bridge    = new NioStreamTlsBridge(conn)
                                                 val tlsStream = new NioTlsStream(bridge, engine)

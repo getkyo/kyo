@@ -111,8 +111,8 @@ end EpollIoLoop
 
 /** Epoll-based non-blocking TCP Transport for Linux (Scala Native).
   *
-  * All connections share one EpollIoLoop. The poller fiber calls @blocking epollWaitTimeout and dispatches readiness to per-fd Promises.
-  * Eliminates per-connection epoll fds and 1ms polling.
+  * Connections are distributed across a group of EpollIoLoop instances via round-robin for multi-core scaling. Each EpollIoLoop has its own
+  * epoll fd and poller fiber.
   */
 final class EpollNativeTransport extends Transport:
 
@@ -120,13 +120,14 @@ final class EpollNativeTransport extends Transport:
 
     type Connection = EpollConnection
 
-    private val loop = new EpollIoLoop
+    private val groupSize = Math.max(1, Runtime.getRuntime.availableProcessors / 2)
+    private val group     = new IoLoopGroup((0 until groupSize).map(_ => new EpollIoLoop))
 
-    // Lazy start: loop is started on the first connect/listen call via this atomic flag.
+    // Lazy start: all loops are started on the first connect/listen call via this atomic flag.
     private val loopStarted = new java.util.concurrent.atomic.AtomicBoolean(false)
 
     private def ensureLoopStarted()(using Frame): Unit < Async =
-        if loopStarted.compareAndSet(false, true) then loop.start()
+        if loopStarted.compareAndSet(false, true) then group.startAll()
         else Kyo.unit
 
     def connect(host: String, port: Int, tls: Maybe[TlsConfig])(using
@@ -144,6 +145,7 @@ final class EpollNativeTransport extends Transport:
         Frame
     ): EpollConnection < (Async & Abort[HttpException]) =
         Sync.defer {
+            val loop = group.next()
             val (fd, pending) = Zone {
                 val outPending = alloc[CInt]()
                 val f          = tcpConnect(toCString(host), port, outPending)
@@ -197,7 +199,7 @@ final class EpollNativeTransport extends Transport:
         Sync.defer {
             import AllowUnsafe.embrace.danger
             c.closed = true
-            loop.cancelFd(c.fd)
+            c.loop.cancelFd(c.fd)
             c.tlsStream match
                 case Present(tls) =>
                     import TlsBindings.*
@@ -226,6 +228,8 @@ final class EpollNativeTransport extends Transport:
                     Abort.panic(HttpBindException(host, port, new Exception("bind/listen failed")))
                 else
                     val boundHost = host
+                    // Use a dedicated loop from the group for the accept selector (server fd readiness).
+                    val acceptLoop = group.next()
                     tls match
                         case Absent =>
                             Scope.acquireRelease {
@@ -234,13 +238,13 @@ final class EpollNativeTransport extends Transport:
                                     Stream.unfold((), chunkSize = 1) { _ =>
                                         if closed.get() then Maybe.empty
                                         else
-                                            loop.awaitReadable(serverFd).andThen {
+                                            acceptLoop.awaitReadable(serverFd).andThen {
                                                 Sync.defer {
                                                     if closed.get() then Maybe.empty
                                                     else
                                                         val clientFd = tcpAccept(serverFd)
                                                         if clientFd >= 0 then
-                                                            Maybe((new EpollConnection(clientFd, loop), ()))
+                                                            Maybe((new EpollConnection(clientFd, group.next()), ()))
                                                         else
                                                             Maybe.empty
                                                         end if
@@ -256,7 +260,7 @@ final class EpollNativeTransport extends Transport:
                                     close = Sync.defer {
                                         closed.set(true)
                                         import AllowUnsafe.embrace.danger
-                                        loop.cancelFd(serverFd)
+                                        acceptLoop.cancelFd(serverFd)
                                         tcpClose(serverFd)
                                     }
                                 )
@@ -292,14 +296,15 @@ final class EpollNativeTransport extends Transport:
                                             Stream.unfold((), chunkSize = 1) { _ =>
                                                 if closed.get() then Maybe.empty
                                                 else
-                                                    loop.awaitReadable(serverFd).andThen {
+                                                    acceptLoop.awaitReadable(serverFd).andThen {
                                                         Sync.defer {
                                                             if closed.get() then Maybe.empty
                                                             else
                                                                 val clientFd = tcpAccept(serverFd)
                                                                 if clientFd >= 0 then
-                                                                    val conn = new EpollConnection(clientFd, loop)
-                                                                    val ssl  = Zone { tlsNew(ctx, null) }
+                                                                    val connLoop = group.next()
+                                                                    val conn     = new EpollConnection(clientFd, connLoop)
+                                                                    val ssl      = Zone { tlsNew(ctx, null) }
                                                                     if ssl == 0 then
                                                                         tcpClose(clientFd)
                                                                         Maybe.empty
@@ -325,7 +330,7 @@ final class EpollNativeTransport extends Transport:
                                             close = Sync.defer {
                                                 closed.set(true)
                                                 import AllowUnsafe.embrace.danger
-                                                loop.cancelFd(serverFd)
+                                                acceptLoop.cancelFd(serverFd)
                                                 tcpClose(serverFd)
                                             }
                                         )
