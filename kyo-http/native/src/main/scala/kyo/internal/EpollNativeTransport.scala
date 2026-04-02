@@ -113,27 +113,31 @@ end EpollIoLoop
   *
   * Connections are distributed across a group of EpollIoLoop instances via round-robin for multi-core scaling. Each EpollIoLoop has its own
   * epoll fd and poller fiber.
+  *
+  * The default IoLoopGroup is a lazy companion-object singleton so that multiple EpollNativeTransport instances share the same poller
+  * threads. Callers may supply a custom group for isolation (e.g. testing).
   */
-final class EpollNativeTransport extends Transport:
+object EpollNativeTransport:
+    private val groupSize = Math.max(1, Runtime.getRuntime.availableProcessors / 2)
+    lazy val defaultGroup: IoLoopGroup[EpollIoLoop] =
+        val g = new IoLoopGroup((0 until groupSize).map(_ => new EpollIoLoop))
+        Runtime.getRuntime.addShutdownHook(new Thread(() => g.closeAll()))
+        g
+    end defaultGroup
+end EpollNativeTransport
+
+final class EpollNativeTransport(
+    group: IoLoopGroup[EpollIoLoop] = EpollNativeTransport.defaultGroup
+) extends Transport:
 
     import PosixBindings.*
 
     type Connection = EpollConnection
 
-    private val groupSize = Math.max(1, Runtime.getRuntime.availableProcessors / 2)
-    private val group     = new IoLoopGroup((0 until groupSize).map(_ => new EpollIoLoop))
-
-    // Lazy start: all loops are started on the first connect/listen call via this atomic flag.
-    private val loopStarted = new java.util.concurrent.atomic.AtomicBoolean(false)
-
-    private def ensureLoopStarted()(using Frame): Unit < Async =
-        if loopStarted.compareAndSet(false, true) then group.startAll()
-        else Kyo.unit
-
     def connect(host: String, port: Int, tls: Maybe[TlsConfig])(using
         Frame
     ): EpollConnection < (Async & Abort[HttpException]) =
-        ensureLoopStarted().andThen {
+        group.ensureStarted().andThen {
             connectPlain(host, port).map { conn =>
                 tls match
                     case Present(tlsCfg) => connectTls(host, conn, tlsCfg)
@@ -217,7 +221,7 @@ final class EpollNativeTransport extends Transport:
     def listen(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using
         Frame
     ): TransportListener[EpollConnection] < (Async & Scope) =
-        ensureLoopStarted().andThen {
+        group.ensureStarted().andThen {
             Sync.defer {
                 val (serverFd, boundPort) = Zone {
                     val outPort = alloc[CInt]()

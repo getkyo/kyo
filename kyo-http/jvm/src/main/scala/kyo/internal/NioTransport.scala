@@ -185,28 +185,32 @@ end NioIoLoop
   *
   * Connections are distributed across a group of NioIoLoop instances via round-robin for multi-core scaling. Each NioIoLoop has its own
   * Selector and poller fiber.
+  *
+  * The default IoLoopGroup is a lazy companion-object singleton so that multiple NioTransport instances share the same poller threads.
+  * Callers may supply a custom group for isolation (e.g. testing). TLS configuration stays per-instance since it is used at connection
+  * creation, not at the IoLoop level.
   */
+object NioTransport:
+    private val groupSize = Math.max(1, Runtime.getRuntime.availableProcessors / 2)
+    lazy val defaultGroup: IoLoopGroup[NioIoLoop] =
+        val g = new IoLoopGroup((0 until groupSize).map(_ => new NioIoLoop))
+        Runtime.getRuntime.addShutdownHook(new Thread(() => g.closeAll()))
+        g
+    end defaultGroup
+end NioTransport
+
 final class NioTransport(
+    group: IoLoopGroup[NioIoLoop] = NioTransport.defaultGroup,
     clientSslContext: Maybe[SSLContext] = Absent,
     serverSslContext: Maybe[SSLContext] = Absent
 ) extends Transport:
 
     type Connection = NioConnection
 
-    private val groupSize = Math.max(1, Runtime.getRuntime.availableProcessors / 2)
-    private val group     = new IoLoopGroup((0 until groupSize).map(_ => new NioIoLoop))
-
-    // Lazy start via atomic flag — starts all loops in the group
-    private val loopStarted = new java.util.concurrent.atomic.AtomicBoolean(false)
-
-    private def ensureLoopStarted()(using Frame): Unit < Async =
-        if loopStarted.compareAndSet(false, true) then group.startAll()
-        else Kyo.unit
-
     def connect(host: String, port: Int, tls: Maybe[TlsConfig])(using
         Frame
     ): NioConnection < (Async & Abort[HttpException]) =
-        ensureLoopStarted().andThen {
+        group.ensureStarted().andThen {
             tls match
                 case Present(tlsCfg) => connectTls(host, port, tlsCfg)
                 case Absent          => connectPlain(host, port)
@@ -289,7 +293,7 @@ final class NioTransport(
     def listen(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using
         Frame
     ): TransportListener[NioConnection] < (Async & Scope) =
-        ensureLoopStarted().andThen {
+        group.ensureStarted().andThen {
             Sync.defer {
                 val serverChannel = ServerSocketChannel.open()
                 serverChannel.configureBlocking(false)
