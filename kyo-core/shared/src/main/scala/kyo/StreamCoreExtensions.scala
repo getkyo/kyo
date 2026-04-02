@@ -1183,7 +1183,8 @@ object StreamCoreExtensions:
                     Sync.Unsafe.defer {
                         val buf = new Array[Byte](bufferSize)
                         val n   = stream.read(buf)
-                        if n <= 0 then Loop.done
+                        if n < 0 then Loop.done
+                        else if n == 0 then Loop.continue // No data yet (JS async buffer empty) — yield and retry
                         else if n == bufferSize then
                             Emit.valueWith(Chunk.fromNoCopy(buf))(Loop.continue)
                         else
