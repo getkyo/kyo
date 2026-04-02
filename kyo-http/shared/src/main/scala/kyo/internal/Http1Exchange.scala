@@ -68,7 +68,7 @@ object Http1Exchange:
                         Abort.run[Closed](inflight.take).map {
                             case Result.Failure(_) => Loop.done(())
                             case Result.Success((id, method)) =>
-                                Http1Protocol.readResponse(stream, maxSize, method).map {
+                                Http1Protocol.readResponseStreaming(stream, maxSize, method).map {
                                     case ((status, headers, body), rest) =>
                                         val wire: Http1Wire = InResp(id, RawHttpResponse(status, headers, body))
                                         Emit.valueWith(Chunk(wire))(Loop.continue(rest))
