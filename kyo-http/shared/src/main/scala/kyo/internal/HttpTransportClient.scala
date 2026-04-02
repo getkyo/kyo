@@ -31,11 +31,9 @@ class HttpTransportClient(private[kyo] val transport: Transport) extends HttpBac
         f: Connection => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
         val tls = if url.ssl then Present(TlsConfig.default) else Absent
-        val base = Scope.run {
-            transport.connect(url.host, url.port, tls).map { tc =>
-                Http1Exchange.init(tc, Int.MaxValue).map { exchange =>
-                    f(new Conn(tc, exchange))
-                }
+        val base = transport.connect(url.host, url.port, tls).map { tc =>
+            Http1Exchange.initUnscoped(tc, Int.MaxValue).map { exchange =>
+                f(new Conn(tc, exchange))
             }
         }
         connectTimeout match
@@ -65,10 +63,10 @@ class HttpTransportClient(private[kyo] val transport: Transport) extends HttpBac
         transport.isAlive(conn.tc)
 
     def closeNow(conn: Connection)(using Frame): Unit < Sync =
-        transport.closeNow(conn.tc)
+        conn.exchange.close.andThen(transport.closeNow(conn.tc))
 
     def close(conn: Connection, gracePeriod: Duration)(using Frame): Unit < Async =
-        transport.close(conn.tc, gracePeriod)
+        conn.exchange.close.andThen(transport.close(conn.tc, gracePeriod))
 
     def close(gracePeriod: Duration)(using Frame): Unit < Async =
         Kyo.unit

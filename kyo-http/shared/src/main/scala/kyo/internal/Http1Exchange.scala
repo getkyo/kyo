@@ -56,6 +56,45 @@ object Http1Exchange:
                 send = {
                     case OutReq(id, req) =>
                         Http1Protocol.writeRequest(conn, req.method, req.path, req.headers, req.body).andThen {
+                            Abort.run[Closed](inflight.put((id, req.method))).unit
+                        }
+                    case _ => Kyo.unit
+                },
+                receive = Stream[Http1Wire, Async & Abort[HttpException]] {
+                    Loop(conn.read) { stream =>
+                        Abort.run[Closed](inflight.take).map {
+                            case Result.Failure(_) => Loop.done(())
+                            case Result.Success((id, method)) =>
+                                Http1Protocol.readResponseStreaming(stream, maxSize, method).map {
+                                    case ((status, headers, body), rest) =>
+                                        val wire: Http1Wire = InResp(id, RawHttpResponse(status, headers, body))
+                                        Emit.valueWith(Chunk(wire))(Loop.continue(rest))
+                                }
+                        }
+                    }
+                },
+                decode = {
+                    case InResp(id, resp) => Exchange.Message.Response(id, resp)
+                    case _                => Exchange.Message.Skip
+                }
+            )
+        }
+
+    /** Creates an *unscoped* Exchange for HTTP/1.1 over the given connection.
+      *
+      * Unlike `init`, this does not register a Scope finalizer — the caller is responsible for calling `exchange.close` when done. This is
+      * needed for connection pooling, where the Exchange must outlive individual request scopes.
+      */
+    def initUnscoped(conn: TransportStream, maxSize: Int)(using
+        Frame
+    )
+        : Exchange[RawHttpRequest, RawHttpResponse, Nothing, HttpException] < Sync =
+        Channel.initUnscoped[(Int, HttpMethod)](1).map { inflight =>
+            Exchange.initUnscoped[RawHttpRequest, RawHttpResponse, Http1Wire, Nothing, HttpException](
+                encode = (id, req) => OutReq(id, req),
+                send = {
+                    case OutReq(id, req) =>
+                        Http1Protocol.writeRequest(conn, req.method, req.path, req.headers, req.body).andThen {
                             // If inflight channel is closed (exchange shutting down), silently ignore —
                             // the exchange will fail the pending request via its done promise.
                             Abort.run[Closed](inflight.put((id, req.method))).unit
