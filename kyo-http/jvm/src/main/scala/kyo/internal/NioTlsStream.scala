@@ -18,7 +18,7 @@ import kyo.*
   *   - BUFFER_UNDERFLOW → read more from TCP
   */
 class NioTlsStream(
-    underlying: NioStream,
+    underlying: TransportStream,
     engine: SSLEngine
 ) extends TransportStream:
 

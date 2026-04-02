@@ -31,7 +31,7 @@ class Http1ProtocolTest extends kyo.Test:
             }
 
         def written: Array[Byte]  = output.toByteArray
-        def writtenString: String = output.toString(Utf8)
+        def writtenString: String = new String(output.toByteArray, Utf8)
     end MockStream
 
     private def mockStream(s: String): MockStream = new MockStream(s.getBytes(Utf8))

@@ -2649,17 +2649,16 @@ class HttpServerTest extends Test:
     "streaming with delayed chunks" - {
 
         "SSE JSON with infinite stream and delay" - {
-            var counter = 0
             val ep = HttpHandler.getSseJson[User]("sse-repeat") { _ =>
-                counter = 0
+                val counter = new java.util.concurrent.atomic.AtomicInteger(0)
                 Stream[HttpSseEvent[User], Async] {
                     Loop.foreach {
                         for
                             _ <- Async.delay(500.millis)(())
                         yield
-                            counter += 1
+                            val c = counter.incrementAndGet()
                             Emit.valueWith(Chunk(HttpSseEvent(
-                                User(counter, s"user-$counter"),
+                                User(c, s"user-$c"),
                                 Absent,
                                 Absent,
                                 Absent
@@ -2720,17 +2719,16 @@ class HttpServerTest extends Test:
         }
 
         "NDJSON with infinite stream and delay" - {
-            var counter = 0
-            val route   = HttpRoute.getRaw("ndjson-repeat").response(_.bodyNdjson[User])
+            val route = HttpRoute.getRaw("ndjson-repeat").response(_.bodyNdjson[User])
             val ep = route.handler { _ =>
-                counter = 0
+                val counter = new java.util.concurrent.atomic.AtomicInteger(0)
                 val users = Stream[User, Async] {
                     Loop.foreach {
                         for
                             _ <- Async.delay(500.millis)(())
                         yield
-                            counter += 1
-                            Emit.valueWith(Chunk(User(counter, s"user-$counter")))(Loop.continue)
+                            val c = counter.incrementAndGet()
+                            Emit.valueWith(Chunk(User(c, s"user-$c")))(Loop.continue)
                     }
                 }
                 HttpResponse.ok.addField("body", users)

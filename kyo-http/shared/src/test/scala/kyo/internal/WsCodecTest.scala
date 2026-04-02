@@ -28,7 +28,7 @@ class WsCodecTest extends kyo.Test:
             Sync.defer(output.write(data.toArrayUnsafe))
 
         def written: Array[Byte]  = output.toByteArray
-        def writtenString: String = output.toString(Utf8)
+        def writtenString: String = new String(output.toByteArray, Utf8)
     end MockStream
 
     // ── Accept key ──────────────────────────────────────────────

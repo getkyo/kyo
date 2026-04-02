@@ -8,6 +8,7 @@
  */
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/resource.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <netdb.h>
@@ -16,6 +17,33 @@
 #include <string.h>
 #include <errno.h>
 #include <stdio.h>
+#include <signal.h>
+
+/* Raise the open-file-descriptor soft limit to the hard limit at startup.
+ * The default macOS soft limit is 256, which is too low for tests that open
+ * many concurrent connections (each needs 3 fds: socket + readKq + writeKq).
+ * The hard limit is typically 10240 on macOS and unlimited/65536 on Linux. */
+__attribute__((constructor))
+static void kyo_init_fd_limit(void) {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) == 0) {
+        rlim_t target = rl.rlim_max;
+        if (target == RLIM_INFINITY || target > 65536) target = 65536;
+        if (target > rl.rlim_cur) {
+            rl.rlim_cur = target;
+            setrlimit(RLIMIT_NOFILE, &rl);
+        }
+    }
+}
+
+/* Suppress SIGPIPE: on macOS set SO_NOSIGPIPE per-socket; on Linux use MSG_NOSIGNAL per write. */
+static void kyo_socket_nosigpipe(int fd) {
+#ifdef SO_NOSIGPIPE
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#endif
+    (void)fd;
+}
 
 #ifdef __APPLE__
 #include <sys/event.h>
@@ -56,9 +84,10 @@ int kyo_tcp_connect(const char *host, int port, int *out_pending) {
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
-    /* Set TCP_NODELAY */
+    /* Set TCP_NODELAY + suppress SIGPIPE */
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    kyo_socket_nosigpipe(fd);
 
     int rc = connect(fd, res->ai_addr, res->ai_addrlen);
     freeaddrinfo(res);
@@ -121,6 +150,7 @@ int kyo_tcp_accept(int server_fd) {
 
     int one = 1;
     setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    kyo_socket_nosigpipe(client_fd);
 
     return client_fd;
 }
@@ -140,7 +170,11 @@ int kyo_tcp_read(int fd, char *buf, int len) {
 }
 
 int kyo_tcp_write(int fd, const char *buf, int len) {
+#ifdef MSG_NOSIGNAL
+    return (int)send(fd, buf, (size_t)len, MSG_NOSIGNAL);
+#else
     return (int)write(fd, buf, (size_t)len);
+#endif
 }
 
 /* ── Socket lifecycle ───────────────────────────────────── */
@@ -186,12 +220,11 @@ int kyo_kqueue_wait_nonblock(int kq, int *out_fds, int *out_filters, int max_eve
     return n < 0 ? 0 : n;
 }
 
-/** Wait for events with 100ms timeout. Returns number of ready events. */
+/** Wait for events indefinitely (infinite timeout). Returns number of ready events. */
 int kyo_kqueue_wait(int kq, int *out_fds, int *out_filters, int max_events) {
     struct kevent events[64];
     int actual_max = max_events < 64 ? max_events : 64;
-    struct timespec timeout = { .tv_sec = 0, .tv_nsec = 100000000 }; /* 100ms */
-    int n = kevent(kq, NULL, 0, events, actual_max, &timeout);
+    int n = kevent(kq, NULL, 0, events, actual_max, NULL); /* infinite wait */
     for (int i = 0; i < n; i++) {
         out_fds[i] = (int)events[i].ident;
         out_filters[i] = events[i].filter;
@@ -245,11 +278,11 @@ int kyo_epoll_wait_nonblock(int epfd, int *out_fds, int *out_events, int max_eve
     return n < 0 ? 0 : n;
 }
 
-/** Wait for events with 100ms timeout. Returns number of ready events. */
+/** Wait for events indefinitely (infinite timeout). Returns number of ready events. */
 int kyo_epoll_wait_timeout(int epfd, int *out_fds, int *out_events, int max_events) {
     struct epoll_event events[64];
     int actual_max = max_events < 64 ? max_events : 64;
-    int n = epoll_wait(epfd, events, actual_max, 100); /* 100ms */
+    int n = epoll_wait(epfd, events, actual_max, -1); /* infinite wait */
     for (int i = 0; i < n; i++) {
         out_fds[i] = events[i].data.fd;
         out_events[i] = (int)events[i].events;

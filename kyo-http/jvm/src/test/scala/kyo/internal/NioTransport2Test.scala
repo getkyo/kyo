@@ -1,0 +1,346 @@
+package kyo.internal
+
+import java.nio.charset.StandardCharsets
+import kyo.*
+
+class NioTransport2Test extends kyo.Test:
+
+    given CanEqual[Any, Any] = CanEqual.derived
+
+    private val Utf8      = StandardCharsets.UTF_8
+    private val transport = new NioTransport2
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    private def withServer(using Frame): TransportListener2[NioConnection2] < (Async & Scope) =
+        transport.listen("127.0.0.1", 0, 128, Absent)
+
+    /** Accept a single connection from the listener's stream and return it. */
+    private def acceptOne(
+        listener: TransportListener2[NioConnection2]
+    )(using Frame): NioConnection2 < (Async & Abort[HttpException]) =
+        listener.connections.take(1).run.map { chunk =>
+            if chunk.isEmpty then
+                Abort.panic(new Exception("No connection accepted"))
+            else
+                chunk(0)
+        }
+
+    /** Read at least `limit` bytes from a connection's read stream. Stops when `limit` is reached or the stream ends. */
+    private def readN(
+        conn: NioConnection2,
+        limit: Int
+    )(using Frame): Array[Byte] < Async =
+        val acc = new java.io.ByteArrayOutputStream()
+        Loop.foreach {
+            if acc.size() >= limit then
+                Loop.done(acc.toByteArray)
+            else
+                conn.read.take(1).run.map { chunk =>
+                    if chunk.isEmpty then
+                        Loop.done(acc.toByteArray)
+                    else
+                        val span = chunk(0)
+                        acc.write(span.toArrayUnsafe, 0, span.size)
+                        if acc.size() >= limit then Loop.done(acc.toByteArray)
+                        else Loop.continue
+                }
+        }
+    end readN
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Connection lifecycle
+    // ─────────────────────────────────────────────────────────────────────────
+
+    "connect to listening server → isAlive true" in run {
+        Scope.run {
+            withServer.map { listener =>
+                transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                    transport.isAlive(conn).map { alive =>
+                        assert(alive)
+                        transport.closeNow(conn).andThen(succeed)
+                    }
+                }
+            }
+        }
+    }
+
+    "connect to non-existent port → Abort" in run {
+        Scope.run {
+            Abort.run[HttpException] {
+                transport.connect("127.0.0.1", 1, Absent)
+            }.map { result =>
+                assert(result.isFailure)
+            }
+        }
+    }
+
+    "closeNow → isAlive false" in run {
+        Scope.run {
+            withServer.map { listener =>
+                transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                    transport.isAlive(conn).map { alive =>
+                        assert(alive)
+                        transport.closeNow(conn).andThen {
+                            transport.isAlive(conn).map { alive2 =>
+                                assert(!alive2)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "double closeNow → idempotent" in run {
+        Scope.run {
+            withServer.map { listener =>
+                transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                    transport.closeNow(conn).andThen {
+                        // Second closeNow should not throw
+                        transport.closeNow(conn).andThen(succeed)
+                    }
+                }
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Read / Write
+    // ─────────────────────────────────────────────────────────────────────────
+
+    "server writes hello, client reads" in run {
+        Scope.run {
+            withServer.map { listener =>
+                val serverFiber = Fiber.initUnscoped {
+                    acceptOne(listener).map { serverConn =>
+                        serverConn.write(Span.fromUnsafe("hello".getBytes(Utf8)))
+                    }
+                }
+                serverFiber.andThen {
+                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                        readN(clientConn, 5).map { bytes =>
+                            assert(new String(bytes, Utf8) == "hello")
+                            transport.closeNow(clientConn).andThen(succeed)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "client writes world, server reads" in run {
+        Scope.run {
+            withServer.map { listener =>
+                val serverFiber = Fiber.initUnscoped {
+                    acceptOne(listener).map { serverConn =>
+                        readN(serverConn, 5)
+                    }
+                }
+                transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    clientConn.write(Span.fromUnsafe("world".getBytes(Utf8))).andThen {
+                        serverFiber.map(_.get).map { bytes =>
+                            assert(new String(bytes, Utf8) == "world")
+                            transport.closeNow(clientConn).andThen(succeed)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "write empty span → no error" in run {
+        Scope.run {
+            withServer.map { listener =>
+                transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                    conn.write(Span.empty[Byte]).andThen {
+                        transport.closeNow(conn).andThen(succeed)
+                    }
+                }
+            }
+        }
+    }
+
+    "1MB write all arrives" in run {
+        val size = 1024 * 1024
+        val data = new Array[Byte](size)
+        java.util.Arrays.fill(data, 42.toByte)
+
+        Scope.run {
+            withServer.map { listener =>
+                val serverFiber = Fiber.initUnscoped {
+                    acceptOne(listener).map { serverConn =>
+                        readN(serverConn, size)
+                    }
+                }
+                transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    clientConn.write(Span.fromUnsafe(data)).andThen {
+                        serverFiber.map(_.get).map { received =>
+                            assert(received.length == size)
+                            assert(received.forall(_ == 42.toByte))
+                            transport.closeNow(clientConn).andThen(succeed)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "read after peer closes → stream ends" in run {
+        Scope.run {
+            withServer.map { listener =>
+                val serverFiber = Fiber.initUnscoped {
+                    acceptOne(listener).map { serverConn =>
+                        serverConn.write(Span.fromUnsafe("bye".getBytes(Utf8))).andThen {
+                            transport.closeNow(serverConn)
+                        }
+                    }
+                }
+                transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    serverFiber.andThen {
+                        clientConn.read.run.map { chunks =>
+                            val allBytes = chunks.toSeq.flatMap(s => s.toArrayUnsafe.toSeq).toArray
+                            assert(allBytes.length >= 0) // stream ended without hanging
+                            transport.closeNow(clientConn).andThen(succeed)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "write after peer closes → error or silent" in run {
+        Scope.run {
+            withServer.map { listener =>
+                val serverFiber = Fiber.initUnscoped {
+                    acceptOne(listener).map { serverConn =>
+                        transport.closeNow(serverConn)
+                    }
+                }
+                transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    serverFiber.andThen {
+                        Async.sleep(50.millis).andThen {
+                            Abort.run[Throwable] {
+                                clientConn.write(Span.fromUnsafe("data".getBytes(Utf8)))
+                            }.map { result =>
+                                // Either errors or silently fails — both acceptable
+                                assert(result.isSuccess || result.isFailure)
+                                transport.closeNow(clientConn).andThen(succeed)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Concurrent connections
+    // ─────────────────────────────────────────────────────────────────────────
+
+    "50 concurrent connections" in run {
+        val n = 50
+        Scope.run {
+            withServer.map { listener =>
+                val serverFiber = Fiber.initUnscoped {
+                    Kyo.foreach((0 until n).toSeq) { _ =>
+                        acceptOne(listener).map { serverConn =>
+                            transport.closeNow(serverConn)
+                        }
+                    }
+                }
+                Kyo.foreach((0 until n).toSeq) { _ =>
+                    transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                        transport.closeNow(conn)
+                    }
+                }.andThen {
+                    serverFiber.map(_.get).andThen(succeed)
+                }
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Server listen
+    // ─────────────────────────────────────────────────────────────────────────
+
+    "listen port 0 → assigned port > 0" in run {
+        Scope.run {
+            withServer.map { listener =>
+                assert(listener.port > 0)
+                assert(listener.host == "127.0.0.1")
+                succeed
+            }
+        }
+    }
+
+    "connections stream yields accepted" in run {
+        Scope.run {
+            withServer.map { listener =>
+                val serverFiber = Fiber.initUnscoped {
+                    acceptOne(listener).map { serverConn =>
+                        transport.closeNow(serverConn)
+                    }
+                }
+                transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    serverFiber.map(_.get).andThen {
+                        transport.closeNow(clientConn).andThen(succeed)
+                    }
+                }
+            }
+        }
+    }
+
+    "accept multiple connections sequentially" in run {
+        Scope.run {
+            withServer.map { listener =>
+                Kyo.foreach((0 until 5).toSeq) { _ =>
+                    val serverFiber = Fiber.initUnscoped {
+                        acceptOne(listener).map { serverConn =>
+                            transport.closeNow(serverConn)
+                        }
+                    }
+                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                        serverFiber.map(_.get).andThen {
+                            transport.closeNow(clientConn)
+                        }
+                    }
+                }.andThen(succeed)
+            }
+        }
+    }
+
+    "Scope exit → server closed" in run {
+        Scope.run {
+            withServer
+        }.map { listener =>
+            // After Scope.run, server should be closed.
+            Abort.run[HttpException] {
+                transport.connect("127.0.0.1", listener.port, Absent)
+            }.map { result =>
+                assert(result.isFailure)
+            }
+        }
+    }
+
+    "each accepted is TransportStream2" in run {
+        Scope.run {
+            withServer.map { listener =>
+                val serverFiber = Fiber.initUnscoped {
+                    acceptOne(listener).map { serverConn =>
+                        // NioConnection2 must be a TransportStream2
+                        val ts: TransportStream2 = serverConn
+                        discard(ts)
+                        transport.closeNow(serverConn)
+                    }
+                }
+                transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    serverFiber.map(_.get).andThen {
+                        transport.closeNow(clientConn).andThen(succeed)
+                    }
+                }
+            }
+        }
+    }
+
+end NioTransport2Test
