@@ -34,7 +34,7 @@ class MeterTest extends Test:
                 w1 <- t.pendingWaiters
                 b2 <- Promise.init[Unit, Any]
                 f2 <- Fiber.initUnscoped(b2.completeUnit.map(_ => t.run(2)))
-                _  <- b2.get
+                _  <- b2.get.andThen(untilTrue(t.pendingWaiters.map(_ > 0)))
                 a2 <- t.availablePermits
                 w2 <- t.pendingWaiters
                 d1 <- f1.done
