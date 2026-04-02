@@ -181,6 +181,15 @@ class SafepointTest extends Test:
         assert(res.eval == 4)
     }
 
+    "no NPE when safepoint leaks across threads (#1095)" in {
+        val safepoint = Safepoint.get
+        val result = fork {
+            given Safepoint = safepoint
+            (1: Int < Any).map(_ + 1).eval
+        }
+        assert(result.eval == 2)
+    }
+
     "interceptors" - {
         abstract class TestInterceptor extends Safepoint.Interceptor:
             def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = {}

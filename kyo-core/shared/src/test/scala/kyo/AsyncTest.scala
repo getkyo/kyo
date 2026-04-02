@@ -1602,4 +1602,121 @@ class AsyncTest extends Test:
         }
     }
 
+    "resource cleanup on interrupt" - {
+
+        "interrupt runs Sync.ensure finalizer" in runJVM {
+            for
+                called <- AtomicBoolean.init(false)
+                fiber <- Fiber.initUnscoped {
+                    Sync.ensure(called.set(true)) {
+                        Async.sleep(1.day)
+                    }
+                }
+                _           <- Async.sleep(10.millis)
+                interrupted <- fiber.interrupt
+                _           <- untilTrue(called.get)
+                flag        <- called.get
+            yield
+                assert(interrupted)
+                assert(flag)
+        }
+
+        "interrupt runs Scope.ensure finalizer" in runJVM {
+            for
+                counter <- AtomicInt.init(0)
+                fiber <- Fiber.initUnscoped {
+                    Scope.run {
+                        Scope.ensure(counter.incrementAndGet.unit).andThen(Async.sleep(1.day))
+                    }
+                }
+                _           <- Async.sleep(10.millis)
+                interrupted <- fiber.interrupt
+                _           <- untilTrue(counter.get.map(_ == 1))
+                count       <- counter.get
+            yield
+                assert(interrupted)
+                assert(count == 1)
+        }
+
+        "nested scopes under interrupt" in runJVM {
+            for
+                outer <- AtomicInt.init(0)
+                inner <- AtomicInt.init(0)
+                fiber <- Fiber.initUnscoped {
+                    Scope.run {
+                        Scope.ensure(outer.incrementAndGet.unit).andThen {
+                            Scope.run {
+                                Scope.ensure(inner.incrementAndGet.unit).andThen(Async.sleep(1.day))
+                            }
+                        }
+                    }
+                }
+                _           <- Async.sleep(10.millis)
+                interrupted <- fiber.interrupt
+                _           <- untilTrue(inner.get.map(_ == 1))
+                _           <- untilTrue(outer.get.map(_ == 1))
+                innerCount  <- inner.get
+                outerCount  <- outer.get
+            yield
+                assert(interrupted)
+                assert(innerCount == 1)
+                assert(outerCount == 1)
+        }
+
+        "timeout triggers scope cleanup" in runJVM {
+            for
+                counter <- AtomicInt.init(0)
+                result <- Abort.run[Timeout] {
+                    Async.timeout(10.millis) {
+                        Scope.run {
+                            Scope.ensure(counter.incrementAndGet.unit).andThen(Async.sleep(1.day))
+                        }
+                    }
+                }
+                _     <- untilTrue(counter.get.map(_ == 1))
+                count <- counter.get
+            yield
+                assert(result.isFailure)
+                assert(count == 1)
+        }
+
+        "rapid interrupt after fiber init (#1458)" in runJVM {
+            Kyo.foreach(1 to 100) { _ =>
+                for
+                    fiber       <- Fiber.initUnscoped(Async.sleep(1.day))
+                    interrupted <- fiber.interrupt
+                    result      <- fiber.getResult
+                yield
+                    assert(interrupted)
+                    assert(result.isPanic) // Fiber was actually interrupted, not just completed
+            }.map(_ => succeed)
+        }
+
+        "interrupt during acquireRelease body" in runJVM {
+            for
+                counter <- AtomicInt.init(0)
+                fiber <- Fiber.initUnscoped {
+                    Scope.run {
+                        Scope.acquireRelease(Sync.defer("resource"))(_ => counter.incrementAndGet.unit)
+                            .andThen(Async.sleep(1.day))
+                    }
+                }
+                _           <- Async.sleep(10.millis)
+                interrupted <- fiber.interrupt
+                _           <- untilTrue(counter.get.map(_ == 1))
+                count       <- counter.get
+            yield
+                assert(interrupted)
+                assert(count == 1)
+        }
+
+        "Duration.Zero timeout still interrupts (#1339)" in runJVM {
+            for
+                result <- Abort.run[Timeout] {
+                    Async.timeout(Duration.Zero)(Async.sleep(1.day))
+                }
+            yield assert(result.isFailure)
+        }
+    }
+
 end AsyncTest
