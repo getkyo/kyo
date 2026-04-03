@@ -1,12 +1,9 @@
-# STEERING
+# URGENT STEERING
 
-Stop analyzing. Start implementing. The Native TLS test setup:
+DO NOT add timeouts to kqueueWait. The blocking wait is BY DESIGN. Kyo's scheduler compensates.
 
-1. Create TlsTestHelper.scala that generates cert+key with openssl CLI
-2. Update HttpTestPlatformBackend to set tlsServerAvailable = true
-3. The test's `runServer` passes `config.tls(TlsConfig.default)` — but TlsConfig.default has no cert paths. Create a TlsTestHelper that provides a TlsConfig with cert/key paths for the server.
-4. For client-side trust: TlsConfig has `trustAll = true`. Check if Native TLS supports this — if not, skip the TLS client validation for now.
+The kqueueRegister return check fix (check if registration failed and complete promise immediately) was the correct approach. Keep that.
 
-For JS: skip for now. Focus on Native first.
+Run the full Native test suite now and report. If bidirectional concurrent exchange still fails, accept it as a known limitation and move on.
 
-Compile, don't run tests yet.
+DO NOT modify kyo_tcp.c or PosixBindings.scala.

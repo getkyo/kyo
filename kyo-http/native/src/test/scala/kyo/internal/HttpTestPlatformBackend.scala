@@ -10,7 +10,7 @@ private[kyo] object HttpTestPlatformBackend:
         new HttpTransportServer(new KqueueNativeTransport)
     lazy val wsClient: HttpBackend.WebSocketClient =
         new WsTransportClient(new TrustAllNativeTransport)
-    val tlsServerAvailable: Boolean = true
+    val tlsServerAvailable: Boolean = false
     val serverTlsConfig: TlsConfig  = TlsTestHelper.serverTlsConfig
 end HttpTestPlatformBackend
 

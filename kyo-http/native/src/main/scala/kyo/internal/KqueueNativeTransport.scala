@@ -67,7 +67,13 @@ private[kyo] class KqueueIoLoop extends IoLoop:
             Sync.Unsafe.defer {
                 val writeSlot = Maybe(pending.get(fd)).map(_._2).getOrElse(Absent)
                 pending.put(fd, (Present(promise.unsafe), writeSlot))
-                discard(kqueueRegister(kq, fd, -1)) // EVFILT_READ, EV_ONESHOT
+                val rc = kqueueRegister(kq, fd, -1) // EVFILT_READ, EV_ONESHOT
+                // If registration fails (e.g. fd already closed), complete the promise immediately
+                // to prevent hanging forever on a dead fd.
+                if rc < 0 then
+                    pending.remove(fd)
+                    promise.unsafe.completeUnitDiscard()
+                end if
             }.andThen(promise.get)
         }
 
@@ -76,7 +82,13 @@ private[kyo] class KqueueIoLoop extends IoLoop:
             Sync.Unsafe.defer {
                 val readSlot = Maybe(pending.get(fd)).map(_._1).getOrElse(Absent)
                 pending.put(fd, (readSlot, Present(promise.unsafe)))
-                discard(kqueueRegister(kq, fd, -2)) // EVFILT_WRITE, EV_ONESHOT
+                val rc = kqueueRegister(kq, fd, -2) // EVFILT_WRITE, EV_ONESHOT
+                // If registration fails (e.g. fd already closed), complete the promise immediately
+                // to prevent hanging forever on a dead fd.
+                if rc < 0 then
+                    pending.remove(fd)
+                    promise.unsafe.completeUnitDiscard()
+                end if
             }.andThen(promise.get)
         }
 
