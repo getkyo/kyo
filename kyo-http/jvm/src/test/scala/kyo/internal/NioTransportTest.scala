@@ -168,17 +168,25 @@ class NioTransportTest extends kyo.Test:
 
         Scope.run {
             withServer.map { listener =>
-                val serverFiber = Fiber.initUnscoped {
-                    acceptOne(listener).map { serverConn =>
-                        readN(serverConn, size)
-                    }
-                }
-                transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
-                    clientConn.write(Span.fromUnsafe(data)).andThen {
-                        serverFiber.map(_.get).map { received =>
-                            assert(received.length == size)
-                            assert(received.forall(_ == 42.toByte))
-                            transport.closeNow(clientConn).andThen(succeed)
+                Promise.init[NioConnection, Any].map { serverConnPromise =>
+                    Fiber.initUnscoped {
+                        acceptOne(listener).map { serverConn =>
+                            serverConnPromise.complete(Result.succeed(serverConn)).andThen {
+                                readN(serverConn, size)
+                            }
+                        }
+                    }.map { serverFiber =>
+                        transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                            // Wait for server to accept before writing
+                            serverConnPromise.get.andThen {
+                                clientConn.write(Span.fromUnsafe(data)).andThen {
+                                    serverFiber.get.map { received =>
+                                        assert(received.length == size)
+                                        assert(received.forall(_ == 42.toByte))
+                                        transport.closeNow(clientConn).andThen(succeed)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
