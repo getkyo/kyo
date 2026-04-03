@@ -27,7 +27,7 @@ private[kyo] class EpollIoLoop extends IoLoop:
     def start()(using Frame): Unit < Async =
         Fiber.initUnscoped {
             Loop.foreach {
-                Sync.defer {
+                Sync.Unsafe.defer {
                     Zone {
                         val outFds    = alloc[CInt](64)
                         val outEvents = alloc[CInt](64)
@@ -38,7 +38,6 @@ private[kyo] class EpollIoLoop extends IoLoop:
                                 val fd    = outFds(i)
                                 val event = outEvents(i)
                                 Maybe(pending.get(fd)).foreach { entry =>
-                                    import AllowUnsafe.embrace.danger
                                     if (event & 1) != 0 then // EPOLLIN
                                         entry._1 match
                                             case Present(p) =>
@@ -66,8 +65,7 @@ private[kyo] class EpollIoLoop extends IoLoop:
 
     def awaitReadable(fd: Int)(using Frame): Unit < Async =
         Promise.init[Unit, Any].map { promise =>
-            Sync.defer {
-                import AllowUnsafe.embrace.danger
+            Sync.Unsafe.defer {
                 val writeSlot = Maybe(pending.get(fd)).map(_._2).getOrElse(Absent)
                 pending.put(fd, (Present(promise.unsafe), writeSlot))
                 discard(epollRegister(epfd, fd, 1)) // EPOLLIN | EPOLLONESHOT
@@ -76,8 +74,7 @@ private[kyo] class EpollIoLoop extends IoLoop:
 
     def awaitWritable(fd: Int)(using Frame): Unit < Async =
         Promise.init[Unit, Any].map { promise =>
-            Sync.defer {
-                import AllowUnsafe.embrace.danger
+            Sync.Unsafe.defer {
                 val readSlot = Maybe(pending.get(fd)).map(_._1).getOrElse(Absent)
                 pending.put(fd, (readSlot, Present(promise.unsafe)))
                 discard(epollRegister(epfd, fd, 2)) // EPOLLOUT | EPOLLONESHOT
@@ -200,8 +197,7 @@ final class EpollNativeTransport(
         Sync.defer(!c.closed && tcpIsAlive(c.fd) == 1)
 
     def closeNow(c: EpollConnection)(using Frame): Unit < Sync =
-        Sync.defer {
-            import AllowUnsafe.embrace.danger
+        Sync.Unsafe.defer {
             c.closed = true
             c.loop.cancelFd(c.fd)
             c.tlsStream match
@@ -261,9 +257,8 @@ final class EpollNativeTransport(
                                     boundPort,
                                     boundHost,
                                     connStream,
-                                    close = Sync.defer {
+                                    close = Sync.Unsafe.defer {
                                         closed.set(true)
-                                        import AllowUnsafe.embrace.danger
                                         acceptLoop.cancelFd(serverFd)
                                         tcpClose(serverFd)
                                     }
@@ -331,9 +326,8 @@ final class EpollNativeTransport(
                                             boundPort,
                                             boundHost,
                                             connStream,
-                                            close = Sync.defer {
+                                            close = Sync.Unsafe.defer {
                                                 closed.set(true)
-                                                import AllowUnsafe.embrace.danger
                                                 acceptLoop.cancelFd(serverFd)
                                                 tcpClose(serverFd)
                                             }

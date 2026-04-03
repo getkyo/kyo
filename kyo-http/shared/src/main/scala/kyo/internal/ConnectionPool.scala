@@ -90,7 +90,7 @@ private[kyo] object ConnectionPool:
     final private[internal] class HostPool(capacity: Int):
         require(capacity >= 2, s"maxConnectionsPerHost must be >= 2: $capacity")
 
-        private val connections = new Array[AnyRef](capacity)
+        private val connections = Array.fill[Maybe[AnyRef]](capacity)(Absent)
         private val timestamps  = new Array[Long](capacity)
         private val sequences   = new AtomicLongArray(Array.tabulate[Long](capacity)(_.toLong))
         private val head        = new AtomicLong(0)
@@ -112,9 +112,9 @@ private[kyo] object ConnectionPool:
                 else if !head.compareAndSet(currentHead, currentHead + 1) then
                     poll(idleTimeoutNanos, isAlive, discardConn)
                 else
-                    val conn = connections(idx).asInstanceOf[C]
+                    val conn = connections(idx).get.asInstanceOf[C]
                     val ts   = timestamps(idx)
-                    connections(idx) = null
+                    connections(idx) = Absent
                     sequences.lazySet(idx, currentHead + capacity)
                     val elapsed = java.lang.System.nanoTime() - ts
                     if elapsed > idleTimeoutNanos then
@@ -140,7 +140,7 @@ private[kyo] object ConnectionPool:
                 else if !tail.compareAndSet(currentTail, currentTail + 1) then
                     release(conn, discardConn)
                 else
-                    connections(idx) = conn.asInstanceOf[AnyRef]
+                    connections(idx) = Present(conn.asInstanceOf[AnyRef])
                     timestamps(idx) = java.lang.System.nanoTime()
                     sequences.lazySet(idx, currentTail + 1)
                     Kyo.unit
@@ -174,10 +174,14 @@ private[kyo] object ConnectionPool:
                 val seq         = sequences.get(idx)
                 if seq < currentHead + 1 then ()
                 else if head.compareAndSet(currentHead, currentHead + 1) then
-                    val conn = connections(idx)
-                    connections(idx) = null
+                    connections(idx) match
+                        case Present(conn) =>
+                            connections(idx) = Absent
+                            kyo.discard(into += conn.asInstanceOf[C])
+                        case Absent =>
+                            connections(idx) = Absent
+                    end match
                     sequences.lazySet(idx, currentHead + capacity)
-                    if conn ne null then kyo.discard(into += conn.asInstanceOf[C])
                     loop()
                 else loop()
                 end if
