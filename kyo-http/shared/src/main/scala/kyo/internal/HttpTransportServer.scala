@@ -100,7 +100,9 @@ class HttpTransportServer(private[kyo] val transport: Transport)(using
                                         case HttpRouter.FindError.Options(_) =>
                                             if Http1Protocol.isKeepAlive(headers) then Loop.continue(remaining)
                                             else Loop.done(())
-                                        case _ => Loop.done(())
+                                        case _ =>
+                                            if Http1Protocol.isKeepAlive(headers) then Loop.continue(remaining)
+                                            else Loop.done(())
                                 }
                             case Result.Panic(_) =>
                                 writeErrorResponse(conn, HttpStatus(500), HttpHeaders.empty).andThen(Loop.done(()))
