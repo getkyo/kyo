@@ -198,10 +198,8 @@ class WebSocketLocalTest extends Test:
             connectTest(
                 ws => ws.close(),
                 ws =>
-                    Async.sleep(10.millis).andThen(
-                        Abort.run[Closed](ws.take()).map(result =>
-                            discard(assert(result.isFailure || result.isPanic))
-                        )
+                    Abort.run[Closed](ws.take()).map(result =>
+                        discard(assert(result.isFailure || result.isPanic))
                     )
             ).andThen(succeed)
         }

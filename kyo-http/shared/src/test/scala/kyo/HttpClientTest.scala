@@ -1363,7 +1363,7 @@ class HttpClientTest extends Test:
             val streamEp = streamRoute.handler { _ =>
                 val chunks = Stream[Span[Byte], Async] {
                     kyo.Loop.foreach {
-                        Async.sleep(1.millis).andThen {
+                        Async.delay(1.millis) {
                             kyo.Emit.valueWith(Chunk(Span.fromUnsafe("data\n".getBytes("UTF-8"))))(kyo.Loop.continue[Unit])
                         }
                     }
@@ -1590,7 +1590,7 @@ class HttpClientTest extends Test:
 
         "concurrent burst within pool capacity" - {
             val route = HttpRoute.getRaw("burst").response(_.bodyText)
-            val ep    = route.handler(_ => Async.sleep(1.millis).andThen(HttpResponse.ok("ok")))
+            val ep    = route.handler(_ => Async.delay(1.millis)(HttpResponse.ok("ok")))
             runServer(ep) { url =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
@@ -1902,7 +1902,7 @@ class HttpClientTest extends Test:
             val ep = route.handler { _ =>
                 val chunks = Stream[Span[Byte], Async] {
                     kyo.Loop.foreach {
-                        Async.sleep(1.millis).andThen {
+                        Async.delay(1.millis) {
                             kyo.Emit.valueWith(Chunk(Span.fromUnsafe("data\n".getBytes("UTF-8"))))(kyo.Loop.continue[Unit])
                         }
                     }
@@ -1910,15 +1910,13 @@ class HttpClientTest extends Test:
                 HttpResponse.ok.addField("body", chunks)
             }
             runServer(ep) { url =>
-                Async.timeout(5.seconds) {
-                    client.connectWith(url, Absent) { conn =>
-                        Sync.ensure(client.closeNow(conn)) {
-                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/infinite"))) { resp =>
-                                assert(resp.status == HttpStatus.OK)
-                                // Read just the first chunk, then let scope close — should not hang
-                                resp.fields.body.take(1).run.map { chunks =>
-                                    assert(chunks.size == 1)
-                                }
+                client.connectWith(url, Absent) { conn =>
+                    Sync.ensure(client.closeNow(conn)) {
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/infinite"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            // Read just the first chunk, then let scope close — should not hang
+                            resp.fields.body.take(1).run.map { chunks =>
+                                assert(chunks.size == 1)
                             }
                         }
                     }
@@ -1938,16 +1936,14 @@ class HttpClientTest extends Test:
                 HttpResponse.ok.addField("body", failingStream)
             }
             runServer(ep) { url =>
-                Async.timeout(5.seconds) {
-                    client.connectWith(url, Absent) { conn =>
-                        Sync.ensure(client.closeNow(conn)) {
-                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/fail-stream"))) { resp =>
-                                assert(resp.status == HttpStatus.OK)
-                                // Stream should either deliver partial data or error, but not hang
-                                Abort.run[Throwable](Abort.catching[Throwable] {
-                                    resp.fields.body.run.map { _ => succeed }
-                                }).map(_ => succeed)
-                            }
+                client.connectWith(url, Absent) { conn =>
+                    Sync.ensure(client.closeNow(conn)) {
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/fail-stream"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            // Stream should either deliver partial data or error, but not hang
+                            Abort.run[Throwable](Abort.catching[Throwable] {
+                                resp.fields.body.run.map { _ => succeed }
+                            }).map(_ => succeed)
                         }
                     }
                 }

@@ -1,14 +1,5 @@
 # STEERING
 
-1. Tests do NOT need to create or pass IoLoopGroup. They just use `new NioTransport(clientSslContext = ...)` — the default group is used automatically. Do NOT change test files to pass a group.
-
-2. The default lazy group needs a JVM shutdown hook to close selectors:
-```scala
-object NioTransport:
-    lazy val defaultGroup: IoLoopGroup[NioIoLoop] =
-        val g = new IoLoopGroup(...)
-        Runtime.getRuntime.addShutdownHook(new Thread(() => g.closeAll()))
-        g
-```
-
-Same for KqueueNativeTransport and EpollNativeTransport on Native.
+The test framework (BaseKyoCoreTest.run) already has a default 15-second timeout. 
+Remove ALL `Async.timeout` guards from tests — they are redundant.
+The only `Async.timeout` that should remain is in tests that TEST the timeout feature itself (e.g., HttpClientTest timeout configuration tests).

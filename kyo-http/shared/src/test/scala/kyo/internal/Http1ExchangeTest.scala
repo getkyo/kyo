@@ -115,7 +115,7 @@ class Http1ExchangeTest extends kyo.Test:
         "exchange.close → pending fails with Closed" in run {
             withExchange { server =>
                 // Server never responds — just keeps the connection open without writing
-                Async.sleep(10.seconds)
+                Latch.init(1).map(_.await)
             } { exchange =>
                 val req = RawHttpRequest(HttpMethod.GET, "/slow", HttpHeaders.empty, HttpBody.Empty)
                 Fiber.initUnscoped(exchange(req)).map { fiber =>
@@ -138,24 +138,16 @@ class Http1ExchangeTest extends kyo.Test:
                 val req = RawHttpRequest(HttpMethod.GET, "/ping", HttpHeaders.empty, HttpBody.Empty)
                 exchange(req).andThen {
                     // awaitDone should block — not complete immediately
-                    AtomicRef.init(false).map { done =>
-                        Fiber.initUnscoped {
-                            Abort.run[Closed](exchange.awaitDone).andThen {
-                                done.set(true)
-                            }
-                        }.map { awaitFiber =>
-                            // Give awaitDone a moment — it should NOT have completed yet
-                            Async.sleep(50.millis).andThen {
-                                done.get.map { isDone =>
-                                    assert(!isDone, "awaitDone should not complete before close")
-                                    // Now close the exchange
-                                    exchange.close.andThen {
-                                        Abort.run[Closed](awaitFiber.get).map { _ =>
-                                            done.get.map { finalDone =>
-                                                assert(finalDone, "awaitDone should complete after close")
-                                            }
-                                        }
-                                    }
+                    Fiber.initUnscoped {
+                        Abort.run[Closed](exchange.awaitDone)
+                    }.map { awaitFiber =>
+                        // awaitDone should NOT have completed yet (exchange still open)
+                        awaitFiber.done.map { isDone =>
+                            assert(!isDone, "awaitDone should not complete before close")
+                            // Now close the exchange
+                            exchange.close.andThen {
+                                Abort.run[Closed](awaitFiber.get).map { _ =>
+                                    succeed
                                 }
                             }
                         }

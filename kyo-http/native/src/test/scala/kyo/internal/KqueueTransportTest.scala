@@ -281,23 +281,26 @@ class KqueueTransportTest extends kyo.Test:
         Scope.run {
             onMacOS { transport =>
                 withServer(transport).map { listener =>
-                    val serverFiber = Fiber.initUnscoped {
-                        acceptOne(listener).map { serverConn =>
-                            transport.closeNow(serverConn)
+                    Promise.init[Unit, Any].map { serverClosed =>
+                        val serverFiber = Fiber.initUnscoped {
+                            acceptOne(listener).map { serverConn =>
+                                transport.closeNow(serverConn).andThen {
+                                    serverClosed.complete(Result.succeed(()))
+                                }
+                            }
                         }
-                    }
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
-                        serverFiber.andThen {
-                            // Give the close a moment to propagate
-                            Async.sleep(50.millis).andThen {
-                                Abort.run[Throwable] {
-                                    // Writing to a closed connection should either error or silently fail
-                                    clientConn.write(Span.fromUnsafe("data".getBytes(Utf8)))
-                                }.map { result =>
-                                    // Either it errors, or the write is silently ignored
-                                    // Both are acceptable behaviors for a closed peer connection
-                                    assert(result.isSuccess || result.isFailure)
-                                    transport.closeNow(clientConn).andThen(succeed)
+                        transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                            serverFiber.andThen {
+                                serverClosed.get.andThen {
+                                    Abort.run[Throwable] {
+                                        // Writing to a closed connection should either error or silently fail
+                                        clientConn.write(Span.fromUnsafe("data".getBytes(Utf8)))
+                                    }.map { result =>
+                                        // Either it errors, or the write is silently ignored
+                                        // Both are acceptable behaviors for a closed peer connection
+                                        assert(result.isSuccess || result.isFailure)
+                                        transport.closeNow(clientConn).andThen(succeed)
+                                    }
                                 }
                             }
                         }
@@ -669,13 +672,8 @@ class KqueueTransportTest extends kyo.Test:
             onMacOS { transport =>
                 withServer(transport).map { listener =>
                     listener.close.andThen {
-                        Abort.run[Timeout](Async.timeout(2.seconds) {
-                            listener.connections.take(1).run.map { chunk =>
-                                assert(chunk.isEmpty)
-                            }
-                        }).map {
-                            case Result.Success(a) => a
-                            case _                 => fail("Timed out waiting for connections stream to terminate")
+                        listener.connections.take(1).run.map { chunk =>
+                            assert(chunk.isEmpty)
                         }
                     }
                 }
@@ -690,16 +688,9 @@ class KqueueTransportTest extends kyo.Test:
                     Fiber.initUnscoped {
                         listener.connections.take(1).run
                     }.map { fiber =>
-                        Async.sleep(50.millis).andThen {
-                            listener.close.andThen {
-                                Abort.run[Timeout](Async.timeout(2.seconds) {
-                                    fiber.get.map { chunk =>
-                                        assert(chunk.isEmpty)
-                                    }
-                                }).map {
-                                    case Result.Success(a) => a
-                                    case _                 => fail("Timed out waiting for connections stream to terminate")
-                                }
+                        listener.close.andThen {
+                            fiber.get.map { chunk =>
+                                assert(chunk.isEmpty)
                             }
                         }
                     }

@@ -220,20 +220,24 @@ class NioTransportTest extends kyo.Test:
     "write after peer closes → error or silent" in run {
         Scope.run {
             withServer.map { listener =>
-                val serverFiber = Fiber.initUnscoped {
-                    acceptOne(listener).map { serverConn =>
-                        transport.closeNow(serverConn)
+                Promise.init[Unit, Any].map { serverClosed =>
+                    val serverFiber = Fiber.initUnscoped {
+                        acceptOne(listener).map { serverConn =>
+                            transport.closeNow(serverConn).andThen {
+                                serverClosed.complete(Result.succeed(()))
+                            }
+                        }
                     }
-                }
-                transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
-                    serverFiber.andThen {
-                        Async.sleep(50.millis).andThen {
-                            Abort.run[Throwable] {
-                                clientConn.write(Span.fromUnsafe("data".getBytes(Utf8)))
-                            }.map { result =>
-                                // Either errors or silently fails — both acceptable
-                                assert(result.isSuccess || result.isFailure)
-                                transport.closeNow(clientConn).andThen(succeed)
+                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                        serverFiber.andThen {
+                            serverClosed.get.andThen {
+                                Abort.run[Throwable] {
+                                    clientConn.write(Span.fromUnsafe("data".getBytes(Utf8)))
+                                }.map { result =>
+                                    // Either errors or silently fails — both acceptable
+                                    assert(result.isSuccess || result.isFailure)
+                                    transport.closeNow(clientConn).andThen(succeed)
+                                }
                             }
                         }
                     }
@@ -359,10 +363,8 @@ class NioTransportTest extends kyo.Test:
         Scope.run {
             withServer.map { listener =>
                 listener.close.andThen {
-                    Async.timeout(2.seconds) {
-                        listener.connections.take(1).run.map { chunk =>
-                            assert(chunk.isEmpty)
-                        }
+                    listener.connections.take(1).run.map { chunk =>
+                        assert(chunk.isEmpty)
                     }
                 }
             }
@@ -375,13 +377,9 @@ class NioTransportTest extends kyo.Test:
                 Fiber.init {
                     listener.connections.take(1).run
                 }.map { fiber =>
-                    Async.sleep(50.millis).andThen {
-                        listener.close.andThen {
-                            Async.timeout(2.seconds) {
-                                fiber.get.map { chunk =>
-                                    assert(chunk.isEmpty)
-                                }
-                            }
+                    listener.close.andThen {
+                        fiber.get.map { chunk =>
+                            assert(chunk.isEmpty)
                         }
                     }
                 }

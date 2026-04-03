@@ -320,15 +320,13 @@ class HttpServerTest extends Test:
                 }
             }
             runServer(ep) { url =>
-                Async.timeout(3.seconds) {
-                    sendRaw(url, HttpMethod.OPTIONS, "/sse-opts").map { resp =>
-                        assert(
-                            resp.status == HttpStatus.NoContent,
-                            s"OPTIONS on SSE endpoint should return 204, got ${resp.status}"
-                        )
-                        val allow = resp.headers.get("Allow")
-                        assert(allow.isDefined, "OPTIONS on SSE should include Allow header")
-                    }
+                sendRaw(url, HttpMethod.OPTIONS, "/sse-opts").map { resp =>
+                    assert(
+                        resp.status == HttpStatus.NoContent,
+                        s"OPTIONS on SSE endpoint should return 204, got ${resp.status}"
+                    )
+                    val allow = resp.headers.get("Allow")
+                    assert(allow.isDefined, "OPTIONS on SSE should include Allow header")
                 }
             }
         }
@@ -339,23 +337,21 @@ class HttpServerTest extends Test:
             val getEp     = getRoute.handler(_ => HttpResponse.ok("get-body"))
             val postEp    = postRoute.handler(_ => HttpResponse.ok("post-body"))
             runServer(getEp, postEp) { url =>
-                Async.timeout(3.seconds) {
-                    sendRaw(url, HttpMethod.OPTIONS, "/mixed").map { resp =>
-                        assert(
-                            resp.status == HttpStatus.NoContent,
-                            s"OPTIONS on mixed path should return 204, got ${resp.status}"
-                        )
-                        val allow = resp.headers.get("Allow")
-                        assert(allow.isDefined, "OPTIONS should include Allow header")
-                        assert(allow.get.contains("GET"), "Allow should include GET")
-                        assert(allow.get.contains("POST"), "Allow should include POST")
-                        assert(allow.get.contains("HEAD"), "Allow should include HEAD")
-                        assert(allow.get.contains("OPTIONS"), "Allow should include OPTIONS")
-                        assert(
-                            resp.fields.body != "get-body",
-                            "OPTIONS should not return the GET handler's body"
-                        )
-                    }
+                sendRaw(url, HttpMethod.OPTIONS, "/mixed").map { resp =>
+                    assert(
+                        resp.status == HttpStatus.NoContent,
+                        s"OPTIONS on mixed path should return 204, got ${resp.status}"
+                    )
+                    val allow = resp.headers.get("Allow")
+                    assert(allow.isDefined, "OPTIONS should include Allow header")
+                    assert(allow.get.contains("GET"), "Allow should include GET")
+                    assert(allow.get.contains("POST"), "Allow should include POST")
+                    assert(allow.get.contains("HEAD"), "Allow should include HEAD")
+                    assert(allow.get.contains("OPTIONS"), "Allow should include OPTIONS")
+                    assert(
+                        resp.fields.body != "get-body",
+                        "OPTIONS should not return the GET handler's body"
+                    )
                 }
             }
         }
@@ -1202,9 +1198,8 @@ class HttpServerTest extends Test:
         "concurrent handler isolation" - {
             val route = HttpRoute.postText("handler-id")
             val ep = route.handler { req =>
-                val id    = req.fields.body
-                val delay = id.toInt % 2
-                Async.sleep(delay.millis).andThen(HttpResponse.ok(id))
+                val id = req.fields.body
+                HttpResponse.ok(id)
             }
             runServer(ep) { url =>
                 val repeats = 10
@@ -1256,7 +1251,7 @@ class HttpServerTest extends Test:
                         )
                     ))
                     _           <- latch.release
-                    fastResults <- Async.timeout(5.seconds)(Kyo.foreach(fastFibers)(_.get))
+                    fastResults <- Kyo.foreach(fastFibers)(_.get)
                     _           <- slowFiber.interrupt
                 yield assert(fastResults.forall(_.status == HttpStatus.OK)))
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
@@ -1928,7 +1923,7 @@ class HttpServerTest extends Test:
                 val ep = route.handler { _ =>
                     val infiniteStream = Stream[Span[Byte], Async] {
                         kyo.Loop.foreach {
-                            Async.sleep(1.millis).andThen {
+                            Async.delay(1.millis) {
                                 kyo.Emit.valueWith(Chunk(Span.fromUnsafe("chunk\n".getBytes("UTF-8"))))(kyo.Loop.continue[Unit])
                             }
                         }
@@ -2002,7 +1997,7 @@ class HttpServerTest extends Test:
                     Sync.ensure(client.closeNow(conn)) {
                         val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
                             kyo.Emit.valueWith(Chunk(Span.fromUnsafe("a".getBytes("UTF-8")))) {
-                                Async.sleep(1.millis).andThen {
+                                Async.delay(1.millis) {
                                     kyo.Emit.valueWith(Chunk(Span.fromUnsafe("b".getBytes("UTF-8"))))(())
                                 }
                             }
@@ -2342,15 +2337,13 @@ class HttpServerTest extends Test:
                     HttpResponse.ok.addField("body", events)
                 }
             withCorsServer(HttpServerConfig.Cors.allowAll, corsEp) { url =>
-                Async.timeout(3.seconds) {
-                    sendRaw(url, HttpMethod.OPTIONS, "/cors-sse").map { resp =>
-                        assert(
-                            resp.status == HttpStatus.NoContent,
-                            s"CORS preflight on SSE should return 204, got ${resp.status}"
-                        )
-                        val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
-                        assert(allowOrigin.isDefined, "CORS preflight on SSE should include CORS headers")
-                    }
+                sendRaw(url, HttpMethod.OPTIONS, "/cors-sse").map { resp =>
+                    assert(
+                        resp.status == HttpStatus.NoContent,
+                        s"CORS preflight on SSE should return 204, got ${resp.status}"
+                    )
+                    val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
+                    assert(allowOrigin.isDefined, "CORS preflight on SSE should include CORS headers")
                 }
             }
         }
@@ -2361,22 +2354,20 @@ class HttpServerTest extends Test:
             val getEp     = getRoute.handler(_ => HttpResponse.ok("get"))
             val postEp    = postRoute.handler(_ => HttpResponse.ok("post"))
             withCorsServer(HttpServerConfig.Cors.allowAll, getEp, postEp) { url =>
-                Async.timeout(3.seconds) {
-                    sendRaw(url, HttpMethod.OPTIONS, "/cors-mixed").map { resp =>
-                        assert(
-                            resp.status == HttpStatus.NoContent,
-                            s"CORS preflight on mixed path should return 204, got ${resp.status}"
-                        )
-                        val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
-                        assert(allowOrigin.isDefined, "CORS preflight should include CORS headers")
-                        // RFC 9110: Allow must reflect all actually registered methods
-                        val allow = resp.headers.get("Allow")
-                        assert(allow.isDefined, "Should include Allow header")
-                        assert(allow.get.contains("GET"), "Allow should include GET")
-                        assert(allow.get.contains("POST"), "Allow should include POST")
-                        assert(allow.get.contains("HEAD"), "Allow should include HEAD")
-                        assert(allow.get.contains("OPTIONS"), "Allow should include OPTIONS")
-                    }
+                sendRaw(url, HttpMethod.OPTIONS, "/cors-mixed").map { resp =>
+                    assert(
+                        resp.status == HttpStatus.NoContent,
+                        s"CORS preflight on mixed path should return 204, got ${resp.status}"
+                    )
+                    val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
+                    assert(allowOrigin.isDefined, "CORS preflight should include CORS headers")
+                    // RFC 9110: Allow must reflect all actually registered methods
+                    val allow = resp.headers.get("Allow")
+                    assert(allow.isDefined, "Should include Allow header")
+                    assert(allow.get.contains("GET"), "Allow should include GET")
+                    assert(allow.get.contains("POST"), "Allow should include POST")
+                    assert(allow.get.contains("HEAD"), "Allow should include HEAD")
+                    assert(allow.get.contains("OPTIONS"), "Allow should include OPTIONS")
                 }
             }
         }
@@ -2469,15 +2460,13 @@ class HttpServerTest extends Test:
                     HttpResponse.ok.addField("body", events)
                 }
             withCorsServer(HttpServerConfig.Cors.allowAll, corsEp) { url =>
-                Async.timeout(3.seconds) {
-                    sendRaw(url, HttpMethod.OPTIONS, "/cors-sse2").map { resp =>
-                        assert(
-                            resp.status == HttpStatus.NoContent,
-                            s"CORS preflight on SSE should return 204, got ${resp.status}"
-                        )
-                        val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
-                        assert(allowOrigin.isDefined, "CORS preflight on SSE should include CORS headers")
-                    }
+                sendRaw(url, HttpMethod.OPTIONS, "/cors-sse2").map { resp =>
+                    assert(
+                        resp.status == HttpStatus.NoContent,
+                        s"CORS preflight on SSE should return 204, got ${resp.status}"
+                    )
+                    val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
+                    assert(allowOrigin.isDefined, "CORS preflight on SSE should include CORS headers")
                 }
             }
         }
@@ -2488,19 +2477,17 @@ class HttpServerTest extends Test:
             val getEp     = getRoute.handler(_ => HttpResponse.ok("get"))
             val postEp    = postRoute.handler(_ => HttpResponse.ok("post"))
             withCorsServer(HttpServerConfig.Cors.allowAll, getEp, postEp) { url =>
-                Async.timeout(3.seconds) {
-                    sendRaw(url, HttpMethod.OPTIONS, "/cors-mixed2").map { resp =>
-                        assert(
-                            resp.status == HttpStatus.NoContent,
-                            s"CORS preflight on mixed path should return 204, got ${resp.status}"
-                        )
-                        val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
-                        assert(allowOrigin.isDefined, "CORS preflight should include CORS headers")
-                        val allow = resp.headers.get("Allow")
-                        assert(allow.isDefined, "Should include Allow header")
-                        assert(allow.get.contains("GET"), "Allow should include GET")
-                        assert(allow.get.contains("POST"), "Allow should include POST")
-                    }
+                sendRaw(url, HttpMethod.OPTIONS, "/cors-mixed2").map { resp =>
+                    assert(
+                        resp.status == HttpStatus.NoContent,
+                        s"CORS preflight on mixed path should return 204, got ${resp.status}"
+                    )
+                    val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
+                    assert(allowOrigin.isDefined, "CORS preflight should include CORS headers")
+                    val allow = resp.headers.get("Allow")
+                    assert(allow.isDefined, "Should include Allow header")
+                    assert(allow.get.contains("GET"), "Allow should include GET")
+                    assert(allow.get.contains("POST"), "Allow should include POST")
                 }
             }
         }
@@ -2672,18 +2659,16 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("sse-repeat").response(_.bodySseJson[User])
             runServer(ep) { url =>
                 var called = false
-                Async.timeout(10.seconds) {
-                    client.connectWith(url, Absent) { conn =>
-                        Sync.ensure(client.closeNow(conn)) {
-                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-repeat"))) { resp =>
-                                assert(resp.status == HttpStatus.OK)
-                                resp.fields.body.take(2).run.map { chunks =>
-                                    called = true
-                                    val events = chunks.toSeq
-                                    assert(events.size == 2)
-                                    assert(events(0).data == User(1, "user-1"))
-                                    assert(events(1).data == User(2, "user-2"))
-                                }
+                client.connectWith(url, Absent) { conn =>
+                    Sync.ensure(client.closeNow(conn)) {
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-repeat"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            resp.fields.body.take(2).run.map { chunks =>
+                                called = true
+                                val events = chunks.toSeq
+                                assert(events.size == 2)
+                                assert(events(0).data == User(1, "user-1"))
+                                assert(events(1).data == User(2, "user-2"))
                             }
                         }
                     }
@@ -2738,18 +2723,16 @@ class HttpServerTest extends Test:
             }
             runServer(ep) { url =>
                 var called = false
-                Async.timeout(10.seconds) {
-                    client.connectWith(url, Absent) { conn =>
-                        Sync.ensure(client.closeNow(conn)) {
-                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-repeat"))) { resp =>
-                                assert(resp.status == HttpStatus.OK)
-                                resp.fields.body.take(2).run.map { chunks =>
-                                    called = true
-                                    val users = chunks.toSeq
-                                    assert(users.size == 2)
-                                    assert(users(0) == User(1, "user-1"))
-                                    assert(users(1) == User(2, "user-2"))
-                                }
+                client.connectWith(url, Absent) { conn =>
+                    Sync.ensure(client.closeNow(conn)) {
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-repeat"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            resp.fields.body.take(2).run.map { chunks =>
+                                called = true
+                                val users = chunks.toSeq
+                                assert(users.size == 2)
+                                assert(users(0) == User(1, "user-1"))
+                                assert(users(1) == User(2, "user-2"))
                             }
                         }
                     }
@@ -2793,14 +2776,12 @@ class HttpServerTest extends Test:
                 HttpResponse.ok.addField("body", events)
             }
             runServer(ep) { url =>
-                Async.timeout(5.seconds) {
-                    client.connectWith(url, Absent) { conn =>
-                        Sync.ensure(client.closeNow(conn)) {
-                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-empty"))) { resp =>
-                                assert(resp.status == HttpStatus.OK)
-                                resp.fields.body.run.map { chunks =>
-                                    assert(chunks.isEmpty)
-                                }
+                client.connectWith(url, Absent) { conn =>
+                    Sync.ensure(client.closeNow(conn)) {
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-empty"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            resp.fields.body.run.map { chunks =>
+                                assert(chunks.isEmpty)
                             }
                         }
                     }
@@ -2813,9 +2794,9 @@ class HttpServerTest extends Test:
             val ep = route.handler { _ =>
                 val events = Stream[HttpSseEvent[String], Async] {
                     Emit.valueWith(Chunk(HttpSseEvent("first", Present("msg"), Absent, Absent))) {
-                        Async.sleep(1.millis).andThen {
+                        Async.delay(1.millis) {
                             Emit.valueWith(Chunk(HttpSseEvent("second", Present("msg"), Absent, Absent))) {
-                                Async.sleep(1.millis).andThen {
+                                Async.delay(1.millis) {
                                     Emit.valueWith(Chunk(HttpSseEvent("third", Present("msg"), Absent, Absent)))(())
                                 }
                             }
@@ -2826,19 +2807,17 @@ class HttpServerTest extends Test:
             }
             runServer(ep) { url =>
                 var called = false
-                Async.timeout(5.seconds) {
-                    client.connectWith(url, Absent) { conn =>
-                        Sync.ensure(client.closeNow(conn)) {
-                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-gaps"))) { resp =>
-                                assert(resp.status == HttpStatus.OK)
-                                resp.fields.body.run.map { chunks =>
-                                    called = true
-                                    val events = chunks.toSeq
-                                    assert(events.size == 3)
-                                    assert(events(0).data == "first")
-                                    assert(events(1).data == "second")
-                                    assert(events(2).data == "third")
-                                }
+                client.connectWith(url, Absent) { conn =>
+                    Sync.ensure(client.closeNow(conn)) {
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-gaps"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            resp.fields.body.run.map { chunks =>
+                                called = true
+                                val events = chunks.toSeq
+                                assert(events.size == 3)
+                                assert(events(0).data == "first")
+                                assert(events(1).data == "second")
+                                assert(events(2).data == "third")
                             }
                         }
                     }
@@ -2886,18 +2865,16 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("sse-delay-map").response(_.bodySseJson[User])
             runServer(ep) { url =>
                 var called = false
-                Async.timeout(10.seconds) {
-                    client.connectWith(url, Absent) { conn =>
-                        Sync.ensure(client.closeNow(conn)) {
-                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-map"))) { resp =>
-                                assert(resp.status == HttpStatus.OK)
-                                resp.fields.body.take(2).run.map { chunks =>
-                                    called = true
-                                    val events = chunks.toSeq
-                                    assert(events.size == 2, s"Expected 2 SSE JSON events, got ${events.size}")
-                                    assert(events(0).data == User(1, "u1"))
-                                    assert(events(1).data == User(2, "u2"))
-                                }
+                client.connectWith(url, Absent) { conn =>
+                    Sync.ensure(client.closeNow(conn)) {
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-map"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            resp.fields.body.take(2).run.map { chunks =>
+                                called = true
+                                val events = chunks.toSeq
+                                assert(events.size == 2, s"Expected 2 SSE JSON events, got ${events.size}")
+                                assert(events(0).data == User(1, "u1"))
+                                assert(events(1).data == User(2, "u2"))
                             }
                         }
                     }
@@ -2920,18 +2897,16 @@ class HttpServerTest extends Test:
             val route = HttpRoute.getRaw("ndjson-loop-delay").response(_.bodyNdjson[User])
             runServer(ep) { url =>
                 var called = false
-                Async.timeout(10.seconds) {
-                    client.connectWith(url, Absent) { conn =>
-                        Sync.ensure(client.closeNow(conn)) {
-                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-loop-delay"))) { resp =>
-                                assert(resp.status == HttpStatus.OK)
-                                resp.fields.body.take(2).run.map { chunks =>
-                                    called = true
-                                    val users = chunks.toSeq
-                                    assert(users.size == 2, s"Expected 2 NDJSON items, got ${users.size}")
-                                    assert(users(0) == User(1, "u1"))
-                                    assert(users(1) == User(2, "u2"))
-                                }
+                client.connectWith(url, Absent) { conn =>
+                    Sync.ensure(client.closeNow(conn)) {
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-loop-delay"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            resp.fields.body.take(2).run.map { chunks =>
+                                called = true
+                                val users = chunks.toSeq
+                                assert(users.size == 2, s"Expected 2 NDJSON items, got ${users.size}")
+                                assert(users(0) == User(1, "u1"))
+                                assert(users(1) == User(2, "u2"))
                             }
                         }
                     }
@@ -2951,17 +2926,15 @@ class HttpServerTest extends Test:
             }
             runServer(ep) { url =>
                 var called = false
-                Async.timeout(5.seconds) {
-                    client.connectWith(url, Absent) { conn =>
-                        Sync.ensure(client.closeNow(conn)) {
-                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-first"))) { resp =>
-                                assert(resp.status == HttpStatus.OK)
-                                resp.fields.body.run.map { chunks =>
-                                    called = true
-                                    val events = chunks.toSeq
-                                    assert(events.size == 1, s"Expected 1 delayed event, got ${events.size}")
-                                    assert(events(0).data == "delayed-event")
-                                }
+                client.connectWith(url, Absent) { conn =>
+                    Sync.ensure(client.closeNow(conn)) {
+                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-first"))) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            resp.fields.body.run.map { chunks =>
+                                called = true
+                                val events = chunks.toSeq
+                                assert(events.size == 1, s"Expected 1 delayed event, got ${events.size}")
+                                assert(events(0).data == "delayed-event")
                             }
                         }
                     }
@@ -3151,10 +3124,8 @@ class HttpServerTest extends Test:
                 }
             }
             runServer(ep) { url =>
-                Async.timeout(3.seconds) {
-                    sendRaw(url, HttpMethod.HEAD, "/head-sse").map { resp =>
-                        assert(resp.fields.body.isEmpty, "HEAD on SSE should have empty body")
-                    }
+                sendRaw(url, HttpMethod.HEAD, "/head-sse").map { resp =>
+                    assert(resp.fields.body.isEmpty, "HEAD on SSE should have empty body")
                 }
             }
         }
@@ -3404,32 +3375,30 @@ class HttpServerTest extends Test:
             val route2 = HttpRoute.getRaw("stream2").response(_.bodySseText)
             runServer(ep1) { url1 =>
                 withServer(ep2) { url2 =>
-                    Async.timeout(10.seconds) {
-                        Async.zip(
-                            client.connectWith(url1, Absent) { conn =>
-                                Sync.ensure(client.closeNow(conn)) {
-                                    client.sendWith(conn, route1, HttpRequest.getRaw(HttpUrl.fromUri("/stream1"))) { resp =>
-                                        resp.fields.body.take(2).run.map { chunks =>
-                                            val events = chunks.toSeq
-                                            assert(events.size == 2)
-                                            assert(events.forall(_.data == "from-server1"))
-                                        }
-                                    }
-                                }
-                            },
-                            client.connectWith(url2, Absent) { conn =>
-                                Sync.ensure(client.closeNow(conn)) {
-                                    client.sendWith(conn, route2, HttpRequest.getRaw(HttpUrl.fromUri("/stream2"))) { resp =>
-                                        resp.fields.body.take(2).run.map { chunks =>
-                                            val events = chunks.toSeq
-                                            assert(events.size == 2)
-                                            assert(events.forall(_.data == "from-server2"))
-                                        }
+                    Async.zip(
+                        client.connectWith(url1, Absent) { conn =>
+                            Sync.ensure(client.closeNow(conn)) {
+                                client.sendWith(conn, route1, HttpRequest.getRaw(HttpUrl.fromUri("/stream1"))) { resp =>
+                                    resp.fields.body.take(2).run.map { chunks =>
+                                        val events = chunks.toSeq
+                                        assert(events.size == 2)
+                                        assert(events.forall(_.data == "from-server1"))
                                     }
                                 }
                             }
-                        ).map((_, _) => succeed)
-                    }
+                        },
+                        client.connectWith(url2, Absent) { conn =>
+                            Sync.ensure(client.closeNow(conn)) {
+                                client.sendWith(conn, route2, HttpRequest.getRaw(HttpUrl.fromUri("/stream2"))) { resp =>
+                                    resp.fields.body.take(2).run.map { chunks =>
+                                        val events = chunks.toSeq
+                                        assert(events.size == 2)
+                                        assert(events.forall(_.data == "from-server2"))
+                                    }
+                                }
+                            }
+                        }
+                    ).map((_, _) => succeed)
                 }
             }
         }
@@ -3437,26 +3406,31 @@ class HttpServerTest extends Test:
         "handler error after client disconnect does not crash" in run {
             val route = HttpRoute.getRaw("slow-fail").response(_.bodyText)
             Latch.init(1).map { handlerDone =>
-                val ep = route.handler { _ =>
-                    // Sleep briefly so client can disconnect, then throw
-                    Async.sleep(200.millis).andThen {
-                        handlerDone.release.andThen {
-                            throw new RuntimeException("delayed boom")
-                            HttpResponse.ok("unreachable")
-                        }
-                    }
-                }
-                withServer(ep) { url =>
-                    // Send request, then disconnect before handler finishes via timeout
-                    Abort.run[Throwable] {
-                        Abort.catching[Throwable] {
-                            Async.timeout(50.millis) {
-                                sendRaw(url, HttpMethod.GET, "/slow-fail")
+                Promise.init[Unit, Any].map { clientDisconnected =>
+                    val ep = route.handler { _ =>
+                        // Wait for client to disconnect, then throw
+                        clientDisconnected.get.andThen {
+                            handlerDone.release.andThen {
+                                throw new RuntimeException("delayed boom")
+                                HttpResponse.ok("unreachable")
                             }
                         }
-                    }.map { _ =>
-                        // Wait for handler to complete and potentially try to write to closed connection
-                        handlerDone.await.andThen(succeed)
+                    }
+                    withServer(ep) { url =>
+                        // Send request, then disconnect before handler finishes via timeout
+                        Abort.run[Throwable] {
+                            Abort.catching[Throwable] {
+                                Async.timeout(50.millis) {
+                                    sendRaw(url, HttpMethod.GET, "/slow-fail")
+                                }
+                            }
+                        }.map { _ =>
+                            // Signal handler that client has disconnected
+                            clientDisconnected.complete(Result.succeed(())).andThen {
+                                // Wait for handler to complete and potentially try to write to closed connection
+                                handlerDone.await.andThen(succeed)
+                            }
+                        }
                     }
                 }
             }
