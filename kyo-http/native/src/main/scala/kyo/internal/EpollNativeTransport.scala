@@ -313,7 +313,12 @@ final class EpollNativeTransport(
                                                                         val bridge    = new EpollStreamTlsBridge(conn)
                                                                         val tlsStream = new NativeTlsStream(ssl, ctx, bridge)
                                                                         conn.tlsStream = Present(tlsStream)
-                                                                        Maybe((conn, ()))
+                                                                        Abort.run[HttpException](tlsStream.handshake()).map {
+                                                                            case Result.Success(_) => Maybe((conn, ()))
+                                                                            case _ =>
+                                                                                tcpClose(clientFd)
+                                                                                Maybe.empty
+                                                                        }
                                                                     end if
                                                                 else
                                                                     Maybe.empty
