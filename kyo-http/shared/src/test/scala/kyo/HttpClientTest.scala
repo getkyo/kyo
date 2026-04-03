@@ -29,7 +29,7 @@ class HttpClientTest extends Test:
                 HttpClient.init(internal.HttpTestPlatformBackend.client).map { httpClient =>
                     HttpServer.init(
                         internal.HttpTestPlatformBackend.server,
-                        HttpServerConfig.default.port(0).host("localhost").tls(internal.TlsConfig.default)
+                        HttpServerConfig.default.port(0).host("localhost").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
                     )(handlers*).map(s =>
                         HttpClient.let(httpClient) {
                             test(HttpUrl.parse(s"https://localhost:${s.port}").getOrThrow)

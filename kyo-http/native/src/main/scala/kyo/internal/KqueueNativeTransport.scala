@@ -176,6 +176,7 @@ final class KqueueNativeTransport(
             if ctx == 0 then
                 Abort.fail(HttpConnectException(host, 0, new Exception("Failed to create TLS context")))
             else
+                if tlsCfg.trustAll then discard(tlsCtxSetVerify(ctx, 0))
                 val ssl = Zone { tlsNew(ctx, toCString(host)) }
                 if ssl == 0 then
                     tlsCtxFree(ctx)

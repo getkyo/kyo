@@ -24,11 +24,12 @@ final class JsTransport extends Transport:
             Sync.defer {
                 val (socket, connectEvent) =
                     if tlsConfig.isDefined then
+                        val rejectUnauth = !tlsConfig.get.trustAll
                         val opts = js.Dynamic.literal(
                             host = host,
                             port = port,
                             servername = host,
-                            rejectUnauthorized = true
+                            rejectUnauthorized = rejectUnauth
                         )
                         (tls.connect(opts), "secureConnect")
                     else
@@ -64,13 +65,26 @@ final class JsTransport extends Transport:
     def close(c: JsConnection, gracePeriod: Duration)(using Frame): Unit < Async =
         Sync.defer(discard(c.conn.socket.end()))
 
-    def listen(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using
+    def listen(host: String, port: Int, backlog: Int, tlsOpt: Maybe[TlsConfig])(using
         frame: Frame
     )
         : TransportListener[JsConnection] < (Async & Scope) =
         Promise.init[TransportListener[JsConnection], Any].map { ready =>
-            val server        = net.createServer()
-            val listenHost    = host
+            val fs         = js.Dynamic.global.require("fs")
+            val listenHost = host
+
+            // Create plain TCP or TLS server depending on config
+            val (server, connEvent) = tlsOpt match
+                case Present(tlsCfg)
+                    if tlsCfg.certChainPath.isDefined && tlsCfg.privateKeyPath.isDefined =>
+                    val opts = js.Dynamic.literal(
+                        cert = fs.readFileSync(tlsCfg.certChainPath.get, "utf8"),
+                        key = fs.readFileSync(tlsCfg.privateKeyPath.get, "utf8")
+                    )
+                    (tls.createServer(opts), "secureConnection")
+                case _ =>
+                    (net.createServer(), "connection")
+
             val activeSockets = js.Array[js.Dynamic]()
 
             // Single-threaded JS queue: incoming connections are buffered here.
@@ -88,8 +102,9 @@ final class JsTransport extends Transport:
                 }: js.Function1[js.Dynamic, Unit]
             ))
 
+            // For TLS servers, "secureConnection" fires after handshake; for plain, "connection" fires immediately.
             discard(server.on(
-                "connection",
+                connEvent,
                 { (socket: js.Dynamic) =>
                     import AllowUnsafe.embrace.danger
                     discard(socket.pause())

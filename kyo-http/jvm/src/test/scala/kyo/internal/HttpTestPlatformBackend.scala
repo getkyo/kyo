@@ -17,4 +17,5 @@ private[kyo] object HttpTestPlatformBackend:
             new NioTransport(clientSslContext = Present(TlsTestHelper.trustAllSslContext))
         )
     val tlsServerAvailable: Boolean = true
+    val serverTlsConfig: TlsConfig  = TlsConfig.default
 end HttpTestPlatformBackend
