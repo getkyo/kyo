@@ -295,7 +295,10 @@ class HttpTransportServer(private[kyo] val transport: Transport)(using
                                     Abort.run[Any](wsHandler.wsHandler(request, ws)).map { _ =>
                                         closeReasonRef.get.map {
                                             case Absent =>
-                                                Abort.run[Any](WsCodec.writeClose(conn, 1000, "", mask = false)).unit
+                                                readFiber.done.map { isDone =>
+                                                    if isDone then Kyo.unit
+                                                    else Abort.run[Any](WsCodec.writeClose(conn, 1000, "", mask = false)).unit
+                                                }
                                             case _ => Kyo.unit
                                         }
                                     }
