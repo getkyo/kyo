@@ -79,24 +79,33 @@ private[kyo] class NioIoLoop extends IoLoop:
                     Loop.foreach {
                         Maybe(regQueue.poll()) match
                             case Present(req) =>
-                                if req.channel.isOpen then
-                                    Maybe(req.channel.keyFor(selector)) match
-                                        case Present(existingKey) if existingKey.isValid =>
-                                            // Accumulate interest on the existing key; update promise slot
-                                            val promises = existingKey.attachment().asInstanceOf[PromiseSlots]
-                                            promises(slotFor(req.op)) = Present(req.promise)
-                                            discard(existingKey.interestOps(existingKey.interestOps() | req.op))
-                                        case _ =>
-                                            val promises: PromiseSlots = Array(Absent, Absent, Absent)
-                                            promises(slotFor(req.op)) = Present(req.promise)
-                                            discard(req.channel.register(selector, req.op, promises))
-                                    end match
-                                else
-                                    // Channel was closed before we could register; complete the promise
-                                    // so the waiting fiber unblocks immediately.
-                                    import AllowUnsafe.embrace.danger
-                                    req.promise.completeUnitDiscard()
-                                end if
+                                try
+                                    if req.channel.isOpen then
+                                        Maybe(req.channel.keyFor(selector)) match
+                                            case Present(existingKey) if existingKey.isValid =>
+                                                // Accumulate interest on the existing key; update promise slot
+                                                val promises = existingKey.attachment().asInstanceOf[PromiseSlots]
+                                                promises(slotFor(req.op)) = Present(req.promise)
+                                                discard(existingKey.interestOps(existingKey.interestOps() | req.op))
+                                            case _ =>
+                                                val promises: PromiseSlots = Array(Absent, Absent, Absent)
+                                                promises(slotFor(req.op)) = Present(req.promise)
+                                                discard(req.channel.register(selector, req.op, promises))
+                                        end match
+                                    else
+                                        // Channel was closed before we could register; complete the promise
+                                        // so the waiting fiber unblocks immediately.
+                                        import AllowUnsafe.embrace.danger
+                                        req.promise.completeUnitDiscard()
+                                    end if
+                                catch
+                                    case _: java.nio.channels.CancelledKeyException =>
+                                        // Key was cancelled concurrently (channel closed between isValid
+                                        // check and interestOps/register call). Complete the promise so
+                                        // the waiting fiber unblocks immediately.
+                                        import AllowUnsafe.embrace.danger
+                                        req.promise.completeUnitDiscard()
+                                end try
                                 Loop.continue
                             case Absent =>
                                 Loop.done(())
@@ -112,37 +121,44 @@ private[kyo] class NioIoLoop extends IoLoop:
                         if iter.hasNext then
                             val key = iter.next()
                             iter.remove()
-                            if key.isValid then
-                                val promises = key.attachment().asInstanceOf[PromiseSlots]
-                                val ready    = key.readyOps()
-                                // Clear the ready bits from interest to avoid re-firing
-                                discard(key.interestOps(key.interestOps() & ~ready))
-                                import AllowUnsafe.embrace.danger
-                                if (ready & SelectionKey.OP_READ) != 0 then
-                                    promises(SlotRead) match
-                                        case Present(p) =>
-                                            promises(SlotRead) = Absent
-                                            p.completeUnitDiscard()
-                                        case Absent =>
-                                    end match
+                            try
+                                if key.isValid then
+                                    val promises = key.attachment().asInstanceOf[PromiseSlots]
+                                    val ready    = key.readyOps()
+                                    // Clear the ready bits from interest to avoid re-firing
+                                    discard(key.interestOps(key.interestOps() & ~ready))
+                                    import AllowUnsafe.embrace.danger
+                                    if (ready & SelectionKey.OP_READ) != 0 then
+                                        promises(SlotRead) match
+                                            case Present(p) =>
+                                                promises(SlotRead) = Absent
+                                                p.completeUnitDiscard()
+                                            case Absent =>
+                                        end match
+                                    end if
+                                    if (ready & SelectionKey.OP_WRITE) != 0 then
+                                        promises(SlotWrite) match
+                                            case Present(p) =>
+                                                promises(SlotWrite) = Absent
+                                                p.completeUnitDiscard()
+                                            case Absent =>
+                                        end match
+                                    end if
+                                    if (ready & SelectionKey.OP_CONNECT) != 0 then
+                                        promises(SlotConnect) match
+                                            case Present(p) =>
+                                                promises(SlotConnect) = Absent
+                                                p.completeUnitDiscard()
+                                            case Absent =>
+                                        end match
+                                    end if
                                 end if
-                                if (ready & SelectionKey.OP_WRITE) != 0 then
-                                    promises(SlotWrite) match
-                                        case Present(p) =>
-                                            promises(SlotWrite) = Absent
-                                            p.completeUnitDiscard()
-                                        case Absent =>
-                                    end match
-                                end if
-                                if (ready & SelectionKey.OP_CONNECT) != 0 then
-                                    promises(SlotConnect) match
-                                        case Present(p) =>
-                                            promises(SlotConnect) = Absent
-                                            p.completeUnitDiscard()
-                                        case Absent =>
-                                    end match
-                                end if
-                            end if
+                            catch
+                                case _: java.nio.channels.CancelledKeyException =>
+                                    // Key was cancelled between select() return and processing.
+                                    // Safe to skip — the connection will be cleaned up elsewhere.
+                                    ()
+                            end try
                             Loop.continue
                         else
                             Loop.done(())
