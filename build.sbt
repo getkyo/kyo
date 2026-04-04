@@ -144,6 +144,7 @@ lazy val kyoJVM = project
         `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
         `kyo-playwright`.jvm,
+        `kyo-pod`.jvm,
         `kyo-examples`.jvm,
         `kyo-actor`.jvm
     )
@@ -175,7 +176,8 @@ lazy val kyoJS = project
         `kyo-combinators`.js,
         `kyo-actor`.js,
         `kyo-http`.js,
-        `kyo-flow`.js
+        `kyo-flow`.js,
+        `kyo-pod`.js
     )
 
 lazy val kyoNative = project
@@ -206,7 +208,8 @@ lazy val kyoNative = project
         `kyo-zio`.native,
         `kyo-zio-test`.native,
         `kyo-stm`.native,
-        `kyo-stats-otlp`.native
+        `kyo-stats-otlp`.native,
+        `kyo-pod`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -694,6 +697,19 @@ lazy val `kyo-combinators` =
         .jsSettings(`js-settings`)
         .nativeSettings(`native-settings`)
         .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-pod` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-pod"))
+        .dependsOn(`kyo-core`, `kyo-http`)
+        .settings(
+            `kyo-settings`
+        )
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
 
 lazy val `kyo-playwright` =
     crossProject(JVMPlatform)
