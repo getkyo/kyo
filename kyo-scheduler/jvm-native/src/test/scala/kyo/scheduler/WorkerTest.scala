@@ -13,7 +13,7 @@ import kyo.scheduler.Task.Done
 import kyo.scheduler.Task.Preempted
 import kyo.scheduler.util.Threads
 import org.scalatest.NonImplicitAssertions
-import org.scalatest.concurrent.Eventually.*
+import org.scalatest.concurrent.Eventually.eventually
 import org.scalatest.concurrent.PatienceConfiguration
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.time.Millis

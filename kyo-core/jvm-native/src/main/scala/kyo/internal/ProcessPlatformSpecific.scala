@@ -292,33 +292,21 @@ final private[kyo] class JvmCommandUnsafe(
       */
     private def validateProgram()(using Frame): Maybe[CommandException] =
         if args.isEmpty then Present(ProgramNotFoundException(""))
+        else if Platform.isWindows then
+            // On Windows, Files.isExecutable is unreliable due to WOW64
+            // filesystem redirection and ACL-based permission checks.
+            // Let ProcessBuilder.start() handle validation natively.
+            Absent
         else
             val cmd = args.head
-            // Absolute or relative path with separator: check directly.
-            if cmd.startsWith("/") || cmd.startsWith("\\") || cmd.contains("/") || cmd.contains("\\") || (cmd.length > 1 && cmd(1) == ':')
-            then
+            if cmd.startsWith("/") || cmd.contains("/") then
                 if java.nio.file.Files.isExecutable(java.nio.file.Paths.get(cmd)) then Absent
                 else Present(ProgramNotFoundException(cmd))
             else
-                // Bare name: scan PATH
                 val pathEnv = java.lang.System.getenv("PATH")
                 val pathStr = if pathEnv != null then pathEnv else ""
-                val pathSep = java.io.File.pathSeparator
-                val dirs    = pathStr.split(java.util.regex.Pattern.quote(pathSep))
-                // On Windows, check with common executable extensions
-                val isWindows = Platform.isWindows
-                val extensions =
-                    if isWindows then
-                        val pathExt = java.lang.System.getenv("PATHEXT")
-                        if pathExt != null then pathExt.toLowerCase.split(";").toSeq
-                        else Seq(".exe", ".cmd", ".bat", ".com")
-                    else Seq("")
-                val found = dirs.exists { dir =>
-                    extensions.exists { ext =>
-                        val full = java.nio.file.Paths.get(dir, cmd + ext)
-                        java.nio.file.Files.isExecutable(full)
-                    }
-                }
+                val dirs    = pathStr.split(":")
+                val found   = dirs.exists(dir => java.nio.file.Files.isExecutable(java.nio.file.Paths.get(dir, cmd)))
                 if found then Absent
                 else Present(ProgramNotFoundException(cmd))
             end if

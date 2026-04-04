@@ -86,7 +86,10 @@ class SleepTest extends AnyFreeSpec with NonImplicitAssertions {
         }).sum / samples
         val stddev = Math.sqrt(variance)
 
-        val threshold = Concurrency.defaultConfig.jitterUpperThreshold * 50
+        // Windows uses Thread.sleep fallback (no nanosleep), so jitter is inherently higher
+        val isWindows  = java.lang.System.getProperty("os.name", "").toLowerCase.contains("windows")
+        val multiplier = if isWindows then 200 else 50
+        val threshold  = Concurrency.defaultConfig.jitterUpperThreshold * multiplier
         assert(
             stddev < threshold,
             s"Sleep jitter stddev=${stddev.toLong}ns (avg=${avg.toLong}ns) exceeds regulator threshold ${threshold.toLong}ns"

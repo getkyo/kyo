@@ -107,20 +107,23 @@ end NodeError
 
 // --- NodePathUnsafe ---
 
-final private[kyo] class NodePathUnsafe(val pathStr: String) extends Path.Unsafe:
+final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
+
+    // Normalize to forward slashes for consistency across platforms.
+    // Node.js on Windows handles '/' in all fs APIs.
+    val pathStr: String = raw.replace('\\', '/')
 
     // --- Pure accessors ---
 
     def parts: Chunk[String] =
-        val sep = NodePath.sep
         if pathStr.isEmpty then Chunk.empty
         else if NodePath.isAbsolute(pathStr) then
             // Absolute: prepend "" to signal root
-            val stripped = if pathStr.startsWith(sep) then pathStr.substring(sep.length) else pathStr
-            val segs     = stripped.split(java.util.regex.Pattern.quote(sep), -1).filter(_.nonEmpty)
+            val stripped = if pathStr.startsWith("/") then pathStr.substring(1) else pathStr
+            val segs     = stripped.split("/", -1).filter(_.nonEmpty)
             Chunk.from("" +: segs.toSeq)
         else
-            Chunk.from(pathStr.split(java.util.regex.Pattern.quote(sep), -1).filter(_.nonEmpty).toSeq)
+            Chunk.from(pathStr.split("/", -1).filter(_.nonEmpty).toSeq)
         end if
     end parts
 
@@ -574,12 +577,16 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
             val isAbs    = parts.headOption.contains("")
             val nonEmpty = parts.filter(_.nonEmpty)
             if nonEmpty.isEmpty then
-                if isAbs then new NodePathUnsafe(NodePath.sep).safe
+                if isAbs then new NodePathUnsafe("/").safe
                 else new NodePathUnsafe("").safe
             else
+                // Don't prepend separator for Windows drive-letter paths (e.g. "C:")
+                val hasDrive = nonEmpty.headOption.exists(s => s.length == 2 && s(1) == ':')
                 val raw =
-                    if isAbs then NodePath.sep + nonEmpty.mkString(NodePath.sep)
-                    else nonEmpty.mkString(NodePath.sep)
+                    if isAbs && !hasDrive then "/" + nonEmpty.mkString("/")
+                    else nonEmpty.mkString("/")
+                // NodePath.normalize resolves .., ., redundant separators;
+                // constructor normalizes \ to /
                 new NodePathUnsafe(NodePath.normalize(raw)).safe
             end if
         end if
