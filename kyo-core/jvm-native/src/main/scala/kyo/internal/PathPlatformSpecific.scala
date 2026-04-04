@@ -37,8 +37,8 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
         end if
     end parts
 
-    def show: String        = jpath.toString
-    def isAbsolute: Boolean = jpath.isAbsolute
+    def show: String        = jpath.toString.replace('\\', '/')
+    def isAbsolute: Boolean = jpath.isAbsolute || parts.headOption.contains("")
 
     override def equals(other: Any): Boolean = other match
         case that: NioPathUnsafe => this.jpath.equals(that.jpath)
@@ -305,7 +305,10 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
         try Result.succeed(expr)
         catch
             case e: NoSuchFileException   => Result.fail(FileNotFoundException(safe))
-            case e: AccessDeniedException => Result.fail(FileAccessDeniedException(safe))
+            case e: AccessDeniedException =>
+                // On Windows, reading a directory raises AccessDeniedException instead of "Is a directory"
+                if java.nio.file.Files.isDirectory(jpath) then Result.fail(FileIsADirectoryException(safe))
+                else Result.fail(FileAccessDeniedException(safe))
             case e: IOException if e.getMessage != null && e.getMessage.contains("Is a directory") =>
                 Result.fail(FileIsADirectoryException(safe))
             case e: IOException => Result.fail(FileIOException(safe, e))

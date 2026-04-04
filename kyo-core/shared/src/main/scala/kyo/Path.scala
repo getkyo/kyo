@@ -299,7 +299,7 @@ object Path extends PathPlatformSpecific:
                                                 if incomplete > 0 then java.util.Arrays.copyOfRange(allBytes, decodeLen, allBytes.length)
                                                 else emptyBytes
                                             val text  = pending + new String(allBytes, 0, decodeLen, StandardCharsets.UTF_8)
-                                            val parts = text.split("\n", -1).toList
+                                            val parts = text.split("\r?\n", -1).toList
                                             val (toEmit, newPending) =
                                                 if text.endsWith("\n") then (parts.dropRight(1), "")
                                                 else (parts.dropRight(1), parts.last)
@@ -502,7 +502,7 @@ object Path extends PathPlatformSpecific:
     /** Flattens a sequence of `Part` values into a `Chunk[String]`. */
     private[kyo] def flattenParts(parts: Seq[Part]): Chunk[String] =
         Chunk.from(parts.flatMap {
-            case s: String => Seq(s)
+            case s: String => s.split("[/\\\\]", -1).toSeq // Split on both / and \ for cross-platform support
             case p: Path   => p.parts.toSeq
         })
 

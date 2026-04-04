@@ -295,7 +295,8 @@ final private[kyo] class JvmCommandUnsafe(
         else
             val cmd = args.head
             // Absolute or relative path with separator: check directly.
-            if cmd.startsWith("/") || cmd.contains("/") then
+            if cmd.startsWith("/") || cmd.startsWith("\\") || cmd.contains("/") || cmd.contains("\\") || (cmd.length > 1 && cmd(1) == ':')
+            then
                 if java.nio.file.Files.isExecutable(java.nio.file.Paths.get(cmd)) then Absent
                 else Present(ProgramNotFoundException(cmd))
             else
@@ -304,9 +305,19 @@ final private[kyo] class JvmCommandUnsafe(
                 val pathStr = if pathEnv != null then pathEnv else ""
                 val pathSep = java.io.File.pathSeparator
                 val dirs    = pathStr.split(java.util.regex.Pattern.quote(pathSep))
+                // On Windows, check with common executable extensions
+                val isWindows = Platform.isWindows
+                val extensions =
+                    if isWindows then
+                        val pathExt = java.lang.System.getenv("PATHEXT")
+                        if pathExt != null then pathExt.toLowerCase.split(";").toSeq
+                        else Seq(".exe", ".cmd", ".bat", ".com")
+                    else Seq("")
                 val found = dirs.exists { dir =>
-                    val full = java.nio.file.Paths.get(dir, cmd)
-                    java.nio.file.Files.isExecutable(full)
+                    extensions.exists { ext =>
+                        val full = java.nio.file.Paths.get(dir, cmd + ext)
+                        java.nio.file.Files.isExecutable(full)
+                    }
                 }
                 if found then Absent
                 else Present(ProgramNotFoundException(cmd))

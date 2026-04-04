@@ -451,19 +451,28 @@ final private[kyo] class NodeCommandUnsafe(
                     catch case _: Throwable => false
                 end isExec
                 // Absolute path or relative path with directory separator: check directly.
-                // On Node.js (Unix), the separator is '/'.
-                if cmd.startsWith("/") || cmd.contains("/") then
+                val isWin = Platform.isWindows
+                if cmd.startsWith("/") || cmd.startsWith("\\") || cmd.contains("/") || cmd.contains("\\") || (cmd.length > 1 && cmd(1) == ':') then
                     if isExec(cmd) then Absent
                     else Present(ProgramNotFoundException(cmd))
                 else
                     // Bare command name: scan PATH
                     val pathEnv = js.Dynamic.global.process.env.PATH
                     val pathStr = if js.typeOf(pathEnv) == "string" then pathEnv.asInstanceOf[String] else ""
-                    // On Unix (Node.js), PATH entries are separated by ':'.
-                    val dirs = pathStr.split(":")
+                    val pathSep = if isWin then ";" else ":"
+                    val dirs    = pathStr.split(pathSep)
+                    // On Windows, check with PATHEXT extensions (.exe, .cmd, .bat, etc.)
+                    val extensions =
+                        if isWin then
+                            val pathExt = js.Dynamic.global.process.env.PATHEXT
+                            if js.typeOf(pathExt) == "string" then pathExt.asInstanceOf[String].toLowerCase.split(";").toSeq
+                            else Seq(".exe", ".cmd", ".bat", ".com")
+                        else Seq("")
                     val found = dirs.exists { dir =>
-                        val full = nodePath.join(dir, cmd).asInstanceOf[String]
-                        isExec(full)
+                        extensions.exists { ext =>
+                            val full = nodePath.join(dir, cmd + ext).asInstanceOf[String]
+                            isExec(full)
+                        }
                     }
                     if found then Absent
                     else Present(ProgramNotFoundException(cmd))

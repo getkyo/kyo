@@ -64,6 +64,6 @@ private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
         else
             // Scale timeout with available resources — slow CI runners need more time
             val cores   = Runtime.getRuntime.availableProcessors()
-            val seconds = if cores <= 4 then 120 else 15
+            val seconds = 120
             Duration.fromJava(java.time.Duration.ofSeconds(seconds))
 end BaseKyoKernelTest

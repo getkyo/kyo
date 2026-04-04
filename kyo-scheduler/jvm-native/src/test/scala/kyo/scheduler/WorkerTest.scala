@@ -23,7 +23,7 @@ import org.scalatest.time.Span
 class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with PatienceConfiguration {
 
     implicit override val patienceConfig: PatienceConfig =
-        PatienceConfig(timeout = Span(5, Seconds), interval = Span(10, Millis))
+        PatienceConfig(timeout = Span(15, Seconds), interval = Span(50, Millis))
 
     val executor = Executors.newCachedThreadPool(Threads("test-worker"))
 

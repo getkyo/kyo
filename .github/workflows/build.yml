@@ -27,11 +27,11 @@ jobs:
     env:
       JAVA_OPTS: >-
         ${{ contains(matrix.os, 'macos-arm64')
-        && '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+        && '-Xmx6G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
         || '-Xms8G -Xmx8G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8' }}
       JVM_OPTS: >-
         ${{ contains(matrix.os, 'macos-arm64')
-        && '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+        && '-Xmx6G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
         || '-Xms8G -Xmx8G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8' }}
 
     steps:
@@ -45,6 +45,8 @@ jobs:
           node-version: '22'
 
       - uses: actions/cache@v4
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
         with:
           path: |
             ~/.cache/coursier
@@ -81,6 +83,11 @@ jobs:
       - name: Test ${{ matrix.target }} (${{ matrix.os }})
         shell: bash
         run: |
+          # macOS arm64 (14GB): serialize JS/Native to avoid Scala.js linker OOM
+          if [ "${{ matrix.os }}" = "macos-arm64" ] && [ "${{ matrix.target }}" != "JVM" ]; then
+            export SBT_TASK_LIMIT=1
+          fi
+
           # Build testKyo command
           mode="${{ inputs.test-command == 'test' && '--all' || '' }}"
           cmd="testKyo $mode ${{ matrix.target }}"

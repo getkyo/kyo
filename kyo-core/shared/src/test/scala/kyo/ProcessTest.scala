@@ -1,6 +1,15 @@
 package kyo
 
+// TODO: Process tests use Unix commands (sleep, sh -c, kill) extensively.
+// Needs cross-platform process helpers for Windows support.
 class ProcessTest extends Test:
+
+    import scala.concurrent.Future
+
+    override def run(v: Future[Assertion] < (Abort[Any] & Async & Scope))(using Frame): Future[Assertion] =
+        if kyo.internal.Platform.isWindows then
+            Future.successful(cancel("ProcessTest uses Unix commands (sleep, sh, kill)"))
+        else super.run(v)
 
     // ---------------------------------------------------------------------------
     // Process lifecycle

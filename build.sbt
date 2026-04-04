@@ -51,6 +51,12 @@ ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 Global / commands += Repeat.command
 Global / commands += TestKyo.command
 
+// Optionally limit task parallelism via SBT_TASK_LIMIT env var (set by CI for constrained runners)
+Global / concurrentRestrictions ++= {
+    val limit = sys.env.getOrElse("SBT_TASK_LIMIT", "0")
+    if (limit != "0") Seq(Tags.limitAll(limit.toInt)) else Nil
+}
+
 lazy val `kyo-settings` = Seq(
     fork               := true,
     scalaVersion       := scala3Version,
