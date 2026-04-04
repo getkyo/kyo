@@ -25,12 +25,8 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions {
     }
 
     private def withClock[A](testCode: InternalClock => A): A = {
-        val executor = Executors.newSingleThreadExecutor(Threads("test-clock"))
-        val clock    = new InternalClock(executor)
+        val clock = new InternalClock(TestExecutors.cached)
         try testCode(clock)
-        finally {
-            clock.stop()
-            executor.shutdown()
-        }
+        finally clock.stop()
     }
 }

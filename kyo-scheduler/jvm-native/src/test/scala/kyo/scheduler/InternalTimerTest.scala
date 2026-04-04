@@ -25,10 +25,11 @@ class InternalTimerTest extends AnyFreeSpec with NonImplicitAssertions {
         task.cancel()
     }
 
-    private def withExecutor[A](f: ScheduledExecutorService => A): A = {
-        val exec = Executors.newSingleThreadScheduledExecutor()
-        try f(exec)
-        finally exec.shutdown()
-    }
+    // Uses its own executor, not TestExecutors.scheduled, because Schedulers created by other
+    // test suites occupy threads from the shared pool via CPUStallMonitor's submit + parkNanos.
+    private val ownExecutor = Executors.newSingleThreadScheduledExecutor()
+
+    private def withExecutor[A](f: ScheduledExecutorService => A): A =
+        f(ownExecutor)
 
 }

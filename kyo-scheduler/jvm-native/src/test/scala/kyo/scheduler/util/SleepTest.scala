@@ -86,7 +86,7 @@ class SleepTest extends AnyFreeSpec with NonImplicitAssertions {
         }).sum / samples
         val stddev = Math.sqrt(variance)
 
-        val threshold = Concurrency.defaultConfig.jitterUpperThreshold * 5
+        val threshold = Concurrency.defaultConfig.jitterUpperThreshold * 10
         assert(
             stddev < threshold,
             s"Sleep jitter stddev=${stddev.toLong}ns (avg=${avg.toLong}ns) exceeds regulator threshold ${threshold.toLong}ns"

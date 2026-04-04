@@ -31,6 +31,18 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     final override def removeFinalizer(f: Maybe[Error[Any]] => Unit) =
         finalizers = finalizers.remove(f)
 
+    // Bridges fiber-level interruption to thread-level interruption. When the promise is
+    // successfully interrupted (CAS from Pending to Error), sets the needsInterrupt flag
+    // and wakes the CPUStallMonitor for immediate scan. If the worker thread is blocked
+    // (flat CPU time), Thread.interrupt() is dispatched within ~100μs.
+    final override def interrupt(error: Error[E]): Boolean =
+        val interrupted = super.interrupt(error)
+        if interrupted then
+            requestInterrupt()
+            Scheduler.get.notifyInterrupt()
+        interrupted
+    end interrupt
+
     private inline def erasedAbortTag = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
     private inline def locally[A](inline f: A): A = f
