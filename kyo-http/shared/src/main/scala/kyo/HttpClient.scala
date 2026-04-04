@@ -3,6 +3,7 @@ package kyo
 import kyo.*
 import kyo.internal.ConnectionPool
 import kyo.internal.HttpPlatformBackend
+import kyo.internal.TransportAddress
 
 /** HTTP client with connection pooling, retries, redirects, and typed request/response handling.
   *
@@ -35,8 +36,6 @@ final class HttpClient private (
     maxConnectionsPerHost: Int,
     clientFrame: Frame
 ):
-
-    import ConnectionPool.HostKey
 
     /** Sends a typed request using the given route and processes the response with `f`. Applies the current fiber-local configuration (base
       * URL, timeout, retries, redirects) and the route's client-side filters.
@@ -157,7 +156,10 @@ final class HttpClient private (
         filter[In, Out, HttpException](
             request,
             (filteredReq: HttpRequest[In]) =>
-                val key = HostKey(filteredReq.url.host, filteredReq.url.port)
+                val url = filteredReq.url
+                val key: TransportAddress = url.unixSocket match
+                    case Present(socketPath) => TransportAddress.Unix(socketPath)
+                    case Absent              => TransportAddress.Tcp(url.host, url.port)
                 def onRelease(conn: backend.Connection): Maybe[Result.Error[Any]] => Unit < Sync =
                     error =>
                         pool.untrack(key, conn).andThen {
@@ -176,7 +178,7 @@ final class HttpClient private (
                             if reserved then
                                 Sync.ensure(pool.unreserve(key)) {
                                     backend.connectWith(
-                                        filteredReq.url,
+                                        url,
                                         config.connectTimeout
                                     ) { conn =>
                                         pool.track(key, conn).andThen {
@@ -186,8 +188,8 @@ final class HttpClient private (
                                 }
                             else
                                 Abort.fail(HttpPoolExhaustedException(
-                                    filteredReq.url.host,
-                                    filteredReq.url.port,
+                                    url.host,
+                                    url.port,
                                     maxConnectionsPerHost,
                                     clientFrame
                                 ))

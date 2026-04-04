@@ -20,6 +20,11 @@ class NativeTlsResourceTest extends kyo.Test:
         if !isMacOS then succeed
         else f
 
+    private def listenerPort(listener: TransportListener[?]): Int =
+        listener.address match
+            case TransportAddress.Tcp(_, port) => port
+            case TransportAddress.Unix(_)      => -1
+
     private def countOpenFds(): Int =
         val fdDir = new java.io.File("/dev/fd")
         if fdDir.exists() then fdDir.list().length else -1
@@ -40,7 +45,7 @@ class NativeTlsResourceTest extends kyo.Test:
             val startFds  = countOpenFds()
             java.lang.System.err.println(s"[fd-transport] Start fds: $startFds")
             Scope.run {
-                transport.listen("127.0.0.1", 0, 128, Present(TlsTestHelper.serverTlsConfig)).map { listener =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Present(TlsTestHelper.serverTlsConfig)).map { listener =>
                     Loop.indexed { i =>
                         if i >= 20 then
                             val endFds = countOpenFds()
@@ -55,7 +60,10 @@ class NativeTlsResourceTest extends kyo.Test:
                                 }
                             }
                             serverFiber.andThen {
-                                transport.connect("127.0.0.1", listener.port, Present(TlsTestHelper.clientTlsConfig)).map {
+                                transport.connect(
+                                    TransportAddress.Tcp("127.0.0.1", listenerPort(listener)),
+                                    Present(TlsTestHelper.clientTlsConfig)
+                                ).map {
                                     clientConn =>
                                         clientConn.read.take(1).run.andThen {
                                             transport.closeNow(clientConn).andThen {
@@ -87,6 +95,9 @@ class NativeTlsResourceTest extends kyo.Test:
                     server,
                     HttpServerConfig.default.port(0).host("localhost").tls(TlsTestHelper.serverTlsConfig)
                 )(handler).map { binding =>
+                    val bindingPort = binding.address match
+                        case HttpServerAddress.Tcp(_, p) => p
+                        case HttpServerAddress.Unix(_)   => -1
                     Loop.indexed { i =>
                         if i >= 20 then
                             val endFds = countOpenFds()
@@ -94,7 +105,7 @@ class NativeTlsResourceTest extends kyo.Test:
                             Loop.done(succeed)
                         else
                             client.connectWith(
-                                HttpUrl.parse(s"https://localhost:${binding.port}/test/ping").getOrThrow,
+                                HttpUrl.parse(s"https://localhost:$bindingPort/test/ping").getOrThrow,
                                 Absent
                             ) { conn =>
                                 Sync.ensure(client.closeNow(conn)) {

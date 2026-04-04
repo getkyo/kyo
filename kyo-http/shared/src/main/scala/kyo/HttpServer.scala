@@ -23,8 +23,13 @@ import kyo.internal.OpenApiGenerator
   *   [[kyo.HttpBackend.Server]] The platform-specific backend
   */
 final class HttpServer private (binding: HttpBackend.Binding):
-    def port: Int                                               = binding.port
-    def host: String                                            = binding.host
+    def address: HttpServerAddress = binding.address
+    def port: Int = binding.address match
+        case HttpServerAddress.Tcp(_, p) => p
+        case HttpServerAddress.Unix(_)   => -1
+    def host: String = binding.address match
+        case HttpServerAddress.Tcp(h, _) => h
+        case HttpServerAddress.Unix(_)   => "localhost"
     def close(gracePeriod: Duration)(using Frame): Unit < Async = binding.close(gracePeriod)
     def close(using Frame): Unit < Async                        = binding.close
     def closeNow(using Frame): Unit < Async                     = binding.closeNow

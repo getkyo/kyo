@@ -20,7 +20,8 @@ case class HttpServerConfig(
     strictCookieParsing: Boolean,
     openApi: Maybe[HttpServerConfig.OpenApiEndpoint],
     cors: Maybe[HttpServerConfig.Cors],
-    tls: Maybe[internal.TlsConfig]
+    tls: Maybe[internal.TlsConfig],
+    unixSocket: Maybe[String] = Absent
 ) derives CanEqual:
     def port(p: Int): HttpServerConfig                    = copy(port = p)
     def host(h: String): HttpServerConfig                 = copy(host = h)
@@ -32,6 +33,7 @@ case class HttpServerConfig(
     def strictCookieParsing(v: Boolean): HttpServerConfig = copy(strictCookieParsing = v)
     def cors(c: HttpServerConfig.Cors): HttpServerConfig  = copy(cors = Present(c))
     def tls(config: internal.TlsConfig): HttpServerConfig = copy(tls = Present(config))
+    def unixSocket(path: String): HttpServerConfig        = copy(unixSocket = Present(path))
     def openApi(
         path: String = "/openapi.json",
         title: String = "API",
@@ -53,7 +55,8 @@ object HttpServerConfig:
         strictCookieParsing = false,
         openApi = Absent,
         cors = Absent,
-        tls = Absent
+        tls = Absent,
+        unixSocket = Absent
     )
 
     case class OpenApiEndpoint(

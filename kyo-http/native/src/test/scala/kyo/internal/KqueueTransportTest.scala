@@ -19,10 +19,15 @@ class KqueueTransportTest extends kyo.Test:
 
     // ── withServer helper ──────────────────────────────────────────
 
+    private def listenerPort(listener: TransportListener[?]): Int =
+        listener.address match
+            case TransportAddress.Tcp(_, port) => port
+            case TransportAddress.Unix(_)      => -1
+
     private def withServer(
         transport: KqueueNativeTransport
     )(using Frame): TransportListener[KqueueConnection] < (Async & Scope) =
-        transport.listen("127.0.0.1", 0, 128, Absent)
+        transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent)
 
     /** Accept a single connection from the listener's stream and return it. */
     private def acceptOne(
@@ -67,7 +72,7 @@ class KqueueTransportTest extends kyo.Test:
         Scope.run {
             onMacOS { transport =>
                 withServer(transport).map { listener =>
-                    transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                         transport.isAlive(conn).map { alive =>
                             assert(alive)
                             transport.closeNow(conn).andThen(succeed)
@@ -82,7 +87,7 @@ class KqueueTransportTest extends kyo.Test:
         Scope.run {
             onMacOS { transport =>
                 Abort.run[HttpException] {
-                    transport.connect("127.0.0.1", 1, Absent)
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", 1), Absent)
                 }.map { result =>
                     assert(result.isFailure)
                 }
@@ -94,7 +99,7 @@ class KqueueTransportTest extends kyo.Test:
         Scope.run {
             onMacOS { transport =>
                 withServer(transport).map { listener =>
-                    transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                         transport.isAlive(conn).map { alive =>
                             assert(alive)
                             transport.closeNow(conn).andThen {
@@ -113,7 +118,7 @@ class KqueueTransportTest extends kyo.Test:
         Scope.run {
             onMacOS { transport =>
                 withServer(transport).map { listener =>
-                    transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                         transport.closeNow(conn).andThen {
                             // Second closeNow should not throw
                             transport.closeNow(conn).andThen(succeed)
@@ -138,7 +143,7 @@ class KqueueTransportTest extends kyo.Test:
                         }
                     }
                     serverAccept.andThen {
-                        transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                        transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                             readN(clientConn, 5).map { bytes =>
                                 assert(new String(bytes, Utf8) == "hello")
                                 transport.closeNow(clientConn).andThen(succeed)
@@ -159,7 +164,7 @@ class KqueueTransportTest extends kyo.Test:
                             readN(serverConn, 5)
                         }
                     }
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         clientConn.write(Span.fromUnsafe("world".getBytes(Utf8))).andThen {
                             serverFiber.map(_.get).map { bytes =>
                                 assert(new String(bytes, Utf8) == "world")
@@ -176,7 +181,7 @@ class KqueueTransportTest extends kyo.Test:
         Scope.run {
             onMacOS { transport =>
                 withServer(transport).map { listener =>
-                    transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                         conn.write(Span.empty[Byte]).andThen {
                             transport.closeNow(conn).andThen(succeed)
                         }
@@ -199,7 +204,7 @@ class KqueueTransportTest extends kyo.Test:
                             readN(serverConn, size)
                         }
                     }
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         clientConn.write(Span.fromUnsafe(data)).andThen {
                             serverFiber.map(_.get).map { received =>
                                 assert(received.length == size)
@@ -231,7 +236,7 @@ class KqueueTransportTest extends kyo.Test:
                             readN(serverConn, total)
                         }
                     }
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         // Write 4 × 256KB sequentially using Loop to avoid Kyo.foreach overhead
                         Loop.indexed { i =>
                             if i >= numChunks then Loop.done(())
@@ -261,7 +266,7 @@ class KqueueTransportTest extends kyo.Test:
                             }
                         }
                     }
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         serverFiber.andThen {
                             // Drain the stream; it should end after EOF
                             clientConn.read.run.map { chunks =>
@@ -289,7 +294,7 @@ class KqueueTransportTest extends kyo.Test:
                                 }
                             }
                         }
-                        transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                        transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                             serverFiber.andThen {
                                 serverClosed.get.andThen {
                                     Abort.run[Throwable] {
@@ -318,7 +323,7 @@ class KqueueTransportTest extends kyo.Test:
         Scope.run {
             onMacOS { transport =>
                 withServer(transport).map { listener =>
-                    transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                         // Type-check: read must return Stream[Span[Byte], Async]
                         val stream: Stream[Span[Byte], Async] = conn.read
                         discard(stream) // just verify it compiles and is the right type
@@ -340,7 +345,7 @@ class KqueueTransportTest extends kyo.Test:
                             }
                         }
                     }
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         serverFiber.andThen {
                             readN(clientConn, 11).map { bytes =>
                                 // "first" + "second" = 11 bytes
@@ -363,7 +368,7 @@ class KqueueTransportTest extends kyo.Test:
                             transport.closeNow(serverConn)
                         }
                     }
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         serverFiber.andThen {
                             // After server closes, reading should yield empty stream (EOF)
                             clientConn.read.run.map { chunks =>
@@ -397,7 +402,7 @@ class KqueueTransportTest extends kyo.Test:
                     }
                     // Connect n clients
                     Kyo.foreach((0 until n).toSeq) { _ =>
-                        transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                        transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                             transport.closeNow(conn)
                         }
                     }.andThen {
@@ -421,7 +426,7 @@ class KqueueTransportTest extends kyo.Test:
                     }
                     serverFiber.andThen {
                         Kyo.foreach((0 until 3).toSeq) { _ =>
-                            transport.connect("127.0.0.1", listener.port, Absent)
+                            transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent)
                         }.map { conns =>
                             Kyo.foreach(conns) { conn =>
                                 readN(conn, 5).map { bytes =>
@@ -459,8 +464,8 @@ class KqueueTransportTest extends kyo.Test:
                         }
                     }
 
-                    transport.connect("127.0.0.1", listener.port, Absent).map { connA =>
-                        transport.connect("127.0.0.1", listener.port, Absent).map { connB =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { connA =>
+                        transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { connB =>
                             serverFiber.andThen {
                                 Fiber.initUnscoped(readN(connA, 4)).map { fiberA =>
                                     Fiber.initUnscoped(readN(connB, 4)).map { fiberB =>
@@ -491,8 +496,10 @@ class KqueueTransportTest extends kyo.Test:
         Scope.run {
             onMacOS { transport =>
                 withServer(transport).map { listener =>
-                    assert(listener.port > 0)
-                    assert(listener.host == "127.0.0.1")
+                    assert(listenerPort(listener) > 0)
+                    assert(listener.address match
+                        case TransportAddress.Tcp(h, _) => h == "127.0.0.1";
+                        case _                          => false)
                     succeed
                 }
             }
@@ -508,7 +515,7 @@ class KqueueTransportTest extends kyo.Test:
                             transport.closeNow(serverConn)
                         }
                     }
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         serverFiber.map(_.get).andThen {
                             transport.closeNow(clientConn).andThen(succeed)
                         }
@@ -521,12 +528,12 @@ class KqueueTransportTest extends kyo.Test:
     "Scope exit → server closed" in run {
         onMacOS { transport =>
             Scope.run {
-                transport.listen("127.0.0.1", 0, 128, Absent)
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent)
             }.map { listener =>
                 // After Scope.run, server should be closed.
                 // Attempting to connect should fail.
                 Abort.run[HttpException] {
-                    transport.connect("127.0.0.1", listener.port, Absent)
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent)
                 }.map { result =>
                     assert(result.isFailure)
                 }
@@ -546,7 +553,7 @@ class KqueueTransportTest extends kyo.Test:
                             transport.closeNow(serverConn)
                         }
                     }
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         serverFiber.map(_.get).andThen {
                             transport.closeNow(clientConn).andThen(succeed)
                         }
@@ -566,7 +573,7 @@ class KqueueTransportTest extends kyo.Test:
                                 transport.closeNow(serverConn)
                             }
                         }
-                        transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                        transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                             serverFiber.map(_.get).andThen {
                                 transport.closeNow(clientConn)
                             }
@@ -594,7 +601,7 @@ class KqueueTransportTest extends kyo.Test:
                             readN(serverConn, total)
                         }
                     }
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         // Write all data as fast as possible
                         clientConn.write(Span.fromUnsafe(data)).andThen {
                             serverFiber.map(_.get).map { received =>
@@ -617,8 +624,8 @@ class KqueueTransportTest extends kyo.Test:
         onMacOS { transport =>
             val connRef = new java.util.concurrent.atomic.AtomicReference[KqueueConnection]()
             Scope.run {
-                transport.listen("127.0.0.1", 0, 128, Absent).map { listener =>
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent).map { listener =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         connRef.set(clientConn)
                         transport.closeNow(clientConn)
                     }
@@ -646,7 +653,7 @@ class KqueueTransportTest extends kyo.Test:
                             transport.closeNow(serverConn)
                         }
                     }
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         // Write some data
                         clientConn.write(Span.fromUnsafe("test data".getBytes(Utf8))).andThen {
                             transport.closeNow(clientConn).andThen {

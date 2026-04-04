@@ -13,7 +13,12 @@ class NioTransportTest extends kyo.Test:
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private def withServer(using Frame): TransportListener[NioConnection] < (Async & Scope) =
-        transport.listen("127.0.0.1", 0, 128, Absent)
+        transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent)
+
+    private def listenerPort(listener: TransportListener[NioConnection]): Int =
+        listener.address match
+            case TransportAddress.Tcp(_, port) => port
+            case TransportAddress.Unix(_)      => -1
 
     /** Accept a single connection from the listener's stream and return it. */
     private def acceptOne(
@@ -55,7 +60,7 @@ class NioTransportTest extends kyo.Test:
     "connect to listening server → isAlive true" in run {
         Scope.run {
             withServer.map { listener =>
-                transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                     transport.isAlive(conn).map { alive =>
                         assert(alive)
                         transport.closeNow(conn).andThen(succeed)
@@ -68,7 +73,7 @@ class NioTransportTest extends kyo.Test:
     "connect to non-existent port → Abort" in run {
         Scope.run {
             Abort.run[HttpException] {
-                transport.connect("127.0.0.1", 1, Absent)
+                transport.connect(TransportAddress.Tcp("127.0.0.1", 1), Absent)
             }.map { result =>
                 assert(result.isFailure)
             }
@@ -78,7 +83,7 @@ class NioTransportTest extends kyo.Test:
     "closeNow → isAlive false" in run {
         Scope.run {
             withServer.map { listener =>
-                transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                     transport.isAlive(conn).map { alive =>
                         assert(alive)
                         transport.closeNow(conn).andThen {
@@ -95,7 +100,7 @@ class NioTransportTest extends kyo.Test:
     "double closeNow → idempotent" in run {
         Scope.run {
             withServer.map { listener =>
-                transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                     transport.closeNow(conn).andThen {
                         // Second closeNow should not throw
                         transport.closeNow(conn).andThen(succeed)
@@ -118,7 +123,7 @@ class NioTransportTest extends kyo.Test:
                     }
                 }
                 serverFiber.andThen {
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         readN(clientConn, 5).map { bytes =>
                             assert(new String(bytes, Utf8) == "hello")
                             transport.closeNow(clientConn).andThen(succeed)
@@ -137,7 +142,7 @@ class NioTransportTest extends kyo.Test:
                         readN(serverConn, 5)
                     }
                 }
-                transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                     clientConn.write(Span.fromUnsafe("world".getBytes(Utf8))).andThen {
                         serverFiber.map(_.get).map { bytes =>
                             assert(new String(bytes, Utf8) == "world")
@@ -152,7 +157,7 @@ class NioTransportTest extends kyo.Test:
     "write empty span → no error" in run {
         Scope.run {
             withServer.map { listener =>
-                transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                     conn.write(Span.empty[Byte]).andThen {
                         transport.closeNow(conn).andThen(succeed)
                     }
@@ -176,7 +181,7 @@ class NioTransportTest extends kyo.Test:
                             }
                         }
                     }.map { serverFiber =>
-                        transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                        transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                             // Wait for server to accept before writing
                             serverConnPromise.get.andThen {
                                 clientConn.write(Span.fromUnsafe(data)).andThen {
@@ -204,7 +209,7 @@ class NioTransportTest extends kyo.Test:
                         }
                     }
                 }
-                transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                     serverFiber.andThen {
                         clientConn.read.run.map { chunks =>
                             val allBytes = chunks.toSeq.flatMap(s => s.toArrayUnsafe.toSeq).toArray
@@ -228,7 +233,7 @@ class NioTransportTest extends kyo.Test:
                             }
                         }
                     }
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         serverFiber.andThen {
                             serverClosed.get.andThen {
                                 Abort.run[Throwable] {
@@ -262,7 +267,7 @@ class NioTransportTest extends kyo.Test:
                     }
                 }
                 Kyo.foreach((0 until n).toSeq) { _ =>
-                    transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                         transport.closeNow(conn)
                     }
                 }.andThen {
@@ -279,8 +284,10 @@ class NioTransportTest extends kyo.Test:
     "listen port 0 → assigned port > 0" in run {
         Scope.run {
             withServer.map { listener =>
-                assert(listener.port > 0)
-                assert(listener.host == "127.0.0.1")
+                assert(listenerPort(listener) > 0)
+                assert(listener.address match
+                    case TransportAddress.Tcp(h, _) => h == "127.0.0.1";
+                    case _                          => false)
                 succeed
             }
         }
@@ -294,7 +301,7 @@ class NioTransportTest extends kyo.Test:
                         transport.closeNow(serverConn)
                     }
                 }
-                transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                     serverFiber.map(_.get).andThen {
                         transport.closeNow(clientConn).andThen(succeed)
                     }
@@ -312,7 +319,7 @@ class NioTransportTest extends kyo.Test:
                             transport.closeNow(serverConn)
                         }
                     }
-                    transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                    transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                         serverFiber.map(_.get).andThen {
                             transport.closeNow(clientConn)
                         }
@@ -328,7 +335,7 @@ class NioTransportTest extends kyo.Test:
         }.map { listener =>
             // After Scope.run, server should be closed.
             Abort.run[HttpException] {
-                transport.connect("127.0.0.1", listener.port, Absent)
+                transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent)
             }.map { result =>
                 assert(result.isFailure)
             }
@@ -346,7 +353,7 @@ class NioTransportTest extends kyo.Test:
                         transport.closeNow(serverConn)
                     }
                 }
-                transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                     serverFiber.map(_.get).andThen {
                         transport.closeNow(clientConn).andThen(succeed)
                     }

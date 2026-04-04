@@ -20,6 +20,11 @@ class Http1NativeTest extends kyo.Test:
         if !isMacOS then succeed
         else f(new KqueueNativeTransport)
 
+    private def listenerPort(listener: TransportListener[?]): Int =
+        listener.address match
+            case TransportAddress.Tcp(_, port) => port
+            case TransportAddress.Unix(_)      => -1
+
     // ── Helper: start a server that handles one connection ─────────────────────
 
     /** Start a server fiber that handles one connection, then run the client.
@@ -34,16 +39,16 @@ class Http1NativeTest extends kyo.Test:
     )(
         client: (KqueueConnection, Int) => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException] & Scope) =
-        transport.listen("127.0.0.1", 0, 128, Absent).map { listener =>
+        transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent).map { listener =>
             Fiber.initUnscoped {
                 listener.connections.take(1).run.map { chunk =>
                     if chunk.isEmpty then Abort.panic(new Exception("No connection accepted"))
                     else handler(chunk(0))
                 }
             }.andThen {
-                transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                     Sync.ensure(transport.closeNow(conn)) {
-                        client(conn, listener.port)
+                        client(conn, listenerPort(listener))
                     }
                 }
             }
@@ -174,7 +179,7 @@ class Http1NativeTest extends kyo.Test:
     "5 sequential requests same connection" in run {
         Scope.run {
             onMacOS { transport =>
-                transport.listen("127.0.0.1", 0, 128, Absent).map { listener =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent).map { listener =>
                     // Server: handle 5 requests on one connection using Loop
                     val serverFiber = Fiber.initUnscoped {
                         listener.connections.take(1).run.map { chunk =>
@@ -198,7 +203,7 @@ class Http1NativeTest extends kyo.Test:
                         }
                     }
                     serverFiber.andThen {
-                        transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                        transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                             Sync.ensure(transport.closeNow(clientConn)) {
                                 // Client: send 5 requests and verify each response
                                 Loop(clientConn.read, 0) { (stream, i) =>
@@ -239,7 +244,7 @@ class Http1NativeTest extends kyo.Test:
     "stream threads correctly across requests" in run {
         Scope.run {
             onMacOS { transport =>
-                transport.listen("127.0.0.1", 0, 128, Absent).map { listener =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent).map { listener =>
                     val serverFiber = Fiber.initUnscoped {
                         listener.connections.take(1).run.map { chunk =>
                             if chunk.isEmpty then Abort.panic(new Exception("No connection"))
@@ -268,7 +273,7 @@ class Http1NativeTest extends kyo.Test:
                         }
                     }
                     serverFiber.andThen {
-                        transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                        transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                             Sync.ensure(transport.closeNow(clientConn)) {
                                 val postBody = Span.fromUnsafe("hello-post".getBytes(Utf8))
                                 Http1Protocol
@@ -391,7 +396,7 @@ class Http1NativeTest extends kyo.Test:
         val n = 10
         Scope.run {
             onMacOS { transport =>
-                transport.listen("127.0.0.1", 0, 128, Absent).map { listener =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent).map { listener =>
                     // Server: accept and handle n connections, each echoing the request path.
                     // Each connection is handled in its own fiber.
                     val serverFiber = Fiber.initUnscoped {
@@ -423,7 +428,7 @@ class Http1NativeTest extends kyo.Test:
                     serverFiber.andThen {
                         // n sequential clients each send a request with unique ID
                         Kyo.foreach((0 until n).toSeq) { id =>
-                            transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                            transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                                 Sync.ensure(transport.closeNow(conn)) {
                                     Http1Protocol
                                         .writeRequest(conn, HttpMethod.GET, s"/client$id", HttpHeaders.empty, HttpBody.Empty)
@@ -451,7 +456,7 @@ class Http1NativeTest extends kyo.Test:
         val n = 10
         Scope.run {
             onMacOS { transport =>
-                transport.listen("127.0.0.1", 0, 128, Absent).map { listener =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent).map { listener =>
                     val serverFiber = Fiber.initUnscoped {
                         Loop(listener.connections, 0) { (connStream, count) =>
                             if count >= n then Loop.done(())
@@ -478,7 +483,7 @@ class Http1NativeTest extends kyo.Test:
                     }
                     serverFiber.andThen {
                         Kyo.foreach((0 until n).toSeq) { id =>
-                            transport.connect("127.0.0.1", listener.port, Absent).map { conn =>
+                            transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
                                 Sync.ensure(transport.closeNow(conn)) {
                                     val reqBody = Span.fromUnsafe(s"payload-$id".getBytes(Utf8))
                                     Http1Protocol
@@ -511,7 +516,7 @@ class Http1NativeTest extends kyo.Test:
     "client disconnects mid-request" in run {
         Scope.run {
             onMacOS { transport =>
-                transport.listen("127.0.0.1", 0, 128, Absent).map { listener =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent).map { listener =>
                     // Server: try to read a full request — should abort because client disconnects
                     val serverFiber = Fiber.initUnscoped {
                         listener.connections.take(1).run.map { chunk =>
@@ -528,7 +533,7 @@ class Http1NativeTest extends kyo.Test:
                     }
                     // Start server fiber first, then connect client
                     serverFiber.map { serverFib =>
-                        transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                        transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                             // Write only partial headers (no CRLF CRLF terminator), then close
                             clientConn
                                 .write(Span.fromUnsafe("GET /test HTTP/1.1\r\nHost: localhost".getBytes(Utf8)))
@@ -548,7 +553,7 @@ class Http1NativeTest extends kyo.Test:
     "server disconnects mid-response" in run {
         Scope.run {
             onMacOS { transport =>
-                transport.listen("127.0.0.1", 0, 128, Absent).map { listener =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent).map { listener =>
                     val serverFiber = Fiber.initUnscoped {
                         listener.connections.take(1).run.map { chunk =>
                             if chunk.isEmpty then Abort.panic(new Exception("No connection"))
@@ -567,7 +572,7 @@ class Http1NativeTest extends kyo.Test:
                         }
                     }
                     serverFiber.andThen {
-                        transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                        transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                             Sync.ensure(transport.closeNow(clientConn)) {
                                 Http1Protocol
                                     .writeRequest(clientConn, HttpMethod.GET, "/test", HttpHeaders.empty, HttpBody.Empty)
@@ -591,7 +596,7 @@ class Http1NativeTest extends kyo.Test:
     "malformed response" in run {
         Scope.run {
             onMacOS { transport =>
-                transport.listen("127.0.0.1", 0, 128, Absent).map { listener =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent).map { listener =>
                     val serverFiber = Fiber.initUnscoped {
                         listener.connections.take(1).run.map { chunk =>
                             if chunk.isEmpty then Abort.panic(new Exception("No connection"))
@@ -608,7 +613,7 @@ class Http1NativeTest extends kyo.Test:
                         }
                     }
                     serverFiber.andThen {
-                        transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                        transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                             Sync.ensure(transport.closeNow(clientConn)) {
                                 Http1Protocol
                                     .writeRequest(clientConn, HttpMethod.GET, "/test", HttpHeaders.empty, HttpBody.Empty)
@@ -674,7 +679,7 @@ class Http1NativeTest extends kyo.Test:
             onMacOS { transport =>
                 val bodySize = 1000
                 val maxSize  = 100 // much smaller than bodySize
-                transport.listen("127.0.0.1", 0, 128, Absent).map { listener =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent).map { listener =>
                     val serverFiber = Fiber.initUnscoped {
                         listener.connections.take(1).run.map { chunk =>
                             if chunk.isEmpty then Abort.panic(new Exception("No connection"))
@@ -692,7 +697,7 @@ class Http1NativeTest extends kyo.Test:
                         }
                     }
                     serverFiber.andThen {
-                        transport.connect("127.0.0.1", listener.port, Absent).map { clientConn =>
+                        transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
                             Sync.ensure(transport.closeNow(clientConn)) {
                                 Http1Protocol
                                     .writeRequest(clientConn, HttpMethod.GET, "/big", HttpHeaders.empty, HttpBody.Empty)

@@ -9,11 +9,11 @@ end TransportStream
 
 trait Transport:
     type Connection <: TransportStream
-    def connect(host: String, port: Int, tls: Maybe[TlsConfig])(using
+    def connect(address: TransportAddress, tls: Maybe[TlsConfig])(using
         Frame
     )
         : Connection < (Async & Abort[HttpException])
-    def listen(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using
+    def listen(address: TransportAddress, backlog: Int, tls: Maybe[TlsConfig])(using
         Frame
     )
         : TransportListener[Connection] < (Async & Scope)
@@ -23,8 +23,7 @@ trait Transport:
 end Transport
 
 class TransportListener[+C <: TransportStream](
-    val port: Int,
-    val host: String,
+    val address: TransportAddress,
     val connections: Stream[C, Async],
     val close: Unit < Sync = Kyo.unit
 )

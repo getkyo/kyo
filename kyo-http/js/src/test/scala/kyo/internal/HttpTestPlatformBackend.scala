@@ -21,17 +21,17 @@ private[kyo] class TrustAllJsTransport extends Transport:
 
     type Connection = inner.Connection
 
-    def connect(host: String, port: Int, tls: Maybe[TlsConfig])(using
+    def connect(address: TransportAddress, tls: Maybe[TlsConfig])(using
         Frame
     ): Connection < (Async & Abort[HttpException]) =
         val adjusted = tls.map(_.copy(trustAll = true))
-        inner.connect(host, port, adjusted)
+        inner.connect(address, adjusted)
     end connect
 
-    def listen(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using
+    def listen(address: TransportAddress, backlog: Int, tls: Maybe[TlsConfig])(using
         Frame
     ): TransportListener[Connection] < (Async & Scope) =
-        inner.listen(host, port, backlog, tls)
+        inner.listen(address, backlog, tls)
 
     def isAlive(c: Connection)(using Frame): Boolean < Sync =
         inner.isAlive(c)

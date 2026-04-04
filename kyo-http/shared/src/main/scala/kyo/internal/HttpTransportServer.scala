@@ -39,8 +39,11 @@ class HttpTransportServer(private[kyo] val transport: Transport)(using
     )(using Frame): HttpBackend.Binding < (Async & Scope) =
         val router     = HttpRouter(handlers, config.cors)
         val connFibers = new java.util.concurrent.CopyOnWriteArrayList[Fiber[Unit, Any]]
+        val listenAddress = config.unixSocket match
+            case Present(path) => TransportAddress.Unix(path)
+            case Absent        => TransportAddress.Tcp(config.host, config.port)
         Promise.init[Unit, Any].map { done =>
-            transport.listen(config.host, config.port, config.backlog, config.tls).map { listener =>
+            transport.listen(listenAddress, config.backlog, config.tls).map { listener =>
                 Fiber.initUnscoped {
                     listener.connections.foreach { conn =>
                         Fiber.initUnscoped {
@@ -55,9 +58,11 @@ class HttpTransportServer(private[kyo] val transport: Transport)(using
                         }
                     }
                 }.map { acceptFiber =>
+                    val serverAddress: HttpServerAddress = listener.address match
+                        case TransportAddress.Tcp(host, port) => HttpServerAddress.Tcp(host, port)
+                        case TransportAddress.Unix(path)      => HttpServerAddress.Unix(path)
                     new HttpBackend.Binding:
-                        val port: Int    = listener.port
-                        val host: String = listener.host
+                        val address: HttpServerAddress = serverAddress
                         def close(gracePeriod: Duration)(using Frame): Unit < Async =
                             listener.close.andThen {
                                 acceptFiber.interrupt.unit.andThen {
@@ -75,6 +80,7 @@ class HttpTransportServer(private[kyo] val transport: Transport)(using
                             }
                         def await(using Frame): Unit < Async =
                             done.get.unit
+                    end new
                 }
             }
         }

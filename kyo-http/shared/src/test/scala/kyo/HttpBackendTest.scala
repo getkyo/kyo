@@ -40,8 +40,9 @@ class HttpBackendTest extends Test:
             config: HttpServerConfig
         )(using Frame): HttpBackend.Binding < (Async & Scope) =
             new HttpBackend.Binding:
-                val port: Int                                               = config.port
-                val host: String                                            = config.host
+                val address: HttpServerAddress = config.unixSocket match
+                    case Present(path) => HttpServerAddress.Unix(path)
+                    case Absent        => HttpServerAddress.Tcp(config.host, config.port)
                 def close(gracePeriod: Duration)(using Frame): Unit < Async = ()
                 def await(using Frame): Unit < Async                        = ()
 
@@ -135,22 +136,19 @@ class HttpBackendTest extends Test:
         "close with default grace period" in {
             var captured: Duration = Duration.Zero
             val binding = new HttpBackend.Binding:
-                val port: Int    = 9090
-                val host: String = "localhost"
+                val address: HttpServerAddress = HttpServerAddress.Tcp("localhost", 9090)
                 def close(gracePeriod: Duration)(using Frame): Unit < Async =
                     captured = gracePeriod
                 def await(using Frame): Unit < Async = ()
             val _: Unit < Async = binding.close
-            assert(binding.port == 9090)
-            assert(binding.host == "localhost")
+            assert(binding.address == HttpServerAddress.Tcp("localhost", 9090))
             assert(captured == 30.seconds)
         }
 
         "closeNow uses zero duration" in {
             var captured: Duration = 30.seconds
             val binding = new HttpBackend.Binding:
-                val port: Int    = 9090
-                val host: String = "localhost"
+                val address: HttpServerAddress = HttpServerAddress.Tcp("localhost", 9090)
                 def close(gracePeriod: Duration)(using Frame): Unit < Async =
                     captured = gracePeriod
                 def await(using Frame): Unit < Async = ()

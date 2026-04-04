@@ -13,7 +13,7 @@ import scala.annotation.tailrec
 final private[kyo] class ConnectionPool[C](
     maxConnectionsPerHost: Int,
     idleConnectionTimeoutNanos: Long,
-    pools: ConcurrentHashMap[ConnectionPool.HostKey, ConnectionPool.HostPool],
+    pools: ConcurrentHashMap[TransportAddress, ConnectionPool.HostPool],
     isAlive: C => Boolean < Sync,
     discardConn: C => Unit < Sync
 ):
@@ -22,30 +22,30 @@ final private[kyo] class ConnectionPool[C](
 
     @volatile private var closed = false
 
-    def poll(key: HostKey)(using Frame): Maybe[C] < Sync =
+    def poll(key: TransportAddress)(using Frame): Maybe[C] < Sync =
         if closed then Sync.defer(Maybe.empty)
         else getPool(key).poll(idleConnectionTimeoutNanos, isAlive, discardConn)
 
-    def release(key: HostKey, conn: C)(using Frame): Unit < Sync =
+    def release(key: TransportAddress, conn: C)(using Frame): Unit < Sync =
         if closed then discardConn(conn)
         else getPool(key).release(conn, discardConn)
 
-    def track(key: HostKey, conn: C)(using Frame): Unit < Sync =
+    def track(key: TransportAddress, conn: C)(using Frame): Unit < Sync =
         Sync.defer { if !closed then getPool(key).track(conn) }
 
-    def untrack(key: HostKey, conn: C)(using Frame): Unit < Sync =
+    def untrack(key: TransportAddress, conn: C)(using Frame): Unit < Sync =
         Sync.defer { if !closed then getPool(key).untrack(conn) }
 
     def discard(conn: C)(using Frame): Unit < Sync =
         discardConn(conn)
 
-    def tryReserve(key: HostKey)(using Frame): Boolean < Sync =
+    def tryReserve(key: TransportAddress)(using Frame): Boolean < Sync =
         Sync.defer {
             if closed then false
             else getPool(key).tryReserve()
         }
 
-    def unreserve(key: HostKey)(using Frame): Unit < Sync =
+    def unreserve(key: TransportAddress)(using Frame): Unit < Sync =
         Sync.defer { if !closed then getPool(key).unreserve() }
 
     def close()(using Frame): Chunk[C] < Sync =
@@ -61,7 +61,7 @@ final private[kyo] class ConnectionPool[C](
                 builder.result()
         }
 
-    private def getPool(key: HostKey): HostPool =
+    private def getPool(key: TransportAddress): HostPool =
         pools.computeIfAbsent(key, _ => new HostPool(maxConnectionsPerHost))
 
 end ConnectionPool
@@ -84,8 +84,6 @@ private[kyo] object ConnectionPool:
                 discard
             )
         }
-
-    private[kyo] case class HostKey(host: String, port: Int) derives CanEqual
 
     final private[internal] class HostPool(capacity: Int):
         require(capacity >= 2, s"maxConnectionsPerHost must be >= 2: $capacity")

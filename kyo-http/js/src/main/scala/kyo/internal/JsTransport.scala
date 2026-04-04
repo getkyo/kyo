@@ -16,7 +16,17 @@ final class JsTransport extends Transport:
 
     type Connection = JsConnection
 
-    def connect(host: String, port: Int, tlsConfig: Maybe[TlsConfig])(using
+    def connect(address: TransportAddress, tlsConfig: Maybe[TlsConfig])(using
+        Frame
+    )
+        : JsConnection < (Async & Abort[HttpException]) =
+        address match
+            case TransportAddress.Tcp(host, port) =>
+                connectTcp(host, port, tlsConfig)
+            case TransportAddress.Unix(path) =>
+                connectUnix(path)
+
+    private def connectTcp(host: String, port: Int, tlsConfig: Maybe[TlsConfig])(using
         Frame
     )
         : JsConnection < (Async & Abort[HttpException]) =
@@ -56,6 +66,34 @@ final class JsTransport extends Transport:
             }.andThen(promise.get)
         }
 
+    private def connectUnix(path: String)(using
+        Frame
+    )
+        : JsConnection < (Async & Abort[HttpException]) =
+        Promise.init[JsConnection, Async & Abort[HttpException]].map { promise =>
+            Sync.defer {
+                val socket = net.connect(js.Dynamic.literal(path = path))
+                discard(socket.pause())
+                discard(socket.on(
+                    "connect",
+                    { () =>
+                        import AllowUnsafe.embrace.danger
+                        val conn = new JsRawConnection(socket)
+                        discard(promise.unsafe.complete(Result.succeed(new JsConnection(conn, new JsStream(conn)))))
+                    }: js.Function0[Unit]
+                ))
+                discard(socket.on(
+                    "error",
+                    { (err: js.Dynamic) =>
+                        import AllowUnsafe.embrace.danger
+                        discard(promise.unsafe.complete(Result.fail(
+                            HttpConnectException(path, 0, new Exception(err.message.toString))
+                        )))
+                    }: js.Function1[js.Dynamic, Unit]
+                ))
+            }.andThen(promise.get)
+        }
+
     def isAlive(c: JsConnection)(using Frame): Boolean < Sync =
         Sync.defer(!c.conn.socket.destroyed.asInstanceOf[Boolean])
 
@@ -65,13 +103,12 @@ final class JsTransport extends Transport:
     def close(c: JsConnection, gracePeriod: Duration)(using Frame): Unit < Async =
         Sync.defer(discard(c.conn.socket.end()))
 
-    def listen(host: String, port: Int, backlog: Int, tlsOpt: Maybe[TlsConfig])(using
+    def listen(address: TransportAddress, backlog: Int, tlsOpt: Maybe[TlsConfig])(using
         frame: Frame
     )
         : TransportListener[JsConnection] < (Async & Scope) =
         Promise.init[TransportListener[JsConnection], Any].map { ready =>
-            val fs         = js.Dynamic.global.require("fs")
-            val listenHost = host
+            val fs = js.Dynamic.global.require("fs")
 
             // Create plain TCP or TLS server depending on config
             val (server, connEvent) = tlsOpt match
@@ -96,9 +133,17 @@ final class JsTransport extends Transport:
                 "error",
                 { (err: js.Dynamic) =>
                     import AllowUnsafe.embrace.danger
-                    discard(ready.unsafe.complete(Result.Panic(
-                        HttpBindException(listenHost, port, new Exception(err.message.asInstanceOf[String]))
-                    )))
+                    val errorMsg = err.message.asInstanceOf[String]
+                    address match
+                        case TransportAddress.Tcp(host, port) =>
+                            discard(ready.unsafe.complete(Result.Panic(
+                                HttpBindException(host, port, new Exception(errorMsg))
+                            )))
+                        case TransportAddress.Unix(path) =>
+                            discard(ready.unsafe.complete(Result.Panic(
+                                HttpBindException(path, 0, new Exception(errorMsg))
+                            )))
+                    end match
                 }: js.Function1[js.Dynamic, Unit]
             ))
 
@@ -108,7 +153,10 @@ final class JsTransport extends Transport:
                 { (socket: js.Dynamic) =>
                     import AllowUnsafe.embrace.danger
                     discard(socket.pause())
-                    discard(socket.setNoDelay(true))
+                    // Only set TCP_NODELAY for TCP sockets, not Unix sockets
+                    address match
+                        case _: TransportAddress.Tcp => discard(socket.setNoDelay(true))
+                        case _                       =>
                     discard(activeSockets.push(socket))
                     val jsConn = new JsRawConnection(socket)
                     val conn   = new JsConnection(jsConn, new JsStream(jsConn))
@@ -137,18 +185,30 @@ final class JsTransport extends Transport:
 
             Scope.acquireRelease {
                 Sync.defer {
-                    discard(server.listen(
-                        port,
-                        host,
-                        { () =>
-                            import AllowUnsafe.embrace.danger
-                            val addr       = server.address()
-                            val actualPort = addr.port.asInstanceOf[Int]
-                            discard(ready.unsafe.complete(Result.succeed(
-                                new TransportListener(actualPort, listenHost, connStream)
-                            )))
-                        }: js.Function0[Unit]
-                    ))
+                    address match
+                        case TransportAddress.Tcp(host, port) =>
+                            discard(server.listen(
+                                port,
+                                host,
+                                { () =>
+                                    import AllowUnsafe.embrace.danger
+                                    val addr       = server.address()
+                                    val actualPort = addr.port.asInstanceOf[Int]
+                                    discard(ready.unsafe.complete(Result.succeed(
+                                        new TransportListener(TransportAddress.Tcp(host, actualPort), connStream)
+                                    )))
+                                }: js.Function0[Unit]
+                            ))
+                        case TransportAddress.Unix(path) =>
+                            discard(server.listen(
+                                js.Dynamic.literal(path = path),
+                                { () =>
+                                    import AllowUnsafe.embrace.danger
+                                    discard(ready.unsafe.complete(Result.succeed(
+                                        new TransportListener(TransportAddress.Unix(path), connStream)
+                                    )))
+                                }: js.Function0[Unit]
+                            ))
                 }.andThen(ready.get)
             } { _ =>
                 Sync.defer {

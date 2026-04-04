@@ -17,12 +17,17 @@ class NativeTlsBaselineTest extends kyo.Test:
         if !isMacOS then succeed
         else f(new KqueueNativeTransport)
 
+    private def listenerPort(listener: TransportListener[?]): Int =
+        listener.address match
+            case TransportAddress.Tcp(_, port) => port
+            case TransportAddress.Unix(_)      => -1
+
     // ── helpers ──────────────────────────────────────────────
 
     private def withTlsServer(
         transport: KqueueNativeTransport
     )(using Frame): TransportListener[KqueueConnection] < (Async & Scope) =
-        transport.listen("127.0.0.1", 0, 128, Present(TlsTestHelper.serverTlsConfig))
+        transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Present(TlsTestHelper.serverTlsConfig))
 
     private def acceptOne(
         listener: TransportListener[KqueueConnection]
@@ -74,13 +79,17 @@ class NativeTlsBaselineTest extends kyo.Test:
                         }
                     }
                     serverFiber.andThen {
-                        transport.connect("127.0.0.1", listener.port, Present(TlsTestHelper.clientTlsConfig)).map { clientConn =>
-                            readN(clientConn, 5).map { bytes =>
-                                assert(new String(bytes, Utf8) == "hello")
-                                clientConn.write(Span.fromUnsafe("world".getBytes(Utf8))).andThen {
-                                    transport.closeNow(clientConn).andThen(succeed)
+                        transport.connect(
+                            TransportAddress.Tcp("127.0.0.1", listenerPort(listener)),
+                            Present(TlsTestHelper.clientTlsConfig)
+                        ).map {
+                            clientConn =>
+                                readN(clientConn, 5).map { bytes =>
+                                    assert(new String(bytes, Utf8) == "hello")
+                                    clientConn.write(Span.fromUnsafe("world".getBytes(Utf8))).andThen {
+                                        transport.closeNow(clientConn).andThen(succeed)
+                                    }
                                 }
-                            }
                         }
                     }
                 }
@@ -106,7 +115,10 @@ class NativeTlsBaselineTest extends kyo.Test:
                                 }
                             }
                             serverFiber.andThen {
-                                transport.connect("127.0.0.1", listener.port, Present(TlsTestHelper.clientTlsConfig)).map {
+                                transport.connect(
+                                    TransportAddress.Tcp("127.0.0.1", listenerPort(listener)),
+                                    Present(TlsTestHelper.clientTlsConfig)
+                                ).map {
                                     clientConn =>
                                         readN(clientConn, 6).map { bytes =>
                                             assert(new String(bytes, Utf8) == s"hello$i")
@@ -142,7 +154,10 @@ class NativeTlsBaselineTest extends kyo.Test:
                                 }
                             }
                             serverFiber.andThen {
-                                transport.connect("127.0.0.1", listener.port, Present(TlsTestHelper.clientTlsConfig)).map {
+                                transport.connect(
+                                    TransportAddress.Tcp("127.0.0.1", listenerPort(listener)),
+                                    Present(TlsTestHelper.clientTlsConfig)
+                                ).map {
                                     clientConn =>
                                         readN(clientConn, msg.length).map { bytes =>
                                             assert(new String(bytes, Utf8) == msg)
@@ -178,7 +193,10 @@ class NativeTlsBaselineTest extends kyo.Test:
                                 }
                             }
                             serverFiber.andThen {
-                                transport.connect("127.0.0.1", listener.port, Present(TlsTestHelper.clientTlsConfig)).map {
+                                transport.connect(
+                                    TransportAddress.Tcp("127.0.0.1", listenerPort(listener)),
+                                    Present(TlsTestHelper.clientTlsConfig)
+                                ).map {
                                     clientConn =>
                                         readN(clientConn, msg.length).map { bytes =>
                                             assert(new String(bytes, Utf8) == msg)
@@ -215,13 +233,17 @@ class NativeTlsBaselineTest extends kyo.Test:
                         }
                     }
                     serverFiber.andThen {
-                        transport.connect("127.0.0.1", listener.port, Present(TlsTestHelper.clientTlsConfig)).map { clientConn =>
-                            clientConn.write(Span.fromUnsafe(data)).andThen {
-                                readN(clientConn, 2).map { bytes =>
-                                    assert(new String(bytes, Utf8) == "ok")
-                                    transport.closeNow(clientConn).andThen(succeed)
+                        transport.connect(
+                            TransportAddress.Tcp("127.0.0.1", listenerPort(listener)),
+                            Present(TlsTestHelper.clientTlsConfig)
+                        ).map {
+                            clientConn =>
+                                clientConn.write(Span.fromUnsafe(data)).andThen {
+                                    readN(clientConn, 2).map { bytes =>
+                                        assert(new String(bytes, Utf8) == "ok")
+                                        transport.closeNow(clientConn).andThen(succeed)
+                                    }
                                 }
-                            }
                         }
                     }
                 }
@@ -248,19 +270,23 @@ class NativeTlsBaselineTest extends kyo.Test:
                         }
                     }
                     serverFiber.andThen {
-                        transport.connect("127.0.0.1", listener.port, Present(TlsTestHelper.clientTlsConfig)).map { clientConn =>
-                            Loop.indexed { i =>
-                                if i >= 100 then Loop.done(succeed)
-                                else
-                                    clientConn.write(Span.fromUnsafe("ping".getBytes(Utf8))).andThen {
-                                        readN(clientConn, 4).map { bytes =>
-                                            assert(new String(bytes, Utf8) == "pong")
-                                            Loop.continue
+                        transport.connect(
+                            TransportAddress.Tcp("127.0.0.1", listenerPort(listener)),
+                            Present(TlsTestHelper.clientTlsConfig)
+                        ).map {
+                            clientConn =>
+                                Loop.indexed { i =>
+                                    if i >= 100 then Loop.done(succeed)
+                                    else
+                                        clientConn.write(Span.fromUnsafe("ping".getBytes(Utf8))).andThen {
+                                            readN(clientConn, 4).map { bytes =>
+                                                assert(new String(bytes, Utf8) == "pong")
+                                                Loop.continue
+                                            }
                                         }
-                                    }
-                            }.map { result =>
-                                transport.closeNow(clientConn).andThen(result)
-                            }
+                                }.map { result =>
+                                    transport.closeNow(clientConn).andThen(result)
+                                }
                         }
                     }
                 }

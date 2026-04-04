@@ -22,6 +22,11 @@ class NativeTlsIsolationTest extends kyo.Test:
         if !isMacOS then succeed
         else f
 
+    private def listenerPort(listener: TransportListener[?]): Int =
+        listener.address match
+            case TransportAddress.Tcp(_, port) => port
+            case TransportAddress.Unix(_)      => -1
+
     // ── helpers ──────────────────────────────────────────────
 
     private def acceptOne(
@@ -147,7 +152,7 @@ class NativeTlsIsolationTest extends kyo.Test:
         Scope.run {
             onMacOS {
                 val transport = new KqueueNativeTransport
-                transport.listen("127.0.0.1", 0, 128, Present(TlsTestHelper.serverTlsConfig)).map { listener =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Present(TlsTestHelper.serverTlsConfig)).map { listener =>
                     val serverFiber = Fiber.initUnscoped {
                         acceptOne(listener).map { serverConn =>
                             // No data exchange — just close immediately after handshake
@@ -155,10 +160,14 @@ class NativeTlsIsolationTest extends kyo.Test:
                         }
                     }
                     serverFiber.andThen {
-                        transport.connect("127.0.0.1", listener.port, Present(TlsTestHelper.clientTlsConfig)).map { clientConn =>
-                            // Handshake has completed (connect returns after handshake).
-                            // No data exchange — just close.
-                            transport.closeNow(clientConn).andThen(succeed)
+                        transport.connect(
+                            TransportAddress.Tcp("127.0.0.1", listenerPort(listener)),
+                            Present(TlsTestHelper.clientTlsConfig)
+                        ).map {
+                            clientConn =>
+                                // Handshake has completed (connect returns after handshake).
+                                // No data exchange — just close.
+                                transport.closeNow(clientConn).andThen(succeed)
                         }
                     }
                 }
@@ -177,10 +186,10 @@ class NativeTlsIsolationTest extends kyo.Test:
         Scope.run {
             onMacOS {
                 val transport = new KqueueNativeTransport
-                transport.listen("127.0.0.1", 0, 128, Present(TlsTestHelper.serverTlsConfig)).map { listener =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Present(TlsTestHelper.serverTlsConfig)).map { listener =>
                     // Server is up with TLS context. Don't connect any clients.
                     // Just verify the listener was created successfully and close.
-                    assert(listener.port > 0)
+                    assert(listenerPort(listener) > 0)
                     listener.close.andThen(succeed)
                 }
             }
@@ -199,7 +208,7 @@ class NativeTlsIsolationTest extends kyo.Test:
             onMacOS {
                 val transport = new KqueueNativeTransport
                 // Create a plain (non-TLS) server
-                transport.listen("127.0.0.1", 0, 128, Absent).map { listener =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Absent).map { listener =>
                     val serverFiber = Fiber.initUnscoped {
                         // Accept one connection on the plain server — it will receive
                         // TLS handshake bytes as raw TCP data, which it won't understand.
@@ -214,7 +223,10 @@ class NativeTlsIsolationTest extends kyo.Test:
                     serverFiber.andThen {
                         // Try to connect with TLS to a plain server — should fail with an error
                         Abort.run[HttpException] {
-                            transport.connect("127.0.0.1", listener.port, Present(TlsTestHelper.clientTlsConfig))
+                            transport.connect(
+                                TransportAddress.Tcp("127.0.0.1", listenerPort(listener)),
+                                Present(TlsTestHelper.clientTlsConfig)
+                            )
                         }.map { result =>
                             // We expect this to fail (handshake error), NOT crash.
                             // Either result is acceptable — the key question is: does it crash?
@@ -268,7 +280,7 @@ class NativeTlsIsolationTest extends kyo.Test:
                 val depthBefore = Thread.currentThread().getStackTrace.length
                 java.lang.System.err.println(s"[Experiment 6] Stack depth before listen: $depthBefore")
 
-                transport.listen("127.0.0.1", 0, 128, Present(TlsTestHelper.serverTlsConfig)).map { listener =>
+                transport.listen(TransportAddress.Tcp("127.0.0.1", 0), 128, Present(TlsTestHelper.serverTlsConfig)).map { listener =>
                     val depthAfterListen = Thread.currentThread().getStackTrace.length
                     java.lang.System.err.println(s"[Experiment 6] Stack depth after listen: $depthAfterListen")
 
@@ -294,22 +306,26 @@ class NativeTlsIsolationTest extends kyo.Test:
                         val clientDepthBeforeConnect = Thread.currentThread().getStackTrace.length
                         java.lang.System.err.println(s"[Experiment 6] Client stack depth before connect: $clientDepthBeforeConnect")
 
-                        transport.connect("127.0.0.1", listener.port, Present(TlsTestHelper.clientTlsConfig)).map { clientConn =>
-                            val clientDepthAfterConnect = Thread.currentThread().getStackTrace.length
-                            java.lang.System.err.println(
-                                s"[Experiment 6] Client stack depth after connect (post-handshake): $clientDepthAfterConnect"
-                            )
+                        transport.connect(
+                            TransportAddress.Tcp("127.0.0.1", listenerPort(listener)),
+                            Present(TlsTestHelper.clientTlsConfig)
+                        ).map {
+                            clientConn =>
+                                val clientDepthAfterConnect = Thread.currentThread().getStackTrace.length
+                                java.lang.System.err.println(
+                                    s"[Experiment 6] Client stack depth after connect (post-handshake): $clientDepthAfterConnect"
+                                )
 
-                            readN(clientConn, 5).map { bytes =>
-                                val clientReadDepth = Thread.currentThread().getStackTrace.length
-                                java.lang.System.err.println(s"[Experiment 6] Client stack depth after read: $clientReadDepth")
-                                assert(new String(bytes, Utf8) == "hello")
-                                clientConn.write(Span.fromUnsafe("world".getBytes(Utf8))).andThen {
-                                    val clientWriteDepth = Thread.currentThread().getStackTrace.length
-                                    java.lang.System.err.println(s"[Experiment 6] Client stack depth after write: $clientWriteDepth")
-                                    transport.closeNow(clientConn).andThen(succeed)
+                                readN(clientConn, 5).map { bytes =>
+                                    val clientReadDepth = Thread.currentThread().getStackTrace.length
+                                    java.lang.System.err.println(s"[Experiment 6] Client stack depth after read: $clientReadDepth")
+                                    assert(new String(bytes, Utf8) == "hello")
+                                    clientConn.write(Span.fromUnsafe("world".getBytes(Utf8))).andThen {
+                                        val clientWriteDepth = Thread.currentThread().getStackTrace.length
+                                        java.lang.System.err.println(s"[Experiment 6] Client stack depth after write: $clientWriteDepth")
+                                        transport.closeNow(clientConn).andThen(succeed)
+                                    }
                                 }
-                            }
                         }
                     }
                 }

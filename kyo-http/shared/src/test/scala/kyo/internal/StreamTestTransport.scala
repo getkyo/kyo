@@ -60,7 +60,7 @@ object StreamTestTransport:
                         case _                    => Maybe.empty
                     }
                 }
-                new TransportListener(0, "127.0.0.1", connStream, close = connCh.close.unit)
+                new TransportListener(TransportAddress.Tcp("127.0.0.1", 0), connStream, close = connCh.close.unit)
             } { _ => connCh.close.unit }
         }
 

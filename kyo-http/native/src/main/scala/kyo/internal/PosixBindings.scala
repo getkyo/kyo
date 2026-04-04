@@ -21,6 +21,14 @@ private[kyo] object PosixBindings:
     @extern @name("kyo_tcp_connect_error")
     def tcpConnectError(fd: CInt): CInt = extern
 
+    /** Non-blocking Unix domain socket connect. Returns fd (>=0), -1 on error. *outPending=1 if async. */
+    @extern @name("kyo_unix_connect")
+    def unixConnect(path: CString, outPending: Ptr[CInt]): CInt = extern
+
+    /** Bind + listen on a Unix domain socket. Returns server fd, -1 on error. *outPort always 0. */
+    @extern @name("kyo_unix_listen")
+    def unixListen(path: CString, backlog: CInt, outPort: Ptr[CInt]): CInt = extern
+
     /** Read up to len bytes. Returns bytes read, 0 on EOF, -1 on error/EAGAIN. */
     @extern @name("kyo_tcp_read")
     def tcpRead(fd: CInt, buf: Ptr[Byte], len: CInt): CInt = extern

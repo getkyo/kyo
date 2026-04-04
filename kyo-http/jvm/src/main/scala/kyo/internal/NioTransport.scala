@@ -1,7 +1,9 @@
 package kyo.internal
 
 import java.net.InetSocketAddress
+import java.net.StandardProtocolFamily
 import java.net.StandardSocketOptions
+import java.net.UnixDomainSocketAddress
 import java.nio.ByteBuffer
 import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
@@ -221,43 +223,58 @@ final class NioTransport(
 
     type Connection = NioConnection
 
-    def connect(host: String, port: Int, tls: Maybe[TlsConfig])(using
+    def connect(address: TransportAddress, tls: Maybe[TlsConfig])(using
         Frame
     ): NioConnection < (Async & Abort[HttpException]) =
-        group.ensureStarted().andThen {
-            tls match
-                case Present(tlsCfg) => connectTls(host, port, tlsCfg)
-                case Absent          => connectPlain(host, port)
-        }
+        address match
+            case TransportAddress.Tcp(host, port) =>
+                group.ensureStarted().andThen {
+                    tls match
+                        case Present(tlsCfg) => connectTls(host, port, tlsCfg)
+                        case Absent          => connectPlain(host, port)
+                }
+            case TransportAddress.Unix(path) =>
+                group.ensureStarted().andThen {
+                    connectUnixPlain(path).map { conn =>
+                        tls match
+                            case Present(tlsCfg) => connectTls(path, 0, tlsCfg, conn)
+                            case Absent          => Sync.defer(conn)
+                    }
+                }
 
     private def connectTls(host: String, port: Int, tlsCfg: TlsConfig)(using
         Frame
     ): NioConnection < (Async & Abort[HttpException]) =
         connectPlain(host, port).map { conn =>
-            Sync.defer {
-                val ctx = clientSslContext match
-                    case Present(c) => c
-                    case Absent =>
-                        if tlsCfg.trustAll then
-                            val ctx = SSLContext.getInstance("TLS")
-                            ctx.init(null, Array(TrustAllManager), new java.security.SecureRandom())
-                            ctx
-                        else
-                            SSLContext.getDefault
-                val engine = ctx.createSSLEngine(host, port)
-                engine.setUseClientMode(true)
-                val params = engine.getSSLParameters
-                val sni    = tlsCfg.sniHostname.getOrElse(host)
-                params.setServerNames(java.util.List.of(new SNIHostName(sni)))
-                val alpn = tlsCfg.alpnProtocols.toArray
-                if alpn.nonEmpty then params.setApplicationProtocols(alpn)
-                if !tlsCfg.trustAll then params.setEndpointIdentificationAlgorithm("HTTPS")
-                engine.setSSLParameters(params)
-                val bridge    = new NioStreamTlsBridge(conn)
-                val tlsStream = new NioTlsStream(bridge, engine)
-                conn.tlsStream = Present(tlsStream)
-                tlsStream.handshake().map(_ => conn)
-            }
+            connectTls(host, port, tlsCfg, conn)
+        }
+
+    private def connectTls(host: String, port: Int, tlsCfg: TlsConfig, conn: NioConnection)(using
+        Frame
+    ): NioConnection < (Async & Abort[HttpException]) =
+        Sync.defer {
+            val ctx = clientSslContext match
+                case Present(c) => c
+                case Absent =>
+                    if tlsCfg.trustAll then
+                        val ctx = SSLContext.getInstance("TLS")
+                        ctx.init(null, Array(TrustAllManager), new java.security.SecureRandom())
+                        ctx
+                    else
+                        SSLContext.getDefault
+            val engine = ctx.createSSLEngine(host, port)
+            engine.setUseClientMode(true)
+            val params = engine.getSSLParameters
+            val sni    = tlsCfg.sniHostname.getOrElse(host)
+            params.setServerNames(java.util.List.of(new SNIHostName(sni)))
+            val alpn = tlsCfg.alpnProtocols.toArray
+            if alpn.nonEmpty then params.setApplicationProtocols(alpn)
+            if !tlsCfg.trustAll then params.setEndpointIdentificationAlgorithm("HTTPS")
+            engine.setSSLParameters(params)
+            val bridge    = new NioStreamTlsBridge(conn)
+            val tlsStream = new NioTlsStream(bridge, engine)
+            conn.tlsStream = Present(tlsStream)
+            tlsStream.handshake().map(_ => conn)
         }
 
     private def connectPlain(host: String, port: Int)(using
@@ -287,6 +304,40 @@ final class NioTransport(
             end if
         }
 
+    private def connectUnixPlain(path: String)(using
+        Frame
+    ): NioConnection < (Async & Abort[HttpException]) =
+        Sync.defer {
+            Abort.recover[Exception](_ =>
+                Abort.fail(HttpConnectException(path, 0, new Exception(s"Unix socket connect failed: $path")))
+            ) {
+                Sync.defer {
+                    val loop    = group.next()
+                    val channel = SocketChannel.open(StandardProtocolFamily.UNIX)
+                    channel.configureBlocking(false)
+                    // Do NOT set TCP_NODELAY — Unix sockets don't support TCP options
+                    val addr      = UnixDomainSocketAddress.of(path)
+                    val connected = channel.connect(addr)
+                    if connected then
+                        Sync.defer(new NioConnection(channel, loop))
+                    else
+                        loop.awaitChannelConnectable(channel).andThen {
+                            Sync.defer {
+                                Abort.recover[Exception](_ =>
+                                    Abort.fail(HttpConnectException(path, 0, new Exception(s"Unix socket connect failed: $path")))
+                                ) {
+                                    Sync.defer {
+                                        channel.finishConnect()
+                                        new NioConnection(channel, loop)
+                                    }
+                                }
+                            }
+                        }
+                    end if
+                }
+            }
+        }
+
     def isAlive(c: NioConnection)(using Frame): Boolean < Sync =
         Sync.defer(c.channel.isOpen && c.channel.isConnected)
 
@@ -303,7 +354,14 @@ final class NioTransport(
     def close(c: NioConnection, gracePeriod: Duration)(using Frame): Unit < Async =
         closeNow(c)
 
-    def listen(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using
+    def listen(address: TransportAddress, backlog: Int, tls: Maybe[TlsConfig])(using
+        Frame
+    ): TransportListener[NioConnection] < (Async & Scope) =
+        address match
+            case TransportAddress.Tcp(host, port) => listenTcp(host, port, backlog, tls)
+            case TransportAddress.Unix(path)      => listenUnix(path, backlog, tls)
+
+    private def listenTcp(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using
         Frame
     ): TransportListener[NioConnection] < (Async & Scope) =
         group.ensureStarted().andThen {
@@ -317,8 +375,8 @@ final class NioTransport(
                         serverChannel.close()
                         throw HttpBindException(host, port, e)
                 end try
-                val actualPort = serverChannel.socket().getLocalPort
-                val actualHost = host
+                val actualPort    = serverChannel.socket().getLocalPort
+                val actualAddress = TransportAddress.Tcp(host, actualPort)
 
                 // Dedicated selector just for accept — ServerSocketChannel can't use the
                 // shared SocketChannel selector (different channel types). This selector is
@@ -345,8 +403,7 @@ final class NioTransport(
                                     }
                                 }
                             new TransportListener(
-                                actualPort,
-                                actualHost,
+                                actualAddress,
                                 connStream,
                                 close = Sync.defer { acceptSelector.close(); serverChannel.close() }
                             )
@@ -385,8 +442,92 @@ final class NioTransport(
                                     }
                                 }
                             new TransportListener(
-                                actualPort,
-                                actualHost,
+                                actualAddress,
+                                connStream,
+                                close = Sync.defer { acceptSelector.close(); serverChannel.close() }
+                            )
+                        } { _ =>
+                            Sync.defer {
+                                acceptSelector.close()
+                                serverChannel.close()
+                            }
+                        }
+                end match
+            }
+        }
+
+    private def listenUnix(path: String, backlog: Int, tls: Maybe[TlsConfig])(using
+        Frame
+    ): TransportListener[NioConnection] < (Async & Scope) =
+        group.ensureStarted().andThen {
+            Sync.defer {
+                val serverChannel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+                serverChannel.configureBlocking(false)
+                try
+                    serverChannel.bind(UnixDomainSocketAddress.of(path), backlog)
+                catch
+                    case e: java.net.BindException =>
+                        serverChannel.close()
+                        throw HttpBindException(path, 0, e)
+                end try
+                val actualAddress = TransportAddress.Unix(path)
+
+                val acceptSelector = Selector.open()
+                serverChannel.register(acceptSelector, SelectionKey.OP_ACCEPT)
+
+                tls match
+                    case Absent =>
+                        Scope.acquireRelease {
+                            val connStream: Stream[NioConnection, Async] =
+                                Stream.unfold((), chunkSize = 1) { _ =>
+                                    pollAcceptSelector(acceptSelector).map {
+                                        case false => Maybe.empty
+                                        case true =>
+                                            Maybe(serverChannel.accept()).map { clientChannel =>
+                                                clientChannel.configureBlocking(false)
+                                                // Unix sockets don't support TCP_NODELAY
+                                                (new NioConnection(clientChannel, group.next()), ())
+                                            }
+                                    }
+                                }
+                            new TransportListener(
+                                actualAddress,
+                                connStream,
+                                close = Sync.defer { acceptSelector.close(); serverChannel.close() }
+                            )
+                        } { _ =>
+                            Sync.defer {
+                                acceptSelector.close()
+                                serverChannel.close()
+                            }
+                        }
+
+                    case Present(tlsCfg) =>
+                        val sslCtx = serverSslContext match
+                            case Present(c) => c
+                            case Absent     => createServerSslContext(tlsCfg)
+                        Scope.acquireRelease {
+                            val connStream: Stream[NioConnection, Async] =
+                                Stream.unfold((), chunkSize = 1) { _ =>
+                                    pollAcceptSelector(acceptSelector).map {
+                                        case false => Maybe.empty
+                                        case true =>
+                                            Maybe(serverChannel.accept()).map { clientChannel =>
+                                                clientChannel.configureBlocking(false)
+                                                // Unix sockets don't support TCP_NODELAY
+                                                val connLoop = group.next()
+                                                val conn     = new NioConnection(clientChannel, connLoop)
+                                                val engine   = sslCtx.createSSLEngine()
+                                                engine.setUseClientMode(false)
+                                                val bridge    = new NioStreamTlsBridge(conn)
+                                                val tlsStream = new NioTlsStream(bridge, engine)
+                                                conn.tlsStream = Present(tlsStream)
+                                                (conn, ())
+                                            }
+                                    }
+                                }
+                            new TransportListener(
+                                actualAddress,
                                 connStream,
                                 close = Sync.defer { acceptSelector.close(); serverChannel.close() }
                             )

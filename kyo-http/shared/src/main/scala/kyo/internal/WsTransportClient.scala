@@ -22,8 +22,9 @@ class WsTransportClient(transport: Transport) extends HttpBackend.WebSocketClien
     )(
         f: WebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        val tls = if url.ssl then Present(TlsConfig.default) else Absent
-        transport.connect(url.host, url.port, tls).map { connection =>
+        val tls     = if url.ssl then Present(TlsConfig.default) else Absent
+        val address = TransportAddress.Tcp(url.host, url.port)
+        transport.connect(address, tls).map { connection =>
             Sync.ensure(transport.closeNow(connection)) {
                 WsCodec.requestUpgrade(connection, url.host, url.path, headers, config).map { wsStream =>
                     Channel.initUnscoped[WebSocketFrame](config.bufferSize).map { inbound =>

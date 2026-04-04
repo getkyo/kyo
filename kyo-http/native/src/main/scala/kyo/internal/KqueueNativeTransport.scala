@@ -117,15 +117,48 @@ final class KqueueNativeTransport(
 
     type Connection = KqueueConnection
 
-    def connect(host: String, port: Int, tls: Maybe[TlsConfig])(using
+    def connect(address: TransportAddress, tls: Maybe[TlsConfig])(using
         Frame
     ): KqueueConnection < (Async & Abort[HttpException]) =
-        group.ensureStarted().andThen {
-            connectPlain(host, port).map { conn =>
-                tls match
-                    case Present(tlsCfg) => connectTls(host, conn, tlsCfg)
-                    case Absent          => conn
+        address match
+            case TransportAddress.Tcp(host, port) =>
+                group.ensureStarted().andThen {
+                    connectPlain(host, port).map { conn =>
+                        tls match
+                            case Present(tlsCfg) => connectTls(host, conn, tlsCfg)
+                            case Absent          => conn
+                    }
+                }
+            case TransportAddress.Unix(path) =>
+                group.ensureStarted().andThen {
+                    connectUnixPlain(path)
+                }
+
+    private def connectUnixPlain(path: String)(using
+        Frame
+    ): KqueueConnection < (Async & Abort[HttpException]) =
+        Sync.defer {
+            val loop = group.next()
+            val (fd, pending) = Zone {
+                val outPending = alloc[CInt]()
+                val f          = unixConnect(toCString(path), outPending)
+                (f, !outPending)
             }
+            if fd < 0 then
+                Abort.fail(HttpConnectException(path, 0, new Exception("unix connect failed")))
+            else if pending == 1 then
+                loop.awaitWritable(fd).andThen {
+                    val err = tcpConnectError(fd)
+                    if err != 0 then
+                        tcpClose(fd)
+                        Abort.fail(HttpConnectException(path, 0, new Exception(s"unix connect failed: errno=$err")))
+                    else
+                        Sync.defer(new KqueueConnection(fd, loop))
+                    end if
+                }
+            else
+                Sync.defer(new KqueueConnection(fd, loop))
+            end if
         }
 
     private def connectPlain(host: String, port: Int)(using
@@ -201,7 +234,14 @@ final class KqueueNativeTransport(
     def close(c: KqueueConnection, gracePeriod: Duration)(using Frame): Unit < Async =
         Sync.defer(tcpShutdown(c.fd))
 
-    def listen(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using
+    def listen(address: TransportAddress, backlog: Int, tls: Maybe[TlsConfig])(using
+        Frame
+    ): TransportListener[KqueueConnection] < (Async & Scope) =
+        address match
+            case TransportAddress.Tcp(host, port) => listenTcp(host, port, backlog, tls)
+            case TransportAddress.Unix(path)      => listenUnix(path, backlog, tls)
+
+    private def listenTcp(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using
         Frame
     ): TransportListener[KqueueConnection] < (Async & Scope) =
         group.ensureStarted().andThen {
@@ -214,7 +254,7 @@ final class KqueueNativeTransport(
                 if serverFd < 0 then
                     Abort.panic(HttpBindException(host, port, new Exception("bind/listen failed")))
                 else
-                    val boundHost = host
+                    val boundAddress = TransportAddress.Tcp(host, boundPort)
                     // Use the first loop in the group for the accept selector (server fd readiness).
                     val acceptLoop = group.next()
                     tls match
@@ -241,8 +281,7 @@ final class KqueueNativeTransport(
                                         end if
                                     }
                                 new TransportListener(
-                                    boundPort,
-                                    boundHost,
+                                    boundAddress,
                                     connStream,
                                     close = Sync.Unsafe.defer {
                                         closed.set(true)
@@ -313,8 +352,136 @@ final class KqueueNativeTransport(
                                                 end if
                                             }
                                         new TransportListener(
-                                            boundPort,
-                                            boundHost,
+                                            boundAddress,
+                                            connStream,
+                                            close = Sync.Unsafe.defer {
+                                                closed.set(true)
+                                                acceptLoop.cancelFd(serverFd)
+                                                tcpClose(serverFd)
+                                            }
+                                        )
+                                    } { _ =>
+                                        Sync.defer {
+                                            tlsCtxFree(ctx)
+                                            tcpClose(serverFd)
+                                        }
+                                    }
+                                end if
+                            end if
+                    end match
+                end if
+            }
+        }
+
+    private def listenUnix(path: String, backlog: Int, tls: Maybe[TlsConfig])(using
+        Frame
+    ): TransportListener[KqueueConnection] < (Async & Scope) =
+        group.ensureStarted().andThen {
+            Sync.defer {
+                val (serverFd, _) = Zone {
+                    val outPort = alloc[CInt]()
+                    val fd      = unixListen(toCString(path), backlog, outPort)
+                    (fd, !outPort)
+                }
+                if serverFd < 0 then
+                    Abort.panic(HttpBindException(path, 0, new Exception("unix bind/listen failed")))
+                else
+                    val boundAddress = TransportAddress.Unix(path)
+                    val acceptLoop   = group.next()
+                    tls match
+                        case Absent =>
+                            Scope.acquireRelease {
+                                val closed = new java.util.concurrent.atomic.AtomicBoolean(false)
+                                val connStream: Stream[KqueueConnection, Async] =
+                                    Stream.unfold((), chunkSize = 1) { _ =>
+                                        if closed.get() then Maybe.empty
+                                        else
+                                            acceptLoop.awaitReadable(serverFd).andThen {
+                                                Sync.defer {
+                                                    if closed.get() then Maybe.empty
+                                                    else
+                                                        val clientFd = tcpAccept(serverFd)
+                                                        if clientFd >= 0 then
+                                                            Maybe((new KqueueConnection(clientFd, group.next()), ()))
+                                                        else
+                                                            Maybe.empty
+                                                        end if
+                                                    end if
+                                                }
+                                            }
+                                        end if
+                                    }
+                                new TransportListener(
+                                    boundAddress,
+                                    connStream,
+                                    close = Sync.Unsafe.defer {
+                                        closed.set(true)
+                                        acceptLoop.cancelFd(serverFd)
+                                        tcpClose(serverFd)
+                                    }
+                                )
+                            } { _ =>
+                                Sync.defer(tcpClose(serverFd))
+                            }
+                        case Present(tlsCfg) =>
+                            import TlsBindings.*
+                            val ctx = tlsCtxNew(1)
+                            if ctx == 0 then
+                                tcpClose(serverFd)
+                                Abort.panic(HttpBindException(path, 0, new Exception("Failed to create TLS context")))
+                            else
+                                val certResult = Zone {
+                                    tlsCtxSetCert(
+                                        ctx,
+                                        toCString(tlsCfg.certChainPath.getOrElse("")),
+                                        toCString(tlsCfg.privateKeyPath.getOrElse(""))
+                                    )
+                                }
+                                if certResult != 0 then
+                                    tlsCtxFree(ctx)
+                                    tcpClose(serverFd)
+                                    Abort.panic(HttpBindException(
+                                        path,
+                                        0,
+                                        new Exception("Failed to load TLS certificate/key")
+                                    ))
+                                else
+                                    Scope.acquireRelease {
+                                        val closed = new java.util.concurrent.atomic.AtomicBoolean(false)
+                                        val connStream: Stream[KqueueConnection, Async] =
+                                            Stream.unfold((), chunkSize = 1) { _ =>
+                                                if closed.get() then Maybe.empty
+                                                else
+                                                    acceptLoop.awaitReadable(serverFd).andThen {
+                                                        Sync.defer {
+                                                            if closed.get() then Maybe.empty
+                                                            else
+                                                                val clientFd = tcpAccept(serverFd)
+                                                                if clientFd >= 0 then
+                                                                    val connLoop = group.next()
+                                                                    val conn     = new KqueueConnection(clientFd, connLoop)
+                                                                    val ssl      = Zone { tlsNew(ctx, null) }
+                                                                    if ssl == 0 then
+                                                                        tcpClose(clientFd)
+                                                                        Maybe.empty
+                                                                    else
+                                                                        tlsSetAcceptState(ssl)
+                                                                        val bridge = new KqueueStreamTlsBridge(conn)
+                                                                        val tlsStream =
+                                                                            new NativeTlsStream(ssl, ctx, ownsCtx = false, bridge)
+                                                                        conn.tlsStream = Present(tlsStream)
+                                                                        Maybe((conn, ()))
+                                                                    end if
+                                                                else
+                                                                    Maybe.empty
+                                                                end if
+                                                            end if
+                                                        }
+                                                    }
+                                                end if
+                                            }
+                                        new TransportListener(
+                                            boundAddress,
                                             connStream,
                                             close = Sync.Unsafe.defer {
                                                 closed.set(true)

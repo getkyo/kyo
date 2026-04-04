@@ -55,8 +55,7 @@ object HttpBackend:
     end Server
 
     abstract class Binding:
-        def port: Int
-        def host: String
+        def address: HttpServerAddress
         def close(gracePeriod: Duration)(using Frame): Unit < Async
         def close(using Frame): Unit < Async    = close(30.seconds)
         def closeNow(using Frame): Unit < Async = close(Duration.Zero)

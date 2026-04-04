@@ -30,16 +30,22 @@ class HttpTransportClient(private[kyo] val transport: Transport) extends HttpBac
     def connectWith[A](url: HttpUrl, connectTimeout: Maybe[Duration])(
         f: Connection => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
+        val address = url.unixSocket match
+            case Present(socketPath) => TransportAddress.Unix(socketPath)
+            case Absent              => TransportAddress.Tcp(url.host, url.port)
         val tls = if url.ssl then Present(TlsConfig.default) else Absent
-        val base = transport.connect(url.host, url.port, tls).map { tc =>
+        val base = transport.connect(address, tls).map { tc =>
             Http1Exchange.initUnscoped(tc, Int.MaxValue).map { exchange =>
                 f(new Conn(tc, exchange))
             }
         }
+        val target = url.unixSocket match
+            case Present(socketPath) => s"unix:$socketPath"
+            case Absent              => s"${url.host}:${url.port}"
         connectTimeout match
             case Present(t) =>
                 Abort.recover[Timeout](_ =>
-                    Abort.fail(HttpTimeoutException(t, "CONNECT", s"${url.host}:${url.port}"))
+                    Abort.fail(HttpTimeoutException(t, "CONNECT", target))
                 )(Async.timeout(t)(base))
             case Absent => base
         end match

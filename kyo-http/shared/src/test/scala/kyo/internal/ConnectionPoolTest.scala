@@ -5,10 +5,8 @@ import kyo.*
 
 class ConnectionPoolTest extends Test:
 
-    import ConnectionPool.HostKey
-
-    val key1 = HostKey("host1", 80)
-    val key2 = HostKey("host2", 80)
+    val key1 = TransportAddress.Tcp("host1", 80)
+    val key2 = TransportAddress.Tcp("host2", 80)
 
     def mkPool(max: Int = 2)(using Frame): ConnectionPool[String] < Sync =
         ConnectionPool.init[String](max, kyo.Duration.Infinity, _ => Sync.defer(true), _ => Kyo.unit)

@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/resource.h>
+#include <sys/un.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <netdb.h>
@@ -161,6 +162,82 @@ int kyo_tcp_connect_error(int fd) {
     socklen_t len = sizeof(error);
     getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len);
     return error;
+}
+
+/* ── Unix domain socket connect ────────────────────────── */
+
+/**
+ * Non-blocking Unix domain socket connect.
+ * Returns: fd (>=0) on success.
+ * *out_pending = 1 if connection is async (EINPROGRESS), 0 if connected immediately.
+ * Returns -1 on error.
+ */
+int kyo_unix_connect(const char *path, int *out_pending) {
+    *out_pending = 0;
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+
+    /* Set non-blocking */
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    /* Suppress SIGPIPE */
+    kyo_socket_nosigpipe(fd);
+
+    /* No TCP_NODELAY for Unix sockets */
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    /* Validate path length */
+    if (strlen(path) >= sizeof(addr.sun_path)) {
+        close(fd);
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+
+    int rc = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+    if (rc == 0) return fd;           /* connected immediately */
+    if (errno == EINPROGRESS) {
+        *out_pending = 1;
+        return fd;                    /* async — wait for writability */
+    }
+    close(fd);
+    return -1;
+}
+
+/* ── Unix domain socket listen (for testing) ──────────── */
+
+/** Bind + listen on a Unix domain socket. Returns server fd, or -1 on error.
+ *  *out_port is always set to 0 (not applicable for Unix sockets). */
+int kyo_unix_listen(const char *path, int backlog, int *out_port) {
+    *out_port = 0; /* not applicable for Unix sockets */
+
+    if (strlen(path) >= sizeof(((struct sockaddr_un *)0)->sun_path)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    unlink(path); /* remove existing socket file */
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+
+    /* Set non-blocking */
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) { close(fd); return -1; }
+    if (listen(fd, backlog) < 0) { close(fd); unlink(path); return -1; }
+
+    return fd;
 }
 
 /* ── TCP read/write ─────────────────────────────────────── */
