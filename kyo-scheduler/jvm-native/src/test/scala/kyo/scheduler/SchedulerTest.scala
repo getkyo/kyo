@@ -1,8 +1,6 @@
 package kyo.scheduler
 
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
-import kyo.scheduler.util.Threads
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.concurrent.Eventually.*
 import org.scalatest.freespec.AnyFreeSpec
@@ -104,13 +102,8 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
     }
 
     private def withScheduler[A](testCode: Scheduler => A): A = {
-        val executor          = Executors.newCachedThreadPool(Threads("test-scheduler-worker"))
-        val scheduledExecutor = Executors.newSingleThreadScheduledExecutor(Threads("test-scheduler-timer"))
-        val scheduler         = new Scheduler(executor, scheduledExecutor)
+        val scheduler = new Scheduler(TestExecutors.cached, TestExecutors.scheduled)
         try testCode(scheduler)
-        finally {
-            scheduler.shutdown()
-            scheduledExecutor.shutdown()
-        }
+        finally scheduler.shutdown()
     }
 }

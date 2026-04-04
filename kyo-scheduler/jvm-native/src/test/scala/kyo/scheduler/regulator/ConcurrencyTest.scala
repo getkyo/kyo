@@ -1,6 +1,5 @@
 package kyo.scheduler.regulator
 
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.TestTimer
@@ -39,9 +38,8 @@ class ConcurrencyTest extends AnyFreeSpec with NonImplicitAssertions {
     }
 
     "probe jitter stays below regulator threshold with real sleep" in {
-        val executor = Executors.newScheduledThreadPool(2)
         try {
-            val timer           = InternalTimer(executor)
+            val timer           = InternalTimer(kyo.scheduler.TestExecutors.scheduled)
             val concurrencyDiff = new AtomicInteger(0)
 
             val concurrency = new Concurrency(
@@ -66,9 +64,7 @@ class ConcurrencyTest extends AnyFreeSpec with NonImplicitAssertions {
                 s"Concurrency regulator reduced workers by $totalDiff, " +
                     "indicating excessive probe jitter"
             )
-        } finally {
-            executor.shutdown()
-        }
+        } finally ()
     }
 
     trait Context {

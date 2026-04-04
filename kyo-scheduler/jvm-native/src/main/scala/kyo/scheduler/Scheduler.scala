@@ -121,6 +121,11 @@ final class Scheduler(
 
     private val top = new Reporter(status, enableTopJMX, enableTopConsoleMs, timer)
 
+    private val blockingMonitor = new BlockingMonitor(workers, () => currentWorkers, maxWorkers, timerExecutor)
+
+    /** Notifies the blocking monitor that a fiber was interrupted, triggering an immediate scan. */
+    def notifyInterrupt(): Unit = blockingMonitor.wake()
+
     /** Schedules a task for execution by the scheduler.
       *
       * The scheduler will assign the task to an available worker based on current load and system conditions. Tasks are executed according
@@ -375,6 +380,7 @@ final class Scheduler(
       */
     def shutdown(): Unit = {
         cycleTask.cancel(true)
+        blockingMonitor.stop()
         admissionRegulator.stop()
         concurrencyRegulator.stop()
         top.close()
@@ -488,9 +494,9 @@ object Scheduler {
 
     private lazy val defaultWorkerExecutor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker", new Worker.WorkerThread(_)))
     private lazy val defaultClockExecutor  = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))
-    private lazy val defaultTimerExecutor  = Executors.newScheduledThreadPool(2, Threads("kyo-scheduler-timer"))
+    private lazy val defaultTimerExecutor  = Executors.newScheduledThreadPool(4, Threads("kyo-scheduler-timer"))
 
-    val get = new Scheduler()
+    lazy val get = new Scheduler()
 
     /** Configuration parameters controlling worker behavior and performance characteristics.
       *
