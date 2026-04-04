@@ -113,6 +113,7 @@ void kyo_tls_free(long ssl_ptr) {
  */
 int kyo_tls_handshake(long ssl_ptr) {
     SSL *ssl = (SSL *)ssl_ptr;
+    ERR_clear_error();
     int rc = SSL_do_handshake(ssl);
     if (rc == 1) return 1; /* done */
     int err = SSL_get_error(ssl, rc);
@@ -145,6 +146,7 @@ int kyo_tls_get_output(long ssl_ptr, char *buf, int len) {
  */
 int kyo_tls_read(long ssl_ptr, char *buf, int len) {
     SSL *ssl = (SSL *)ssl_ptr;
+    ERR_clear_error();
     int n = SSL_read(ssl, buf, len);
     if (n > 0) return n;
     int err = SSL_get_error(ssl, n);
@@ -159,6 +161,7 @@ int kyo_tls_read(long ssl_ptr, char *buf, int len) {
  */
 int kyo_tls_write(long ssl_ptr, const char *buf, int len) {
     SSL *ssl = (SSL *)ssl_ptr;
+    ERR_clear_error();
     int n = SSL_write(ssl, buf, len);
     if (n > 0) return n;
     int err = SSL_get_error(ssl, n);

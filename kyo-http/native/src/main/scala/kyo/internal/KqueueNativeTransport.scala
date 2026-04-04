@@ -19,9 +19,8 @@ private[kyo] class KqueueIoLoop extends IoLoop:
 
     private val kq = kqueueCreate()
 
-    // fd → (readPromise, writePromise)
-    private val pending =
-        new java.util.concurrent.ConcurrentHashMap[Int, (Maybe[Promise.Unsafe[Unit, Any]], Maybe[Promise.Unsafe[Unit, Any]])]()
+    private val pendingReads  = new java.util.concurrent.ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()
+    private val pendingWrites = new java.util.concurrent.ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()
 
     /** Start the shared poller fiber. Must be called once before any awaitReadable/awaitWritable. */
     def start()(using Frame): Unit < Async =
@@ -37,21 +36,11 @@ private[kyo] class KqueueIoLoop extends IoLoop:
                             if i < n then
                                 val fd     = outFds(i)
                                 val filter = outFilters(i)
-                                Maybe(pending.get(fd)).foreach { entry =>
-                                    if filter == -1 then // EVFILT_READ
-                                        entry._1 match
-                                            case Present(p) =>
-                                                pending.put(fd, (Absent, entry._2))
-                                                p.completeUnitDiscard()
-                                            case Absent =>
-                                    else if filter == -2 then // EVFILT_WRITE
-                                        entry._2 match
-                                            case Present(p) =>
-                                                pending.put(fd, (entry._1, Absent))
-                                                p.completeUnitDiscard()
-                                            case Absent =>
-                                    end if
-                                }
+                                if filter == -1 then // EVFILT_READ
+                                    Maybe(pendingReads.remove(fd)).foreach(_.completeUnitDiscard())
+                                else if filter == -2 then // EVFILT_WRITE
+                                    Maybe(pendingWrites.remove(fd)).foreach(_.completeUnitDiscard())
+                                end if
                                 Loop.continue
                             else
                                 Loop.done(())
@@ -65,13 +54,12 @@ private[kyo] class KqueueIoLoop extends IoLoop:
     def awaitReadable(fd: Int)(using Frame): Unit < Async =
         Promise.init[Unit, Any].map { promise =>
             Sync.Unsafe.defer {
-                val writeSlot = Maybe(pending.get(fd)).map(_._2).getOrElse(Absent)
-                pending.put(fd, (Present(promise.unsafe), writeSlot))
+                pendingReads.put(fd, promise.unsafe)
                 val rc = kqueueRegister(kq, fd, -1) // EVFILT_READ, EV_ONESHOT
                 // If registration fails (e.g. fd already closed), complete the promise immediately
                 // to prevent hanging forever on a dead fd.
                 if rc < 0 then
-                    pending.remove(fd)
+                    pendingReads.remove(fd)
                     promise.unsafe.completeUnitDiscard()
                 end if
             }.andThen(promise.get)
@@ -80,13 +68,12 @@ private[kyo] class KqueueIoLoop extends IoLoop:
     def awaitWritable(fd: Int)(using Frame): Unit < Async =
         Promise.init[Unit, Any].map { promise =>
             Sync.Unsafe.defer {
-                val readSlot = Maybe(pending.get(fd)).map(_._1).getOrElse(Absent)
-                pending.put(fd, (readSlot, Present(promise.unsafe)))
+                pendingWrites.put(fd, promise.unsafe)
                 val rc = kqueueRegister(kq, fd, -2) // EVFILT_WRITE, EV_ONESHOT
                 // If registration fails (e.g. fd already closed), complete the promise immediately
                 // to prevent hanging forever on a dead fd.
                 if rc < 0 then
-                    pending.remove(fd)
+                    pendingWrites.remove(fd)
                     promise.unsafe.completeUnitDiscard()
                 end if
             }.andThen(promise.get)
@@ -98,17 +85,8 @@ private[kyo] class KqueueIoLoop extends IoLoop:
       * promise would hang forever.
       */
     def cancelFd(fd: Int)(using AllowUnsafe): Unit =
-        val entry = pending.remove(fd)
-        if entry != null then
-            entry._1 match
-                case Present(p) => p.completeUnitDiscard()
-                case Absent     =>
-            end match
-            entry._2 match
-                case Present(p) => p.completeUnitDiscard()
-                case Absent     =>
-            end match
-        end if
+        Maybe(pendingReads.remove(fd)).foreach(_.completeUnitDiscard())
+        Maybe(pendingWrites.remove(fd)).foreach(_.completeUnitDiscard())
     end cancelFd
 
     def close(): Unit =
@@ -127,9 +105,7 @@ end KqueueIoLoop
 object KqueueNativeTransport:
     private val groupSize = Math.max(1, Runtime.getRuntime.availableProcessors / 2)
     lazy val defaultGroup: IoLoopGroup[KqueueIoLoop] =
-        val g = new IoLoopGroup((0 until groupSize).map(_ => new KqueueIoLoop))
-        Runtime.getRuntime.addShutdownHook(new Thread(() => g.closeAll()))
-        g
+        new IoLoopGroup((0 until groupSize).map(_ => new KqueueIoLoop))
     end defaultGroup
 end KqueueNativeTransport
 
@@ -196,7 +172,7 @@ final class KqueueNativeTransport(
                 else
                     tlsSetConnectState(ssl)
                     val tcpStream = new KqueueStreamTlsBridge(conn)
-                    val tlsStream = new NativeTlsStream(ssl, ctx, tcpStream)
+                    val tlsStream = new NativeTlsStream(ssl, ctx, ownsCtx = true, tcpStream)
                     conn.tlsStream = Present(tlsStream)
                     tlsStream.handshake().map(_ => conn)
                 end if
@@ -215,7 +191,7 @@ final class KqueueNativeTransport(
                 case Present(tls) =>
                     import TlsBindings.*
                     tlsFree(tls.sslPtr)
-                    tlsCtxFree(tls.ctxPtr)
+                    if tls.ownsCtx then tlsCtxFree(tls.ctxPtr)
                     c.tlsStream = Absent
                 case Absent =>
             end match
@@ -320,15 +296,13 @@ final class KqueueNativeTransport(
                                                                         Maybe.empty
                                                                     else
                                                                         tlsSetAcceptState(ssl)
-                                                                        val bridge    = new KqueueStreamTlsBridge(conn)
-                                                                        val tlsStream = new NativeTlsStream(ssl, ctx, bridge)
+                                                                        val bridge = new KqueueStreamTlsBridge(conn)
+                                                                        val tlsStream =
+                                                                            new NativeTlsStream(ssl, ctx, ownsCtx = false, bridge)
                                                                         conn.tlsStream = Present(tlsStream)
-                                                                        Abort.run[HttpException](tlsStream.handshake()).map {
-                                                                            case Result.Success(_) => Maybe((conn, ()))
-                                                                            case _ =>
-                                                                                tcpClose(clientFd)
-                                                                                Maybe.empty
-                                                                        }
+                                                                        // Handshake deferred to first read/write (lazy handshake)
+                                                                        // so the accept loop is not blocked by TLS negotiation.
+                                                                        Maybe((conn, ()))
                                                                     end if
                                                                 else
                                                                     Maybe.empty

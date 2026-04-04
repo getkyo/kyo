@@ -17,13 +17,20 @@ import scala.scalanative.unsafe.*
 private[kyo] class NativeTlsStream(
     val sslPtr: CLong,
     val ctxPtr: CLong,
+    val ownsCtx: Boolean,
     underlying: RawStream
 ) extends RawStream:
 
     import TlsBindings.*
 
-    // TODO do we need to make this configurable? double check this is a reasonable default
     private val BufSize = 16384
+
+    // Pre-allocated buffers to avoid per-call allocation pressure under concurrent load
+    private val feedBuf  = new Array[Byte](BufSize)
+    private val flushBuf = new Array[Byte](BufSize)
+
+    // Tracks whether handshake() has been called. Allows lazy server-side handshake on first read/write.
+    private var handshakeDone: Boolean = false
 
     /** Perform TLS handshake. Non-blocking, fiber-cooperative.
       *
@@ -31,6 +38,7 @@ private[kyo] class NativeTlsStream(
       * (-1): flush output only. done (1): flush remaining output, we're done. error (-2): fail with HttpConnectException.
       */
     def handshake()(using Frame): Unit < (Async & Abort[HttpException]) =
+        handshakeDone = true
         Loop.foreach {
             val result = tlsHandshake(sslPtr)
             if result == 1 then
@@ -38,12 +46,20 @@ private[kyo] class NativeTlsStream(
                 flushOutput().andThen(Loop.done(()))
             else if result == 0 then // want_read
                 flushOutput().andThen {
-                    feedInput().andThen(Loop.continue)
+                    feedInput().map { gotData =>
+                        if !gotData then
+                            Abort.fail(HttpConnectException(
+                                "",
+                                0,
+                                new Exception("TLS handshake failed: peer closed connection")
+                            ))
+                        else Loop.continue
+                    }
                 }
             else if result == -1 then // want_write
                 flushOutput().andThen(Loop.continue)
-            else       // error
-                Zone { // TODO Is the zone because of the string? let's make all Zone bodies as small as possible
+            else // error
+                Zone {
                     Abort.fail(HttpConnectException(
                         "",
                         0,
@@ -52,77 +68,99 @@ private[kyo] class NativeTlsStream(
                 }
             end if
         }
+    end handshake
 
-    /** Read encrypted bytes from TCP and feed into OpenSSL's read BIO. */
-    private def feedInput()(using Frame): Unit < Async =
-        val buf = new Array[Byte](BufSize) // TODO can we avoid allocating buffers over and over?
-        underlying.read(buf).map { n =>
+    /** Read encrypted bytes from TCP and feed into OpenSSL's read BIO. Returns true if data was fed, false if EOF (peer closed).
+      */
+    private def feedInput()(using Frame): Boolean < Async =
+        underlying.read(feedBuf).map { n =>
             if n > 0 then
                 Zone {
-                    // TODO Why do we need to create a new buffer? Is there a faster way to copy?
                     val ptr = alloc[Byte](n)
                     var i   = 0
                     while i < n do
-                        ptr(i) = buf(i)
+                        ptr(i) = feedBuf(i)
                         i += 1
                     end while
                     discard(tlsFeedInput(sslPtr, ptr, n))
                 }
-            else Kyo.unit
+                true
+            else false
         }
     end feedInput
 
     /** Drain encrypted bytes from OpenSSL's write BIO and write to TCP. */
     private def flushOutput()(using Frame): Unit < Async =
-        val arr = new Array[Byte](BufSize)
-        val n = Zone {
-            val ptr    = alloc[Byte](BufSize)
-            val result = tlsGetOutput(sslPtr, ptr, BufSize)
-            if result > 0 then
-                var i = 0
-                while i < result do
-                    arr(i) = ptr(i)
-                    i += 1
-                end while
-            end if
-            result
+        Loop.foreach {
+            val n = Zone {
+                val ptr    = alloc[Byte](BufSize)
+                val result = tlsGetOutput(sslPtr, ptr, BufSize)
+                if result > 0 then
+                    var i = 0
+                    while i < result do
+                        flushBuf(i) = ptr(i)
+                        i += 1
+                    end while
+                end if
+                result
+            }
+            if n > 0 then
+                underlying.write(Span.fromUnsafe(flushBuf.slice(0, n))).andThen(Loop.continue)
+            else Loop.done(())
         }
-        if n > 0 then
-            underlying.write(Span.fromUnsafe(arr.slice(0, n))).andThen(flushOutput())
-        else Kyo.unit
     end flushOutput
 
     // ── RawStream implementation ──────────────────
 
     def read(buf: Array[Byte])(using Frame): Int < Async =
-        // Try to read buffered plaintext from OpenSSL first
-        val n = Zone {
-            val ptr    = alloc[Byte](buf.length)
-            val result = tlsRead(sslPtr, ptr, buf.length)
-            if result > 0 then
-                var i = 0
-                while i < result do
-                    buf(i) = ptr(i)
-                    i += 1
-                end while
-            end if
-            result
-        }
-        if n > 0 then n
-        else if n == 0 then
-            // Need more encrypted data from TCP
-            feedInput().andThen {
-                flushOutput().andThen(read(buf))
+        if !handshakeDone then
+            Abort.run[HttpException](handshake()).map {
+                case Result.Success(_) => readImpl(buf)
+                case _                 => -1 // handshake failed — signal EOF
             }
-        else -1 // closed or error
-        end if
-    end read
+        else readImpl(buf)
+
+    private def readImpl(buf: Array[Byte])(using Frame): Int < Async =
+        Loop.foreach {
+            // Try to read buffered plaintext from OpenSSL
+            val n = Zone {
+                val ptr    = alloc[Byte](buf.length)
+                val result = tlsRead(sslPtr, ptr, buf.length)
+                if result > 0 then
+                    var i = 0
+                    while i < result do
+                        buf(i) = ptr(i)
+                        i += 1
+                    end while
+                end if
+                result
+            }
+            if n > 0 then Loop.done(n)
+            else if n == 0 then
+                // Need more encrypted data from TCP
+                feedInput().map { gotData =>
+                    if !gotData then Loop.done(-1) // EOF - peer closed
+                    else
+                        flushOutput().andThen(Loop.continue)
+                }
+            else Loop.done(-1) // closed or error
+            end if
+        }
+    end readImpl
 
     def write(data: Span[Byte])(using Frame): Unit < Async =
         if data.isEmpty then Kyo.unit
-        else
+        else if !handshakeDone then
+            Abort.run[HttpException](handshake()).map {
+                case Result.Success(_) => writeImpl(data)
+                case _                 => Kyo.unit // handshake failed — caller will see EOF on read
+            }
+        else writeImpl(data)
+
+    private def writeImpl(data: Span[Byte])(using Frame): Unit < Async =
+        Loop(data) { (remaining: Span[Byte]) =>
             val n = Zone {
-                val arr = data.toArrayUnsafe
+                val arr = remaining.toArrayUnsafe
                 val ptr = alloc[Byte](arr.length)
                 var i   = 0
                 while i < arr.length do
@@ -133,15 +171,17 @@ private[kyo] class NativeTlsStream(
             }
             if n > 0 then
                 flushOutput().andThen {
-                    if n < data.size then write(data.slice(n, data.size))
-                    else Kyo.unit
+                    if n < remaining.size then Loop.continue(remaining.slice(n, remaining.size))
+                    else Loop.done(())
                 }
             else if n == 0 then
-                flushOutput().andThen(write(data))
+                flushOutput().andThen(Loop.continue(remaining))
             else
                 Zone {
                     Abort.panic(HttpProtocolException(s"TLS write failed: ${fromCString(tlsErrorString())}"))
                 }
             end if
+        }
+    end writeImpl
 
 end NativeTlsStream

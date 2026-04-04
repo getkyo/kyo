@@ -19,9 +19,8 @@ private[kyo] class EpollIoLoop extends IoLoop:
 
     private val epfd = epollCreate()
 
-    // fd → (readPromise, writePromise)
-    private val pending =
-        new java.util.concurrent.ConcurrentHashMap[Int, (Maybe[Promise.Unsafe[Unit, Any]], Maybe[Promise.Unsafe[Unit, Any]])]()
+    private val pendingReads  = new java.util.concurrent.ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()
+    private val pendingWrites = new java.util.concurrent.ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()
 
     /** Start the shared poller fiber. Must be called once before any awaitReadable/awaitWritable. */
     def start()(using Frame): Unit < Async =
@@ -37,22 +36,12 @@ private[kyo] class EpollIoLoop extends IoLoop:
                             if i < n then
                                 val fd    = outFds(i)
                                 val event = outEvents(i)
-                                Maybe(pending.get(fd)).foreach { entry =>
-                                    if (event & 1) != 0 then // EPOLLIN
-                                        entry._1 match
-                                            case Present(p) =>
-                                                pending.put(fd, (Absent, entry._2))
-                                                p.completeUnitDiscard()
-                                            case Absent =>
-                                    end if
-                                    if (event & 2) != 0 then // EPOLLOUT
-                                        entry._2 match
-                                            case Present(p) =>
-                                                pending.put(fd, (entry._1, Absent))
-                                                p.completeUnitDiscard()
-                                            case Absent =>
-                                    end if
-                                }
+                                if (event & 1) != 0 then // EPOLLIN
+                                    Maybe(pendingReads.remove(fd)).foreach(_.completeUnitDiscard())
+                                end if
+                                if (event & 2) != 0 then // EPOLLOUT
+                                    Maybe(pendingWrites.remove(fd)).foreach(_.completeUnitDiscard())
+                                end if
                                 Loop.continue
                             else
                                 Loop.done(())
@@ -66,8 +55,7 @@ private[kyo] class EpollIoLoop extends IoLoop:
     def awaitReadable(fd: Int)(using Frame): Unit < Async =
         Promise.init[Unit, Any].map { promise =>
             Sync.Unsafe.defer {
-                val writeSlot = Maybe(pending.get(fd)).map(_._2).getOrElse(Absent)
-                pending.put(fd, (Present(promise.unsafe), writeSlot))
+                pendingReads.put(fd, promise.unsafe)
                 discard(epollRegister(epfd, fd, 1)) // EPOLLIN | EPOLLONESHOT
             }.andThen(promise.get)
         }
@@ -75,8 +63,7 @@ private[kyo] class EpollIoLoop extends IoLoop:
     def awaitWritable(fd: Int)(using Frame): Unit < Async =
         Promise.init[Unit, Any].map { promise =>
             Sync.Unsafe.defer {
-                val readSlot = Maybe(pending.get(fd)).map(_._1).getOrElse(Absent)
-                pending.put(fd, (readSlot, Present(promise.unsafe)))
+                pendingWrites.put(fd, promise.unsafe)
                 discard(epollRegister(epfd, fd, 2)) // EPOLLOUT | EPOLLONESHOT
             }.andThen(promise.get)
         }
@@ -88,17 +75,8 @@ private[kyo] class EpollIoLoop extends IoLoop:
       */
     def cancelFd(fd: Int)(using AllowUnsafe): Unit =
         discard(epollDeregister(epfd, fd))
-        val entry = pending.remove(fd)
-        if entry != null then
-            entry._1 match
-                case Present(p) => p.completeUnitDiscard()
-                case Absent     =>
-            end match
-            entry._2 match
-                case Present(p) => p.completeUnitDiscard()
-                case Absent     =>
-            end match
-        end if
+        Maybe(pendingReads.remove(fd)).foreach(_.completeUnitDiscard())
+        Maybe(pendingWrites.remove(fd)).foreach(_.completeUnitDiscard())
     end cancelFd
 
     def close(): Unit =
@@ -117,9 +95,7 @@ end EpollIoLoop
 object EpollNativeTransport:
     private val groupSize = Math.max(1, Runtime.getRuntime.availableProcessors / 2)
     lazy val defaultGroup: IoLoopGroup[EpollIoLoop] =
-        val g = new IoLoopGroup((0 until groupSize).map(_ => new EpollIoLoop))
-        Runtime.getRuntime.addShutdownHook(new Thread(() => g.closeAll()))
-        g
+        new IoLoopGroup((0 until groupSize).map(_ => new EpollIoLoop))
     end defaultGroup
 end EpollNativeTransport
 
@@ -186,7 +162,7 @@ final class EpollNativeTransport(
                 else
                     tlsSetConnectState(ssl)
                     val tcpStream = new EpollStreamTlsBridge(conn)
-                    val tlsStream = new NativeTlsStream(ssl, ctx, tcpStream)
+                    val tlsStream = new NativeTlsStream(ssl, ctx, ownsCtx = true, tcpStream)
                     conn.tlsStream = Present(tlsStream)
                     tlsStream.handshake().map(_ => conn)
                 end if
@@ -205,7 +181,7 @@ final class EpollNativeTransport(
                 case Present(tls) =>
                     import TlsBindings.*
                     tlsFree(tls.sslPtr)
-                    tlsCtxFree(tls.ctxPtr)
+                    if tls.ownsCtx then tlsCtxFree(tls.ctxPtr)
                     c.tlsStream = Absent
                 case Absent =>
             end match
@@ -310,15 +286,13 @@ final class EpollNativeTransport(
                                                                         Maybe.empty
                                                                     else
                                                                         tlsSetAcceptState(ssl)
-                                                                        val bridge    = new EpollStreamTlsBridge(conn)
-                                                                        val tlsStream = new NativeTlsStream(ssl, ctx, bridge)
+                                                                        val bridge = new EpollStreamTlsBridge(conn)
+                                                                        val tlsStream =
+                                                                            new NativeTlsStream(ssl, ctx, ownsCtx = false, bridge)
                                                                         conn.tlsStream = Present(tlsStream)
-                                                                        Abort.run[HttpException](tlsStream.handshake()).map {
-                                                                            case Result.Success(_) => Maybe((conn, ()))
-                                                                            case _ =>
-                                                                                tcpClose(clientFd)
-                                                                                Maybe.empty
-                                                                        }
+                                                                        // Handshake deferred to first read/write (lazy handshake)
+                                                                        // so the accept loop is not blocked by TLS negotiation.
+                                                                        Maybe((conn, ()))
                                                                     end if
                                                                 else
                                                                     Maybe.empty

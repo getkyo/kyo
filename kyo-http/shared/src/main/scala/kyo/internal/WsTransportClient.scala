@@ -31,7 +31,7 @@ class WsTransportClient(transport: Transport) extends HttpBackend.WebSocketClien
                             AtomicRef.init[Maybe[(Int, String)]](Absent).map { closeReasonRef =>
                                 val closeFn: (Int, String) => Unit < Async = (code, reason) =>
                                     closeReasonRef.set(Present((code, reason))).andThen {
-                                        WsCodec.writeClose(connection, code, reason, mask = true)
+                                        outbound.close.unit
                                     }
                                 val ws = new WebSocket(inbound, outbound, closeReasonRef, closeFn)
 
@@ -53,6 +53,12 @@ class WsTransportClient(transport: Transport) extends HttpBackend.WebSocketClien
                                                     outbound.take.map { frame =>
                                                         WsCodec.writeFrame(connection, frame, mask = true).andThen(Loop.continue)
                                                     }
+                                                }
+                                            }.map { _ =>
+                                                closeReasonRef.get.map {
+                                                    case Present((code, reason)) =>
+                                                        Abort.run[Any](WsCodec.writeClose(connection, code, reason, mask = true)).unit
+                                                    case Absent => Kyo.unit
                                                 }
                                             }.andThen(outbound.close).unit
                                         }.map { writeFiber =>

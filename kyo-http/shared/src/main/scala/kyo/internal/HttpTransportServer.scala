@@ -37,7 +37,8 @@ class HttpTransportServer(private[kyo] val transport: Transport)(using
         handlers: Seq[HttpHandler[?, ?, ?]],
         config: HttpServerConfig
     )(using Frame): HttpBackend.Binding < (Async & Scope) =
-        val router = HttpRouter(handlers, config.cors)
+        val router     = HttpRouter(handlers, config.cors)
+        val connFibers = new java.util.concurrent.CopyOnWriteArrayList[Fiber[Unit, Any]]
         Promise.init[Unit, Any].map { done =>
             transport.listen(config.host, config.port, config.backlog, config.tls).map { listener =>
                 Fiber.initUnscoped {
@@ -46,7 +47,12 @@ class HttpTransportServer(private[kyo] val transport: Transport)(using
                             Sync.ensure(transport.closeNow(conn)) {
                                 serveConnection(conn, router, config)
                             }
-                        }.unit
+                        }.map { fiber =>
+                            connFibers.add(fiber)
+                            fiber.onComplete { _ =>
+                                Sync.defer(connFibers.remove(fiber))
+                            }.unit
+                        }
                     }
                 }.map { acceptFiber =>
                     new HttpBackend.Binding:
@@ -54,7 +60,18 @@ class HttpTransportServer(private[kyo] val transport: Transport)(using
                         val host: String = listener.host
                         def close(gracePeriod: Duration)(using Frame): Unit < Async =
                             listener.close.andThen {
-                                acceptFiber.interrupt.unit.andThen(done.completeDiscard(Result.succeed(())))
+                                acceptFiber.interrupt.unit.andThen {
+                                    Sync.defer {
+                                        val fibers = new java.util.ArrayList(connFibers)
+                                        connFibers.clear()
+                                        fibers
+                                    }.map { fibers =>
+                                        val seq = scala.jdk.CollectionConverters.ListHasAsScala(fibers).asScala.toSeq
+                                        Kyo.foreach(seq)(_.interrupt.unit).andThen {
+                                            done.completeDiscard(Result.succeed(()))
+                                        }
+                                    }
+                                }
                             }
                         def await(using Frame): Unit < Async =
                             done.get.unit
