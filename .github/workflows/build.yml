@@ -88,6 +88,12 @@ jobs:
             export SBT_TASK_LIMIT=1
           fi
 
+          # Windows: serialize to avoid OverlappingFileLockException during
+          # concurrent coursier dependency resolution (mandatory file locks)
+          if [[ "${{ matrix.os }}" == windows-* ]]; then
+            export SBT_TASK_LIMIT=1
+          fi
+
           # Build testKyo command
           mode="${{ inputs.test-command == 'test' && '--all' || '' }}"
           cmd="testKyo $mode ${{ matrix.target }}"
