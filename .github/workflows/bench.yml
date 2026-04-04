@@ -54,11 +54,11 @@ jobs:
       TH: ${{ github.event.inputs.threads || '1' }}
       PE: ${{ github.event.inputs.profileEvents || 'alloc,cpu' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
-      - uses: coursier/cache-action@v8
-      - uses: coursier/setup-action@v3
+      - uses: coursier/cache-action@v8.1.0
+      - uses: coursier/setup-action@v3.0.0
         with:
           jvm: corretto:21
           apps: sbt
@@ -88,24 +88,27 @@ jobs:
         run: |
           short_sha=$(echo "${{ github.sha }}" | cut -c 1-7)
           mkdir -p output/
-          cp -r kyo-bench/.jvm/jmh-result.json output/#${short_sha}-jmh-result.json
+          cp -r kyo-bench/.jvm/jmh-result.json "output/#${short_sha}-jmh-result.json"
           cp -r kyo-bench/.jvm/kyo.bench.* output/
           rm -rf output/**/*reverse.html
-          for file in $(find output -name "*.html"); do
-            newfile=$(echo $file | sed 's/\([^.]*\)-.*flame-\([^-]*\)-forward.html/\1-\2.html/')
-            if [ "$file" != "$newfile" ]; then
+          while IFS= read -r -d '' file; do
+            newfile="${file%-*flame-*-forward.html}"
+            suffix="${file##*flame-}"
+            suffix="${suffix%-forward.html}"
+            if [ -n "$suffix" ] && [ "$file" != "$newfile" ]; then
+              newfile="${newfile}-${suffix}.html"
               mv "$file" "$newfile"
             fi
-          done
-          for file in $(find output -name "*.html"); do
+          done < <(find output -name "*.html" -print0)
+          while IFS= read -r -d '' file; do
             new_name="${short_sha}-$(basename "$file")"
             mv "$file" "$(dirname "$file")/$new_name"
-          done
+          done < <(find output -name "*.html" -print0)
           ls output/
     
       - name: publish results
         id: publish-results
-        uses: actions/github-script@v8
+        uses: actions/github-script@v8.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
