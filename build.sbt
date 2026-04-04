@@ -362,14 +362,14 @@ lazy val `kyo-core` =
         .dependsOn(`kyo-prelude`)
         .in(file("kyo-core"))
         .settings(
-            `kyo-settings`,
-            libraryDependencies += "dev.dirs" % "directories" % "26"
+            `kyo-settings`
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(
             `js-settings`,
-            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
+            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13),
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
 
 lazy val `kyo-offheap` =
