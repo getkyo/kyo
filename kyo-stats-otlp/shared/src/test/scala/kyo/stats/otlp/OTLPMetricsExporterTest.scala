@@ -73,16 +73,26 @@ class OTLPMetricsExporterTest extends Test:
                 val uniqueName = "test.export.histogram." + java.util.UUID.randomUUID().toString.take(8)
                 val histogram  = Stat.initScope("test", "export").initHistogram(uniqueName, "test histogram")
                 for
-                    _        <- histogram.observe(42.0)
-                    _        <- histogram.observe(7.0)
-                    _        <- OTLPMetricsExporter.run(config)
-                    received <- metricCh.take
+                    _ <- histogram.observe(42.0)
+                    _ <- histogram.observe(7.0)
+                    _ <- OTLPMetricsExporter.run(config)
+                    // The first export may not include the histogram if it fires
+                    // before the metric is fully registered. Take up to 3 exports.
+                    found <- Loop.indexed { i =>
+                        metricCh.take.map { received =>
+                            val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
+                            allMetrics.find(_.name == s"test.export.$uniqueName") match
+                                case Some(m)       => Loop.done(m)
+                                case None if i < 2 => Loop.continue
+                                case None => throw new AssertionError(
+                                        s"Histogram test.export.$uniqueName not found after ${i + 1} exports"
+                                    )
+                            end match
+                        }
+                    }
                 yield
-                    val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
-                    val found      = allMetrics.find(_.name == s"test.export.$uniqueName")
-                    assert(found.isDefined)
-                    assert(found.get.histogram.isDefined)
-                    assert(found.get.histogram.get.dataPoints.head.count == "2")
+                    assert(found.histogram.isDefined)
+                    assert(found.histogram.get.dataPoints.head.count == "2")
                 end for
             }
         }

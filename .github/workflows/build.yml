@@ -1,0 +1,106 @@
+name: build
+on:
+  workflow_call:
+    inputs:
+      os-matrix:
+        type: string
+        required: true
+      test-command:
+        type: string
+        required: true
+
+jobs:
+  build:
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.os-matrix) }}
+        target: [JVM, JS, Native]
+    runs-on: >-
+      ${{ matrix.os == 'linux-x64'     && 'ubuntu-latest'
+       || matrix.os == 'linux-arm64'   && 'ubuntu-24.04-arm'
+       || matrix.os == 'macos-x64'     && 'macos-latest-large'
+       || matrix.os == 'macos-arm64'   && 'macos-latest-xlarge'
+       || matrix.os == 'windows-x64'   && 'build-windows-x64'
+       || matrix.os == 'windows-arm64' && 'build-windows-arm' }}
+    env:
+      JAVA_OPTS: >-
+        ${{ contains(matrix.os, 'macos-arm64')
+        && '-Xmx6G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+        || '-Xms8G -Xmx8G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8' }}
+      JVM_OPTS: >-
+        ${{ contains(matrix.os, 'macos-arm64')
+        && '-Xmx6G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+        || '-Xms8G -Xmx8G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8' }}
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6.3.0
+        if: matrix.target == 'JS'
+        with:
+          node-version: '22'
+
+      - uses: actions/cache@v4
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-${{ matrix.os }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-${{ matrix.os }}-
+
+      - name: Install Dependencies (Linux)
+        if: contains(matrix.os, 'linux') && matrix.target == 'Native'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
+
+      - name: Install Dependencies (macOS)
+        if: contains(matrix.os, 'macos') && matrix.target == 'Native'
+        run: brew install h2o libidn2
+
+      - uses: coursier/setup-action@v3.0.0
+        if: matrix.os != 'windows-arm64'
+        with:
+          jvm: temurin:25
+          apps: sbt
+
+      # Windows ARM64: coursier/setup-action doesn't support this platform yet.
+      # JDK 25 and sbt are pre-installed on the runner image.
+      - name: Setup JDK (Windows ARM64)
+        if: matrix.os == 'windows-arm64'
+        shell: bash
+        run: echo "JAVA_HOME=$JAVA_HOME_25_AARCH64" >> "$GITHUB_ENV"
+
+      - name: Test ${{ matrix.target }} (${{ matrix.os }})
+        shell: bash
+        run: |
+          # macOS arm64 (14GB): serialize JS/Native to avoid Scala.js linker OOM
+          if [ "${{ matrix.os }}" = "macos-arm64" ] && [ "${{ matrix.target }}" != "JVM" ]; then
+            export SBT_TASK_LIMIT=1
+          fi
+
+          # Windows: serialize all sbt tasks to avoid OverlappingFileLockException
+          # during coursier dependency resolution (mandatory file locks).
+          case "${{ matrix.os }}" in
+            windows-*) export SBT_TASK_LIMIT=1;;
+          esac
+
+          # Build testKyo command
+          mode="${{ inputs.test-command == 'test' && '--all' || '' }}"
+          cmd="testKyo $mode ${{ matrix.target }}"
+
+          if [ "${{ matrix.target }}" = "Native" ]; then
+            # Native tests need retry wrapper for libunwind crash tolerance
+            ./scripts/native-test.sh "$cmd"
+          else
+            sbt "$cmd"
+          fi

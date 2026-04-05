@@ -14,4 +14,13 @@ object Platform:
             .getInputArguments()
             .toString.contains("jdwp")
     def exit(code: Int): Unit = java.lang.System.exit(code)
+
+    // OS detection
+    val isWindows: Boolean = java.lang.System.getProperty("os.name", "").toLowerCase.contains("windows")
+    val isMac: Boolean     = java.lang.System.getProperty("os.name", "").toLowerCase.contains("mac")
+    val isLinux: Boolean   = java.lang.System.getProperty("os.name", "").toLowerCase.contains("linux")
+
+    val fileSeparator: String = java.io.File.separator
+    val pathSeparator: String = java.io.File.pathSeparator
+    val lineSeparator: String = java.lang.System.lineSeparator()
 end Platform

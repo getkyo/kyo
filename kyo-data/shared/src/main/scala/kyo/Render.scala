@@ -86,7 +86,7 @@ extension (sc: StringContext)
         val ai         = args.iterator
         var text: Text = pi.next()
         while ai.hasNext do
-            text = text + ai.next
+            text = text + ai.next()
             text = text + StringContext.processEscapes(pi.next())
         text
 end extension

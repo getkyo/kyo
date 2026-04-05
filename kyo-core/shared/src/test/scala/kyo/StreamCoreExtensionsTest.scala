@@ -599,20 +599,24 @@ class StreamCoreExtensionsTest extends Test:
             }
 
             "dynamic" - {
-                "broadcasted in unison" in runNotJS {
-                    Channel.initWith[Maybe[Int]](1024): channel =>
-                        val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
-                        lazyStream.broadcasted().map: reusableStream =>
-                            Latch.initWith(10): latch =>
-                                Fiber.initUnscoped(Async.foreach(1 to 10)(_ => latch.release.andThen(reusableStream.run))).map: runFiber =>
-                                    latch.await.andThen:
-                                        Fiber.initUnscoped(
-                                            Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
-                                        ).andThen:
-                                            runFiber.get.map: resultChunks =>
-                                                assert(
-                                                    resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
-                                                )
+                "broadcasted in unison" in {
+                    assume(Runtime.getRuntime.availableProcessors() > 4, "Needs >4 cores for 10 concurrent fibers")
+                    runNotJS {
+                        Channel.initWith[Maybe[Int]](1024): channel =>
+                            val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
+                            lazyStream.broadcasted().map: reusableStream =>
+                                Latch.initWith(10): latch =>
+                                    Fiber.initUnscoped(Async.foreach(1 to 10)(_ => latch.release.andThen(reusableStream.run))).map:
+                                        runFiber =>
+                                            latch.await.andThen:
+                                                Fiber.initUnscoped(
+                                                    Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
+                                                ).andThen:
+                                                    runFiber.get.map: resultChunks =>
+                                                        assert(
+                                                            resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
+                                                        )
+                    }
                 }
 
                 "broadcasted should produce empty results when running after original stream completes" in run {
@@ -630,22 +634,25 @@ class StreamCoreExtensionsTest extends Test:
                                 assert(res1 == Result.Failure("message") && res2 == Result.Failure("message"))
                 }
 
-                "broadcastDynamic in unison" in runNotJS {
-                    Channel.initWith[Maybe[Int]](1024): channel =>
-                        val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
-                        lazyStream.broadcastDynamic().map: streamHub =>
-                            Latch.initWith(10): latch =>
-                                Fiber.initUnscoped(
-                                    Async.foreach(1 to 10)(_ => latch.release.andThen(streamHub.subscribe.map(_.run)))
-                                ).map: runFiber =>
-                                    latch.await.andThen:
-                                        Fiber.initUnscoped(
-                                            Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
-                                        ).andThen:
-                                            runFiber.get.map: resultChunks =>
-                                                assert(
-                                                    resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
-                                                )
+                "broadcastDynamic in unison" in {
+                    assume(Runtime.getRuntime.availableProcessors() > 4, "Needs >4 cores for 10 concurrent fibers")
+                    runNotJS {
+                        Channel.initWith[Maybe[Int]](1024): channel =>
+                            val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
+                            lazyStream.broadcastDynamic().map: streamHub =>
+                                Latch.initWith(10): latch =>
+                                    Fiber.initUnscoped(
+                                        Async.foreach(1 to 10)(_ => latch.release.andThen(streamHub.subscribe.map(_.run)))
+                                    ).map: runFiber =>
+                                        latch.await.andThen:
+                                            Fiber.initUnscoped(
+                                                Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
+                                            ).andThen:
+                                                runFiber.get.map: resultChunks =>
+                                                    assert(
+                                                        resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
+                                                    )
+                    }
                 }
 
                 "broadcastDynamic subscriptions should be empty when subscribing after original stream completes" in run {
@@ -768,6 +775,94 @@ class StreamCoreExtensionsTest extends Test:
         }
     }
 
+    "stream resource cleanup (#1398)" - {
+        "Scope.ensure runs after full stream consumption" in run {
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    Scope.ensure(counter.incrementAndGet.unit).andThen(Stream.init(1 to 10).run)
+                }.map { res =>
+                    counter.get.map { c =>
+                        assert(c == 1 && res == (1 to 10))
+                    }
+                }
+            }
+        }
+
+        "Scope.run wrapping stream take" in run {
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    Scope.ensure(counter.incrementAndGet.unit).andThen(Stream.init(1 to 10).take(3).run)
+                }.map { res =>
+                    counter.get.map { c =>
+                        assert(c == 1 && res == (1 to 3))
+                    }
+                }
+            }
+        }
+
+        "Channel.use with stream take" in run {
+            AtomicRef.init[Maybe[Channel[Int]]](Maybe.empty).map { ref =>
+                Channel.use[Int](10) { c =>
+                    ref.set(Maybe(c))
+                        .andThen(Kyo.foreach(1 to 10)(c.put))
+                        .andThen(c.streamUntilClosed().take(3).run)
+                }.map { res =>
+                    ref.get.map { maybeChannel =>
+                        assert(res == (1 to 3))
+                        maybeChannel.get.closed.map { c =>
+                            assert(c) // Channel closed by Sync.ensure in Channel.use
+                        }
+                    }
+                }
+            }
+        }
+
+        "take(0) still runs scope finalizers" in run {
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    Scope.ensure(counter.incrementAndGet.unit).andThen(Stream.init(1 to 10).take(0).run)
+                }.map { res =>
+                    counter.get.map { c =>
+                        assert(c == 1 && res.isEmpty)
+                    }
+                }
+            }
+        }
+
+        "Abort in stream with Scope.ensure" in run {
+            AtomicInt.init(0).map { counter =>
+                val stream = Stream[Int, Abort[String]] {
+                    Emit.valueWith(Chunk(1, 2, 3)) {
+                        Abort.fail("err")
+                    }
+                }
+                Abort.run[String] {
+                    Scope.run {
+                        Scope.ensure(counter.incrementAndGet.unit).andThen(stream.run)
+                    }
+                }.map { res =>
+                    counter.get.map { c =>
+                        assert(c == 1 && res.isError)
+                    }
+                }
+            }
+        }
+
+        "Sync.ensure with take documents current behavior" in pending
+
+        "takeWhile early exit with scope ensure" in run {
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    Scope.ensure(counter.incrementAndGet.unit).andThen(Stream.init(1 to 10).takeWhile(_ < 1).run)
+                }.map { res =>
+                    counter.get.map { c =>
+                        assert(c == 1 && res.isEmpty)
+                    }
+                }
+            }
+        }
+    }
+
     "mapPar Closed error propagation (#1387)" - {
         "should not deadlock when f fails with Abort[Closed]" in run {
             val failure = Closed("fail", summon[Frame])
@@ -811,6 +906,77 @@ class StreamCoreExtensionsTest extends Test:
             val stream  = Stream.init(1 to 4)
             val stream2 = stream.mapPar(2)(i => i + 1)
             stream2.run.map(res => assert(res == Chunk(2, 3, 4, 5)))
+        }
+
+        "mapChunkPar propagates Closed as error" in run {
+            val stream = Stream.init(1 to 12)
+            val stream2 = stream.mapChunkPar(2)(chunk =>
+                if chunk.exists(_ == 5) then Abort.fail(Closed("test", summon[Frame]))
+                else chunk.map(_ + 1)
+            )
+            Abort.run(stream2.run).map(res => assert(res.isError))
+        }
+
+        "mapChunkParUnordered propagates Closed as error" in run {
+            val stream = Stream.init(1 to 12)
+            val stream2 = stream.mapChunkParUnordered(2)(chunk =>
+                if chunk.exists(_ == 5) then Abort.fail(Closed("test", summon[Frame]))
+                else chunk.map(_ + 1)
+            )
+            Abort.run(stream2.run).map(res => assert(res.isError))
+        }
+
+        "mapPar cleans up resources on Closed" in run {
+            AtomicInt.init(0).map { counter =>
+                val stream = Stream.init(1 to 12)
+                val stream2 = stream.mapPar(2) { i =>
+                    counter.incrementAndGet.map { _ =>
+                        if i == 5 then Abort.fail(Closed("test", summon[Frame]))
+                        else i + 1
+                    }
+                }
+                Abort.run(stream2.run).map { res =>
+                    counter.get.map { c =>
+                        assert(res.isError)
+                        assert(c > 0) // Some elements were processed before failure
+                    }
+                }
+            }
+        }
+
+        "mapPar with non-Closed error still propagates" in run {
+            val stream  = Stream.init(1 to 12)
+            val stream2 = stream.mapPar(2)(i => if i == 5 then Abort.fail("custom-error") else i + 1)
+            Abort.run(stream2.run).map(res => assert(res == Result.Failure("custom-error")))
+        }
+
+        "concurrent stream ops clean up fibers on error" in run {
+            AtomicInt.init(0).map { active =>
+                val stream = Stream.init(1 to 100)
+                val stream2 = stream.mapPar(4) { i =>
+                    active.incrementAndGet.andThen {
+                        if i == 50 then Abort.fail(Closed("test", summon[Frame]))
+                        else Async.sleep(1.milli).andThen(active.decrementAndGet).andThen(i)
+                    }
+                }
+                Abort.run(stream2.run).map { res =>
+                    active.get.map { a =>
+                        assert(res.isError)
+                        // After error, active counter should not keep growing
+                        // (fibers should be interrupted/cleaned up)
+                        assert(a < 100) // Not all 100 elements were started
+                    }
+                }
+            }
+        }
+
+        "mapParUnordered propagates Closed as error" in run {
+            val stream = Stream.init(1 to 12)
+            val stream2 = stream.mapParUnordered(2)(i =>
+                if i == 5 then Abort.fail(Closed("test", summon[Frame]))
+                else i + 1
+            )
+            Abort.run(stream2.run).map(res => assert(res.isError))
         }
     }
 

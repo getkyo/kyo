@@ -44,7 +44,7 @@ class BytecodeTest extends Test:
         import javassist.*
         val classpath = System.getProperty("java.class.path")
         val classPool = ClassPool.getDefault
-        classpath.split(":").foreach { path =>
+        classpath.split(java.io.File.pathSeparator).foreach { path =>
             classPool.insertClassPath(path)
         }
         val ctClass = classPool.get(ct.runtimeClass.getName())
