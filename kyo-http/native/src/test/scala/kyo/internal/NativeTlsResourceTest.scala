@@ -108,9 +108,11 @@ class NativeTlsResourceTest extends kyo.Test:
                                 HttpUrl.parse(s"https://localhost:$bindingPort/test/ping").getOrThrow,
                                 Absent
                             ) { conn =>
-                                Sync.ensure(client.closeNow(conn)) {
-                                    client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/test/ping"))) { resp =>
-                                        assert(resp.status == HttpStatus.OK)
+                                Scope.run {
+                                    Scope.ensure(client.closeNow(conn)).andThen {
+                                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/test/ping"))) { resp =>
+                                            assert(resp.status == HttpStatus.OK)
+                                        }
                                     }
                                 }
                             }.andThen {

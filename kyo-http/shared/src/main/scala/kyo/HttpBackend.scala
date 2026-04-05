@@ -33,13 +33,13 @@ object HttpBackend:
             conn: Connection,
             route: HttpRoute[In, Out, ?],
             request: HttpRequest[In],
-            onRelease: Maybe[Result.Error[Any]] => Unit < Sync = _ => Kyo.unit
+            onRelease: Maybe[Result.Error[Any]] => Unit < Async = _ => Kyo.unit
         )(
             f: HttpResponse[Out] => A < (Async & Abort[HttpException])
         )(using Frame): A < (Async & Abort[HttpException])
 
         def isAlive(conn: Connection)(using Frame): Boolean < Sync
-        def closeNow(conn: Connection)(using Frame): Unit < Sync
+        def closeNow(conn: Connection)(using Frame): Unit < Async
         def close(conn: Connection, gracePeriod: Duration)(using Frame): Unit < Async
         def close(conn: Connection)(using Frame): Unit < Async = close(conn, 30.seconds)
 

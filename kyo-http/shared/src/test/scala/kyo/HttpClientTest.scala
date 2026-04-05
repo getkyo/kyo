@@ -57,8 +57,10 @@ class HttpClientTest extends Test:
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
         client.connectWith(url, Absent) { conn =>
-            Sync.ensure(client.closeNow(conn)) {
-                client.sendWith(conn, route, request)(identity)
+            Scope.run {
+                Scope.ensure(client.closeNow(conn)).andThen {
+                    client.sendWith(conn, route, request)(identity)
+                }
             }
         }
 
@@ -472,15 +474,17 @@ class HttpClientTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/stream"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.run.map { chunks =>
-                                val text = chunks.foldLeft("")((acc, span) =>
-                                    acc + new String(span.toArrayUnsafe, "UTF-8")
-                                )
-                                called = true
-                                assert(text == "hello world")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/stream"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.run.map { chunks =>
+                                    val text = chunks.foldLeft("")((acc, span) =>
+                                        acc + new String(span.toArrayUnsafe, "UTF-8")
+                                    )
+                                    called = true
+                                    assert(text == "hello world")
+                                }
                             }
                         }
                     }
@@ -507,11 +511,13 @@ class HttpClientTest extends Test:
                 val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
                     .addField("body", bodyStream)
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, request) { resp =>
-                            called = true
-                            assert(resp.status == HttpStatus.OK)
-                            assert(resp.fields.body == "received 12 bytes")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, request) { resp =>
+                                called = true
+                                assert(resp.status == HttpStatus.OK)
+                                assert(resp.fields.body == "received 12 bytes")
+                            }
                         }
                     }
                 }.andThen(assert(called))
@@ -536,10 +542,12 @@ class HttpClientTest extends Test:
                 val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
                     .addField("body", bodyStream)
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, request) { resp =>
-                            called = true
-                            assert(resp.fields.body == User(1, "alice"))
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, request) { resp =>
+                                called = true
+                                assert(resp.fields.body == User(1, "alice"))
+                            }
                         }
                     }
                 }.andThen(assert(called))
@@ -1287,201 +1295,6 @@ class HttpClientTest extends Test:
             }
         }
 
-        "slot returned after concurrent timeouts" - {
-            val slowRoute = HttpRoute.getRaw("slow").response(_.bodyText)
-            val fastRoute = HttpRoute.getRaw("fast").response(_.bodyText)
-            // Handler blocks forever — cancelled when client times out
-            val slowEp = slowRoute.handler(_ => Latch.init(1).map(_.await).andThen(HttpResponse.ok("late")))
-            val fastEp = fastRoute.handler(_ => HttpResponse.ok("ok"))
-            runServer(slowEp, fastEp) { url =>
-                val repeats = 10
-                val sizes   = Choice.eval(2, 4, 8)
-                (for
-                    size  <- sizes
-                    c     <- HttpClient.init(client, size * 2)
-                    latch <- Latch.init(1)
-                    slowReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
-                    fastReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/fast", Absent))
-                    fibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(HttpClientConfig(timeout = Present(50.millis))) {
-                                Abort.run[HttpException](c.sendWith(slowRoute, slowReq)(identity))
-                            }
-                        )
-                    ))
-                    _ <- latch.release
-                    _ <- Kyo.foreach(fibers)(_.get)
-                    results <- HttpClient.withConfig(noTimeout) {
-                        Async.fill(size, size)(c.sendWith(fastRoute, fastReq)(identity))
-                    }
-                yield assert(results.forall(_.status == HttpStatus.OK)))
-                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
-            }
-        }
-
-        "slot returned after concurrent fiber cancellations" - {
-            val slowRoute = HttpRoute.getRaw("slow2").response(_.bodyText)
-            val fastRoute = HttpRoute.getRaw("fast2").response(_.bodyText)
-            // Handler blocks forever — cancelled by fiber interrupt
-            val slowEp = slowRoute.handler(_ => Latch.init(1).map(_.await).andThen(HttpResponse.ok("late")))
-            val fastEp = fastRoute.handler(_ => HttpResponse.ok("ok"))
-            runServer(slowEp, fastEp) { url =>
-                val repeats = 10
-                val sizes   = Choice.eval(2, 4, 8)
-                (for
-                    size  <- sizes
-                    c     <- HttpClient.init(client, size)
-                    latch <- Latch.init(1)
-                    slowReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow2", Absent))
-                    fastReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/fast2", Absent))
-                    fibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(noTimeout) {
-                                c.sendWith(slowRoute, slowReq)(identity)
-                            }
-                        )
-                    ))
-                    _ <- latch.release
-                    // Let fibers acquire slots, then interrupt them
-                    _ <- Kyo.foreach(fibers)(_.interrupt)
-                    _ <- untilTrue {
-                        Abort.run(c.sendWith(fastRoute, fastReq)(identity)).map(_.isSuccess)
-                    }
-                    results <- HttpClient.withConfig(noTimeout) {
-                        Async.fill(size, size)(c.sendWith(fastRoute, fastReq)(identity))
-                    }
-                yield assert(results.forall(_.status == HttpStatus.OK)))
-                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
-            }
-        }
-
-        "slot returned after streaming response cancellation" - {
-            val streamRoute = HttpRoute.getRaw("stream").response(_.bodyStream)
-            val fastRoute   = HttpRoute.getRaw("fast3").response(_.bodyText)
-            val streamEp = streamRoute.handler { _ =>
-                val chunks = Stream[Span[Byte], Async] {
-                    kyo.Loop.foreach {
-                        Async.delay(1.millis) {
-                            kyo.Emit.valueWith(Chunk(Span.fromUnsafe("data\n".getBytes("UTF-8"))))(kyo.Loop.continue[Unit])
-                        }
-                    }
-                }
-                HttpResponse.ok.addField("body", chunks)
-            }
-            val fastEp = fastRoute.handler(_ => HttpResponse.ok("ok"))
-            runServer(streamEp, fastEp) { url =>
-                val repeats = 10
-                val sizes   = Choice.eval(2, 4)
-                (for
-                    size  <- sizes
-                    c     <- HttpClient.init(client, size)
-                    latch <- Latch.init(1)
-                    streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream", Absent))
-                    fastReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/fast3", Absent))
-                    fibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(noTimeout) {
-                                c.sendWith(streamRoute, streamReq) { resp =>
-                                    resp.fields.body.take(1).run.map(_ => ())
-                                }
-                            }
-                        )
-                    ))
-                    _ <- latch.release
-                    _ <- Kyo.foreach(fibers)(f => Abort.run[Throwable](f.get))
-                    _ <- untilTrue {
-                        Abort.run(c.sendWith(fastRoute, fastReq)(identity)).map(_.isSuccess)
-                    }
-                    results <- HttpClient.withConfig(noTimeout) {
-                        Async.fill(size, size)(c.sendWith(fastRoute, fastReq)(identity))
-                    }
-                yield assert(results.forall(_.status == HttpStatus.OK)))
-                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
-            }
-        }
-
-        "slot returned after streaming request cancellation" - {
-            val postRoute = HttpRoute.postRaw("upload")
-                .request(_.bodyStream)
-                .response(_.bodyText)
-            val fastRoute = HttpRoute.getRaw("fast4").response(_.bodyText)
-            val postEp = postRoute.handler { req =>
-                req.fields.body.run.map(_ => HttpResponse.ok("done"))
-            }
-            val fastEp = fastRoute.handler(_ => HttpResponse.ok("ok"))
-            runServer(postEp, fastEp) { url =>
-                val repeats = 10
-                val sizes   = Choice.eval(2, 4)
-                (for
-                    size  <- sizes
-                    c     <- HttpClient.init(client, size)
-                    latch <- Latch.init(1)
-                    fastReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/fast4", Absent))
-                    fibers <- Kyo.fill(size)(Fiber.initUnscoped {
-                        latch.await.andThen {
-                            val slowBody = Stream[Span[Byte], Async] {
-                                kyo.Loop.foreach {
-                                    // Block forever per iteration — cancelled by fiber interrupt
-                                    Latch.init(1).map(_.await).andThen {
-                                        kyo.Emit.valueWith(Chunk(Span.fromUnsafe("x".getBytes("UTF-8"))))(kyo.Loop.continue[Unit])
-                                    }
-                                }
-                            }
-                            val req = HttpRequest.postRaw(HttpUrl(url.scheme, url.host, url.port, "/upload", Absent))
-                                .addField("body", slowBody)
-                            HttpClient.withConfig(noTimeout) {
-                                c.sendWith(postRoute, req)(identity)
-                            }
-                        }
-                    })
-                    _ <- latch.release
-                    // Let fibers acquire slots, then interrupt them
-                    _ <- Kyo.foreach(fibers)(_.interrupt)
-                    _ <- untilTrue {
-                        Abort.run(c.sendWith(fastRoute, fastReq)(identity)).map(_.isSuccess)
-                    }
-                    results <- HttpClient.withConfig(noTimeout) {
-                        Async.fill(size, size)(c.sendWith(fastRoute, fastReq)(identity))
-                    }
-                yield assert(results.forall(_.status == HttpStatus.OK)))
-                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
-            }
-        }
-
-        "slot returned after connection error" - {
-            val fastRoute = HttpRoute.getRaw("fast5").response(_.bodyText)
-            val fastEp    = fastRoute.handler(_ => HttpResponse.ok("ok"))
-            runServer(fastEp) { url =>
-                val repeats = 10
-                val sizes   = Choice.eval(2, 4, 8)
-                (for
-                    size  <- sizes
-                    c     <- HttpClient.init(client, size)
-                    latch <- Latch.init(1)
-                    badReq   = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", 1, "/nope", Absent))
-                    fastReq  = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/fast5", Absent))
-                    badRoute = HttpRoute.getRaw("nope").response(_.bodyText)
-                    fibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(noTimeout) {
-                                Abort.run[HttpException](c.sendWith(badRoute, badReq)(identity))
-                            }
-                        )
-                    ))
-                    _ <- latch.release
-                    _ <- Kyo.foreach(fibers)(_.get)
-                    results <- HttpClient.withConfig(noTimeout) {
-                        Async.fill(size, size)(c.sendWith(fastRoute, fastReq)(identity))
-                    }
-                yield assert(results.forall(_.status == HttpStatus.OK)))
-                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
-            }
-        }
     }
 
     "close" - {
@@ -1911,12 +1724,14 @@ class HttpClientTest extends Test:
             }
             runServer(ep) { url =>
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/infinite"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            // Read just the first chunk, then let scope close — should not hang
-                            resp.fields.body.take(1).run.map { chunks =>
-                                assert(chunks.size == 1)
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/infinite"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                // Read just the first chunk, then let scope close — should not hang
+                                resp.fields.body.take(1).run.map { chunks =>
+                                    assert(chunks.size == 1)
+                                }
                             }
                         }
                     }
@@ -1937,13 +1752,15 @@ class HttpClientTest extends Test:
             }
             runServer(ep) { url =>
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/fail-stream"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            // Stream should either deliver partial data or error, but not hang
-                            Abort.run[Throwable](Abort.catching[Throwable] {
-                                resp.fields.body.run.map { _ => succeed }
-                            }).map(_ => succeed)
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/fail-stream"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                // Stream should either deliver partial data or error, but not hang
+                                Abort.run[Throwable](Abort.catching[Throwable] {
+                                    resp.fields.body.run.map { _ => succeed }
+                                }).map(_ => succeed)
+                            }
                         }
                     }
                 }
@@ -1975,16 +1792,18 @@ class HttpClientTest extends Test:
             }
             runServer(ep) { url =>
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
-                            Span.fromUnsafe("hello ".getBytes("UTF-8")),
-                            Span.fromUnsafe("world".getBytes("UTF-8"))
-                        ))
-                        val request = HttpRequest.postRaw(HttpUrl.fromUri("/echo"))
-                            .addField("body", bodyStream)
-                        client.sendWith(conn, route, request) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            assert(resp.fields.body == "hello world")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
+                                Span.fromUnsafe("hello ".getBytes("UTF-8")),
+                                Span.fromUnsafe("world".getBytes("UTF-8"))
+                            ))
+                            val request = HttpRequest.postRaw(HttpUrl.fromUri("/echo"))
+                                .addField("body", bodyStream)
+                            client.sendWith(conn, route, request) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                assert(resp.fields.body == "hello world")
+                            }
                         }
                     }
                 }

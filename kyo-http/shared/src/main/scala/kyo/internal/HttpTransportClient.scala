@@ -55,7 +55,7 @@ class HttpTransportClient(private[kyo] val transport: Transport) extends HttpBac
         conn: Connection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        onRelease: Maybe[Result.Error[Any]] => Unit < Sync
+        onRelease: Maybe[Result.Error[Any]] => Unit < Async
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
@@ -68,7 +68,7 @@ class HttpTransportClient(private[kyo] val transport: Transport) extends HttpBac
     def isAlive(conn: Connection)(using Frame): Boolean < Sync =
         transport.isAlive(conn.tc)
 
-    def closeNow(conn: Connection)(using Frame): Unit < Sync =
+    def closeNow(conn: Connection)(using Frame): Unit < Async =
         conn.exchange.close.andThen(transport.closeNow(conn.tc))
 
     def close(conn: Connection, gracePeriod: Duration)(using Frame): Unit < Async =
@@ -82,16 +82,18 @@ class HttpTransportClient(private[kyo] val transport: Transport) extends HttpBac
         conn: Connection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        onRelease: Maybe[Result.Error[Any]] => Unit < Sync
+        onRelease: Maybe[Result.Error[Any]] => Unit < Async
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
-        Sync.ensure(onRelease) {
-            encodeToRaw(route, request).map { rawReq =>
-                Abort.recover[Closed](_ => Abort.fail(HttpConnectionClosedException())) {
-                    conn.exchange(rawReq)
-                }.map { rawResp =>
-                    decodeFromRawBuffered(route, rawResp, request).map(f)
+        Scope.run {
+            Scope.ensure(onRelease).andThen {
+                encodeToRaw(route, request).map { rawReq =>
+                    Abort.recover[Closed](_ => Abort.fail(HttpConnectionClosedException())) {
+                        conn.exchange(rawReq)
+                    }.map { rawResp =>
+                        decodeFromRawBuffered(route, rawResp, request).map(f)
+                    }
                 }
             }
         }
@@ -107,30 +109,32 @@ class HttpTransportClient(private[kyo] val transport: Transport) extends HttpBac
         conn: Connection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        onRelease: Maybe[Result.Error[Any]] => Unit < Sync
+        onRelease: Maybe[Result.Error[Any]] => Unit < Async
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
         AtomicRef.init(false).map { phase2Started =>
             AtomicRef.init(false).map { released =>
                 // Idempotent release — safe to call from both phases
-                val safeRelease: Maybe[Result.Error[Any]] => Unit < Sync = error =>
+                val safeRelease: Maybe[Result.Error[Any]] => Unit < Async = error =>
                     released.getAndSet(true).map { wasReleased =>
                         if !wasReleased then onRelease(error)
                         else Kyo.unit
                     }
                 // Phase 1: outer ensure — only fires if phase 2 hasn't started
-                Sync.ensure { error =>
-                    phase2Started.get.map { started =>
-                        if !started then safeRelease(error)
-                        else Kyo.unit
-                    }
-                } {
-                    encodeToRaw(route, request).map { rawReq =>
-                        Abort.recover[Closed](_ => Abort.fail(HttpConnectionClosedException())) {
-                            conn.exchange(rawReq)
-                        }.map { rawResp =>
-                            decodeFromRawStreaming(route, rawResp, request, phase2Started, safeRelease).map(f)
+                Scope.run {
+                    Scope.ensure { error =>
+                        phase2Started.get.map { started =>
+                            if !started then safeRelease(error)
+                            else Kyo.unit
+                        }
+                    }.andThen {
+                        encodeToRaw(route, request).map { rawReq =>
+                            Abort.recover[Closed](_ => Abort.fail(HttpConnectionClosedException())) {
+                                conn.exchange(rawReq)
+                            }.map { rawResp =>
+                                decodeFromRawStreaming(route, rawResp, request, phase2Started, safeRelease).map(f)
+                            }
                         }
                     }
                 }
@@ -143,7 +147,7 @@ class HttpTransportClient(private[kyo] val transport: Transport) extends HttpBac
         rawResp: RawHttpResponse,
         request: HttpRequest[?],
         phase2Started: AtomicRef[Boolean],
-        safeRelease: Maybe[Result.Error[Any]] => Unit < Sync
+        safeRelease: Maybe[Result.Error[Any]] => Unit < Async
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
         val rawStream = rawResp.body match
             case HttpBody.Streamed(chunks) => chunks
@@ -156,14 +160,16 @@ class HttpTransportClient(private[kyo] val transport: Transport) extends HttpBac
             // - On stream end: release with success (fully consumed) or error (partial)
             AtomicRef.init(false).map { fullyConsumed =>
                 val wrappedStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
-                    Sync.ensure { error =>
-                        fullyConsumed.get.map { consumed =>
-                            if consumed then safeRelease(error)
-                            else safeRelease(Present(Result.Panic(new Exception("streaming response not fully consumed"))))
-                        }
-                    } {
-                        rawStream.emit.andThen {
-                            fullyConsumed.set(true)
+                    Scope.run {
+                        Scope.ensure { error =>
+                            fullyConsumed.get.map { consumed =>
+                                if consumed then safeRelease(error)
+                                else safeRelease(Present(Result.Panic(new Exception("streaming response not fully consumed"))))
+                            }
+                        }.andThen {
+                            rawStream.emit.andThen {
+                                fullyConsumed.set(true)
+                            }
                         }
                     }
                 }

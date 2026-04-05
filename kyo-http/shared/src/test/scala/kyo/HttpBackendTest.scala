@@ -23,14 +23,14 @@ class HttpBackendTest extends Test:
             conn: Connection,
             route: HttpRoute[In, Out, ?],
             request: HttpRequest[In],
-            onRelease: Maybe[Result.Error[Any]] => Unit < Sync
+            onRelease: Maybe[Result.Error[Any]] => Unit < Async
         )(
             f: HttpResponse[Out] => A < (Async & Abort[HttpException])
         )(using Frame): A < (Async & Abort[HttpException]) =
             Abort.fail(HttpJsonDecodeException("stub", "TEST", "/test"))
 
         def isAlive(conn: Connection)(using Frame): Boolean < Sync                    = Sync.defer(true)
-        def closeNow(conn: Connection)(using Frame): Unit < Sync                      = Kyo.unit
+        def closeNow(conn: Connection)(using Frame): Unit < Async                     = Kyo.unit
         def close(conn: Connection, gracePeriod: Duration)(using Frame): Unit < Async = ()
         def close(gracePeriod: Duration)(using Frame): Unit < Async                   = ()
 

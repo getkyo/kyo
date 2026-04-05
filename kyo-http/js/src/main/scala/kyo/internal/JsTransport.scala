@@ -97,7 +97,7 @@ final class JsTransport extends Transport:
     def isAlive(c: JsConnection)(using Frame): Boolean < Sync =
         Sync.defer(!c.conn.socket.destroyed.asInstanceOf[Boolean])
 
-    def closeNow(c: JsConnection)(using Frame): Unit < Sync =
+    def closeNow(c: JsConnection)(using Frame): Unit < Async =
         Sync.defer(discard(c.conn.socket.destroy()))
 
     def close(c: JsConnection, gracePeriod: Duration)(using Frame): Unit < Async =

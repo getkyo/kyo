@@ -82,8 +82,10 @@ class HttpServerTest extends Test:
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
         client.connectWith(url, Absent) { conn =>
-            Sync.ensure(client.closeNow(conn)) {
-                client.sendWith(conn, route, request)(identity)
+            Scope.run {
+                Scope.ensure(client.closeNow(conn)).andThen {
+                    client.sendWith(conn, route, request)(identity)
+                }
             }
         }
 
@@ -806,15 +808,17 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/stream"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.run.map { chunks =>
-                                val text = chunks.foldLeft("")((acc, span) =>
-                                    acc + new String(span.toArrayUnsafe, "UTF-8")
-                                )
-                                called = true
-                                assert(text == "hello world")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/stream"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.run.map { chunks =>
+                                    val text = chunks.foldLeft("")((acc, span) =>
+                                        acc + new String(span.toArrayUnsafe, "UTF-8")
+                                    )
+                                    called = true
+                                    assert(text == "hello world")
+                                }
                             }
                         }
                     }
@@ -831,13 +835,15 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/events"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.run.map { chunks =>
-                                called = true
-                                val users = chunks.toSeq
-                                assert(users == Seq(User(1, "alice"), User(2, "bob")))
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/events"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.run.map { chunks =>
+                                    called = true
+                                    val users = chunks.toSeq
+                                    assert(users == Seq(User(1, "alice"), User(2, "bob")))
+                                }
                             }
                         }
                     }
@@ -857,15 +863,17 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.run.map { chunks =>
-                                called = true
-                                val events = chunks.toSeq
-                                assert(events.size == 2)
-                                assert(events(0).data == "hello")
-                                assert(events(1).data == "world")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.run.map { chunks =>
+                                    called = true
+                                    val events = chunks.toSeq
+                                    assert(events.size == 2)
+                                    assert(events(0).data == "hello")
+                                    assert(events(1).data == "world")
+                                }
                             }
                         }
                     }
@@ -887,16 +895,18 @@ class HttpServerTest extends Test:
             }
             runServer(ep) { url =>
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
-                            Span.fromUnsafe("part1 ".getBytes("UTF-8")),
-                            Span.fromUnsafe("part2".getBytes("UTF-8"))
-                        ))
-                        val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
-                            .addField("body", bodyStream)
-                        client.sendWith(conn, route, request) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            assert(resp.fields.body == "part1 part2")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
+                                Span.fromUnsafe("part1 ".getBytes("UTF-8")),
+                                Span.fromUnsafe("part2".getBytes("UTF-8"))
+                            ))
+                            val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
+                                .addField("body", bodyStream)
+                            client.sendWith(conn, route, request) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                assert(resp.fields.body == "part1 part2")
+                            }
                         }
                     }
                 }
@@ -914,16 +924,18 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/many"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.run.map { chunks =>
-                                called = true
-                                val text = chunks.foldLeft("")((acc, span) =>
-                                    acc + new String(span.toArrayUnsafe, "UTF-8")
-                                )
-                                assert(text.contains("chunk1\n"))
-                                assert(text.contains("chunk100\n"))
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/many"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.run.map { chunks =>
+                                    called = true
+                                    val text = chunks.foldLeft("")((acc, span) =>
+                                        acc + new String(span.toArrayUnsafe, "UTF-8")
+                                    )
+                                    assert(text.contains("chunk1\n"))
+                                    assert(text.contains("chunk100\n"))
+                                }
                             }
                         }
                     }
@@ -1137,12 +1149,14 @@ class HttpServerTest extends Test:
             val ep    = route.handler(_ => HttpResponse.ok("pong"))
             runServer(ep) { url =>
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        Kyo.foreach(1 to 5) { i =>
-                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ping")))(identity)
-                        }.map { responses =>
-                            assert(responses.forall(_.status == HttpStatus.OK))
-                            assert(responses.forall(_.fields.body == "pong"))
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            Kyo.foreach(1 to 5) { i =>
+                                client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ping")))(identity)
+                            }.map { responses =>
+                                assert(responses.forall(_.status == HttpStatus.OK))
+                                assert(responses.forall(_.fields.body == "pong"))
+                            }
                         }
                     }
                 }
@@ -1280,18 +1294,20 @@ class HttpServerTest extends Test:
                         Fiber.initUnscoped(
                             latch.await.andThen {
                                 client.connectWith(url, Absent) { conn =>
-                                    Sync.ensure(client.closeNow(conn)) {
-                                        client.sendWith(
-                                            conn,
-                                            route,
-                                            HttpRequest.getRaw(HttpUrl.fromUri("/stream-iso"))
-                                                .setHeader("X-Marker", s"m$i")
-                                        ) { resp =>
-                                            resp.fields.body.run.map { chunks =>
-                                                val text: String = chunks.foldLeft("")((acc, span) =>
-                                                    acc + new String(span.toArrayUnsafe, "UTF-8")
-                                                )
-                                                (i, text)
+                                    Scope.run {
+                                        Scope.ensure(client.closeNow(conn)).andThen {
+                                            client.sendWith(
+                                                conn,
+                                                route,
+                                                HttpRequest.getRaw(HttpUrl.fromUri("/stream-iso"))
+                                                    .setHeader("X-Marker", s"m$i")
+                                            ) { resp =>
+                                                resp.fields.body.run.map { chunks =>
+                                                    val text: String = chunks.foldLeft("")((acc, span) =>
+                                                        acc + new String(span.toArrayUnsafe, "UTF-8")
+                                                    )
+                                                    (i, text)
+                                                }
                                             }
                                         }
                                     }
@@ -1631,18 +1647,20 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
-                            resp.fields.body.run.map { chunks =>
-                                called = true
-                                val events = chunks.toSeq
-                                assert(events.size == 2)
-                                assert(events(0).data == "hello")
-                                assert(events(0).event.contains("greeting"))
-                                assert(events(0).id.contains("evt-1"))
-                                assert(events(0).retry.contains(5.seconds))
-                                assert(events(1).data == "world")
-                                assert(events(1).id.contains("evt-2"))
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
+                                resp.fields.body.run.map { chunks =>
+                                    called = true
+                                    val events = chunks.toSeq
+                                    assert(events.size == 2)
+                                    assert(events(0).data == "hello")
+                                    assert(events(0).event.contains("greeting"))
+                                    assert(events(0).id.contains("evt-1"))
+                                    assert(events(0).retry.contains(5.seconds))
+                                    assert(events(1).data == "world")
+                                    assert(events(1).id.contains("evt-2"))
+                                }
                             }
                         }
                     }
@@ -1661,15 +1679,17 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
-                            resp.fields.body.run.map { chunks =>
-                                called = true
-                                val text = chunks.foldLeft("")((acc, span) =>
-                                    acc + new String(span.toArrayUnsafe, "UTF-8")
-                                )
-                                assert(!text.contains("\"hello\""), s"SSE data should not be JSON-quoted, got: $text")
-                                assert(text.contains("data: hello"), s"Expected plain text SSE data, got: $text")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
+                                resp.fields.body.run.map { chunks =>
+                                    called = true
+                                    val text = chunks.foldLeft("")((acc, span) =>
+                                        acc + new String(span.toArrayUnsafe, "UTF-8")
+                                    )
+                                    assert(!text.contains("\"hello\""), s"SSE data should not be JSON-quoted, got: $text")
+                                    assert(text.contains("data: hello"), s"Expected plain text SSE data, got: $text")
+                                }
                             }
                         }
                     }
@@ -1994,19 +2014,21 @@ class HttpServerTest extends Test:
             }
             runServer(ep) { url =>
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
-                            kyo.Emit.valueWith(Chunk(Span.fromUnsafe("a".getBytes("UTF-8")))) {
-                                Async.delay(1.millis) {
-                                    kyo.Emit.valueWith(Chunk(Span.fromUnsafe("b".getBytes("UTF-8"))))(())
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+                                kyo.Emit.valueWith(Chunk(Span.fromUnsafe("a".getBytes("UTF-8")))) {
+                                    Async.delay(1.millis) {
+                                        kyo.Emit.valueWith(Chunk(Span.fromUnsafe("b".getBytes("UTF-8"))))(())
+                                    }
                                 }
                             }
-                        }
-                        val request = HttpRequest.postRaw(HttpUrl.fromUri("/slow-upload"))
-                            .addField("body", bodyStream)
-                        client.sendWith(conn, route, request) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            assert(resp.fields.body == "ab")
+                            val request = HttpRequest.postRaw(HttpUrl.fromUri("/slow-upload"))
+                                .addField("body", bodyStream)
+                            client.sendWith(conn, route, request) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                assert(resp.fields.body == "ab")
+                            }
                         }
                     }
                 }
@@ -2044,15 +2066,17 @@ class HttpServerTest extends Test:
                 }
                 withServer(ep) { url =>
                     client.connectWith(url, Absent) { conn =>
-                        Sync.ensure(client.closeNow(conn)) {
-                            val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
-                                kyo.Emit.valueWith(Chunk(Span.fromUnsafe("hello".getBytes("UTF-8"))))(())
-                            }
-                            val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload-complete"))
-                                .addField("body", bodyStream)
-                            client.sendWith(conn, route, request) { resp =>
-                                assert(resp.status == HttpStatus.OK)
-                                assert(resp.fields.body == "hello")
+                        Scope.run {
+                            Scope.ensure(client.closeNow(conn)).andThen {
+                                val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+                                    kyo.Emit.valueWith(Chunk(Span.fromUnsafe("hello".getBytes("UTF-8"))))(())
+                                }
+                                val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload-complete"))
+                                    .addField("body", bodyStream)
+                                client.sendWith(conn, route, request) { resp =>
+                                    assert(resp.status == HttpStatus.OK)
+                                    assert(resp.fields.body == "hello")
+                                }
                             }
                         }
                     }.andThen {
@@ -2083,13 +2107,15 @@ class HttpServerTest extends Test:
             }
             runServer(ep) { url =>
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/many-chunks"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.run.map { chunks =>
-                                val totalBytes = chunks.foldLeft(0)(_ + _.size)
-                                assert(totalBytes > 0)
-                                succeed
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/many-chunks"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.run.map { chunks =>
+                                    val totalBytes = chunks.foldLeft(0)(_ + _.size)
+                                    assert(totalBytes > 0)
+                                    succeed
+                                }
                             }
                         }
                     }
@@ -2111,14 +2137,16 @@ class HttpServerTest extends Test:
             }
             runServer(ep) { url =>
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/err-stream"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            Abort.run[Throwable](Abort.catching[Throwable] {
-                                resp.fields.body.run.map { chunks =>
-                                    succeed
-                                }
-                            }).map(_ => succeed)
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/err-stream"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                Abort.run[Throwable](Abort.catching[Throwable] {
+                                    resp.fields.body.run.map { chunks =>
+                                        succeed
+                                    }
+                                }).map(_ => succeed)
+                            }
                         }
                     }
                 }
@@ -2531,15 +2559,17 @@ class HttpServerTest extends Test:
             var called = false
             withCorsServer(HttpServerConfig.Cors.allowAll, ep) { url =>
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-sse-get2"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
-                            assert(allowOrigin.isDefined, "SSE GET with CORS should include Access-Control-Allow-Origin")
-                            resp.fields.body.run.map { chunks =>
-                                called = true
-                                assert(chunks.toSeq.size == 1)
-                                assert(chunks.toSeq(0).data == "test")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-sse-get2"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
+                                assert(allowOrigin.isDefined, "SSE GET with CORS should include Access-Control-Allow-Origin")
+                                resp.fields.body.run.map { chunks =>
+                                    called = true
+                                    assert(chunks.toSeq.size == 1)
+                                    assert(chunks.toSeq(0).data == "test")
+                                }
                             }
                         }
                     }
@@ -2591,15 +2621,17 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-sse-get"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
-                            assert(allowOrigin.isDefined, "SSE GET with CORS filter should include Access-Control-Allow-Origin")
-                            resp.fields.body.run.map { chunks =>
-                                called = true
-                                assert(chunks.toSeq.size == 1)
-                                assert(chunks.toSeq(0).data == "test")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-sse-get"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
+                                assert(allowOrigin.isDefined, "SSE GET with CORS filter should include Access-Control-Allow-Origin")
+                                resp.fields.body.run.map { chunks =>
+                                    called = true
+                                    assert(chunks.toSeq.size == 1)
+                                    assert(chunks.toSeq(0).data == "test")
+                                }
                             }
                         }
                     }
@@ -2660,15 +2692,17 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-repeat"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.take(2).run.map { chunks =>
-                                called = true
-                                val events = chunks.toSeq
-                                assert(events.size == 2)
-                                assert(events(0).data == User(1, "user-1"))
-                                assert(events(1).data == User(2, "user-2"))
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-repeat"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.take(2).run.map { chunks =>
+                                    called = true
+                                    val events = chunks.toSeq
+                                    assert(events.size == 2)
+                                    assert(events(0).data == User(1, "user-1"))
+                                    assert(events(1).data == User(2, "user-2"))
+                                }
                             }
                         }
                     }
@@ -2689,16 +2723,18 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delayed"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.run.map { chunks =>
-                                called = true
-                                val events = chunks.toSeq
-                                assert(events.size == 3, s"Expected 3 delayed SSE events, got ${events.size}")
-                                assert(events(0).data == "event-1")
-                                assert(events(1).data == "event-2")
-                                assert(events(2).data == "event-3")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delayed"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.run.map { chunks =>
+                                    called = true
+                                    val events = chunks.toSeq
+                                    assert(events.size == 3, s"Expected 3 delayed SSE events, got ${events.size}")
+                                    assert(events(0).data == "event-1")
+                                    assert(events(1).data == "event-2")
+                                    assert(events(2).data == "event-3")
+                                }
                             }
                         }
                     }
@@ -2724,15 +2760,17 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-repeat"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.take(2).run.map { chunks =>
-                                called = true
-                                val users = chunks.toSeq
-                                assert(users.size == 2)
-                                assert(users(0) == User(1, "user-1"))
-                                assert(users(1) == User(2, "user-2"))
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-repeat"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.take(2).run.map { chunks =>
+                                    called = true
+                                    val users = chunks.toSeq
+                                    assert(users.size == 2)
+                                    assert(users(0) == User(1, "user-1"))
+                                    assert(users(1) == User(2, "user-2"))
+                                }
                             }
                         }
                     }
@@ -2753,15 +2791,17 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-delayed"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.run.map { chunks =>
-                                called = true
-                                val users = chunks.toSeq
-                                assert(users.size == 2, s"Expected 2 delayed NDJSON items, got ${users.size}")
-                                assert(users(0) == User(1, "alice"))
-                                assert(users(1) == User(2, "bob"))
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-delayed"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.run.map { chunks =>
+                                    called = true
+                                    val users = chunks.toSeq
+                                    assert(users.size == 2, s"Expected 2 delayed NDJSON items, got ${users.size}")
+                                    assert(users(0) == User(1, "alice"))
+                                    assert(users(1) == User(2, "bob"))
+                                }
                             }
                         }
                     }
@@ -2777,11 +2817,13 @@ class HttpServerTest extends Test:
             }
             runServer(ep) { url =>
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-empty"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.run.map { chunks =>
-                                assert(chunks.isEmpty)
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-empty"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.run.map { chunks =>
+                                    assert(chunks.isEmpty)
+                                }
                             }
                         }
                     }
@@ -2808,16 +2850,18 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-gaps"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.run.map { chunks =>
-                                called = true
-                                val events = chunks.toSeq
-                                assert(events.size == 3)
-                                assert(events(0).data == "first")
-                                assert(events(1).data == "second")
-                                assert(events(2).data == "third")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-gaps"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.run.map { chunks =>
+                                    called = true
+                                    val events = chunks.toSeq
+                                    assert(events.size == 3)
+                                    assert(events(0).data == "first")
+                                    assert(events(1).data == "second")
+                                    assert(events(2).data == "third")
+                                }
                             }
                         }
                     }
@@ -2839,14 +2883,16 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-map-delay"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.run.map { chunks =>
-                                called = true
-                                val events = chunks.toSeq
-                                assert(events.size == 3, s"Expected 3 events via .map pattern, got ${events.size}")
-                                assert(events(0).data == "item-1")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-map-delay"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.run.map { chunks =>
+                                    called = true
+                                    val events = chunks.toSeq
+                                    assert(events.size == 3, s"Expected 3 events via .map pattern, got ${events.size}")
+                                    assert(events(0).data == "item-1")
+                                }
                             }
                         }
                     }
@@ -2866,15 +2912,17 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-map"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.take(2).run.map { chunks =>
-                                called = true
-                                val events = chunks.toSeq
-                                assert(events.size == 2, s"Expected 2 SSE JSON events, got ${events.size}")
-                                assert(events(0).data == User(1, "u1"))
-                                assert(events(1).data == User(2, "u2"))
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-map"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.take(2).run.map { chunks =>
+                                    called = true
+                                    val events = chunks.toSeq
+                                    assert(events.size == 2, s"Expected 2 SSE JSON events, got ${events.size}")
+                                    assert(events(0).data == User(1, "u1"))
+                                    assert(events(1).data == User(2, "u2"))
+                                }
                             }
                         }
                     }
@@ -2898,15 +2946,17 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-loop-delay"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.take(2).run.map { chunks =>
-                                called = true
-                                val users = chunks.toSeq
-                                assert(users.size == 2, s"Expected 2 NDJSON items, got ${users.size}")
-                                assert(users(0) == User(1, "u1"))
-                                assert(users(1) == User(2, "u2"))
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-loop-delay"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.take(2).run.map { chunks =>
+                                    called = true
+                                    val users = chunks.toSeq
+                                    assert(users.size == 2, s"Expected 2 NDJSON items, got ${users.size}")
+                                    assert(users(0) == User(1, "u1"))
+                                    assert(users(1) == User(2, "u2"))
+                                }
                             }
                         }
                     }
@@ -2927,14 +2977,16 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-first"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.run.map { chunks =>
-                                called = true
-                                val events = chunks.toSeq
-                                assert(events.size == 1, s"Expected 1 delayed event, got ${events.size}")
-                                assert(events(0).data == "delayed-event")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-first"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.run.map { chunks =>
+                                    called = true
+                                    val events = chunks.toSeq
+                                    assert(events.size == 1, s"Expected 1 delayed event, got ${events.size}")
+                                    assert(events(0).data == "delayed-event")
+                                }
                             }
                         }
                     }
@@ -3377,23 +3429,27 @@ class HttpServerTest extends Test:
                 withServer(ep2) { url2 =>
                     Async.zip(
                         client.connectWith(url1, Absent) { conn =>
-                            Sync.ensure(client.closeNow(conn)) {
-                                client.sendWith(conn, route1, HttpRequest.getRaw(HttpUrl.fromUri("/stream1"))) { resp =>
-                                    resp.fields.body.take(2).run.map { chunks =>
-                                        val events = chunks.toSeq
-                                        assert(events.size == 2)
-                                        assert(events.forall(_.data == "from-server1"))
+                            Scope.run {
+                                Scope.ensure(client.closeNow(conn)).andThen {
+                                    client.sendWith(conn, route1, HttpRequest.getRaw(HttpUrl.fromUri("/stream1"))) { resp =>
+                                        resp.fields.body.take(2).run.map { chunks =>
+                                            val events = chunks.toSeq
+                                            assert(events.size == 2)
+                                            assert(events.forall(_.data == "from-server1"))
+                                        }
                                     }
                                 }
                             }
                         },
                         client.connectWith(url2, Absent) { conn =>
-                            Sync.ensure(client.closeNow(conn)) {
-                                client.sendWith(conn, route2, HttpRequest.getRaw(HttpUrl.fromUri("/stream2"))) { resp =>
-                                    resp.fields.body.take(2).run.map { chunks =>
-                                        val events = chunks.toSeq
-                                        assert(events.size == 2)
-                                        assert(events.forall(_.data == "from-server2"))
+                            Scope.run {
+                                Scope.ensure(client.closeNow(conn)).andThen {
+                                    client.sendWith(conn, route2, HttpRequest.getRaw(HttpUrl.fromUri("/stream2"))) { resp =>
+                                        resp.fields.body.take(2).run.map { chunks =>
+                                            val events = chunks.toSeq
+                                            assert(events.size == 2)
+                                            assert(events.forall(_.data == "from-server2"))
+                                        }
                                     }
                                 }
                             }
@@ -3505,12 +3561,14 @@ class HttpServerTest extends Test:
             runServer(ep) { url =>
                 var called = false
                 client.connectWith(url, Absent) { conn =>
-                    Sync.ensure(client.closeNow(conn)) {
-                        client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-empty"))) { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                            resp.fields.body.run.map { chunks =>
-                                called = true
-                                assert(chunks.isEmpty, s"Empty SSE stream should produce 0 events, got ${chunks.size}")
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-empty"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                resp.fields.body.run.map { chunks =>
+                                    called = true
+                                    assert(chunks.isEmpty, s"Empty SSE stream should produce 0 events, got ${chunks.size}")
+                                }
                             }
                         }
                     }

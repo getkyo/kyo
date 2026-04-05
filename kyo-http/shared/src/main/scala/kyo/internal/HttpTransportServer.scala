@@ -47,8 +47,10 @@ class HttpTransportServer(private[kyo] val transport: Transport)(using
                 Fiber.initUnscoped {
                     listener.connections.foreach { conn =>
                         Fiber.initUnscoped {
-                            Sync.ensure(transport.closeNow(conn)) {
-                                serveConnection(conn, router, config)
+                            Scope.run {
+                                Scope.acquireRelease(Sync.defer(conn))(c => transport.closeNow(c)).map { conn =>
+                                    serveConnection(conn, router, config)
+                                }
                             }
                         }.map { fiber =>
                             connFibers.add(fiber)

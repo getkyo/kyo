@@ -25,52 +25,54 @@ class WsTransportClient(transport: Transport) extends HttpBackend.WebSocketClien
         val tls     = if url.ssl then Present(TlsConfig.default) else Absent
         val address = TransportAddress.Tcp(url.host, url.port)
         transport.connect(address, tls).map { connection =>
-            Sync.ensure(transport.closeNow(connection)) {
-                WsCodec.requestUpgrade(connection, url.host, url.path, headers, config).map { wsStream =>
-                    Channel.initUnscoped[WebSocketFrame](config.bufferSize).map { inbound =>
-                        Channel.initUnscoped[WebSocketFrame](config.bufferSize).map { outbound =>
-                            AtomicRef.init[Maybe[(Int, String)]](Absent).map { closeReasonRef =>
-                                val closeFn: (Int, String) => Unit < Async = (code, reason) =>
-                                    closeReasonRef.set(Present((code, reason))).andThen {
-                                        outbound.close.unit
-                                    }
-                                val ws = new WebSocket(inbound, outbound, closeReasonRef, closeFn)
+            Scope.run {
+                Scope.acquireRelease(Sync.defer(connection))(c => transport.closeNow(c)).map { connection =>
+                    WsCodec.requestUpgrade(connection, url.host, url.path, headers, config).map { wsStream =>
+                        Channel.initUnscoped[WebSocketFrame](config.bufferSize).map { inbound =>
+                            Channel.initUnscoped[WebSocketFrame](config.bufferSize).map { outbound =>
+                                AtomicRef.init[Maybe[(Int, String)]](Absent).map { closeReasonRef =>
+                                    val closeFn: (Int, String) => Unit < Async = (code, reason) =>
+                                        closeReasonRef.set(Present((code, reason))).andThen {
+                                            outbound.close.unit
+                                        }
+                                    val ws = new WebSocket(inbound, outbound, closeReasonRef, closeFn)
 
-                                Fiber.initUnscoped {
-                                    Loop(wsStream) { stream =>
-                                        WsCodec.readFrame(stream, connection).map { case (frame, remaining) =>
-                                            inbound.put(frame).andThen(Loop.continue(remaining))
-                                        }
-                                    }
-                                }.map { readFiber =>
                                     Fiber.initUnscoped {
-                                        readFiber.getResult.map { _ =>
-                                            inbound.close.unit
+                                        Loop(wsStream) { stream =>
+                                            WsCodec.readFrame(stream, connection).map { case (frame, remaining) =>
+                                                inbound.put(frame).andThen(Loop.continue(remaining))
+                                            }
                                         }
-                                    }.map { monitorFiber =>
+                                    }.map { readFiber =>
                                         Fiber.initUnscoped {
-                                            Abort.run[Closed] {
-                                                Loop.foreach {
-                                                    outbound.take.map { frame =>
-                                                        WsCodec.writeFrame(connection, frame, mask = true).andThen(Loop.continue)
+                                            readFiber.getResult.map { _ =>
+                                                inbound.close.unit
+                                            }
+                                        }.map { monitorFiber =>
+                                            Fiber.initUnscoped {
+                                                Abort.run[Closed] {
+                                                    Loop.foreach {
+                                                        outbound.take.map { frame =>
+                                                            WsCodec.writeFrame(connection, frame, mask = true).andThen(Loop.continue)
+                                                        }
                                                     }
+                                                }.map { _ =>
+                                                    closeReasonRef.get.map {
+                                                        case Present((code, reason)) =>
+                                                            Abort.run[Any](WsCodec.writeClose(connection, code, reason, mask = true)).unit
+                                                        case Absent => Kyo.unit
+                                                    }
+                                                }.andThen(outbound.close).unit
+                                            }.map { writeFiber =>
+                                                Sync.ensure(
+                                                    readFiber.interrupt.unit
+                                                        .andThen(writeFiber.interrupt.unit)
+                                                        .andThen(monitorFiber.interrupt.unit)
+                                                        .andThen(inbound.close.unit)
+                                                        .andThen(outbound.close.unit)
+                                                ) {
+                                                    f(ws)
                                                 }
-                                            }.map { _ =>
-                                                closeReasonRef.get.map {
-                                                    case Present((code, reason)) =>
-                                                        Abort.run[Any](WsCodec.writeClose(connection, code, reason, mask = true)).unit
-                                                    case Absent => Kyo.unit
-                                                }
-                                            }.andThen(outbound.close).unit
-                                        }.map { writeFiber =>
-                                            Sync.ensure(
-                                                readFiber.interrupt.unit
-                                                    .andThen(writeFiber.interrupt.unit)
-                                                    .andThen(monitorFiber.interrupt.unit)
-                                                    .andThen(inbound.close.unit)
-                                                    .andThen(outbound.close.unit)
-                                            ) {
-                                                f(ws)
                                             }
                                         }
                                     }

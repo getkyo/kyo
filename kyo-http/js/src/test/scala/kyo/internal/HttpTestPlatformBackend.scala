@@ -36,7 +36,7 @@ private[kyo] class TrustAllJsTransport extends Transport:
     def isAlive(c: Connection)(using Frame): Boolean < Sync =
         inner.isAlive(c)
 
-    def closeNow(c: Connection)(using Frame): Unit < Sync =
+    def closeNow(c: Connection)(using Frame): Unit < Async =
         inner.closeNow(c)
 
     def close(c: Connection, gracePeriod: Duration)(using Frame): Unit < Async =

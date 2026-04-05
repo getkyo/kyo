@@ -160,7 +160,7 @@ final class HttpClient private (
                 val key: TransportAddress = url.unixSocket match
                     case Present(socketPath) => TransportAddress.Unix(socketPath)
                     case Absent              => TransportAddress.Tcp(url.host, url.port)
-                def onRelease(conn: backend.Connection): Maybe[Result.Error[Any]] => Unit < Sync =
+                def onRelease(conn: backend.Connection): Maybe[Result.Error[Any]] => Unit < Async =
                     error =>
                         pool.untrack(key, conn).andThen {
                             error match

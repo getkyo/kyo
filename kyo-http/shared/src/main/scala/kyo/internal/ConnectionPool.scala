@@ -15,18 +15,18 @@ final private[kyo] class ConnectionPool[C](
     idleConnectionTimeoutNanos: Long,
     pools: ConcurrentHashMap[TransportAddress, ConnectionPool.HostPool],
     isAlive: C => Boolean < Sync,
-    discardConn: C => Unit < Sync
+    discardConn: C => Unit < Async
 ):
 
     import ConnectionPool.*
 
     @volatile private var closed = false
 
-    def poll(key: TransportAddress)(using Frame): Maybe[C] < Sync =
+    def poll(key: TransportAddress)(using Frame): Maybe[C] < Async =
         if closed then Sync.defer(Maybe.empty)
         else getPool(key).poll(idleConnectionTimeoutNanos, isAlive, discardConn)
 
-    def release(key: TransportAddress, conn: C)(using Frame): Unit < Sync =
+    def release(key: TransportAddress, conn: C)(using Frame): Unit < Async =
         if closed then discardConn(conn)
         else getPool(key).release(conn, discardConn)
 
@@ -36,7 +36,7 @@ final private[kyo] class ConnectionPool[C](
     def untrack(key: TransportAddress, conn: C)(using Frame): Unit < Sync =
         Sync.defer { if !closed then getPool(key).untrack(conn) }
 
-    def discard(conn: C)(using Frame): Unit < Sync =
+    def discard(conn: C)(using Frame): Unit < Async =
         discardConn(conn)
 
     def tryReserve(key: TransportAddress)(using Frame): Boolean < Sync =
@@ -72,7 +72,7 @@ private[kyo] object ConnectionPool:
         maxConnectionsPerHost: Int,
         idleConnectionTimeout: Duration,
         isAlive: C => Boolean < Sync,
-        discard: C => Unit < Sync
+        discard: C => Unit < Async
     )(using Frame): ConnectionPool[C] < Sync =
         Sync.defer {
             require(maxConnectionsPerHost >= 2, s"maxConnectionsPerHost must be >= 2: $maxConnectionsPerHost")
@@ -99,8 +99,8 @@ private[kyo] object ConnectionPool:
         final def poll[C](
             idleTimeoutNanos: Long,
             isAlive: C => Boolean < Sync,
-            discardConn: C => Unit < Sync
-        )(using Frame): Maybe[C] < Sync =
+            discardConn: C => Unit < Async
+        )(using Frame): Maybe[C] < Async =
             Sync.defer {
                 val currentHead = head.get()
                 val idx         = (currentHead % capacity).toInt
@@ -128,7 +128,7 @@ private[kyo] object ConnectionPool:
                 end if
             }
 
-        final def release[C](conn: C, discardConn: C => Unit < Sync)(using Frame): Unit < Sync =
+        final def release[C](conn: C, discardConn: C => Unit < Async)(using Frame): Unit < Async =
             Sync.defer {
                 val currentTail = tail.get()
                 val idx         = (currentTail % capacity).toInt

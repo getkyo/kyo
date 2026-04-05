@@ -341,7 +341,7 @@ final class NioTransport(
     def isAlive(c: NioConnection)(using Frame): Boolean < Sync =
         Sync.defer(c.channel.isOpen && c.channel.isConnected)
 
-    def closeNow(c: NioConnection)(using Frame): Unit < Sync =
+    def closeNow(c: NioConnection)(using Frame): Unit < Async =
         Sync.Unsafe.defer {
             // Drain pending promises first so waiting fibers unblock immediately when the
             // channel closes, then close the channel and wake up the selector so the poller

@@ -47,8 +47,10 @@ class Http1NativeTest extends kyo.Test:
                 }
             }.andThen {
                 transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
-                    Sync.ensure(transport.closeNow(conn)) {
-                        client(conn, listenerPort(listener))
+                    Scope.run {
+                        Scope.ensure(transport.closeNow(conn)).andThen {
+                            client(conn, listenerPort(listener))
+                        }
                     }
                 }
             }
@@ -204,33 +206,35 @@ class Http1NativeTest extends kyo.Test:
                     }
                     serverFiber.andThen {
                         transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
-                            Sync.ensure(transport.closeNow(clientConn)) {
-                                // Client: send 5 requests and verify each response
-                                Loop(clientConn.read, 0) { (stream, i) =>
-                                    if i >= 5 then Loop.done(succeed)
-                                    else
-                                        Http1Protocol
-                                            .writeRequest(
-                                                clientConn,
-                                                HttpMethod.GET,
-                                                s"/req$i",
-                                                HttpHeaders.empty,
-                                                HttpBody.Empty
-                                            )
-                                            .andThen {
-                                                Http1Protocol.readResponse(stream, 65536).map {
-                                                    case ((status, _, body), remaining) =>
-                                                        assert(status.code == 200)
-                                                        body match
-                                                            case HttpBody.Buffered(data) =>
-                                                                assert(
-                                                                    new String(data.toArrayUnsafe, Utf8) == s"response-$i"
-                                                                )
-                                                            case other => fail(s"Expected Buffered, got $other")
-                                                        end match
-                                                        Loop.continue(remaining, i + 1)
+                            Scope.run {
+                                Scope.ensure(transport.closeNow(clientConn)).andThen {
+                                    // Client: send 5 requests and verify each response
+                                    Loop(clientConn.read, 0) { (stream, i) =>
+                                        if i >= 5 then Loop.done(succeed)
+                                        else
+                                            Http1Protocol
+                                                .writeRequest(
+                                                    clientConn,
+                                                    HttpMethod.GET,
+                                                    s"/req$i",
+                                                    HttpHeaders.empty,
+                                                    HttpBody.Empty
+                                                )
+                                                .andThen {
+                                                    Http1Protocol.readResponse(stream, 65536).map {
+                                                        case ((status, _, body), remaining) =>
+                                                            assert(status.code == 200)
+                                                            body match
+                                                                case HttpBody.Buffered(data) =>
+                                                                    assert(
+                                                                        new String(data.toArrayUnsafe, Utf8) == s"response-$i"
+                                                                    )
+                                                                case other => fail(s"Expected Buffered, got $other")
+                                                            end match
+                                                            Loop.continue(remaining, i + 1)
+                                                    }
                                                 }
-                                            }
+                                    }
                                 }
                             }
                         }
@@ -274,46 +278,48 @@ class Http1NativeTest extends kyo.Test:
                     }
                     serverFiber.andThen {
                         transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
-                            Sync.ensure(transport.closeNow(clientConn)) {
-                                val postBody = Span.fromUnsafe("hello-post".getBytes(Utf8))
-                                Http1Protocol
-                                    .writeRequest(
-                                        clientConn,
-                                        HttpMethod.POST,
-                                        "/post",
-                                        HttpHeaders.empty,
-                                        HttpBody.Buffered(postBody)
-                                    )
-                                    .andThen {
-                                        Http1Protocol
-                                            .writeRequest(
-                                                clientConn,
-                                                HttpMethod.GET,
-                                                "/get",
-                                                HttpHeaders.empty,
-                                                HttpBody.Empty
-                                            )
-                                            .andThen {
-                                                Http1Protocol.readResponse(clientConn.read, 65536).map {
-                                                    case ((_, _, body1), remaining1) =>
-                                                        body1 match
-                                                            case HttpBody.Buffered(d) =>
-                                                                assert(new String(d.toArrayUnsafe, Utf8) == "POST:10")
-                                                            case other => fail(s"Expected Buffered for POST, got $other")
-                                                        end match
-                                                        Http1Protocol.readResponse(remaining1, 65536).map {
-                                                            case ((_, _, body2), _) =>
-                                                                body2 match
-                                                                    case HttpBody.Buffered(d) =>
-                                                                        // GET body should be 0 — no leakage from POST
-                                                                        assert(new String(d.toArrayUnsafe, Utf8) == "GET:0")
-                                                                    case other =>
-                                                                        fail(s"Expected Buffered for GET, got $other")
-                                                                end match
-                                                        }
+                            Scope.run {
+                                Scope.ensure(transport.closeNow(clientConn)).andThen {
+                                    val postBody = Span.fromUnsafe("hello-post".getBytes(Utf8))
+                                    Http1Protocol
+                                        .writeRequest(
+                                            clientConn,
+                                            HttpMethod.POST,
+                                            "/post",
+                                            HttpHeaders.empty,
+                                            HttpBody.Buffered(postBody)
+                                        )
+                                        .andThen {
+                                            Http1Protocol
+                                                .writeRequest(
+                                                    clientConn,
+                                                    HttpMethod.GET,
+                                                    "/get",
+                                                    HttpHeaders.empty,
+                                                    HttpBody.Empty
+                                                )
+                                                .andThen {
+                                                    Http1Protocol.readResponse(clientConn.read, 65536).map {
+                                                        case ((_, _, body1), remaining1) =>
+                                                            body1 match
+                                                                case HttpBody.Buffered(d) =>
+                                                                    assert(new String(d.toArrayUnsafe, Utf8) == "POST:10")
+                                                                case other => fail(s"Expected Buffered for POST, got $other")
+                                                            end match
+                                                            Http1Protocol.readResponse(remaining1, 65536).map {
+                                                                case ((_, _, body2), _) =>
+                                                                    body2 match
+                                                                        case HttpBody.Buffered(d) =>
+                                                                            // GET body should be 0 — no leakage from POST
+                                                                            assert(new String(d.toArrayUnsafe, Utf8) == "GET:0")
+                                                                        case other =>
+                                                                            fail(s"Expected Buffered for GET, got $other")
+                                                                    end match
+                                                            }
+                                                    }
                                                 }
-                                            }
-                                    }
+                                        }
+                                }
                             }
                         }
                     }
@@ -429,19 +435,21 @@ class Http1NativeTest extends kyo.Test:
                         // n sequential clients each send a request with unique ID
                         Kyo.foreach((0 until n).toSeq) { id =>
                             transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
-                                Sync.ensure(transport.closeNow(conn)) {
-                                    Http1Protocol
-                                        .writeRequest(conn, HttpMethod.GET, s"/client$id", HttpHeaders.empty, HttpBody.Empty)
-                                        .andThen {
-                                            Http1Protocol.readResponse(conn.read, 65536).map { case ((status, _, body), _) =>
-                                                assert(status.code == 200)
-                                                body match
-                                                    case HttpBody.Buffered(data) =>
-                                                        assert(new String(data.toArrayUnsafe, Utf8) == s"echo:/client$id")
-                                                    case other => fail(s"Client $id: Expected Buffered, got $other")
-                                                end match
+                                Scope.run {
+                                    Scope.ensure(transport.closeNow(conn)).andThen {
+                                        Http1Protocol
+                                            .writeRequest(conn, HttpMethod.GET, s"/client$id", HttpHeaders.empty, HttpBody.Empty)
+                                            .andThen {
+                                                Http1Protocol.readResponse(conn.read, 65536).map { case ((status, _, body), _) =>
+                                                    assert(status.code == 200)
+                                                    body match
+                                                        case HttpBody.Buffered(data) =>
+                                                            assert(new String(data.toArrayUnsafe, Utf8) == s"echo:/client$id")
+                                                        case other => fail(s"Client $id: Expected Buffered, got $other")
+                                                    end match
+                                                }
                                             }
-                                        }
+                                    }
                                 }
                             }
                         }.map(_ => succeed)
@@ -484,21 +492,23 @@ class Http1NativeTest extends kyo.Test:
                     serverFiber.andThen {
                         Kyo.foreach((0 until n).toSeq) { id =>
                             transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { conn =>
-                                Sync.ensure(transport.closeNow(conn)) {
-                                    val reqBody = Span.fromUnsafe(s"payload-$id".getBytes(Utf8))
-                                    Http1Protocol
-                                        .writeRequest(conn, HttpMethod.POST, "/echo", HttpHeaders.empty, HttpBody.Buffered(reqBody))
-                                        .andThen {
-                                            Http1Protocol.readResponse(conn.read, 65536).map { case ((status, _, body), _) =>
-                                                assert(status.code == 200)
-                                                body match
-                                                    case HttpBody.Buffered(data) =>
-                                                        val received = new String(data.toArrayUnsafe, Utf8)
-                                                        assert(received == s"payload-$id", s"Client $id got: $received")
-                                                    case other => fail(s"Client $id: Expected Buffered, got $other")
-                                                end match
+                                Scope.run {
+                                    Scope.ensure(transport.closeNow(conn)).andThen {
+                                        val reqBody = Span.fromUnsafe(s"payload-$id".getBytes(Utf8))
+                                        Http1Protocol
+                                            .writeRequest(conn, HttpMethod.POST, "/echo", HttpHeaders.empty, HttpBody.Buffered(reqBody))
+                                            .andThen {
+                                                Http1Protocol.readResponse(conn.read, 65536).map { case ((status, _, body), _) =>
+                                                    assert(status.code == 200)
+                                                    body match
+                                                        case HttpBody.Buffered(data) =>
+                                                            val received = new String(data.toArrayUnsafe, Utf8)
+                                                            assert(received == s"payload-$id", s"Client $id got: $received")
+                                                        case other => fail(s"Client $id: Expected Buffered, got $other")
+                                                    end match
+                                                }
                                             }
-                                        }
+                                    }
                                 }
                             }
                         }.map(_ => succeed)
@@ -573,17 +583,19 @@ class Http1NativeTest extends kyo.Test:
                     }
                     serverFiber.andThen {
                         transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
-                            Sync.ensure(transport.closeNow(clientConn)) {
-                                Http1Protocol
-                                    .writeRequest(clientConn, HttpMethod.GET, "/test", HttpHeaders.empty, HttpBody.Empty)
-                                    .andThen {
-                                        Abort.run[HttpException] {
-                                            Http1Protocol.readResponse(clientConn.read, 65536)
-                                        }.map { result =>
-                                            // Server closed mid-body → should fail
-                                            assert(result.isFailure || result.isPanic, s"Expected failure, got $result")
+                            Scope.run {
+                                Scope.ensure(transport.closeNow(clientConn)).andThen {
+                                    Http1Protocol
+                                        .writeRequest(clientConn, HttpMethod.GET, "/test", HttpHeaders.empty, HttpBody.Empty)
+                                        .andThen {
+                                            Abort.run[HttpException] {
+                                                Http1Protocol.readResponse(clientConn.read, 65536)
+                                            }.map { result =>
+                                                // Server closed mid-body → should fail
+                                                assert(result.isFailure || result.isPanic, s"Expected failure, got $result")
+                                            }
                                         }
-                                    }
+                                }
                             }
                         }
                     }
@@ -614,22 +626,24 @@ class Http1NativeTest extends kyo.Test:
                     }
                     serverFiber.andThen {
                         transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
-                            Sync.ensure(transport.closeNow(clientConn)) {
-                                Http1Protocol
-                                    .writeRequest(clientConn, HttpMethod.GET, "/test", HttpHeaders.empty, HttpBody.Empty)
-                                    .andThen {
-                                        Abort.run[HttpException] {
-                                            Http1Protocol.readResponse(clientConn.read, 65536)
-                                        }.map { result =>
-                                            result match
-                                                case Result.Failure(_: HttpProtocolException) => succeed
-                                                case Result.Failure(_)                        => succeed // any error acceptable
-                                                case Result.Panic(_)                          => succeed // panic also acceptable
-                                                case Result.Success(_) =>
-                                                    fail("Expected failure for malformed response")
-                                            end match
+                            Scope.run {
+                                Scope.ensure(transport.closeNow(clientConn)).andThen {
+                                    Http1Protocol
+                                        .writeRequest(clientConn, HttpMethod.GET, "/test", HttpHeaders.empty, HttpBody.Empty)
+                                        .andThen {
+                                            Abort.run[HttpException] {
+                                                Http1Protocol.readResponse(clientConn.read, 65536)
+                                            }.map { result =>
+                                                result match
+                                                    case Result.Failure(_: HttpProtocolException) => succeed
+                                                    case Result.Failure(_)                        => succeed // any error acceptable
+                                                    case Result.Panic(_)                          => succeed // panic also acceptable
+                                                    case Result.Success(_) =>
+                                                        fail("Expected failure for malformed response")
+                                                end match
+                                            }
                                         }
-                                    }
+                                }
                             }
                         }
                     }
@@ -698,23 +712,25 @@ class Http1NativeTest extends kyo.Test:
                     }
                     serverFiber.andThen {
                         transport.connect(TransportAddress.Tcp("127.0.0.1", listenerPort(listener)), Absent).map { clientConn =>
-                            Sync.ensure(transport.closeNow(clientConn)) {
-                                Http1Protocol
-                                    .writeRequest(clientConn, HttpMethod.GET, "/big", HttpHeaders.empty, HttpBody.Empty)
-                                    .andThen {
-                                        Abort.run[HttpException] {
-                                            Http1Protocol.readResponse(clientConn.read, maxSize)
-                                        }.map { result =>
-                                            result match
-                                                case Result.Failure(e: HttpPayloadTooLargeException) => succeed
-                                                case Result.Failure(e) =>
-                                                    fail(s"Expected HttpPayloadTooLargeException, got $e")
-                                                case Result.Panic(e) => fail(s"Unexpected panic: $e")
-                                                case Result.Success(_) =>
-                                                    fail("Expected failure when body exceeds maxSize")
-                                            end match
+                            Scope.run {
+                                Scope.ensure(transport.closeNow(clientConn)).andThen {
+                                    Http1Protocol
+                                        .writeRequest(clientConn, HttpMethod.GET, "/big", HttpHeaders.empty, HttpBody.Empty)
+                                        .andThen {
+                                            Abort.run[HttpException] {
+                                                Http1Protocol.readResponse(clientConn.read, maxSize)
+                                            }.map { result =>
+                                                result match
+                                                    case Result.Failure(e: HttpPayloadTooLargeException) => succeed
+                                                    case Result.Failure(e) =>
+                                                        fail(s"Expected HttpPayloadTooLargeException, got $e")
+                                                    case Result.Panic(e) => fail(s"Unexpected panic: $e")
+                                                    case Result.Success(_) =>
+                                                        fail("Expected failure when body exceeds maxSize")
+                                                end match
+                                            }
                                         }
-                                    }
+                                }
                             }
                         }
                     }

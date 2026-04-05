@@ -192,43 +192,46 @@ final class KqueueNativeTransport(
         Frame
     ): KqueueConnection < (Async & Abort[HttpException]) =
         import TlsBindings.*
-        Sync.defer {
-            val ctx = tlsCtxNew(0)
-            if ctx == 0 then
-                Abort.fail(HttpConnectException(host, 0, new Exception("Failed to create TLS context")))
-            else
-                if tlsCfg.trustAll then discard(tlsCtxSetVerify(ctx, 0))
-                val ssl = Zone { tlsNew(ctx, toCString(host)) }
-                if ssl == 0 then
-                    tlsCtxFree(ctx)
-                    Abort.fail(HttpConnectException(host, 0, new Exception("Failed to create TLS session")))
+        Meter.initMutexUnscoped.map { sslLock =>
+            Sync.defer {
+                val ctx = tlsCtxNew(0)
+                if ctx == 0 then
+                    Abort.fail(HttpConnectException(host, 0, new Exception("Failed to create TLS context")))
                 else
-                    tlsSetConnectState(ssl)
-                    val tcpStream = new KqueueStreamTlsBridge(conn)
-                    val tlsStream = new NativeTlsStream(ssl, ctx, ownsCtx = true, tcpStream)
-                    conn.tlsStream = Present(tlsStream)
-                    tlsStream.handshake().map(_ => conn)
+                    if tlsCfg.trustAll then discard(tlsCtxSetVerify(ctx, 0))
+                    val ssl = Zone { tlsNew(ctx, toCString(host)) }
+                    if ssl == 0 then
+                        tlsCtxFree(ctx)
+                        Abort.fail(HttpConnectException(host, 0, new Exception("Failed to create TLS session")))
+                    else
+                        tlsSetConnectState(ssl)
+                        val tcpStream = new KqueueStreamTlsBridge(conn)
+                        val tlsStream = new NativeTlsStream(ssl, ctx, ownsCtx = true, tcpStream, sslLock)
+                        conn.tlsStream = Present(tlsStream)
+                        tlsStream.handshake().map(_ => conn)
+                    end if
                 end if
-            end if
+            }
         }
     end connectTls
 
     def isAlive(c: KqueueConnection)(using Frame): Boolean < Sync =
         Sync.defer(!c.closed && tcpIsAlive(c.fd) == 1)
 
-    def closeNow(c: KqueueConnection)(using Frame): Unit < Sync =
+    def closeNow(c: KqueueConnection)(using Frame): Unit < Async =
         Sync.Unsafe.defer {
             c.closed = true
             c.loop.cancelFd(c.fd)
+        }.andThen {
             c.tlsStream match
                 case Present(tls) =>
-                    import TlsBindings.*
-                    tlsFree(tls.sslPtr)
-                    if tls.ownsCtx then tlsCtxFree(tls.ctxPtr)
-                    c.tlsStream = Absent
+                    tls.freeSsl().andThen {
+                        c.tlsStream = Absent
+                        Sync.defer(tcpClose(c.fd))
+                    }
                 case Absent =>
+                    Sync.defer(tcpClose(c.fd))
             end match
-            tcpClose(c.fd)
         }
 
     def close(c: KqueueConnection, gracePeriod: Duration)(using Frame): Unit < Async =
@@ -336,12 +339,20 @@ final class KqueueNativeTransport(
                                                                     else
                                                                         tlsSetAcceptState(ssl)
                                                                         val bridge = new KqueueStreamTlsBridge(conn)
-                                                                        val tlsStream =
-                                                                            new NativeTlsStream(ssl, ctx, ownsCtx = false, bridge)
-                                                                        conn.tlsStream = Present(tlsStream)
-                                                                        // Handshake deferred to first read/write (lazy handshake)
-                                                                        // so the accept loop is not blocked by TLS negotiation.
-                                                                        Maybe((conn, ()))
+                                                                        Meter.initMutexUnscoped.map { sslLock =>
+                                                                            val tlsStream =
+                                                                                new NativeTlsStream(
+                                                                                    ssl,
+                                                                                    ctx,
+                                                                                    ownsCtx = false,
+                                                                                    bridge,
+                                                                                    sslLock
+                                                                                )
+                                                                            conn.tlsStream = Present(tlsStream)
+                                                                            // Handshake deferred to first read/write (lazy handshake)
+                                                                            // so the accept loop is not blocked by TLS negotiation.
+                                                                            Maybe((conn, ()))
+                                                                        }
                                                                     end if
                                                                 else
                                                                     Maybe.empty
@@ -467,10 +478,18 @@ final class KqueueNativeTransport(
                                                                     else
                                                                         tlsSetAcceptState(ssl)
                                                                         val bridge = new KqueueStreamTlsBridge(conn)
-                                                                        val tlsStream =
-                                                                            new NativeTlsStream(ssl, ctx, ownsCtx = false, bridge)
-                                                                        conn.tlsStream = Present(tlsStream)
-                                                                        Maybe((conn, ()))
+                                                                        Meter.initMutexUnscoped.map { sslLock =>
+                                                                            val tlsStream =
+                                                                                new NativeTlsStream(
+                                                                                    ssl,
+                                                                                    ctx,
+                                                                                    ownsCtx = false,
+                                                                                    bridge,
+                                                                                    sslLock
+                                                                                )
+                                                                            conn.tlsStream = Present(tlsStream)
+                                                                            Maybe((conn, ()))
+                                                                        }
                                                                     end if
                                                                 else
                                                                     Maybe.empty
