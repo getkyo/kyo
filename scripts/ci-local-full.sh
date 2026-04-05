@@ -29,38 +29,36 @@ WINDOWS_VM_NAME="kyo-windows"
 WINDOWS_SSH_PORT=2222
 WINDOWS_SSH_USER="${KYO_WINDOWS_USER:-kyo}"
 
-# Docker socket (Docker Desktop on macOS uses a non-default path)
-DOCKER_SOCKET="${DOCKER_HOST:-}"
-if [ -z "$DOCKER_SOCKET" ]; then
-    if [ -S "$HOME/.docker/run/docker.sock" ]; then
-        DOCKER_SOCKET="unix://$HOME/.docker/run/docker.sock"
-    elif [ -S /var/run/docker.sock ]; then
-        DOCKER_SOCKET="unix:///var/run/docker.sock"
-    fi
-fi
-
 # ─── Dependency checks (gated by what's needed) ─────────────────────────────
+
+need_podman() {
+    if ! command -v podman &>/dev/null; then
+        echo "Installing podman..."
+        brew install podman
+    fi
+    if ! podman info &>/dev/null 2>&1; then
+        echo "Starting podman machine..."
+        podman machine start 2>/dev/null || true
+    fi
+}
+
+# Podman socket for act (Docker-compatible API)
+get_podman_socket() {
+    podman machine inspect 2>/dev/null \
+        | grep -o '"Path": "[^"]*api.sock"' \
+        | head -1 \
+        | sed 's/"Path": "//;s/"//'
+}
 
 need_act() {
     if ! command -v act &>/dev/null; then
         echo "Installing act (GitHub Actions local runner)..."
         brew install act
     fi
-}
-
-need_docker() {
-    if [ -z "$DOCKER_SOCKET" ]; then
-        echo "Error: Docker is not running. Start Docker Desktop."
-        exit 1
-    fi
-    if ! DOCKER_HOST="$DOCKER_SOCKET" docker info &>/dev/null 2>&1; then
-        echo "Error: Docker is not responding at $DOCKER_SOCKET"
-        exit 1
-    fi
-    # Ensure image is pulled
-    if ! DOCKER_HOST="$DOCKER_SOCKET" docker image inspect "$DOCKER_IMAGE" &>/dev/null 2>&1; then
+    # Ensure act image is available via podman
+    if ! podman image exists "$DOCKER_IMAGE" 2>/dev/null; then
         echo "Pulling $DOCKER_IMAGE (first run only, ~1.6GB)..."
-        DOCKER_HOST="$DOCKER_SOCKET" docker pull "$DOCKER_IMAGE"
+        podman pull "$DOCKER_IMAGE"
     fi
 }
 
@@ -79,7 +77,7 @@ need_windows_vm() {
         echo "     - Enable SSH: Settings → System → Optional Features → OpenSSH Server"
         echo "     - Port forward: 2222 → 22 (in UTM network settings)"
         echo "  4. Inside the VM, install (PowerShell as Admin):"
-        echo "     winget install Amazon.Corretto.21"
+        echo "     winget install Amazon.Corretto.25"
         echo "     winget install sbt.sbt"
         echo "     winget install Git.Git"
         echo "     winget install OpenJS.NodeJS"
@@ -124,29 +122,33 @@ if [ ! -f "$ACT_DOCKER_CONFIG/config.json" ]; then
     echo '{"auths":{}}' > "$ACT_DOCKER_CONFIG/config.json"
 fi
 
+run_linux() {
+    local os="$1" target="$2"
+
+    echo ""
+    echo "════════════════════════════════════════════════════"
+    echo "  Running: $os / $target (via podman)"
+    echo "════════════════════════════════════════════════════"
+    echo ""
+
+    local platform="linux/arm64"
+    if [[ "$os" == "linux-x64" ]]; then
+        platform="linux/amd64"
+    fi
+
+    # Mirrors build.yml test step: testKyo --all <target>
+    # sbt-linux.sh handles JDK install, native deps, sbt setup in a
+    # fresh container matching CI (ubuntu:noble + Corretto JDK).
+    local cmd="testKyo --all $target"
+    if [ "$target" = "Native" ]; then
+        PLATFORM="$platform" "$SCRIPT_DIR/sbt-linux.sh" "$cmd"
+    else
+        PLATFORM="$platform" "$SCRIPT_DIR/sbt-linux.sh" "$cmd"
+    fi
+}
+
 run_act() {
     local os="$1" target="$2"
-    local platform_args=()
-
-    case "$os" in
-        linux-*)
-            platform_args+=(
-                -P "ubuntu-latest=$DOCKER_IMAGE"
-                -P "ubuntu-24.04-arm=$DOCKER_IMAGE"
-            )
-            if [[ "$os" == "linux-arm64" ]]; then
-                platform_args+=(--container-architecture linux/arm64)
-            else
-                platform_args+=(--container-architecture linux/amd64)
-            fi
-            ;;
-        macos-*)
-            platform_args+=(
-                -P "macos-latest-large=-self-hosted"
-                -P "macos-latest-xlarge=-self-hosted"
-            )
-            ;;
-    esac
 
     echo ""
     echo "════════════════════════════════════════════════════"
@@ -154,13 +156,18 @@ run_act() {
     echo "════════════════════════════════════════════════════"
     echo ""
 
-    DOCKER_HOST="$DOCKER_SOCKET" \
+    local podman_sock
+    podman_sock="$(get_podman_socket)"
+
+    DOCKER_HOST="unix://$podman_sock" \
     DOCKER_CONFIG="$ACT_DOCKER_CONFIG" \
     act pull_request \
         -W .github/workflows/build-pr.yml \
         --pull=false \
+        --container-daemon-socket - \
         -P "build=$DOCKER_IMAGE" \
-        "${platform_args[@]}" \
+        -P "macos-latest-large=-self-hosted" \
+        -P "macos-latest-xlarge=-self-hosted" \
         --matrix "os:$os" \
         --matrix "target:$target"
 }
@@ -256,10 +263,10 @@ for job in "${JOBS[@]}"; do
 done
 
 if $needs_linux || $needs_macos; then
-    need_act
+    need_podman
 fi
-if $needs_linux; then
-    need_docker
+if $needs_macos; then
+    need_act
 fi
 if $needs_windows; then
     need_windows_vm
@@ -274,7 +281,13 @@ for job in "${JOBS[@]}"; do
     os="${job%%:*}"
     target="${job##*:}"
 
-    if [[ "$os" == windows-* ]]; then
+    if [[ "$os" == linux-* ]]; then
+        if run_linux "$os" "$target"; then
+            PASSED+=("$job")
+        else
+            FAILED+=("$job")
+        fi
+    elif [[ "$os" == windows-* ]]; then
         if run_windows "$os" "$target"; then
             PASSED+=("$job")
         else

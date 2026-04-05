@@ -65,6 +65,7 @@ echo "---"
 podman run --rm \
   --platform "$PLATFORM" \
   --security-opt label=disable \
+  --ipc=host \
   -v "$TMPDIR:/build-input:ro" \
   "$DISTRO" \
   bash -c "

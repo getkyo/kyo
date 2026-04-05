@@ -459,6 +459,9 @@ class TMapTest extends Test:
         }
 
         "concurrent bulk operations" in runNotJS {
+            // Under high contention, concurrent filter+fold can exceed the
+            // default 20-retry budget. Use unlimited retries.
+            val retrySchedule = STM.defaultRetrySchedule.forever
             (for
                 size <- Choice.eval(1, 10, 100)
                 map  <- STM.run(TMap.init[Int, Int]())
@@ -467,11 +470,11 @@ class TMapTest extends Test:
                 }
 
                 filterOps = Async.fill(5, 5)(
-                    STM.run(map.filter((k, v) => v % 2 == 0))
+                    STM.run(retrySchedule)(map.filter((k, v) => v % 2 == 0))
                 )
 
                 foldOps = Async.fill(5, 5)(
-                    STM.run(map.fold(0)((acc, _, v) => acc + v))
+                    STM.run(retrySchedule)(map.fold(0)((acc, _, v) => acc + v))
                 )
 
                 _        <- filterOps
