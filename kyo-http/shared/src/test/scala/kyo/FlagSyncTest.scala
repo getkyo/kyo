@@ -265,7 +265,7 @@ class FlagSyncTest extends Test:
                 fiber <- Fiber.initUnscoped(FlagSync.startSync(5.millis, source))
                 _     <- Scope.ensure(fiber.interrupt.unit)
                 // Wait for multiple iterations — proves the loop survived the exceptions
-                _ <- untilTrue(callCount.get() >= 5)
+                _ <- untilTrue(callCount.get() >= 5 && logMessages.size() > 0)
             yield
                 // The source was called multiple times, proving the loop didn't crash
                 assert(callCount.get() >= 5, "source should have been called at least 5 times")
