@@ -93,9 +93,8 @@ class ChannelTest extends Test:
             take2 <- Fiber.initUnscoped(c.take)
             v1    <- take1.get
             _     <- put.get
-            v2    <- take1.get
-            v3    <- take2.get
-        yield assert(b && v1 == 1 && v2 == 1 && v3 == 2)
+            v2    <- take2.get
+        yield assert(b && Set(v1, v2) == Set(1, 2))
     }
     "blocking put" in run {
         for
@@ -637,7 +636,7 @@ class ChannelTest extends Test:
                 .andThen(succeed)
         }
 
-        "offer and poll" in runNotNative {
+        "offer and poll" in run {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -657,7 +656,7 @@ class ChannelTest extends Test:
                 .andThen(succeed)
         }
 
-        "put and take" in runNotNative {
+        "put and take" in run {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)

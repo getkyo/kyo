@@ -5,7 +5,7 @@ import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version    = "3.8.2"
+val scala3Version    = "3.8.3"
 val scala3LTSVersion = "3.3.7"
 val scala213Version  = "2.13.18"
 
@@ -49,6 +49,17 @@ inThisBuild(List(
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
 Global / commands += Repeat.command
+Global / commands += TestKyo.command
+
+// CI concurrency controls:
+// - SBT_TASK_LIMIT: serialize ALL tasks (for OOM prevention on memory-constrained runners)
+// - SBT_UPDATE_LIMIT: serialize only dependency resolution (for Windows file lock avoidance)
+Global / concurrentRestrictions ++= {
+    val taskLimit   = sys.env.getOrElse("SBT_TASK_LIMIT", "0")
+    val updateLimit = sys.env.getOrElse("SBT_UPDATE_LIMIT", "0")
+    (if (taskLimit != "0") Seq(Tags.limitAll(taskLimit.toInt)) else Nil) ++
+        (if (updateLimit != "0") Seq(Tags.limit(Tags.Update, updateLimit.toInt)) else Nil)
+}
 
 lazy val `kyo-settings` = Seq(
     fork               := true,
@@ -355,14 +366,14 @@ lazy val `kyo-core` =
         .dependsOn(`kyo-prelude`)
         .in(file("kyo-core"))
         .settings(
-            `kyo-settings`,
-            libraryDependencies += "dev.dirs" % "directories" % "26"
+            `kyo-settings`
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(
             `js-settings`,
-            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
+            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13),
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
 
 lazy val `kyo-offheap` =

@@ -6,36 +6,9 @@ on:
 
 jobs:
   build:
-    runs-on: build
-    timeout-minutes: 45
-    env:
-      JAVA_OPTS: -Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
-      JVM_OPTS:  -Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
-
-    steps:
-    - uses: actions/checkout@v6
-    - uses: actions/setup-node@v6
-      with:
-        node-version: '22'
-    - uses: coursier/cache-action@v8
-    - name: Install Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
-    - uses: coursier/setup-action@v3
-      with:
-        jvm: corretto:24
-        apps: sbt
-
-    - name: Clean Native targets
-      run: sbt 'kyoNative/clean'
-
-    - name: Build Native
-      run: ./scripts/native-test.sh
-
-    - name: Build JVM
-      run: sbt '+kyoJVM/test'
-
-    - name: Build JS
-      run: sbt '+kyoJS/test'
- 
+    uses: ./.github/workflows/build.yml
+    with:
+      # Full matrix (enable when budget allows):
+      # os-matrix: '["linux-x64", "linux-arm64", "macos-x64", "macos-arm64", "windows-x64", "windows-arm64"]'
+      os-matrix: '["linux-x64", "linux-arm64"]'
+      test-command: test

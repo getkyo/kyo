@@ -249,9 +249,13 @@ private[kyo] object H2oServerBackend:
     // ── Server lifecycle ────────────────────────────────────────────────
 
     private def startServer(router: HttpRouter, config: HttpServerConfig): HttpBackend.Binding =
+        // The C-level create_listener() uses inet_pton() which only accepts
+        // dotted-decimal IPv4 addresses, not hostnames. Resolve "localhost" to
+        // "127.0.0.1" so the socket binds to the IPv4 loopback correctly.
+        val host = if config.host == "localhost" then "127.0.0.1" else config.host
         val newServer = Zone {
             H2oBindings.start(
-                toCString(config.host),
+                toCString(host),
                 config.port,
                 config.maxContentLength,
                 config.backlog
