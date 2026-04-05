@@ -619,4 +619,247 @@ class RecordTest extends Test:
         assert(staged.f25 == None)
     }
 
+    "Flag.Reader" - {
+        "parses key=value pairs into typed record" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String & "age" ~ Int]]]
+            val result = reader("name=Alice,age=30")
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.name == "Alice")
+            assert(record.age == 30)
+        }
+
+        "handles whitespace" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String & "age" ~ Int]]]
+            val result = reader(" name = Alice , age = 30 ")
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.name == "Alice")
+            assert(record.age == 30)
+        }
+
+        "returns Left on missing required field" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String & "age" ~ Int]]]
+            val result = reader("name=Alice")
+            assert(result.isLeft)
+            assert(result.left.exists(_.getMessage.contains("age")))
+        }
+
+        "returns Left on value parse error" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String & "age" ~ Int]]]
+            val result = reader("name=Alice,age=notanumber")
+            assert(result.isLeft)
+        }
+
+        "returns Left on empty string" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String & "age" ~ Int]]]
+            val result = reader("")
+            assert(result.isLeft)
+            assert(result.left.exists(_.getMessage.contains("age")))
+            assert(result.left.exists(_.getMessage.contains("name")))
+        }
+
+        "single field record" in {
+            val reader = summon[Flag.Reader[Record["x" ~ Int]]]
+            val result = reader("x=42")
+            assert(result.isRight)
+            assert(result.toOption.get.x == 42)
+        }
+
+        "typeName includes field names" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String & "age" ~ Int]]]
+            assert(reader.typeName.contains("Record["))
+            assert(reader.typeName.contains("name"))
+            assert(reader.typeName.contains("age"))
+        }
+
+        "record with Boolean field" in {
+            val reader = summon[Flag.Reader[Record["enabled" ~ Boolean & "name" ~ String]]]
+            val result = reader("enabled=true,name=test")
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.enabled == true)
+            assert(record.name == "test")
+        }
+
+        "record with Boolean false" in {
+            val reader = summon[Flag.Reader[Record["enabled" ~ Boolean & "name" ~ String]]]
+            val result = reader("enabled=false,name=test")
+            assert(result.isRight)
+            assert(result.toOption.get.enabled == false)
+        }
+
+        "record with Duration field" in {
+            val reader = summon[Flag.Reader[Record["timeout" ~ Duration & "name" ~ String]]]
+            val result = reader("timeout=5s,name=test")
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.timeout == 5.seconds)
+            assert(record.name == "test")
+        }
+
+        "record with Int, Long, and Double fields" in {
+            val reader = summon[Flag.Reader[Record["count" ~ Int & "total" ~ Long & "ratio" ~ Double]]]
+            val result = reader("count=42,total=100000,ratio=1.5")
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.count == 42)
+            assert(record.total == 100000L)
+            assert(record.ratio == 1.5)
+        }
+
+        "record with 5 fields" in {
+            val reader = summon[Flag.Reader[Record["a" ~ Int & "b" ~ Int & "c" ~ Int & "d" ~ Int & "e" ~ Int]]]
+            val result = reader("a=1,b=2,c=3,d=4,e=5")
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.a == 1)
+            assert(record.b == 2)
+            assert(record.c == 3)
+            assert(record.d == 4)
+            assert(record.e == 5)
+        }
+
+        "parse order differs from declaration order" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String & "age" ~ Int]]]
+            val result = reader("age=30,name=Alice")
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.name == "Alice")
+            assert(record.age == 30)
+        }
+
+        "extra fields in input are silently dropped" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String & "age" ~ Int]]]
+            val result = reader("name=Alice,age=30,extra=ignored")
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.name == "Alice")
+            assert(record.age == 30)
+        }
+
+        "duplicate fields in input: last value wins" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String & "age" ~ Int]]]
+            val result = reader("name=Alice,age=30,name=Bob")
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.name == "Bob")
+            assert(record.age == 30)
+        }
+
+        "value containing colon-slash-slash" in {
+            val reader = summon[Flag.Reader[Record["url" ~ String & "name" ~ String]]]
+            val result = reader("url=http://example.com,name=hello")
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.url == "http://example.com")
+            assert(record.name == "hello")
+        }
+
+        "value starting with slash" in {
+            val reader = summon[Flag.Reader[Record["path" ~ String & "name" ~ String]]]
+            val result = reader("path=/usr/local/bin,name=test")
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.path == "/usr/local/bin")
+            assert(record.name == "test")
+        }
+
+        "value containing equals sign" in {
+            val reader = summon[Flag.Reader[Record["expr" ~ String & "name" ~ String]]]
+            val result = reader("expr=a=b,name=test")
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.expr == "a=b")
+            assert(record.name == "test")
+        }
+
+        "wrong type for field returns Left" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String & "age" ~ Int]]]
+            val result = reader("name=Alice,age=notanumber")
+            assert(result.isLeft)
+        }
+
+        "completely malformed input (no equals) returns Left" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String & "age" ~ Int]]]
+            val result = reader("garbage")
+            assert(result.isLeft)
+            assert(result.left.exists(_.getMessage.contains("=")))
+        }
+
+        "partial fields returns Left listing missing fields" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String & "age" ~ Int & "city" ~ String]]]
+            val result = reader("name=Alice")
+            assert(result.isLeft)
+            assert(result.left.exists(_.getMessage.contains("age")))
+            assert(result.left.exists(_.getMessage.contains("city")))
+        }
+
+        "comma in value conflicts with separator (List-like value)" in {
+            // Comma is the field separator, so "tags=a,b,c" parses as
+            // three entries: "tags=a", "b" (no =), "c" (no =).
+            // The entries without = cause a parse error.
+            val reader = summon[Flag.Reader[Record["tags" ~ String & "name" ~ String]]]
+            val result = reader("tags=a,b,c,name=test")
+            // "b" and "c" have no '=' so this should fail
+            assert(result.isLeft)
+        }
+
+        "empty value for a field" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String & "tag" ~ String]]]
+            val result = reader("name=Alice,tag=")
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.name == "Alice")
+            assert(record.tag == "")
+        }
+
+        "whitespace-only input returns Left for required fields" in {
+            val reader = summon[Flag.Reader[Record["name" ~ String]]]
+            val result = reader("   ")
+            assert(result.isLeft)
+            assert(result.left.exists(_.getMessage.contains("name")))
+        }
+
+        "record reader used via reader directly (simulates StaticFlag resolution)" in {
+            val reader = summon[Flag.Reader[Record["host" ~ String & "port" ~ Int]]]
+            val input  = "host=localhost,port=8080"
+            val result = reader(input)
+            assert(result.isRight)
+            val record = result.toOption.get
+            assert(record.host == "localhost")
+            assert(record.port == 8080)
+        }
+
+        "record with Seq field rejected at compile time" in {
+            // Seq uses comma-separated format which conflicts with Record's comma separator.
+            // Flag.Reader.Scalar is required for Record fields, and Seq only has Flag.Reader (not Scalar).
+            typeCheckFailure("""summon[Flag.Reader[Record["name" ~ String & "items" ~ Seq[Int]]]]""")(
+                "Scalar"
+            )
+        }
+
+        "nested record rejected at compile time" in {
+            // Nested records use comma-separated key=value format which conflicts with
+            // the outer Record's comma separator. Record only has Flag.Reader (not Scalar).
+            typeCheckFailure("""summon[Flag.Reader[Record["name" ~ String & "db" ~ Record["host" ~ String & "port" ~ Int]]]]""")(
+                "Scalar"
+            )
+        }
+
+        "Chunk field rejected at compile time" in {
+            // Chunk uses comma-separated format which conflicts with Record's comma separator.
+            typeCheckFailure("""summon[Flag.Reader[Record["name" ~ String & "items" ~ Chunk[Int]]]]""")(
+                "Scalar"
+            )
+        }
+
+        "Dict field rejected at compile time" in {
+            // Dict uses comma-separated key=value format which conflicts with Record's comma separator.
+            typeCheckFailure("""summon[Flag.Reader[Record["name" ~ String & "data" ~ Dict[String, Int]]]]""")(
+                "Scalar"
+            )
+        }
+    }
+
 end RecordTest

@@ -1493,4 +1493,23 @@ object Span:
 
     end internal
 
+    /** Parses a comma-separated string into a Span, delegating element parsing to the inner reader. */
+    given [A](using r: Flag.Reader.Scalar[A], ct: ClassTag[A]): Flag.Reader[Span[A]] with
+        def apply(s: String): Either[Throwable, Span[A]] =
+            if s.trim.isEmpty then Right(Span.empty[A])
+            else
+                val elements         = s.split(",").iterator.map(_.trim)
+                val buffer           = scala.collection.mutable.ArrayBuffer.empty[A]
+                var error: Throwable = null
+                while elements.hasNext && (error eq null) do
+                    r(elements.next()) match
+                        case Left(e)  => error = e
+                        case Right(a) => discard(buffer += a)
+                end while
+                if error ne null then Left(error)
+                else Right(Span.from(buffer))
+
+        def typeName: String = s"Span[${r.typeName}]"
+    end given
+
 end Span

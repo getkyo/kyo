@@ -223,4 +223,13 @@ object Instant:
 
     end extension
 
+    /** Parses an ISO-8601 formatted string into an Instant. */
+    given Flag.Reader.Scalar[Instant] with
+        def apply(s: String): Either[Throwable, Instant] =
+            try Right(Instant.fromJava(JInstant.parse(s.trim)))
+            catch case e: DateTimeParseException => Left(new IllegalArgumentException(s"Invalid Instant format: $s", e))
+
+        def typeName: String = "Instant"
+    end given
+
 end Instant

@@ -686,4 +686,30 @@ class TextTest extends Test:
         }
     }
 
+    "Flag.Reader" - {
+        val reader = summon[Flag.Reader[Text]]
+
+        "typeName" in {
+            assert(reader.typeName == "Text")
+        }
+
+        "wraps string as Text" in {
+            val result = reader("hello")
+            assert(result.isRight)
+            assert(result.toOption.get.is(Text("hello")))
+        }
+
+        "preserves empty string" in {
+            val result = reader("")
+            assert(result.isRight)
+            assert(result.toOption.get.isEmpty)
+        }
+
+        "preserves whitespace" in {
+            val result = reader("  hello  ")
+            assert(result.isRight)
+            assert(result.toOption.get.is(Text("  hello  ")))
+        }
+    }
+
 end TextTest
