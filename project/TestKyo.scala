@@ -186,8 +186,8 @@ object TestKyo {
 
     // --- Helpers ---
 
-    /** Check if a project name matches the given platform.
-      * JVM projects use bare names (e.g. "kyo-core") while JS/Native use suffixed names.
+    /** Check if a project name matches the given platform. JVM projects use bare names (e.g. "kyo-core") while JS/Native use suffixed
+      * names.
       */
     private def matchesPlatform(name: String, platform: String): Boolean =
         platform match {
