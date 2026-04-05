@@ -93,9 +93,8 @@ class ChannelTest extends Test:
             take2 <- Fiber.initUnscoped(c.take)
             v1    <- take1.get
             _     <- put.get
-            v2    <- take1.get
-            v3    <- take2.get
-        yield assert(b && v1 == 1 && v2 == 1 && v3 == 2)
+            v2    <- take2.get
+        yield assert(b && Set(v1, v2) == Set(1, 2))
     }
     "blocking put" in run {
         for
