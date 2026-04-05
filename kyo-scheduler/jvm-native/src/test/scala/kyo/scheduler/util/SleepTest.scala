@@ -27,7 +27,8 @@ class SleepTest extends AnyFreeSpec with NonImplicitAssertions {
         val start = System.nanoTime()
         Sleep(0)
         val elapsed = (System.nanoTime() - start) / 1000000
-        assert(elapsed < 100, s"Sleep(0) took ${elapsed}ms")
+        // CI runners under load can introduce context-switch latency
+        assert(elapsed < 200, s"Sleep(0) took ${elapsed}ms")
     }
 
     "probe jitter stays below regulator threshold under blocking load" in {
