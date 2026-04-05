@@ -60,7 +60,11 @@ object TestKyo {
                 case Some(v) =>
                     log(s"switching to Scala $v for cross-build modules")
                     val state3 = Command.process(s"++$v", state2, msg => state2.log.error(msg))
-                    runAll(state3, platform, v)
+                    val state4 = runAll(state3, platform, v)
+                    // Restore Scala 3 so sbt doesn't resolve the root project under 2.x,
+                    // which causes cross-version conflicts (e.g. kyo-dataJS scala-java-time)
+                    log(s"restoring Scala $scala3")
+                    Command.process(s"++$scala3", state4, msg => state4.log.error(msg))
                 case None =>
                     log("no Scala 2.x cross-build modules found")
                     state2
