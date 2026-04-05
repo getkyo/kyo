@@ -329,14 +329,14 @@ object Exchange:
             val wire    = encodeFn(id, req)
             val promise = Promise.Unsafe.init[Resp, Abort[E | Closed]]()
             donePromise.poll() match
-                case Maybe.Present(Result.Failure(err)) =>
-                    promise.completeDiscard(Result.fail(err))
+                case Maybe.Present(failure: Result.Error[E | Closed] @unchecked) =>
+                    promise.completeDiscard(failure)
                 case _ =>
                     discard(pending.put(id, promise))
                     donePromise.poll() match
-                        case Maybe.Present(Result.Failure(err)) =>
+                        case Maybe.Present(failure: Result.Error[E | Closed] @unchecked) =>
                             discard(pending.remove(id))
-                            promise.completeDiscard(Result.fail(err))
+                            promise.completeDiscard(failure)
                         case _ => ()
                     end match
             end match
@@ -435,9 +435,9 @@ object Exchange:
                 nextIdFn = nextId,
                 encodeFn = encode,
                 decodeFn = decode,
-                safeNextId = () => bug("Called safe nextId on Unsafe-initialized Exchange"),
-                safeEncode = (_, _) => bug("Called safe encode on Unsafe-initialized Exchange"),
-                safeSend = _ => bug("Called safe send on Unsafe-initialized Exchange"),
+                safeNextId = () => Sync.Unsafe.defer(bug("Called safe nextId on Unsafe-initialized Exchange")),
+                safeEncode = (_, _) => Sync.Unsafe.defer(bug("Called safe encode on Unsafe-initialized Exchange")),
+                safeSend = _ => Sync.Unsafe.defer(bug("Called safe send on Unsafe-initialized Exchange")),
                 pending = pendingMap,
                 readerFiber = Fiber.unit,
                 eventChannel = eventChannel,
