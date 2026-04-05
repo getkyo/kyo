@@ -452,7 +452,10 @@ final private[kyo] class NodeCommandUnsafe(
                 end isExec
                 // Absolute path or relative path with directory separator: check directly.
                 val isWin = Platform.isWindows
-                if cmd.startsWith("/") || cmd.startsWith("\\") || cmd.contains("/") || cmd.contains("\\") || (cmd.length > 1 && cmd(1) == ':') then
+                if cmd.startsWith("/") || cmd.startsWith("\\") || cmd.contains("/") || cmd.contains(
+                        "\\"
+                    ) || (cmd.length > 1 && cmd(1) == ':')
+                then
                     if isExec(cmd) then Absent
                     else Present(ProgramNotFoundException(cmd))
                 else

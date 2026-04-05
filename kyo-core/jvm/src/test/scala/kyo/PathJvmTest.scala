@@ -13,7 +13,8 @@ class PathJvmTest extends Test:
     "toJava returns java.nio.file.Path and its string matches toString" in {
         val p                         = Path / "usr" / "local" / "bin"
         val javaP: java.nio.file.Path = p.toJava
-        assert(javaP.toString == p.toString)
+        // On Windows, Java uses '\' but kyo normalizes to '/'
+        assert(javaP.toString.replace('\\', '/') == p.toString)
     }
 
     "Path.of(javaPath) round-trips with toJava" in {

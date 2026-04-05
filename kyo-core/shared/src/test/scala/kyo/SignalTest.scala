@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.internal.Platform
+
 class SignalTest extends Test:
 
     "init" - {
@@ -247,6 +249,9 @@ class SignalTest extends Test:
 
         "concurrent reads and writes" in {
             assume(Runtime.getRuntime.availableProcessors() > 4, "Needs >4 cores for 20 concurrent fibers")
+            // Native scheduler has limited preemption — 20 busy-wait fibers
+            // contending on CAS need fewer repetitions to avoid starvation timeout
+            val effectiveRepeats = if Platform.isNative then 5 else repeats
             run {
                 (for
                     ref <- Signal.initRef(0)
@@ -270,7 +275,7 @@ class SignalTest extends Test:
                     writeResults <- writers.get
                     finalValue   <- ref.get
                 yield assert(readResults.forall(_ == 10) && writeResults.forall(_ == 10) && finalValue == 10))
-                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                    .handle(Choice.run, _.unit, Loop.repeat(effectiveRepeats))
                     .andThen(succeed)
             }
         }

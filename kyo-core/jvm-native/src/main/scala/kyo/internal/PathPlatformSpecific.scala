@@ -488,7 +488,12 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
         else
             val jpath =
                 if isAbsolute then
-                    java.nio.file.Path.of("/" + nonEmpty.mkString("/"))
+                    val raw = java.nio.file.Path.of("/" + nonEmpty.mkString("/"))
+                    // On Windows, Path.of("/foo") creates a root-relative path that lacks
+                    // a drive letter, so isAbsolute returns false. Resolve to an absolute
+                    // path so that subsequent parts→make round-trips stay consistent.
+                    if !raw.isAbsolute && raw.getRoot != null then raw.toAbsolutePath()
+                    else raw
                 else
                     java.nio.file.Path.of(nonEmpty.head, nonEmpty.tail.toSeq*)
             new NioPathUnsafe(jpath.normalize()).safe

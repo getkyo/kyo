@@ -1,6 +1,7 @@
 package kyo
 
 import java.nio.charset.StandardCharsets
+import kyo.internal.Platform
 
 class PathTest extends Test:
 
@@ -13,7 +14,9 @@ class PathTest extends Test:
         assert(p.parts == Chunk("a", "b"))
     }
 
+    // Unix-style absolute paths (/usr/...) have no Windows equivalent — drive letter required
     "absolute path with dot and dotdot normalizes" in {
+        assume(!Platform.isWindows, "Unix absolute path syntax")
         val p = Path / "/usr" / "local" / "." / "bin" / ".." / "lib"
         assert(p.parts == Chunk("", "usr", "local", "lib"))
     }
@@ -24,6 +27,7 @@ class PathTest extends Test:
     }
 
     "absolute path string round-trips via toString" in {
+        assume(!Platform.isWindows, "Unix absolute path syntax")
         val str = "/usr/local/bin"
         val p   = Path(str)
         assert(p.toString == str)
@@ -1598,6 +1602,7 @@ class PathTest extends Test:
     }
 
     "isAbsolute returns true for absolute path" in {
+        assume(!Platform.isWindows, "Unix absolute path syntax")
         val p = Path / "/usr" / "local" / "bin"
         assert(p.isAbsolute)
     }
@@ -1608,6 +1613,7 @@ class PathTest extends Test:
     }
 
     "parent of absolute single-component path represents root" in run {
+        assume(!Platform.isWindows, "Unix absolute path syntax")
         // Path("", "etc") represents /etc — its parent should be "/"
         val p = Path("", "etc")
         p.parent match
@@ -1619,6 +1625,7 @@ class PathTest extends Test:
     }
 
     "parent chain from /a/b/c terminates at root then Absent" in run {
+        assume(!Platform.isWindows, "Unix absolute path syntax")
         import AllowUnsafe.embrace.danger
         val p  = Path("", "a", "b", "c")
         val p2 = p.parent // should be /a/b
@@ -1633,6 +1640,7 @@ class PathTest extends Test:
     }
 
     "parent of /a is root with correct string representation" in run {
+        assume(!Platform.isWindows, "Unix absolute path syntax")
         import AllowUnsafe.embrace.danger
         val p = Path("", "a")
         p.parent match
@@ -2097,9 +2105,11 @@ class PathTest extends Test:
     // removeAll error propagation
     // =========================================================================
 
-    // Skipped when running as root (e.g. inside containers) because root
-    // bypasses filesystem permission checks.
-    private def isRoot = Command("id", "-u").text.map(_.trim == "0")
+    // Skipped on Windows (no Unix permissions/chmod) and when running as
+    // root (e.g. inside containers) because root bypasses permission checks.
+    private def isRoot: Boolean < (Async & Abort[CommandException]) =
+        if Platform.isWindows then true
+        else Command("id", "-u").text.map(_.trim == "0")
 
     "removeAll raises error when subdirectory is permission-denied" in run {
         for

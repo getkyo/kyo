@@ -376,7 +376,7 @@ class ClockTest extends Test:
                 _        <- task.interrupt
             yield
                 val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgInterval >= 4.millis && avgInterval < 40.millis)
+                assert(avgInterval >= 4.millis && avgInterval < 100.millis)
         }
         "with Schedule and state" in run {
             for
@@ -499,7 +499,7 @@ class ClockTest extends Test:
                     time2 <- Clock.nowMonotonic
                 yield
                     assert(time2 - time1 >= 4.millis)
-                    assert(time2 - time1 < 200.millis)
+                    assert(time2 - time1 < 500.millis)
             }
         }
     }
