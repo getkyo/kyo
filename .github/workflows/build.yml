@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    timeout-minutes: 60
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -54,7 +54,7 @@ jobs:
             ~/AppData/Local/Coursier/Cache
             ~/.sbt
             ~/.ivy2/cache
-          key: deps-${{ matrix.os }}-${{ hashFiles('**/*.sbt', 'project/build.properties', 'project/plugins.sbt') }}
+          key: deps-${{ matrix.os }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
           restore-keys: deps-${{ matrix.os }}-
 
       - name: Install Dependencies (Linux)
@@ -88,10 +88,11 @@ jobs:
             export SBT_TASK_LIMIT=1
           fi
 
-          # Windows: serialize to avoid OverlappingFileLockException during
-          # concurrent coursier dependency resolution (mandatory file locks)
+          # Windows: serialize dependency resolution only to avoid
+          # OverlappingFileLockException (mandatory file locks in coursier).
+          # Compilation and tests still run in parallel.
           case "${{ matrix.os }}" in
-            windows-*) export SBT_TASK_LIMIT=1;;
+            windows-*) export SBT_UPDATE_LIMIT=1;;
           esac
 
           # Build testKyo command

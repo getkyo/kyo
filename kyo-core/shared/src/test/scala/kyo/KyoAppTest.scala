@@ -38,7 +38,10 @@ class KyoAppTest extends Test:
         }
     }
 
+    // KyoApp.main on Native initializes the full runtime per call — takes
+    // ~10 minutes on Windows Native, which is prohibitively expensive.
     "ordered runs" in {
+        assume(!Platform.isNative, "KyoApp.main too slow on Native")
         val x       = new ListBuffer[Int]
         val promise = scala.concurrent.Promise[Assertion]()
         val app = new KyoApp:

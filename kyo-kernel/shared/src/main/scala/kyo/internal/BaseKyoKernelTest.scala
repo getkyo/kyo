@@ -62,8 +62,7 @@ private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
         if Platform.isDebugEnabled then
             Duration.Infinity
         else
-            // Scale timeout with available resources — slow CI runners need more time
-            val cores   = Runtime.getRuntime.availableProcessors()
-            val seconds = 120
-            Duration.fromJava(java.time.Duration.ofSeconds(seconds))
+            // Slowest legitimate test is ~33s (Native "large skip").
+            // 45s gives headroom without burning CI credits on stuck tests.
+            Duration.fromJava(java.time.Duration.ofSeconds(45))
 end BaseKyoKernelTest
