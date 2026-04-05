@@ -292,22 +292,21 @@ final private[kyo] class JvmCommandUnsafe(
       */
     private def validateProgram()(using Frame): Maybe[CommandException] =
         if args.isEmpty then Present(ProgramNotFoundException(""))
+        else if Platform.isWindows then
+            // On Windows, Files.isExecutable is unreliable due to WOW64
+            // filesystem redirection and ACL-based permission checks.
+            // Let ProcessBuilder.start() handle validation natively.
+            Absent
         else
             val cmd = args.head
-            // Absolute or relative path with separator: check directly.
             if cmd.startsWith("/") || cmd.contains("/") then
                 if java.nio.file.Files.isExecutable(java.nio.file.Paths.get(cmd)) then Absent
                 else Present(ProgramNotFoundException(cmd))
             else
-                // Bare name: scan PATH
                 val pathEnv = java.lang.System.getenv("PATH")
                 val pathStr = if pathEnv != null then pathEnv else ""
-                val pathSep = java.io.File.pathSeparator
-                val dirs    = pathStr.split(java.util.regex.Pattern.quote(pathSep))
-                val found = dirs.exists { dir =>
-                    val full = java.nio.file.Paths.get(dir, cmd)
-                    java.nio.file.Files.isExecutable(full)
-                }
+                val dirs    = pathStr.split(":")
+                val found   = dirs.exists(dir => java.nio.file.Files.isExecutable(java.nio.file.Paths.get(dir, cmd)))
                 if found then Absent
                 else Present(ProgramNotFoundException(cmd))
             end if

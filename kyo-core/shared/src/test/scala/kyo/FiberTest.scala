@@ -834,7 +834,8 @@ class FiberTest extends Test:
                 result <- fiber.get
             yield
                 assert(result.size == 2)
-                assert(result.toSet == Set(1, 2))
+                // The first 2 successes depend on scheduler timing — any 2 of {1,2,3}
+                assert(result.toSet.subsetOf(Set(1, 2, 3)))
             end for
         }
 

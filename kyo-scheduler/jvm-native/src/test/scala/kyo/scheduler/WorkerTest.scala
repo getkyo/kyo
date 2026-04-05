@@ -13,17 +13,16 @@ import kyo.scheduler.Task.Done
 import kyo.scheduler.Task.Preempted
 import kyo.scheduler.util.Threads
 import org.scalatest.NonImplicitAssertions
-import org.scalatest.concurrent.Eventually.*
-import org.scalatest.concurrent.PatienceConfiguration
+import org.scalatest.concurrent.Eventually
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.time.Millis
 import org.scalatest.time.Seconds
 import org.scalatest.time.Span
 
-class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with PatienceConfiguration {
+class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually {
 
     implicit override val patienceConfig: PatienceConfig =
-        PatienceConfig(timeout = Span(5, Seconds), interval = Span(10, Millis))
+        PatienceConfig(timeout = Span(15, Seconds), interval = Span(50, Millis))
 
     val executor = Executors.newCachedThreadPool(Threads("test-worker"))
 

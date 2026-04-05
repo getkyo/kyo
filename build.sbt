@@ -51,13 +51,14 @@ ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 Global / commands += Repeat.command
 Global / commands += TestKyo.command
 
-// Serialize tasks on resource-constrained platforms to avoid OOM and file lock issues.
-// Windows: always serialize (OverlappingFileLockException in dependency resolution).
-// macOS JS/Native: serialize (Scala.js linker OOMs in 7GB RAM with parallel linking).
-// Controlled via SBT_TASK_LIMIT env var from CI workflow.
+// CI concurrency controls:
+// - SBT_TASK_LIMIT: serialize ALL tasks (for OOM prevention on memory-constrained runners)
+// - SBT_UPDATE_LIMIT: serialize only dependency resolution (for Windows file lock avoidance)
 Global / concurrentRestrictions ++= {
-    val limit = sys.env.getOrElse("SBT_TASK_LIMIT", if (scala.util.Properties.isWin) "1" else "0")
-    if (limit != "0") Seq(Tags.limitAll(limit.toInt)) else Nil
+    val taskLimit   = sys.env.getOrElse("SBT_TASK_LIMIT", "0")
+    val updateLimit = sys.env.getOrElse("SBT_UPDATE_LIMIT", "0")
+    (if (taskLimit != "0") Seq(Tags.limitAll(taskLimit.toInt)) else Nil) ++
+        (if (updateLimit != "0") Seq(Tags.limit(Tags.Update, updateLimit.toInt)) else Nil)
 }
 
 lazy val `kyo-settings` = Seq(
@@ -816,14 +817,11 @@ lazy val `native-settings` = Seq(
 )
 
 lazy val `js-settings` = Seq(
-    Compile / doc / sources  := Seq.empty,
-    fork                     := false,
-    bspEnabled               := false,
-    Test / parallelExecution := false,
-    jsEnv := {
-        val maxMem = if (scala.util.Properties.isMac) "2048" else "5120"
-        new NodeJSEnv(NodeJSEnv.Config().withArgs(List(s"--max_old_space_size=$maxMem")))
-    },
+    Compile / doc / sources                     := Seq.empty,
+    fork                                        := false,
+    bspEnabled                                  := false,
+    Test / parallelExecution                    := false,
+    jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 )
 

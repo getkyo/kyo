@@ -225,13 +225,16 @@ class ExitCodeTest extends Test:
             }
     }
 
-    "envClear runs process with empty environment" in run {
-        Command("env")
-            .envClear
-            .text
-            .map { result =>
-                assert(result.trim.isEmpty)
-            }
+    "envClear runs process with empty environment" in {
+        assume(!kyo.internal.Platform.isWindows, "env command is Unix-only")
+        run {
+            Command("env")
+                .envClear
+                .text
+                .map { result =>
+                    assert(result.trim.isEmpty)
+                }
+        }
     }
 
 end ExitCodeTest
