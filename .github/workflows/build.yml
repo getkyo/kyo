@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    timeout-minutes: 45
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
@@ -88,11 +88,10 @@ jobs:
             export SBT_TASK_LIMIT=1
           fi
 
-          # Windows: serialize dependency resolution only to avoid
-          # OverlappingFileLockException (mandatory file locks in coursier).
-          # Compilation and tests still run in parallel.
+          # Windows: serialize all sbt tasks to avoid OverlappingFileLockException
+          # during coursier dependency resolution (mandatory file locks).
           case "${{ matrix.os }}" in
-            windows-*) export SBT_UPDATE_LIMIT=1;;
+            windows-*) export SBT_TASK_LIMIT=1;;
           esac
 
           # Build testKyo command
