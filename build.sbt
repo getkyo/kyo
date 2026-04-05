@@ -5,7 +5,7 @@ import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version    = "3.8.2"
+val scala3Version    = "3.8.3"
 val scala3LTSVersion = "3.3.7"
 val scala213Version  = "2.13.18"
 
@@ -49,6 +49,16 @@ inThisBuild(List(
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
 Global / commands += Repeat.command
+Global / commands += TestKyo.command
+
+// Serialize tasks on resource-constrained platforms to avoid OOM and file lock issues.
+// Windows: always serialize (OverlappingFileLockException in dependency resolution).
+// macOS JS/Native: serialize (Scala.js linker OOMs in 7GB RAM with parallel linking).
+// Controlled via SBT_TASK_LIMIT env var from CI workflow.
+Global / concurrentRestrictions ++= {
+    val limit = sys.env.getOrElse("SBT_TASK_LIMIT", if (scala.util.Properties.isWin) "1" else "0")
+    if (limit != "0") Seq(Tags.limitAll(limit.toInt)) else Nil
+}
 
 lazy val `kyo-settings` = Seq(
     fork               := true,
@@ -352,14 +362,14 @@ lazy val `kyo-core` =
         .dependsOn(`kyo-prelude`)
         .in(file("kyo-core"))
         .settings(
-            `kyo-settings`,
-            libraryDependencies += "dev.dirs" % "directories" % "26"
+            `kyo-settings`
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(
             `js-settings`,
-            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
+            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13),
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
 
 lazy val `kyo-offheap` =
@@ -787,11 +797,14 @@ lazy val `native-settings` = Seq(
 )
 
 lazy val `js-settings` = Seq(
-    Compile / doc / sources                     := Seq.empty,
-    fork                                        := false,
-    bspEnabled                                  := false,
-    Test / parallelExecution                    := false,
-    jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
+    Compile / doc / sources  := Seq.empty,
+    fork                     := false,
+    bspEnabled               := false,
+    Test / parallelExecution := false,
+    jsEnv := {
+        val maxMem = if (scala.util.Properties.isMac) "2048" else "5120"
+        new NodeJSEnv(NodeJSEnv.Config().withArgs(List(s"--max_old_space_size=$maxMem")))
+    },
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 )
 

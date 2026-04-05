@@ -78,7 +78,7 @@ class JavaLogTest extends Test:
                 _ <- Log.warn("warning", ex)
             yield
                 handler.close()
-                val logs = buffer.toString.trim.split('\n')
+                val logs = buffer.toString.trim.split("\\r?\\n")
                 assert(logs.length == 7)
                 assert(logs(1).matches("FINE: \\[.*\\] test message"))
                 assert(logs(3).matches("INFO: \\[.*\\] info message"))

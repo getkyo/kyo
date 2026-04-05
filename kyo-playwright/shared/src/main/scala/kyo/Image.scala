@@ -21,7 +21,7 @@ final case class Image private (data: Array[Byte]):
       * @return
       *   Unit wrapped in Sync effect
       */
-    def writeFileBinary(path: String)(using Frame): Unit < Sync =
+    def writeFileBinary(path: String)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
         writeFileBinary(Path(path))
 
     /** Writes the image to a file in binary format.
@@ -31,8 +31,8 @@ final case class Image private (data: Array[Byte]):
       * @return
       *   Unit wrapped in Sync effect
       */
-    def writeFileBinary(path: Path)(using Frame): Unit < Sync =
-        path.writeBytes(binary.unsafeArray)
+    def writeFileBinary(path: Path)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+        path.writeBytes(Span.fromUnsafe(binary.unsafeArray))
 
     /** Writes the image to a file in base64 format.
       *
@@ -41,7 +41,7 @@ final case class Image private (data: Array[Byte]):
       * @return
       *   Unit wrapped in Sync effect
       */
-    def writeFileBase64(path: String)(using Frame): Unit < Sync =
+    def writeFileBase64(path: String)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
         writeFileBase64(Path(path))
 
     /** Writes the image to a file in base64 format.
@@ -49,9 +49,9 @@ final case class Image private (data: Array[Byte]):
       * @param path
       *   The file path as a Path object
       * @return
-      *   Unit wrapped in Sync effect
+      *   Unit wrapped in Sync and Abort[FileWriteException] effects
       */
-    def writeFileBase64(path: Path)(using Frame): Unit < Sync =
+    def writeFileBase64(path: Path)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
         path.write(base64)
 
     /** Converts the image data to an immutable array of bytes.

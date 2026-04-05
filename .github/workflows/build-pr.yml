@@ -10,37 +10,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: build
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - { name: "JVM", command: "sbt '+kyoJVM/testQuick'" }
-          - { name: "JS", command: "sbt '+kyoJS/testQuick'" }
-          - { name: "Native", command: "./scripts/native-test.sh 'kyoNative/testQuick'" }
-    env:
-      JAVA_OPTS: -Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
-      JVM_OPTS:  -Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
-
-    steps:
-    - uses: actions/checkout@v6
-    - uses: actions/setup-node@v6
-      with:
-        node-version: '22'
-    - uses: coursier/cache-action@v8 
-    - name: Install Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3 libwslay-dev
-    - uses: coursier/setup-action@v3
-      with:
-        jvm: corretto:24
-        apps: sbt
-
-    - name: Clean Native targets
-      if: matrix.target.name == 'Native'
-      run: sbt 'kyoNative/clean'
-
-    - name: Build ${{ matrix.target.name }}
-      run: ${{ matrix.target.command }}
+    uses: ./.github/workflows/build.yml
+    with:
+      os-matrix: '["linux", "macos", "windows"]'
+      test-command: testDiff
