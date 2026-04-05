@@ -1,6 +1,7 @@
 package kyo.scheduler
 
 trait Task {
+    import Task.State.*
 
     @volatile private var state: Task.State = Task.State.init
 
@@ -17,9 +18,9 @@ trait Task {
 
     /** Marks this task for thread interrupt dispatch by the BlockingMonitor.
       *
-      * Called by IOTask.interrupt when a fiber is interrupted. Sets the needsInterrupt flag and also forces preemption so the task yields at
-      * the next effect boundary. The BlockingMonitor periodically checks this flag and, if the worker thread's CPU time is flat (thread is
-      * blocked), dispatches Thread.interrupt() to wake it.
+      * Called by IOTask.interrupt when a fiber is interrupted. Sets the needsInterrupt flag and also forces preemption so the task yields
+      * at the next effect boundary. The BlockingMonitor periodically checks this flag and, if the worker thread's CPU time is flat (thread
+      * is blocked), dispatches Thread.interrupt() to wake it.
       */
     def requestInterrupt(): Unit =
         this.state = state.interrupt
@@ -50,33 +51,34 @@ object Task {
       *   - addRuntime always produces a positive (non-preempting) state, since runtime is added after task execution when preemption is no
       *     longer relevant
       */
-    private[scheduler] opaque type State = Int
+    private[scheduler] type State = Int
 
     private[scheduler] object State {
-        private inline def InterruptMask: Int = 1
+        private val InterruptMask: Int = 1
 
         /** Initial state: runtime = 1, no interrupt, not preempting. */
-        inline def init: State = 2
+        def init: State = 2
 
-        extension (s: State)
-            inline def preempting: Boolean     = s < 0
-            inline def needsInterrupt: Boolean = (s & InterruptMask) != 0
-            inline def runtime: Int            = (if (s < 0) -s else s) >>> 1
+        implicit class StateOps(private val s: State) extends AnyVal {
+            def preempting: Boolean     = s < 0
+            def needsInterrupt: Boolean = (s & InterruptMask) != 0
+            def runtime: Int            = (if (s < 0) -s else s) >>> 1
 
             /** Sets the preemption flag (negates). No-op if already preempting. */
-            inline def preempt: State = -s
+            def preempt: State = -s
 
             /** Sets both interrupt flag and preemption. */
-            inline def interrupt: State =
+            def interrupt: State = {
                 val abs = if (s < 0) -s else s
                 -(abs | InterruptMask)
+            }
 
-            /** Adds execution time. Clears preemption (flips to positive) since runtime is
-              * added after task execution when preemption is no longer relevant.
+            /** Adds execution time. Clears preemption (flips to positive) since runtime is added after task execution when preemption is no
+              * longer relevant.
               */
-            inline def addRuntime(v: Int): State =
+            def addRuntime(v: Int): State =
                 (if (s < 0) -s else s) + (v << 1)
-        end extension
+        }
     }
 
     implicit val taskOrdering: Ordering[Task] =
