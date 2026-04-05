@@ -70,15 +70,15 @@ jobs:
       - uses: coursier/setup-action@v3.0.0
         if: matrix.os != 'windows-arm64'
         with:
-          jvm: temurin:21
+          jvm: temurin:25
           apps: sbt
 
       # Windows ARM64: coursier/setup-action doesn't support this platform yet.
-      # JDK 21 and sbt are pre-installed on the runner image.
+      # JDK 25 and sbt are pre-installed on the runner image.
       - name: Setup JDK (Windows ARM64)
         if: matrix.os == 'windows-arm64'
         shell: bash
-        run: echo "JAVA_HOME=$JAVA_HOME_21_AARCH64" >> "$GITHUB_ENV"
+        run: echo "JAVA_HOME=$JAVA_HOME_25_AARCH64" >> "$GITHUB_ENV"
 
       - name: Test ${{ matrix.target }} (${{ matrix.os }})
         shell: bash
