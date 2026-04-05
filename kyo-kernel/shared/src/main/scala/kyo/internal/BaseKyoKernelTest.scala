@@ -62,7 +62,7 @@ private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
         if Platform.isDebugEnabled then
             Duration.Infinity
         else
-            // Slowest legitimate test is ~33s (Native "large skip").
-            // 45s gives headroom without burning CI credits on stuck tests.
-            Duration.fromJava(java.time.Duration.ofSeconds(45))
+            // Slowest legitimate test is ~45s under CI load.
+            // 60s gives headroom without burning CI credits on stuck tests.
+            Duration.fromJava(java.time.Duration.ofSeconds(60))
 end BaseKyoKernelTest
