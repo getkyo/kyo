@@ -7,7 +7,8 @@ import scala.sys.process.*
   *
   * Usage: testKyo diff vs origin/main, all platforms, current Scala testKyo JVM diff vs origin/main, JVM only testKyo --all full test, all
   * platforms testKyo --all JVM full test, JVM only testKyo --scala 2.13.18 JVM diff, Scala 2.13, JVM only (auto-discovers modules) testKyo
-  * --all --scala 2.13.18 JVM full test, Scala 2.13, JVM only testKyo origin/feature JVM diff vs specific ref, JVM only
+  * --all --scala 2.13.18 JVM full test, Scala 2.13, JVM only testKyo origin/feature JVM diff vs specific ref, JVM only testKyo --dry-run
+  * JVM show what would run without executing
   */
 object TestKyo {
 
@@ -17,11 +18,12 @@ object TestKyo {
 
     def command: Command = Command.args("testKyo", "") { (state, args) =>
         val isAll           = args.contains("--all")
+        val isDryRun        = args.contains("--dry-run")
         val scalaIdx        = args.indexOf("--scala")
         val scalaVersionArg = if (scalaIdx >= 0 && scalaIdx + 1 < args.length) Some(args(scalaIdx + 1)) else None
 
         val remaining = args
-            .filterNot(_ == "--all")
+            .filterNot(a => a == "--all" || a == "--dry-run")
             .filterNot(a => a == "--scala" || (scalaIdx >= 0 && args.indexOf(a) == scalaIdx + 1))
 
         val (platformArgs, refArgs) = remaining.partition(a => platformNames.exists(_.equalsIgnoreCase(a)))
@@ -50,8 +52,8 @@ object TestKyo {
         // When a specific --scala version is set, always use runAll (filters by version).
         // runDiff's full-test fallback (kyoJVM/test) would include modules that don't support the version.
         val state2 =
-            if (isAll || scalaVersionOpt.isDefined) runAll(state1, platform, targetScala)
-            else runDiff(state1, baseRef, platform)
+            if (isAll || scalaVersionOpt.isDefined) runAll(state1, platform, targetScala, isDryRun)
+            else runDiff(state1, baseRef, platform, isDryRun)
 
         // If no --scala specified, also run Scala 2.x cross-build modules
         if (runBothScala) {
@@ -59,12 +61,12 @@ object TestKyo {
             scala2 match {
                 case Some(v) =>
                     log(s"switching to Scala $v for cross-build modules")
-                    val state3 = Command.process(s"++$v", state2, msg => state2.log.error(msg))
-                    val state4 = runAll(state3, platform, v)
+                    val state3 = if (isDryRun) state2 else Command.process(s"++$v", state2, msg => state2.log.error(msg))
+                    val state4 = runAll(state3, platform, v, isDryRun)
                     // Restore Scala 3 so sbt doesn't resolve the root project under 2.x,
                     // which causes cross-version conflicts (e.g. kyo-dataJS scala-java-time)
                     log(s"restoring Scala $scala3")
-                    Command.process(s"++$scala3", state4, msg => state4.log.error(msg))
+                    if (isDryRun) state4 else Command.process(s"++$scala3", state4, msg => state4.log.error(msg))
                 case None =>
                     log("no Scala 2.x cross-build modules found")
                     state2
@@ -76,7 +78,7 @@ object TestKyo {
 
     // --- Full test mode ---
 
-    private def runAll(state: State, platform: Option[String], scalaVersion: String): State = {
+    private def runAll(state: State, platform: Option[String], scalaVersion: String, isDryRun: Boolean = false): State = {
         val extracted = Project.extract(state)
         val structure = extracted.structure
         val allRefs   = structure.allProjectRefs
@@ -87,16 +89,13 @@ object TestKyo {
             val name        = ref.project
             val versions    = (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
             val isAggregate = excluded.contains(name)
-            val matchesPlatform = if (isAggregate) false
+            val platformMatch = if (isAggregate) false
             else platform match {
-                case Some("JVM")    => !name.endsWith("JS") && !name.endsWith("Native")
-                case Some("JS")     => name.endsWith("JS")
-                case Some("Native") => name.endsWith("Native")
-                case None           => true
-                case _              => false
+                case Some(p) => matchesPlatform(name, p)
+                case None    => true
             }
             val matchesScala = versions.contains(scalaVersion)
-            matchesPlatform && matchesScala
+            platformMatch && matchesScala
         }
 
         if (testable.isEmpty) {
@@ -107,13 +106,13 @@ object TestKyo {
             log(s"testing ${sorted.size} projects: ${sorted.mkString(", ")}")
             val commands = sorted.map(name => s"$name/test").mkString("; ")
             log(s"running: $commands")
-            Command.process(commands, state, msg => state.log.error(msg))
+            if (isDryRun) state else Command.process(commands, state, msg => state.log.error(msg))
         }
     }
 
     // --- Diff test mode ---
 
-    private def runDiff(state: State, baseRef: String, platform: Option[String]): State = {
+    private def runDiff(state: State, baseRef: String, platform: Option[String], isDryRun: Boolean = false): State = {
         val changedFiles = diffFiles(baseRef)
         if (changedFiles.isEmpty) {
             log(s"no changed files vs $baseRef — skipping tests")
@@ -123,13 +122,13 @@ object TestKyo {
             changedFiles.foreach(f => log(s"  $f"))
 
             if (buildConfigChanged(changedFiles))
-                runDiffFull(state, platform, changedFiles)
+                runDiffFull(state, platform, changedFiles, isDryRun)
             else
-                runDiffAffected(state, changedFiles, platform)
+                runDiffAffected(state, changedFiles, platform, isDryRun)
         }
     }
 
-    private def runDiffFull(state: State, platform: Option[String], changedFiles: Seq[String]): State = {
+    private def runDiffFull(state: State, platform: Option[String], changedFiles: Seq[String], isDryRun: Boolean = false): State = {
         val trigger = changedFiles.filter(f => f == "build.sbt" || f.startsWith("project/") || f.startsWith(".github/"))
         log(s"build/CI config changed (${trigger.mkString(", ")}) — running full test")
         val cmd = platform match {
@@ -137,10 +136,10 @@ object TestKyo {
             case None    => "test"
         }
         log(s"running: $cmd")
-        Command.process(cmd, state, msg => state.log.error(msg))
+        if (isDryRun) state else Command.process(cmd, state, msg => state.log.error(msg))
     }
 
-    private def runDiffAffected(state: State, changedFiles: Seq[String], platform: Option[String]): State = {
+    private def runDiffAffected(state: State, changedFiles: Seq[String], platform: Option[String], isDryRun: Boolean = false): State = {
         val extracted = Project.extract(state)
         val structure = extracted.structure
         val allRefs   = structure.allProjectRefs
@@ -150,7 +149,7 @@ object TestKyo {
         val directlyChanged = changedFiles.flatMap(fileToProjects(_, allNames)).toSet
 
         val filtered = platform match {
-            case Some(p) => directlyChanged.filter(_.endsWith(p))
+            case Some(p) => directlyChanged.filter(matchesPlatform(_, p))
             case None    => directlyChanged
         }
 
@@ -167,7 +166,7 @@ object TestKyo {
             }
 
             val toTest = platform match {
-                case Some(p) => allAffected.filter(_.endsWith(p))
+                case Some(p) => allAffected.filter(matchesPlatform(_, p))
                 case None    => allAffected
             }
 
@@ -180,12 +179,23 @@ object TestKyo {
                 log(s"with dependents: ${sorted.mkString(", ")}")
                 val commands = sorted.map(name => s"$name/test").mkString("; ")
                 log(s"running: $commands")
-                Command.process(commands, state, msg => state.log.error(msg))
+                if (isDryRun) state else Command.process(commands, state, msg => state.log.error(msg))
             }
         }
     }
 
     // --- Helpers ---
+
+    /** Check if a project name matches the given platform.
+      * JVM projects use bare names (e.g. "kyo-core") while JS/Native use suffixed names.
+      */
+    private def matchesPlatform(name: String, platform: String): Boolean =
+        platform match {
+            case "JVM"    => !name.endsWith("JS") && !name.endsWith("Native")
+            case "JS"     => name.endsWith("JS")
+            case "Native" => name.endsWith("Native")
+            case _        => false
+        }
 
     /** Map a changed file path to affected sbt project names.
       *
@@ -203,7 +213,13 @@ object TestKyo {
                     case "native" => Seq("Native")
                     case _        => Seq("JVM", "JS", "Native")
                 }
-                affectedPlatforms.map(p => s"$module$p").filter(allProjectNames.contains).toSet
+                affectedPlatforms.flatMap { p =>
+                    // JVM projects may use bare name (e.g. "kyo-core") or suffixed (e.g. "kyo-coreJVM")
+                    val suffixed = s"$module$p"
+                    if (allProjectNames.contains(suffixed)) Seq(suffixed)
+                    else if (p == "JVM" && allProjectNames.contains(module)) Seq(module)
+                    else Seq.empty
+                }.toSet
             case _ => Set.empty
         }
     }
