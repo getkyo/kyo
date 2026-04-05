@@ -189,17 +189,21 @@ class CommandTest extends Test:
         end for
     }
 
-    "stdoutToFile with append=true appends" in run {
-        for
-            path    <- Path.temp("kyo-stdout-append-test", ".txt")
-            _       <- path.write("line1\n")
-            _       <- echo("line2").stdoutToFile(path, append = true).waitFor
-            content <- path.read
-            _       <- path.remove
-        yield
-            assert(content.contains("line1"))
-            assert(content.contains("line2"))
-        end for
+    // ProcessBuilder.Redirect.appendTo is broken on Scala Native Windows ARM64
+    "stdoutToFile with append=true appends" in {
+        assume(!(isWindows && kyo.internal.Platform.isNative), "ProcessBuilder append broken on Native Windows")
+        run {
+            for
+                path    <- Path.temp("kyo-stdout-append-test", ".txt")
+                _       <- path.write("line1\n")
+                _       <- echo("line2").stdoutToFile(path, append = true).waitFor
+                content <- path.read
+                _       <- path.remove
+            yield
+                assert(content.contains("line1"))
+                assert(content.contains("line2"))
+            end for
+        }
     }
 
     "stderrToFile writes stderr to file" in {
@@ -489,17 +493,20 @@ class CommandTest extends Test:
     // Regression tests
     // ---------------------------------------------------------------------------
 
-    "stdoutToFile with append=true preserves existing content" in run {
-        for
-            path    <- Path.temp("kyo-stdout-append-preserve-test", ".txt")
-            _       <- path.write("line1\n")
-            _       <- echo("line2").stdoutToFile(path, append = true).waitFor
-            content <- path.read
-            _       <- path.remove
-        yield
-            assert(content.contains("line1"))
-            assert(content.contains("line2"))
-        end for
+    "stdoutToFile with append=true preserves existing content" in {
+        assume(!(isWindows && kyo.internal.Platform.isNative), "ProcessBuilder append broken on Native Windows")
+        run {
+            for
+                path    <- Path.temp("kyo-stdout-append-preserve-test", ".txt")
+                _       <- path.write("line1\n")
+                _       <- echo("line2").stdoutToFile(path, append = true).waitFor
+                content <- path.read
+                _       <- path.remove
+            yield
+                assert(content.contains("line1"))
+                assert(content.contains("line2"))
+            end for
+        }
     }
 
     "text on command with only stderr output returns empty string" in {

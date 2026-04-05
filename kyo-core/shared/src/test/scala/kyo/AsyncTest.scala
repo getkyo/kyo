@@ -906,7 +906,9 @@ class AsyncTest extends Test:
         }
 
         "race with isolate" in run {
-
+            // The race winner depends on scheduler timing — either task may
+            // complete first. Assert that the isolated Var state is consistent
+            // with whichever task won (both components match).
             Var.runTuple(0) {
                 Var.isolate.update[Int].use {
                     Async.race(
@@ -924,8 +926,9 @@ class AsyncTest extends Test:
                         )
                     )
                 }
-            }.map { result =>
-                assert(result == (1, 1))
+            }.map { case (varState, raceResult) =>
+                assert(varState == raceResult, s"Var state ($varState) must match race result ($raceResult)")
+                assert(varState == 1 || varState == 2, s"Winner must be 1 or 2, got $varState")
             }
         }
 

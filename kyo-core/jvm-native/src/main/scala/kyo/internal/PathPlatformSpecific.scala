@@ -301,11 +301,22 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             case _: DirectoryNotEmptyException               => FileDirectoryNotEmptyException(path)
             case _                                           => FileIOException(path, e)
 
+    // On Scala Native Windows ARM64, java.nio.file throws generic IOException
+    // instead of specific subclasses (NoSuchFileException, NotDirectoryException).
+    // Detect these via Windows error codes in the exception message.
+    private def isFileNotFound(e: IOException): Boolean =
+        e.isInstanceOf[NoSuchFileException] ||
+            (e.getMessage != null && (e.getMessage.contains("(2)") || e.getMessage.contains("(3)")))
+
+    private def isNotDirectory(e: IOException): Boolean =
+        e.isInstanceOf[NotDirectoryException] ||
+            (e.getMessage != null && e.getMessage.contains("(267)"))
+
     private def catchRead[A](expr: => A)(using Frame): Result[FileReadException, A] =
         try Result.succeed(expr)
         catch
-            case e: NoSuchFileException   => Result.fail(FileNotFoundException(safe))
-            case e: AccessDeniedException =>
+            case e: IOException if isFileNotFound(e) => Result.fail(FileNotFoundException(safe))
+            case e: AccessDeniedException            =>
                 // On Windows, reading a directory raises AccessDeniedException instead of "Is a directory"
                 if java.nio.file.Files.isDirectory(jpath) then Result.fail(FileIsADirectoryException(safe))
                 else Result.fail(FileAccessDeniedException(safe))
@@ -317,8 +328,8 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     private def catchWrite[A](expr: => A)(using Frame): Result[FileWriteException, A] =
         try Result.succeed(expr)
         catch
-            case e: NoSuchFileException   => Result.fail(FileNotFoundException(safe))
-            case e: AccessDeniedException =>
+            case e: IOException if isFileNotFound(e) => Result.fail(FileNotFoundException(safe))
+            case e: AccessDeniedException            =>
                 // On some platforms (Scala Native / macOS), writing to a directory raises
                 // AccessDeniedException (EACCES) rather than an IOException with "Is a directory".
                 // Detect this case by checking whether the target path is actually a directory.
@@ -332,11 +343,11 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     private def catchFs[A](expr: => A)(using Frame): Result[FileFsException, A] =
         try Result.succeed(expr)
         catch
-            case e: NoSuchFileException                      => Result.fail(FileNotFoundException(safe))
+            case e: IOException if isFileNotFound(e)         => Result.fail(FileNotFoundException(safe))
             case e: AccessDeniedException                    => Result.fail(FileAccessDeniedException(safe))
             case e: java.nio.file.FileAlreadyExistsException => Result.fail(kyo.FileAlreadyExistsException(safe))
             case e: DirectoryNotEmptyException               => Result.fail(FileDirectoryNotEmptyException(safe))
-            case e: NotDirectoryException                    => Result.fail(FileNotADirectoryException(safe))
+            case e: IOException if isNotDirectory(e)         => Result.fail(FileNotADirectoryException(safe))
             case e: IOException                              => Result.fail(FileIOException(safe, e))
             case e: Throwable                                => Result.panic(e)
 
