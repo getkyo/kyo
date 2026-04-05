@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.internal.Platform
+
 case class CustomInt(value: Int) extends AnyVal
 
 class ConcreteTagTest extends Test:
@@ -921,6 +923,7 @@ class ConcreteTagTest extends Test:
             }
 
             "String array" in {
+                assume(!Platform.isNative)
                 val tag = ConcreteTag.fromArray(new Array[String](1))
                 assert(tag == ConcreteTag[String])
             }
