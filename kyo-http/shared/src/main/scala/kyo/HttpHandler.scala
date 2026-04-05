@@ -30,7 +30,60 @@ sealed abstract class HttpHandler[In, Out, +E](val route: HttpRoute[In, Out, E])
 
     def apply(request: HttpRequest[In])(using Frame): HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])
 
+    // These methods close over concrete In/Out/E types so HttpTransportServer
+    // can dispatch without casting the existential HttpHandler[?, ?, ?] from the router.
+
+    /** Decode a buffered request from raw wire data and invoke the handler. No casts needed — this method has access to the concrete types
+      * In, Out, E through `this`. Used by HttpTransportServer to serve requests without type erasure issues.
+      */
+    private[kyo] def serveBuffered(
+        pathCaptures: Dict[String, String],
+        queryParam: Maybe[HttpUrl],
+        headers: HttpHeaders,
+        body: Span[Byte],
+        path: String,
+        method: HttpMethod
+    )(using Frame): Result[HttpException, HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])] =
+        internal.RouteUtil.decodeBufferedRequest(route, pathCaptures, queryParam, headers, body, path, Present(method))
+            .map(request => this(request))
+
+    /** Decode a streaming request from raw wire data and invoke the handler. */
+    private[kyo] def serveStreaming(
+        pathCaptures: Dict[String, String],
+        queryParam: Maybe[HttpUrl],
+        headers: HttpHeaders,
+        body: Stream[Span[Byte], Async],
+        path: String,
+        method: HttpMethod
+    )(using Frame): Result[HttpException, HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])] =
+        internal.RouteUtil.decodeStreamingRequest(route, pathCaptures, queryParam, headers, body, path, Present(method))
+            .map(request => this(request))
+
+    /** Encode a successful response to wire format using RouteUtil callbacks. */
+    private[kyo] def encodeResponse[A](response: HttpResponse[Out])(
+        onEmpty: (HttpStatus, HttpHeaders) => A,
+        onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A,
+        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A
+    )(using Frame): A =
+        internal.RouteUtil.encodeResponse(route, response)(onEmpty, onBuffered, onStreaming)
+
+    /** Try to encode a typed error via the route's error mappings. */
+    private[kyo] def encodeError(error: Any)(using Frame): Maybe[(HttpStatus, HttpHeaders, Span[Byte])] =
+        internal.RouteUtil.encodeError(route, error)
+
 end HttpHandler
+
+/** A WebSocket endpoint handler. Extends HttpHandler so it can be registered with HttpServer.init alongside normal HTTP handlers. The
+  * backend detects this type and performs a WebSocket upgrade instead of normal request-response dispatch.
+  */
+final private[kyo] class WebSocketHttpHandler(
+    route: HttpRoute[Any, Any, Nothing],
+    private[kyo] val wsHandler: (HttpRequest[Any], WebSocket) => Unit < (Async & Abort[Closed]),
+    private[kyo] val wsConfig: WebSocket.Config
+) extends HttpHandler[Any, Any, Nothing](route):
+    def apply(request: HttpRequest[Any])(using Frame) =
+        HttpResponse(HttpStatus.SwitchingProtocols)
+end WebSocketHttpHandler
 
 object HttpHandler:
 
@@ -279,5 +332,21 @@ object HttpHandler:
         val route = HttpRoute.getRaw(path).response(_.bodyNdjson[V])
         route.handler(req => f(req).map(stream => HttpResponse.ok.addField("body", stream)))
     end getNdJson
+
+    // ==================== WebSocket methods ====================
+
+    /** Creates a WebSocket endpoint at the given path. The handler function receives the upgrade request (for auth, cookies, subprotocol
+      * negotiation) and a WebSocket handle. The handler runs for the lifetime of the connection — when it returns, the connection closes.
+      */
+    def webSocket(path: String)(
+        f: (HttpRequest[Any], WebSocket) => Unit < (Async & Abort[Closed])
+    )(using Frame): HttpHandler[Any, Any, Nothing] =
+        new WebSocketHttpHandler(HttpRoute.getRaw(path), f, WebSocket.Config())
+
+    /** Creates a WebSocket endpoint with custom configuration. */
+    def webSocket(path: String, config: WebSocket.Config)(
+        f: (HttpRequest[Any], WebSocket) => Unit < (Async & Abort[Closed])
+    )(using Frame): HttpHandler[Any, Any, Nothing] =
+        new WebSocketHttpHandler(HttpRoute.getRaw(path), f, config)
 
 end HttpHandler

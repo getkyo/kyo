@@ -4,8 +4,8 @@ import kyo.*
 
 /** Platform abstraction layer for HTTP client and server implementations.
   *
-  * `HttpBackend` defines the traits that JVM (Netty), JS (Fetch/Node), and Native (libcurl/H2O) backends implement. Users typically don't
-  * interact with backends directly — `HttpClient` and `HttpServer` use the platform-appropriate backend automatically.
+  * `HttpBackend` defines the traits that platform backends implement. Users typically don't interact with backends directly — `HttpClient`
+  * and `HttpServer` use the platform-appropriate backend automatically.
   *
   * The `Client` trait is connection-oriented: `connectWith` establishes a connection, `sendWith` sends a request through it. This design
   * lets `HttpClient` manage connection pooling independently of the backend.
@@ -23,9 +23,7 @@ object HttpBackend:
         type Connection
 
         def connectWith[A](
-            host: String,
-            port: Int,
-            ssl: Boolean,
+            url: HttpUrl,
             connectTimeout: Maybe[Duration]
         )(
             f: Connection => A < (Async & Abort[HttpException])
@@ -35,20 +33,18 @@ object HttpBackend:
             conn: Connection,
             route: HttpRoute[In, Out, ?],
             request: HttpRequest[In],
-            onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit = _ => ()
+            onRelease: Maybe[Result.Error[Any]] => Unit < Async = _ => Kyo.unit
         )(
             f: HttpResponse[Out] => A < (Async & Abort[HttpException])
         )(using Frame): A < (Async & Abort[HttpException])
 
-        def isAlive(conn: Connection)(using AllowUnsafe): Boolean
-        def closeNowUnsafe(conn: Connection)(using AllowUnsafe): Unit
+        def isAlive(conn: Connection)(using Frame): Boolean < Sync
+        def closeNow(conn: Connection)(using Frame): Unit < Async
         def close(conn: Connection, gracePeriod: Duration)(using Frame): Unit < Async
-        def close(conn: Connection)(using Frame): Unit < Async    = close(conn, 30.seconds)
-        def closeNow(conn: Connection)(using Frame): Unit < Async = close(conn, Duration.Zero)
+        def close(conn: Connection)(using Frame): Unit < Async = close(conn, 30.seconds)
 
         def close(gracePeriod: Duration)(using Frame): Unit < Async
-        def close(using Frame): Unit < Async    = close(30.seconds)
-        def closeNow(using Frame): Unit < Async = close(Duration.Zero)
+        def close(using Frame): Unit < Async = close(30.seconds)
     end Client
 
     trait Server:
@@ -59,12 +55,26 @@ object HttpBackend:
     end Server
 
     abstract class Binding:
-        def port: Int
-        def host: String
+        def address: HttpAddress
         def close(gracePeriod: Duration)(using Frame): Unit < Async
         def close(using Frame): Unit < Async    = close(30.seconds)
         def closeNow(using Frame): Unit < Async = close(Duration.Zero)
         def await(using Frame): Unit < Async
     end Binding
+
+    /** Platform abstraction for WebSocket client connections.
+      *
+      * Separate from `Client` because WebSocket has a fundamentally different lifecycle — it upgrades an HTTP connection to a persistent
+      * bidirectional channel rather than following request-response semantics.
+      */
+    trait WebSocketClient:
+        def connect[A, S](
+            url: HttpUrl,
+            headers: HttpHeaders,
+            config: WebSocket.Config
+        )(
+            f: WebSocket => A < S
+        )(using Frame): A < (S & Async & Abort[HttpException])
+    end WebSocketClient
 
 end HttpBackend

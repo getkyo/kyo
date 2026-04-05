@@ -1100,13 +1100,14 @@ object RouteUtil:
         end if
     end encodeHalt
 
+    private case class ErrorBody(status: Int, error: String) derives Json
+
     private[kyo] def encodeErrorBody(status: HttpStatus): Span[Byte] =
-        // Status names come from HttpStatus enum cases (e.g., "NotFound", "BadRequest")
-        // which are safe ASCII identifiers — no escaping needed.
-        val name = status.toString
-        val sb   = new StringBuilder(48)
-        discard(sb.append("{\"status\":").append(status.code).append(",\"error\":\"").append(name).append("\"}"))
-        stringToSpan(sb.toString)
+        stringToSpan(Json[ErrorBody].encode(ErrorBody(status.code, status.toString)))
     end encodeErrorBody
+
+    private[kyo] def encodeErrorBodyWithMessage(status: HttpStatus, message: String): Span[Byte] =
+        stringToSpan(Json[ErrorBody].encode(ErrorBody(status.code, message)))
+    end encodeErrorBodyWithMessage
 
 end RouteUtil

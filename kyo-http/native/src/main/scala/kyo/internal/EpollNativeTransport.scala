@@ -1,0 +1,601 @@
+package kyo.internal
+
+import kyo.*
+import scala.scalanative.unsafe.*
+
+/** Shared epoll-based I/O event loop for Linux (Scala Native).
+  *
+  * A single epoll fd is shared across all connections. The poller fiber calls the @blocking epollWaitTimeout once, dispatches all ready
+  * events to their per-fd Promises, then loops. This eliminates per-connection epoll fds and 1ms polling.
+  *
+  * Thread safety: ConcurrentHashMap for the pending table. The poller is the only reader of ready events; writers only add/replace entries
+  * before registering with the kernel.
+  *
+  * AllowUnsafe is confined to the single point where poller completes Promises.
+  */
+private[kyo] class EpollIoLoop extends IoLoop:
+
+    import PosixBindings.*
+
+    private val epfd = epollCreate()
+
+    private val pendingReads  = new java.util.concurrent.ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()
+    private val pendingWrites = new java.util.concurrent.ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()
+
+    /** Start the shared poller fiber. Must be called once before any awaitReadable/awaitWritable. */
+    def start()(using Frame): Unit < Async =
+        Fiber.initUnscoped {
+            Loop.foreach {
+                Sync.Unsafe.defer {
+                    Zone {
+                        val outFds    = alloc[CInt](64)
+                        val outEvents = alloc[CInt](64)
+                        // @blocking: OS thread blocks here; Kyo scheduler spawns workers as needed
+                        val n = epollWaitTimeout(epfd, outFds, outEvents, 64)
+                        Loop.indexed { i =>
+                            if i < n then
+                                val fd    = outFds(i)
+                                val event = outEvents(i)
+                                if (event & 1) != 0 then // EPOLLIN
+                                    Maybe(pendingReads.remove(fd)).foreach(_.completeUnitDiscard())
+                                end if
+                                if (event & 2) != 0 then // EPOLLOUT
+                                    Maybe(pendingWrites.remove(fd)).foreach(_.completeUnitDiscard())
+                                end if
+                                Loop.continue
+                            else
+                                Loop.done(())
+                            end if
+                        }
+                    }
+                }.andThen(Loop.continue)
+            }
+        }.unit
+
+    def awaitReadable(fd: Int)(using Frame): Unit < Async =
+        Promise.initWith[Unit, Any] { promise =>
+            Sync.Unsafe.defer {
+                pendingReads.put(fd, promise.unsafe)
+                discard(epollRegister(epfd, fd, 1)) // EPOLLIN | EPOLLONESHOT
+            }.andThen(promise.get)
+        }
+
+    def awaitWritable(fd: Int)(using Frame): Unit < Async =
+        Promise.initWith[Unit, Any] { promise =>
+            Sync.Unsafe.defer {
+                pendingWrites.put(fd, promise.unsafe)
+                discard(epollRegister(epfd, fd, 2)) // EPOLLOUT | EPOLLONESHOT
+            }.andThen(promise.get)
+        }
+
+    /** Cancel any pending promises for the given fd and complete them so waiting fibers unblock.
+      *
+      * Must be called BEFORE closing the fd. Once the fd is closed, epoll will never fire for it, so any fiber suspended on a pending
+      * promise would hang forever.
+      */
+    def cancelFd(fd: Int)(using AllowUnsafe): Unit =
+        discard(epollDeregister(epfd, fd))
+        Maybe(pendingReads.remove(fd)).foreach(_.completeUnitDiscard())
+        Maybe(pendingWrites.remove(fd)).foreach(_.completeUnitDiscard())
+    end cancelFd
+
+    def close(): Unit =
+        tcpClose(epfd)
+
+end EpollIoLoop
+
+/** Epoll-based non-blocking TCP Transport for Linux (Scala Native).
+  *
+  * Connections are distributed across a group of EpollIoLoop instances via round-robin for multi-core scaling. Each EpollIoLoop has its own
+  * epoll fd and poller fiber.
+  *
+  * The default IoLoopGroup is a lazy companion-object singleton so that multiple EpollNativeTransport instances share the same poller
+  * threads. Callers may supply a custom group for isolation (e.g. testing).
+  */
+object EpollNativeTransport:
+    private val groupSize = Math.max(1, Runtime.getRuntime.availableProcessors / 2)
+    lazy val defaultGroup: IoLoopGroup[EpollIoLoop] =
+        new IoLoopGroup((0 until groupSize).map(_ => new EpollIoLoop))
+    end defaultGroup
+end EpollNativeTransport
+
+final class EpollNativeTransport(
+    group: IoLoopGroup[EpollIoLoop] = EpollNativeTransport.defaultGroup
+) extends Transport:
+
+    import PosixBindings.*
+
+    type Connection = EpollConnection
+
+    def connect(address: HttpAddress, tls: Maybe[TlsConfig])(using Frame): EpollConnection < (Async & Abort[HttpException]) =
+        address match
+            case HttpAddress.Tcp(host, port) =>
+                group.ensureStarted().andThen {
+                    connectPlain(host, port).map { conn =>
+                        tls match
+                            case Present(tlsCfg) => connectTls(host, conn, tlsCfg)
+                            case Absent          => conn
+                    }
+                }
+            case HttpAddress.Unix(path) =>
+                group.ensureStarted().andThen {
+                    connectUnixPlain(path)
+                }
+
+    private def connectUnixPlain(path: String)(using Frame): EpollConnection < (Async & Abort[HttpException]) =
+        Sync.defer {
+            val loop = group.next()
+            val (fd, pending) = Zone {
+                val outPending = alloc[CInt]()
+                val f          = unixConnect(toCString(path), outPending)
+                (f, !outPending)
+            }
+            if fd < 0 then
+                Abort.fail(HttpConnectException(path, 0, new Exception("unix connect failed")))
+            else if pending == 1 then
+                loop.awaitWritable(fd).andThen {
+                    val err = tcpConnectError(fd)
+                    if err != 0 then
+                        tcpClose(fd)
+                        Abort.fail(HttpConnectException(path, 0, new Exception(s"unix connect failed: errno=$err")))
+                    else
+                        new EpollConnection(fd, loop)
+                    end if
+                }
+            else
+                Sync.defer(new EpollConnection(fd, loop))
+            end if
+        }
+
+    private def connectPlain(host: String, port: Int)(using Frame): EpollConnection < (Async & Abort[HttpException]) =
+        Sync.defer {
+            val loop = group.next()
+            val (fd, pending) = Zone {
+                val outPending = alloc[CInt]()
+                val f          = tcpConnect(toCString(host), port, outPending)
+                (f, !outPending)
+            }
+            if fd < 0 then
+                Abort.fail(HttpConnectException(host, port, new Exception("connect failed")))
+            else if pending == 1 then
+                loop.awaitWritable(fd).andThen {
+                    val err = tcpConnectError(fd)
+                    if err != 0 then
+                        tcpClose(fd)
+                        Abort.fail(HttpConnectException(host, port, new Exception(s"connect failed: errno=$err")))
+                    else
+                        new EpollConnection(fd, loop)
+                    end if
+                }
+            else
+                Sync.defer(new EpollConnection(fd, loop))
+            end if
+        }
+
+    private def connectTls(host: String, conn: EpollConnection, tlsCfg: TlsConfig)(using Frame): EpollConnection < (Async & Abort[HttpException]) =
+        import TlsBindings.*
+        Meter.initMutexUnscoped.map { sslLock =>
+            Sync.defer {
+                val ctx = tlsCtxNew(0)
+                if ctx == 0 then
+                    Abort.fail(HttpConnectException(host, 0, new Exception("Failed to create TLS context")))
+                else
+                    if tlsCfg.trustAll then discard(tlsCtxSetVerify(ctx, 0))
+                    val ssl = Zone { tlsNew(ctx, toCString(host)) }
+                    if ssl == 0 then
+                        tlsCtxFree(ctx)
+                        Abort.fail(HttpConnectException(host, 0, new Exception("Failed to create TLS session")))
+                    else
+                        tlsSetConnectState(ssl)
+                        val tcpStream = new EpollStreamTlsBridge(conn)
+                        val tlsStream = new NativeTlsStream(ssl, ctx, ownsCtx = true, tcpStream, sslLock)
+                        conn.tlsStream = Present(tlsStream)
+                        tlsStream.handshake().map(_ => conn)
+                    end if
+                end if
+            }
+        }
+    end connectTls
+
+    def isAlive(c: EpollConnection)(using Frame): Boolean < Sync =
+        Sync.defer(!c.closed && tcpIsAlive(c.fd) == 1)
+
+    def closeNow(c: EpollConnection)(using Frame): Unit < Async =
+        Sync.Unsafe.defer {
+            c.closed = true
+            c.loop.cancelFd(c.fd)
+        }.andThen {
+            c.tlsStream match
+                case Present(tls) =>
+                    tls.freeSsl().andThen {
+                        c.tlsStream = Absent
+                        Sync.defer(tcpClose(c.fd))
+                    }
+                case Absent =>
+                    Sync.defer(tcpClose(c.fd))
+            end match
+        }
+
+    def close(c: EpollConnection, gracePeriod: Duration)(using Frame): Unit < Async =
+        Sync.defer(tcpShutdown(c.fd))
+
+    def listen(address: HttpAddress, backlog: Int, tls: Maybe[TlsConfig])(using Frame): TransportListener[EpollConnection] < Async =
+        address match
+            case HttpAddress.Tcp(host, port) => listenTcp(host, port, backlog, tls)
+            case HttpAddress.Unix(path)      => listenUnix(path, backlog, tls)
+
+    private def listenTcp(host: String, port: Int, backlog: Int, tls: Maybe[TlsConfig])(using Frame): TransportListener[EpollConnection] < Async =
+        group.ensureStarted().andThen {
+            Sync.defer {
+                val (serverFd, boundPort) = Zone {
+                    val outPort = alloc[CInt]()
+                    val fd      = tcpListen(toCString(host), port, backlog, outPort)
+                    (fd, !outPort)
+                }
+                if serverFd < 0 then
+                    Abort.panic(HttpBindException(host, port, new Exception("bind/listen failed")))
+                else
+                    val boundAddress = HttpAddress.Tcp(host, boundPort)
+                    // Use a dedicated loop from the group for the accept selector (server fd readiness).
+                    val acceptLoop = group.next()
+                    tls match
+                        case Absent =>
+                            val closed = new java.util.concurrent.atomic.AtomicBoolean(false)
+                            val connStream: Stream[EpollConnection, Async] =
+                                Stream.unfold((), chunkSize = 1) { _ =>
+                                    if closed.get() then Maybe.empty
+                                    else
+                                        acceptLoop.awaitReadable(serverFd).andThen {
+                                            Sync.defer {
+                                                if closed.get() then Maybe.empty
+                                                else
+                                                    val clientFd = tcpAccept(serverFd)
+                                                    if clientFd >= 0 then
+                                                        Maybe((new EpollConnection(clientFd, group.next()), ()))
+                                                    else
+                                                        Maybe.empty
+                                                    end if
+                                                end if
+                                            }
+                                        }
+                                    end if
+                                }
+                            new TransportListener(
+                                boundAddress,
+                                connStream,
+                                close = Sync.Unsafe.defer {
+                                    closed.set(true)
+                                    acceptLoop.cancelFd(serverFd)
+                                    tcpClose(serverFd)
+                                }
+                            )
+                        case Present(tlsCfg) =>
+                            import TlsBindings.*
+                            val ctx = tlsCtxNew(1)
+                            if ctx == 0 then
+                                tcpClose(serverFd)
+                                Abort.panic(HttpBindException(host, port, new Exception("Failed to create TLS context")))
+                            else
+                                val certResult = Zone {
+                                    tlsCtxSetCert(
+                                        ctx,
+                                        toCString(tlsCfg.certChainPath.getOrElse("")),
+                                        toCString(tlsCfg.privateKeyPath.getOrElse(""))
+                                    )
+                                }
+                                if certResult != 0 then
+                                    tlsCtxFree(ctx)
+                                    tcpClose(serverFd)
+                                    Abort.panic(HttpBindException(
+                                        host,
+                                        port,
+                                        new Exception("Failed to load TLS certificate/key")
+                                    ))
+                                else
+                                    val closed = new java.util.concurrent.atomic.AtomicBoolean(false)
+                                    val connStream: Stream[EpollConnection, Async] =
+                                        Stream.unfold((), chunkSize = 1) { _ =>
+                                            if closed.get() then Maybe.empty
+                                            else
+                                                acceptLoop.awaitReadable(serverFd).andThen {
+                                                    Sync.defer {
+                                                        if closed.get() then Maybe.empty
+                                                        else
+                                                            val clientFd = tcpAccept(serverFd)
+                                                            if clientFd >= 0 then
+                                                                val connLoop = group.next()
+                                                                val conn     = new EpollConnection(clientFd, connLoop)
+                                                                val ssl      = Zone { tlsNew(ctx, null) }
+                                                                if ssl == 0 then
+                                                                    tcpClose(clientFd)
+                                                                    Maybe.empty
+                                                                else
+                                                                    tlsSetAcceptState(ssl)
+                                                                    val bridge = new EpollStreamTlsBridge(conn)
+                                                                    Meter.initMutexUnscoped.map { sslLock =>
+                                                                        val tlsStream =
+                                                                            new NativeTlsStream(
+                                                                                ssl,
+                                                                                ctx,
+                                                                                ownsCtx = false,
+                                                                                bridge,
+                                                                                sslLock
+                                                                            )
+                                                                        conn.tlsStream = Present(tlsStream)
+                                                                        // Handshake deferred to first read/write (lazy handshake)
+                                                                        // so the accept loop is not blocked by TLS negotiation.
+                                                                        Maybe((conn, ()))
+                                                                    }
+                                                                end if
+                                                            else
+                                                                Maybe.empty
+                                                            end if
+                                                        end if
+                                                    }
+                                                }
+                                            end if
+                                        }
+                                    new TransportListener(
+                                        boundAddress,
+                                        connStream,
+                                        close = Sync.Unsafe.defer {
+                                            closed.set(true)
+                                            acceptLoop.cancelFd(serverFd)
+                                            tcpClose(serverFd)
+                                        }
+                                    )
+                                end if
+                            end if
+                    end match
+                end if
+            }
+        }
+
+    private def listenUnix(path: String, backlog: Int, tls: Maybe[TlsConfig])(using Frame): TransportListener[EpollConnection] < Async =
+        group.ensureStarted().andThen {
+            Sync.defer {
+                val (serverFd, _) = Zone {
+                    val outPort = alloc[CInt]()
+                    val fd      = unixListen(toCString(path), backlog, outPort)
+                    (fd, !outPort)
+                }
+                if serverFd < 0 then
+                    Abort.panic(HttpBindException(path, 0, new Exception("unix bind/listen failed")))
+                else
+                    val boundAddress = HttpAddress.Unix(path)
+                    val acceptLoop   = group.next()
+                    tls match
+                        case Absent =>
+                            val closed = new java.util.concurrent.atomic.AtomicBoolean(false)
+                            val connStream: Stream[EpollConnection, Async] =
+                                Stream.unfold((), chunkSize = 1) { _ =>
+                                    if closed.get() then Maybe.empty
+                                    else
+                                        acceptLoop.awaitReadable(serverFd).andThen {
+                                            Sync.defer {
+                                                if closed.get() then Maybe.empty
+                                                else
+                                                    val clientFd = tcpAccept(serverFd)
+                                                    if clientFd >= 0 then
+                                                        Maybe((new EpollConnection(clientFd, group.next()), ()))
+                                                    else
+                                                        Maybe.empty
+                                                    end if
+                                                end if
+                                            }
+                                        }
+                                    end if
+                                }
+                            new TransportListener(
+                                boundAddress,
+                                connStream,
+                                close = Sync.Unsafe.defer {
+                                    closed.set(true)
+                                    acceptLoop.cancelFd(serverFd)
+                                    tcpClose(serverFd)
+                                }
+                            )
+                        case Present(tlsCfg) =>
+                            import TlsBindings.*
+                            val ctx = tlsCtxNew(1)
+                            if ctx == 0 then
+                                tcpClose(serverFd)
+                                Abort.panic(HttpBindException(path, 0, new Exception("Failed to create TLS context")))
+                            else
+                                val certResult = Zone {
+                                    tlsCtxSetCert(
+                                        ctx,
+                                        toCString(tlsCfg.certChainPath.getOrElse("")),
+                                        toCString(tlsCfg.privateKeyPath.getOrElse(""))
+                                    )
+                                }
+                                if certResult != 0 then
+                                    tlsCtxFree(ctx)
+                                    tcpClose(serverFd)
+                                    Abort.panic(HttpBindException(
+                                        path,
+                                        0,
+                                        new Exception("Failed to load TLS certificate/key")
+                                    ))
+                                else
+                                    val closed = new java.util.concurrent.atomic.AtomicBoolean(false)
+                                    val connStream: Stream[EpollConnection, Async] =
+                                        Stream.unfold((), chunkSize = 1) { _ =>
+                                            if closed.get() then Maybe.empty
+                                            else
+                                                acceptLoop.awaitReadable(serverFd).andThen {
+                                                    Sync.defer {
+                                                        if closed.get() then Maybe.empty
+                                                        else
+                                                            val clientFd = tcpAccept(serverFd)
+                                                            if clientFd >= 0 then
+                                                                val connLoop = group.next()
+                                                                val conn     = new EpollConnection(clientFd, connLoop)
+                                                                val ssl      = Zone { tlsNew(ctx, null) }
+                                                                if ssl == 0 then
+                                                                    tcpClose(clientFd)
+                                                                    Maybe.empty
+                                                                else
+                                                                    tlsSetAcceptState(ssl)
+                                                                    val bridge = new EpollStreamTlsBridge(conn)
+                                                                    Meter.initMutexUnscoped.map { sslLock =>
+                                                                        val tlsStream =
+                                                                            new NativeTlsStream(
+                                                                                ssl,
+                                                                                ctx,
+                                                                                ownsCtx = false,
+                                                                                bridge,
+                                                                                sslLock
+                                                                            )
+                                                                        conn.tlsStream = Present(tlsStream)
+                                                                        Maybe((conn, ()))
+                                                                    }
+                                                                end if
+                                                            else
+                                                                Maybe.empty
+                                                            end if
+                                                        end if
+                                                    }
+                                                }
+                                            end if
+                                        }
+                                    new TransportListener(
+                                        boundAddress,
+                                        connStream,
+                                        close = Sync.Unsafe.defer {
+                                            closed.set(true)
+                                            acceptLoop.cancelFd(serverFd)
+                                            tcpClose(serverFd)
+                                        }
+                                    )
+                                end if
+                            end if
+                    end match
+                end if
+            }
+        }
+
+end EpollNativeTransport
+
+/** An epoll-backed connection that implements TransportStream (stream-based reads).
+  *
+  * Uses the shared EpollIoLoop for all read/write readiness. No per-connection epoll fds.
+  */
+private[kyo] class EpollConnection(
+    val fd: Int,
+    private[internal] val loop: EpollIoLoop,
+    var closed: Boolean = false,
+    var tlsStream: Maybe[NativeTlsStream] = Absent
+) extends TransportStream:
+
+    import PosixBindings.*
+
+    private val ChunkSize = 8192
+
+    def read(using Frame): Stream[Span[Byte], Async] =
+        Stream.unfold((), chunkSize = 1) { _ =>
+            tlsStream match
+                case Present(tls) => readTls(tls)
+                case Absent       => readPlain()
+        }
+
+    private def readPlain()(using Frame): Maybe[(Span[Byte], Unit)] < Async =
+        loop.awaitReadable(fd).andThen {
+            Sync.defer {
+                Zone {
+                    val ptr = alloc[Byte](ChunkSize)
+                    val n   = tcpRead(fd, ptr, ChunkSize)
+                    if n > 0 then
+                        val arr = new Array[Byte](n)
+                        var i   = 0
+                        while i < n do
+                            arr(i) = ptr(i)
+                            i += 1
+                        end while
+                        Maybe((Span.fromUnsafe(arr), ()))
+                    else if n == 0 then
+                        Maybe.empty[(Span[Byte], Unit)] // EOF: peer closed
+                    else
+                        Maybe.empty[(Span[Byte], Unit)] // EAGAIN / error — treat as EOF
+                    end if
+                }
+            }
+        }
+    end readPlain
+
+    private def readTls(tls: NativeTlsStream)(using Frame): Maybe[(Span[Byte], Unit)] < Async =
+        val buf = new Array[Byte](ChunkSize)
+        tls.read(buf).map { n =>
+            if n > 0 then
+                val arr = new Array[Byte](n)
+                java.lang.System.arraycopy(buf, 0, arr, 0, n)
+                Maybe((Span.fromUnsafe(arr), ()))
+            else
+                Maybe.empty[(Span[Byte], Unit)]
+            end if
+        }
+    end readTls
+
+    def write(data: Span[Byte])(using Frame): Unit < Async =
+        if data.isEmpty then Kyo.unit
+        else
+            tlsStream match
+                case Present(tls) => tls.write(data)
+                case Absent       => writePlain(data)
+
+    private[kyo] def writePlain(data: Span[Byte])(using Frame): Unit < Async =
+        loop.awaitWritable(fd).andThen {
+            Sync.defer {
+                Zone {
+                    val arr = data.toArrayUnsafe
+                    val ptr = alloc[Byte](arr.length)
+                    var i   = 0
+                    while i < arr.length do
+                        ptr(i) = arr(i)
+                        i += 1
+                    end while
+                    val written = tcpWrite(fd, ptr, arr.length)
+                    if written < 0 then
+                        Abort.panic(HttpProtocolException(s"write failed on fd $fd"))
+                    else if written < data.size then
+                        writePlain(data.slice(written, data.size))
+                    else
+                        Kyo.unit
+                    end if
+                }
+            }
+        }
+    end writePlain
+
+end EpollConnection
+
+/** Bridges an EpollConnection to the RawStream API, so NativeTlsStream can use it for TLS I/O.
+  *
+  * Delegates to the connection's raw I/O using the shared EpollIoLoop.
+  */
+private[kyo] class EpollStreamTlsBridge(conn: EpollConnection) extends RawStream:
+
+    def read(buf: Array[Byte])(using Frame): Int < Async =
+        conn.loop.awaitReadable(conn.fd).andThen {
+            Sync.defer {
+                import PosixBindings.*
+                Zone {
+                    val ptr       = alloc[Byte](buf.length)
+                    val bytesRead = tcpRead(conn.fd, ptr, buf.length)
+                    if bytesRead > 0 then
+                        var i = 0
+                        while i < bytesRead do
+                            buf(i) = ptr(i)
+                            i += 1
+                        end while
+                    end if
+                    if bytesRead == 0 then -1 else bytesRead // 0 = EOF on POSIX, map to -1
+                }
+            }
+        }
+    end read
+
+    def write(data: Span[Byte])(using Frame): Unit < Async =
+        conn.writePlain(data)
+
+end EpollStreamTlsBridge

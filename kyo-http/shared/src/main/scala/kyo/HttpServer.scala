@@ -1,7 +1,7 @@
 package kyo
 
 import kyo.*
-import kyo.internal.HttpPlatformBackend
+import kyo.internal.HttpPlatformTransport
 import kyo.internal.OpenApiGenerator
 
 /** HTTP server that binds handlers to a port and manages the server lifecycle.
@@ -23,8 +23,13 @@ import kyo.internal.OpenApiGenerator
   *   [[kyo.HttpBackend.Server]] The platform-specific backend
   */
 final class HttpServer private (binding: HttpBackend.Binding):
-    def port: Int                                               = binding.port
-    def host: String                                            = binding.host
+    def address: HttpAddress = binding.address
+    def port: Int = binding.address match
+        case HttpAddress.Tcp(_, p) => p
+        case HttpAddress.Unix(_)   => -1
+    def host: String = binding.address match
+        case HttpAddress.Tcp(h, _) => h
+        case HttpAddress.Unix(_)   => "localhost"
     def close(gracePeriod: Duration)(using Frame): Unit < Async = binding.close(gracePeriod)
     def close(using Frame): Unit < Async                        = binding.close
     def closeNow(using Frame): Unit < Async                     = binding.closeNow
@@ -40,7 +45,7 @@ object HttpServer:
         init(HttpServerConfig.default.port(port).host(host))(handlers*)
 
     def init(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
-        init(HttpPlatformBackend.server, config)(handlers*)
+        init(HttpPlatformTransport.defaultServer, config)(handlers*)
 
     def init(backend: HttpBackend.Server, config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
@@ -65,9 +70,9 @@ object HttpServer:
     ): A < (S & Async & Scope) =
         init(config)(handlers*).map(f)
 
-    def initWith[A, S](backend: HttpBackend.Server, port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(
-        f: HttpServer => A < S
-    )(using Frame): A < (S & Async & Scope) =
+    def initWith[A, S](backend: HttpBackend.Server, port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
+        Frame
+    ): A < (S & Async & Scope) =
         init(backend, port, host)(handlers*).map(f)
 
     def initUnscoped(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
@@ -77,7 +82,7 @@ object HttpServer:
         initUnscoped(HttpServerConfig.default.port(port).host(host))(handlers*)
 
     def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
-        initUnscoped(HttpPlatformBackend.server, config)(handlers*)
+        initUnscoped(HttpPlatformTransport.defaultServer, config)(handlers*)
 
     def initUnscoped(backend: HttpBackend.Server, port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
@@ -103,22 +108,24 @@ object HttpServer:
         backend.bind(allHandlers, config).map(new HttpServer(_))
     end initUnscoped
 
-    def initUnscopedWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using Frame): A < (S & Async & Scope) =
+    def initUnscopedWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using Frame): A < (S & Async) =
         initUnscoped(handlers*).map(f)
 
     def initUnscopedWith[A, S](port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async & Scope) =
+    ): A < (S & Async) =
         initUnscoped(port, host)(handlers*).map(f)
 
     def initUnscopedWith[A, S](config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async & Scope) =
+    ): A < (S & Async) =
         initUnscoped(config)(handlers*).map(f)
 
-    def initUnscopedWith[A, S](backend: HttpBackend.Server, port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(
-        f: HttpServer => A < S
-    )(using Frame): A < (S & Async & Scope) =
+    def initUnscopedWith[A, S](
+        backend: HttpBackend.Server,
+        port: Int,
+        host: String
+    )(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using Frame): A < (S & Async) =
         initUnscoped(backend, port, host)(handlers*).map(f)
 
 end HttpServer

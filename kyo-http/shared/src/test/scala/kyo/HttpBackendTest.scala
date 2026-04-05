@@ -13,9 +13,7 @@ class HttpBackendTest extends Test:
         type Connection = Unit
 
         def connectWith[A](
-            host: String,
-            port: Int,
-            ssl: Boolean,
+            url: HttpUrl,
             connectTimeout: Maybe[Duration]
         )(
             f: Connection => A < (Async & Abort[HttpException])
@@ -25,14 +23,14 @@ class HttpBackendTest extends Test:
             conn: Connection,
             route: HttpRoute[In, Out, ?],
             request: HttpRequest[In],
-            onReleaseUnsafe: Maybe[Result.Error[Any]] => Unit
+            onRelease: Maybe[Result.Error[Any]] => Unit < Async
         )(
             f: HttpResponse[Out] => A < (Async & Abort[HttpException])
         )(using Frame): A < (Async & Abort[HttpException]) =
             Abort.fail(HttpJsonDecodeException("stub", "TEST", "/test"))
 
-        def isAlive(conn: Connection)(using AllowUnsafe): Boolean                     = true
-        def closeNowUnsafe(conn: Connection)(using AllowUnsafe): Unit                 = ()
+        def isAlive(conn: Connection)(using Frame): Boolean < Sync                    = Sync.defer(true)
+        def closeNow(conn: Connection)(using Frame): Unit < Async                     = Kyo.unit
         def close(conn: Connection, gracePeriod: Duration)(using Frame): Unit < Async = ()
         def close(gracePeriod: Duration)(using Frame): Unit < Async                   = ()
 
@@ -42,8 +40,9 @@ class HttpBackendTest extends Test:
             config: HttpServerConfig
         )(using Frame): HttpBackend.Binding < Async =
             new HttpBackend.Binding:
-                val port: Int                                               = config.port
-                val host: String                                            = config.host
+                val address: HttpAddress = config.unixSocket match
+                    case Present(path) => HttpAddress.Unix(path)
+                    case Absent        => HttpAddress.Tcp(config.host, config.port)
                 def close(gracePeriod: Duration)(using Frame): Unit < Async = ()
                 def await(using Frame): Unit < Async                        = ()
 
@@ -137,22 +136,19 @@ class HttpBackendTest extends Test:
         "close with default grace period" in {
             var captured: Duration = Duration.Zero
             val binding = new HttpBackend.Binding:
-                val port: Int    = 9090
-                val host: String = "localhost"
+                val address: HttpAddress = HttpAddress.Tcp("localhost", 9090)
                 def close(gracePeriod: Duration)(using Frame): Unit < Async =
                     captured = gracePeriod
                 def await(using Frame): Unit < Async = ()
             val _: Unit < Async = binding.close
-            assert(binding.port == 9090)
-            assert(binding.host == "localhost")
+            assert(binding.address == HttpAddress.Tcp("localhost", 9090))
             assert(captured == 30.seconds)
         }
 
         "closeNow uses zero duration" in {
             var captured: Duration = 30.seconds
             val binding = new HttpBackend.Binding:
-                val port: Int    = 9090
-                val host: String = "localhost"
+                val address: HttpAddress = HttpAddress.Tcp("localhost", 9090)
                 def close(gracePeriod: Duration)(using Frame): Unit < Async =
                     captured = gracePeriod
                 def await(using Frame): Unit < Async = ()

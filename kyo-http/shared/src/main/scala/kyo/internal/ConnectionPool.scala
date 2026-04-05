@@ -8,14 +8,14 @@ import kyo.*
 import scala.annotation.tailrec
 
 /** Manages per-host pools of idle connections with bounded capacity, health checks, and idle eviction. Uses a lock-free Vyukov MPMC ring
-  * buffer per host for zero-allocation on the hot path.
+  * buffer per host for zero-allocation on the hot path. All methods return suspended computations.
   */
 final private[kyo] class ConnectionPool[C](
     maxConnectionsPerHost: Int,
     idleConnectionTimeoutNanos: Long,
-    pools: ConcurrentHashMap[ConnectionPool.HostKey, ConnectionPool.HostPool],
-    isAlive: C => Boolean,
-    discardConn: C => Unit
+    pools: ConcurrentHashMap[HttpAddress, ConnectionPool.HostPool],
+    isAlive: C => Boolean < Sync,
+    discardConn: C => Unit < Async
 ):
 
     import ConnectionPool.*
@@ -23,50 +23,53 @@ final private[kyo] class ConnectionPool[C](
     @volatile private var closed = false
 
     /** Try to get a live idle connection for the given host. */
-    def poll(key: HostKey)(using AllowUnsafe): Maybe[C] =
+    def poll(key: HttpAddress)(using Frame): Maybe[C] < Async =
         if closed then Maybe.empty
         else getPool(key).poll(idleConnectionTimeoutNanos, isAlive, discardConn)
 
     /** Return a connection to the idle pool. If the ring is full, discard it. */
-    def release(key: HostKey, conn: C)(using AllowUnsafe): Unit =
+    def release(key: HttpAddress, conn: C)(using Frame): Unit < Async =
         if closed then discardConn(conn)
         else getPool(key).release(conn, discardConn)
 
     /** Track a connection as in-flight. */
-    def track(key: HostKey, conn: C)(using AllowUnsafe): Unit =
-        if !closed then getPool(key).track(conn)
+    def track(key: HttpAddress, conn: C)(using Frame): Unit < Sync =
+        Sync.defer { if !closed then getPool(key).track(conn) }
 
     /** Untrack an in-flight connection. */
-    def untrack(key: HostKey, conn: C)(using AllowUnsafe): Unit =
-        if !closed then getPool(key).untrack(conn)
+    def untrack(key: HttpAddress, conn: C)(using Frame): Unit < Sync =
+        Sync.defer { if !closed then getPool(key).untrack(conn) }
 
     /** Discard a connection without returning it to the pool. */
-    def discard(conn: C)(using AllowUnsafe): Unit =
+    def discard(conn: C)(using Frame): Unit < Async =
         discardConn(conn)
 
     /** Try to reserve an in-flight slot. Returns true if under the per-host limit. */
-    def tryReserve(key: HostKey)(using AllowUnsafe): Boolean =
-        if closed then false
-        else getPool(key).tryReserve()
+    def tryReserve(key: HttpAddress)(using Frame): Boolean < Sync =
+        Sync.defer {
+            if closed then false
+            else getPool(key).tryReserve()
+        }
 
     /** Release an in-flight slot. Always call this after tryReserve, on both success and failure paths. */
-    def unreserve(key: HostKey)(using AllowUnsafe): Unit =
-        if !closed then getPool(key).unreserve()
+    def unreserve(key: HttpAddress)(using Frame): Unit < Sync =
+        Sync.defer { if !closed then getPool(key).unreserve() }
 
     /** Close the pool. Returns all connections (idle + in-flight) for the caller to close. */
-    def close()(using AllowUnsafe): Chunk[C] =
-        if closed then Chunk.empty
-        else
-            closed = true
-            val builder = ChunkBuilder.init[C]
-            pools.forEach { (_, hostPool) =>
-                hostPool.close(builder)
-            }
-            pools.clear()
-            builder.result()
-    end close
+    def close()(using Frame): Chunk[C] < Sync =
+        Sync.defer {
+            if closed then Chunk.empty
+            else
+                closed = true
+                val builder = ChunkBuilder.init[C]
+                pools.forEach { (_, hostPool) =>
+                    hostPool.close(builder)
+                }
+                pools.clear()
+                builder.result()
+        }
 
-    private def getPool(key: HostKey)(using AllowUnsafe): HostPool =
+    private def getPool(key: HttpAddress): HostPool =
         pools.computeIfAbsent(key, _ => new HostPool(maxConnectionsPerHost))
 
 end ConnectionPool
@@ -76,39 +79,25 @@ private[kyo] object ConnectionPool:
     def init[C](
         maxConnectionsPerHost: Int,
         idleConnectionTimeout: Duration,
-        isAlive: C => Boolean,
-        discard: C => Unit
-    )(using AllowUnsafe): ConnectionPool[C] =
-        // Minimum of 2 is required by the Vyukov MPMC ring buffer (sequence values collide at capacity 1)
-        require(
-            maxConnectionsPerHost >= 2,
-            s"maxConnectionsPerHost must be >= 2: $maxConnectionsPerHost"
-        )
-        new ConnectionPool(
-            maxConnectionsPerHost,
-            idleConnectionTimeout.toNanos,
-            new ConcurrentHashMap(),
-            isAlive,
-            discard
-        )
-    end init
+        isAlive: C => Boolean < Sync,
+        discard: C => Unit < Async
+    )(using Frame): ConnectionPool[C] < Sync =
+        Sync.defer {
+            require(maxConnectionsPerHost >= 2, s"maxConnectionsPerHost must be >= 2: $maxConnectionsPerHost")
+            new ConnectionPool(
+                maxConnectionsPerHost,
+                idleConnectionTimeout.toNanos,
+                new ConcurrentHashMap(),
+                isAlive,
+                discard
+            )
+        }
 
-    private[kyo] case class HostKey(host: String, port: Int) derives CanEqual
-
-    /** Lock-free MPMC ring buffer for idle connections, inspired by Dmitry Vyukov's MPMC queue (as implemented in Agrona's
-      * ManyToManyConcurrentArrayQueue).
-      *
-      * Uses three parallel pre-allocated arrays (connections, timestamps, sequences) for zero allocation on the hot path. The sequence
-      * array coordinates concurrent access: each slot's sequence number acts as a per-slot state machine that ensures writers have
-      * exclusive ownership before writing and readers see completed writes before reading.
-      *
-      * Requires capacity >= 2 (same as Agrona) because with capacity == 1 the sequence values for "written, awaiting read" (seq = tail + 1)
-      * and "read, ready for write" (seq = head + capacity) collide.
-      */
+    /** Lock-free MPMC ring buffer for idle connections, inspired by Dmitry Vyukov's MPMC queue. */
     final private[internal] class HostPool(capacity: Int):
         require(capacity >= 2, s"maxConnectionsPerHost must be >= 2: $capacity")
 
-        private val connections = new Array[AnyRef](capacity)
+        private val connections = Array.fill[Maybe[AnyRef]](capacity)(Absent)
         private val timestamps  = new Array[Long](capacity)
         private val sequences   = new AtomicLongArray(Array.tabulate[Long](capacity)(_.toLong))
         private val head        = new AtomicLong(0)
@@ -117,62 +106,58 @@ private[kyo] object ConnectionPool:
         private val tracked     = new ConcurrentHashMap[AnyRef, Unit]()
 
         /** Try to take an idle connection. Discards expired or dead connections and retries. */
-        @tailrec final def poll[C](
+        final def poll[C](
             idleTimeoutNanos: Long,
-            isAlive: C => Boolean,
-            discardConn: C => Unit
-        )(using AllowUnsafe): Maybe[C] =
-            val currentHead = head.get()
-            val idx         = (currentHead % capacity).toInt
-            val seq         = sequences.get(idx)
-            if seq < currentHead + 1 then
-                // Ring is empty — no completed write at this position
-                Maybe.empty
-            else if !head.compareAndSet(currentHead, currentHead + 1) then
-                // Another reader won, retry
-                poll(idleTimeoutNanos, isAlive, discardConn)
-            else
-                // Claimed the slot — read data
-                val conn = connections(idx).asInstanceOf[C]
-                val ts   = timestamps(idx)
-                connections(idx) = null
-                // Release slot back to writers
-                sequences.lazySet(idx, currentHead + capacity)
-                // Check idle timeout and liveness
-                val elapsed = java.lang.System.nanoTime() - ts
-                if elapsed > idleTimeoutNanos then
-                    discardConn(conn)
-                    poll(idleTimeoutNanos, isAlive, discardConn)
-                else if !isAlive(conn) then
-                    discardConn(conn)
+            isAlive: C => Boolean < Sync,
+            discardConn: C => Unit < Async
+        )(using Frame): Maybe[C] < Async =
+            Sync.defer {
+                val currentHead = head.get()
+                val idx         = (currentHead % capacity).toInt
+                val seq         = sequences.get(idx)
+                if seq < currentHead + 1 then
+                    Maybe.empty
+                else if !head.compareAndSet(currentHead, currentHead + 1) then
                     poll(idleTimeoutNanos, isAlive, discardConn)
                 else
-                    Present(conn)
+                    val conn = connections(idx).get.asInstanceOf[C]
+                    val ts   = timestamps(idx)
+                    connections(idx) = Absent
+                    sequences.lazySet(idx, currentHead + capacity)
+                    val elapsed = java.lang.System.nanoTime() - ts
+                    if elapsed > idleTimeoutNanos then
+                        discardConn(conn).andThen(poll(idleTimeoutNanos, isAlive, discardConn))
+                    else
+                        isAlive(conn).map { alive =>
+                            if !alive then
+                                discardConn(conn).andThen(poll(idleTimeoutNanos, isAlive, discardConn))
+                            else
+                                Present(conn)
+                        }
+                    end if
                 end if
-            end if
-        end poll
+            }
 
         /** Return a connection to the ring. If full, discard it. */
-        @tailrec final def release[C](conn: C, discardConn: C => Unit)(using AllowUnsafe): Unit =
-            val currentTail = tail.get()
-            val idx         = (currentTail % capacity).toInt
-            val seq         = sequences.get(idx)
-            if seq < currentTail then
-                // Ring is full — slot still holds an unread write
-                discardConn(conn)
-            else if !tail.compareAndSet(currentTail, currentTail + 1) then
-                // Another writer won, retry
-                release(conn, discardConn)
-            else
-                // Claimed the slot — write data
-                connections(idx) = conn.asInstanceOf[AnyRef]
-                timestamps(idx) = java.lang.System.nanoTime()
-                sequences.lazySet(idx, currentTail + 1)
-            end if
-        end release
+        final def release[C](conn: C, discardConn: C => Unit < Async)(using Frame): Unit < Async =
+            Sync.defer {
+                val currentTail = tail.get()
+                val idx         = (currentTail % capacity).toInt
+                val seq         = sequences.get(idx)
+                if seq < currentTail then
+                    discardConn(conn)
+                else if !tail.compareAndSet(currentTail, currentTail + 1) then
+                    release(conn, discardConn)
+                else
+                    connections(idx) = Present(conn.asInstanceOf[AnyRef])
+                    timestamps(idx) = java.lang.System.nanoTime()
+                    sequences.lazySet(idx, currentTail + 1)
+                    Kyo.unit
+                end if
+            }
 
         /** Reserve an in-flight slot to prevent connection storms. */
-        def tryReserve()(using AllowUnsafe): Boolean =
+        def tryReserve(): Boolean =
             @tailrec def loop(): Boolean =
                 val current  = inFlight.get()
                 val idleSize = (tail.get() - head.get()).toInt.max(0)
@@ -184,38 +169,40 @@ private[kyo] object ConnectionPool:
         end tryReserve
 
         /** Release an in-flight slot. */
-        def unreserve()(using AllowUnsafe): Unit =
-            discard(inFlight.decrementAndGet())
+        def unreserve(): Unit =
+            kyo.discard(inFlight.decrementAndGet())
 
         /** Track a connection as in-flight. */
-        def track[C](conn: C)(using AllowUnsafe): Unit =
-            discard(tracked.put(conn.asInstanceOf[AnyRef], ()))
+        def track[C](conn: C): Unit =
+            kyo.discard(tracked.put(conn.asInstanceOf[AnyRef], ()))
 
         /** Untrack an in-flight connection. */
-        def untrack[C](conn: C)(using AllowUnsafe): Unit =
-            discard(tracked.remove(conn.asInstanceOf[AnyRef]))
+        def untrack[C](conn: C): Unit =
+            kyo.discard(tracked.remove(conn.asInstanceOf[AnyRef]))
 
         /** Close the pool. Collects all connections (idle + in-flight) for the caller to close. */
-        def close[C](into: ChunkBuilder[C])(using AllowUnsafe): Unit =
-            // Drain idle
+        def close[C](into: ChunkBuilder[C]): Unit =
             @tailrec def loop(): Unit =
                 val currentHead = head.get()
                 val idx         = (currentHead % capacity).toInt
                 val seq         = sequences.get(idx)
-                if seq < currentHead + 1 then () // empty, done
+                if seq < currentHead + 1 then ()
                 else if head.compareAndSet(currentHead, currentHead + 1) then
-                    val conn = connections(idx)
-                    connections(idx) = null
+                    connections(idx) match
+                        case Present(conn) =>
+                            connections(idx) = Absent
+                            kyo.discard(into += conn.asInstanceOf[C])
+                        case Absent =>
+                            connections(idx) = Absent
+                    end match
                     sequences.lazySet(idx, currentHead + capacity)
-                    if conn ne null then discard(into += conn.asInstanceOf[C])
                     loop()
-                else loop() // CAS failed, retry
+                else loop()
                 end if
             end loop
             loop()
-            // Collect in-flight
             tracked.forEach { (conn, _) =>
-                discard(into += conn.asInstanceOf[C])
+                kyo.discard(into += conn.asInstanceOf[C])
             }
             tracked.clear()
         end close

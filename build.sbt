@@ -559,34 +559,15 @@ lazy val `kyo-http` =
             libraryDependencies += "dev.zio" %%% "zio-schema-derivation" % "1.6.4"
         )
         .jvmSettings(
-            mimaCheck(false),
-            libraryDependencies += "io.netty" % "netty-codec-http"              % "4.2.1.Final",
-            libraryDependencies += "io.netty" % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-x86_64",
-            libraryDependencies += "io.netty" % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-aarch_64",
-            libraryDependencies += "io.netty" % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-x86_64",
-            libraryDependencies += "io.netty" % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-aarch_64"
+            mimaCheck(false)
         )
         .jsSettings(
             `js-settings`,
-            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
         .nativeSettings(
             `native-settings`,
-            nativeConfig ~= { c =>
-                import scala.sys.process.*
-                val h2oCompileFlags =
-                    try "pkg-config --cflags libh2o-evloop".!!.trim.split("\\s+").toSeq
-                    catch { case _: Exception => Seq.empty }
-                val h2oLinkFlags =
-                    try "pkg-config --libs libh2o-evloop".!!.trim.split("\\s+").toSeq
-                    catch { case _: Exception => Seq("-lh2o-evloop") }
-                val curlLinkFlags =
-                    try "pkg-config --libs libcurl".!!.trim.split("\\s+").toSeq
-                    catch { case _: Exception => Seq("-lcurl") }
-                c.withCompileOptions(c.compileOptions ++ Seq("-DH2O_USE_LIBUV=0") ++ h2oCompileFlags)
-                    .withLinkingOptions(c.linkingOptions ++ curlLinkFlags ++ h2oLinkFlags)
-            }
+            nativeConfig ~= { c => c.withLinkingOptions(c.linkingOptions ++ Seq("-lssl", "-lcrypto")) }
         )
 
 lazy val `kyo-caliban` =
