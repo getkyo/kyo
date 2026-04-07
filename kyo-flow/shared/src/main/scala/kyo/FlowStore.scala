@@ -153,8 +153,8 @@ object FlowStore:
       */
     def initMemory(using Frame): FlowStore < (Sync & Scope) =
         AtomicRef.init(MemoryData.empty).map { ref =>
-            Signal.initRef(0).map { signal =>
-                new MemoryFlowStore(ref, signal)
+            Channel.init[Unit](1).map { channel =>
+                new MemoryFlowStore(ref, channel)
             }
         }
 

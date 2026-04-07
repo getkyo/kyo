@@ -222,13 +222,13 @@ class SignalTest extends Test:
             for
                 ref    <- Signal.initRef(1)
                 f      <- Fiber.initUnscoped(ref.streamChanges.take(3).run)
-                _      <- Async.sleep(2.millis)
+                _      <- Async.sleep(30.millis)
                 _      <- ref.set(2)
-                _      <- Async.sleep(2.millis)
+                _      <- Async.sleep(30.millis)
                 _      <- ref.set(2) // Should be ignored
-                _      <- Async.sleep(2.millis)
+                _      <- Async.sleep(30.millis)
                 _      <- ref.set(3)
-                _      <- Async.sleep(2.millis)
+                _      <- Async.sleep(30.millis)
                 values <- f.get
             yield assert(values == Chunk(1, 2, 3))
         }

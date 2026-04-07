@@ -14,11 +14,11 @@ private[kyo] object MemoryData:
 
 private[kyo] class MemoryFlowStore(
     ref: AtomicRef[MemoryData],
-    signal: Signal.SignalRef[Int]
+    channel: Channel[Unit]
 )(using Frame) extends FlowStore:
 
     private def notify(using Frame): Unit < Sync =
-        signal.updateAndGet(_ + 1).unit
+        Abort.run[Closed](channel.offer(())).unit
 
     // --- Coordination ---
 
@@ -75,10 +75,14 @@ private[kyo] class MemoryFlowStore(
         tryOnce.map { results =>
             if results.nonEmpty then results
             else
-                Async.race(
-                    Async.sleep(timeout).andThen(Seq.empty[FlowStore.ExecutionState]),
-                    signal.next.andThen(tryOnce)
-                )
+                Abort.run[Closed] {
+                    channel.poll.andThen {
+                        Async.race(
+                            Async.sleep(timeout).andThen(Seq.empty[FlowStore.ExecutionState]),
+                            channel.take.andThen(tryOnce)
+                        )
+                    }
+                }.map(_.getOrElse(Seq.empty))
         }
     end claimReady
 
