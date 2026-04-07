@@ -1076,6 +1076,110 @@ class TagTest extends Test:
         typeCheck("x.method")
     }
 
+    "show determinism" - {
+
+        "intersection order is canonical" - {
+            trait SA
+            trait SB
+            trait SC
+
+            "A & B == B & A" in {
+                assert(Tag[SA & SB].show == Tag[SB & SA].show)
+            }
+
+            "A & B & C == C & B & A" in {
+                assert(Tag[SA & SB & SC].show == Tag[SC & SB & SA].show)
+            }
+
+            "A & B & C == B & C & A" in {
+                assert(Tag[SA & SB & SC].show == Tag[SB & SC & SA].show)
+            }
+        }
+
+        "union order is canonical" - {
+            trait SA
+            trait SB
+            trait SC
+
+            "A | B == B | A" in {
+                assert(Tag[SA | SB].show == Tag[SB | SA].show)
+            }
+
+            "A | B | C == C | B | A" in {
+                assert(Tag[SA | SB | SC].show == Tag[SC | SB | SA].show)
+            }
+
+            "A | B | C == B | C | A" in {
+                assert(Tag[SA | SB | SC].show == Tag[SB | SC | SA].show)
+            }
+        }
+
+        "nested intersection and union" - {
+            trait SA
+            trait SB
+            trait SC
+            trait SD
+
+            "(A & B) | (C & D) == (D & C) | (B & A)" in {
+                assert(Tag[(SA & SB) | (SC & SD)].show == Tag[(SD & SC) | (SB & SA)].show)
+            }
+
+            "(A | B) & (C | D) == (D | C) & (B | A)" in {
+                assert(Tag[(SA | SB) & (SC | SD)].show == Tag[(SD | SC) & (SB | SA)].show)
+            }
+        }
+
+        "parameterized types" - {
+            "List[Int] is stable" in {
+                assert(Tag[List[Int]].show == Tag[List[Int]].show)
+            }
+
+            "Map[String, Int] is stable" in {
+                assert(Tag[Map[String, Int]].show == Tag[Map[String, Int]].show)
+            }
+        }
+
+        "dynamic tags" - {
+            "simple dynamic tag is stable" in {
+                def mkTag[A: Tag] = Tag[List[A]].show
+                assert(mkTag[Int] == mkTag[Int])
+                assert(mkTag[String] == mkTag[String])
+                assert(mkTag[Int] != mkTag[String])
+            }
+
+            "dynamic intersection is canonical" in {
+                def mkIntersectionAB[A: Tag, B: Tag] = Tag[A & B].show
+                def mkIntersectionBA[A: Tag, B: Tag] = Tag[B & A].show
+                assert(mkIntersectionAB[Int, String] == mkIntersectionBA[Int, String])
+            }
+
+            "dynamic union is canonical" in {
+                def mkUnionAB[A: Tag, B: Tag] = Tag[A | B].show
+                def mkUnionBA[A: Tag, B: Tag] = Tag[B | A].show
+                assert(mkUnionAB[Int, String] == mkUnionBA[Int, String])
+            }
+
+            "nested dynamic is stable" in {
+                def mkTag[A: Tag, B: Tag] = Tag[Map[A, List[B]]].show
+                assert(mkTag[String, Int] == mkTag[String, Int])
+                assert(mkTag[String, Int] != mkTag[Int, String])
+            }
+
+            "dynamic with intersection reorder" in {
+                def mk1[A: Tag, B: Tag, C: Tag] = Tag[A & B & C].show
+                def mk2[A: Tag, B: Tag, C: Tag] = Tag[C & A & B].show
+                assert(mk1[Int, String, Boolean] == mk2[Int, String, Boolean])
+            }
+        }
+
+        "repeated calls produce same result" in {
+            trait SA
+            trait SB
+            val results = (1 to 10).map(_ => Tag[SA & SB].show)
+            assert(results.distinct.size == 1)
+        }
+    }
+
     // TODO: fix this to use `pendingUntilFixed` instead of `ignore`
     given RegisterFunction = (name, test, pending) =>
         if pending then name ignore Future.successful(test)

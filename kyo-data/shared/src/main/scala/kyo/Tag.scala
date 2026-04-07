@@ -217,8 +217,14 @@ object Tag:
                         case NothingEntry                 => "scala.Nothing"
                         case NullEntry                    => "scala.Null"
                         case LiteralEntry(widened, value) => value
-                        case IntersectionEntry(set)       => "(" + set.map(render(owner, _)).mkString(" & ") + ")"
-                        case UnionEntry(set)              => "(" + set.map(render(owner, _)).mkString(" | ") + ")"
+                        case IntersectionEntry(set) =>
+                            val b = new ChunkBuilder[String]
+                            set.foreach(id => b.addOne(render(owner, id)))
+                            "(" + b.result().sorted.mkString(" & ") + ")"
+                        case UnionEntry(set) =>
+                            val b = new ChunkBuilder[String]
+                            set.foreach(id => b.addOne(render(owner, id)))
+                            "(" + b.result().sorted.mkString(" | ") + ")"
                         case LambdaEntry(params, _, _, body) =>
                             s"[${params.mkString(", ")}] => ${render(owner, body)}"
                         case OpaqueEntry(name, lower, upper, variances, params) =>

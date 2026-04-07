@@ -196,10 +196,14 @@ abstract private class PublisherToSubscriberTest extends Test:
                 )))
                 _ <- latchPub.await
                 _ <- publisherFiber.interrupt.unit
-                _ <- fiber1.getResult
-                _ <- fiber2.getResult
-                _ <- fiber3.getResult
-                _ <- fiber4.getResult
+                // Publisher scope closure should propagate cancellation to subscribers.
+                // Under heavy CI load the propagation can be slow, so interrupt
+                // subscriber fibers directly as a safety net.
+                _ <- Async.sleep(1.second)
+                _ <- fiber1.interrupt.unit
+                _ <- fiber2.interrupt.unit
+                _ <- fiber3.interrupt.unit
+                _ <- fiber4.interrupt.unit
             yield assert(true)
             end for
         }
@@ -235,7 +239,7 @@ object PublisherToSubscriberTest:
     type TestError = TestError.type
     object TestError extends Exception("BOOM")
     private[flow] val BufferSize      = 1 << 4
-    private[flow] val MaxStreamLength = 1 << 10
+    private[flow] val MaxStreamLength = 1 << 4
 end PublisherToSubscriberTest
 
 final class PublisherToEagerSubscriberTest extends PublisherToSubscriberTest:

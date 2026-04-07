@@ -185,9 +185,12 @@ object Scope:
                                         if tasks.isEmpty then
                                             promise.completeUnitDiscard
                                         else
-                                            Async.foreachDiscard(tasks, parallelism) { task =>
+                                            Async.foreachDiscard(tasks.reverse, parallelism) { task =>
                                                 Abort.run[Throwable](task(ex))
-                                                    .map(_.foldError(_ => (), ex => Log.error("Scope finalizer failed", ex.exception)))
+                                                    .map(_.foldError(
+                                                        _ => (),
+                                                        ex => Log.error("Scope finalizer failed", ex.exception)
+                                                    ))
                                             }
                                                 .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
                                                 .map(promise.becomeDiscard)

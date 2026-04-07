@@ -1,7 +1,6 @@
 package kyo.stats.internal
 
 import java.lang.ref.WeakReference
-import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import scala.annotation.tailrec
 
@@ -36,19 +35,12 @@ object StatsRegistry {
             internal.counterGauges.get(name :: reversePath, description, new UnsafeCounterGauge(() => run))
     }
 
-    def addExporter(exporter: StatsExporter) =
-        internal.exporters.add(exporter)
+    private[kyo] object internal {
 
-    def removeExporter(exporter: StatsExporter) =
-        internal.exporters.remove(exporter)
-
-    private[kyo] object internal extends StatsRefresh {
-
-        val counters       = new Store[UnsafeCounter]
-        val histograms     = new Store[UnsafeHistogram]
-        val gauges         = new Store[UnsafeGauge]
-        val counterGauges  = new Store[UnsafeCounterGauge]
-        lazy val exporters = Collections.newSetFromMap(new ConcurrentHashMap[StatsExporter, java.lang.Boolean])
+        val counters      = new Store[UnsafeCounter]
+        val histograms    = new Store[UnsafeHistogram]
+        val gauges        = new Store[UnsafeGauge]
+        val counterGauges = new Store[UnsafeCounterGauge]
 
         class Store[A <: AnyRef] extends Serializable {
             val map = new ConcurrentHashMap[List[String], (WeakReference[A], String)]
@@ -62,53 +54,6 @@ object StatsRegistry {
                     get(reversePath, description, init)
                 } else {
                     value
-                }
-            }
-            def gc(): Unit =
-                map.forEach { (path, ref) =>
-                    if (ref._1.get() == null) {
-                        map.remove(path)
-                        ()
-                    }
-                }
-        }
-
-        def refresh() = {
-            counters.gc()
-            histograms.gc()
-            gauges.gc()
-            if (!exporters.isEmpty()) {
-                counters.map.forEach { (path, tuple) =>
-                    val (ref, desc) = tuple
-                    val counter     = ref.get()
-                    if (counter != null) {
-                        val delta = counter.delta()
-                        exporters.forEach(_.counter(path, desc, delta))
-                    }
-                }
-                histograms.map.forEach { (path, tuple) =>
-                    val (ref, desc) = tuple
-                    val histogram   = ref.get()
-                    if (histogram != null) {
-                        val summary = histogram.summary()
-                        exporters.forEach(_.histogram(path, desc, summary))
-                    }
-                }
-                gauges.map.forEach { (path, tuple) =>
-                    val (ref, desc) = tuple
-                    val gauge       = ref.get()
-                    if (gauge != null) {
-                        val current = gauge.collect()
-                        exporters.forEach(_.gauge(path, desc, current))
-                    }
-                }
-                counterGauges.map.forEach { (path, tuple) =>
-                    val (ref, desc) = tuple
-                    val counter     = ref.get()
-                    if (counter != null) {
-                        val delta = counter.delta()
-                        exporters.forEach(_.counter(path, desc, delta))
-                    }
                 }
             }
         }

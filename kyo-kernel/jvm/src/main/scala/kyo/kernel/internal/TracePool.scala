@@ -1,10 +1,10 @@
 package kyo.kernel.internal
 
 import java.util.Arrays
+import kyo.AllowUnsafe
 import kyo.discard
+import kyo.internal.*
 import kyo.kernel.internal.*
-import org.jctools.queues.MessagePassingQueue.Consumer
-import org.jctools.queues.MpmcArrayQueue
 
 /** A concurrent two-level object pooling system for managing Trace objects used in execution tracking.
   *
@@ -27,7 +27,8 @@ private[kernel] object TracePool:
     inline def globalCapacity: Int = 8192
     inline def localCapacity: Int  = 32
 
-    private val global = new MpmcArrayQueue[Trace](globalCapacity)
+    import AllowUnsafe.embrace.danger
+    private val global = new MpmcUnsafeQueue[Trace](globalCapacity)
 
     abstract class Local extends Serializable:
         final private val pool = new Array[Trace](localCapacity)
@@ -47,7 +48,7 @@ private[kernel] object TracePool:
             end if
         end borrow
 
-        final private val add: Consumer[Trace] =
+        final private val add: Trace => Unit =
             (trace: Trace) =>
                 val idx = size
                 if (trace ne null) && idx < localCapacity then

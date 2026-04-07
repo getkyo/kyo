@@ -4,6 +4,7 @@ import java.lang.Float.floatToIntBits
 import java.lang.Float.intBitsToFloat
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.LongAdder
+import kyo.AllowUnsafe
 import scala.annotation.tailrec
 
 /** A fixed-bucket histogram for recording value distributions, inspired by the OTel SDK's ExplicitBucketHistogramAggregation and
@@ -58,9 +59,9 @@ class UnsafeHistogram(boundaries: Array[Double]) extends Serializable {
     private def pack(min: Float, max: Float): Long =
         (floatToIntBits(min).toLong << 32) | (floatToIntBits(max).toLong & 0xffffffffL)
 
-    def observe(v: Long): Unit = observe(v.toDouble)
+    def observe(v: Long)(implicit _au: AllowUnsafe): Unit = observe(v.toDouble)
 
-    def observe(v: Double): Unit = {
+    def observe(v: Double)(implicit _au: AllowUnsafe): Unit = {
         @tailrec def findBucket(lo: Int, hi: Int): Unit =
             if (lo >= hi)
                 buckets(lo).increment()
@@ -90,7 +91,7 @@ class UnsafeHistogram(boundaries: Array[Double]) extends Serializable {
         loop()
     }
 
-    def summary(): Summary = {
+    def summary()(implicit _au: AllowUnsafe): Summary = {
         val counts = new Array[Long](buckets.length)
         @tailrec def loop(i: Int, total: Long): Long =
             if (i >= counts.length)
