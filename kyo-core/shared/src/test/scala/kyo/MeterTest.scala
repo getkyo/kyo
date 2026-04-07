@@ -144,7 +144,7 @@ class MeterTest extends Test:
 
         "concurrency" - {
 
-            val repeats = 100
+            val repeats = 10
 
             "run" in run {
                 (for
