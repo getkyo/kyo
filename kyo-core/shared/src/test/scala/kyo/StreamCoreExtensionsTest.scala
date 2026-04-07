@@ -670,7 +670,7 @@ class StreamCoreExtensionsTest extends Test:
             def stream(tc: TimeControl) = Stream {
                 Loop(1): i =>
                     Emit.valueWith(Chunk(i)):
-                        (if i % 5 == 0 then tc.advance(30.millis) else Kyo.unit)
+                        (if i % 5 == 0 then tc.advance(30.millis, 100.millis) else Kyo.unit)
                             .andThen(Loop.continue(i + 1))
             }.take(11)
 

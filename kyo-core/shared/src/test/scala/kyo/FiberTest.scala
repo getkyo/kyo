@@ -173,7 +173,7 @@ class FiberTest extends Test:
             "returns first result regardless of success/failure" in run {
                 val error = new Exception("test error")
                 Fiber.internal.raceFirst(Seq(
-                    Async.delay(10.millis)(1),
+                    Async.delay(1.second)(1),
                     Async.delay(1.millis)(Abort.fail[Exception](error))
                 )).map(_.getResult).map { r =>
                     assert(r.failure.contains(error))
