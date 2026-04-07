@@ -496,7 +496,7 @@ object Scheduler {
     private lazy val defaultClockExecutor  = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))
     private lazy val defaultTimerExecutor  = Executors.newScheduledThreadPool(4, Threads("kyo-scheduler-timer"))
 
-    lazy val get = new Scheduler()
+    val get = new Scheduler()
 
     /** Configuration parameters controlling worker behavior and performance characteristics.
       *
