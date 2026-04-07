@@ -242,6 +242,8 @@ abstract private class Worker(
                     // Either queue is empty or another thread changed our state
                     // Clean up and exit
                     mount = null
+                    mountId = 0L
+                    blocked = false
                     clearCurrent()
                     return
                 }
@@ -255,6 +257,8 @@ abstract private class Worker(
                 // Drain remaining tasks from queue
                 drain()
                 mount = null
+                mountId = 0L
+                blocked = false
                 clearCurrent()
                 return
             }
