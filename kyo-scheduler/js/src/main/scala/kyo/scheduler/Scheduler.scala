@@ -29,4 +29,6 @@ class Scheduler {
 
     def reject(key: Int): Boolean = false
 
+    def notifyInterrupt(): Unit = {}
+
 }
