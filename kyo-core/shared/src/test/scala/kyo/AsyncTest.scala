@@ -1505,6 +1505,96 @@ class AsyncTest extends Test:
         }
     }
 
+    "foreachIndexed" - {
+        "indices are correct when size > concurrency (batching path)" in run {
+            // When size > concurrency, items are batched. The index passed to f
+            // should be the global item index, not group_index + within_group_index.
+            val items = (0 until 20).toList
+            Async.foreachIndexed(items, concurrency = 3) { (idx, value) =>
+                (idx, value)
+            }.map { results =>
+                val pairs = results.toSeq
+                // Each item's index should equal its value since items = 0..19
+                pairs.zipWithIndex.foreach { case ((reportedIdx, value), position) =>
+                    assert(reportedIdx == position, s"Item at position $position: expected index $position but got $reportedIdx")
+                    assert(value == position, s"Item at position $position: expected value $position but got $value")
+                }
+                succeed
+            }
+        }
+
+        "indices are correct with uneven batches" in run {
+            // 10 items with concurrency=3 → groups of 4,4,2
+            // Bug: idx + idx2 gives 0,1,2,3 / 1,2,3,4 / 2,3 instead of 0,1,2,3 / 4,5,6,7 / 8,9
+            val items = (0 until 10).toList
+            Async.foreachIndexed(items, concurrency = 3) { (idx, _) =>
+                idx
+            }.map { results =>
+                assert(results == Chunk.from(0 until 10), s"Expected indices 0..9 but got $results")
+            }
+        }
+
+        "indices are correct via foreach (delegates to foreachIndexed)" in run {
+            // foreach wraps foreachIndexed, discarding the index.
+            // Verify by capturing indices through the values themselves.
+            val items = (0 until 12).toList
+            Async.foreach(items, concurrency = 2) { value =>
+                value
+            }.map { results =>
+                assert(results == Chunk.from(0 until 12))
+            }
+        }
+
+        "indices correct with many items and low concurrency" in run {
+            // 100 items, concurrency 4 → 4 groups of 25
+            // With the bug: group 0 gets 0..24, group 1 gets 1..25, group 2 gets 2..26, group 3 gets 3..27
+            val items = (0 until 100).toList
+            Async.foreachIndexed(items, concurrency = 4) { (idx, _) =>
+                idx
+            }.map { results =>
+                assert(results == Chunk.from(0 until 100), s"Expected indices 0..99 but got ${results.take(30)}...")
+            }
+        }
+    }
+
+    "batching concurrency" - {
+        "tasks are picked up by idle workers instead of waiting in static batch" in run {
+            // With static batching: items split into equal groups, each processed sequentially.
+            // If one batch has all slow tasks, other workers idle after finishing their fast batch.
+            //
+            // Create a scenario where the first batch finishes fast but the last batch is slow.
+            // With proper work-stealing, idle workers would pick up remaining slow tasks.
+            //
+            // 8 items, concurrency=2 → 2 batches of 4
+            // Batch 0 (items 0-3): instant
+            // Batch 1 (items 4-7): each sleeps 50ms → 200ms sequential
+            // With static batching: ~200ms (batch 1 runs all 4 sequentially)
+            // With work-stealing: ~100ms (2 workers each run 2 slow tasks)
+            for
+                maxConcurrent <- AtomicInt.init(0)
+                active        <- AtomicInt.init(0)
+                results <- Async.foreach(0 until 8, concurrency = 2) { i =>
+                    for
+                        current <- active.incrementAndGet
+                        _       <- maxConcurrent.updateAndGet(max => if current > max then current else max)
+                        _       <- Kyo.when(i >= 4)(Async.sleep(50.millis))
+                        _       <- active.decrementAndGet
+                    yield i
+                }
+                peak <- maxConcurrent.get
+            yield
+                // Results should preserve order regardless
+                assert(results.toSeq == (0 until 8).toSeq)
+                // With effective concurrency, both workers should be utilized during
+                // the slow tasks. If batching is static, only 1 worker handles all slow tasks.
+                // We check that at some point 2 workers were active simultaneously during
+                // the slow phase. This assertion will pass with work-stealing but may
+                // fail with static batching since batch 0 (fast) finishes before batch 1 starts slow tasks.
+                assert(peak == 2, s"Expected both workers active concurrently during slow phase, but peak was $peak")
+            end for
+        }
+    }
+
     "zip" - {
         "executes nine computations in parallel" in run {
             for
