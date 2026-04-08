@@ -22,7 +22,11 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
     // ── shared scheduler (single instance for all scheduler-level tests) ─
 
-    private val scheduler = new Scheduler(TestExecutors.cached, TestExecutors.scheduled)
+    private val scheduler = new Scheduler(
+        TestExecutors.cached,
+        TestExecutors.scheduled,
+        TestExecutors.scheduled
+    )
 
     // ── shared helpers ──────────────────────────────────────────────────
 
