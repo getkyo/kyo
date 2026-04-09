@@ -5,6 +5,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.top.WorkerStatus
+import kyo.scheduler.util.ThreadUserTime
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
 
@@ -93,12 +94,31 @@ abstract private class Worker(
 
     private val state = new AtomicReference[State](State.Idle)
 
-    @volatile private var mount: Thread = null
+    @volatile private[scheduler] var mount: Thread = null
+    // -1 = not mounted (idle or never started). Set to the thread's CPU-time ID
+    // at the start of run(), reset to -1 on exit. Published by currentTask volatile.
+    private[scheduler] var mountId: Long = -1L
+    // Not volatile: written by BlockingMonitor timer thread (~2ms), read by cycleWorkers timer
+    // thread (~100μs). Stale reads are acceptable — this is a scheduling heuristic, not a
+    // correctness constraint. Worst case: a blocked worker accepts one extra task before
+    // detection, which is then drained on the next cycle.
+    private[scheduler] var blocked: Boolean = false
+
+    // Coordinates between BlockingMonitor's interrupt dispatch and task cleanup.
+    // Prevents the TOCTOU race where Thread.interrupt() dispatched for task A arrives
+    // after task B starts on the same worker. Both monitor and worker acquire this lock:
+    // monitor before dispatch, worker before clearing currentTask + Thread.interrupted().
+    private[scheduler] val interruptLock = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+    @scala.annotation.tailrec
+    private def acquireInterruptLock(): Unit =
+        if (!interruptLock.compareAndSet(false, true))
+            acquireInterruptLock()
 
     val b1, b2, b3, b4, b5, b6, b7 = 0L // padding
 
-    @volatile private var taskStartMs       = 0L
-    @volatile private var currentTask: Task = null
+    @volatile private var taskStartMs                  = 0L
+    @volatile private[scheduler] var currentTask: Task = null
 
     val c1, c2, c3, c4, c5, c6, c7 = 0L // padding
 
@@ -164,7 +184,7 @@ abstract private class Worker(
       */
     def checkAvailability(nowMs: Long): Boolean = {
         val st        = this.state.get()
-        val available = !checkStalling(nowMs) && (st ne State.Stalled) && !isBlocked()
+        val available = (st ne State.Stalled) && !blocked && !checkStalling(nowMs)
         if (!available && (st eq State.Running) && state.compareAndSet(State.Running, State.Stalled))
             drain()
         available
@@ -180,20 +200,12 @@ abstract private class Worker(
         stalled
     }
 
-    private def isBlocked(): Boolean = {
-        val mount = this.mount
-        (mount ne null) && {
-            val state = mount.getState().ordinal()
-            state == Thread.State.BLOCKED.ordinal() ||
-            state == Thread.State.WAITING.ordinal() ||
-            state == Thread.State.TIMED_WAITING.ordinal()
-        }
-    }
-
     def run(): Unit = {
+        Thread.interrupted() // clear stale interrupt from pool reuse
         // Set up worker state
         mounts += 1
         mount = Thread.currentThread()
+        mountId = ThreadUserTime.currentThreadId()
         setCurrent(this)
         var task: Task = null
 
@@ -231,6 +243,8 @@ abstract private class Worker(
                 if (queue.isEmpty() || !state.compareAndSet(State.Idle, State.Running)) {
                     // Either queue is empty or another thread changed our state
                     // Clean up and exit
+                    mountId = -1L
+                    blocked = false
                     mount = null
                     clearCurrent()
                     return
@@ -244,6 +258,10 @@ abstract private class Worker(
                 if (task ne null) schedule(task)
                 // Drain remaining tasks from queue
                 drain()
+                mountId = -1L
+                blocked = false
+                mount = null
+                clearCurrent()
                 return
             }
         }
@@ -261,8 +279,11 @@ abstract private class Worker(
                 thread.getUncaughtExceptionHandler().uncaughtException(thread, ex)
                 Task.Done
         } finally {
+            acquireInterruptLock()
             currentTask = null
             taskStartMs = 0
+            Thread.interrupted() // clear stale interrupt flag before next task
+            interruptLock.set(false)
             task.addRuntime((clock.currentMillis() - start).asInstanceOf[Int])
         }
     }
@@ -293,7 +314,7 @@ abstract private class Worker(
             state.get() eq State.Running,
             thread,
             frame,
-            isBlocked(),
+            blocked,
             checkStalling(clock.currentMillis()),
             executions,
             preemptions,
