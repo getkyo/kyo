@@ -259,19 +259,28 @@ object Exchange:
                         case Maybe.Absent =>
                             val promise = Promise.Unsafe.init[Resp, Abort[E | Closed]]()
                             self.addPending(id, promise)
-                            Sync.ensure(Sync.Unsafe.defer(self.removePending(id))) {
-                                given ConcreteTag[E] = self.concreteTag
-                                self.safeEncode(id, req).map { wire =>
-                                    Abort.runWith[E](self.safeSend(wire)) {
-                                        case Result.Success(_) =>
-                                            promise.safe.get
-                                        case Result.Failure(e) =>
-                                            Sync.Unsafe.defer(self.shutdownWithError(e)).andThen(Abort.fail(e))
-                                        case Result.Panic(t) =>
-                                            Abort.panic(t)
+                            // Double-check: close() may have drained the pending map
+                            // between the poll() above and addPending(). Without this,
+                            // the promise would never be completed → hang.
+                            self.donePromise.poll() match
+                                case Maybe.Present(Result.Failure(err)) =>
+                                    self.removePending(id)
+                                    Abort.fail(err)
+                                case _ =>
+                                    Sync.ensure(Sync.Unsafe.defer(self.removePending(id))) {
+                                        given ConcreteTag[E] = self.concreteTag
+                                        self.safeEncode(id, req).map { wire =>
+                                            Abort.runWith[E](self.safeSend(wire)) {
+                                                case Result.Success(_) =>
+                                                    promise.safe.get
+                                                case Result.Failure(e) =>
+                                                    Sync.Unsafe.defer(self.shutdownWithError(e)).andThen(Abort.fail(e))
+                                                case Result.Panic(t) =>
+                                                    Abort.panic(t)
+                                            }
+                                        }
                                     }
-                                }
-                            }
+                            end match
                     end match
                 }
             }

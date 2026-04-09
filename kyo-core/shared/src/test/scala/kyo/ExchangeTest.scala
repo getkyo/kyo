@@ -1397,6 +1397,32 @@ class ExchangeTest extends Test:
             }.andThen(succeed)
         }
 
+        "apply after close completes with Closed (no hang)" in run {
+            for
+                (ex, sendCh, receiveCh) <- mkExchange
+                _                       <- ex.close
+                result                  <- Abort.run[TestError | Closed](ex("req"))
+            yield assert(
+                result match
+                    case Result.Failure(_: Closed) => true
+                    case _                         => false
+                ,
+                s"Expected Closed, got $result"
+            )
+        }
+
+        "apply vs close race — high iteration count" in run {
+            val iterations = 500
+            Kyo.foreachDiscard(1 to iterations) { _ =>
+                for
+                    (ex, sendCh, receiveCh) <- mkExchange
+                    applyFiber              <- Fiber.initUnscoped(Abort.run[TestError | Closed](ex("req")))
+                    _                       <- ex.close
+                    result                  <- applyFiber.getResult
+                yield ()
+            }.andThen(succeed)
+        }
+
         "apply vs receive stream end race never hangs" in run {
             val iterations = 50
             Kyo.foreachDiscard(1 to iterations) { _ =>
