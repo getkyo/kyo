@@ -622,46 +622,49 @@ object Channel:
                     discard(puts.drain(_.promise.completeDiscard(closedResult)))
                     flush()
                 else if !putsEmpty && !takesEmpty then
-                    priorityPuts.poll().orElse(puts.poll()).foreach {
-                        case put @ Put.Value(value, promise) =>
-                            takes.poll() match
-                                case Present(takePromise) if takePromise.complete(Result.succeed(value)) =>
-                                    // Value transfered, complete put
-                                    promise.completeUnitDiscard()
+                    if batchInProgress.compareAndSet(false, true) then
+                        priorityPuts.poll().orElse(puts.poll()).foreach {
+                            case put @ Put.Value(value, promise) =>
+                                takes.poll() match
+                                    case Present(takePromise) if takePromise.complete(Result.succeed(value)) =>
+                                        // Value transfered, complete put
+                                        promise.completeUnitDiscard()
 
-                                case _ =>
-                                    // Take promise was interrupted, return put to the queue
-                                    discard(puts.offer(put))
-                            end match
+                                    case _ =>
+                                        // Take promise was interrupted, return put to the queue
+                                        discard(puts.offer(put))
+                                end match
 
-                        case Put.Batch(chunk, promise) =>
-                            // NB: this is only efficient if chunk is effectively indexed
-                            // (i.e. Chunk.Indexed or Chunk.Drop with Chunk.Indexed underlying)
-                            val size = chunk.length
-                            @tailrec
-                            def loop(i: Int): Unit =
-                                if i >= size then
-                                    // All items transfered, complete put
-                                    promise.completeUnitDiscard()
-                                else
-                                    takes.poll() match
-                                        case Present(takePromise) =>
-                                            if takePromise.complete(Result.succeed(chunk(i))) then
-                                                // Item transfered, move to the next one
-                                                loop(i + 1)
-                                            else
-                                                // Take was interrupted, retry current item
-                                                loop(i)
-                                            end if
-                                        case _ =>
-                                            // No more pending takes, enqueue put for the remaining items
-                                            discard(priorityPuts.offer(Put.Batch(chunk.dropLeft(i), promise)))
-                                end if
-                            end loop
+                            case Put.Batch(chunk, promise) =>
+                                // NB: this is only efficient if chunk is effectively indexed
+                                // (i.e. Chunk.Indexed or Chunk.Drop with Chunk.Indexed underlying)
+                                val size = chunk.length
+                                @tailrec
+                                def loop(i: Int): Unit =
+                                    if i >= size then
+                                        // All items transfered, complete put
+                                        promise.completeUnitDiscard()
+                                    else
+                                        takes.poll() match
+                                            case Present(takePromise) =>
+                                                if takePromise.complete(Result.succeed(chunk(i))) then
+                                                    // Item transfered, move to the next one
+                                                    loop(i + 1)
+                                                else
+                                                    // Take was interrupted, retry current item
+                                                    loop(i)
+                                                end if
+                                            case _ =>
+                                                // No more pending takes, enqueue put for the remaining items
+                                                discard(priorityPuts.offer(Put.Batch(chunk.dropLeft(i), promise)))
+                                    end if
+                                end loop
 
-                            loop(0)
-                    }
-                    flush()
+                                loop(0)
+                        }
+                        batchInProgress.set(false)
+                        flush()
+                    end if
                 end if
             end flush
         end ZeroCapacityUnsafe
@@ -705,6 +708,7 @@ object Channel:
             end offerAll
 
             def poll()(using AllowUnsafe, Frame) =
+                while batchInProgress.get() do Thread.onSpinWait()
                 val result = queue.poll()
                 if result.exists(_.nonEmpty) then flush()
                 result
@@ -715,6 +719,7 @@ object Channel:
                 def loop(current: Chunk[A], i: Int): Result[Closed, Chunk[A]] =
                     if i == 0 then Result.Success(current)
                     else
+                        while batchInProgress.get() do Thread.onSpinWait()
                         val next = queue.drainUpTo(i)
                         next match
                             case Result.Success(c) =>
