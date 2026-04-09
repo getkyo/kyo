@@ -708,7 +708,7 @@ object Channel:
             end offerAll
 
             def poll()(using AllowUnsafe, Frame) =
-                while batchInProgress.get() do Thread.onSpinWait()
+                while batchInProgress.get() do ()
                 val result = queue.poll()
                 if result.exists(_.nonEmpty) then flush()
                 result
@@ -719,7 +719,7 @@ object Channel:
                 def loop(current: Chunk[A], i: Int): Result[Closed, Chunk[A]] =
                     if i == 0 then Result.Success(current)
                     else
-                        while batchInProgress.get() do Thread.onSpinWait()
+                        while batchInProgress.get() do ()
                         val next = queue.drainUpTo(i)
                         next match
                             case Result.Success(c) =>
