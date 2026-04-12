@@ -408,7 +408,7 @@ object Async extends AsyncPlatformSpecific:
                 case 1 => f(0, iterable.head).map(Chunk(_))
                 case size =>
                     isolate.capture { state =>
-                        val items = Chunk.from(iterable).toIndexed
+                        val items = Chunk.Indexed.from(iterable)
                         Fiber.internal.foreachIndexed(items, concurrency) { (idx, v) =>
                             isolate.isolate(state, f(idx, v))
                         }.map(_.use(r => Kyo.foreach(r)(isolate.restore)))
