@@ -616,6 +616,7 @@ class ChannelTest extends Test:
                 )
                 closeFiber    <- Fiber.initUnscoped(latch.await.andThen(channel.close))
                 _             <- latch.release
+                _             <- Async.sleep(100.millis)
                 offered       <- offerFiber.get
                 backlog       <- closeFiber.get
                 closedChannel <- channel.close
