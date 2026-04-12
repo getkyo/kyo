@@ -396,6 +396,9 @@ object Signal:
         def updateAndGet(f: A => A)(using Frame): A < Sync =
             Sync.Unsafe.defer(_unsafe.updateAndGet(f))
 
+        def waiters(using Frame): Int < Sync =
+            Sync.Unsafe.defer(_unsafe.waiters())
+
         def unsafe: SignalRef.Unsafe[A] = _unsafe
     end SignalRef
 
@@ -476,6 +479,8 @@ object Signal:
             private def onUpdate(value: A)(using AllowUnsafe): Unit =
                 nextPromise.getAndSet(Promise.Unsafe.initMasked())
                     .completeDiscard(Result.succeed(value))
+
+            def waiters()(using AllowUnsafe): Int = nextPromise.get().waiters()
 
             def safe: SignalRef[A] = SignalRef(this)
 
