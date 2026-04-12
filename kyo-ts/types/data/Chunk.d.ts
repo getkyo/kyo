@@ -1,0 +1,38 @@
+export declare class Chunk {
+  append<B>(b: B): Chunk<B>;
+  appended<B>(b: B): Chunk<B>;
+  apply(index: number): A;
+  changes<B>(first: Maybe<B>): Chunk<B>;
+  changes(): Chunk<A>;
+  collect<B>(pf: PartialFunction<A, B>): Chunk<B>;
+  concat<B>(other: Chunk<B>): Chunk<B>;
+  copyTo<B>(array: B[], start: number): void;
+  copyTo<B>(array: B[], start: number, elements: number): void;
+  drop(n: number): Chunk<A>;
+  dropLeft(n: number): Chunk<A>;
+  dropLeftAndRight(left: number, right: number): Chunk<A>;
+  dropRight(n: number): Chunk<A>;
+  dropWhile(p: (x1: A) => boolean): Chunk<A>;
+  filter(pred: (x1: A) => boolean): Chunk<A>;
+  foldLeft<B>(z: B, op: (x1: B, x2: A) => B): B;
+  foreach<U>(f: (x1: A) => U): void;
+  readonly headMaybe: Maybe<A>;
+  readonly isEmpty: boolean;
+  readonly iterableFactory: StrictOptimizedSeqFactory<unknown>;
+  readonly iterator: Iterator<A>;
+  readonly knownSize: number;
+  readonly last: A;
+  readonly lastMaybe: Maybe<A>;
+  readonly length: number;
+  map<B>(f: (x1: A) => B): Chunk<B>;
+  slice(from: number, until: number): Chunk<A>;
+  take(n: number): Chunk<A>;
+  takeRight(n: number): Chunk<A>;
+  takeWhile(pred: (x1: A) => boolean): Chunk<A>;
+  toArray<B>(): B[];
+  toIndexed<B>(): Indexed<B>;
+
+  static empty<A>(): Chunk<A>;
+  static from<A>(source: A | undefined): Chunk<A>;
+  static newBuilder<A>(): Builder<A, Chunk<A>>;
+};

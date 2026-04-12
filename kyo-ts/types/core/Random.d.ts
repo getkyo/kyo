@@ -1,0 +1,30 @@
+export declare class Random {
+  let_<A, S>(v: Kyo<A, S>): Kyo<A, S & Sync>;
+  nextBoolean(): Kyo<boolean, Sync>;
+  nextBytes(length: number): Kyo<number[], Sync>;
+  nextDouble(): Kyo<number, Sync>;
+  nextFloat(): Kyo<number, Sync>;
+  nextGaussian(): Kyo<number, Sync>;
+  nextInt(exclusiveBound: number): Kyo<number, Sync>;
+  nextInt(): Kyo<number, Sync>;
+  nextLong(): Kyo<number, Sync>;
+  nextString(length: number, chars: Char[]): Kyo<string, Sync>;
+  nextStringAlphanumeric(length: number): Kyo<string, Sync>;
+  nextValue<A>(seq: A[]): Kyo<A, Sync>;
+  nextValues<A>(length: number, seq: A[]): Kyo<A[], Sync>;
+  shuffle<A>(seq: A[]): Kyo<A[], Sync>;
+  readonly unsafe: Unsafe;
+
+  static apply(u: Unsafe): Random;
+  static get(): Kyo<Random, unknown>;
+  readonly live: Random;
+  static nextBoolean(): Kyo<boolean, Sync>;
+  static nextDouble(): Kyo<number, Sync>;
+  static nextFloat(): Kyo<number, Sync>;
+  static nextGaussian(): Kyo<number, Sync>;
+  static nextInt(): Kyo<number, Sync>;
+  static nextLong(): Kyo<number, Sync>;
+  static nextValue<A>(seq: A[]): Kyo<A, Sync>;
+  static shuffle<A>(seq: A[]): Kyo<A[], Sync>;
+  static use<A, S>(f: (x1: Random) => Kyo<A, S>): Kyo<A, S & Sync>;
+};

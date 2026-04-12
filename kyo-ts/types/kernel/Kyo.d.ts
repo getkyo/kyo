@@ -1,0 +1,38 @@
+export declare class Kyo {
+  later(): Kyo<A, S>;
+  now(): A;
+  unless<S1>(ifFalse: () => Kyo<A, S1>): Kyo<Maybe<A>, S & S1>;
+  when<S1>(ifTrue: () => Kyo<A, S1>): Kyo<Maybe<A>, S & S1>;
+  when<S1>(ifTrue: () => Kyo<A, S1>, ifFalse: () => Kyo<A, S1>): Kyo<A, S & S1>;
+  zip<A1, A2, A3, A4, A5>(v2: Kyo<A2, S>, v3: Kyo<A3, S>, v4: Kyo<A4, S>, v5: Kyo<A5, S>): Kyo<[A1, A2, A3, A4, A5], S>;
+  zip<A1, A2, A3>(v2: Kyo<A2, S>, v3: Kyo<A3, S>): Kyo<[A1, A2, A3], S>;
+  zip<A1, A2, A3, A4>(v2: Kyo<A2, S>, v3: Kyo<A3, S>, v4: Kyo<A4, S>): Kyo<[A1, A2, A3, A4], S>;
+  zip<A1, A2, A3, A4, A5, A6, A7, A8, A9, A10>(v2: Kyo<A2, S>, v3: Kyo<A3, S>, v4: Kyo<A4, S>, v5: Kyo<A5, S>, v6: Kyo<A6, S>, v7: Kyo<A7, S>, v8: Kyo<A8, S>, v9: Kyo<A9, S>, v10: Kyo<A10, S>): Kyo<[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10], S>;
+  zip<A1, A2, A3, A4, A5, A6>(v2: Kyo<A2, S>, v3: Kyo<A3, S>, v4: Kyo<A4, S>, v5: Kyo<A5, S>, v6: Kyo<A6, S>): Kyo<[A1, A2, A3, A4, A5, A6], S>;
+  zip<A1, A2, A3, A4, A5, A6, A7, A8>(v2: Kyo<A2, S>, v3: Kyo<A3, S>, v4: Kyo<A4, S>, v5: Kyo<A5, S>, v6: Kyo<A6, S>, v7: Kyo<A7, S>, v8: Kyo<A8, S>): Kyo<[A1, A2, A3, A4, A5, A6, A7, A8], S>;
+  zip<A1, A2, A3, A4, A5, A6, A7, A8, A9>(v2: Kyo<A2, S>, v3: Kyo<A3, S>, v4: Kyo<A4, S>, v5: Kyo<A5, S>, v6: Kyo<A6, S>, v7: Kyo<A7, S>, v8: Kyo<A8, S>, v9: Kyo<A9, S>): Kyo<[A1, A2, A3, A4, A5, A6, A7, A8, A9], S>;
+  zip<A1, A2, A3, A4, A5, A6, A7>(v2: Kyo<A2, S>, v3: Kyo<A3, S>, v4: Kyo<A4, S>, v5: Kyo<A5, S>, v6: Kyo<A6, S>, v7: Kyo<A7, S>): Kyo<[A1, A2, A3, A4, A5, A6, A7], S>;
+  zip<A1, A2>(v2: Kyo<A2, S>): Kyo<[A1, A2], S>;
+
+  static collect<A, B, S>(source: Set<A>, f: (x1: Safepoint) => (x1: A) => Kyo<Maybe<B>, S>): Kyo<Set<B>, S>;
+  static collectAll<CC, A, S>(source: CC<Kyo<A, S>>): Kyo<CC<A>, S>;
+  static collectAllDiscard<K1, V1, S>(source: Map<K1, Kyo<V1, S>>): Kyo<void, S>;
+  static dropWhile<A, S>(source: A[], f: (x1: Safepoint) => (x1: A) => Kyo<boolean, S>): Kyo<A[], S>;
+  static filter<CC, A, S>(source: CC<A>, f: (x1: Safepoint) => (x1: A) => Kyo<boolean, S>): Kyo<CC<A>, S>;
+  static filterKeys<K1, V1, S>(source: Map<K1, V1>, f: (x1: Safepoint) => (x1: K1) => Kyo<boolean, S>): Kyo<Map<K1, V1>, S>;
+  static findFirst<K1, V1, B, S>(source: Map<K1, V1>, f: (x1: Safepoint) => (x1: [K1, V1]) => Kyo<Maybe<B>, S>): Kyo<Maybe<B>, S>;
+  static foldLeft<CC, A, B, S>(source: CC<A>, acc: B, f: (x1: Safepoint) => (x1: B, x2: A) => Kyo<B, S>): Kyo<B, S>;
+  static foreach<A, B, S>(source: A[], f: (x1: Safepoint) => (x1: A) => Kyo<B, S>): Kyo<B[], S>;
+  static foreachConcat<K1, V1, K2, V2, S>(source: Map<K1, V1>, f: (x1: Safepoint) => (x1: [K1, V1]) => Kyo<IterableOnce<[K2, V2]>, S>): Kyo<Map<K2, V2>, S>;
+  static foreachDiscard<A, B, S>(source: A[], f: (x1: Safepoint) => (x1: A) => Kyo<unknown, S>): Kyo<void, S>;
+  static foreachIndexed<A, B, S>(source: A[], f: (x1: Safepoint) => (x1: number, x2: A) => Kyo<B, S>): Kyo<B[], S>;
+  static groupBy<S, A, K>(source: Set<A>, f: (x1: Safepoint) => (x1: A) => Kyo<K, S>): Kyo<Map<K, Set<A>>, S>;
+  static groupMap<CC, A, K, B, S>(source: CC<A>, key: (x1: Safepoint) => (x1: A) => Kyo<K, S>, f: (x1: Safepoint) => (x1: A) => Kyo<B, S>): Kyo<Map<K, CC<B>>, S>;
+  static lift<A, S>(v: A): Kyo<A, S>;
+  static partition<K1, V1, S>(source: Map<K1, V1>, f: (x1: Safepoint) => (x1: [K1, V1]) => Kyo<boolean, S>): Kyo<[Map<K1, V1>, Map<K1, V1>], S>;
+  static partitionMap<S, A, A1, A2>(source: A[], f: (x1: Safepoint) => (x1: A) => Kyo<Either<A1, A2>, S>): Kyo<[A1[], A2[]], S>;
+  static scanLeft<K1, V1, B, S>(source: Map<K1, V1>, z: B, op: (x1: Safepoint) => (x1: B, x2: [K1, V1]) => Kyo<B, S>): Kyo<Chunk<B>, S>;
+  static span<CC, A, S>(source: CC<A>, f: (x1: Safepoint) => (x1: A) => Kyo<boolean, S>): Kyo<[CC<A>, CC<A>], S>;
+  static takeWhile<A, S>(source: A[], f: (x1: Safepoint) => (x1: A) => Kyo<boolean, S>): Kyo<A[], S>;
+  readonly unit: Kyo<void, unknown>;
+};

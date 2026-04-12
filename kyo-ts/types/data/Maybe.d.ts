@@ -1,0 +1,37 @@
+export declare class Maybe {
+  Ops(): Ops<A>;
+  collect<B>(pf: PartialFunction<A, B>): Maybe<B>;
+  contains<B>(elem: B): boolean;
+  exists(f: (x1: A) => boolean): boolean;
+  filter(f: (x1: A) => boolean): Maybe<A>;
+  filterNot(f: (x1: A) => boolean): Maybe<A>;
+  flatMap<B>(f: (x1: A) => Maybe<B>): Maybe<B>;
+  fold<B>(ifEmpty: () => B, ifDefined: (x1: A) => B): B;
+  forall(f: (x1: A) => boolean): boolean;
+  foreach(f: (x1: A) => void): void;
+  get(): A;
+  getOrElse<B>(default_: () => B): B;
+  isDefined(): boolean;
+  isEmpty(): boolean;
+  iterator(): Iterator<A>;
+  map<B>(f: (x1: A) => B): Maybe<B>;
+  nonEmpty(): boolean;
+  orElse<B>(alternative: () => Maybe<B>): Maybe<B>;
+  show(): string;
+  toChunk(): Chunk<A>;
+  toIterableOnce(): IterableOnce<A>;
+  toLeft<X>(right: () => X): Either<A, X>;
+  toList(): A[];
+  toOption(): A | undefined;
+  toResult<E>(ifEmpty: () => Result<E, A>): Result<E, A>;
+  toResult<E>(): Result<Absent, A>;
+  toRight<X>(left: () => X): Either<X, A>;
+  withFilter(f: (x1: A) => boolean): Maybe<A>;
+  zip<B>(that: Maybe<B>): Maybe<[A, B]>;
+
+  static apply<A>(v: A): Maybe<A>;
+  static empty<A>(): Maybe<A>;
+  static fromOption<A>(opt: A | undefined): Maybe<A>;
+  static given_CanEqual_Maybe_Maybe<A, B>(): CanEqual<Maybe<A>, Maybe<B>>;
+  static given_Render_MaybeA<A, MaybeA>(): given_Render_MaybeA<A, MaybeA>;
+};

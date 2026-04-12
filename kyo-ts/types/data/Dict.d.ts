@@ -1,0 +1,36 @@
+export declare class Dict {
+  apply(key: K): V;
+  collect<K2, V2>(pf: PartialFunction<[K, V], [K2, V2]>): Dict<K2, V2>;
+  concat(other: Dict<K, V>): Dict<K, V>;
+  contains(key: K): boolean;
+  count(fn: (x1: K, x2: V) => boolean): number;
+  exists(fn: (x1: K, x2: V) => boolean): boolean;
+  filter(fn: (x1: K, x2: V) => boolean): Dict<K, V>;
+  filterNot(fn: (x1: K, x2: V) => boolean): Dict<K, V>;
+  find(fn: (x1: K, x2: V) => boolean): Maybe<[K, V]>;
+  flatMap<K2, V2>(fn: (x1: K, x2: V) => Dict<K2, V2>): Dict<K2, V2>;
+  foldLeft<B>(z: B, fn: (x1: B, x2: K, x3: V) => B): B;
+  forall(fn: (x1: K, x2: V) => boolean): boolean;
+  foreach(fn: (x1: K, x2: V) => void): void;
+  foreachKey(fn: (x1: K) => void): void;
+  foreachValue(fn: (x1: V) => void): void;
+  get(key: K): Maybe<V>;
+  getOrElse(key: K, default_: () => V): V;
+  is(other: Dict<K, V>): boolean;
+  isEmpty(): boolean;
+  keys(): ReadonlyArray<K>;
+  map<K2, V2>(fn: (x1: K, x2: V) => [K2, V2]): Dict<K2, V2>;
+  mapValues<V2>(fn: (x1: V) => V2): Dict<K, V2>;
+  mkString(): string;
+  mkString(start: string, sep: string, end: string): string;
+  mkString(separator: string): string;
+  nonEmpty(): boolean;
+  remove(key: K): Dict<K, V>;
+  size(): number;
+  toMap(): Map<K, V>;
+  update(key: K, value: V): Dict<K, V>;
+
+  static apply<K, V>(entries: [K, V][]): Dict<K, V>;
+  static empty<K, V>(): Dict<K, V>;
+  static from<K, V>(map: Map<K, V>): Dict<K, V>;
+};

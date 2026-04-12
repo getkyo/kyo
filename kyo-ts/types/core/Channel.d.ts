@@ -1,0 +1,23 @@
+export declare class Channel {
+  capacity(): number;
+  close(): Kyo<Maybe<A[]>, Sync>;
+  closeAwaitEmpty(): Kyo<boolean, Async>;
+  closed(): Kyo<boolean, Sync>;
+  drain(): Kyo<Chunk<A>, Abort<Closed> & Sync>;
+  drainUpTo(max: number): Kyo<Chunk<A>, Sync & Abort<Closed>>;
+  empty(): Kyo<boolean, Abort<Closed> & Sync>;
+  full(): Kyo<boolean, Abort<Closed> & Sync>;
+  offer(value: A): Kyo<boolean, Abort<Closed> & Sync>;
+  offerDiscard(value: A): Kyo<void, Abort<Closed> & Sync>;
+  pendingPuts(): Kyo<number, Abort<Closed> & Sync>;
+  pendingTakes(): Kyo<number, Abort<Closed> & Sync>;
+  poll(): Kyo<Maybe<A>, Abort<Closed> & Sync>;
+  put(value: A): Kyo<void, Abort<Closed> & Async>;
+  putBatch(values: A[]): Kyo<void, Abort<Closed> & Async>;
+  size(): Kyo<number, Abort<Closed> & Sync>;
+  stream(maxChunkSize: number): Stream<A, Abort<Closed> & Async>;
+  streamUntilClosed(maxChunkSize: number): Stream<A, Async>;
+  take(): Kyo<A, Abort<Closed> & Async>;
+  takeExactly(n: number): Kyo<Chunk<A>, Abort<Closed> & Async>;
+  unsafe(): Unsafe<A>;
+};

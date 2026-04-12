@@ -1,0 +1,34 @@
+export declare class Pipe {
+  contramap<AA, A1, S1>(f: (x1: A1) => Kyo<AA, S1>): Pipe<A1, B, S & S1>;
+  contramapChunk<AA, A1, S1>(f: (x1: Chunk<A1>) => Kyo<Chunk<AA>, S1>): Pipe<A1, B, S & S1>;
+  contramapChunkPure<AA, A1>(f: (x1: Chunk<A1>) => Chunk<AA>): Pipe<A1, B, S>;
+  contramapPure<AA, A1>(f: (x1: A1) => AA): Pipe<A1, B, S>;
+  join<BB, C, S1>(sink: Sink<BB, C, S1>): Sink<A, C, S & S1>;
+  map<BB, B1, S1>(f: (x1: BB) => Kyo<B1, S1>): Pipe<A, B1, S & S1>;
+  mapChunk<BB, B1, S1>(f: (x1: Chunk<BB>) => Kyo<Chunk<B1>, S1>): Pipe<A, B1, S & S1>;
+  mapChunkPure<BB, B1>(f: (x1: Chunk<BB>) => Chunk<B1>): Pipe<A, B1, S>;
+  mapPure<BB, B1>(f: (x1: BB) => B1): Pipe<A, B1, S>;
+  readonly pollEmit: Kyo<void, Poll<Chunk<A>> & Emit<Chunk<B>> & S>;
+  transform<AA, S1>(stream: Stream<AA, S1>): Stream<B, S & S1>;
+
+  static changes<A>(first: A): Pipe<A, A, unknown>;
+  static changes<A>(): Pipe<A, A, unknown>;
+  static collect<A, B, S>(f: (x1: A) => Kyo<Maybe<B>, S>): Pipe<A, B, S>;
+  static collectPure<A, B>(f: (x1: A) => Maybe<B>): Pipe<A, B, unknown>;
+  static collectWhile<A, B, S>(f: (x1: A) => Kyo<Maybe<B>, S>): Pipe<A, B, S>;
+  static collectWhilePure<A, B>(f: (x1: A) => Maybe<B>): Pipe<A, B, unknown>;
+  static dropWhile<A, S>(f: (x1: A) => Kyo<boolean, S>): Pipe<A, A, S>;
+  static dropWhilePure<A>(f: (x1: A) => boolean): Pipe<A, A, unknown>;
+  static empty<A, B>(): Pipe<A, B, unknown>;
+  static filter<A, S>(f: (x1: A) => Kyo<boolean, S>): Pipe<A, A, S>;
+  static filterPure<A>(f: (x1: A) => boolean): Pipe<A, A, unknown>;
+  static identity<A>(): Pipe<A, A, unknown>;
+  static map<A, B, S>(f: (x1: A) => Kyo<B, S>): Pipe<A, B, S>;
+  static mapChunk<A, B, S>(f: (x1: Chunk<A>) => Kyo<Chunk<B>, S>): Pipe<A, B, S>;
+  static mapChunkPure<A, B>(f: (x1: Chunk<A>) => Chunk<B>): Pipe<A, B, unknown>;
+  static mapPure<A, B>(f: (x1: A) => B): Pipe<A, B, unknown>;
+  static takeWhile<A, S>(f: (x1: A) => Kyo<boolean, S>): Pipe<A, A, S>;
+  static takeWhilePure<A>(f: (x1: A) => boolean): Pipe<A, A, unknown>;
+  static tap<A, S>(f: (x1: A) => Kyo<unknown, S>): Pipe<A, A, S>;
+  static tapChunk<A, S>(f: (x1: Chunk<A>) => Kyo<unknown, S>): Pipe<A, A, S>;
+};
