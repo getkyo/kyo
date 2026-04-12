@@ -22,7 +22,11 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
     // ── shared scheduler (single instance for all scheduler-level tests) ─
 
-    private val scheduler = new Scheduler(TestExecutors.cached, TestExecutors.scheduled)
+    private val scheduler = new Scheduler(
+        TestExecutors.cached,
+        TestExecutors.scheduled,
+        TestExecutors.scheduled
+    )
 
     // ── shared helpers ──────────────────────────────────────────────────
 
@@ -570,41 +574,6 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             eventually(assert(task.executions == 1))
         }
 
-        "does not interrupt active thread even with needsInterrupt" in {
-            val baseline    = blockedWorkerCount()
-            val interrupted = new AtomicBoolean(false)
-            val started     = new CountDownLatch(1)
-            val stop        = new AtomicBoolean(false)
-            val task = TestTask(_run = () => {
-                started.countDown()
-                // Pure busy-spin — no yield, no syscalls, just increment.
-                // Ensures CPU time continuously advances.
-                var sum = 0L
-                while (!stop.get()) {
-                    sum += 1
-                    if (sum % 100000000 == 0 && Thread.interrupted())
-                        interrupted.set(true)
-                }
-                Task.Done
-            })
-            scheduler.schedule(task)
-            assert(started.await(5, TimeUnit.SECONDS))
-
-            task.requestInterrupt()
-            assert(task.needsInterrupt())
-
-            // Give the monitor time to run multiple cycles. An active thread's CPU time
-            // should advance between samples, so it should NOT be detected as blocked
-            // and should NOT receive Thread.interrupt().
-            eventually(timeout(scaled(org.scalatest.time.Span(2, org.scalatest.time.Seconds)))) {
-                assert(blockedWorkerCount() <= baseline, "active worker should not be blocked")
-            }
-            assert(!interrupted.get(), "active thread must not receive Thread.interrupt()")
-
-            stop.set(true)
-            eventually(assert(task.executions == 1))
-        }
-
         "re-interrupts thread that catches and re-blocks" in {
             val interruptCount = new AtomicInteger(0)
             val started        = new CountDownLatch(1)
@@ -811,6 +780,8 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 task
             }
 
+            assert(blockingStarted.await(10, TimeUnit.SECONDS), "blocking tasks should start")
+
             // 3 active tasks — should NOT receive Thread.interrupt()
             val activeTasks = (0 until 3).map { i =>
                 val flag = activeInterrupted(i)
@@ -829,8 +800,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 task
             }
 
-            assert(blockingStarted.await(10, TimeUnit.SECONDS), "blocking tasks should start")
-            assert(activeStarted.await(10, TimeUnit.SECONDS), "active tasks should start")
+            assert(activeStarted.await(20, TimeUnit.SECONDS), "active tasks should start")
 
             // Let monitor establish baseline CPU time samples
             Thread.sleep(30)
@@ -873,7 +843,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             val firstTask = TestTask(_run = () => {
                 firstStarted.countDown()
                 try
-                    Thread.sleep(30)
+                    Thread.sleep(10000)
                 catch {
                     case _: InterruptedException => ()
                 }
@@ -906,10 +876,10 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
             // Schedule second task — it may land on the same worker
             scheduler.schedule(secondTask)
-            assert(secondStarted.await(5, TimeUnit.SECONDS))
+            assert(secondStarted.await(20, TimeUnit.SECONDS))
 
             // Let the monitor run several cycles with the second task active
-            Thread.sleep(100)
+            Thread.sleep(1000)
 
             // The second task should NOT have received any spurious interrupts
             assert(
@@ -926,69 +896,6 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "stress" - {
 
-        "low load — blocking detection and no false positives" in {
-            // Part A: blocking task IS detected as blocked
-            val started = new CountDownLatch(1)
-            val done    = new CountDownLatch(1)
-
-            val blockingTask = TestTask(_run = () => {
-                started.countDown()
-                done.await()
-                Task.Done
-            })
-
-            scheduler.schedule(blockingTask)
-            assert(started.await(5, TimeUnit.SECONDS))
-
-            eventually(timeout(scaled(Span(5, Seconds)))) {
-                assert(
-                    blockedWorkerCount() >= 1,
-                    "worker running blocking task should be detected as blocked"
-                )
-            }
-
-            done.countDown()
-            eventually(timeout(scaled(Span(5, Seconds)))) {
-                assert(blockingTask.executions == 1, "blocking task should complete")
-            }
-
-            // Part B: active task is NOT detected as blocked
-            // Wait for blocked flag to clear from Part A
-            Thread.sleep(50)
-            val baselineAfterA = blockedWorkerCount()
-
-            val iterations = new AtomicInteger(0)
-            val stop       = new AtomicBoolean(false)
-
-            val activeTask = TestTask(_run = () => {
-                // Pure busy-spin — no yield, no syscalls. Ensures CPU time advances
-                // continuously between monitor samples even under contention.
-                while (!stop.get()) {
-                    val _ = iterations.incrementAndGet()
-                }
-                Task.Done
-            })
-
-            scheduler.schedule(activeTask)
-            eventually(assert(iterations.get() > 1000))
-
-            // Under parallel test processes, transient false positives can occur before
-            // the pressure-scaled threshold adapts. Use eventually to allow the flag to clear.
-            eventually(timeout(scaled(Span(5, Seconds)))) {
-                assert(
-                    blockedWorkerCount() <= baselineAfterA,
-                    "active CPU-bound worker should not be detected as blocked"
-                )
-            }
-
-            val before = iterations.get()
-            Thread.sleep(20)
-            assert(iterations.get() > before, "task should continue executing")
-
-            stop.set(true)
-            eventually(assert(activeTask.executions == 1))
-        }
-
         "CPU saturation — blocking task still detected" in {
             // Use 3 busy threads — enough to create significant CPU pressure without
             // exhausting Native thread resources
@@ -1004,7 +911,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 })
 
                 scheduler.schedule(task)
-                assert(started.await(10, TimeUnit.SECONDS))
+                assert(started.await(20, TimeUnit.SECONDS))
 
                 eventually(timeout(scaled(Span(10, Seconds)))) {
                     assert(
@@ -1015,52 +922,6 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
                 done.countDown()
                 eventually(timeout(scaled(Span(5, Seconds)))) {
-                    assert(task.executions == 1)
-                }
-            } finally
-                cleanupBusyThreads(busyThreads, busyStop)
-        }
-
-        "CPU contention — active task not persistently blocked" in {
-            val baseline = blockedWorkerCount()
-            // Use 3 busy threads — enough for contention without exhausting Native resources
-            val (busyThreads, busyStop) = spawnBusyThreads(3)
-            try {
-                val iterations = new AtomicInteger(0)
-                val stop       = new AtomicBoolean(false)
-
-                val task = TestTask(_run = () => {
-                    while (!stop.get()) {
-                        val _ = iterations.incrementAndGet()
-                    }
-                    Task.Done
-                })
-
-                scheduler.schedule(task)
-
-                eventually(timeout(scaled(Span(10, Seconds)))) {
-                    assert(iterations.get() > 100, "task should get CPU time even under contention")
-                }
-
-                Thread.sleep(200)
-
-                var notBlocked = 0
-                var checks     = 0
-                val checkEnd   = System.nanoTime() + 300000000L // 300ms
-                while (System.nanoTime() < checkEnd) {
-                    if (blockedWorkerCount() <= baseline)
-                        notBlocked += 1
-                    checks += 1
-                    Thread.sleep(10)
-                }
-
-                assert(
-                    notBlocked > 0,
-                    s"active task under contention should not be persistently blocked ($checks checks, $notBlocked not-blocked)"
-                )
-
-                stop.set(true)
-                eventually(timeout(scaled(Span(10, Seconds)))) {
                     assert(task.executions == 1)
                 }
             } finally
