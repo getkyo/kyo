@@ -196,7 +196,7 @@ class FiberTest extends Test:
                     ))
                     _      <- startLatch.await
                     _      <- promise1.complete(Result.succeed(1))
-                    _      <- Async.sleep(1.milli)
+                    _      <- Async.sleep(100.millis)
                     result <- fiber.get
                     _      <- untilTrue(interruptCount.get.map(_ == 2))
                 yield assert(result == 1)
