@@ -207,6 +207,7 @@ class MeterTest extends Test:
                         Async.foreach(runFibers.take(50), 50)(_.interrupt(panic))
                     ))
                     _           <- started.await
+                    _           <- Async.sleep(100.millis)
                     _           <- latch.release
                     interrupted <- interruptFiber.get
                     completed   <- Kyo.foreach(runFibers)(_.getResult)
