@@ -176,8 +176,8 @@ private[scheduler] class BlockingMonitor(
         if (position >= n) count
         else {
             val worker  = workers(position)
-            val mountId = if (worker ne null) worker.mountId else 0L
-            if (mountId != 0L) {
+            val mountId = if (worker ne null) worker.mountId else -1L
+            if (mountId > 0L) {
                 threadIds(count) = mountId
                 positions(count) = position
                 tasks(count) = worker.currentTask
