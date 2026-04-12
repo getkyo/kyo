@@ -780,6 +780,8 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 task
             }
 
+            assert(blockingStarted.await(10, TimeUnit.SECONDS), "blocking tasks should start")
+
             // 3 active tasks — should NOT receive Thread.interrupt()
             val activeTasks = (0 until 3).map { i =>
                 val flag = activeInterrupted(i)
@@ -798,7 +800,6 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 task
             }
 
-            assert(blockingStarted.await(10, TimeUnit.SECONDS), "blocking tasks should start")
             assert(activeStarted.await(10, TimeUnit.SECONDS), "active tasks should start")
 
             // Let monitor establish baseline CPU time samples
@@ -842,7 +843,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             val firstTask = TestTask(_run = () => {
                 firstStarted.countDown()
                 try
-                    Thread.sleep(30)
+                    Thread.sleep(10000)
                 catch {
                     case _: InterruptedException => ()
                 }
