@@ -44,7 +44,7 @@ class MpscUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             (producers :+ consumer).foreach(_.start())
             start.countDown()
-            Thread.sleep(200)
+            Thread.sleep(1000)
             stop.set(true)
             (producers :+ consumer).foreach(_.join(10000))
 
