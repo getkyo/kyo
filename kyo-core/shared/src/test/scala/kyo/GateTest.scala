@@ -1040,13 +1040,13 @@ class GateTest extends Test:
 
             "parent waits for all subgroups" in run {
                 for
-                    parent <- Gate.Dynamic.initUnscoped(0)
+                    parent <- Gate.Dynamic.initUnscoped(1)
                     sub1   <- parent.subgroup(1)
                     sub2   <- parent.subgroup(1)
                     pf     <- Fiber.initUnscoped(parent.pass)
-                    d1     <- Fiber.done(pf)
+                    d1     <- pf.done
                     _      <- sub1.pass
-                    d2     <- Fiber.done(pf)
+                    d2     <- pf.done
                     _      <- sub2.pass
                     _      <- pf.get
                 yield assert(!d1)
