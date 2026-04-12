@@ -190,13 +190,12 @@ class SignalTest extends Test:
     "Signal operations" - {
         "current and next" in run {
             for
-                ref     <- Signal.initRef(1)
-                v1      <- ref.current
-                started <- Latch.init(1)
-                f       <- Fiber.initUnscoped(started.release.andThen(ref.next))
-                _       <- started.await
-                _       <- ref.set(2)
-                v2      <- f.get
+                ref <- Signal.initRef(1)
+                v1  <- ref.current
+                f   <- Fiber.initUnscoped(ref.next)
+                _   <- untilTrue(ref.waiters.map(_ == 1))
+                _   <- ref.set(2)
+                v2  <- f.get
             yield assert(v1 == 1 && v2 == 2)
         }
 
