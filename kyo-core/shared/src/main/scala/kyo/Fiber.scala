@@ -681,45 +681,58 @@ object Fiber:
     ): Fiber[Chunk[A], Abort[E]] < Sync =
         internal.gather(max)(iterable)
 
-    private[kyo] def foreachIndexed[E, A, B](iterable: Iterable[A])(f: (Int, A) => B < (Abort[E] & Async))(
-        using frame: Frame
-    ): Fiber[Chunk[B], Abort[E]] < Sync =
-        internal.foreachIndexed(iterable)(f)
-
     private[kyo] object internal:
 
-        def foreachIndexed[E, A, B](iterable: Iterable[A])(f: (Int, A) => B < (Abort[E] & Async))(
-            using frame: Frame
-        ): Fiber[Chunk[B], Abort[E]] < Sync =
-            iterable.size match
-                case 0 => Fiber.succeed(Chunk.empty)
-                case size =>
+        def foreachIndexed[E, A, B](items: Chunk.Indexed[A], concurrency: Int)(
+            f: (Int, A) => B < (Abort[E] & Async)
+        )(using frame: Frame): Fiber[Chunk[B], Abort[E]] < Sync =
+            val size = items.size
+            if size == 0 then Fiber.succeed(Chunk.empty)
+            else
+                val numWorkers = Math.min(size, concurrency)
+                if numWorkers == 1 then
+                    Fiber.initUnscoped[E, Chunk[B], Any, Any](Kyo.foreachIndexed(items)(f))
+                else
                     Sync.Unsafe.defer {
                         class State extends IOPromise[Any, Chunk[B] < Abort[E]]
-                            with ((Int, Result[E, B]) => Unit):
+                            with (Result[E, Unit] => Unit):
                             val results = (new Array[Any](size)).asInstanceOf[Array[B]]
                             val pending = AtomicInt.Unsafe.init(size)
-                            def apply(idx: Int, result: Result[E, B]): Unit =
-                                result.foldError(
-                                    { value =>
-                                        results(idx) = value
-                                        if pending.decrementAndGet() == 0 then
-                                            this.completeDiscard(Result.succeed(Chunk.fromNoCopy(results)))
-                                    },
-                                    this.interruptDiscard
-                                )
+                            val counter = AtomicInt.Unsafe.init(0)
+                            def complete(idx: Int, value: B): Unit =
+                                results(idx) = value
+                                if pending.decrementAndGet() == 0 then
+                                    this.completeDiscard(Result.succeed(Chunk.fromNoCopy(results)))
+                            end complete
+                            def apply(result: Result[E, Unit]): Unit =
+                                result.foldError(_ => (), this.interruptDiscard)
                         end State
                         val state = new State
                         Isolate.internal.runDetached { (trace, context) =>
                             val safepoint = Safepoint.get
-                            foreach(iterable) { (idx, v) =>
-                                val fiber = IOTask(f(idx, v), safepoint.copyTrace(trace), context)
-                                state.interrupts(fiber)
-                                fiber.onComplete(state(idx, _))
-                            }
+                            @tailrec def loop(i: Int): Unit =
+                                if i < numWorkers then
+                                    def workerLoop(): Unit < (Abort[E] & Async) =
+                                        val idx = state.counter.getAndIncrement()
+                                        if idx >= size then ()
+                                        else
+                                            f(idx, items(idx)).map { value =>
+                                                state.complete(idx, value)
+                                                workerLoop()
+                                            }
+                                        end if
+                                    end workerLoop
+                                    val fiber = IOTask(workerLoop(), safepoint.copyTrace(trace), context)
+                                    state.interrupts(fiber)
+                                    fiber.onComplete(state)
+                                    loop(i + 1)
+                            loop(0)
                             state
                         }
                     }
+                end if
+            end if
+        end foreachIndexed
 
         def race[E, A](iterable: Iterable[A < (Abort[E] & Async)])(using Frame): Fiber[A, Abort[E]] < Sync =
             Race.success(iterable)
