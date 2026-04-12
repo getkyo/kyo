@@ -406,17 +406,12 @@ object Async extends AsyncPlatformSpecific:
             iterable.size match
                 case 0 => Chunk.empty
                 case 1 => f(0, iterable.head).map(Chunk(_))
-                case size if size <= concurrency =>
-                    isolate.capture { state =>
-                        Fiber.internal.foreachIndexed(iterable)((idx, v) => isolate.isolate(state, f(idx, v)))
-                            .map(_.use(r => Kyo.foreach(r)(isolate.restore)))
-                    }
                 case size =>
                     isolate.capture { state =>
-                        val groupSize = Math.ceil(size.toDouble / Math.max(1, concurrency)).toInt
-                        Fiber.internal.foreachIndexed(Chunk.from(iterable.grouped(groupSize)))((idx, group) =>
-                            Kyo.foreachIndexed(Chunk.from(group))((idx2, v) => isolate.isolate(state, f(idx + idx2, v)))
-                        ).map(_.use(r => Kyo.foreach(r.flattenChunk)(isolate.restore)))
+                        val items = Chunk.Indexed.from(iterable)
+                        Fiber.internal.foreachIndexed(items, concurrency) { (idx, v) =>
+                            isolate.isolate(state, f(idx, v))
+                        }.map(_.use(r => Kyo.foreach(r)(isolate.restore)))
                     }
 
     /** Executes a sequence of computations using bounded concurrency.
