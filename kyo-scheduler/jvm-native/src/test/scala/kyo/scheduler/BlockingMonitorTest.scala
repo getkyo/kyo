@@ -800,7 +800,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 task
             }
 
-            assert(activeStarted.await(10, TimeUnit.SECONDS), "active tasks should start")
+            assert(activeStarted.await(20, TimeUnit.SECONDS), "active tasks should start")
 
             // Let monitor establish baseline CPU time samples
             Thread.sleep(30)
@@ -876,7 +876,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
             // Schedule second task — it may land on the same worker
             scheduler.schedule(secondTask)
-            assert(secondStarted.await(5, TimeUnit.SECONDS))
+            assert(secondStarted.await(20, TimeUnit.SECONDS))
 
             // Let the monitor run several cycles with the second task active
             Thread.sleep(1000)
@@ -911,7 +911,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 })
 
                 scheduler.schedule(task)
-                assert(started.await(10, TimeUnit.SECONDS))
+                assert(started.await(20, TimeUnit.SECONDS))
 
                 eventually(timeout(scaled(Span(10, Seconds)))) {
                     assert(

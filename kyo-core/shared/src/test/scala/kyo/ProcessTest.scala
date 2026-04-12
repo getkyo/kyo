@@ -46,7 +46,7 @@ class ProcessTest extends Test:
     "destroy causes waitFor to return non-Success exit code" in run {
         Scope.run {
             for
-                proc <- Command("sleep", "60").spawn
+                proc <- Command("sleep", "5").spawn
                 _    <- proc.destroy
                 code <- proc.waitFor
             yield assert(code != ExitCode.Success)
