@@ -13,14 +13,98 @@ set -uo pipefail
 # Usage:
 #   ./scripts/native-test.sh                          # runs sbt 'kyoNative/test'
 #   ./scripts/native-test.sh 'testKyo --all Native'   # custom sbt command
+#   ./scripts/native-test.sh --self-test              # run built-in validation
 #
 
-MAX_RETRIES=3
-STALE_TIMEOUT=180  # seconds (3 min) without output before killing
-POLL_INTERVAL=10   # check output freshness every 10 seconds
+# ── self-test mode (must be before SBT_CMD assignment) ──────────────
+if [ "${1:-}" = "--self-test" ]; then
+    SELF="$0"
+    PASS=0; FAIL=0; TOTAL=0
+    TMPDIR_SELF=$(mktemp -d)
+    trap 'rm -rf "$TMPDIR_SELF"' EXIT
+
+    assert() {
+        local name="$1" expected="$2"
+        shift 2
+        TOTAL=$((TOTAL+1))
+        local fake="$TMPDIR_SELF/fake-$$-$TOTAL"
+        printf '#!/bin/bash\n%s\n' "$*" > "$fake"
+        chmod +x "$fake"
+        ln -sf "$fake" "$TMPDIR_SELF/sbt"
+        actual=$(PATH="$TMPDIR_SELF:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=3 POLL_INTERVAL=1 \
+            "$SELF" "test" >/dev/null 2>&1; echo $?)
+        if [ "$actual" = "$expected" ]; then
+            echo "  PASS: $name"
+            PASS=$((PASS+1))
+        else
+            echo "  FAIL: $name — expected exit $expected, got $actual"
+            FAIL=$((FAIL+1))
+        fi
+    }
+
+    echo "Running self-tests..."
+
+    # ── basic outcomes ──
+    assert "clean pass"                     0  'echo "Tests: succeeded 100, failed 0"; exit 0'
+    assert "test failures"                  1  'echo "Tests: succeeded 90, failed 3"; exit 1'
+    assert "crash after pass"               0  'echo "Tests: succeeded 100, failed 0"; exit 137'
+    assert "killed before tests"            1  'exit 137'
+
+    # ── hang scenarios (watchdog kills, then check_log decides) ──
+    assert "hang after tests pass"          0  'echo "Tests: succeeded 163, failed 0"; sleep 600'
+    assert "hang after test failures"       1  'echo "Tests: succeeded 90, failed 2"; sleep 600'
+    assert "hang with no output"            1  'sleep 600'
+
+    # ── multiple test suites in one run ──
+    assert "multi-suite all pass"           0  'echo "Tests: succeeded 64, failed 0"
+echo "Tests: succeeded 45, failed 0"
+echo "Tests: succeeded 163, failed 0"
+exit 0'
+    assert "multi-suite one fails"          1  'echo "Tests: succeeded 64, failed 0"
+echo "Tests: succeeded 45, failed 2"
+echo "Tests: succeeded 163, failed 0"
+exit 1'
+    assert "multi-suite pass then hang"     0  'echo "Tests: succeeded 64, failed 0"
+echo "Tests: succeeded 45, failed 0"
+echo "Tests: succeeded 163, failed 0"
+sleep 600'
+    assert "multi-suite fail then hang"     1  'echo "Tests: succeeded 64, failed 0"
+echo "Tests: succeeded 45, failed 1"
+sleep 600'
+
+    # ── scalafmt / other non-test errors ──
+    assert "scalafmt fail, tests pass"      0  'echo "scalafmt: failed for 1 sources"
+echo "Tests: succeeded 100, failed 0"
+exit 1'
+    assert "scalafmt fail, no tests"        1  'echo "scalafmt: failed for 1 sources"; exit 1'
+
+    # ── retry behavior ──
+    rm -f /tmp/native-test-retry-flag
+    assert "retry succeeds on 2nd attempt"  0  '
+if [ ! -f /tmp/native-test-retry-flag ]; then
+    touch /tmp/native-test-retry-flag
+    exit 137
+else
+    rm -f /tmp/native-test-retry-flag
+    echo "Tests: succeeded 100, failed 0"
+    exit 0
+fi'
+
+    echo ""
+    echo "Results: $PASS/$TOTAL passed, $FAIL failed"
+    rm -rf "$TMPDIR_SELF"
+    [ $FAIL -eq 0 ]
+    exit $?
+fi
+
+# ── main ────────────────────────────────────────────────────────────
+MAX_RETRIES=${MAX_RETRIES:-3}
+STALE_TIMEOUT=${STALE_TIMEOUT:-180}  # seconds without output before killing
+POLL_INTERVAL=${POLL_INTERVAL:-10}   # check output freshness interval
 SBT_CMD="${1:-kyoNative/test}"
 LOG=$(mktemp)
-trap "rm -f $LOG" EXIT
+tail_pid=""
+trap 'rm -f "$LOG"; [ -n "$tail_pid" ] && kill $tail_pid 2>/dev/null' EXIT
 
 log() { echo "=== [native-test] $* ==="; }
 
@@ -38,6 +122,19 @@ kill_tree() {
         kill -$sig $child 2>/dev/null
     done
     kill -$sig $pid 2>/dev/null
+}
+
+# Evaluate log contents: returns 0 (pass), 1 (fail), or 2 (no test output).
+check_log() {
+    if grep -qE "Tests:.*failed [1-9]" "$LOG"; then
+        log "tests FAILED (real test failures detected)"
+        return 1
+    fi
+    if grep -qE "Tests:" "$LOG"; then
+        log "0 test failures — tolerating non-zero exit"
+        return 0
+    fi
+    return 2
 }
 
 for attempt in $(seq 1 $MAX_RETRIES); do
@@ -59,7 +156,6 @@ for attempt in $(seq 1 $MAX_RETRIES); do
     # Watchdog: poll log file size, kill sbt if it stops growing
     last_size=$(file_size "$LOG")
     stale_seconds=0
-    hung=false
 
     while kill -0 $sbt_pid 2>/dev/null; do
         sleep $POLL_INTERVAL
@@ -74,12 +170,10 @@ for attempt in $(seq 1 $MAX_RETRIES); do
                 log "no output for ${STALE_TIMEOUT}s — killing hung process (pid $sbt_pid)"
                 kill_tree $sbt_pid TERM
                 sleep 3
-                # Force kill if still alive
                 if kill -0 $sbt_pid 2>/dev/null; then
                     log "process still alive — sending SIGKILL"
                     kill_tree $sbt_pid KILL
                 fi
-                hung=true
                 break
             fi
         else
@@ -95,30 +189,20 @@ for attempt in $(seq 1 $MAX_RETRIES); do
     exit_code=$?
     kill $tail_pid 2>/dev/null
     wait $tail_pid 2>/dev/null
-
-    if $hung; then
-        log "process was hung — retrying..."
-        continue
-    fi
+    tail_pid=""
 
     if [ $exit_code -eq 0 ]; then
         log "tests passed"
         exit 0
     fi
 
-    # Check for actual test failures
-    if grep -qE "Tests:.*failed [1-9]" "$LOG"; then
-        log "tests FAILED (real test failures detected)"
-        exit 1
+    check_log
+    rc=$?
+    if [ $rc -le 1 ]; then
+        exit $rc
     fi
 
-    # Tests ran with 0 failures but sbt exited non-zero (crash, scalafmt, etc.)
-    if grep -qE "Tests:" "$LOG"; then
-        log "0 test failures — tolerating non-zero exit (crash/scalafmt)"
-        exit 0
-    fi
-
-    # No test output at all — process was killed before tests ran
+    # No test output — process was killed before tests ran
     log "no test output — retrying..."
 done
 

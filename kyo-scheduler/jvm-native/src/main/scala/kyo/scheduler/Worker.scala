@@ -95,7 +95,9 @@ abstract private class Worker(
     private val state = new AtomicReference[State](State.Idle)
 
     @volatile private[scheduler] var mount: Thread = null
-    private[scheduler] var mountId: Long           = 0L // published by currentTask volatile
+    // -1 = not mounted (idle or never started). Set to the thread's CPU-time ID
+    // at the start of run(), reset to -1 on exit. Published by currentTask volatile.
+    private[scheduler] var mountId: Long = -1L
     // Not volatile: written by BlockingMonitor timer thread (~2ms), read by cycleWorkers timer
     // thread (~100μs). Stale reads are acceptable — this is a scheduling heuristic, not a
     // correctness constraint. Worst case: a blocked worker accepts one extra task before
@@ -241,9 +243,9 @@ abstract private class Worker(
                 if (queue.isEmpty() || !state.compareAndSet(State.Idle, State.Running)) {
                     // Either queue is empty or another thread changed our state
                     // Clean up and exit
-                    mount = null
-                    mountId = 0L
+                    mountId = -1L
                     blocked = false
+                    mount = null
                     clearCurrent()
                     return
                 }
@@ -256,9 +258,9 @@ abstract private class Worker(
                 if (task ne null) schedule(task)
                 // Drain remaining tasks from queue
                 drain()
-                mount = null
-                mountId = 0L
+                mountId = -1L
                 blocked = false
+                mount = null
                 clearCurrent()
                 return
             }
