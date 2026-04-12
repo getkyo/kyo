@@ -629,19 +629,6 @@ class AsyncTest extends Test:
             }.map(_ => succeed)
         }
 
-        "interrupt with latch synchronization" in runJVM {
-            for
-                promise <- Promise.init[Int, Any]
-                started <- Latch.init(1)
-                fiber <- Fiber.initUnscoped {
-                    started.release.andThen(promise.get)
-                }
-                _      <- started.await
-                _      <- fiber.interrupt
-                result <- promise.getResult
-            yield assert(result.isPanic)
-        }
-
         "concurrent fibers immediate interrupt" in runJVM {
             for
                 promises <- Kyo.fill(20)(Promise.init[Int, Any])
@@ -674,13 +661,12 @@ class AsyncTest extends Test:
             // When using Scope, child fibers are tracked and interrupted with parent
             for
                 innerPromise <- Promise.init[Int, Any]
-                started      <- Latch.init(1)
                 outerFiber <- Fiber.initUnscoped {
                     Scope.run {
-                        Fiber.init(started.release.andThen(innerPromise.get)).map(_.get)
+                        Fiber.init(innerPromise.get).map(_.get)
                     }
                 }
-                _      <- started.await
+                _      <- untilTrue(innerPromise.waiters.map(_ == 1))
                 _      <- outerFiber.interrupt
                 result <- innerPromise.getResult
             yield assert(result.isPanic)
@@ -691,13 +677,10 @@ class AsyncTest extends Test:
             Kyo.foreach(1 to 100) { _ =>
                 for
                     promise <- Promise.init[Int, Any]
-                    started <- Latch.init(1)
-                    fiber <- Fiber.initUnscoped {
-                        started.release.andThen(promise.get)
-                    }
-                    _      <- started.await // Ensure fiber has started
-                    _      <- fiber.interrupt
-                    result <- promise.getResult
+                    fiber   <- Fiber.initUnscoped(promise.get)
+                    _       <- untilTrue(promise.waiters.map(_ == 1))
+                    _       <- fiber.interrupt
+                    result  <- promise.getResult
                 yield assert(result.isPanic)
             }.map(_ => succeed)
         }
@@ -1552,10 +1535,10 @@ class AsyncTest extends Test:
                         }
                     }.andThen(done.release).andThen(exit.await)
                 }
-                _       <- done.await
-                waiters <- fiber.waiters
-                _       <- exit.release
-            yield assert(waiters == 1)
+                _ <- done.await
+                _ <- untilTrue(fiber.waiters.map(_ == 1))
+                _ <- exit.release
+            yield succeed
         }
         "with delay" in run {
             for
@@ -1566,10 +1549,10 @@ class AsyncTest extends Test:
                         Async.sleep(1.nanos)
                     }.andThen(done.release).andThen(exit.await)
                 }
-                _       <- done.await
-                waiters <- fiber.waiters
-                _       <- exit.release
-            yield assert(waiters == 1)
+                _ <- done.await
+                _ <- untilTrue(fiber.waiters.map(_ == 1))
+                _ <- exit.release
+            yield succeed
         }
     }
 
