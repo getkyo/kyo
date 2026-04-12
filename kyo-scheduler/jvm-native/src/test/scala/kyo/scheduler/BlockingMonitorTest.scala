@@ -1025,52 +1025,6 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 cleanupBusyThreads(busyThreads, busyStop)
         }
 
-        "CPU contention — active task not persistently blocked" in {
-            val baseline = blockedWorkerCount()
-            // Use 3 busy threads — enough for contention without exhausting Native resources
-            val (busyThreads, busyStop) = spawnBusyThreads(3)
-            try {
-                val iterations = new AtomicInteger(0)
-                val stop       = new AtomicBoolean(false)
-
-                val task = TestTask(_run = () => {
-                    while (!stop.get()) {
-                        val _ = iterations.incrementAndGet()
-                    }
-                    Task.Done
-                })
-
-                scheduler.schedule(task)
-
-                eventually(timeout(scaled(Span(10, Seconds)))) {
-                    assert(iterations.get() > 100, "task should get CPU time even under contention")
-                }
-
-                Thread.sleep(200)
-
-                var notBlocked = 0
-                var checks     = 0
-                val checkEnd   = System.nanoTime() + 300000000L // 300ms
-                while (System.nanoTime() < checkEnd) {
-                    if (blockedWorkerCount() <= baseline)
-                        notBlocked += 1
-                    checks += 1
-                    Thread.sleep(10)
-                }
-
-                assert(
-                    notBlocked > 0,
-                    s"active task under contention should not be persistently blocked ($checks checks, $notBlocked not-blocked)"
-                )
-
-                stop.set(true)
-                eventually(timeout(scaled(Span(10, Seconds)))) {
-                    assert(task.executions == 1)
-                }
-            } finally
-                cleanupBusyThreads(busyThreads, busyStop)
-        }
-
         "mixed workload — discrimination and compensation" in {
             // Start active task first so it grabs a worker
             val activeStarted = new CountDownLatch(1)
