@@ -1552,10 +1552,10 @@ class AsyncTest extends Test:
                         }
                     }.andThen(done.release).andThen(exit.await)
                 }
-                _       <- done.await
-                waiters <- fiber.waiters
-                _       <- exit.release
-            yield assert(waiters == 1)
+                _ <- done.await
+                _ <- untilTrue(fiber.waiters.map(_ == 1))
+                _ <- exit.release
+            yield succeed
         }
         "with delay" in run {
             for
@@ -1566,10 +1566,10 @@ class AsyncTest extends Test:
                         Async.sleep(1.nanos)
                     }.andThen(done.release).andThen(exit.await)
                 }
-                _       <- done.await
-                waiters <- fiber.waiters
-                _       <- exit.release
-            yield assert(waiters == 1)
+                _ <- done.await
+                _ <- untilTrue(fiber.waiters.map(_ == 1))
+                _ <- exit.release
+            yield succeed
         }
     }
 
