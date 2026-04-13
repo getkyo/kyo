@@ -890,3 +890,10 @@ lazy val `kyo-scalafix-test` = (project in file("scalafix/tests"))
     )
     .dependsOn(`kyo-rules`)
     .enablePlugins(ScalafixTestkitPlugin)
+lazy val `kyo-grpc` = (project in file("kyo-grpc"))
+  .settings(
+    libraryDependencies ++= Seq(
+      "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % "0.11.15"
+    )
+  )
+  .dependsOn(`kyo-core`.jvm)
