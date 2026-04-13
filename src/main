@@ -1,0 +1,14 @@
+syntax = "proto3";
+package kyo.grpc;
+
+service KyoService {
+  rpc Execute (KyoRequest) returns (KyoResponse);
+}
+
+message KyoRequest {
+  string command = 1;
+}
+
+message KyoResponse {
+  string result = 1;
+}
