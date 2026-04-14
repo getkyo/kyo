@@ -3,7 +3,6 @@ package kyo.scheduler
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -11,7 +10,6 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import kyo.scheduler.Task.Done
 import kyo.scheduler.Task.Preempted
-import kyo.scheduler.util.Threads
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.concurrent.Eventually
 import org.scalatest.freespec.AnyFreeSpec
@@ -19,12 +17,21 @@ import org.scalatest.time.Millis
 import org.scalatest.time.Seconds
 import org.scalatest.time.Span
 
-class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually {
+class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually with org.scalatest.BeforeAndAfterEach {
 
     implicit override val patienceConfig: PatienceConfig =
         PatienceConfig(timeout = Span(15, Seconds), interval = Span(50, Millis))
 
-    val executor = Executors.newCachedThreadPool(Threads("test-worker"))
+    val executor = TestExecutors.cached
+
+    // Set to true after each test to stop all workers created during that test
+    private var globalStop = new AtomicBoolean(false)
+
+    override def afterEach(): Unit = {
+        globalStop.set(true)
+        Thread.sleep(50)                      // give workers time to exit run() loop
+        globalStop = new AtomicBoolean(false) // fresh for next test
+    }
 
     private def createWorker(
         executor: Executor = _ => (),
@@ -33,10 +40,11 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         stealTask: Worker => Task = _ => null,
         currentCycle: () => Long = () => 0
     ): Worker = {
-        val clock = InternalClock(executor)
+        val testStop = globalStop
+        val clock    = InternalClock(executor)
         new Worker(0, executor, scheduleTask, stealTask, clock, 5) {
             def getCurrentCycle() = currentCycle()
-            def shouldStop()      = stop()
+            def shouldStop()      = testStop.get() || stop()
         }
     }
 
@@ -335,7 +343,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             for (_ <- 0 until 10) worker.enqueue(task)
             eventually(assert(worker.load() == 10))
             cdl2.countDown()
-            eventually(assert(!worker.checkAvailability(0)))
+            eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
             assert(drained.size() == 9)
             cdl1.countDown()
             eventually(assert(worker.load() == 0))
@@ -506,5 +514,98 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             cdl.countDown()
             eventually(assert(worker.checkAvailability(System.currentTimeMillis())))
         }
+    }
+
+    "checkAvailability" - {
+        "blocked flag makes worker unavailable" in {
+            val drained = new java.util.concurrent.ConcurrentLinkedQueue[Task]()
+            val started = new CountDownLatch(1)
+            val done    = new CountDownLatch(1)
+            val worker = createWorker(
+                executor = executor,
+                scheduleTask = (t, _) => { val _ = drained.add(t) }
+            )
+            // Start a task that blocks
+            val task1 = TestTask(_run = () => {
+                started.countDown()
+                done.await(5, TimeUnit.SECONDS)
+                Task.Done
+            })
+            worker.enqueue(task1)
+            assert(started.await(5, TimeUnit.SECONDS))
+
+            // Add a second task to the queue
+            val task2 = TestTask()
+            worker.enqueue(task2)
+
+            // Simulate BlockingMonitor setting blocked flag
+            worker.blocked = true
+
+            // checkAvailability should return false and drain
+            eventually {
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+            }
+            assert(drained.size() >= 1, "queue should be drained when blocked")
+
+            // Unblock
+            worker.blocked = false
+            done.countDown()
+            eventually(assert(task1.executions == 1))
+        }
+
+        "cleared blocked flag restores availability" in {
+            val worker = createWorker(executor = executor)
+            // No task running — checkStalling won't trigger
+            worker.blocked = true
+            assert(!worker.checkAvailability(System.currentTimeMillis()))
+            worker.blocked = false
+            assert(worker.checkAvailability(System.currentTimeMillis()))
+        }
+    }
+
+    "mountId" - {
+        "is set during run and cleared on exit" in {
+            val mountIdDuringRun = new java.util.concurrent.atomic.AtomicLong(0)
+            val done             = new CountDownLatch(1)
+            val worker           = createWorker(executor = executor)
+            val task = TestTask(_run = () => {
+                mountIdDuringRun.set(worker.mountId)
+                done.countDown()
+                Task.Done
+            })
+            worker.enqueue(task)
+            assert(done.await(5, TimeUnit.SECONDS))
+            assert(mountIdDuringRun.get() != 0, "mountId should be non-zero while running")
+            eventually(assert(task.executions == 1))
+        }
+    }
+
+    "runTask clears interrupt flag" in {
+        val flagAfterTask = new AtomicBoolean(false)
+        val latch         = new CountDownLatch(1)
+        val task1 = TestTask(_run = () => {
+            Thread.currentThread().interrupt() // set interrupt flag
+            Task.Done
+        })
+        val task2 = TestTask(_run = () => {
+            flagAfterTask.set(Thread.interrupted()) // check if flag leaked
+            latch.countDown()
+            Task.Done
+        })
+
+        val worker = createWorker(executor = executor)
+        worker.enqueue(task1)
+        worker.enqueue(task2)
+
+        assert(latch.await(5, TimeUnit.SECONDS))
+        assert(!flagAfterTask.get(), "interrupt flag should be cleared between tasks")
+    }
+
+    "needsInterrupt" in {
+        val task = TestTask()
+        assert(!task.needsInterrupt())
+
+        task.requestInterrupt()
+        assert(task.needsInterrupt())
     }
 }

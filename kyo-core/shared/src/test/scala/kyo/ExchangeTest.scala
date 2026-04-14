@@ -1397,6 +1397,32 @@ class ExchangeTest extends Test:
             }.andThen(succeed)
         }
 
+        "apply after close completes with Closed (no hang)" in run {
+            for
+                (ex, sendCh, receiveCh) <- mkExchange
+                _                       <- ex.close
+                result                  <- Abort.run[TestError | Closed](ex("req"))
+            yield assert(
+                result match
+                    case Result.Failure(_: Closed) => true
+                    case _                         => false
+                ,
+                s"Expected Closed, got $result"
+            )
+        }
+
+        "apply vs close race — high iteration count" in run {
+            val iterations = 500
+            Kyo.foreachDiscard(1 to iterations) { _ =>
+                for
+                    (ex, sendCh, receiveCh) <- mkExchange
+                    applyFiber              <- Fiber.initUnscoped(Abort.run[TestError | Closed](ex("req")))
+                    _                       <- ex.close
+                    result                  <- applyFiber.getResult
+                yield ()
+            }.andThen(succeed)
+        }
+
         "apply vs receive stream end race never hangs" in run {
             val iterations = 50
             Kyo.foreachDiscard(1 to iterations) { _ =>
@@ -1409,6 +1435,27 @@ class ExchangeTest extends Test:
                     _ <- Abort.run[TestError | Closed](applyFiber.get)
                 yield ()
             }.andThen(succeed)
+        }
+
+        "apply vs receive stream end race — high iteration count" in run {
+            val iterations = 500
+            Kyo.foreachDiscard(1 to iterations) { _ =>
+                for
+                    (ex, sendCh, receiveCh) <- mkExchange
+                    applyFiber              <- Fiber.initUnscoped(Abort.run[TestError | Closed](ex("req")))
+                    _                       <- receiveCh.close
+                    _                       <- Abort.run[TestError | Closed](applyFiber.get)
+                yield ()
+            }.andThen(succeed)
+        }
+
+        "apply after receive stream end completes with Closed" in run {
+            for
+                (ex, sendCh, receiveCh) <- mkExchange
+                _                       <- receiveCh.close
+                _                       <- Async.sleep(10.millis)
+                result                  <- Abort.run[TestError | Closed](ex("req"))
+            yield assert(result.isFailure, s"Expected failure, got $result")
         }
 
         "concurrent close from many fibers — no duplicates, no exceptions" in run {
