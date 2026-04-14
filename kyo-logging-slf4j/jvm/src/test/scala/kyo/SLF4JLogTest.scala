@@ -80,7 +80,7 @@ class SLF4JLogTest extends Test:
                 _ <- Log.warn("warning", ex)
             yield
                 appender.stop()
-                val logs = buffer.toString.trim.split('\n')
+                val logs = buffer.toString.trim.split("\\r?\\n")
                 assert(logs.length == 4)
                 assert(logs(0).matches("DEBUG kyo.logging \\[.*\\] test message"))
                 assert(logs(1).matches("INFO kyo.logging \\[.*\\] info message"))

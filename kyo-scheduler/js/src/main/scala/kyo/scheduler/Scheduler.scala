@@ -2,6 +2,7 @@ package kyo.scheduler
 
 import kyo.scheduler.util.Flag
 import org.scalajs.macrotaskexecutor.MacrotaskExecutor
+import scala.concurrent.ExecutionContext
 
 object Scheduler {
     val get = new Scheduler
@@ -19,6 +20,8 @@ class Scheduler {
                 schedule(t)
         }
 
+    def asExecutionContext: ExecutionContext = MacrotaskExecutor
+
     def flush(): Unit = {}
 
     def reject(): Boolean = false
@@ -26,5 +29,7 @@ class Scheduler {
     def reject(key: String): Boolean = false
 
     def reject(key: Int): Boolean = false
+
+    def notifyInterrupt(): Unit = {}
 
 }

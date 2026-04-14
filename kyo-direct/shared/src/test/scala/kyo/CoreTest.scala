@@ -147,30 +147,28 @@ class CoreTest extends Test:
         }
     }
 
-    "barrier operations" in run {
+    "gate operations" in run {
         direct {
-            val barrier = Barrier.init(2).now
-            assert(barrier.pending.now == 2)
+            val gate = Gate.initUnscoped(2).now
+            assert(gate.pendingCount.now == 2)
 
-            // Start two fibers that will wait at the barrier
+            // Start two fibers that will pass through the gate
             val fiber1 = Fiber.initUnscoped {
                 direct {
-                    barrier.await.now
-                    true
+                    Abort.run[Closed](gate.pass).now
                 }
             }.now
 
             val fiber2 = Fiber.initUnscoped {
                 direct {
-                    barrier.await.now
-                    true
+                    Abort.run[Closed](gate.pass).now
                 }
             }.now
 
             // Both fibers should complete successfully
-            assert(fiber1.get.now)
-            assert(fiber2.get.now)
-            assert(barrier.pending.now == 0)
+            assert(fiber1.get.now.isSuccess)
+            assert(fiber2.get.now.isSuccess)
+            assert(gate.passCount.now == 1)
         }
     }
 

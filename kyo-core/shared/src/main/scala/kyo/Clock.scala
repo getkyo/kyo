@@ -375,7 +375,11 @@ object Clock:
       *   The current time
       */
     def now(using Frame): Instant < Sync =
-        Sync.Unsafe.withLocal(local)(_.unsafe.now())
+        nowWith(identity)
+
+    /** Gets the current time and passes it to a continuation function. */
+    inline def nowWith[A, S](inline f: Instant => A < S)(using Frame): A < (S & Sync) =
+        Sync.Unsafe.withLocal(local)(clock => f(clock.unsafe.now()))
 
     /** Gets the current monotonic time using the local Clock instance. Unlike `now`, this is guaranteed to be strictly monotonic and
       * suitable for measuring elapsed time.

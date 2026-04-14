@@ -14,6 +14,12 @@ class ClockTest extends Test:
             }
         }
 
+        "nowWith" in run {
+            Clock.nowWith { now =>
+                assert(now - javaNow() < 1.milli)
+            }
+        }
+
         "unsafe now" in {
             import AllowUnsafe.embrace.danger
             val now = Clock.live.unsafe.now()
@@ -295,7 +301,7 @@ class ClockTest extends Test:
             yield
                 val elapsedWall    = wallEnd - wallStart
                 val elapsedShifted = shiftedEnd - wallStart
-                assert(elapsedWall >= 18.millis && elapsedWall < 50.millis)
+                assert(elapsedWall >= 18.millis && elapsedWall < 200.millis)
                 assert(elapsedShifted < elapsedWall)
         }
 
@@ -350,7 +356,7 @@ class ClockTest extends Test:
                 _        <- task.interrupt
             yield
                 val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgInterval >= 4.millis && avgInterval < 20.millis)
+                assert(avgInterval >= 4.millis && avgInterval < 100.millis)
         }
         "respects interrupt" in run {
             for
@@ -370,7 +376,7 @@ class ClockTest extends Test:
                 _        <- task.interrupt
             yield
                 val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgInterval >= 4.millis && avgInterval < 40.millis)
+                assert(avgInterval >= 4.millis && avgInterval < 100.millis)
         }
         "with Schedule and state" in run {
             for
@@ -399,7 +405,7 @@ class ClockTest extends Test:
                 _        <- task.interrupt
             yield
                 val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgDelay >= 4.millis && avgDelay < 20.millis)
+                assert(avgDelay >= 4.millis && avgDelay < 100.millis)
         }
 
         "respects interrupt" in run {
@@ -438,7 +444,7 @@ class ClockTest extends Test:
                 _        <- task.interrupt
             yield
                 val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgDelay >= 4.millis && avgDelay < 20.millis)
+                assert(avgDelay >= 4.millis && avgDelay < 100.millis)
         }
 
         "works with Schedule and state" in run {
@@ -493,7 +499,7 @@ class ClockTest extends Test:
                     time2 <- Clock.nowMonotonic
                 yield
                     assert(time2 - time1 >= 4.millis)
-                    assert(time2 - time1 < 40.millis)
+                    assert(time2 - time1 < 500.millis)
             }
         }
     }

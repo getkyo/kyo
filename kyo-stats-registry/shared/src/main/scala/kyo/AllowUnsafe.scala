@@ -1,0 +1,29 @@
+package kyo
+
+import scala.annotation.implicitNotFound
+
+@implicitNotFound("""
+Use of Kyo's unsafe APIs detected! These are intended for low-level usage like in integrations, libraries, and performance-sensitive code.
+
+Options (in order of preference):
+
+1. Receive an implicit AllowUnsafe parameter
+   def myFunction(implicit allow: AllowUnsafe) = // unsafe code here
+
+2. Suspend the operation with Sync
+   Sync.Unsafe.defer { // unsafe code here }
+
+3. Import implicit evidence (last resort)
+   import AllowUnsafe.embrace.danger
+   // unsafe code here
+
+WARNING: Using AllowUnsafe directly bypasses important safety mechanisms and may break referential transparency. Ensure you fully understand the risks before proceeding this way.
+""")
+abstract class AllowUnsafe private ()
+
+object AllowUnsafe {
+    private val instance: AllowUnsafe = new AllowUnsafe() {}
+    object embrace {
+        implicit val danger: AllowUnsafe = instance
+    }
+}

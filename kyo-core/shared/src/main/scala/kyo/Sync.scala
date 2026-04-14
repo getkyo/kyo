@@ -119,6 +119,11 @@ object Sync:
                 f(using AllowUnsafe.embrace.danger)
             }
 
+        inline def ensure[A, S](inline f: AllowUnsafe ?=> Any < (Sync & Abort[Throwable]))(v: => A < S)(using
+            inline frame: Frame
+        ): A < (Sync & S) =
+            Sync.ensure(f(using AllowUnsafe.embrace.danger))(v)
+
         def withLocal[A, B, S](local: Local[A])(f: AllowUnsafe ?=> A => B < S)(using Frame): B < (S & Sync) =
             local.use(f(using AllowUnsafe.embrace.danger))
 

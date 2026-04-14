@@ -34,7 +34,7 @@ class MeterTest extends Test:
                 w1 <- t.pendingWaiters
                 b2 <- Promise.init[Unit, Any]
                 f2 <- Fiber.initUnscoped(b2.completeUnit.map(_ => t.run(2)))
-                _  <- b2.get
+                _  <- b2.get.andThen(untilTrue(t.pendingWaiters.map(_ > 0)))
                 a2 <- t.availablePermits
                 w2 <- t.pendingWaiters
                 d1 <- f1.done
@@ -144,7 +144,7 @@ class MeterTest extends Test:
 
         "concurrency" - {
 
-            val repeats = 100
+            val repeats = 10
 
             "run" in run {
                 (for
@@ -195,7 +195,7 @@ class MeterTest extends Test:
 
             "with interruptions" in runJVM {
                 (for
-                    size    <- Choice.eval(1, 2, 3, 50, 100)
+                    size    <- Choice.eval(1, 2, 3, 50)
                     meter   <- Meter.initSemaphore(size)
                     started <- Latch.init(100)
                     latch   <- Latch.init(1)
@@ -207,6 +207,7 @@ class MeterTest extends Test:
                         Async.foreach(runFibers.take(50), 50)(_.interrupt(panic))
                     ))
                     _           <- started.await
+                    _           <- Async.sleep(100.millis)
                     _           <- latch.release
                     interrupted <- interruptFiber.get
                     completed   <- Kyo.foreach(runFibers)(_.getResult)

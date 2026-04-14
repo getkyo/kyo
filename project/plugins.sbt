@@ -12,16 +12,16 @@ addSbtPlugin("org.scalameta" % "sbt-mdoc" % "2.8.2")
 
 addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.4.4")
 
-addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "1.1.4")
+addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "1.1.5")
 
-addSbtPlugin("com.timushev.sbt" % "sbt-updates" % "0.6.3")
+addSbtPlugin("com.timushev.sbt" % "sbt-updates" % "0.6.4")
 
-addSbtPlugin("ch.epfl.scala" % "sbt-scalafix" % "0.14.5")
+addSbtPlugin("ch.epfl.scala" % "sbt-scalafix" % "0.14.6")
 
 // addSbtPlugin("com.gradle" % "sbt-develocity" % "1.0.1")
 
 // addSbtPlugin("com.github.sbt" % "sbt-jacoco" % "3.4.0")
 
 libraryDependencies ++= Seq(
-    "org.typelevel" %% "scalac-options" % "0.1.8"
+    "org.typelevel" %% "scalac-options" % "0.1.9"
 )

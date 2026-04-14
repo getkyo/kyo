@@ -22,12 +22,16 @@ jobs:
       JAVA_OPTS: -Xms1G -Xmx1G
       JVM_OPTS:  -Xms1G -Xmx1G
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      - uses: coursier/cache-action@v8
-      - uses: coursier/setup-action@v2
+      - uses: coursier/cache-action@v8.1.0
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
+      - uses: coursier/setup-action@v3.0.0
         with:
           jvm: corretto:24
           apps: sbt

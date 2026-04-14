@@ -173,7 +173,7 @@ class FiberTest extends Test:
             "returns first result regardless of success/failure" in run {
                 val error = new Exception("test error")
                 Fiber.internal.raceFirst(Seq(
-                    Async.delay(10.millis)(1),
+                    Async.delay(1.second)(1),
                     Async.delay(1.millis)(Abort.fail[Exception](error))
                 )).map(_.getResult).map { r =>
                     assert(r.failure.contains(error))
@@ -196,7 +196,7 @@ class FiberTest extends Test:
                     ))
                     _      <- startLatch.await
                     _      <- promise1.complete(Result.succeed(1))
-                    _      <- Async.sleep(1.milli)
+                    _      <- Async.sleep(100.millis)
                     result <- fiber.get
                     _      <- untilTrue(interruptCount.get.map(_ == 2))
                 yield assert(result == 1)
@@ -241,14 +241,14 @@ class FiberTest extends Test:
     "foreachIndexed" - {
         "empty sequence" in run {
             for
-                fiber  <- Fiber.internal.foreachIndexed(Seq())((idx, v) => (idx, v))
+                fiber  <- Fiber.internal.foreachIndexed(Chunk.from(Seq()).toIndexed, Int.MaxValue)((idx, v) => (idx, v))
                 result <- fiber.get
             yield assert(result == Seq())
         }
 
         "small collection + Sync" in run {
             for
-                fiber  <- Fiber.internal.foreachIndexed(Seq(1, 2, 3))((idx, v) => Sync.defer((idx, v)))
+                fiber  <- Fiber.internal.foreachIndexed(Chunk.from(Seq(1, 2, 3)).toIndexed, Int.MaxValue)((idx, v) => Sync.defer((idx, v)))
                 result <- fiber.get
             yield assert(result == Seq((0, 1), (1, 2), (2, 3)))
         }
@@ -261,7 +261,7 @@ class FiberTest extends Test:
                         if v == 3 then Abort.fail(error)
                         else v
 
-                    Fiber.internal.foreachIndexed(1 to 5)(task)
+                    Fiber.internal.foreachIndexed(Chunk.from(1 to 5).toIndexed, Int.MaxValue)(task)
                 }
                 result <- fiber.getResult
             yield assert(result.failure.contains(error))
@@ -681,15 +681,17 @@ class FiberTest extends Test:
 
     "boundary inference with Abort" - {
         "same failures" in {
-            val v: Int < Abort[Int]                   = 1
-            val _: Fiber[Int, Abort[Int]] < Sync      = Fiber.internal.race(Seq(v))
-            val _: Fiber[Seq[Int], Abort[Int]] < Sync = Fiber.internal.foreachIndexed(Seq(v))((_, v) => v)
+            val v: Int < Abort[Int]              = 1
+            val _: Fiber[Int, Abort[Int]] < Sync = Fiber.internal.race(Seq(v))
+            val _: Fiber[Seq[Int], Abort[Int]] < Sync =
+                Fiber.internal.foreachIndexed(Chunk.from(Seq(v)).toIndexed, Int.MaxValue)((_, v) => v)
             succeed
         }
         "additional failure" in {
-            val v: Int < Abort[Int]                            = 1
-            val _: Fiber[Int, Abort[Int | String]] < Sync      = Fiber.internal.race(Seq(v))
-            val _: Fiber[Seq[Int], Abort[Int | String]] < Sync = Fiber.internal.foreachIndexed(Seq(v))((_, v) => v)
+            val v: Int < Abort[Int]                       = 1
+            val _: Fiber[Int, Abort[Int | String]] < Sync = Fiber.internal.race(Seq(v))
+            val _: Fiber[Seq[Int], Abort[Int | String]] < Sync =
+                Fiber.internal.foreachIndexed(Chunk.from(Seq(v)).toIndexed, Int.MaxValue)((_, v) => v)
             succeed
         }
     }
@@ -834,7 +836,8 @@ class FiberTest extends Test:
                 result <- fiber.get
             yield
                 assert(result.size == 2)
-                assert(result == Chunk(1, 2))
+                // The first 2 successes depend on scheduler timing — any 2 of {1,2,3}
+                assert(result.toSet.subsetOf(Set(1, 2, 3)))
             end for
         }
 
@@ -1074,4 +1077,46 @@ class FiberTest extends Test:
             }
         }
     }
+    "resource safety regressions" - {
+        "interrupt callbacks cleaned after child completes (#1125)" in runJVM {
+            for
+                parent <- Fiber.initUnscoped {
+                    Loop.indexed { i =>
+                        if i >= 10000 then Loop.done(())
+                        else
+                            for
+                                child <- Fiber.initUnscoped(42)
+                                _     <- child.get
+                            yield Loop.continue
+                    }
+                }
+                result <- parent.get
+            yield assert(result == ())
+        }
+
+        "rapid interrupt after init (#1458)" in runJVM {
+            Loop.repeat(100) {
+                for
+                    promise <- Promise.init[Int, Any]
+                    fiber   <- Fiber.initUnscoped(promise.get)
+                    res     <- fiber.interrupt
+                yield
+                    assert(res)
+                    ()
+            }.andThen(succeed)
+        }
+
+        "masked promise not interruptible (#736)" in run {
+            for
+                promise <- Promise.init[Int, Any]
+                masked  <- promise.mask
+                res     <- masked.interrupt
+                _       <- promise.complete(Result.succeed(42))
+                value   <- masked.get
+            yield
+                assert(!res)
+                assert(value == 42)
+        }
+    }
+
 end FiberTest

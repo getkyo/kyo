@@ -135,6 +135,7 @@ class AsyncTest extends Test:
                 fiber2       <- Fiber.initUnscoped(runLoop(started, done))
                 fiber3       <- Fiber.initUnscoped(runLoop(started, done))
                 _            <- started.await
+                _            <- Async.sleep(100.millis)
                 interrupted1 <- fiber1.interrupt(panic)
                 interrupted2 <- fiber2.interrupt(panic)
                 interrupted3 <- fiber3.interrupt(panic)
@@ -564,6 +565,44 @@ class AsyncTest extends Test:
                 yield assert(result.isPanic)
             }.map(_ => succeed)
         }
+
+        "custom error" - {
+            case class CustomError(msg: String)
+
+            "completes before timeout" in run {
+                for
+                    result <- Async.timeoutWithError(1.second, Result.Failure(CustomError("timed out")))(42)
+                yield assert(result == 42)
+            }
+
+            "times out with custom error" in run {
+                val result =
+                    Async.timeoutWithError(5.millis, Result.Failure(CustomError("timed out")))(
+                        Async.sleep(1.second).andThen(42)
+                    )
+                Abort.run[CustomError](result).map {
+                    case Result.Failure(CustomError("timed out")) => succeed
+                    case other                                    => fail(s"Expected CustomError, got $other")
+                }
+            }
+
+            "infinite duration doesn't timeout" in run {
+                for
+                    result <- Async.timeoutWithError(Duration.Infinity, Result.Failure(CustomError("timed out")))(42)
+                yield assert(result == 42)
+            }
+
+            "custom panic" in run {
+                val result =
+                    Async.timeoutWithError(5.millis, Result.Panic(new RuntimeException("custom panic")))(
+                        Async.sleep(1.second).andThen(42)
+                    )
+                Abort.run[Any](result).map {
+                    case Result.Panic(e: RuntimeException) => assert(e.getMessage == "custom panic")
+                    case other                             => fail(s"Expected Panic, got $other")
+                }
+            }
+        }
     }
 
     "interrupt propagation" - {
@@ -589,19 +628,6 @@ class AsyncTest extends Test:
                     r1    <- p1.getResult
                 yield assert(r1.isPanic)
             }.map(_ => succeed)
-        }
-
-        "interrupt with latch synchronization" in runJVM {
-            for
-                promise <- Promise.init[Int, Any]
-                started <- Latch.init(1)
-                fiber <- Fiber.initUnscoped {
-                    started.release.andThen(promise.get)
-                }
-                _      <- started.await
-                _      <- fiber.interrupt
-                result <- promise.getResult
-            yield assert(result.isPanic)
         }
 
         "concurrent fibers immediate interrupt" in runJVM {
@@ -636,13 +662,12 @@ class AsyncTest extends Test:
             // When using Scope, child fibers are tracked and interrupted with parent
             for
                 innerPromise <- Promise.init[Int, Any]
-                started      <- Latch.init(1)
                 outerFiber <- Fiber.initUnscoped {
                     Scope.run {
-                        Fiber.init(started.release.andThen(innerPromise.get)).map(_.get)
+                        Fiber.init(innerPromise.get).map(_.get)
                     }
                 }
-                _      <- started.await
+                _      <- untilTrue(innerPromise.waiters.map(_ == 1))
                 _      <- outerFiber.interrupt
                 result <- innerPromise.getResult
             yield assert(result.isPanic)
@@ -653,13 +678,10 @@ class AsyncTest extends Test:
             Kyo.foreach(1 to 100) { _ =>
                 for
                     promise <- Promise.init[Int, Any]
-                    started <- Latch.init(1)
-                    fiber <- Fiber.initUnscoped {
-                        started.release.andThen(promise.get)
-                    }
-                    _      <- started.await // Ensure fiber has started
-                    _      <- fiber.interrupt
-                    result <- promise.getResult
+                    fiber   <- Fiber.initUnscoped(promise.get)
+                    _       <- untilTrue(promise.waiters.map(_ == 1))
+                    _       <- fiber.interrupt
+                    result  <- promise.getResult
                 yield assert(result.isPanic)
             }.map(_ => succeed)
         }
@@ -868,7 +890,9 @@ class AsyncTest extends Test:
         }
 
         "race with isolate" in run {
-
+            // The race winner depends on scheduler timing — either task may
+            // complete first. Assert that the isolated Var state is consistent
+            // with whichever task won (both components match).
             Var.runTuple(0) {
                 Var.isolate.update[Int].use {
                     Async.race(
@@ -886,8 +910,9 @@ class AsyncTest extends Test:
                         )
                     )
                 }
-            }.map { result =>
-                assert(result == (1, 1))
+            }.map { case (varState, raceResult) =>
+                assert(varState == raceResult, s"Var state ($varState) must match race result ($raceResult)")
+                assert(varState == 1 || varState == 2, s"Winner must be 1 or 2, got $varState")
             }
         }
 
@@ -1464,6 +1489,96 @@ class AsyncTest extends Test:
         }
     }
 
+    "foreachIndexed" - {
+        "indices are correct when size > concurrency (batching path)" in run {
+            // When size > concurrency, items are batched. The index passed to f
+            // should be the global item index, not group_index + within_group_index.
+            val items = (0 until 20).toList
+            Async.foreachIndexed(items, concurrency = 3) { (idx, value) =>
+                (idx, value)
+            }.map { results =>
+                val pairs = results.toSeq
+                // Each item's index should equal its value since items = 0..19
+                pairs.zipWithIndex.foreach { case ((reportedIdx, value), position) =>
+                    assert(reportedIdx == position, s"Item at position $position: expected index $position but got $reportedIdx")
+                    assert(value == position, s"Item at position $position: expected value $position but got $value")
+                }
+                succeed
+            }
+        }
+
+        "indices are correct with uneven batches" in run {
+            // 10 items with concurrency=3 → groups of 4,4,2
+            // Bug: idx + idx2 gives 0,1,2,3 / 1,2,3,4 / 2,3 instead of 0,1,2,3 / 4,5,6,7 / 8,9
+            val items = (0 until 10).toList
+            Async.foreachIndexed(items, concurrency = 3) { (idx, _) =>
+                idx
+            }.map { results =>
+                assert(results == Chunk.from(0 until 10), s"Expected indices 0..9 but got $results")
+            }
+        }
+
+        "indices are correct via foreach (delegates to foreachIndexed)" in run {
+            // foreach wraps foreachIndexed, discarding the index.
+            // Verify by capturing indices through the values themselves.
+            val items = (0 until 12).toList
+            Async.foreach(items, concurrency = 2) { value =>
+                value
+            }.map { results =>
+                assert(results == Chunk.from(0 until 12))
+            }
+        }
+
+        "indices correct with many items and low concurrency" in run {
+            // 100 items, concurrency 4 → 4 groups of 25
+            // With the bug: group 0 gets 0..24, group 1 gets 1..25, group 2 gets 2..26, group 3 gets 3..27
+            val items = (0 until 100).toList
+            Async.foreachIndexed(items, concurrency = 4) { (idx, _) =>
+                idx
+            }.map { results =>
+                assert(results == Chunk.from(0 until 100), s"Expected indices 0..99 but got ${results.take(30)}...")
+            }
+        }
+    }
+
+    "batching concurrency" - {
+        "tasks are picked up by idle workers instead of waiting in static batch" in run {
+            // With static batching: items split into equal groups, each processed sequentially.
+            // If one batch has all slow tasks, other workers idle after finishing their fast batch.
+            //
+            // Create a scenario where the first batch finishes fast but the last batch is slow.
+            // With proper work-stealing, idle workers would pick up remaining slow tasks.
+            //
+            // 8 items, concurrency=2 → 2 batches of 4
+            // Batch 0 (items 0-3): instant
+            // Batch 1 (items 4-7): each sleeps 50ms → 200ms sequential
+            // With static batching: ~200ms (batch 1 runs all 4 sequentially)
+            // With work-stealing: ~100ms (2 workers each run 2 slow tasks)
+            for
+                maxConcurrent <- AtomicInt.init(0)
+                active        <- AtomicInt.init(0)
+                results <- Async.foreach(0 until 8, concurrency = 2) { i =>
+                    for
+                        current <- active.incrementAndGet
+                        _       <- maxConcurrent.updateAndGet(max => if current > max then current else max)
+                        _       <- Kyo.when(i >= 4)(Async.sleep(50.millis))
+                        _       <- active.decrementAndGet
+                    yield i
+                }
+                peak <- maxConcurrent.get
+            yield
+                // Results should preserve order regardless
+                assert(results.toSeq == (0 until 8).toSeq)
+                // With effective concurrency, both workers should be utilized during
+                // the slow tasks. If batching is static, only 1 worker handles all slow tasks.
+                // We check that at some point 2 workers were active simultaneously during
+                // the slow phase. This assertion will pass with work-stealing but may
+                // fail with static batching since batch 0 (fast) finishes before batch 1 starts slow tasks.
+                assert(peak == 2, s"Expected both workers active concurrently during slow phase, but peak was $peak")
+            end for
+        }
+    }
+
     "zip" - {
         "executes nine computations in parallel" in run {
             for
@@ -1511,10 +1626,10 @@ class AsyncTest extends Test:
                         }
                     }.andThen(done.release).andThen(exit.await)
                 }
-                _       <- done.await
-                waiters <- fiber.waiters
-                _       <- exit.release
-            yield assert(waiters == 1)
+                _ <- done.await
+                _ <- untilTrue(fiber.waiters.map(_ == 1))
+                _ <- exit.release
+            yield succeed
         }
         "with delay" in run {
             for
@@ -1525,10 +1640,10 @@ class AsyncTest extends Test:
                         Async.sleep(1.nanos)
                     }.andThen(done.release).andThen(exit.await)
                 }
-                _       <- done.await
-                waiters <- fiber.waiters
-                _       <- exit.release
-            yield assert(waiters == 1)
+                _ <- done.await
+                _ <- untilTrue(fiber.waiters.map(_ == 1))
+                _ <- exit.release
+            yield succeed
         }
     }
 
@@ -1561,6 +1676,123 @@ class AsyncTest extends Test:
             nested.flatten.flatten.map { result =>
                 assert(result == 3)
             }
+        }
+    }
+
+    "resource cleanup on interrupt" - {
+
+        "interrupt runs Sync.ensure finalizer" in runJVM {
+            for
+                called <- AtomicBoolean.init(false)
+                fiber <- Fiber.initUnscoped {
+                    Sync.ensure(called.set(true)) {
+                        Async.sleep(1.day)
+                    }
+                }
+                _           <- Async.sleep(10.millis)
+                interrupted <- fiber.interrupt
+                _           <- untilTrue(called.get)
+                flag        <- called.get
+            yield
+                assert(interrupted)
+                assert(flag)
+        }
+
+        "interrupt runs Scope.ensure finalizer" in runJVM {
+            for
+                counter <- AtomicInt.init(0)
+                fiber <- Fiber.initUnscoped {
+                    Scope.run {
+                        Scope.ensure(counter.incrementAndGet.unit).andThen(Async.sleep(1.day))
+                    }
+                }
+                _           <- Async.sleep(10.millis)
+                interrupted <- fiber.interrupt
+                _           <- untilTrue(counter.get.map(_ == 1))
+                count       <- counter.get
+            yield
+                assert(interrupted)
+                assert(count == 1)
+        }
+
+        "nested scopes under interrupt" in runJVM {
+            for
+                outer <- AtomicInt.init(0)
+                inner <- AtomicInt.init(0)
+                fiber <- Fiber.initUnscoped {
+                    Scope.run {
+                        Scope.ensure(outer.incrementAndGet.unit).andThen {
+                            Scope.run {
+                                Scope.ensure(inner.incrementAndGet.unit).andThen(Async.sleep(1.day))
+                            }
+                        }
+                    }
+                }
+                _           <- Async.sleep(10.millis)
+                interrupted <- fiber.interrupt
+                _           <- untilTrue(inner.get.map(_ == 1))
+                _           <- untilTrue(outer.get.map(_ == 1))
+                innerCount  <- inner.get
+                outerCount  <- outer.get
+            yield
+                assert(interrupted)
+                assert(innerCount == 1)
+                assert(outerCount == 1)
+        }
+
+        "timeout triggers scope cleanup" in runJVM {
+            for
+                counter <- AtomicInt.init(0)
+                result <- Abort.run[Timeout] {
+                    Async.timeout(10.millis) {
+                        Scope.run {
+                            Scope.ensure(counter.incrementAndGet.unit).andThen(Async.sleep(1.day))
+                        }
+                    }
+                }
+                _     <- untilTrue(counter.get.map(_ == 1))
+                count <- counter.get
+            yield
+                assert(result.isFailure)
+                assert(count == 1)
+        }
+
+        "rapid interrupt after fiber init (#1458)" in runJVM {
+            Kyo.foreach(1 to 100) { _ =>
+                for
+                    fiber       <- Fiber.initUnscoped(Async.sleep(1.day))
+                    interrupted <- fiber.interrupt
+                    result      <- fiber.getResult
+                yield
+                    assert(interrupted)
+                    assert(result.isPanic) // Fiber was actually interrupted, not just completed
+            }.map(_ => succeed)
+        }
+
+        "interrupt during acquireRelease body" in runJVM {
+            for
+                counter <- AtomicInt.init(0)
+                fiber <- Fiber.initUnscoped {
+                    Scope.run {
+                        Scope.acquireRelease(Sync.defer("resource"))(_ => counter.incrementAndGet.unit)
+                            .andThen(Async.sleep(1.day))
+                    }
+                }
+                _           <- Async.sleep(10.millis)
+                interrupted <- fiber.interrupt
+                _           <- untilTrue(counter.get.map(_ == 1))
+                count       <- counter.get
+            yield
+                assert(interrupted)
+                assert(count == 1)
+        }
+
+        "Duration.Zero timeout still interrupts (#1339)" in runJVM {
+            for
+                result <- Abort.run[Timeout] {
+                    Async.timeout(Duration.Zero)(Async.sleep(1.day))
+                }
+            yield assert(result.isFailure)
         }
     }
 

@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.internal.Platform
+
 class SignalTest extends Test:
 
     "init" - {
@@ -188,13 +190,12 @@ class SignalTest extends Test:
     "Signal operations" - {
         "current and next" in run {
             for
-                ref     <- Signal.initRef(1)
-                v1      <- ref.current
-                started <- Latch.init(1)
-                f       <- Fiber.initUnscoped(started.release.andThen(ref.next))
-                _       <- started.await
-                _       <- ref.set(2)
-                v2      <- f.get
+                ref <- Signal.initRef(1)
+                v1  <- ref.current
+                f   <- Fiber.initUnscoped(ref.next)
+                _   <- untilTrue(ref.waiters.map(_ == 1))
+                _   <- ref.set(2)
+                v2  <- f.get
             yield assert(v1 == 1 && v2 == 2)
         }
 
@@ -220,13 +221,13 @@ class SignalTest extends Test:
             for
                 ref    <- Signal.initRef(1)
                 f      <- Fiber.initUnscoped(ref.streamChanges.take(3).run)
-                _      <- Async.sleep(2.millis)
+                _      <- Async.sleep(100.millis)
                 _      <- ref.set(2)
-                _      <- Async.sleep(2.millis)
+                _      <- Async.sleep(100.millis)
                 _      <- ref.set(2) // Should be ignored
-                _      <- Async.sleep(2.millis)
+                _      <- Async.sleep(100.millis)
                 _      <- ref.set(3)
-                _      <- Async.sleep(2.millis)
+                _      <- Async.sleep(100.millis)
                 values <- f.get
             yield assert(values == Chunk(1, 2, 3))
         }
@@ -245,31 +246,37 @@ class SignalTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent reads and writes" in run {
-            (for
-                ref <- Signal.initRef(0)
-                readers <-
-                    Fiber.initUnscoped(Async.fill(10, 10)(
-                        Loop(0)(_ => ref.currentWith(v => if v < 10 then Loop.continue(v) else Loop.done(v)))
-                    ))
-                writers <-
-                    Fiber.initUnscoped(Async.fill(10, 10)(
-                        Loop.foreach {
-                            ref.get.map { v =>
-                                if v < 10 then
-                                    ref.compareAndSet(v, v + 1).andThen(Loop.continue)
-                                else
-                                    Loop.done(v)
-                                end if
+        "concurrent reads and writes" in {
+            assume(Runtime.getRuntime.availableProcessors() > 4, "Needs >4 cores for 20 concurrent fibers")
+            // Native scheduler has limited preemption — 20 busy-wait fibers
+            // contending on CAS need fewer repetitions to avoid starvation timeout
+            val effectiveRepeats = if Platform.isNative then 5 else repeats
+            run {
+                (for
+                    ref <- Signal.initRef(0)
+                    readers <-
+                        Fiber.initUnscoped(Async.fill(10, 10)(
+                            Loop(0)(_ => ref.currentWith(v => if v < 10 then Loop.continue(v) else Loop.done(v)))
+                        ))
+                    writers <-
+                        Fiber.initUnscoped(Async.fill(10, 10)(
+                            Loop.foreach {
+                                ref.get.map { v =>
+                                    if v < 10 then
+                                        ref.compareAndSet(v, v + 1).andThen(Loop.continue)
+                                    else
+                                        Loop.done(v)
+                                    end if
+                                }
                             }
-                        }
-                    ))
-                readResults  <- readers.get
-                writeResults <- writers.get
-                finalValue   <- ref.get
-            yield assert(readResults.forall(_ == 10) && writeResults.forall(_ == 10) && finalValue == 10))
-                .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                        ))
+                    readResults  <- readers.get
+                    writeResults <- writers.get
+                    finalValue   <- ref.get
+                yield assert(readResults.forall(_ == 10) && writeResults.forall(_ == 10) && finalValue == 10))
+                    .handle(Choice.run, _.unit, Loop.repeat(effectiveRepeats))
+                    .andThen(succeed)
+            }
         }
 
     }

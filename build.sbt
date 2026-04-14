@@ -5,12 +5,12 @@ import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version    = "3.8.1"
+val scala3Version    = "3.8.3"
 val scala3LTSVersion = "3.3.7"
 val scala213Version  = "2.13.18"
 
 val zioVersion       = "2.1.24"
-val catsVersion      = "3.6.3"
+val catsVersion      = "3.7.0"
 val scalaTestVersion = "3.2.19"
 
 val compilerOptionFailDiscard = "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error"
@@ -49,6 +49,17 @@ inThisBuild(List(
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
 Global / commands += Repeat.command
+Global / commands += TestKyo.command
+
+// CI concurrency controls:
+// - SBT_TASK_LIMIT: serialize ALL tasks (for OOM prevention on memory-constrained runners)
+// - SBT_UPDATE_LIMIT: serialize only dependency resolution (for Windows file lock avoidance)
+Global / concurrentRestrictions ++= {
+    val taskLimit   = sys.env.getOrElse("SBT_TASK_LIMIT", "0")
+    val updateLimit = sys.env.getOrElse("SBT_UPDATE_LIMIT", "0")
+    (if (taskLimit != "0") Seq(Tags.limitAll(taskLimit.toInt)) else Nil) ++
+        (if (updateLimit != "0") Seq(Tags.limit(Tags.Update, updateLimit.toInt)) else Nil)
+}
 
 lazy val `kyo-settings` = Seq(
     fork               := true,
@@ -109,14 +120,14 @@ lazy val kyoJVM = project
         `kyo-direct`.jvm,
         `kyo-stm`.jvm,
         `kyo-stats-registry`.jvm,
-        `kyo-stats-otel`.jvm,
+        `kyo-stats-otlp`.jvm,
         `kyo-logging-jpl`.jvm,
         `kyo-logging-slf4j`.jvm,
-        `kyo-cache`.jvm,
         `kyo-reactive-streams`.jvm,
         `kyo-aeron`.jvm,
         `kyo-sttp`.jvm,
         `kyo-tapir`.jvm,
+        `kyo-http`.jvm,
         `kyo-caliban`.jvm,
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
@@ -145,12 +156,15 @@ lazy val kyoJS = project
         `kyo-direct`.js,
         `kyo-stm`.js,
         `kyo-stats-registry`.js,
+        `kyo-reactive-streams`.js,
         `kyo-sttp`.js,
+        `kyo-stats-otlp`.js,
         `kyo-zio-test`.js,
         `kyo-zio`.js,
         `kyo-cats`.js,
         `kyo-combinators`.js,
-        `kyo-actor`.js
+        `kyo-actor`.js,
+        `kyo-http`.js
     )
 
 lazy val kyoNative = project
@@ -171,8 +185,15 @@ lazy val kyoNative = project
         `kyo-offheap`.native,
         `kyo-direct`.native,
         `kyo-combinators`.native,
+        `kyo-reactive-streams`.native,
         `kyo-sttp`.native,
-        `kyo-actor`.native
+        `kyo-actor`.native,
+        `kyo-http`.native,
+        `kyo-scheduler-zio`.native,
+        `kyo-zio`.native,
+        `kyo-zio-test`.native,
+        `kyo-stm`.native,
+        `kyo-stats-otlp`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -197,18 +218,20 @@ lazy val `kyo-scheduler` =
             libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1"
         )
 
-lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio", file("kyo-scheduler-zio"))(JVMPlatform)
+lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio", file("kyo-scheduler-zio"))(JVMPlatform, NativePlatform)
     .withoutSuffixFor(JVMPlatform)
     .crossType(CrossType.Full)
     .dependsOn(`kyo-scheduler`)
     .settings(
         `kyo-settings`,
+        scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
+        crossScalaVersions                := List(scala3LTSVersion, scala213Version),
         libraryDependencies += "dev.zio" %%% "zio" % zioVersion
     )
     .jvmSettings(mimaCheck(false))
-    .settings(
-        scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-        crossScalaVersions := List(scala3LTSVersion, scala213Version)
+    .nativeSettings(
+        `native-settings`,
+        crossScalaVersions := List(scala3LTSVersion)
     )
 
 lazy val `kyo-scheduler-cats` =
@@ -280,6 +303,7 @@ lazy val `kyo-data` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
+        .dependsOn(`kyo-stats-registry`)
         .in(file("kyo-data"))
         .settings(
             `kyo-settings`,
@@ -298,8 +322,7 @@ lazy val `kyo-kernel` =
         .in(file("kyo-kernel"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.jctools"   % "jctools-core" % "4.0.5",
-            libraryDependencies += "org.javassist" % "javassist"    % "3.30.2-GA" % Test,
+            libraryDependencies += "org.javassist" % "javassist" % "3.30.2-GA" % Test,
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
@@ -314,7 +337,7 @@ lazy val `kyo-prelude` =
         .in(file("kyo-prelude"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio-laws-laws" % "1.0.0-RC45" % Test,
+            libraryDependencies += "dev.zio" %%% "zio-laws-laws" % "1.0.0-RC46" % Test,
             libraryDependencies += "dev.zio" %%% "zio-test-sbt"  % zioVersion   % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -340,14 +363,14 @@ lazy val `kyo-core` =
         .dependsOn(`kyo-prelude`)
         .in(file("kyo-core"))
         .settings(
-            `kyo-settings`,
-            libraryDependencies += "dev.dirs" % "directories" % "26"
+            `kyo-settings`
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(
             `js-settings`,
-            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
+            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13),
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
 
 lazy val `kyo-offheap` =
@@ -371,7 +394,7 @@ lazy val `kyo-direct` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.2.0",
+            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.3.1",
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
@@ -418,7 +441,7 @@ lazy val `kyo-logging-slf4j` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.17",
-            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.25" % Test
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.32" % Test
         )
         .jvmSettings(mimaCheck(false))
 
@@ -430,54 +453,47 @@ lazy val `kyo-stats-registry` =
         .settings(
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.2",
-            crossScalaVersions                       := List(scala3LTSVersion, scala213Version)
+            crossScalaVersions := List(scala3LTSVersion, scala213Version)
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
-lazy val `kyo-stats-otel` =
-    crossProject(JVMPlatform)
+lazy val `kyo-stats-otlp` =
+    crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
-        .in(file("kyo-stats-otel"))
-        .dependsOn(`kyo-core`)
+        .in(file("kyo-stats-otlp"))
+        .dependsOn(`kyo-http`)
         .settings(
-            `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.58.0",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.58.0" % Test,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
+            `kyo-settings`
         )
         .jvmSettings(mimaCheck(false))
-
-lazy val `kyo-cache` =
-    crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-cache"))
-        .dependsOn(`kyo-core`)
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.2.3"
+        .nativeSettings(`native-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
-        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-reactive-streams` =
-    crossProject(JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-reactive-streams"))
         .dependsOn(`kyo-core`)
         .settings(
-            `kyo-settings`,
+            `kyo-settings`
+        )
+        .jvmSettings(
+            mimaCheck(false),
             libraryDependencies ++= Seq(
                 "org.reactivestreams" % "reactive-streams"     % "1.0.4",
                 "org.reactivestreams" % "reactive-streams-tck" % "1.0.4"    % Test,
                 "org.scalatestplus"  %% "testng-7-5"           % "3.2.17.0" % Test
             )
         )
-        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
 
 lazy val `kyo-aeron` =
     crossProject(JVMPlatform)
@@ -495,9 +511,9 @@ lazy val `kyo-aeron` =
                 "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
             ),
             libraryDependencies ++= Seq(
-                "io.aeron"     % "aeron-driver" % "1.50.0",
-                "io.aeron"     % "aeron-client" % "1.50.0",
-                "com.lihaoyi" %% "upickle"      % "4.4.2"
+                "io.aeron"     % "aeron-driver" % "1.50.2",
+                "io.aeron"     % "aeron-client" % "1.50.2",
+                "com.lihaoyi" %% "upickle"      % "4.4.3"
             )
         )
         .jvmSettings(mimaCheck(false))
@@ -525,10 +541,53 @@ lazy val `kyo-tapir` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.34",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.34"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.13.11",
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.13.11"
         )
         .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-http` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-http"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "dev.zio" %%% "zio-schema"            % "1.6.4",
+            libraryDependencies += "dev.zio" %%% "zio-schema-json"       % "1.6.4",
+            libraryDependencies += "dev.zio" %%% "zio-schema-derivation" % "1.6.4"
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            libraryDependencies += "io.netty" % "netty-codec-http"              % "4.2.1.Final",
+            libraryDependencies += "io.netty" % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-x86_64",
+            libraryDependencies += "io.netty" % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-aarch_64",
+            libraryDependencies += "io.netty" % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-x86_64",
+            libraryDependencies += "io.netty" % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-aarch_64"
+        )
+        .jsSettings(
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            nativeConfig ~= { c =>
+                import scala.sys.process.*
+                val h2oCompileFlags =
+                    try "pkg-config --cflags libh2o-evloop".!!.trim.split("\\s+").toSeq
+                    catch { case _: Exception => Seq.empty }
+                val h2oLinkFlags =
+                    try "pkg-config --libs libh2o-evloop".!!.trim.split("\\s+").toSeq
+                    catch { case _: Exception => Seq("-lh2o-evloop") }
+                val curlLinkFlags =
+                    try "pkg-config --libs libcurl".!!.trim.split("\\s+").toSeq
+                    catch { case _: Exception => Seq("-lcurl") }
+                c.withCompileOptions(c.compileOptions ++ Seq("-DH2O_USE_LIBUV=0") ++ h2oCompileFlags)
+                    .withLinkingOptions(c.linkingOptions ++ curlLinkFlags ++ h2oLinkFlags)
+            }
+        )
 
 lazy val `kyo-caliban` =
     crossProject(JVMPlatform)
@@ -536,19 +595,18 @@ lazy val `kyo-caliban` =
         .crossType(CrossType.Pure)
         .in(file("kyo-caliban"))
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-tapir`)
+        .dependsOn(`kyo-http`)
         .dependsOn(`kyo-zio`)
         .dependsOn(`kyo-zio-test`)
-        .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "3.0.0",
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "3.0.0"
+            libraryDependencies += "com.github.ghostdogpr"                 %% "caliban"               % "3.0.0",
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.28.2" % "provided"
         )
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-zio-test` =
-    crossProject(JVMPlatform, JSPlatform)
+    crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-zio-test"))
@@ -563,10 +621,13 @@ lazy val `kyo-zio-test` =
         .jsSettings(
             `js-settings`
         )
+        .nativeSettings(
+            `native-settings`
+        )
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-zio` =
-    crossProject(JVMPlatform, JSPlatform)
+    crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-zio"))
@@ -578,6 +639,9 @@ lazy val `kyo-zio` =
         )
         .jsSettings(
             `js-settings`
+        )
+        .nativeSettings(
+            `native-settings`
         )
         .jvmSettings(mimaCheck(false))
 
@@ -615,7 +679,7 @@ lazy val `kyo-playwright` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.microsoft.playwright" % "playwright" % "1.57.0"
+            libraryDependencies += "com.microsoft.playwright" % "playwright" % "1.58.0"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -638,7 +702,7 @@ lazy val `kyo-examples` =
                 "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
             ),
             Compile / doc / sources                              := Seq.empty,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.13.6"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.13.11"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -651,6 +715,8 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-parse`)
         .dependsOn(`kyo-sttp`)
+        .dependsOn(`kyo-tapir`)
+        .dependsOn(`kyo-http`)
         .dependsOn(`kyo-stm`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-scheduler-zio`)
@@ -683,11 +749,11 @@ lazy val `kyo-bench` =
             },
             libraryDependencies += "dev.zio"              %% "izumi-reflect"       % "3.0.9",
             libraryDependencies += "org.typelevel"        %% "cats-effect"         % catsVersion,
-            libraryDependencies += "org.typelevel"        %% "log4cats-core"       % "2.7.1",
-            libraryDependencies += "org.typelevel"        %% "log4cats-slf4j"      % "2.7.1",
+            libraryDependencies += "org.typelevel"        %% "log4cats-core"       % "2.8.0",
+            libraryDependencies += "org.typelevel"        %% "log4cats-slf4j"      % "2.8.0",
             libraryDependencies += "org.typelevel"        %% "cats-mtl"            % "1.6.0",
             libraryDependencies += "io.github.timwspence" %% "cats-stm"            % "0.13.5",
-            libraryDependencies += "com.47deg"            %% "fetch"               % "3.2.0",
+            libraryDependencies += "com.47deg"            %% "fetch"               % "3.2.1",
             libraryDependencies += "dev.zio"              %% "zio-logging"         % "2.5.3",
             libraryDependencies += "dev.zio"              %% "zio-logging-slf4j2"  % "2.5.3",
             libraryDependencies += "dev.zio"              %% "zio"                 % zioVersion,
@@ -697,6 +763,7 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC45",
             libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.12.2",
             libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "1.0.0-M44",
+            libraryDependencies += "org.http4s"           %% "http4s-ember-server" % "1.0.0-M44",
             libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "1.0.0-M44",
             libraryDependencies += "dev.zio"              %% "zio-http"            % "3.8.0",
             libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.7",
@@ -732,7 +799,6 @@ lazy val readme =
         .dependsOn(
             `kyo-core`,
             `kyo-direct`,
-            `kyo-cache`,
             `kyo-sttp`,
             `kyo-tapir`,
             `kyo-bench`,
@@ -743,10 +809,11 @@ lazy val readme =
         )
 
 lazy val `native-settings` = Seq(
-    fork                                        := false,
-    bspEnabled                                  := false,
-    Test / testForkedParallel                   := false,
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
+    fork                                              := false,
+    bspEnabled                                        := false,
+    Test / testForkedParallel                         := false,
+    Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "16777216",
+    libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.6.0"
 )
 
 lazy val `js-settings` = Seq(

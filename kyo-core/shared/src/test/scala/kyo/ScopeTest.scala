@@ -204,6 +204,23 @@ class ScopeTest extends Test:
             yield assert(result.panic.exists(_.isInstanceOf[Closed]))
             end for
         }
+
+        "concurrent acquireRelease all cleaned up" in run {
+            AtomicInt.init.map { counter =>
+                Scope.run {
+                    for
+                        fibers <- Kyo.fill(10) {
+                            Fiber.init {
+                                Scope.acquireRelease(Sync.defer(()))(_ => counter.incrementAndGet.unit)
+                            }
+                        }
+                        _ <- Kyo.foreach(fibers)(_.get)
+                    yield ()
+                }.map { _ =>
+                    counter.get.map(c => assert(c == 10))
+                }
+            }
+        }
     }
 
     "parallel close" - {
@@ -416,6 +433,336 @@ class ScopeTest extends Test:
                 Abort.run
             ).map { _ =>
                 assert(recoveryAction == "IllegalState")
+            }
+        }
+    }
+
+    "finalizer ordering (#1439)" - {
+
+        "documents release order with parallelism 1" in run {
+            var order = List.empty[Int]
+            Scope.run {
+                for
+                    _ <- Scope.acquireRelease(Sync.defer(1))(_ => Sync.defer { order = 1 :: order }.unit)
+                    _ <- Scope.acquireRelease(Sync.defer(2))(_ => Sync.defer { order = 2 :: order }.unit)
+                    _ <- Scope.acquireRelease(Sync.defer(3))(_ => Sync.defer { order = 3 :: order }.unit)
+                yield ()
+            }.map { _ =>
+                assert(order == List(1, 2, 3))
+            }
+        }
+
+        "releases all with parallel close" in run {
+            AtomicInt.init(0).map { counter =>
+                Scope.run(3) {
+                    for
+                        _ <- Scope.acquireRelease(Sync.defer(1))(_ => counter.incrementAndGet.unit)
+                        _ <- Scope.acquireRelease(Sync.defer(2))(_ => counter.incrementAndGet.unit)
+                        _ <- Scope.acquireRelease(Sync.defer(3))(_ => counter.incrementAndGet.unit)
+                    yield ()
+                }.map { _ =>
+                    counter.get.map(c => assert(c == 3))
+                }
+            }
+        }
+
+        "nested Scope.run releases inner before outer" in run {
+            var innerDone = false
+            Scope.run {
+                Scope.ensure {
+                    assert(innerDone)
+                    ()
+                }.andThen {
+                    Scope.run {
+                        Scope.ensure {
+                            innerDone = true
+                            ()
+                        }
+                    }
+                }
+            }.map(_ => assert(innerDone))
+        }
+
+        "many resources all released" in run {
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    Kyo.foreach(1 to 100) { i =>
+                        Scope.acquireRelease(Sync.defer(i))(_ => counter.incrementAndGet.unit)
+                    }
+                }.map { _ =>
+                    counter.get.map(c => assert(c == 100))
+                }
+            }
+        }
+    }
+
+    "acquireRelease safety (#1224)" - {
+        case object TestAcquireException extends scala.util.control.NoStackTrace
+
+        "finalizer runs after normal acquire" in run {
+            var released = false
+            Scope.run {
+                Scope.acquireRelease(Sync.defer("resource"))(_ => Sync.defer { released = true }.unit)
+            }.map { _ =>
+                assert(released)
+            }
+        }
+
+        "acquire failure skips release" in run {
+            var released = false
+            Abort.run {
+                Scope.run {
+                    Scope.acquireRelease(Sync.defer[Int, Any](throw TestAcquireException))(_ =>
+                        Sync.defer { released = true }.unit
+                    )
+                }
+            }.map { result =>
+                assert(!released)
+                assert(result.isPanic)
+            }
+        }
+
+        "ensure on closed scope panics with Closed" in run {
+            var called = false
+            val io =
+                for
+                    l <- Latch.init(1)
+                    f <- Fiber.initUnscoped(l.await.andThen(Scope.ensure { called = true }))
+                yield (l, f)
+            for
+                (l, f) <- Scope.run(io)
+                _      <- l.release
+                result <- f.getResult
+            yield assert(result.panic.exists(_.isInstanceOf[Closed]))
+            end for
+        }
+
+        "concurrent acquireRelease all cleaned up" in run {
+            AtomicInt.init.map { counter =>
+                Scope.run {
+                    for
+                        fibers <- Kyo.fill(10) {
+                            Fiber.init {
+                                Scope.acquireRelease(Sync.defer(()))(_ => counter.incrementAndGet.unit)
+                            }
+                        }
+                        _ <- Kyo.foreach(fibers)(_.get)
+                    yield ()
+                }.map { _ =>
+                    counter.get.map(c => assert(c == 10))
+                }
+            }
+        }
+
+    }
+
+    "scope + fiber" - {
+
+        "scoped fiber interrupted on scope exit" in run {
+            for
+                interrupted <- AtomicBoolean.init(false)
+                promise     <- Promise.init[Int, Any]
+                _ <- Scope.run {
+                    for
+                        _ <- promise.onInterrupt(_ => interrupted.set(true))
+                        f <- Fiber.init(promise.get)
+                    yield ()
+                }
+                _    <- untilTrue(interrupted.get)
+                flag <- interrupted.get
+            yield assert(flag)
+            end for
+        }
+
+        "multiple fibers in scope all interrupted" in run {
+            for
+                counter  <- AtomicInt.init(0)
+                promises <- Kyo.fill(5)(Promise.init[Int, Any])
+                _ <- Scope.run {
+                    for
+                        _      <- Kyo.foreach(promises)(p => p.onInterrupt(_ => counter.incrementAndGet.unit))
+                        fibers <- Kyo.foreach(promises)(p => Fiber.init(p.get))
+                    yield ()
+                }
+                _ <- untilTrue(counter.get.map(_ == 5))
+                c <- counter.get
+            yield assert(c == 5)
+            end for
+        }
+
+        "Sync.ensure inside forked fiber runs" in run {
+            var called = false
+            for
+                fiber <- Fiber.initUnscoped {
+                    Sync.ensure { called = true }(42)
+                }
+                result <- fiber.get
+            yield
+                assert(result == 42)
+                assert(called)
+            end for
+        }
+
+        "Scope.ensure inside forked fiber runs at scope exit" in run {
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    for
+                        f <- Fiber.init {
+                            Scope.ensure(counter.incrementAndGet.unit)
+                        }
+                        _ <- f.get
+                    yield ()
+                }.map { _ =>
+                    counter.get.map(c => assert(c == 1))
+                }
+            }
+        }
+
+        "Scope.ensure from multiple fibers all run" in run {
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    for
+                        fibers <- Kyo.fill(10) {
+                            Fiber.init {
+                                Scope.ensure(counter.incrementAndGet.unit)
+                            }
+                        }
+                        _ <- Kyo.foreach(fibers)(_.get)
+                    yield ()
+                }.map { _ =>
+                    counter.get.map(c => assert(c == 10))
+                }
+            }
+        }
+    }
+
+    "finalizer failure isolation" - {
+        case object TestException extends scala.util.control.NoStackTrace
+
+        "failing finalizer doesn't mask primary result" in run {
+            Scope.run {
+                Scope.ensure(throw TestException).andThen(42)
+            }.handle(Abort.run).map { result =>
+                assert(result.contains(42) || result.isPanic)
+            }
+        }
+
+        "failing finalizer doesn't mask primary error" in run {
+            val primaryEx = new RuntimeException("primary")
+            Abort.run {
+                Scope.run {
+                    Scope.ensure(throw TestException).andThen(Sync.defer[Int, Any](throw primaryEx))
+                }
+            }.map { result =>
+                // The primary error should be preserved
+                assert(result.isPanic)
+            }
+        }
+
+        "multiple finalizers one fails others still run" in pending
+
+        "all finalizers fail" in run {
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    for
+                        _ <- Scope.ensure { counter.incrementAndGet.unit.andThen(throw TestException) }
+                        _ <- Scope.ensure { counter.incrementAndGet.unit.andThen(throw TestException) }
+                        _ <- Scope.ensure { counter.incrementAndGet.unit.andThen(throw TestException) }
+                    yield ()
+                }.handle(Abort.run).map { _ =>
+                    counter.get.map(c => assert(c == 3))
+                }
+            }
+        }
+    }
+
+    "edge cases" - {
+
+        "empty Scope.run returns value" in run {
+            val v: Int < Scope = 42
+            Scope.run(v).map(r => assert(r == 42))
+        }
+
+        "very large number of finalizers" in run {
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    Kyo.foreach(1 to 10000) { _ =>
+                        Scope.ensure(counter.incrementAndGet.unit)
+                    }
+                }.map { _ =>
+                    counter.get.map(c => assert(c == 10000))
+                }
+            }
+        }
+
+        "scope with async finalizer" in run {
+            var finalizerRan = false
+            Scope.run {
+                Scope.ensure {
+                    Async.sleep(1.milli).andThen { finalizerRan = true }
+                }.andThen(42)
+            }.map { r =>
+                assert(r == 42)
+                assert(finalizerRan)
+            }
+        }
+
+        "concurrent ensure registration from multiple fibers" in run {
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    for
+                        fibers <- Kyo.fill(10) {
+                            Fiber.init {
+                                Scope.ensure(counter.incrementAndGet.unit)
+                            }
+                        }
+                        _ <- Kyo.foreach(fibers)(_.get)
+                    yield ()
+                }.map { _ =>
+                    counter.get.map(c => assert(c == 10))
+                }
+            }
+        }
+
+        "Scope.run wrapping Scope.run" in run {
+            var innerDone = false
+            Scope.run {
+                Scope.ensure {
+                    assert(innerDone)
+                    ()
+                }.andThen {
+                    Scope.run {
+                        Scope.ensure {
+                            innerDone = true
+                            ()
+                        }.andThen(42)
+                    }
+                }
+            }.map(r => assert(r == 42))
+        }
+    }
+
+    "scope isolation (#1381)" - {
+
+        "Scope.run on generic effect type with Scope should not run caller's finalizers" in run {
+            def handleScoped[A, S](v: A < (Scope & S)): A < (Async & S) =
+                Scope.run(v)
+
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    // Register a finalizer in the OUTER scope
+                    Scope.ensure(counter.incrementAndGet.unit).andThen {
+                        // handleScoped calls Scope.run again — this inner Scope.run
+                        // should NOT trigger the outer scope's finalizer
+                        handleScoped(Sync.defer(42))
+                    }
+                }.map { r =>
+                    counter.get.map { c =>
+                        assert(r == 42)
+                        // Outer finalizer should run exactly once (when outer Scope.run closes)
+                        assert(c == 1)
+                    }
+                }
             }
         }
     }

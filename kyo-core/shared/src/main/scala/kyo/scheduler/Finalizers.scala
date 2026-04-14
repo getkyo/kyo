@@ -1,10 +1,11 @@
 package kyo.scheduler
 
 import java.util.ArrayDeque
+import kyo.AllowUnsafe
 import kyo.Maybe
 import kyo.Result.Error
 import kyo.discard
-import org.jctools.queues.MpmcArrayQueue
+import kyo.internal.*
 import scala.annotation.tailrec
 
 private type Finalizer              = Maybe[Error[Any]] => Unit
@@ -15,10 +16,11 @@ private[kyo] object Finalizers:
 
     val empty: Finalizers = Absent
 
-    private val bufferCache = new MpmcArrayQueue[ArrayDeque[Finalizer]](1024)
+    import AllowUnsafe.embrace.danger
+    private val bufferCache = new MpmcUnsafeQueue[ArrayDeque[Finalizer]](1024)
 
     private def buffer(): ArrayDeque[Finalizer] =
-        Maybe(bufferCache.poll()).getOrElse(new ArrayDeque())
+        bufferCache.poll().getOrElse(new ArrayDeque())
 
     extension (e: Finalizers)
 

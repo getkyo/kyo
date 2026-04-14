@@ -18,6 +18,7 @@ import kyo.scheduler.top.Reporter
 import kyo.scheduler.top.Status
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
+import kyo.scheduler.util.Sleep
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
 import scala.annotation.nowarn
@@ -116,9 +117,14 @@ final class Scheduler(
         new Admission(() => loadAvg(), schedule, () => System.currentTimeMillis, timer)
 
     private val concurrencyRegulator =
-        new Concurrency(() => loadAvg(), updateWorkers, Thread.sleep(_), () => System.nanoTime, timer)
+        new Concurrency(() => loadAvg(), updateWorkers, Sleep(_), () => System.nanoTime, timer)
 
     private val top = new Reporter(status, enableTopJMX, enableTopConsoleMs, timer)
+
+    private val blockingMonitor = new BlockingMonitor(workers, () => currentWorkers, maxWorkers, timerExecutor)
+
+    /** Notifies the blocking monitor that a fiber was interrupted, triggering an immediate scan. */
+    def notifyInterrupt(): Unit = blockingMonitor.wake()
 
     /** Schedules a task for execution by the scheduler.
       *
@@ -374,6 +380,7 @@ final class Scheduler(
       */
     def shutdown(): Unit = {
         cycleTask.cancel(true)
+        blockingMonitor.stop()
         admissionRegulator.stop()
         concurrencyRegulator.stop()
         top.close()
@@ -416,6 +423,7 @@ final class Scheduler(
                         cycleWorkers()
                         LockSupport.parkNanos(cycleIntervalNs)
                     }
+                    Thread.interrupted(): Unit
                 }
             ): Callable[Unit]
         )
@@ -486,7 +494,7 @@ object Scheduler {
 
     private lazy val defaultWorkerExecutor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker", new Worker.WorkerThread(_)))
     private lazy val defaultClockExecutor  = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))
-    private lazy val defaultTimerExecutor  = Executors.newScheduledThreadPool(2, Threads("kyo-scheduler-timer"))
+    private lazy val defaultTimerExecutor  = Executors.newScheduledThreadPool(4, Threads("kyo-scheduler-timer"))
 
     val get = new Scheduler()
 
