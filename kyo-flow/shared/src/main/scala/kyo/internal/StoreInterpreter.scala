@@ -187,7 +187,7 @@ private[kyo] class StoreInterpreter(
         isolate.capture { state =>
             val isoLeft  = isolate.isolate(state, Abort.run[FlowSuspension](Abort.run[FlowException](left)))
             val isoRight = isolate.isolate(state, Abort.run[FlowSuspension](Abort.run[FlowException](right)))
-            Fiber.foreachIndexed(Seq(isoLeft, isoRight))((_, v) => v).map { fiber =>
+            Fiber.internal.foreachIndexed(Chunk.Indexed(isoLeft, isoRight), 2)((_, v) => v).map { fiber =>
                 fiber.use { results =>
                     Kyo.foreach(results)(isolate.restore(_)).map { restored =>
                         val lr = restored(0).asInstanceOf[R]
