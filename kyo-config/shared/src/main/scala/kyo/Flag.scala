@@ -34,14 +34,14 @@ import scala.jdk.CollectionConverters.*
   * @see
   *   [[Rollout]] for the expression DSL used in conditional rollouts
   */
-abstract class Flag[A] private[kyo] (val default: A, val validate: A => Either[Throwable, A] = (a: A) => Right(a))(implicit
-    val reader: Flag.Reader[A]
+abstract class Flag[A] private[kyo] (final val default: A, final val validate: A => Either[Throwable, A] = (a: A) => Right(a))(implicit
+    final val reader: Flag.Reader[A]
 ) {
 
     // --- Public API ---
 
     /** Fully-qualified flag name, derived from the JVM class name. */
-    val name: String = {
+    final val name: String = {
         val className = getClass.getName.stripSuffix("$")
         // Validate before replacement: check original JVM name for suspicious patterns
         if (className.matches(".*\\$\\d+.*") || className.contains("$anon$") || className.contains("$$Lambda")) {
@@ -55,24 +55,28 @@ abstract class Flag[A] private[kyo] (val default: A, val validate: A => Either[T
     }
 
     /** Environment variable name: flag name with dots replaced by underscores, uppercased. */
-    val envName: String = name.replace('.', '_').toUpperCase
+    final val envName: String = name.replace('.', '_').toUpperCase
+
+    // --- Internal ---
+
+    private val (resolvedSource: Flag.Source, resolvedExpression: String) = {
+        val prop = java.lang.System.getProperty(name)
+        if (prop ne null) (Flag.Source.SystemProperty, prop)
+        else {
+            val env = java.lang.System.getenv(envName)
+            if (env ne null) (Flag.Source.EnvironmentVariable, env)
+            else (Flag.Source.Default, "")
+        }
+    }
 
     /** The source that provided the resolved value. */
-    val source: Flag.Source =
-        if (java.lang.System.getProperty(name) ne null) Flag.Source.SystemProperty
-        else if (java.lang.System.getenv(envName) ne null) Flag.Source.EnvironmentVariable
-        else Flag.Source.Default
+    final val source: Flag.Source = resolvedSource
 
     /** Whether this flag supports runtime updates. */
     def isDynamic: Boolean
 
-    // --- Internal ---
-
     /** Raw expression string from system property or environment variable. Empty string when source is Default. */
-    private[kyo] val initialExpression: String =
-        if (source.eq(Flag.Source.SystemProperty)) java.lang.System.getProperty(name)
-        else if (source.eq(Flag.Source.EnvironmentVariable)) java.lang.System.getenv(envName)
-        else ""
+    private[kyo] val initialExpression: String = resolvedExpression
 
     /** Returns true if the expression contains rollout DSL syntax (@ or ;). */
     private[kyo] def isRollout(expr: String): Boolean =
@@ -126,6 +130,17 @@ object Flag {
 
         /** Human-readable type name for error messages. */
         def typeName: String
+
+        /** Parse s and wrap any failure in a [[FlagValueParseException]]. */
+        private[kyo] def parse(flagName: String, s: String): A =
+            try apply(s) match {
+                    case Right(a) => a
+                    case Left(e)  => throw FlagValueParseException(flagName, s, typeName, e)
+                }
+            catch {
+                case e: FlagException => throw e
+                case e: Exception     => throw FlagValueParseException(flagName, s, typeName, e)
+            }
     }
 
     object Reader {
@@ -210,28 +225,12 @@ object Flag {
       */
     def apply[A](name: String, default: A)(implicit reader: Reader[A]): A = {
         val prop = java.lang.System.getProperty(name)
-        if (prop ne null) {
-            try reader(prop) match {
-                    case Right(a) => a
-                    case Left(e)  => throw FlagValueParseException(name, prop, reader.typeName, e)
-                }
-            catch {
-                case e: FlagException => throw e
-                case e: Throwable     => throw FlagValueParseException(name, prop, reader.typeName, e)
-            }
-        } else {
+        if (prop ne null) reader.parse(name, prop)
+        else {
             val envName = name.replace('.', '_').toUpperCase
             val env     = java.lang.System.getenv(envName)
-            if (env ne null) {
-                try reader(env) match {
-                        case Right(a) => a
-                        case Left(e)  => throw FlagValueParseException(name, env, reader.typeName, e)
-                    }
-                catch {
-                    case e: FlagException => throw e
-                    case e: Throwable     => throw FlagValueParseException(name, env, reader.typeName, e)
-                }
-            } else default
+            if (env ne null) reader.parse(name, env)
+            else default
         }
     }
 

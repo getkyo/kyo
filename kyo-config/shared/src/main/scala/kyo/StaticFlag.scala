@@ -62,30 +62,12 @@ abstract class StaticFlag[A](default: A, validate: A => Either[Throwable, A] = (
             val parsed =
                 if (isRollout(initialExpression)) {
                     Rollout.select(initialExpression) match {
-                        case Right(Some(s)) =>
-                            try reader(s) match {
-                                    case Right(a) => Some(a)
-                                    case Left(e)  => throw FlagValueParseException(name, s, reader.typeName, e)
-                                }
-                            catch {
-                                case e: FlagException => throw e
-                                case e: Exception =>
-                                    throw FlagValueParseException(name, s, reader.typeName, e)
-                            }
-                        case Right(None) => None
-                        case Left(err) =>
-                            throw FlagRolloutParseException(name, initialExpression, err)
+                        case Right(Some(s)) => Some(reader.parse(name, s))
+                        case Right(None)    => None
+                        case Left(err)      => throw FlagRolloutParseException(name, initialExpression, err)
                     }
                 } else {
-                    try reader(initialExpression) match {
-                            case Right(a) => Some(a)
-                            case Left(e)  => throw FlagValueParseException(name, initialExpression, reader.typeName, e)
-                        }
-                    catch {
-                        case e: FlagException => throw e
-                        case e: Exception =>
-                            throw FlagValueParseException(name, initialExpression, reader.typeName, e)
-                    }
+                    Some(reader.parse(name, initialExpression))
                 }
             parsed match {
                 case None => validatedDefault
