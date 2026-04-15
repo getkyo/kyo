@@ -76,12 +76,10 @@ private[kyo] class MemoryFlowStore(
             if results.nonEmpty then results
             else
                 Abort.run[Closed] {
-                    channel.poll.andThen {
-                        Async.race(
-                            Async.sleep(timeout).andThen(Seq.empty[FlowStore.ExecutionState]),
-                            channel.take.andThen(tryOnce)
-                        )
-                    }
+                    Async.race(
+                        Async.sleep(timeout).andThen(Seq.empty[FlowStore.ExecutionState]),
+                        channel.take.andThen(tryOnce)
+                    )
                 }.map(_.getOrElse(Seq.empty))
         }
     end claimReady
