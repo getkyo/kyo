@@ -35,6 +35,8 @@ abstract class Json[A]:
         zio.schema.codec.JsonCodec.jsonDecoder(zioSchema).decodeJson(json) match
             case Right(a)    => Result.succeed(a)
             case Left(error) => Result.fail(s"JSON decode error: $error")
+
+    def erased: Json[Any] = this.asInstanceOf[Json[Any]]
 end Json
 
 object Json:
@@ -67,7 +69,26 @@ object Json:
     given Json[Byte]    = fromZio(zio.schema.Schema[Byte])
     given Json[Char]    = fromZio(zio.schema.Schema[Char])
 
-    given Json[String] = fromZio(zio.schema.Schema[String])
+    given Json[String]   = fromZio(zio.schema.Schema[String])
+    given Json[Instant]  = fromZio(zio.schema.Schema[java.time.Instant].asInstanceOf[zio.schema.Schema[Instant]])
+    given Json[Duration] = fromZio(durationSchema)
+    private given durationSchema: zio.schema.Schema[Duration] =
+        zio.schema.Schema[Long].transform(Duration.fromNanos, _.toNanos)
+
+    private given instantSchema: zio.schema.Schema[Instant] =
+        zio.schema.Schema[java.time.Instant].asInstanceOf[zio.schema.Schema[Instant]]
+
+    given Json[Schedule] =
+        given [B](using s: Json[B]): zio.schema.Schema[B] = s.zioSchema
+        fromZio(zio.schema.DeriveSchema.gen[Schedule])
+
+    // Tag[Any]: serialize as tag.show (deterministic), deserialize by casting String → Tag[Any]
+    // Tag is opaque over String|Dynamic. Static tags ARE strings at runtime.
+    given Json[Tag[Any]] = new Json[Tag[Any]]:
+        private[kyo] val zioSchema = zio.schema.Schema[String].transform(
+            str => str.asInstanceOf[Tag[Any]],
+            tag => tag.show
+        )
 
     // Unit: accept empty body or JSON null
     given Json[Unit] = new Json[Unit]:

@@ -128,6 +128,7 @@ lazy val kyoJVM = project
         `kyo-sttp`.jvm,
         `kyo-tapir`.jvm,
         `kyo-http`.jvm,
+        `kyo-flow`.jvm,
         `kyo-caliban`.jvm,
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
@@ -164,7 +165,8 @@ lazy val kyoJS = project
         `kyo-cats`.js,
         `kyo-combinators`.js,
         `kyo-actor`.js,
-        `kyo-http`.js
+        `kyo-http`.js,
+        `kyo-flow`.js
     )
 
 lazy val kyoNative = project
@@ -189,6 +191,7 @@ lazy val kyoNative = project
         `kyo-sttp`.native,
         `kyo-actor`.native,
         `kyo-http`.native,
+        `kyo-flow`.native,
         `kyo-scheduler-zio`.native,
         `kyo-zio`.native,
         `kyo-zio-test`.native,
@@ -587,6 +590,21 @@ lazy val `kyo-http` =
                 c.withCompileOptions(c.compileOptions ++ Seq("-DH2O_USE_LIBUV=0") ++ h2oCompileFlags)
                     .withLinkingOptions(c.linkingOptions ++ curlLinkFlags ++ h2oLinkFlags)
             }
+        )
+
+lazy val `kyo-flow` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-flow"))
+        .dependsOn(`kyo-http`)
+        .dependsOn(`kyo-direct` % Test)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
 
 lazy val `kyo-caliban` =

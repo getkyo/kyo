@@ -18,6 +18,7 @@ class RandomTest extends Test:
                 def nextString(length: Int, chars: Seq[Char])(using AllowUnsafe) = chars.last.toString * length
                 def nextBytes(length: Int)(using AllowUnsafe)                    = Seq.fill(length)(1.toByte)
                 def shuffle[A](seq: Seq[A])(using AllowUnsafe)                   = seq.reverse
+                override def uuid()(using AllowUnsafe)                           = "mocked-uuid"
         )
 
         "nextInt" in run {
@@ -95,6 +96,12 @@ class RandomTest extends Test:
         "shuffle" in run {
             Random.let(testRandom)(Random.shuffle(Seq(1, 2, 3))).map { v =>
                 assert(v == Seq(3, 2, 1))
+            }
+        }
+
+        "uuid" in run {
+            Random.let(testRandom)(Random.uuid).map { v =>
+                assert(v == "mocked-uuid")
             }
         }
     }
@@ -192,6 +199,20 @@ class RandomTest extends Test:
                 assert(v.toSet == Set(1, 2, 3))
             }
         }
+
+        "uuid" in run {
+            Random.uuid.map { v =>
+                assert(v.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+            }
+        }
+
+        "uuid uniqueness" in run {
+            Random.uuid.map { a =>
+                Random.uuid.map { b =>
+                    assert(a != b)
+                }
+            }
+        }
     }
 
     "unsafe" - {
@@ -278,6 +299,11 @@ class RandomTest extends Test:
             assert(result.toSet == seq.toSet)
         }
 
+        "should generate uuid correctly" in {
+            val result = testUnsafe.uuid()
+            assert(result.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+        }
+
         "should convert to safe Random" in {
             val safeRandom = testUnsafe.safe
             assert(safeRandom.isInstanceOf[Random])
@@ -299,6 +325,7 @@ class RandomTest extends Test:
             def nextString(length: Int, chars: Seq[Char])(using Frame) = chars.last.toString * length
             def nextBytes(length: Int)(using Frame)                    = Seq.fill(length)(1.toByte)
             def shuffle[A](seq: Seq[A])(using Frame)                   = seq.reverse
+            def uuid(using Frame)                                      = "context-uuid"
             def unsafe                                                 = ???
 
         "get should return current Random instance" in run {

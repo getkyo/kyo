@@ -263,7 +263,7 @@ object Dict:
         infix def ++(other: Dict[K, V]): Dict[K, V] = concat(other)
 
         /** Applies the given function to each key-value pair in this Dict. */
-        inline def foreach(inline fn: (K, V) => Unit): Unit =
+        def foreach(fn: (K, V) => Unit): Unit =
             reduce(
                 span =>
                     val n = Span.size(span) / 2
@@ -392,7 +392,7 @@ object Dict:
         /** Applies a binary operator to a start value and all entries, going left to right. The function receives the accumulator, key, and
           * value as separate arguments to avoid tuple allocation.
           */
-        inline def foldLeft[B](z: B)(inline fn: (B, K, V) => B): B =
+        def foldLeft[B](z: B)(fn: (B, K, V) => B): B =
             reduce(
                 span =>
                     val n = Span.size(span) / 2
