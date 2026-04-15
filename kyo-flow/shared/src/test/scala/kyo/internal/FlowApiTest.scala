@@ -37,6 +37,15 @@ class FlowApiTest extends Test:
         val pattern = s""""$field"\\s*:\\s*(\\d+)""".r
         pattern.findFirstMatchIn(body).map(_.group(1).toInt).getOrElse(-1)
 
+    private def awaitStatus(port: Int, eid: String)(pred: String => Boolean)(using Frame): String < (Async & Abort[Any]) =
+        AtomicRef.init("").map { last =>
+            untilTrue {
+                HttpClient.getText(url(port, s"/api/v1/executions/$eid")).map { body =>
+                    last.set(body).andThen(pred(body))
+                }
+            }.andThen(last.get)
+        }
+
     // =========================================================================
     // Workflow endpoints
     // =========================================================================
@@ -181,16 +190,13 @@ class FlowApiTest extends Test:
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     eid = jsonField(createBody, "executionId")
-                    _ <- Async.sleep(500.millis)
-                    _ <- HttpClient.postText(url(port, s"/api/v1/executions/$eid/signal/x"), "42")
-                    _ <- Async.sleep(500.millis)
-                    _ <- HttpClient.postText(url(port, s"/api/v1/executions/$eid/signal/name"), "\"hello\"")
-                    _ <- Async.sleep(1.second)
-                    // Execution should be completed now. Try signaling again.
+                    _    <- awaitStatus(port, eid)(_.contains("waiting:x"))
+                    _    <- HttpClient.postText(url(port, s"/api/v1/executions/$eid/signal/x"), "42")
+                    _    <- awaitStatus(port, eid)(_.contains("waiting:name"))
+                    _    <- HttpClient.postText(url(port, s"/api/v1/executions/$eid/signal/name"), "\"hello\"")
+                    _    <- awaitStatus(port, eid)(_.contains("completed"))
                     body <- HttpClient.postText(url(port, s"/api/v1/executions/$eid/signal/x"), "99")
-                yield
-                    // Should NOT be "ok" — should indicate error
-                    assert(!body.contains("\"ok\":true"), s"Signal to completed execution should fail, got: $body")
+                yield assert(!body.contains("\"ok\":true"), s"Signal to completed execution should fail, got: $body")
             }
         }
     }
@@ -294,28 +300,13 @@ class FlowApiTest extends Test:
         "create → signal → complete" in run {
             withFlowServer { port =>
                 for
-                    // Create
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     eid = jsonField(createBody, "executionId")
-                    _ <- Async.sleep(500.millis)
-
-                    // Signal x
-                    _ <- HttpClient.postText(url(port, s"/api/v1/executions/$eid/signal/x"), "10")
-                    _ <- Async.sleep(500.millis)
-
-                    // Check waiting for name
-                    statusBody <- HttpClient.getText(url(port, s"/api/v1/executions/$eid"))
-                    _ = assert(statusBody.contains("waiting:name"))
-
-                    // Signal name
-                    _ <- HttpClient.postText(url(port, s"/api/v1/executions/$eid/signal/name"), "\"World\"")
-                    _ <- Async.sleep(500.millis)
-
-                    // Check completed
-                    finalBody <- HttpClient.getText(url(port, s"/api/v1/executions/$eid"))
-                    _ = assert(finalBody.contains("completed"))
-
-                    // Check history
+                    _        <- awaitStatus(port, eid)(_.contains("waiting:x"))
+                    _        <- HttpClient.postText(url(port, s"/api/v1/executions/$eid/signal/x"), "10")
+                    _        <- awaitStatus(port, eid)(_.contains("waiting:name"))
+                    _        <- HttpClient.postText(url(port, s"/api/v1/executions/$eid/signal/name"), "\"World\"")
+                    _        <- awaitStatus(port, eid)(_.contains("completed"))
                     histBody <- HttpClient.getText(url(port, s"/api/v1/executions/$eid/history"))
                 yield
                     assert(histBody.contains("Created"))

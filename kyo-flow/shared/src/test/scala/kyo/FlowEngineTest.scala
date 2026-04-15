@@ -27,7 +27,10 @@ class FlowEngineTest extends Test:
         maxRounds: Int = 200
     )(using Frame): Flow.Status < Async =
         def go(remaining: Int): Flow.Status < Async =
-            if remaining <= 0 then Abort.panic(new AssertionError("pump timed out"))
+            if remaining <= 0 then
+                store.getExecution(eid).map { state =>
+                    Abort.panic(new AssertionError(s"pump timed out — last state: $state"))
+                }
             else
                 tc.advance(100.millis).map { _ =>
                     store.getExecution(eid).map {

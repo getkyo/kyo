@@ -72,13 +72,19 @@ private[kyo] class MemoryFlowStore(
                 }
             }
 
+        def loop: Seq[FlowStore.ExecutionState] < (Async & Abort[Closed]) =
+            tryOnce.map { results =>
+                if results.nonEmpty then results
+                else channel.take.andThen(loop)
+            }
+
         tryOnce.map { results =>
             if results.nonEmpty then results
             else
                 Abort.run[Closed] {
                     Async.race(
-                        Async.sleep(timeout).andThen(Seq.empty[FlowStore.ExecutionState]),
-                        channel.take.andThen(tryOnce)
+                        Async.delay(timeout)(Seq.empty[FlowStore.ExecutionState]),
+                        loop
                     )
                 }.map(_.getOrElse(Seq.empty))
         }
