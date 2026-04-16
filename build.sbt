@@ -358,6 +358,17 @@ lazy val `kyo-parse` =
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
+lazy val `kyo-schema` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-data` % "test->test;compile->compile")
+        .in(file("kyo-schema"))
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+
 lazy val `kyo-core` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
