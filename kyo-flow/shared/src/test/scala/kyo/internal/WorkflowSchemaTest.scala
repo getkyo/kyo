@@ -154,12 +154,12 @@ class WorkflowSchemaTest extends Test:
             store: FlowStore,
             eid: Flow.Id.Execution,
             predicate: Flow.Status => Boolean,
-            maxRounds: Int = 100
+            maxRounds: Int = 200
         )(using Frame): Flow.Status < Async =
             def go(remaining: Int): Flow.Status < Async =
                 if remaining <= 0 then Abort.panic(new AssertionError("pump timed out"))
                 else
-                    tc.advance(100.millis).map { _ =>
+                    tc.advance(10.millis).map { _ =>
                         store.getExecution(eid).map {
                             case Present(state) if predicate(state.status) => state.status
                             case _                                         => go(remaining - 1)
