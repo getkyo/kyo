@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.internal.server.*
 
 class HttpRouterTest extends kyo.Test:
 
@@ -17,7 +18,7 @@ class HttpRouterTest extends kyo.Test:
 
     "empty router" - {
         "returns NotFound for any path" in {
-            val router = HttpRouter(Seq.empty)
+            val router = HttpRouter(Seq.empty, Absent)
             router.find(HttpMethod.GET, "/anything") match
                 case Result.Failure(HttpRouter.FindError.NotFound) => succeed
                 case other                                         => fail(s"expected NotFound, got $other")
@@ -29,7 +30,7 @@ class HttpRouterTest extends kyo.Test:
     "single route" - {
         "matches exact path" in {
             val route  = HttpRoute.getRaw("users")
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/users") match
                 case Result.Success(m) =>
                     assert(m.pathCaptures.isEmpty)
@@ -41,7 +42,7 @@ class HttpRouterTest extends kyo.Test:
 
         "matches without leading slash" in {
             val route  = HttpRoute.getRaw("users")
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "users") match
                 case Result.Success(_) => succeed
                 case other             => fail(s"expected match, got $other")
@@ -49,7 +50,7 @@ class HttpRouterTest extends kyo.Test:
 
         "matches with trailing slash" in {
             val route  = HttpRoute.getRaw("users")
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/users/") match
                 case Result.Success(_) => succeed
                 case other             => fail(s"expected match, got $other")
@@ -57,7 +58,7 @@ class HttpRouterTest extends kyo.Test:
 
         "matches with multiple slashes" in {
             val route  = HttpRoute.getRaw("users")
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "///users///") match
                 case Result.Success(_) => succeed
                 case other             => fail(s"expected match, got $other")
@@ -65,7 +66,7 @@ class HttpRouterTest extends kyo.Test:
 
         "returns NotFound for wrong path" in {
             val route  = HttpRoute.getRaw("users")
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/posts") match
                 case Result.Failure(HttpRouter.FindError.NotFound) => succeed
                 case other                                         => fail(s"expected NotFound, got $other")
@@ -73,7 +74,7 @@ class HttpRouterTest extends kyo.Test:
 
         "returns MethodNotAllowed for wrong method" in {
             val route  = HttpRoute.getRaw("users")
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.POST, "/users") match
                 case Result.Failure(HttpRouter.FindError.MethodNotAllowed(methods)) =>
                     assert(methods.contains(HttpMethod.GET))
@@ -83,7 +84,7 @@ class HttpRouterTest extends kyo.Test:
 
         "HEAD matches GET route" in {
             val route  = HttpRoute.getRaw("users")
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.HEAD, "/users") match
                 case Result.Success(_) => succeed
                 case other             => fail(s"expected match, got $other")
@@ -95,7 +96,7 @@ class HttpRouterTest extends kyo.Test:
     "multi-segment paths" - {
         "matches nested path" in {
             val route  = HttpRoute.getRaw("api" / HttpPath.Literal("v1") / HttpPath.Literal("users"))
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/api/v1/users") match
                 case Result.Success(_) => succeed
                 case other             => fail(s"expected match, got $other")
@@ -103,7 +104,7 @@ class HttpRouterTest extends kyo.Test:
 
         "NotFound for partial match" in {
             val route  = HttpRoute.getRaw("api" / HttpPath.Literal("v1") / HttpPath.Literal("users"))
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/api/v1") match
                 case Result.Failure(HttpRouter.FindError.NotFound) => succeed
                 case other                                         => fail(s"expected NotFound, got $other")
@@ -111,7 +112,7 @@ class HttpRouterTest extends kyo.Test:
 
         "NotFound for too-deep path" in {
             val route  = HttpRoute.getRaw("api")
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/api/v1/users") match
                 case Result.Failure(HttpRouter.FindError.NotFound) => succeed
                 case other                                         => fail(s"expected NotFound, got $other")
@@ -123,7 +124,7 @@ class HttpRouterTest extends kyo.Test:
     "path captures" - {
         "extracts single capture" in {
             val route  = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("userId"))
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/users/42") match
                 case Result.Success(m) =>
                     assert(m.pathCaptures.is(Dict("userId" -> "42")))
@@ -133,7 +134,7 @@ class HttpRouterTest extends kyo.Test:
 
         "extracts multiple captures" in {
             val route  = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("userId") / "posts" / HttpPath.Capture[Int]("postId"))
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/users/42/posts/7") match
                 case Result.Success(m) =>
                     assert(m.pathCaptures.is(Dict("userId" -> "42", "postId" -> "7")))
@@ -143,7 +144,7 @@ class HttpRouterTest extends kyo.Test:
 
         "URL-decodes capture values" in {
             val route  = HttpRoute.getRaw("users" / HttpPath.Capture[String]("name"))
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/users/John%20Doe") match
                 case Result.Success(m) =>
                     assert(m.pathCaptures.is(Dict("name" -> "John Doe")))
@@ -153,7 +154,7 @@ class HttpRouterTest extends kyo.Test:
 
         "uses wireName when set" in {
             val route  = HttpRoute.getRaw("users" / HttpPath.Capture[String]("userId", wireName = "user_id"))
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/users/42") match
                 case Result.Success(m) =>
                     assert(m.pathCaptures.is(Dict("user_id" -> "42")))
@@ -163,7 +164,7 @@ class HttpRouterTest extends kyo.Test:
 
         "capture matches any segment" in {
             val route  = HttpRoute.getRaw("users" / HttpPath.Capture[String]("userId"))
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/users/anything-goes-here") match
                 case Result.Success(m) =>
                     assert(m.pathCaptures("userId") == "anything-goes-here")
@@ -177,7 +178,7 @@ class HttpRouterTest extends kyo.Test:
     "rest captures" - {
         "captures remaining path" in {
             val route  = HttpRoute.getRaw("files" / Capture.Rest("path"))
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/files/a/b/c.txt") match
                 case Result.Success(m) =>
                     assert(m.pathCaptures.is(Dict("path" -> "a/b/c.txt")))
@@ -187,7 +188,7 @@ class HttpRouterTest extends kyo.Test:
 
         "captures single segment" in {
             val route  = HttpRoute.getRaw("files" / Capture.Rest("path"))
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/files/readme.md") match
                 case Result.Success(m) =>
                     assert(m.pathCaptures("path") == "readme.md")
@@ -197,14 +198,14 @@ class HttpRouterTest extends kyo.Test:
         "rejects Rest in non-terminal position" in {
             val route = HttpRoute.getRaw("api" / Capture.Rest("mid") / "suffix")
             val ex = intercept[IllegalArgumentException] {
-                HttpRouter(Seq(mkEndpoint(route)))
+                HttpRouter(Seq(mkEndpoint(route)), Absent)
             }
             assert(ex.getMessage.contains("Rest capture must be the last segment"))
         }
 
         "allows Rest as the only segment" in {
             val route  = HttpRoute.getRaw(Capture.Rest("path"))
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/anything/here") match
                 case Result.Success(m) =>
                     assert(m.pathCaptures("path") == "anything/here")
@@ -219,7 +220,7 @@ class HttpRouterTest extends kyo.Test:
         "routes to correct endpoint by path" in {
             val usersRoute = HttpRoute.getRaw("users")
             val postsRoute = HttpRoute.getRaw("posts")
-            val router     = HttpRouter(Seq(mkEndpoint(usersRoute), mkEndpoint(postsRoute)))
+            val router     = HttpRouter(Seq(mkEndpoint(usersRoute), mkEndpoint(postsRoute)), Absent)
             router.find(HttpMethod.GET, "/users") match
                 case Result.Success(m) =>
                     assert(m.endpoint.route.request.path == usersRoute.request.path)
@@ -235,7 +236,7 @@ class HttpRouterTest extends kyo.Test:
         "routes to correct endpoint by method" in {
             val getRoute  = HttpRoute.getRaw("users")
             val postRoute = HttpRoute.postRaw("users").request(_.bodyJson[User])
-            val router    = HttpRouter(Seq(mkEndpoint(getRoute), mkEndpoint(postRoute)))
+            val router    = HttpRouter(Seq(mkEndpoint(getRoute), mkEndpoint(postRoute)), Absent)
             router.find(HttpMethod.GET, "/users") match
                 case Result.Success(m) =>
                     assert(m.endpoint.route.method == HttpMethod.GET)
@@ -252,7 +253,7 @@ class HttpRouterTest extends kyo.Test:
             val getRoute    = HttpRoute.getRaw("users")
             val postRoute   = HttpRoute.postRaw("users").request(_.bodyJson[User])
             val deleteRoute = HttpRoute.deleteRaw("users")
-            val router      = HttpRouter(Seq(mkEndpoint(getRoute), mkEndpoint(postRoute), mkEndpoint(deleteRoute)))
+            val router      = HttpRouter(Seq(mkEndpoint(getRoute), mkEndpoint(postRoute), mkEndpoint(deleteRoute)), Absent)
             router.find(HttpMethod.PUT, "/users") match
                 case Result.Failure(HttpRouter.FindError.MethodNotAllowed(methods)) =>
                     assert(methods.contains(HttpMethod.GET))
@@ -265,7 +266,7 @@ class HttpRouterTest extends kyo.Test:
         "literal preferred over capture" in {
             val literalRoute = HttpRoute.getRaw("users" / HttpPath.Literal("me"))
             val captureRoute = HttpRoute.getRaw("users" / HttpPath.Capture[String]("userId"))
-            val router       = HttpRouter(Seq(mkEndpoint(literalRoute), mkEndpoint(captureRoute)))
+            val router       = HttpRouter(Seq(mkEndpoint(literalRoute), mkEndpoint(captureRoute)), Absent)
             // "me" should match literal
             router.find(HttpMethod.GET, "/users/me") match
                 case Result.Success(m) =>
@@ -286,7 +287,7 @@ class HttpRouterTest extends kyo.Test:
     "streaming flags" - {
         "non-streaming route" in {
             val route  = HttpRoute.getRaw("users").response(_.bodyJson[User])
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/users") match
                 case Result.Success(m) =>
                     assert(!m.isStreamingRequest)
@@ -297,7 +298,7 @@ class HttpRouterTest extends kyo.Test:
 
         "streaming request" in {
             val route  = HttpRoute.postRaw("upload").request(_.bodyStream)
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.POST, "/upload") match
                 case Result.Success(m) =>
                     assert(m.isStreamingRequest)
@@ -308,7 +309,7 @@ class HttpRouterTest extends kyo.Test:
 
         "streaming response" in {
             val route  = HttpRoute.getRaw("events").response(_.bodySseJson[User])
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/events") match
                 case Result.Success(m) =>
                     assert(!m.isStreamingRequest)
@@ -319,7 +320,7 @@ class HttpRouterTest extends kyo.Test:
 
         "both streaming" in {
             val route  = HttpRoute.postRaw("pipe").request(_.bodyStream).response(_.bodyStream)
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.POST, "/pipe") match
                 case Result.Success(m) =>
                     assert(m.isStreamingRequest)
@@ -334,7 +335,7 @@ class HttpRouterTest extends kyo.Test:
     "root path" - {
         "matches empty path" in {
             val route  = HttpRoute.getRaw("")
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/") match
                 case Result.Success(_) => succeed
                 case other             => fail(s"expected match, got $other")
@@ -342,7 +343,7 @@ class HttpRouterTest extends kyo.Test:
 
         "matches empty string" in {
             val route  = HttpRoute.getRaw("")
-            val router = HttpRouter(Seq(mkEndpoint(route)))
+            val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "") match
                 case Result.Success(_) => succeed
                 case other             => fail(s"expected match, got $other")
@@ -354,7 +355,7 @@ class HttpRouterTest extends kyo.Test:
     "binary search" - {
         "works with many literal siblings" in {
             val routes = (0 until 20).map(i => HttpRoute.getRaw(f"route$i%02d"))
-            val router = HttpRouter(routes.map(mkEndpoint))
+            val router = HttpRouter(routes.map(mkEndpoint), Absent)
             // Check first, last, and middle
             router.find(HttpMethod.GET, "/route00") match
                 case Result.Success(_) => succeed
@@ -390,7 +391,7 @@ class HttpRouterTest extends kyo.Test:
                 val route = HttpRoute(m, HttpRoute.RequestDef(HttpPath.Literal("test")))
                 mkEndpoint(route)
             }
-            val router = HttpRouter(routes)
+            val router = HttpRouter(routes, Absent)
             // All methods should match (HEAD via GET)
             val failures = methods.flatMap { m =>
                 router.find(m, "/test") match

@@ -2,20 +2,25 @@ package kyo
 
 import kyo.*
 
-/** OpenAPI 3.x specification model and compile-time route generation.
+/** OpenAPI 3.x specification model and bidirectional integration with typed routes.
   *
   * Supports OpenAPI in both directions:
-  *   - **Routes → spec**: The server auto-generates a spec from registered handlers via `HttpServerConfig.openApi`.
-  *   - **Spec → routes**: `HttpOpenApi.fromJson` and `HttpOpenApi.fromFile` are compile-time macros that read an OpenAPI spec and produce
-  *     typed `HttpRoute` values. Each operation becomes a route accessed by `operationId`.
+  *   - **Routes → spec**: The server auto-generates a spec from all registered handlers when `HttpServerConfig.openApi` is configured and
+  *     serves it at the specified path (default `/openapi.json`). No additional code is required beyond configuring the server.
+  *   - **Spec → routes**: `HttpOpenApi.fromJson` and `HttpOpenApi.fromFile` are compile-time macros that parse an OpenAPI spec and produce
+  *     an anonymous object with one typed `HttpRoute` field per operation, named by `operationId`. Errors in the spec are reported at
+  *     compile time.
   *
-  * Note: Spec-to-routes currently supports path, query, and header parameters with primitive types, and JSON response bodies. Request
-  * bodies, `$ref` resolution, complex schema composition (`allOf`/`oneOf`/`anyOf`), and security schemes are not yet implemented.
+  * Note: The spec-to-routes macros currently support path, query, and header parameters with primitive types, and JSON response bodies.
+  * Request bodies, `$ref` schema resolution, complex schema composition (`allOf` / `oneOf` / `anyOf`), and security schemes are not yet
+  * implemented.
   *
   * @see
-  *   [[kyo.HttpRoute]] The route type produced by the macros
+  *   [[kyo.HttpRoute]] The route type produced by the spec-to-routes macros
   * @see
-  *   [[kyo.HttpServerConfig.openApi]] Enables auto-generated spec serving
+  *   [[kyo.HttpServerConfig]] `openApi` field enables auto-generated spec serving
+  * @see
+  *   [[kyo.HttpHandler]] Registered handlers are the source for the generated spec
   */
 case class HttpOpenApi(
     openapi: String,
@@ -27,10 +32,10 @@ case class HttpOpenApi(
 object HttpOpenApi:
 
     transparent inline def fromJson(inline json: String): Any =
-        ${ kyo.internal.OpenApiMacro.deriveFromStringImpl('json) }
+        ${ kyo.internal.codec.OpenApiMacro.deriveFromStringImpl('json) }
 
     transparent inline def fromFile(inline path: String): Any =
-        ${ kyo.internal.OpenApiMacro.deriveImpl('path) }
+        ${ kyo.internal.codec.OpenApiMacro.deriveImpl('path) }
 
     def toJson(openApi: HttpOpenApi): String =
         Json[HttpOpenApi].encode(openApi)
