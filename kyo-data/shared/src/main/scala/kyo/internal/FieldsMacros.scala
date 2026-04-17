@@ -50,6 +50,22 @@ object FieldsMacros:
                 case h +: t => TypeRepr.of[*:].appliedTo(List(h, tupled(t)))
                 case _      => TypeRepr.of[EmptyTuple]
 
+        def structural(typs: Vector[TypeRepr]): TypeRepr =
+            if typs.isEmpty then
+                TypeRepr.of[Fields.Structural]
+            else
+                val structType = typs.foldLeft(Map[String, TypeRepr]()) {
+                    case (acc, AppliedType(_, List(ConstantType(StringConstant(name)), valueType))) =>
+                        acc.get(name) match
+                            case Some(x) => acc + (name -> OrType(x, valueType))
+                            case None    => acc + (name -> valueType)
+                    case (acc, _) => acc
+                }.foldLeft(TypeRepr.of[Any]) {
+                    case (acc, (name, valueType)) =>
+                        Refinement(acc, name, ByNameType(valueType))
+                }
+                AndType(TypeRepr.of[Fields.Structural], structType)
+
         val components = decompose(TypeRepr.of[A].dealias)
 
         case class ComponentInfo(name: String, nameExpr: Expr[String], tagExpr: Expr[Any], nestedExpr: Expr[List[Field[?, ?]]])
@@ -63,12 +79,16 @@ object FieldsMacros:
                             Expr.summon[Tag[v]].getOrElse(
                                 report.errorAndAbort(s"Cannot summon Tag for field '$name': ${valueType.show}")
                             )
-                    val nestedExpr = valueType.asType match
-                        case '[Record[f]] =>
-                            Expr.summon[Fields[f]] match
-                                case Some(fields) => '{ $fields.fields }
-                                case None         => '{ Nil: List[Field[?, ?]] }
-                        case _ => '{ Nil: List[Field[?, ?]] }
+                    val recordRepr = TypeRepr.of[Record]
+                    val nestedExpr = valueType.dealias match
+                        case AppliedType(recordRepr, List(f)) =>
+                            f.asType match
+                                case '[f] =>
+                                    Expr.summon[Fields[f]] match
+                                        case Some(fields) => '{ $fields.fields }
+                                        case None         => '{ Nil: List[Field[?, ?]] }
+                        case _ =>
+                            '{ Nil: List[Field[?, ?]] }
                     Some(ComponentInfo(name, nameExpr, tagExpr, nestedExpr))
                 case _ => None
 
@@ -77,9 +97,9 @@ object FieldsMacros:
             '{ Field[String, Any](${ ci.nameExpr }, ${ ci.tagExpr }.asInstanceOf[Tag[Any]], ${ ci.nestedExpr }) }
         ).toList)
 
-        tupled(components).asType match
-            case '[type x <: Tuple; x] =>
-                '{ Fields.createAux[A, x]($fieldsList) }
+        (tupled(components).asType, structural(components).asType) match
+            case ('[type x <: Tuple; x], '[type s <: Fields.Structural; s]) =>
+                '{ Fields.createAux[A, x, s]($fieldsList) }
         end match
     end deriveImpl
 
@@ -253,7 +273,7 @@ object FieldsMacros:
                             '{ () }
                         )
                     }
-                    new Record[f](Dict.fromArrayUnsafe(arr.asInstanceOf[Array[String | Any]]))
+                    Dict.fromArrayUnsafe(arr.asInstanceOf[Array[Any]]).asInstanceOf[Record[f]] // Record.from leads to cyclic macro error
                 }
         end match
     end fromProductImpl
