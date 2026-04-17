@@ -53,9 +53,9 @@ class FocusTest extends Test:
     val compOrder2    = MTEachOrder(2, Seq(compItem3), "normal")
     val compWarehouse = MTWarehouse("Main", Seq(compOrder1, compOrder2))
 
-    // --- get/set/modify ---
+    // --- get/set/update ---
 
-    "get/set/modify" - {
+    "get/set/update" - {
 
         "get single field" in {
             val result = Schema[MTPerson].focus(_.name).get(person)
@@ -67,8 +67,8 @@ class FocusTest extends Test:
             assert(result == MTPerson("Bob", 30))
         }
 
-        "modify single field" in {
-            val result = Schema[MTPerson].focus(_.age).modify(person)(_ + 1)
+        "update single field" in {
+            val result = Schema[MTPerson].focus(_.age).update(person)(_ + 1)
             assert(result == MTPerson("Alice", 31))
         }
 
@@ -82,8 +82,8 @@ class FocusTest extends Test:
             assert(result == MTPersonAddr("Alice", 30, MTAddress("123 Main St", "Seattle", "97201")))
         }
 
-        "modify nested field" in {
-            val result = Schema[MTPersonAddr].focus(_.address.zip).modify(personAddr)(_ + "-0001")
+        "update nested field" in {
+            val result = Schema[MTPersonAddr].focus(_.address.zip).update(personAddr)(_ + "-0001")
             assert(result == MTPersonAddr("Alice", 30, MTAddress("123 Main St", "Portland", "97201-0001")))
         }
 
@@ -216,9 +216,9 @@ class FocusTest extends Test:
             assert(Schema[MTCompany].focus(_.hq.lead.address.city).path == List("hq", "lead", "address", "city"))
         }
 
-        "field named get via focus modify" in {
+        "field named get via focus update" in {
             val evil   = MTEvil("hello", 42, "/tmp", true)
-            val result = Schema[MTEvil].focus(_.get).modify(evil)(_.toUpperCase)
+            val result = Schema[MTEvil].focus(_.get).update(evil)(_.toUpperCase)
             assert(result == MTEvil("HELLO", 42, "/tmp", true))
         }
 
@@ -448,13 +448,13 @@ class FocusTest extends Test:
             assert(result == MTDrawing("Circle Art", MTCircle(10.0)))
         }
 
-        "modify variant field" in {
-            val result = Schema[MTDrawing].focus(_.shape.MTCircle.radius).modify(circleDrw)(_ * 2.0)
+        "update variant field" in {
+            val result = Schema[MTDrawing].focus(_.shape.MTCircle.radius).update(circleDrw)(_ * 2.0)
             assert(result == MTDrawing("Circle Art", MTCircle(10.0)))
         }
 
-        "modify non-matching variant" in {
-            val result = Schema[MTDrawing].focus(_.shape.MTCircle.radius).modify(rectDrw)(_ * 2.0)
+        "update non-matching variant" in {
+            val result = Schema[MTDrawing].focus(_.shape.MTCircle.radius).update(rectDrw)(_ * 2.0)
             assert(result == rectDrw)
         }
 
@@ -522,9 +522,9 @@ class FocusTest extends Test:
             assert(result.items == newItems.toSeq)
         }
 
-        "modify transforms each element independently" in {
+        "update transforms each element independently" in {
             val each   = Schema[MTEachOrder].foreach(_.items)
-            val result = each.modify(eachOrder2Items)(item => item.copy(price = item.price * 2))
+            val result = each.update(eachOrder2Items)(item => item.copy(price = item.price * 2))
             assert(result.items.map(_.price) == Seq(19.98, 39.98))
             assert(result.id == 1)
             assert(result.note == "rush")
@@ -536,10 +536,10 @@ class FocusTest extends Test:
             assert(result == Chunk(9.99, 19.99))
         }
 
-        "focus into element field modify" in {
+        "focus into element field update" in {
             val twoItemOrder = MTEachOrder(1, Seq(eachItem1, eachItem2), "rush")
             val prices       = Schema[MTEachOrder].foreach(_.items).focus(_.price)
-            val result       = prices.modify(twoItemOrder)(_ * 1.1)
+            val result       = prices.update(twoItemOrder)(_ * 1.1)
             assert(result.items(0).price == 9.99 * 1.1)
             assert(result.items(1).price == 19.99 * 1.1)
             assert(result.items(0).name == "Widget")
@@ -597,10 +597,10 @@ class FocusTest extends Test:
             assert(errors.head.message == "price must be positive")
         }
 
-        "modify on empty collection returns root unchanged" in {
+        "update on empty collection returns root unchanged" in {
             val emptyOrder = MTEachOrder(99, Seq.empty, "empty")
             val each       = Schema[MTEachOrder].foreach(_.items)
-            val result     = each.modify(emptyOrder)(item => item.copy(price = 0))
+            val result     = each.update(emptyOrder)(item => item.copy(price = 0))
             assert(result == emptyOrder)
         }
 
@@ -629,9 +629,9 @@ class FocusTest extends Test:
             assert(result == Chunk(eachItem1, eachItem2, eachItem3))
         }
 
-        "nested foreach modify across warehouse orders and items" in {
+        "nested foreach update across warehouse orders and items" in {
             val items    = Schema[MTWarehouse].foreach(_.orders).foreach(_.items)
-            val result   = items.modify(eachWarehouse)(item => item.copy(price = item.price + 1))
+            val result   = items.update(eachWarehouse)(item => item.copy(price = item.price + 1))
             val allItems = Schema[MTWarehouse].foreach(_.orders).foreach(_.items).get(result)
             assert(allItems.map(_.price) == Chunk(10.99, 20.99, 30.99))
             assert(result.name == "Main")
@@ -655,7 +655,7 @@ class FocusTest extends Test:
 
         "triple nesting: foreach.foreach.focus modifies deeply nested values" in {
             val prices    = Schema[MTWarehouse].foreach(_.orders).foreach(_.items).focus(_.price)
-            val result    = prices.modify(eachWarehouse)(_ * 2)
+            val result    = prices.update(eachWarehouse)(_ * 2)
             val newPrices = Schema[MTWarehouse].foreach(_.orders).foreach(_.items).focus(_.price).get(result)
             assert(newPrices == Chunk(9.99 * 2, 19.99 * 2, 29.99 * 2))
         }
@@ -670,7 +670,7 @@ class FocusTest extends Test:
             assert(items.size == 3)
             assert(orders.size == 2)
 
-            val modified = ordersEach.modify(eachWarehouse)(o => o.copy(note = "modified"))
+            val modified = ordersEach.update(eachWarehouse)(o => o.copy(note = "modified"))
             assert(modified.orders.forall(_.note == "modified"))
             assert(itemsEach.get(modified) == Chunk(eachItem1, eachItem2, eachItem3))
         }
@@ -708,9 +708,9 @@ class FocusTest extends Test:
             assert(errors.exists(_.message == "price must be positive"))
         }
 
-        "nested foreach modify deeply nested field" in {
+        "nested foreach update deeply nested field" in {
             val names    = Schema[MTWarehouse].foreach(_.orders).foreach(_.items).focus(_.name)
-            val result   = names.modify(eachWarehouse)(_.toUpperCase)
+            val result   = names.update(eachWarehouse)(_.toUpperCase)
             val newNames = Schema[MTWarehouse].foreach(_.orders).foreach(_.items).focus(_.name).get(result)
             assert(newNames == Chunk("WIDGET", "GADGET", "DOOHICKEY"))
         }
@@ -814,12 +814,12 @@ class FocusTest extends Test:
             assert(f.get(company) == "Portland")
         }
 
-        "stored focus reuse: same focus instance works for get, set, modify" in {
+        "stored focus reuse: same focus instance works for get, set, update" in {
             val f = Schema[MTPersonAddr].focus(_.address).focus(_.city)
             assert(f.get(personAddr) == "Portland")
             val updated = f.set(personAddr, "Seattle")
             assert(f.get(updated) == "Seattle")
-            val modified = f.modify(personAddr)(_.toUpperCase)
+            val modified = f.update(personAddr)(_.toUpperCase)
             assert(f.get(modified) == "PORTLAND")
         }
 
@@ -854,9 +854,9 @@ class FocusTest extends Test:
             assert(f1.get(circleDrw) == Maybe(5.0))
         }
 
-        "sum type: modify on non-matching variant is a no-op" in {
+        "sum type: update on non-matching variant is a no-op" in {
             val f      = Schema[MTDrawing].focus(_.shape.MTCircle.radius)
-            val result = f.modify(rectDrw)(_ * 2)
+            val result = f.update(rectDrw)(_ * 2)
             assert(result == rectDrw)
         }
 
@@ -872,29 +872,29 @@ class FocusTest extends Test:
             assert(result.size == 2) // only 2 circles, rectangle excluded
         }
 
-        "foreach over drawings then focus through sum: modify doubles radii on circles-only gallery" in {
+        "foreach over drawings then focus through sum: update doubles radii on circles-only gallery" in {
             val circlesOnlyGallery = MTGallery("Circles", Seq(circleDrw, MTDrawing("Big Circle", MTCircle(10.0))))
             val f                  = Schema[MTGallery].foreach(_.drawings).focus(_.shape.MTCircle.radius)
-            val result             = f.modify(circlesOnlyGallery)(_ * 2)
+            val result             = f.update(circlesOnlyGallery)(_ * 2)
             val drawings           = result.drawings
             assert(drawings(0).shape == MTCircle(10.0))
             assert(drawings(1).shape == MTCircle(20.0))
         }
 
-        "double foreach modify: foreach(_.orders).foreach(_.items).modify applies to all items" in {
+        "double foreach update: foreach(_.orders).foreach(_.items).update applies to all items" in {
             val f        = Schema[MTWarehouse].foreach(_.orders).foreach(_.items)
-            val result   = f.modify(compWarehouse)(item => item.copy(price = item.price * 1.1))
+            val result   = f.update(compWarehouse)(item => item.copy(price = item.price * 1.1))
             val allItems = result.orders.flatMap(_.items)
             assert(math.abs(allItems(0).price - 9.99 * 1.1) < 0.001)
             assert(math.abs(allItems(1).price - 19.99 * 1.1) < 0.001)
             assert(math.abs(allItems(2).price - 29.99 * 1.1) < 0.001)
         }
 
-        "double foreach then focus modify: foreach(_.orders).foreach(_.items).focus(_.price).modify gives same result" in {
+        "double foreach then focus update: foreach(_.orders).foreach(_.items).focus(_.price).update gives same result" in {
             val f1      = Schema[MTWarehouse].foreach(_.orders).foreach(_.items)
             val f2      = Schema[MTWarehouse].foreach(_.orders).foreach(_.items).focus(_.price)
-            val result1 = f1.modify(compWarehouse)(item => item.copy(price = item.price * 1.1))
-            val result2 = f2.modify(compWarehouse)(_ * 1.1)
+            val result1 = f1.update(compWarehouse)(item => item.copy(price = item.price * 1.1))
+            val result2 = f2.update(compWarehouse)(_ * 1.1)
             val items1  = result1.orders.flatMap(_.items).map(_.price)
             val items2  = result2.orders.flatMap(_.items).map(_.price)
             assert(items1.zip(items2).forall((a, b) => math.abs(a - b) < 0.001))
@@ -1072,9 +1072,9 @@ class FocusTest extends Test:
             assert(result == MTEvil("hello", 42, "/tmp", false))
         }
 
-        "modify evil field via selectDynamic" in {
+        "update evil field via selectDynamic" in {
             val evil   = MTEvil("hello", 42, "/tmp", true)
-            val result = Schema[MTEvil].focus(_.selectDynamic("selectDynamic")).modify(evil)(!_)
+            val result = Schema[MTEvil].focus(_.selectDynamic("selectDynamic")).update(evil)(!_)
             assert(result == MTEvil("hello", 42, "/tmp", false))
         }
 
@@ -1323,25 +1323,6 @@ class FocusTest extends Test:
             assert(result == person)
         }
 
-        "focus on mapped field get" in {
-            val m = Schema[MTPerson].map("age")(_.toString)
-            val f = m.focus(_.age)
-            assert(f.get(person) == "30")
-        }
-
-        "focus on mapped field path" in {
-            val m = Schema[MTPerson].map("age")(_.toString)
-            val f = m.focus(_.age)
-            assert(f.path == List("age"))
-        }
-
-        "focus on mapped field set is no-op" in {
-            val m      = Schema[MTPerson].map("age")(_.toString)
-            val f      = m.focus(_.age)
-            val result = f.set(person, "25")
-            assert(result == person)
-        }
-
         "chained rename then focus" in {
             val m = Schema[MTPerson].rename("name", "userName").rename("age", "userAge")
             val f = m.focus(_.userName)
@@ -1360,17 +1341,11 @@ class FocusTest extends Test:
             )("not found")
         }
 
-        "focus on renamed field modify" in {
+        "focus on renamed field update" in {
             val m      = Schema[MTPerson].rename("name", "userName")
             val f      = m.focus(_.userName)
-            val result = f.modify(person)(_.toUpperCase)
+            val result = f.update(person)(_.toUpperCase)
             assert(result == MTPerson("ALICE", 30))
-        }
-
-        "rename and map chained then focus" in {
-            val m = Schema[MTPerson].rename("name", "userName").map("age")(_.toString)
-            val f = m.focus(_.userName)
-            assert(f.get(person) == "Alice")
         }
 
         "check on renamed field" in {
@@ -1411,8 +1386,8 @@ class FocusTest extends Test:
             typeCheckFailure("Schema[kyo.MTPerson].focus(_.age).set(kyo.MTPerson(\"a\", 1), \"string\")")("Required: Int")
         }
 
-        "modify type mismatch compile error" in {
-            typeCheckFailure("Schema[kyo.MTPerson].focus(_.name).modify(kyo.MTPerson(\"a\", 1))((x: Int) => x + 1)")(
+        "update type mismatch compile error" in {
+            typeCheckFailure("Schema[kyo.MTPerson].focus(_.name).update(kyo.MTPerson(\"a\", 1))((x: Int) => x + 1)")(
                 "Required: String => String"
             )
         }

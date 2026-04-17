@@ -36,7 +36,7 @@ final class Focus[Root, Value, Mode[_]] private[kyo] (
     val path: Seq[String],
     private[kyo] val getter: Root => Mode[Value],
     private[kyo] val setter: (Root, Mode[Value]) => Root,
-    private[kyo] val modifyFn: (Root, Value => Value) => Root,
+    private[kyo] val updateFn: (Root, Value => Value) => Root,
     private[kyo] val schema: Schema[Root]
 ):
 
@@ -65,7 +65,7 @@ final class Focus[Root, Value, Mode[_]] private[kyo] (
       */
     def set(root: Root, value: Mode[Value]): Root = setter(root, value)
 
-    /** Modifies the focused value using a function, returning a new root.
+    /** Updates the focused value using a function, returning a new root.
       *
       * For Id mode, applies f to the single value. For Maybe mode, no-op if absent. For Chunk mode, maps f over all elements.
       *
@@ -81,7 +81,7 @@ final class Focus[Root, Value, Mode[_]] private[kyo] (
       * @see
       *   [[Modify.update]] for batched, multi-field mutations
       */
-    def modify(root: Root)(f: Value => Value): Root = modifyFn(root, f)
+    def update(root: Root)(f: Value => Value): Root = updateFn(root, f)
 
     /** Returns the type tag for the focused value type. Summoned at compile time. */
     def tag(using t: Tag[Value]): Tag[Value] = t
@@ -343,9 +343,9 @@ object Focus:
             val updated   = vs.zip(v2s).map((v, v2) => innerSetter(v, v2))
             val remaining = vs.drop(v2s.size)
             outer.setter(root, updated ++ remaining)
-        val modifyFn: (Root, Value2 => Value2) => Root = (root, f) =>
+        val updateFn: (Root, Value2 => Value2) => Root = (root, f) =>
             setterFn(root, getterFn(root).map(f))
-        new Focus[Root, Value2, Chunk](combinedPath, getterFn, setterFn, modifyFn, outer.schema)
+        new Focus[Root, Value2, Chunk](combinedPath, getterFn, setterFn, updateFn, outer.schema)
     end composeChunkAny
 
     // --- Foreach compose factories ---
@@ -411,9 +411,9 @@ object Focus:
                 (acc :+ innerSetter(v, rebuilt), offset + inner.size)
             }
             outer.setter(root, updated)
-        val modifyFn: (Root, E => E) => Root = (root, f) =>
+        val updateFn: (Root, E => E) => Root = (root, f) =>
             setterFn(root, getterFn(root).map(f))
-        new Focus[Root, E, Chunk](combinedPath, getterFn, setterFn, modifyFn, outer.schema)
+        new Focus[Root, E, Chunk](combinedPath, getterFn, setterFn, updateFn, outer.schema)
     end composeChunkForeach
 
 end Focus

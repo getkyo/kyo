@@ -46,14 +46,14 @@ final class Modify[Root] private[kyo] (
     /** Updates the focused field with a function.
       *
       * Use Modify when you want to batch multiple field mutations into a reusable value and apply them together. For immediate,
-      * single-field transforms, use [[Focus.modify]] instead.
+      * single-field transforms, use [[Focus.update]] instead.
       *
       * Uses a focus lambda to navigate to the field, same as Schema.focus/Compare. For sum-type focus paths, if the current variant doesn't
       * match the focused path, the operation silently returns the root unchanged. This enables safe chaining of multiple set/update calls
       * without needing to check the active variant.
       *
       * @see
-      *   [[Focus.modify]] for immediate, single-field transforms
+      *   [[Focus.update]] for immediate, single-field transforms
       */
     inline def update[V](inline f: Focus.Select[Root, Root] => Focus.Select[Root, V])(fn: V => V): Modify[Root] =
         val root      = Focus.Select[Root]

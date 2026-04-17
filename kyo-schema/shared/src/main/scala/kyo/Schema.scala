@@ -19,9 +19,9 @@ import scala.language.dynamics
   * with checks, documentation, constraints, examples, and field transforms.
   *
   * The `Focused` type member tracks the current structural representation of A through successive transform calls. It starts as the full
-  * field intersection of the original case class and narrows or changes as `drop`, `rename`, `map`, and `add` are applied. Although
-  * transform methods return `Any` due to `transparent inline`, at runtime the result is always `Schema[A] { type Focused = F' }` where `F'`
-  * reflects the new shape.
+  * field intersection of the original case class and narrows or changes as `drop`, `rename`, and `add` are applied. Although transform
+  * methods return `Any` due to `transparent inline`, at runtime the result is always `Schema[A] { type Focused = F' }` where `F'` reflects
+  * the new shape.
   *
   * Serialization (JSON / Protobuf) is not on Schema itself. Use [[Json]] and [[Protobuf]] as entry points; they require a `Schema[A]` given
   * to be in scope.
@@ -62,7 +62,6 @@ final class Schema[A] private[kyo] (
     val droppedFields: Set[String] = Set.empty,
     val renamedFields: Chunk[(String, String)] = Chunk.empty,
     val computedFields: Chunk[(String, A => Any)] = Chunk.empty,
-    val fieldTransforms: Chunk[(String, Any => Any)] = Chunk.empty,
     val sourceFields: Seq[Field[?, ?]] = Seq.empty,
     private[kyo] val checks: Seq[A => Seq[ValidationFailedException]] = Seq.empty,
     private[kyo] val documentation: Maybe[String] = Maybe.empty,
@@ -196,7 +195,6 @@ final class Schema[A] private[kyo] (
             setter,
             segments,
             checks :+ rootCheck,
-            fieldTransforms,
             computedFields,
             renamedFields,
             sourceFields,
@@ -254,7 +252,6 @@ final class Schema[A] private[kyo] (
             setter,
             segments,
             checks,
-            fieldTransforms,
             computedFields,
             renamedFields,
             sourceFields,
@@ -293,7 +290,6 @@ final class Schema[A] private[kyo] (
             setter,
             segments,
             checks,
-            fieldTransforms,
             computedFields,
             renamedFields,
             sourceFields,
@@ -335,7 +331,6 @@ final class Schema[A] private[kyo] (
             setter,
             segments,
             checks,
-            fieldTransforms,
             computedFields,
             renamedFields,
             sourceFields,
@@ -644,7 +639,6 @@ final class Schema[A] private[kyo] (
             setter,
             segments,
             checks,
-            fieldTransforms,
             computedFields,
             renamedFields,
             sourceFields,
@@ -703,22 +697,6 @@ final class Schema[A] private[kyo] (
     transparent inline def flatten: Any =
         ${ internal.SchemaTransformMacro.flattenImpl[A, Focused]('this) }
 
-    /** Maps a field's value using the given function, optionally changing its type.
-      *
-      * When the function returns the same type, returns Schema[A] (type unchanged). When the function returns a different type V2, returns
-      * `Schema[A] { type Focused = F' }` where F' replaces the named field's type with V2. The transform function is stored internally for
-      * use by structural operations (result/to/fold). Fails at compile time if the field does not exist.
-      *
-      * Note: schemas with map transforms cannot be decoded (the transform function is not reversible); serialization (encoding) still
-      * works.
-      */
-    transparent inline def map[N <: String & Singleton, V2](inline fieldName: N)(using
-        h: Fields.Have[Focused, N]
-    )(
-        f: h.Value => V2
-    ): Any =
-        ${ internal.SchemaTransformMacro.mapImpl[A, Focused]('this, 'fieldName, 'f) }
-
     /** Adds a new computed field to the structural type Focused.
       *
       * Returns `Schema[A] { type Focused = Focused & ("name" ~ V) }`. The compute function is called on the root value at serialization
@@ -757,20 +735,6 @@ final class Schema[A] private[kyo] (
         inline to: String
     ): Any =
         ${ internal.SchemaTransformMacro.renameFocusImpl[A, Focused]('this, 'focus, 'to) }
-
-    /** Maps a field identified by a Focus lambda using the given function, optionally changing its type.
-      *
-      * Lambda version of `map(fieldName)(f)`. The field is identified by the lambda, and the transform function is applied to the field's
-      * value. Provides IDE autocompletion for the field.
-      *
-      * {{{
-      * Schema[User].map(_.age)(_.toString)  // equivalent to Schema[User].map("age")(_.toString)
-      * }}}
-      */
-    transparent inline def map[V, V2](
-        inline focus: Focus.Select[A, Focused] => Focus.Select[A, V]
-    )(f: V => V2): Any =
-        ${ internal.SchemaTransformMacro.mapFocusImpl[A, Focused]('this, 'focus, 'f) }
 
     /** Selects only the fields identified by Focus lambdas, removing all others.
       *
@@ -812,7 +776,7 @@ final class Schema[A] private[kyo] (
       * time, calling `f` with the correct singleton name type `N` and value type `V` for each field.
       *
       * Iterates original case class fields in declaration order. Respects transforms: dropped fields are skipped, renamed fields use the
-      * new name, map transforms are applied, computed fields are included.
+      * new name, computed fields are included.
       *
       * @param value
       *   The value to fold over
@@ -828,8 +792,8 @@ final class Schema[A] private[kyo] (
 
     /** Returns a reusable function that converts a value of type A to a Record.
       *
-      * Respects transforms: dropped fields are omitted, renamed fields use the new name, map transforms are applied, computed fields are
-      * included. The returned function can be stored and applied to multiple values.
+      * Respects transforms: dropped fields are omitted, renamed fields use the new name, computed fields are included. The returned
+      * function can be stored and applied to multiple values.
       */
     def toRecord(using A <:< Product): A => Record[Focused] =
         (a: A) => this.resultOf(a)
@@ -838,9 +802,9 @@ final class Schema[A] private[kyo] (
 
     /** Navigates via a lambda on Focus, auto-detecting product vs sum navigation.
       *
-      * For product-only navigation (case class fields), returns `Focus[Root, Value, Focus.Id]` with direct `get`/`set`/`modify`. For
+      * For product-only navigation (case class fields), returns `Focus[Root, Value, Focus.Id]` with direct `get`/`set`/`update`. For
       * navigation that crosses a sum type (sealed trait variant), returns `Focus[Root, Value, Maybe]` with Maybe-wrapped
-      * `get`/`set`/`modify`.
+      * `get`/`set`/`update`.
       *
       * Usage:
       * {{{
@@ -855,13 +819,13 @@ final class Schema[A] private[kyo] (
 
     /** Navigates into a collection-typed field, providing bulk operations on all elements.
       *
-      * Uses a Focus lambda to identify the collection field. Returns `Focus[Root, E, Chunk]` for get/set/modify operations on all elements.
+      * Uses a Focus lambda to identify the collection field. Returns `Focus[Root, E, Chunk]` for get/set/update operations on all elements.
       * For element validation, use `Schema.check` with a predicate over the collection.
       *
       * {{{
       * val each = Schema[Order].foreach(_.items)
       * each.get(order)                         // Chunk[Item]
-      * each.modify(order)(item => item.copy(price = item.price * 1.1))
+      * each.update(order)(item => item.copy(price = item.price * 1.1))
       * }}}
       */
     inline def foreach[C <: Seq[E], E](inline f: Focus.Select[A, Focused] => Focus.Select[A, C]): Focus[A, E, Chunk] =
@@ -924,29 +888,6 @@ final class Schema[A] private[kyo] (
 
     // --- Internal ---
 
-    /** Adds a field transform function. Used by mapImpl. */
-    private[kyo] def withFieldTransform(fieldName: String, f: Any => Any): Schema[A] { type Focused = Schema.this.Focused } =
-        Schema.createWithFocused[A, Focused](
-            getter,
-            setter,
-            segments,
-            checks,
-            fieldTransforms :+ (fieldName, f),
-            computedFields,
-            renamedFields,
-            sourceFields,
-            droppedFields,
-            documentation,
-            fieldDocs,
-            examples,
-            fieldDeprecated,
-            constraints,
-            fieldIdOverrides,
-            serializeWrite,
-            serializeRead,
-            discriminatorField
-        )
-
     /** Adds a computed field function. Used by addImpl. */
     private[kyo] def withComputedField[R](fieldName: String, f: A => Any): Schema[A] { type Focused = Schema.this.Focused } =
         Schema.createWithFocused[A, Focused](
@@ -954,7 +895,6 @@ final class Schema[A] private[kyo] (
             setter,
             segments,
             checks,
-            fieldTransforms,
             computedFields :+ (fieldName, f),
             renamedFields,
             sourceFields,
@@ -973,7 +913,7 @@ final class Schema[A] private[kyo] (
     /** Converts a value of type A to a Record containing the fields of Focused.
       *
       * Internal implementation used by the `toRecord` function. Respects transforms: dropped fields are omitted, renamed fields use the new
-      * name, map transforms are applied, computed fields are included.
+      * name, computed fields are included.
       */
     private[kyo] def resultOf(value: A)(using ev: A <:< Product): Record[Focused] =
         val product = ev(value)
@@ -996,11 +936,7 @@ final class Schema[A] private[kyo] (
         val dictFromFields = sourceFields.zipWithIndex.foldLeft(Dict.empty[String, Any]) { case (acc, (sourceField, idx)) =>
             val fieldName = sourceField.name
             if !droppedFields.contains(fieldName) && !renamedSourceNames.contains(fieldName) then
-                val rawValue = product.productElement(idx)
-                val transformedValue = fieldTransforms.foldLeft(rawValue) { (v, tf) =>
-                    if tf._1 == fieldName then tf._2(v) else v
-                }
-                acc.update(fieldName, transformedValue)
+                acc.update(fieldName, product.productElement(idx))
             else acc
             end if
         }
@@ -1009,11 +945,7 @@ final class Schema[A] private[kyo] (
         val dictWithRenames = resolvedRenames.foldLeft(dictFromFields) { case (acc, (sourceName, targetName)) =>
             val originalIdx = sourceFields.indexWhere(_.name == sourceName)
             if originalIdx >= 0 then
-                val rawValue = product.productElement(originalIdx)
-                val transformedValue = fieldTransforms.foldLeft(rawValue) { (v, tf) =>
-                    if tf._1 == targetName then tf._2(v) else v
-                }
-                acc.update(targetName, transformedValue)
+                acc.update(targetName, product.productElement(originalIdx))
             else acc
             end if
         }
@@ -1079,7 +1011,6 @@ final class Schema[A] private[kyo] (
             setter,
             segments,
             checks ++ other.checks,
-            fieldTransforms,
             computedFields,
             renamedFields,
             sourceFields,
@@ -1145,7 +1076,7 @@ object Schema:
       * Constraints carry the field path (segments) so they can be matched to properties during JsonSchema enrichment. They also drive
       * runtime validation checks (baked into _checks at add time, except Format which is advisory only).
       */
-    sealed trait Constraint derives CanEqual, Schema:
+    sealed abstract class Constraint derives CanEqual, Schema:
         def segments: Seq[String]
 
     object Constraint:
@@ -1680,12 +1611,11 @@ object Schema:
     private[kyo] def createFrom[A, F2](
         source: Schema[A],
         checks: Seq[A => Seq[ValidationFailedException]],
-        fieldTransforms: Chunk[(String, Any => Any)],
         computedFields: Chunk[(String, A => Any)],
         renamedFields: Chunk[(String, String)],
         droppedFields: Set[String] = Set.empty
     ): Schema[A] { type Focused = F2 } =
-        internal.SchemaFactory.createFrom(source, checks, fieldTransforms, computedFields, renamedFields, droppedFields)
+        internal.SchemaFactory.createFrom(source, checks, computedFields, renamedFields, droppedFields)
 
     /** Internal factory for creating Schema with a specific Focused type, preserving all state. Used by methods that return
       * `Schema[A] { type Focused = E }` without changing E.
@@ -1695,7 +1625,6 @@ object Schema:
         setter: (A, Any) => A,
         segments: Seq[String],
         checks: Seq[A => Seq[ValidationFailedException]],
-        fieldTransforms: Chunk[(String, Any => Any)],
         computedFields: Chunk[(String, A => Any)],
         renamedFields: Chunk[(String, String)],
         sourceFields: Seq[Field[?, ?]],
@@ -1715,7 +1644,6 @@ object Schema:
             setter,
             segments,
             checks,
-            fieldTransforms,
             computedFields,
             renamedFields,
             sourceFields,

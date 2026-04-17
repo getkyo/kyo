@@ -17,7 +17,7 @@ private[kyo] object SchemaSerializer:
         schema.serializeWrite match
             case Maybe.Present(write) =>
                 if schema.droppedFields.isEmpty && schema.renamedFields.isEmpty &&
-                    schema.fieldTransforms.isEmpty && schema.computedFields.isEmpty &&
+                    schema.computedFields.isEmpty &&
                     schema.discriminatorField.isEmpty
                 then
                     write(value, writer)
@@ -32,7 +32,7 @@ private[kyo] object SchemaSerializer:
 
     /** Transform-aware serialization path.
       *
-      * Serializes the original value to Structure.Value, applies transforms (drop/rename/map/add), then writes the transformed tree to the
+      * Serializes the original value to Structure.Value, applies transforms (drop/rename/add), then writes the transformed tree to the
       * target Writer.
       */
     def writeWithTransforms[A](schema: Schema[A], value: A, writer: Writer)(using Frame): Unit =
@@ -42,11 +42,6 @@ private[kyo] object SchemaSerializer:
 
         val transformed = original match
             case Structure.Value.Record(originalFields) =>
-                val product = value.asInstanceOf[Product]
-
-                // Build field name -> product index map
-                val fieldIndexMap = schema.sourceFields.zipWithIndex.map((f, i) => f.name -> i).toMap
-
                 // Resolve rename chains
                 val forwardMap = schema.renamedFields.toMap
                 def resolveTarget(name: String): String =
@@ -58,39 +53,20 @@ private[kyo] object SchemaSerializer:
                     else None
                 }.toMap
                 val renamedSourceNames = resolvedRenames.keySet
-                val transformMap       = schema.fieldTransforms.toMap
 
-                // Transform original fields: drop, skip renamed sources, apply map transforms
+                // Transform original fields: drop and skip renamed sources
                 val transformedFields = originalFields.flatMap { (name, reflValue) =>
                     if schema.droppedFields.contains(name) then
                         Chunk.empty
                     else if renamedSourceNames.contains(name) then
                         Chunk.empty // added below with new name
-                    else if transformMap.contains(name) then
-                        val idx = fieldIndexMap.getOrElse(name, -1)
-                        if idx >= 0 then
-                            val rawValue    = product.productElement(idx)
-                            val transformed = transformMap(name)(rawValue)
-                            Chunk((name, anyToStructureValue(transformed)))
-                        else
-                            Chunk((name, reflValue))
-                        end if
                     else
                         Chunk((name, reflValue))
                 }
 
                 // Add renamed fields with their values
                 val renamedFieldValues = Chunk.from(resolvedRenames.flatMap { (sourceName, targetName) =>
-                    val idx = fieldIndexMap.getOrElse(sourceName, -1)
-                    if idx >= 0 then
-                        if transformMap.contains(targetName) then
-                            val rawValue    = product.productElement(idx)
-                            val transformed = transformMap(targetName)(rawValue)
-                            Some((targetName, anyToStructureValue(transformed)))
-                        else
-                            originalFields.find(_._1 == sourceName).map((_, v) => (targetName, v))
-                    else None
-                    end if
+                    originalFields.find(_._1 == sourceName).map((_, v) => (targetName, v))
                 })
 
                 // Add computed fields
@@ -147,7 +123,7 @@ private[kyo] object SchemaSerializer:
             case Maybe.Present(read) =>
                 if schema.discriminatorField.nonEmpty then
                     readWithDiscriminator(schema, reader)
-                else if schema.renamedFields.nonEmpty || schema.fieldTransforms.nonEmpty || schema.droppedFields.nonEmpty then
+                else if schema.renamedFields.nonEmpty || schema.droppedFields.nonEmpty then
                     readWithTransforms(schema, reader)
                 else
                     read(reader)
@@ -161,17 +137,9 @@ private[kyo] object SchemaSerializer:
     /** Transform-aware deserialization path.
       *
       * Handles renames (by reversing the rename mapping so the external field name is translated back to the original) and dropped fields
-      * (by pre-populating their slots with zero values so required-field checks pass). Throws [[SchemaNotSerializableException]] if the
-      * schema contains irreversible map transforms.
+      * (by pre-populating their slots with zero values so required-field checks pass).
       */
     def readWithTransforms[A](schema: Schema[A], reader: Reader)(using Frame): A =
-        if schema.fieldTransforms.nonEmpty then
-            throw SchemaNotSerializableException(
-                "Decode is not supported on schemas with map transforms. " +
-                    "The map function cannot be reversed for deserialization."
-            )
-        end if
-
         // Build reverse rename map: external name (in JSON) -> original field name
         val forwardMap = schema.renamedFields.toMap
 
@@ -312,7 +280,7 @@ private[kyo] object SchemaSerializer:
         val discField  = schema.discriminatorField.get
         val discReader = new DiscriminatorReader(reader, discField, frame)
         // The macro-generated sealedReadBody expects wrapper format, which DiscriminatorReader provides
-        if schema.renamedFields.nonEmpty || schema.fieldTransforms.nonEmpty || schema.droppedFields.nonEmpty then
+        if schema.renamedFields.nonEmpty || schema.droppedFields.nonEmpty then
             readWithTransforms(schema, discReader)
         else
             schema.serializeRead.get(discReader)

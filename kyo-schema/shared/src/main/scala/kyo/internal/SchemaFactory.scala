@@ -68,7 +68,6 @@ private[kyo] object SchemaFactory:
     def createFrom[A, F2](
         source: Schema[A],
         checks: Seq[A => Seq[ValidationFailedException]],
-        fieldTransforms: Chunk[(String, Any => Any)],
         computedFields: Chunk[(String, A => Any)],
         renamedFields: Chunk[(String, String)],
         droppedFields: Set[String] = Set.empty
@@ -116,7 +115,6 @@ private[kyo] object SchemaFactory:
             droppedFields = source.droppedFields ++ droppedFields,
             renamedFields = renamedFields,
             computedFields = computedFields,
-            fieldTransforms = fieldTransforms,
             sourceFields = source.sourceFields,
             checks = checks,
             documentation = source.documentation,
@@ -135,7 +133,6 @@ private[kyo] object SchemaFactory:
         setter: (A, Any) => A,
         segments: Seq[String],
         checks: Seq[A => Seq[ValidationFailedException]],
-        fieldTransforms: Chunk[(String, Any => Any)],
         computedFields: Chunk[(String, A => Any)],
         renamedFields: Chunk[(String, String)],
         sourceFields: Seq[Field[?, ?]],
@@ -161,7 +158,6 @@ private[kyo] object SchemaFactory:
             droppedFields = droppedFields,
             renamedFields = renamedFields,
             computedFields = computedFields,
-            fieldTransforms = fieldTransforms,
             sourceFields = sourceFields,
             checks = checks,
             documentation = doc,

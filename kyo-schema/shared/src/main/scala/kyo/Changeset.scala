@@ -64,7 +64,7 @@ object Changeset:
       *   - [[Op.SequencePatch]]: add, remove, or reorder sequence elements
       *   - [[Op.MapPatch]]: add, remove, or update map entries
       */
-    sealed trait Op derives CanEqual, Schema:
+    sealed abstract class Op derives CanEqual, Schema:
         def fieldPath: Chunk[String]
 
     object Op:
