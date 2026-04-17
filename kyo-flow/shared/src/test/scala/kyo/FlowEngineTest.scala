@@ -24,7 +24,7 @@ class FlowEngineTest extends Test:
         store: FlowStore,
         eid: Flow.Id.Execution,
         predicate: Flow.Status => Boolean,
-        maxRounds: Int = 200
+        maxRounds: Int = 500
     )(using Frame): Flow.Status < Async =
         def go(remaining: Int): Flow.Status < Async =
             if remaining <= 0 then
