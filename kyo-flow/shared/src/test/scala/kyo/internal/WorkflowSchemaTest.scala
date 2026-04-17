@@ -53,6 +53,85 @@ class WorkflowSchemaTest extends Test:
     }
 
     // =========================================================================
+    // Subflow child field inclusion
+    // =========================================================================
+
+    "schema includes child flow fields from subflows" - {
+
+        "child output field is present in schema" in {
+            val child = Flow.input[Int]("a").output("b")(ctx => ctx.a * 10)
+            val flow = Flow.input[Int]("x")
+                .subflow("payment", child)(ctx => "a" ~ ctx.x)
+                .output("result")(ctx => ctx.payment.b)
+
+            val schema = WorkflowSchema.of(flow)
+            assert(schema.fromStoreName("x").nonEmpty, "parent input 'x' should be in schema")
+            assert(schema.fromStoreName("result").nonEmpty, "parent output 'result' should be in schema")
+            assert(schema.fromStoreName("b").nonEmpty, "child output 'b' should be in schema")
+        }
+
+        "child input field is present in schema" in {
+            val child = Flow.input[Int]("a").output("b")(ctx => ctx.a)
+            val flow = Flow.input[Int]("x")
+                .subflow("s", child)(ctx => "a" ~ ctx.x)
+                .output("y")(ctx => 1)
+
+            val schema = WorkflowSchema.of(flow)
+            assert(schema.fromStoreName("a").nonEmpty, "child input 'a' should be in schema")
+        }
+
+        "nested subflow fields are present in schema" in {
+            val inner = Flow.input[Int]("ia").output("ib")(ctx => ctx.ia)
+            val outer = Flow.input[Int]("oa")
+                .subflow("inner", inner)(ctx => "ia" ~ ctx.oa)
+                .output("ob")(ctx => ctx.inner.ib)
+            val flow = Flow.input[Int]("x")
+                .subflow("outer", outer)(ctx => "oa" ~ ctx.x)
+                .output("result")(ctx => ctx.outer.ob)
+
+            val schema = WorkflowSchema.of(flow)
+            assert(schema.fromStoreName("x").nonEmpty, "top-level input 'x' should be in schema")
+            assert(schema.fromStoreName("ib").nonEmpty, "inner child output 'ib' should be in schema")
+            assert(schema.fromStoreName("ob").nonEmpty, "outer child output 'ob' should be in schema")
+        }
+    }
+
+    "rebuildRecord preserves child flow fields" - {
+
+        "child output field survives rebuild" in run {
+            val child = Flow.input[Int]("a").output("b")(ctx => ctx.a * 10)
+            val flow = Flow.input[Int]("x")
+                .subflow("payment", child)(ctx => "a" ~ ctx.x)
+                .output("result")(ctx => ctx.payment.b)
+
+            val schema = WorkflowSchema.of(flow)
+
+            val fields = Dict(
+                "x" -> FlowStore.FieldData(summon[Json[Int]].encode(5), Tag[Int].erased),
+                "b" -> FlowStore.FieldData(summon[Json[Int]].encode(50), Tag[Int].erased)
+            )
+
+            val record = rebuildRecord(fields, schema)
+            val dict   = record.toDict
+
+            assert(dict.get("x").nonEmpty, "parent field 'x' should be in rebuilt record")
+            assert(dict.get("b").nonEmpty, "child field 'b' should survive rebuild")
+        }
+    }
+
+    private def rebuildRecord(fields: Dict[String, FlowStore.FieldData], schema: WorkflowSchema): Record[Any] =
+        val dict = fields.foldLeft(Dict.empty[String, Any]) { (acc, name, fd) =>
+            schema.fromStoreName(name) match
+                case Present(entry) =>
+                    entry.decode(fd) match
+                        case Present(v) => acc.update(name, v)
+                        case _          => acc
+                case _ => acc
+        }
+        new Record[Any](dict)
+    end rebuildRecord
+
+    // =========================================================================
     // Version enforcement end-to-end
     // =========================================================================
     "version enforcement" - {
