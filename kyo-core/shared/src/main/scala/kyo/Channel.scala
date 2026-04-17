@@ -401,6 +401,7 @@ object Channel:
         def putFiber(value: A)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]]
         def putBatchFiber(values: Seq[A])(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]]
         def takeFiber()(using AllowUnsafe, Frame): Fiber.Unsafe[A, Abort[Closed]]
+        private[kyo] def reuseTake(promise: Promise.Unsafe[A, Abort[Closed]])(using AllowUnsafe, Frame): Unit
 
         def drain()(using AllowUnsafe, Frame): Result[Closed, Chunk[A]]
         def drainUpTo(max: Int)(using AllowUnsafe, Frame): Result[Closed, Chunk[A]]
@@ -459,6 +460,14 @@ object Channel:
                 flush()
                 promise
             end takeFiber
+
+            /** Registers an existing promise as a taker without allocation. The promise must have been reset via becomeAvailable(). This is
+              * the zero-alloc alternative to takeFiber().
+              */
+            final private[kyo] def reuseTake(promise: Promise.Unsafe[A, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+                require(takes.offer(promise), "reuseTake: unbounded queue offer must not fail")
+                flush()
+            end reuseTake
         end BaseUnsafe
 
         final class ZeroCapacityUnsafe[A](val initFrame: Frame)(using allow: AllowUnsafe) extends BaseUnsafe[A]:

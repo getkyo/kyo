@@ -994,4 +994,238 @@ class IOPromiseTest extends Test:
         }
     }
 
+    // --- becomeAvailable / reuseTake tests ---
+
+    /** A testable subclass that exposes protected methods. */
+    class TestablePromise[E, A] extends IOPromise[E, A]:
+        def testBecomeAvailable(): Boolean     = becomeAvailable()
+        var onCompleteCount: Int               = 0
+        var lastOnCompleteResult: Result[E, A] = null.asInstanceOf[Result[E, A]]
+
+        override protected def onComplete(): Unit =
+            onCompleteCount += 1
+            poll() match
+                case Present(r) => lastOnCompleteResult = r
+                case Absent     => ()
+        end onComplete
+    end TestablePromise
+
+    /** A reusable promise that can be used as a Channel taker and reset between cycles. */
+    class ReusableChannelPromise[A] extends IOPromise[Any, A < Abort[Closed]]:
+        def reset(): Boolean = becomeAvailable()
+        def toUnsafe: Fiber.Promise.Unsafe[A, Abort[Closed]] =
+            Fiber.Promise.Unsafe.fromIOPromise(this)
+    end ReusableChannelPromise
+
+    /** Helper to extract value from a channel block result. */
+    private def blockValue[A](fiber: Fiber.Unsafe[A, Abort[Closed]]): A =
+        import AllowUnsafe.embrace.danger
+        val result = fiber.block(deadline())
+        result.getOrThrow.eval
+    end blockValue
+
+    "becomeAvailable" - {
+        "reset completed success promise" in {
+            val p = new TestablePromise[Nothing, Int]
+            assert(p.complete(Result.succeed(1)))
+            assert(p.done())
+            assert(p.testBecomeAvailable())
+            assert(!p.done())
+        }
+
+        "reset completed failure promise" in {
+            val p  = new TestablePromise[Exception, Int]
+            val ex = new Exception("fail")
+            assert(p.complete(Result.fail(ex)))
+            assert(p.done())
+            assert(p.testBecomeAvailable())
+            assert(!p.done())
+        }
+
+        "reset pending promise returns false" in {
+            val p = new TestablePromise[Nothing, Int]
+            assert(!p.testBecomeAvailable())
+        }
+
+        "reset linked promise returns false" in {
+            val p     = new TestablePromise[Nothing, Int]
+            val other = new IOPromise[Nothing, Int]
+            assert(p.become(other))
+            assert(!p.testBecomeAvailable())
+        }
+
+        "reuse cycle: complete → reset → complete again" in {
+            val p = new TestablePromise[Nothing, Int]
+            assert(p.complete(Result.succeed(1)))
+            assert(p.block(deadline()) == Result.succeed(1))
+            assert(p.testBecomeAvailable())
+            assert(p.complete(Result.succeed(2)))
+            assert(p.block(deadline()) == Result.succeed(2))
+        }
+
+        "multiple reuse cycles" in {
+            val p = new TestablePromise[Nothing, Int]
+            for i <- 1 to 10 do
+                assert(p.complete(Result.succeed(i)))
+                assert(p.block(deadline()) == Result.succeed(i))
+                assert(p.testBecomeAvailable())
+            end for
+            assert(p.complete(Result.succeed(11)))
+            assert(p.block(deadline()) == Result.succeed(11))
+        }
+
+        "onComplete fires after reuse" in {
+            val p = new TestablePromise[Nothing, Int]
+            assert(p.complete(Result.succeed(1)))
+            assert(p.testBecomeAvailable())
+            var received: Result[Nothing, Int] = null.asInstanceOf[Result[Nothing, Int]]
+            p.onComplete(r => received = r)
+            assert(p.complete(Result.succeed(2)))
+            assert(received == Result.succeed(2))
+        }
+
+        "repeated becomeAvailable and complete cycles" in {
+            val p = new TestablePromise[Nothing, Int]
+            for i <- 1 to 100 do
+                assert(p.complete(Result.succeed(i)))
+                assert(p.testBecomeAvailable())
+            end for
+            assert(p.complete(Result.succeed(999)))
+            var received: Result[Nothing, Int] = null.asInstanceOf[Result[Nothing, Int]]
+            p.onComplete(r => received = r)
+            assert(received == Result.succeed(999))
+        }
+    }
+
+    "onComplete poll" - {
+        "reads success result" in {
+            val p = new TestablePromise[Nothing, Int]
+            assert(p.complete(Result.succeed(42)))
+            assert(p.onCompleteCount == 1)
+            assert(p.lastOnCompleteResult == Result.succeed(42))
+        }
+
+        "reads failure result" in {
+            val p  = new TestablePromise[Exception, Int]
+            val ex = new Exception("fail")
+            assert(p.complete(Result.fail(ex)))
+            assert(p.onCompleteCount == 1)
+            assert(p.lastOnCompleteResult == Result.fail(ex))
+        }
+
+        "reads panic result" in {
+            val p     = new TestablePromise[Nothing, Int]
+            val panic = Result.Panic(new RuntimeException("boom"))
+            assert(p.interrupt(panic))
+            assert(p.onCompleteCount == 1)
+            val result = p.lastOnCompleteResult
+            assert(result.isPanic)
+        }
+    }
+
+    "reuseTake" - {
+        "reuseTake receives next put" in run {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val ch      = Channel.Unsafe.init[Int](4)
+                val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
+                ch.reuseTake(promise)
+                discard(ch.offer(1))
+                val value = blockValue(promise)
+                assert(value == 1)
+            }
+        }
+
+        "reuseTake multiple cycles" in run {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val ch      = Channel.Unsafe.init[Int](4)
+                val promise = new ReusableChannelPromise[Int]
+                val unsafe  = promise.toUnsafe
+                for i <- 1 to 5 do
+                    ch.reuseTake(unsafe)
+                    discard(ch.offer(i))
+                    val value = blockValue(unsafe)
+                    assert(value == i)
+                    assert(promise.reset())
+                end for
+                assert(true)
+            }
+        }
+
+        "reuseTake with offer" in run {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val ch      = Channel.Unsafe.init[Int](4)
+                val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
+                discard(ch.offer(10))
+                ch.reuseTake(promise)
+                val value = blockValue(promise)
+                assert(value == 10)
+            }
+        }
+
+        "reuseTake on closed channel" in run {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val ch      = Channel.Unsafe.init[Int](4)
+                val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
+                discard(ch.close())
+                ch.reuseTake(promise)
+                val result = promise.block(deadline())
+                assert(result.isFailure)
+            }
+        }
+
+        "reuseTake interleaved with regular takeFiber" in run {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val ch      = Channel.Unsafe.init[Int](4)
+                val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
+
+                ch.reuseTake(promise)
+                discard(ch.offer(1))
+                val r1 = blockValue(promise)
+                assert(r1 == 1)
+
+                val fiber = ch.takeFiber()
+                discard(ch.offer(2))
+                val r2 = blockValue(fiber)
+                assert(r2 == 2)
+
+                val promise2 = Promise.Unsafe.init[Int, Abort[Closed]]()
+                ch.reuseTake(promise2)
+                discard(ch.offer(3))
+                val r3 = blockValue(promise2)
+                assert(r3 == 3)
+
+                assert(true)
+            }
+        }
+
+        "reuseTake concurrent puts" in run {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val ch      = Channel.Unsafe.init[Int](16)
+                val results = new java.util.concurrent.ConcurrentLinkedQueue[Int]()
+
+                for i <- 1 to 10 do
+                    discard(ch.offer(i))
+
+                for _ <- 1 to 10 do
+                    val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
+                    ch.reuseTake(promise)
+                    val value = blockValue(promise)
+                    discard(results.add(value))
+                end for
+
+                assert(results.size() == 10)
+                val all = new java.util.ArrayList[Int]()
+                results.forEach(v => discard(all.add(v)))
+                val sorted = (0 until all.size()).map(all.get).sorted
+                assert(sorted == (1 to 10).toSeq)
+            }
+        }
+    }
+
 end IOPromiseTest

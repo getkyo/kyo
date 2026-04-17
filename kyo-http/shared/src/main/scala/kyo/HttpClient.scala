@@ -1,24 +1,27 @@
 package kyo
 
 import kyo.*
-import kyo.internal.ConnectionPool
-import kyo.internal.HttpPlatformBackend
+import kyo.internal.HttpPlatformTransport
+import kyo.internal.client.HttpClientBackend
 
 /** HTTP client with connection pooling, retries, redirects, and typed request/response handling.
   *
   * HttpClient manages a per-host connection pool shared across all fibers. Convenience methods like `getJson`, `postText`, and `getSseJson`
-  * create an HttpRoute internally and delegate to the typed send path — routes are the underlying abstraction even when users don't
-  * interact with them directly. For full control, use `sendWith` with an explicit route.
+  * create an [[kyo.HttpRoute]] internally and delegate to the typed send path — routes are the underlying abstraction even when users don't
+  * interact with them directly. For full control over request and response encoding, use `sendWith` with an explicit route.
   *
-  * The client and its configuration are stored in fiber-local storage via `Local`. All methods on the companion object (`getJson`,
-  * `postJson`, etc.) use a shared client. To scope a custom client or configuration to a block of code:
-  *   - `HttpClient.let(client) { ... }` — use a specific client instance
-  *   - `HttpClient.withConfig(_.timeout(10.seconds)) { ... }` — apply config transformations (stacks with current config)
-  *   - `HttpClient.withConfig(config) { ... }` — replace the config entirely
+  * The active client and its configuration live in fiber-local storage via `Local`. All companion-object methods (`getJson`, `postJson`,
+  * etc.) use a shared default client. To scope a custom client or configuration to a block of code:
+  *   - `HttpClient.let(client) { ... }` — install a specific client instance for the duration
+  *   - `HttpClient.withConfig(_.timeout(10.seconds)) { ... }` — transform the config (stacks with the current config)
+  *   - `HttpClient.withConfig(config) { ... }` — replace the config entirely (discards current config)
   *
   * The request lifecycle chains through `retryWith → redirectsWith → timeoutWith → poolWith`, each layer wrapping the next. Retries only
-  * activate when a `Schedule` is configured. Redirects follow up to `maxRedirects` hops, changing the method to GET for 303 See Other per
-  * RFC 9110. Timeouts cancel the entire operation including any in-progress retries.
+  * activate when a `Schedule` is set in the config. Redirects follow up to `maxRedirects` hops and switch to GET on 303 See Other per RFC
+  * 9110. A timeout cancels the entire operation including in-progress retries.
+  *
+  * Note: The default shared client is created lazily on first use. It holds at most 100 idle connections per host and releases connections
+  * after 60 seconds of inactivity. Use `HttpClient.init` when you need isolated connection pools or non-default limits.
   *
   * @see
   *   [[kyo.HttpRoute]] The endpoint contract that drives typed serialization
@@ -27,204 +30,63 @@ import kyo.internal.HttpPlatformBackend
   * @see
   *   [[kyo.HttpException]] The error hierarchy for client failures
   * @see
-  *   [[kyo.HttpBackend.Client]] The platform-specific backend trait
+  *   [[kyo.HttpWebSocket]] WebSocket connections opened via `HttpClient.webSocket`
   */
-final class HttpClient private (
-    backend: HttpBackend.Client,
-    pool: ConnectionPool[backend.Connection],
-    maxConnectionsPerHost: Int,
-    clientFrame: Frame
-):
-
-    import ConnectionPool.HostKey
-
-    /** Sends a typed request using the given route and processes the response with `f`. Applies the current fiber-local configuration (base
-      * URL, timeout, retries, redirects) and the route's client-side filters.
-      */
-    def sendWith[In, Out, A](
-        route: HttpRoute[In, Out, Any],
-        request: HttpRequest[In]
-    )(
-        f: HttpResponse[Out] => A < (Async & Abort[HttpException])
-    )(using Frame): A < (Async & Abort[HttpException]) =
-        HttpClient.local.use { (_, config) =>
-            sendWithConfig(route, request, config)(f)
-        }
-
-    private[kyo] def sendWithConfig[In, Out, A](
-        route: HttpRoute[In, Out, Any],
-        request: HttpRequest[In],
-        config: HttpClientConfig
-    )(
-        f: HttpResponse[Out] => A < (Async & Abort[HttpException])
-    )(using Frame): A < (Async & Abort[HttpException]) =
-        val resolved = config.baseUrl match
-            case Present(base) if request.url.scheme.isEmpty =>
-                request.copy(url = HttpUrl(base.scheme, base.host, base.port, request.url.path, request.url.rawQuery))
-            case _ => request
-        retryWith(route, resolved, config)(f)
-    end sendWithConfig
-
-    private def retryWith[In, Out, A](
-        route: HttpRoute[In, Out, Any],
-        request: HttpRequest[In],
-        config: HttpClientConfig
-    )(
-        f: HttpResponse[Out] => A < (Async & Abort[HttpException])
-    )(using Frame): A < (Async & Abort[HttpException]) =
-        config.retrySchedule match
-            case Present(schedule) =>
-                def loop(remaining: Schedule): A < (Async & Abort[HttpException]) =
-                    redirectsWith(route, request, config) { res =>
-                        if !config.retryOn(res.status) then f(res)
-                        else
-                            Clock.nowWith { now =>
-                                remaining.next(now) match
-                                    case Present((delay, nextSchedule)) =>
-                                        Async.delay(delay)(loop(nextSchedule))
-                                    case Absent => f(res)
-                            }
-                    }
-                loop(schedule)
-            case Absent =>
-                redirectsWith(route, request, config)(f)
-    end retryWith
-
-    private def redirectsWith[In, Out, A](
-        route: HttpRoute[In, Out, Any],
-        request: HttpRequest[In],
-        config: HttpClientConfig
-    )(
-        f: HttpResponse[Out] => A < (Async & Abort[HttpException])
-    )(using Frame): A < (Async & Abort[HttpException]) =
-        if config.followRedirects then
-            def loop(req: HttpRequest[In], count: Int, chain: Chunk[String]): A < (Async & Abort[HttpException]) =
-                timeoutWith(route, req, config) { res =>
-                    if !res.status.isRedirect then f(res)
-                    else if count >= config.maxRedirects then
-                        Abort.fail(HttpRedirectLoopException(count, req.method.name, req.url.baseUrl, chain))
-                    else
-                        res.headers.get("Location") match
-                            case Present(location) =>
-                                HttpUrl.parse(location) match
-                                    case Result.Success(newUrl) =>
-                                        // Preserve original host/port/scheme for relative redirects
-                                        val resolved =
-                                            if newUrl.host.nonEmpty then newUrl
-                                            else newUrl.copy(scheme = req.url.scheme, host = req.url.host, port = req.url.port)
-                                        // RFC 9110 §15.4.4: 303 See Other requires changing method to GET
-                                        val nextReq =
-                                            if res.status == HttpStatus.SeeOther then req.copy(url = resolved, method = HttpMethod.GET)
-                                            else req.copy(url = resolved)
-                                        loop(nextReq, count + 1, chain.append(location))
-                                    case Result.Failure(err) =>
-                                        Abort.fail(err)
-                            case Absent => f(res)
-                }
-            loop(request, 0, Chunk.empty)
-        else
-            timeoutWith(route, request, config)(f)
-
-    private def timeoutWith[In, Out, A](
-        route: HttpRoute[In, Out, Any],
-        request: HttpRequest[In],
-        config: HttpClientConfig
-    )(
-        f: HttpResponse[Out] => A < (Async & Abort[HttpException])
-    )(using Frame): A < (Async & Abort[HttpException]) =
-        config.timeout match
-            case Present(duration) =>
-                Async.timeoutWithError(duration, Result.Failure(HttpTimeoutException(duration, request.method.name, request.url.baseUrl)))(
-                    poolWith(route, request, config)(f)
-                )
-            case Absent =>
-                poolWith(route, request, config)(f)
-
-    private def poolWith[In, Out, A](
-        route: HttpRoute[In, Out, Any],
-        request: HttpRequest[In],
-        config: HttpClientConfig
-    )(
-        f: HttpResponse[Out] => A < (Async & Abort[HttpException])
-    )(using Frame): A < (Async & Abort[HttpException]) =
-        // Client-side filters (e.g. basicAuth, bearerAuth) are Passthrough — they transform the request
-        // and forward next's result unchanged. We cast so that next's return type aligns with A
-        // (the result of sendWith(f)), preserving connection-holding semantics inside Sync.ensure.
-        // Auto-discovered filters (e.g. W3C trace context from kyo-stats-otlp) are composed first.
-        val filter = HttpFilterFactory.composedClient.andThen(route.filter)
-            .asInstanceOf[HttpFilter[Any, In, Out, Out, Nothing]]
-
-        filter[In, Out, HttpException](
-            request,
-            (filteredReq: HttpRequest[In]) =>
-                Sync.Unsafe.defer {
-                    val key = HostKey(filteredReq.url.host, filteredReq.url.port)
-                    def onReleaseUnsafe(conn: backend.Connection): Maybe[Result.Error[Any]] => Unit =
-                        error =>
-                            pool.untrack(key, conn)
-                            error match
-                                case Absent => pool.release(key, conn)
-                                case _      => pool.discard(conn)
-                    end onReleaseUnsafe
-                    pool.poll(key) match
-                        case Present(conn) =>
-                            pool.track(key, conn)
-                            backend.sendWith(conn, route, filteredReq, onReleaseUnsafe(conn))(f)
-                        case _ =>
-                            if pool.tryReserve(key) then
-                                Sync.ensure(pool.unreserve(key)) {
-                                    backend.connectWith(
-                                        filteredReq.url.host,
-                                        filteredReq.url.port,
-                                        filteredReq.url.ssl,
-                                        config.connectTimeout
-                                    ) {
-                                        conn =>
-                                            pool.track(key, conn)
-                                            backend.sendWith(conn, route, filteredReq, onReleaseUnsafe(conn))(f)
-                                    }
-                                }
-                            else
-                                Abort.fail(HttpPoolExhaustedException(
-                                    filteredReq.url.host,
-                                    filteredReq.url.port,
-                                    maxConnectionsPerHost,
-                                    clientFrame
-                                ))
-                    end match
-                }.asInstanceOf[HttpResponse[Out] < (Async & Abort[HttpException | HttpResponse.Halt])]
-        ).asInstanceOf[A < (Async & Abort[HttpException])]
-    end poolWith
-
-    def close(gracePeriod: Duration)(using Frame): Unit < Async =
-        Sync.Unsafe.defer {
-            val conns = pool.close()
-            Kyo.foreachDiscard(conns)(conn => backend.close(conn, gracePeriod))
-        }
-    end close
-    def close(using Frame): Unit < Async    = close(30.seconds)
-    def closeNow(using Frame): Unit < Async = close(Duration.Zero)
-
-end HttpClient
+opaque type HttpClient = HttpClientBackend[?]
 
 object HttpClient:
 
-    // --- Default client ---
-
+    // Bootstrap boundary: lazy val requires eager evaluation of the suspended pool init.
     private lazy val defaultClient: HttpClient =
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
-        val backend = HttpPlatformBackend.client
-        val pool = ConnectionPool.init[backend.Connection](
-            100,
-            60.seconds,
-            conn => backend.isAlive(conn),
-            conn => backend.closeNowUnsafe(conn)
-        )
-        new HttpClient(backend, pool, 100, Frame.internal)
+        initUnsafe(HttpPlatformTransport.transport, 100, 60.seconds)
     end defaultClient
 
     private val local: Local[(HttpClient, HttpClientConfig)] = Local.init((defaultClient, HttpClientConfig()))
+
+    // Cached non-generic routes — avoids per-request allocation for convenience methods.
+    private val routeGetText      = HttpRoute.getText("")
+    private val routeGetBinary    = HttpRoute.getBinary("")
+    private val routePostText     = HttpRoute.postText("")
+    private val routePostBinary   = HttpRoute.postBinary("")
+    private val routePutText      = HttpRoute.putText("")
+    private val routePutBinary    = HttpRoute.putBinary("")
+    private val routePatchText    = HttpRoute.patchText("")
+    private val routePatchBinary  = HttpRoute.patchBinary("")
+    private val routeDeleteText   = HttpRoute.deleteText("")
+    private val routeDeleteBinary = HttpRoute.deleteBinary("")
+    private val routeHeadRaw      = HttpRoute.headRaw("")
+    private val routeOptionsRaw   = HttpRoute.optionsRaw("")
+    private val routeSseText      = HttpRoute.getRaw("").response(_.bodySseText)
+
+    extension (self: HttpClient)
+        /** Sends a typed request using the given route and processes the response with `f`. Applies the current fiber-local configuration
+          * (base URL, timeout, retries, redirects) and the route's client-side filters.
+          */
+        def sendWith[In, Out, A](
+            route: HttpRoute[In, Out, Any],
+            request: HttpRequest[In]
+        )(
+            f: HttpResponse[Out] => A < (Async & Abort[HttpException])
+        )(using Frame): A < (Async & Abort[HttpException]) =
+            local.use { (_, config) =>
+                self.sendWithConfig(route, request, config)(f)
+            }
+
+        /** Closes the client with a grace period for in-flight requests. */
+        def close(gracePeriod: Duration)(using Frame): Unit < Async =
+            Sync.Unsafe.defer(self.closeFiber(gracePeriod).safe.get)
+
+        /** Closes the client with a default grace period (30 seconds). */
+        def close(using Frame): Unit < Async = close(30.seconds)
+
+        /** Closes the client immediately without waiting for in-flight requests. */
+        def closeNow(using Frame): Unit < Async = close(Duration.Zero)
+
+        /** Reference equality check (for testing scope isolation). */
+        private[kyo] def eq(that: HttpClient): Boolean = (self: AnyRef) eq (that: AnyRef)
+    end extension
 
     // --- Context management ---
 
@@ -258,191 +120,470 @@ object HttpClient:
       * `HttpClient.let(client) { ... }` to make it the active client for a block of code.
       */
     def init(
-        backend: HttpBackend.Client,
         maxConnectionsPerHost: Int = 100,
-        idleConnectionTimeout: Duration = 60.seconds
+        idleConnectionTimeout: Duration = 60.seconds,
+        defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default
     )(using Frame): HttpClient < (Async & Scope) =
-        Scope.acquireRelease(initUnscoped(backend, maxConnectionsPerHost, idleConnectionTimeout))(_.closeNow)
+        Scope.acquireRelease(initUnscoped(maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig))(_.closeNow)
 
     /** Creates a client with its own connection pool that must be closed explicitly via `close()`. Prefer `init` with Scope-based lifecycle
       * unless you need manual control.
       */
     def initUnscoped(
-        backend: HttpBackend.Client,
         maxConnectionsPerHost: Int = 100,
-        idleConnectionTimeout: Duration = 60.seconds
+        idleConnectionTimeout: Duration = 60.seconds,
+        defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default
     )(using frame: Frame): HttpClient < Sync =
         require(maxConnectionsPerHost > 0, s"maxConnectionsPerHost must be positive: $maxConnectionsPerHost")
         require(idleConnectionTimeout > Duration.Zero, s"idleConnectionTimeout must be positive: $idleConnectionTimeout")
         Sync.Unsafe.defer {
-            val pool = ConnectionPool.init[backend.Connection](
-                maxConnectionsPerHost,
-                idleConnectionTimeout,
-                conn => backend.isAlive(conn),
-                conn => backend.closeNowUnsafe(conn)
-            )
-            new HttpClient(backend, pool, maxConnectionsPerHost, frame)
+            initUnsafe(HttpPlatformTransport.transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig)
         }
     end initUnscoped
 
     // ==================== JSON methods ====================
 
-    def getJson[A: Json](url: String)(using Frame): A < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.getJson[A](""))(_.fields.body)
-    def getJson[A: Json](url: HttpUrl)(using Frame): A < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.getJson[A](""))(_.fields.body)
+    // --- GET ---
 
-    def postJson[A: Json](using Frame)[B: Json](url: String, body: B): A < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.postJson[A, B](""), body)(_.fields.body)
-    def postJson[A: Json](using Frame)[B: Json](url: HttpUrl, body: B): A < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.postJson[A, B](""), body)(_.fields.body)
+    def getJson[A: Json](
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): A < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, HttpRoute.getJson[A](""), resolveHeaders(headers), resolveQuery(query))(_.fields.body))
 
-    def putJson[A: Json](using Frame)[B: Json](url: String, body: B): A < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.putJson[A, B](""), body)(_.fields.body)
-    def putJson[A: Json](using Frame)[B: Json](url: HttpUrl, body: B): A < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.putJson[A, B](""), body)(_.fields.body)
+    def getJsonResponse[A: Json](
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse["body" ~ A] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, HttpRoute.getJson[A](""), resolveHeaders(headers), resolveQuery(query))(identity))
 
-    def patchJson[A: Json](using Frame)[B: Json](url: String, body: B): A < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.patchJson[A, B](""), body)(_.fields.body)
-    def patchJson[A: Json](using Frame)[B: Json](url: HttpUrl, body: B): A < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.patchJson[A, B](""), body)(_.fields.body)
+    // --- POST ---
 
-    def deleteJson[A: Json](url: String)(using Frame): A < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.deleteJson[A](""))(_.fields.body)
-    def deleteJson[A: Json](url: HttpUrl)(using Frame): A < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.deleteJson[A](""))(_.fields.body)
+    def postJson[A: Json](using
+        Frame
+    )[B: Json](
+        url: String | HttpUrl,
+        body: B,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    ): A < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u =>
+            sendUrl(u, HttpRoute.postJson[A, B](""), body, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+        )
+
+    def postJsonResponse[A: Json](using
+        Frame
+    )[B: Json](
+        url: String | HttpUrl,
+        body: B,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    ): HttpResponse["body" ~ A] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, HttpRoute.postJson[A, B](""), body, resolveHeaders(headers), resolveQuery(query))(identity))
+
+    // --- PUT ---
+
+    def putJson[A: Json](using
+        Frame
+    )[B: Json](
+        url: String | HttpUrl,
+        body: B,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    ): A < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, HttpRoute.putJson[A, B](""), body, resolveHeaders(headers), resolveQuery(query))(_.fields.body))
+
+    def putJsonResponse[A: Json](using
+        Frame
+    )[B: Json](
+        url: String | HttpUrl,
+        body: B,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    ): HttpResponse["body" ~ A] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, HttpRoute.putJson[A, B](""), body, resolveHeaders(headers), resolveQuery(query))(identity))
+
+    // --- PATCH ---
+
+    def patchJson[A: Json](using
+        Frame
+    )[B: Json](
+        url: String | HttpUrl,
+        body: B,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    ): A < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u =>
+            sendUrl(u, HttpRoute.patchJson[A, B](""), body, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+        )
+
+    def patchJsonResponse[A: Json](using
+        Frame
+    )[B: Json](
+        url: String | HttpUrl,
+        body: B,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    ): HttpResponse["body" ~ A] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, HttpRoute.patchJson[A, B](""), body, resolveHeaders(headers), resolveQuery(query))(identity))
+
+    // --- DELETE ---
+
+    def deleteJson[A: Json](
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): A < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, HttpRoute.deleteJson[A](""), resolveHeaders(headers), resolveQuery(query))(_.fields.body))
+
+    def deleteJsonResponse[A: Json](
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse["body" ~ A] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, HttpRoute.deleteJson[A](""), resolveHeaders(headers), resolveQuery(query))(identity))
 
     // ==================== Text methods ====================
 
-    def getText(url: String)(using Frame): String < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.getText(""))(_.fields.body)
-    def getText(url: HttpUrl)(using Frame): String < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.getText(""))(_.fields.body)
+    // --- GET ---
 
-    def postText(url: String, body: String)(using Frame): String < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.postText(""), body)(_.fields.body)
-    def postText(url: HttpUrl, body: String)(using Frame): String < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.postText(""), body)(_.fields.body)
+    def getText(
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): String < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routeGetText, resolveHeaders(headers), resolveQuery(query))(_.fields.body))
 
-    def putText(url: String, body: String)(using Frame): String < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.putText(""), body)(_.fields.body)
-    def putText(url: HttpUrl, body: String)(using Frame): String < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.putText(""), body)(_.fields.body)
+    def getTextResponse(
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse["body" ~ String] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routeGetText, resolveHeaders(headers), resolveQuery(query))(identity))
 
-    def patchText(url: String, body: String)(using Frame): String < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.patchText(""), body)(_.fields.body)
-    def patchText(url: HttpUrl, body: String)(using Frame): String < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.patchText(""), body)(_.fields.body)
+    // --- POST ---
 
-    def deleteText(url: String)(using Frame): String < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.deleteText(""))(_.fields.body)
-    def deleteText(url: HttpUrl)(using Frame): String < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.deleteText(""))(_.fields.body)
+    def postText(
+        url: String | HttpUrl,
+        body: String,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): String < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routePostText, body, resolveHeaders(headers), resolveQuery(query))(_.fields.body))
+
+    def postTextResponse(
+        url: String | HttpUrl,
+        body: String,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse["body" ~ String] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routePostText, body, resolveHeaders(headers), resolveQuery(query))(identity))
+
+    // --- PUT ---
+
+    def putText(
+        url: String | HttpUrl,
+        body: String,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): String < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routePutText, body, resolveHeaders(headers), resolveQuery(query))(_.fields.body))
+
+    def putTextResponse(
+        url: String | HttpUrl,
+        body: String,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse["body" ~ String] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routePutText, body, resolveHeaders(headers), resolveQuery(query))(identity))
+
+    // --- PATCH ---
+
+    def patchText(
+        url: String | HttpUrl,
+        body: String,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): String < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routePatchText, body, resolveHeaders(headers), resolveQuery(query))(_.fields.body))
+
+    def patchTextResponse(
+        url: String | HttpUrl,
+        body: String,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse["body" ~ String] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routePatchText, body, resolveHeaders(headers), resolveQuery(query))(identity))
+
+    // --- DELETE ---
+
+    def deleteText(
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): String < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routeDeleteText, resolveHeaders(headers), resolveQuery(query))(_.fields.body))
+
+    def deleteTextResponse(
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse["body" ~ String] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routeDeleteText, resolveHeaders(headers), resolveQuery(query))(identity))
 
     // ==================== Binary methods ====================
 
-    def getBinary(url: String)(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.getBinary(""))(_.fields.body)
-    def getBinary(url: HttpUrl)(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.getBinary(""))(_.fields.body)
+    // --- GET ---
 
-    def postBinary(url: String, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.postBinary(""), body)(_.fields.body)
-    def postBinary(url: HttpUrl, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.postBinary(""), body)(_.fields.body)
+    def getBinary(
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routeGetBinary, resolveHeaders(headers), resolveQuery(query))(_.fields.body))
 
-    def putBinary(url: String, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.putBinary(""), body)(_.fields.body)
-    def putBinary(url: HttpUrl, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.putBinary(""), body)(_.fields.body)
+    def getBinaryResponse(
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse["body" ~ Span[Byte]] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routeGetBinary, resolveHeaders(headers), resolveQuery(query))(identity))
 
-    def patchBinary(url: String, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.patchBinary(""), body)(_.fields.body)
-    def patchBinary(url: HttpUrl, body: Span[Byte])(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.patchBinary(""), body)(_.fields.body)
+    // --- POST ---
 
-    def deleteBinary(url: String)(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
-        parseAndSend(url, HttpRoute.deleteBinary(""))(_.fields.body)
-    def deleteBinary(url: HttpUrl)(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
-        sendUrl(url, HttpRoute.deleteBinary(""))(_.fields.body)
+    def postBinary(
+        url: String | HttpUrl,
+        body: Span[Byte],
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routePostBinary, body, resolveHeaders(headers), resolveQuery(query))(_.fields.body))
+
+    def postBinaryResponse(
+        url: String | HttpUrl,
+        body: Span[Byte],
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse["body" ~ Span[Byte]] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routePostBinary, body, resolveHeaders(headers), resolveQuery(query))(identity))
+
+    // --- PUT ---
+
+    def putBinary(
+        url: String | HttpUrl,
+        body: Span[Byte],
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routePutBinary, body, resolveHeaders(headers), resolveQuery(query))(_.fields.body))
+
+    def putBinaryResponse(
+        url: String | HttpUrl,
+        body: Span[Byte],
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse["body" ~ Span[Byte]] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routePutBinary, body, resolveHeaders(headers), resolveQuery(query))(identity))
+
+    // --- PATCH ---
+
+    def patchBinary(
+        url: String | HttpUrl,
+        body: Span[Byte],
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routePatchBinary, body, resolveHeaders(headers), resolveQuery(query))(_.fields.body))
+
+    def patchBinaryResponse(
+        url: String | HttpUrl,
+        body: Span[Byte],
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse["body" ~ Span[Byte]] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routePatchBinary, body, resolveHeaders(headers), resolveQuery(query))(identity))
+
+    // --- DELETE ---
+
+    def deleteBinary(
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routeDeleteBinary, resolveHeaders(headers), resolveQuery(query))(_.fields.body))
+
+    def deleteBinaryResponse(
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse["body" ~ Span[Byte]] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routeDeleteBinary, resolveHeaders(headers), resolveQuery(query))(identity))
 
     // ==================== Streaming methods ====================
 
-    def getSseJson[V: Json: Tag](url: String)(using
-        Frame,
-        Tag[Emit[Chunk[HttpSseEvent[V]]]]
-    ): Stream[HttpSseEvent[V], Async & Abort[HttpException]] =
-        Stream(parseAndSend(url, HttpRoute.getRaw("").response(_.bodySseJson[V]))(_.fields.body).map(_.emit))
-    def getSseJson[V: Json: Tag](url: HttpUrl)(using
-        Frame,
-        Tag[Emit[Chunk[HttpSseEvent[V]]]]
-    ): Stream[HttpSseEvent[V], Async & Abort[HttpException]] =
-        Stream(sendUrl(url, HttpRoute.getRaw("").response(_.bodySseJson[V]))(_.fields.body).map(_.emit))
+    // --- SSE JSON ---
 
-    def getSseText(url: String)(using
-        Frame,
-        Tag[Emit[Chunk[HttpSseEvent[String]]]]
-    ): Stream[HttpSseEvent[String], Async & Abort[HttpException]] =
-        Stream(parseAndSend(url, HttpRoute.getRaw("").response(_.bodySseText))(_.fields.body).map(_.emit))
-    def getSseText(url: HttpUrl)(using
-        Frame,
-        Tag[Emit[Chunk[HttpSseEvent[String]]]]
-    ): Stream[HttpSseEvent[String], Async & Abort[HttpException]] =
-        Stream(sendUrl(url, HttpRoute.getRaw("").response(_.bodySseText))(_.fields.body).map(_.emit))
+    def getSseJson[V: Json: Tag](
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame, Tag[Emit[Chunk[HttpSseEvent[V]]]]): Stream[HttpSseEvent[V], Async & Abort[HttpException]] =
+        Stream(resolveUrl(url).map(u =>
+            sendUrl(
+                u,
+                HttpRoute.getRaw("").response(_.bodySseJson[V]),
+                resolveHeaders(headers),
+                resolveQuery(query)
+            )(_.fields.body).map(_.emit)
+        ))
 
-    def getNdJson[V: Json: Tag](url: String)(using
-        Frame,
-        Tag[Emit[Chunk[V]]]
-    ): Stream[V, Async & Abort[HttpException]] =
-        Stream(parseAndSend(url, HttpRoute.getRaw("").response(_.bodyNdjson[V]))(_.fields.body).map(_.emit))
-    def getNdJson[V: Json: Tag](url: HttpUrl)(using
-        Frame,
-        Tag[Emit[Chunk[V]]]
-    ): Stream[V, Async & Abort[HttpException]] =
-        Stream(sendUrl(url, HttpRoute.getRaw("").response(_.bodyNdjson[V]))(_.fields.body).map(_.emit))
+    // --- SSE Text ---
 
-    // --- Internal ---
+    def getSseText(
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame, Tag[Emit[Chunk[HttpSseEvent[String]]]]): Stream[HttpSseEvent[String], Async & Abort[HttpException]] =
+        Stream(resolveUrl(url).map(u =>
+            sendUrl(
+                u,
+                routeSseText,
+                resolveHeaders(headers),
+                resolveQuery(query)
+            )(_.fields.body).map(_.emit)
+        ))
+
+    // --- NDJSON ---
+
+    def getNdJson[V: Json: Tag](
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame, Tag[Emit[Chunk[V]]]): Stream[V, Async & Abort[HttpException]] =
+        Stream(resolveUrl(url).map(u =>
+            sendUrl(
+                u,
+                HttpRoute.getRaw("").response(_.bodyNdjson[V]),
+                resolveHeaders(headers),
+                resolveQuery(query)
+            )(_.fields.body).map(_.emit)
+        ))
+
+    // ==================== HEAD methods ====================
+
+    def head(
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse[Any] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routeHeadRaw, resolveHeaders(headers), resolveQuery(query))(identity))
+
+    // ==================== OPTIONS methods ====================
+
+    def options(
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): HttpResponse[Any] < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrl(u, routeOptionsRaw, resolveHeaders(headers), resolveQuery(query))(identity))
+
+    // ==================== HttpWebSocket methods ====================
+
+    /** Connects to a HttpWebSocket endpoint. The connection closes when `f` returns. */
+    def webSocket[A, S](
+        url: String,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        config: HttpWebSocket.Config = HttpWebSocket.Config()
+    )(
+        f: HttpWebSocket => A < S
+    )(using Frame): A < (S & Async & Abort[HttpException]) =
+        local.use { (client, clientConfig) =>
+            val resolved = clientConfig.baseUrl match
+                case Present(base) if !url.contains("://") =>
+                    base.toString.stripSuffix("/") + url
+                case _ => url
+            Abort.get(HttpUrl.parse(resolved)).map(parsed =>
+                client.connectWebSocket(parsed, resolveHeaders(headers), config, clientConfig.connectTimeout)(f)
+            )
+        }
+
+    /** Connects to a HttpWebSocket endpoint from a parsed URL. */
+    def webSocket[A, S](url: HttpUrl)(
+        f: HttpWebSocket => A < S
+    )(using Frame): A < (S & Async & Abort[HttpException]) =
+        webSocket(url, HttpHeaders.empty, HttpWebSocket.Config())(f)
+
+    /** Connects to a HttpWebSocket endpoint from a parsed URL with custom headers and configuration. */
+    def webSocket[A, S](url: HttpUrl, headers: HttpHeaders, config: HttpWebSocket.Config)(
+        f: HttpWebSocket => A < S
+    )(using Frame): A < (S & Async & Abort[HttpException]) =
+        local.use { (client, clientConfig) =>
+            client.connectWebSocket(url, headers, config, clientConfig.connectTimeout)(f)
+        }
+
+    // --- Internal helpers ---
+
+    private def resolveUrl(url: String | HttpUrl)(using Frame): HttpUrl < Abort[HttpException] =
+        url match
+            case s: String  => Abort.get(HttpUrl.parse(s))
+            case u: HttpUrl => u
+
+    private def resolveHeaders(h: HttpHeaders | Seq[(String, String)]): HttpHeaders =
+        h match
+            case h: HttpHeaders @unchecked           => h
+            case s: Seq[(String, String)] @unchecked => HttpHeaders.init(s)
+
+    private def resolveQuery(q: HttpQueryParams | Seq[(String, String)]): HttpQueryParams =
+        q match
+            case q: HttpQueryParams @unchecked       => q
+            case s: Seq[(String, String)] @unchecked => HttpQueryParams.init(s*)
+
+    private def applyQuery(url: HttpUrl, query: HttpQueryParams): HttpUrl =
+        if query.isEmpty then url
+        else
+            val qs = query.toQueryString
+            val merged = url.rawQuery match
+                case Present(existing) => s"$existing&$qs"
+                case Absent            => qs
+            url.copy(rawQuery = Present(merged))
 
     private def sendUrl[Out, A](
         url: HttpUrl,
-        route: HttpRoute[Any, Out, Any]
+        route: HttpRoute[Any, Out, Any],
+        headers: HttpHeaders,
+        query: HttpQueryParams
     )(
         extract: HttpResponse[Out] => A
     )(using Frame): A < (Async & Abort[HttpException]) =
         local.use { (client, config) =>
-            client.sendWithConfig(route, HttpRequest(route.method, url), config)(extract)
+            val req = HttpRequest(route.method, applyQuery(url, query), headers, Record.empty)
+            client.sendWithConfig(route, req, config)(extract)
         }
 
     private def sendUrl[B, Out, A](
         url: HttpUrl,
         route: HttpRoute["body" ~ B, Out, Any],
-        body: B
+        body: B,
+        headers: HttpHeaders,
+        query: HttpQueryParams
     )(
         extract: HttpResponse[Out] => A
     )(using Frame): A < (Async & Abort[HttpException]) =
         local.use { (client, config) =>
-            client.sendWithConfig(route, HttpRequest(route.method, url).addField("body", body), config)(extract)
+            val req = HttpRequest(route.method, applyQuery(url, query), headers, Record.empty).addField("body", body)
+            client.sendWithConfig(route, req, config)(extract)
         }
 
-    private def parseAndSend[Out, A](
-        rawUrl: String,
-        route: HttpRoute[Any, Out, Any]
-    )(
-        extract: HttpResponse[Out] => A
-    )(using Frame): A < (Async & Abort[HttpException]) =
-        HttpUrl.parse(rawUrl) match
-            case Result.Success(url) => sendUrl(url, route)(extract)
-            case Result.Failure(err) => Abort.fail(err)
+    // --- Private implementation ---
 
-    private def parseAndSend[B, Out, A](
-        rawUrl: String,
-        route: HttpRoute["body" ~ B, Out, Any],
-        body: B
-    )(
-        extract: HttpResponse[Out] => A
-    )(using Frame): A < (Async & Abort[HttpException]) =
-        HttpUrl.parse(rawUrl) match
-            case Result.Success(url) => sendUrl(url, route, body)(extract)
-            case Result.Failure(err) => Abort.fail(err)
+    private def initUnsafe(
+        transport: kyo.internal.transport.Transport[?],
+        maxConnectionsPerHost: Int,
+        idleConnectionTimeout: Duration,
+        defaultTlsConfig: kyo.HttpTlsConfig = kyo.HttpTlsConfig.default
+    )(using AllowUnsafe, Frame): HttpClientBackend[?] =
+        HttpClientBackend.init(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig)
 
 end HttpClient

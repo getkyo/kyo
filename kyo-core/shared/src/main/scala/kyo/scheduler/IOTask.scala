@@ -35,13 +35,11 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     // successfully interrupted (CAS from Pending to Error), sets the needsInterrupt flag
     // and wakes the BlockingMonitor for immediate scan. If the worker thread is blocked
     // (flat CPU time), Thread.interrupt() is dispatched within ~100μs.
-    final override def interrupt(error: Error[E]): Boolean =
-        val interrupted = super.interrupt(error)
-        if interrupted then
-            requestInterrupt()
-            Scheduler.get.notifyInterrupt()
-        interrupted
-    end interrupt
+    final override def preInterrupt(): Boolean =
+        requestInterrupt()
+        Scheduler.get.notifyInterrupt()
+        true
+    end preInterrupt
 
     private inline def erasedAbortTag = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
