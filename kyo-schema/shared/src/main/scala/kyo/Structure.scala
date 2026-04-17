@@ -9,7 +9,7 @@ import scala.annotation.tailrec
   * etc.), and the Value tree holds the actual data in a format-neutral representation. Together they let you traverse, compare, and
   * transform typed Scala values without knowledge of a specific serialization format.
   *
-  * Common use cases include generic diffing (Changeset), structural navigation (Path), cross-format serialization, and forwarding typed
+  * Common use cases include generic diffing (Changeset), structural navigation (Focus), cross-format serialization, and forwarding typed
   * values to dynamic systems such as scripting runtimes or document databases.
   *
   * @see
@@ -77,7 +77,7 @@ object Structure:
       * Each variant captures the shape of one category of Scala type. The tree is produced at compile time by `Structure.of[A]` and can be
       * inspected at runtime to drive generic algorithms.
       */
-    sealed trait Type derives Schema:
+    sealed abstract class Type derives Schema:
         def name: String
 
     object Type:

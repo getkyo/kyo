@@ -73,14 +73,8 @@ private[kyo] object FocusMacro:
 
                 directField match
                     case Some(df) =>
-                        val dfType = nominalType.memberType(df)
-                        if dfType =:= valueType then
-                            // Direct: field exists on case class with matching type
-                            generateDirectFocus[A, F, Nominal, v](focus, fieldName, caseFields, sym, nominalType, nameExpr)
-                        else
-                            // Mapped: field exists but type differs (after map transform)
-                            generateMappedFocus[A, F, Nominal, v](focus, fieldName, fieldName, caseFields, sym, nominalType, nameExpr)
-                        end if
+                        // Direct: field exists on case class
+                        generateDirectFocus[A, F, Nominal, v](focus, fieldName, caseFields, sym, nominalType, nameExpr)
                     case None =>
                         // Field not in case class. Check for rename by comparing with F's fields.
                         val expandedF     = ExpandMacro.expandType(TypeRepr.of[F])
@@ -209,43 +203,6 @@ private[kyo] object FocusMacro:
 
         '{ Focus.Select.create[A, V]($getterExpr, $setterExpr, $focus.segments :+ $nameExpr, $focus.isPartial, $focus.schema) }
     end generateRenamedFocus
-
-    /** Generates Focus for a mapped field. Accesses original field and applies transforms at runtime. */
-    private def generateMappedFocus[A: Type, F: Type, Nominal: Type, V: Type](using
-        Quotes
-    )(
-        focus: Expr[Focus.Select[A, F]],
-        fieldName: String,
-        originalFieldName: String,
-        caseFields: List[quotes.reflect.Symbol],
-        sym: quotes.reflect.Symbol,
-        nominalType: quotes.reflect.TypeRepr,
-        nameExpr: Expr[String]
-    ): Expr[Any] =
-        import quotes.reflect.*
-
-        val fieldNameExpr = Expr(originalFieldName)
-
-        val getterExpr = '{ (root: A) =>
-            $focus.getter.asInstanceOf[A => Maybe[Any]](root).map { (parent: Any) =>
-                val rawValue = ${
-                    val typedParent = '{ parent.asInstanceOf[Nominal] }.asTerm
-                    Select.unique(typedParent, originalFieldName).asExprOf[Any]
-                }
-                // Apply field transforms for this field from the schema
-                val schema = $focus.schema.get.asInstanceOf[Schema[A]]
-                val transformed = schema.fieldTransforms.foldLeft(rawValue) { (v, tf) =>
-                    if tf._1 == $fieldNameExpr then tf._2(v) else v
-                }
-                transformed.asInstanceOf[V]
-            }
-        }
-
-        // Mapped fields are read-only (no inverse transform available); setter is a no-op
-        val setterExpr = '{ (root: A, _: V) => root }
-
-        '{ Focus.Select.create[A, V]($getterExpr, $setterExpr, $focus.segments :+ $nameExpr, $focus.isPartial, $focus.schema) }
-    end generateMappedFocus
 
     /** Generates Focus for a computed (added) field. Uses runtime lookup through _computedFields. */
     private def generateComputedFocus[A: Type, F: Type, V: Type](using

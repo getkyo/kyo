@@ -4,7 +4,7 @@ import kyo.*
 import kyo.Record.*
 import scala.quoted.*
 
-/** Macro implementations for Schema[A] transform methods: drop, rename, map, add.
+/** Macro implementations for Schema[A] transform methods: drop, rename, add, select, flatten.
   *
   * Each transform modifies the Focused type member. The macros validate field names at compile time and compute the new structural type. F
   * is passed as a separate type parameter extracted from Schema.this.Focused at the call site.
@@ -12,7 +12,6 @@ import scala.quoted.*
   * Runtime behavior:
   *   - drop: removes field from type only, getter/setter unchanged
   *   - rename: changes field name in type, stores rename mapping
-  *   - map: stores field transform function; if return type differs, updates field type in Focused
   *   - add: adds field to type, stores computed field function
   */
 object SchemaTransformMacro:
@@ -23,7 +22,7 @@ object SchemaTransformMacro:
         if sym.flags.is(Flags.Sealed) && !sym.flags.is(Flags.Case) then
             report.errorAndAbort(
                 s"Schema.$opName is not supported for sealed traits. " +
-                    s"Transforms (drop, rename, map, add, select, flatten) operate on case class fields. " +
+                    s"Transforms (drop, rename, add, select, flatten) operate on case class fields. " +
                     s"Apply .$opName to a Schema of a specific case class variant instead."
             )
         end if
@@ -66,7 +65,6 @@ object SchemaTransformMacro:
                     Schema.createFrom[A, f2](
                         $meta,
                         $meta.checks,
-                        $meta.fieldTransforms,
                         $meta.computedFields,
                         $meta.renamedFields,
                         Set($nameExpr)
@@ -127,84 +125,12 @@ object SchemaTransformMacro:
                     Schema.createFrom[A, f2](
                         $meta,
                         $meta.checks,
-                        $meta.fieldTransforms,
                         $meta.computedFields,
                         $meta.renamedFields :+ ($fromExpr, $toExpr)
                     )
                 }
         end match
     end renameImpl
-
-    /** Implements Schema[A].map[N, V2]("fieldName")(f: h.Value => V2).
-      *
-      * Validates that fieldName exists in F (Focused). The field's type is already verified by Fields.Have at the call site. Extracts the
-      * return type V2 from the function's type. If V2 == V (same type), returns Schema[A] with the transform stored. If V2 != V, returns
-      * Schema[A] { type Focused = F' } where F' = (F minus fieldName) & (fieldName ~ V2). Stores the transform function internally for
-      * structural operations (result/to/fold).
-      */
-    def mapImpl[A: Type, F: Type](
-        meta: Expr[Schema[A]],
-        fieldName: Expr[String],
-        f: Expr[? => ?]
-    )(using Quotes): Expr[Any] =
-        import quotes.reflect.*
-
-        assertNotSealedTrait[A]("map")
-
-        val nameStr = MacroUtils.extractStringLiteral(fieldName)
-        val fType   = TypeRepr.of[F]
-
-        // Expand F to find the field (compile-time validation)
-        val expanded = ExpandMacro.expandType(fType)
-
-        // Verify field exists and get the field's value type
-        val fieldValueType = NavigationMacro.findValueType(expanded, nameStr).getOrElse {
-            val available = MacroUtils.collectFields(expanded).map(_._1)
-            report.errorAndAbort(
-                s"Field '$nameStr' not found. Available fields: ${available.mkString(", ")}."
-            )
-        }
-
-        // Extract the return type from the function's typed tree.
-        val returnType = extractFunctionReturnType(f.asTerm)
-
-        val nameExpr = Expr(nameStr)
-
-        if returnType =:= fieldValueType then
-            // Same type: Focused unchanged, just store the transform
-            '{
-                Schema.createFrom[A, F](
-                    $meta,
-                    $meta.checks,
-                    $meta.fieldTransforms :+ ($nameExpr, $f.asInstanceOf[Any => Any]),
-                    $meta.computedFields,
-                    $meta.renamedFields
-                )
-            }
-        else
-            // Different type: build new F' = (F minus fieldName) & (fieldName ~ ReturnType)
-            val withoutField = MacroUtils.removeField(expanded, nameStr)
-            val tildeType    = TypeRepr.of[Record.~]
-            val nameType     = ConstantType(StringConstant(nameStr))
-            val newField     = tildeType.appliedTo(List(nameType, returnType))
-            val newType =
-                if withoutField =:= TypeRepr.of[Any] then newField
-                else AndType(withoutField, newField)
-
-            newType.asType match
-                case '[f2] =>
-                    '{
-                        Schema.createFrom[A, f2](
-                            $meta,
-                            $meta.checks,
-                            $meta.fieldTransforms :+ ($nameExpr, $f.asInstanceOf[Any => Any]),
-                            $meta.computedFields,
-                            $meta.renamedFields
-                        )
-                    }
-            end match
-        end if
-    end mapImpl
 
     /** Implements Schema[A].add[V]("name")(f: A => V).
       *
@@ -248,7 +174,6 @@ object SchemaTransformMacro:
                     Schema.createFrom[A, f2](
                         $meta,
                         $meta.checks,
-                        $meta.fieldTransforms,
                         $meta.computedFields :+ ($nameExpr, $f.asInstanceOf[A => Any]),
                         $meta.renamedFields
                     )
@@ -310,7 +235,6 @@ object SchemaTransformMacro:
                     Schema.createFrom[A, f2](
                         $meta,
                         $meta.checks,
-                        $meta.fieldTransforms,
                         $meta.computedFields,
                         $meta.renamedFields,
                         $droppedExpr
@@ -369,7 +293,6 @@ object SchemaTransformMacro:
                         Schema.createFrom[A, f2](
                             $meta,
                             $meta.checks,
-                            $meta.fieldTransforms,
                             $meta.computedFields,
                             $meta.renamedFields
                         )
@@ -424,10 +347,7 @@ object SchemaTransformMacro:
                                     val isRenamed = $meta.renamedFields.exists(_._1 == $nameExpr)
                                     if isRenamed then acc
                                     else
-                                        val rawValue = product.productElement($idxExpr)
-                                        val transformedValue = $meta.fieldTransforms.foldLeft(rawValue) { (v, tf) =>
-                                            if tf._1 == $nameExpr then tf._2(v) else v
-                                        }
+                                        val rawValue    = product.productElement($idxExpr)
                                         val sourceField = $meta.sourceFields.lift($idxExpr)
                                         val fld = Field[n, v](
                                             ${ Expr(fieldName).asExprOf[n] },
@@ -435,7 +355,7 @@ object SchemaTransformMacro:
                                             sourceField.map(_.nested).getOrElse(Nil),
                                             sourceField.fold(Maybe.empty[v])(sf => sf.default.asInstanceOf[Maybe[v]])
                                         )
-                                        $f[n, v](acc, fld, transformedValue.asInstanceOf[v])
+                                        $f[n, v](acc, fld, rawValue.asInstanceOf[v])
                                     end if
                                 end if
                             }
@@ -473,12 +393,9 @@ object SchemaTransformMacro:
             resolvedRenames.foreach { case (sourceName, targetName) =>
                 val originalIdx = theMeta.sourceFields.indexWhere(_.name == sourceName)
                 if originalIdx >= 0 then
-                    val rawValue = product.productElement(originalIdx)
-                    val transformedValue = theMeta.fieldTransforms.foldLeft(rawValue) { (v, tf) =>
-                        if tf._1 == targetName then tf._2(v) else v
-                    }
+                    val rawValue     = product.productElement(originalIdx)
                     val renamedField = Field[String, Any](targetName, Tag[Any], Nil, Maybe.empty)
-                    acc = theF[String, Any](acc, renamedField, transformedValue)
+                    acc = theF[String, Any](acc, renamedField, rawValue)
                 end if
             }
 
@@ -491,44 +408,6 @@ object SchemaTransformMacro:
             acc
         }
     end foldFieldsImpl
-
-    /** Extracts the return type from a function expression's type.
-      *
-      * The function is properly typed (e.g., `Int => String`), so we extract the return type from the function type directly. Falls back to
-      * inspecting the lambda body if the function type is not directly available.
-      */
-    private def extractFunctionReturnType(using Quotes)(term: quotes.reflect.Term): quotes.reflect.TypeRepr =
-        import quotes.reflect.*
-
-        // First try to extract from the function type directly
-        val funcType = term.tpe.widen
-        funcType match
-            case AppliedType(_, List(_, retType)) =>
-                // Function1[In, Out] — return Out
-                retType
-            case _ =>
-                // Fallback: walk the tree to find the lambda body type
-                def findLambdaRetType(t: Term): Option[TypeRepr] =
-                    t match
-                        case Inlined(_, _, body) => findLambdaRetType(body)
-                        case Typed(expr, _)      => findLambdaRetType(expr)
-                        case Lambda(_, body)     => Some(body.tpe.widen)
-                        case Block(List(ddef: DefDef), _) =>
-                            ddef.returnTpt.tpe match
-                                case tp if !(tp =:= TypeRepr.of[Any]) => Some(tp)
-                                case _                                => ddef.rhs.map(_.tpe.widen)
-                        case _ => None
-
-                findLambdaRetType(term) match
-                    case Some(retType) => retType
-                    case None =>
-                        report.errorAndAbort(
-                            s"Schema.map requires a lambda expression (e.g., .map(\"fieldName\")(value => transform(value))). " +
-                                "Pass a function literal, not a method reference or complex expression."
-                        )
-                end match
-        end match
-    end extractFunctionReturnType
 
     // --- Lambda (Focus) overload implementations ---
 
@@ -625,20 +504,6 @@ object SchemaTransformMacro:
         val nameStr = extractFocusFieldName(focus.asTerm)
         renameImpl[A, F](meta, Expr(nameStr), to)
     end renameFocusImpl
-
-    /** Implements Schema[A].map(_.field)(f) — lambda overload.
-      *
-      * Extracts the field name from the Focus lambda at compile time, then delegates to mapImpl.
-      */
-    def mapFocusImpl[A: Type, F: Type](
-        meta: Expr[Schema[A]],
-        focus: Expr[Focus.Select[A, F] => Focus.Select[A, ?]],
-        f: Expr[? => ?]
-    )(using Quotes): Expr[Any] =
-        import quotes.reflect.*
-        val nameStr = extractFocusFieldName(focus.asTerm)
-        mapImpl[A, F](meta, Expr(nameStr), f)
-    end mapFocusImpl
 
     /** Implements Schema[A].select(_.a, _.b, ...) — lambda overload.
       *

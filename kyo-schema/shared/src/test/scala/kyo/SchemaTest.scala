@@ -841,10 +841,10 @@ class SchemaTest extends Test:
             assert(result == MTPerson("Bob", 30))
         }
 
-        "check then focus modify" in {
+        "check then focus update" in {
             val m = Schema[MTPerson].check(_.name)(_.nonEmpty, "name required")
-            // After check we're at root, need to focus again to modify a field
-            val result = m.focus(_.name).modify(person)(_.toUpperCase)
+            // After check we're at root, need to focus again to update a field
+            val result = m.focus(_.name).update(person)(_.toUpperCase)
             assert(result == MTPerson("ALICE", 30))
         }
 
@@ -1732,17 +1732,6 @@ class SchemaTest extends Test:
             assert(result == Map("x" -> "1", "y" -> "two", "z" -> "true"))
         }
 
-        "fold after map applies transform" in {
-            val m = Schema[MTPerson].map("name")(_.toUpperCase)
-            val result = m.fold(alice)(Map.empty[String, String]) {
-                [N <: String, V] =>
-                    (acc: Map[String, String], field: Field[N, V], value: V) =>
-                        acc + (field.name -> value.toString)
-            }
-            assert(result("name") == "ALICE")
-            assert(result("age") == "30")
-        }
-
         "fold init passthrough" in {
             // Even though fold iterates, verify it starts from init
             val m = Schema[MTPerson]
@@ -2116,13 +2105,6 @@ class SchemaTest extends Test:
 
     "transform" - {
 
-        /** Cross-platform Double -> JVM-compatible string using JsonWriter's Ryu formatter. */
-        def doubleToString(d: Double): String =
-            val w = JsonWriter()
-            w.double(d)
-            w.resultString
-        end doubleToString
-
         val user = MTUser("Alice", 30, "alice@example.com", "123-45-6789")
 
         // === Typical usage ===
@@ -2143,12 +2125,6 @@ class SchemaTest extends Test:
             assert(got == "Alice")
             val age = m.focus(_.age).get(user)
             assert(age == 30)
-        }
-
-        "map field to new type" in {
-            val m = Schema[MTUser].map("age")(_.toString)
-            val _: Schema[MTUser] { type Focused = "name" ~ String & "email" ~ String & "ssn" ~ String & "age" ~ String } = m
-            assert(m.fieldNames.contains("age"))
         }
 
         "flatten nested case class" in {
@@ -2267,61 +2243,6 @@ class SchemaTest extends Test:
             assert(m.focus(_.ssn).tag =:= Tag[String])
         }
 
-        // --- map (4 tests) ---
-
-        "map transforms value" in {
-            val m = Schema[MTUser].map("name")(_.toUpperCase)
-            // map doesn't change the type
-            val _: Schema[MTUser] { type Focused = "name" ~ String & "age" ~ Int & "email" ~ String & "ssn" ~ String } = m
-            succeed
-        }
-
-        "map preserves type" in {
-            val m = Schema[MTUser].map("name")(_.toUpperCase)
-            assert(m.focus(_.name).tag =:= Tag[String])
-            assert(m.focus(_.age).tag =:= Tag[Int])
-        }
-
-        "map schema unchanged" in {
-            val m = Schema[MTUser].map("name")(_.toUpperCase)
-            assert(m.fieldNames == Set("name", "age", "email", "ssn"))
-            assert(m.focus(_.name).tag =:= Tag[String])
-        }
-
-        "map multiple fields" in {
-            val m = Schema[MTUser].map("name")(_.toUpperCase).map("age")(_ + 1)
-            assert(m.fieldNames == Set("name", "age", "email", "ssn"))
-            assert(m.focus(_.name).tag =:= Tag[String])
-            assert(m.focus(_.age).tag =:= Tag[Int])
-        }
-
-        // --- map (4 tests) ---
-
-        "map changes field type" in {
-            val m = Schema[MTUser].map("age")(_.toString)
-            val _: Schema[MTUser] { type Focused = "name" ~ String & "email" ~ String & "ssn" ~ String & "age" ~ String } = m
-            succeed
-        }
-
-        "map schema reflects" in {
-            val m = Schema[MTUser].map("age")(_.toString)
-            assert(m.fieldNames == Set("name", "age", "email", "ssn"))
-            // Type change verified via type ascription
-            val _: Schema[MTUser] { type Focused = "name" ~ String & "email" ~ String & "ssn" ~ String & "age" ~ String } = m
-            succeed
-        }
-
-        "map then navigate" in {
-            val m = Schema[MTUser].map("age")(_.toString)
-            // Type change verified via type ascription
-            val _: Schema[MTUser] { type Focused = "name" ~ String & "email" ~ String & "ssn" ~ String & "age" ~ String } = m
-            assert(m.fieldNames.contains("age"))
-        }
-
-        "map compile error nonexistent field" in {
-            typeCheckFailure("Schema[kyo.MTUser].map(\"nonexistent\")(_.toString)")("No given instance")
-        }
-
         // --- add (6 tests) ---
 
         "add new field" in {
@@ -2436,10 +2357,6 @@ class SchemaTest extends Test:
             typeCheckFailure("Schema[kyo.MTUser].add[String](\"name\")(_.name)")("already exists")
         }
 
-        "map nonexistent field compile error" in {
-            typeCheckFailure("Schema[kyo.MTUser].map(\"nonexistent\")(identity)")("No given instance")
-        }
-
         "drop on primitive compile error" in {
             typeCheckFailure("Schema[Int].drop(\"x\")")("not found")
         }
@@ -2454,14 +2371,6 @@ class SchemaTest extends Test:
 
         "drop after rename uses new name" in {
             typeCheckFailure("Schema[kyo.MTUser].rename(\"name\", \"userName\").drop(\"name\")")("not found")
-        }
-
-        "map type change succeeds" in {
-            // With unified map, changing the return type is allowed (formerly mapTo).
-            // map("name")(_.length) changes the field type from String to Int.
-            val m = Schema[MTUser].map("name")(_.length)
-            val _: Schema[MTUser] { type Focused = "age" ~ Int & "email" ~ String & "ssn" ~ String & "name" ~ Int } = m
-            assert(m.fieldNames.contains("name"))
         }
 
         // === select (from MetaKeepFlattenMergeTest, 5 tests) ===
@@ -2626,13 +2535,6 @@ class SchemaTest extends Test:
             typeCheckFailure("Schema[kyo.MTUser].drop(\"email\").convert[kyo.MTEmailAge]")("no corresponding field")
         }
 
-        "convert type mismatch after map compile error" in {
-            // After map age to String, target with age: Int should fail
-            typeCheckFailure("Schema[kyo.MTUser].map(\"age\")(_.toString).drop(\"ssn\").drop(\"email\").convert[kyo.MTPublicUser]")(
-                "has type"
-            )
-        }
-
         "convert after rename chain A->B then B->C" in {
             // rename name->userName then userName->displayName, convert[B] matches displayName
             val convert = Schema[MTUser]
@@ -2643,18 +2545,6 @@ class SchemaTest extends Test:
                 .convert[MTDisplayUser]
             val result = convert(user)
             assert(result == MTDisplayUser("Alice", 30))
-        }
-
-        "convert after map on renamed field" in {
-            // rename then map the new name, verifies transform applies to renamed field
-            val convert = Schema[MTUser]
-                .drop("ssn")
-                .drop("email")
-                .rename("name", "userName")
-                .map("userName")(_.toUpperCase)
-                .convert[MTUserName]
-            val result = convert(user)
-            assert(result == MTUserName("ALICE", 30))
         }
 
         "convert after drop then add back same name different type" in {
@@ -2671,43 +2561,6 @@ class SchemaTest extends Test:
 
         // --- ETL pipeline tests ---
 
-        "ETL full pipeline drop+rename+map+rename+to" in {
-            // Note: rename must come BEFORE map so the transform is registered under the final name.
-            // The chain: drop metadata, rename userId->user, rename eventType->kind,
-            // rename timestamp->ts, then map("ts") to convert Long->String.
-            val transform = Schema[MTRawEvent]
-                .drop("metadata")
-                .rename("userId", "user")
-                .rename("eventType", "kind")
-                .rename("timestamp", "ts")
-                .map("ts")(ts => java.time.Instant.ofEpochMilli(ts).toString)
-                .convert[MTCleanEvent]
-            val raw    = MTRawEvent("u123", "click", 1705276800000L, "extra")
-            val result = transform(raw)
-            assert(result.user == "u123")
-            assert(result.kind == "click")
-            assert(result.ts == java.time.Instant.ofEpochMilli(1705276800000L).toString)
-        }
-
-        "ETL to compile error if rename chain leaves wrong names" in {
-            // Rename userId to "uid" but CleanEvent expects "user" -- compile error
-            typeCheckFailure(
-                """Schema[kyo.MTRawEvent].drop("metadata").rename("userId", "uid").rename("eventType", "kind").map("timestamp")(ts => java.time.Instant.ofEpochMilli(ts).toString).rename("timestamp", "ts").convert[kyo.MTCleanEvent]"""
-            )("no corresponding field")
-        }
-
-        "ETL map then rename same field" in {
-            // Rename first, then map the new name so the transform is applied correctly.
-            // rename("timestamp", "ts") then map("ts")(_.toString)
-            val m = Schema[MTRawEvent]
-                .rename("timestamp", "ts")
-                .map("ts")(ts => ts.toString)
-            assert(m.fieldNames.contains("ts"))
-            assert(!m.fieldNames.contains("timestamp"))
-            val record = m.toRecord(MTRawEvent("u1", "click", 12345L, "meta"))
-            assert(record.dict("ts") == "12345")
-        }
-
         "ETL rename chain A->B then B->C" in {
             // rename userId->user then user->u, verify "u" in schema
             val m = Schema[MTRawEvent]
@@ -2716,24 +2569,6 @@ class SchemaTest extends Test:
             assert(m.fieldNames.contains("u"))
             assert(!m.fieldNames.contains("userId"))
             assert(!m.fieldNames.contains("user"))
-        }
-
-        "ETL transform chain ordering matters" in {
-            // rename first, then map uses the new name
-            val m = Schema[MTRawEvent]
-                .rename("userId", "user")
-                .map("user")(_.toUpperCase)
-            val record = m.toRecord(MTRawEvent("u123", "click", 100L, "m"))
-            assert(record.dict("user") == "U123")
-        }
-
-        "ETL map on renamed field changes schema tag" in {
-            // rename then map, schema shows new type under new name
-            val m = Schema[MTRawEvent]
-                .rename("timestamp", "ts")
-                .map("ts")(ts => ts.toString)
-            assert(m.fieldNames.contains("ts"))
-            assert(!m.fieldNames.contains("timestamp"))
         }
 
         // --- Migration tests ---
@@ -2764,73 +2599,7 @@ class SchemaTest extends Test:
             assert(result == MTMigrated("Alice", 30, true))
         }
 
-        "migration map changes type during migration" in {
-            // map("age")(_.toString) for migration to type with String age
-            val migrate = Schema[MTUserV1]
-                .drop("email")
-                .map("age")(_.toString)
-                .convert[MTMigratedStringAge]
-            val old    = MTUserV1("Alice", 30, "alice@example.com")
-            val result = migrate(old)
-            assert(result == MTMigratedStringAge("Alice", "30"))
-        }
-
-        // --- Map with type inference tests ---
-
-        "map on Int field, Int has no .length compile error" in {
-            // Int has no .length method, so map("age")(_.length) should fail
-            typeCheckFailure("Schema[kyo.MTUser].map(\"age\")(_.length)")("not a member")
-        }
-
-        "map on renamed field reflects in schema" in {
-            // rename("name", "userName") then map("userName")(_.toUpperCase), schema reflects change
-            val m = Schema[MTUser].rename("name", "userName").map("userName")(_.toUpperCase)
-            assert(m.fieldNames.contains("userName"))
-            assert(!m.fieldNames.contains("name"))
-        }
-
-        "map identity function preserves value" in {
-            // map("name")(identity), result has original value
-            val m      = Schema[MTUser].map("name")(identity)
-            val record = m.toRecord(user)
-            assert(record.dict("name") == "Alice")
-        }
-
-        "map then result applies transform" in {
-            // map("name")(_.toUpperCase), result(user) has "ALICE" in Record
-            val m      = Schema[MTUser].map("name")(_.toUpperCase)
-            val record = m.toRecord(user)
-            assert(record.dict("name") == "ALICE")
-        }
-
         // --- Domain event processing tests ---
-
-        "event full pipeline validate+map+rename+to" in {
-            val eventMeta = Schema[MTOrderEvent]
-                .check(_.orderId)(_.nonEmpty, "orderId required")
-                .check(_.action)(s => Set("create", "update", "cancel").contains(s), "invalid action")
-                .check(_.amount)(_ > 0, "amount must be positive")
-
-            val processEvent = eventMeta
-                .map("amount")(a => f"$$${a}%.2f")
-                .rename("timestamp", "time")
-                .convert[MTAuditEntry]
-
-            val event  = MTOrderEvent("ORD-123", "create", 49.99, 1705276800000L)
-            val result = processEvent(event)
-            assert(result.orderId == "ORD-123")
-            assert(result.action == "create")
-            assert(result.amount == "$49.99")
-            assert(result.time == 1705276800000L)
-        }
-
-        "event map infers Double for amount field" in {
-            // map("amount")(a => f"$$${a}%.2f") formats "$49.99"
-            val m      = Schema[MTOrderEvent].map("amount")(a => f"$$${a}%.2f")
-            val event  = MTOrderEvent("ORD-123", "create", 49.99, 1705276800000L)
-            val record = m.toRecord(event)
-            assert(record.dict("amount") == "$49.99")
-        }
 
         "event validation collects all 3 errors on bad input" in {
             val eventMeta = Schema[MTOrderEvent]
@@ -2842,89 +2611,6 @@ class SchemaTest extends Test:
             assert(errors.exists(_.message == "orderId required"))
             assert(errors.exists(_.message == "invalid action"))
             assert(errors.exists(_.message == "amount must be positive"))
-        }
-
-        "event to compile error if rename omitted" in {
-            // Without rename("timestamp", "time"), to[MTAuditEntry] fails because "timestamp" != "time"
-            typeCheckFailure(
-                """Schema[kyo.MTOrderEvent].map("amount")(a => a.toString).convert[kyo.MTAuditEntry]"""
-            )("no corresponding field")
-        }
-
-        "event to does not run validation" in {
-            // to[MTAuditEntry] succeeds even if checks would fail on the input
-            val eventMeta = Schema[MTOrderEvent]
-                .check(_.orderId)(_.nonEmpty, "orderId required")
-                .check(_.amount)(_ > 0, "amount must be positive")
-            val processEvent = eventMeta
-                .map("amount")(doubleToString)
-                .rename("timestamp", "time")
-                .convert[MTAuditEntry]
-            // Invalid input: empty orderId and negative amount
-            val badEvent = MTOrderEvent("", "create", -1.0, 100L)
-            val result   = processEvent(badEvent)
-            // to succeeds — it does not run validation
-            assert(result.orderId == "")
-            assert(result.amount == "-1.0")
-        }
-
-        "event single meta used for both validate and to" in {
-            val eventMeta = Schema[MTOrderEvent]
-                .check(_.orderId)(_.nonEmpty, "orderId required")
-                .check(_.action)(s => Set("create", "update", "cancel").contains(s), "invalid action")
-                .check(_.amount)(_ > 0, "amount must be positive")
-
-            // Same meta for validation
-            val event  = MTOrderEvent("ORD-1", "create", 10.0, 100L)
-            val errors = eventMeta.validate(event)
-            assert(errors.isEmpty)
-
-            // Same meta for transform+to
-            val convert = eventMeta
-                .map("amount")(doubleToString)
-                .rename("timestamp", "time")
-                .convert[MTAuditEntry]
-            val result = convert(event)
-            assert(result.orderId == "ORD-1")
-            assert(result.time == 100L)
-        }
-
-        "event rename then to matches target field name" in {
-            // rename("timestamp", "time"), to[MTAuditEntry] finds "time"
-            val convert = Schema[MTOrderEvent]
-                .map("amount")(doubleToString)
-                .rename("timestamp", "time")
-                .convert[MTAuditEntry]
-            val event  = MTOrderEvent("ORD-1", "create", 10.0, 200L)
-            val result = convert(event)
-            assert(result.time == 200L)
-        }
-
-        "event transform function is reusable" in {
-            val processEvent = Schema[MTOrderEvent]
-                .map("amount")(doubleToString)
-                .rename("timestamp", "time")
-                .convert[MTAuditEntry]
-            val e1 = MTOrderEvent("ORD-1", "create", 10.0, 100L)
-            val e2 = MTOrderEvent("ORD-2", "update", 20.0, 200L)
-            val r1 = processEvent(e1)
-            val r2 = processEvent(e2)
-            assert(r1 == MTAuditEntry("ORD-1", "create", "10.0", 100L))
-            assert(r2 == MTAuditEntry("ORD-2", "update", "20.0", 200L))
-        }
-
-        "Double field transform via doubleToString is platform-consistent (whole number)" in {
-            val event     = MTOrderEvent("x", "create", -1.0, 100L)
-            val transform = Schema[MTOrderEvent].map("amount")(doubleToString).rename("timestamp", "time").convert[MTAuditEntry]
-            val result    = transform(event)
-            assert(result.amount == "-1.0") // must hold on JVM, JS, and Native
-        }
-
-        "Double field transform via doubleToString with fractional values" in {
-            val event     = MTOrderEvent("y", "create", 3.14, 1L)
-            val transform = Schema[MTOrderEvent].map("amount")(doubleToString).rename("timestamp", "time").convert[MTAuditEntry]
-            val result    = transform(event)
-            assert(result.amount == "3.14") // Ryu format for fractional
         }
 
         "event validation on valid input returns empty" in {
@@ -2993,16 +2679,6 @@ class SchemaTest extends Test:
             assert(m.fieldNames.contains("age"))
         }
 
-        "versioning map+rename for type-changing migration" in {
-            // map("age")(_.toString) then rename("name", "fullName"), to target with String age
-            val migrate = Schema[MTUserV1]
-                .rename("name", "fullName")
-                .map("age")(_.toString)
-                .convert[MTUserV2StringAge]
-            val result = migrate(MTUserV1("Alice", 30, "alice@example.com"))
-            assert(result == MTUserV2StringAge("Alice", "30", "alice@example.com"))
-        }
-
         "versioning migration preserves fields not explicitly transformed" in {
             // email passes through rename+add chain unchanged
             val migrate = Schema[MTUserV1]
@@ -3034,11 +2710,6 @@ class SchemaTest extends Test:
             typeCheckFailure("Schema[kyo.MTShape].rename(\"Circle\", \"circle\")")("not supported")
         }
 
-        "map on sealed trait fails to compile" in {
-            // map requires Fields.Have evidence which fails on sealed traits before the macro guard fires
-            typeCheckFailure("Schema[kyo.MTShape].map(\"Circle\")(identity)")("No given instance")
-        }
-
         "lambda syntax" - {
 
             val user = MTUser("Alice", 30, "alice@example.com", "123-45-6789")
@@ -3061,16 +2732,6 @@ class SchemaTest extends Test:
                 assert(!byLambda.fieldNames.contains("name"))
             }
 
-            "map via lambda same as string" in {
-                val byString = Schema[MTUser].map("age")(_.toString)
-                val byLambda = Schema[MTUser].map(_.age)(_.toString)
-                // Both produce the same field names and type structure
-                assert(byString.fieldNames == byLambda.fieldNames)
-                val _: Schema[MTUser] { type Focused = "name" ~ String & "email" ~ String & "ssn" ~ String & "age" ~ String } = byString
-                val _: Schema[MTUser] { type Focused = "name" ~ String & "email" ~ String & "ssn" ~ String & "age" ~ String } = byLambda
-                succeed
-            }
-
             "select via lambda same as string" in {
                 val byString = Schema[MTUser].select("name", "age")
                 val byLambda = Schema[MTUser].select(_.name, _.age)
@@ -3086,7 +2747,6 @@ class SchemaTest extends Test:
                 val m = Schema[MTUser]
                     .drop(_.ssn)
                     .rename("name", "userName")
-                    .map(_.age)(_.toString)
                     .add("active")(_ => true)
                 assert(m.fieldNames == Set("userName", "age", "email", "active"))
                 val record = m.toRecord(user)
@@ -3124,12 +2784,6 @@ class SchemaTest extends Test:
                 assert(email == "alice@example.com")
             }
 
-            "type-changing map via lambda infers V2" in {
-                val m = Schema[MTUser].map(_.age)(age => age.toLong)
-                // Verify the type at the type level
-                val _: Schema[MTUser] { type Focused = "name" ~ String & ("age" ~ Long) & "email" ~ String & "ssn" ~ String } = m
-                assert(m.fieldNames.contains("age"))
-            }
         }
     }
 
@@ -3450,27 +3104,6 @@ class SchemaTest extends Test:
             assert(json.contains("\"Alice\""))
             assert(!json.contains("\"name\""))
             assert(!json.contains("ssn"))
-        }
-
-        "transform map - result contains transformed field type" in {
-            val m      = Schema[MTPerson].map(_.age)(_.toString)
-            val person = MTPerson("Alice", 30)
-            val record = m.toRecord(person)
-            // age should now be a String "30" instead of Int 30
-            assert(record.dict("age") == "30")
-            assert(record.dict("name") == "Alice")
-        }
-
-        "transform map - JSON via to[DTO] has transformed type" in {
-            // map age to String, then convert to MTStringAge(name, age: String)
-            val m      = Schema[MTPerson].map(_.age)(_.toString)
-            val person = MTPerson("Alice", 30)
-            val dto    = m.convert[MTStringAge](person)
-            val json   = Json.encode(dto)
-            assert(json.contains("\"age\""))
-            assert(json.contains("\"30\"")) // age as string, not bare 30
-            assert(json.contains("\"name\""))
-            assert(json.contains("\"Alice\""))
         }
 
         "transform add - result contains computed field" in {
@@ -3851,13 +3484,6 @@ class SchemaTest extends Test:
             assert(json.contains("\"Alice\""))
         }
 
-        "map + encode uses transformed value" in {
-            given schema: Schema[MTPerson] = Schema[MTPerson].map(_.age)(_.toString)
-            val person                     = MTPerson("Alice", 30)
-            val json                       = Json.encode(person)
-            assert(json.contains("\"30\""), s"mapped age should be a string '30' in JSON: $json")
-        }
-
         "add + encode includes computed field" in {
             given schema: Schema[MTPerson] = Schema[MTPerson].add("greeting")(p => s"Hello ${p.name}")
             val person                     = MTPerson("Alice", 30)
@@ -3880,13 +3506,11 @@ class SchemaTest extends Test:
             given schema: Schema[MTUser] = Schema[MTUser]
                 .drop(_.ssn)
                 .rename(_.name, "userName")
-                .map(_.age)(_.toString)
             val user = MTUser("Alice", 30, "alice@test.com", "123-45-6789")
             val json = Json.encode(user)
             assert(!json.contains("ssn"), s"dropped 'ssn' should not appear: $json")
             assert(json.contains("\"userName\""), s"renamed field should appear as 'userName': $json")
             assert(!json.contains("\"name\""), s"original 'name' should not appear: $json")
-            assert(json.contains("\"30\""), s"mapped age should be string '30': $json")
             assert(json.contains("\"email\""))
         }
 
@@ -3968,34 +3592,6 @@ class SchemaTest extends Test:
             assert(decoded.name == user.name)
             assert(decoded.age == user.age)
             assert(decoded.email == user.email)
-        }
-
-        "add + map: decode throws SchemaNotSerializableException" in {
-            given schema: Schema[MTPerson] = Schema[MTPerson].map(_.age)(_.toString).add("greeting")(p => s"Hello ${p.name}")
-            val person                     = MTPerson("Alice", 30)
-            val json                       = Json.encode(person)
-            try
-                val _ = Json.decode[MTPerson](json).getOrThrow
-                fail("Expected SchemaNotSerializableException but decode succeeded")
-            catch
-                case _: SchemaNotSerializableException => succeed
-                case e: Exception =>
-                    fail(s"Expected SchemaNotSerializableException but got ${e.getClass.getName}: ${e.getMessage}")
-            end try
-        }
-
-        "map: decode throws SchemaNotSerializableException" in {
-            given schema: Schema[MTPerson] = Schema[MTPerson].map(_.age)(_.toString)
-            val person                     = MTPerson("Alice", 30)
-            val json                       = Json.encode(person)
-            try
-                val _ = Json.decode[MTPerson](json).getOrThrow
-                fail("Expected SchemaNotSerializableException but decode succeeded")
-            catch
-                case _: SchemaNotSerializableException => succeed
-                case e: Exception =>
-                    fail(s"Expected SchemaNotSerializableException but got ${e.getClass.getName}: ${e.getMessage}")
-            end try
         }
 
         "transform round-trip: rename + drop" in {
@@ -6166,9 +5762,9 @@ class SchemaTest extends Test:
             assert(patched.id == 42)
         }
 
-        "foreach + modify + changeset: modify all items then compare with changeset" in {
+        "foreach + update + changeset: update all items then compare with changeset" in {
             val each    = Schema[XCOrder].foreach(_.items)
-            val doubled = each.modify(order)(item => item.copy(price = item.price * 2))
+            val doubled = each.update(order)(item => item.copy(price = item.price * 2))
 
             // Verify modification worked
             assert(doubled.items(0).price == 9.99 * 2)

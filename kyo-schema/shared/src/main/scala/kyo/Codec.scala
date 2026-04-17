@@ -23,7 +23,7 @@ import kyo.Span
   * @see
   *   [[kyo.Schema]] for the type-driven serialization entry point
   */
-trait Codec:
+abstract class Codec:
     def newWriter(): Codec.Writer
     def newReader(input: Span[Byte])(using Frame): Codec.Reader
 end Codec
