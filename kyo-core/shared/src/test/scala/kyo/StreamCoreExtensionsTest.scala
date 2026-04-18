@@ -972,6 +972,30 @@ class StreamCoreExtensionsTest extends Test:
             )
             Abort.run(stream2.run).map(res => assert(res.isError))
         }
+
+        "mapParUnordered error with small buffer does not deadlock" in run {
+            val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+            Choice.run {
+                for
+                    par <- Choice.eval(2, 4, 1024)
+                    s2 = stream.mapParUnordered(par, 1)(i => if i == 5 then Abort.fail("failure") else i + 1)
+                    res <- Abort.run(s2.run)
+                yield assert(res == Result.Failure("failure"))
+            }.andThen(succeed)
+        }
+
+        "mapChunkParUnordered error with small buffer does not deadlock" in run {
+            val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+            Choice.run {
+                for
+                    par <- Choice.eval(2, 4, 1024)
+                    s2 = stream.mapChunkParUnordered(par, 1)(chunk =>
+                        if chunk.contains(5) then Abort.fail("failure") else chunk.map(_ + 1)
+                    )
+                    res <- Abort.run(s2.run)
+                yield assert(res == Result.Failure("failure"))
+            }.andThen(succeed)
+        }
     }
 
     "mapParUnordered buffer closed (#1328)" - {
