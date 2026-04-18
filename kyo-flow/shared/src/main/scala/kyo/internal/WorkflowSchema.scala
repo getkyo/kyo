@@ -81,7 +81,7 @@ private[kyo] object WorkflowSchema:
                     val seqJson     = summon[Json[Seq[Any]]].erased
                     val e           = TypeEntry[Any](Tag[Any], seqJson, v => Chunk.from(v.asInstanceOf[Seq[Any]]))
                     (Dict(Tag[Any] -> e), Dict(n.name -> e))
-                case n: Subflow[?, ?, ?, ?, ?, ?] @unchecked => empty
+                case n: Subflow[?, ?, ?, ?, ?, ?] @unchecked => loop(n.childFlow)
                 case _: Sleep                                => empty
                 case _: Step[?, ?]                           => empty
                 case n: AndThen[?, ?, ?, ?, ?, ?] @unchecked =>
