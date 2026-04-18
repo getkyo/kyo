@@ -16,7 +16,6 @@ import kyo.scheduler.regulator.Admission
 import kyo.scheduler.regulator.Concurrency
 import kyo.scheduler.top.Reporter
 import kyo.scheduler.top.Status
-import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Sleep
 import kyo.scheduler.util.Threads
@@ -564,29 +563,18 @@ object Scheduler {
     )
     object Config {
         val default: Config = {
-            val cores             = Runtime.getRuntime().availableProcessors()
-            val coreWorkers       = Math.max(1, Flag("coreWorkers", cores))
-            val minWorkers        = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
-            val maxWorkers        = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
-            val scheduleStride    = Math.max(1, Flag("scheduleStride", cores))
-            val stealStride       = Math.max(1, Flag("stealStride", cores * 8))
-            val virtualizeWorkers = Flag("virtualizeWorkers", false)
-            val timeSliceMs       = Flag("timeSliceMs", 10)
-            val cycleIntervalNs   = Flag("cycleIntervalNs", 100000)
-            val enableTopJMX      = Flag("enableTopJMX", false)
-            val enableTopConsole  = Flag("enableTopConsoleMs", 0)
             Config(
-                cores,
-                coreWorkers,
-                minWorkers,
-                maxWorkers,
-                scheduleStride,
-                stealStride,
-                virtualizeWorkers,
-                timeSliceMs,
-                cycleIntervalNs,
-                enableTopJMX,
-                enableTopConsole
+                Runtime.getRuntime().availableProcessors(),
+                coreWorkers(),
+                minWorkers(),
+                maxWorkers(),
+                scheduleStride(),
+                stealStride(),
+                virtualizeWorkers(),
+                timeSliceMs(),
+                cycleIntervalNs(),
+                enableTopJMX(),
+                enableTopConsoleMs()
             )
         }
     }

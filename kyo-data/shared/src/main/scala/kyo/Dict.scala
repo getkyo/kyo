@@ -606,4 +606,35 @@ object Dict:
             System.arraycopy(arr, n, trimmed, j, j)
             Span.fromUnsafe(trimmed)
 
+    /** Parses comma-separated key=value pairs into a Dict. */
+    given [K, V](using rk: Flag.Reader.Scalar[K], rv: Flag.Reader.Scalar[V]): Flag.Reader[Dict[K, V]] with
+        def apply(s: String): Either[Throwable, Dict[K, V]] =
+            if s.trim.isEmpty then Right(Dict.empty[K, V])
+            else
+                val entries          = s.split(",")
+                val builder          = DictBuilder.init[K, V]
+                var error: Throwable = null
+                var i                = 0
+                while i < entries.length && (error eq null) do
+                    val trimmed = entries(i).trim
+                    val eqIdx   = trimmed.indexOf('=')
+                    if eqIdx < 0 then
+                        error = new IllegalArgumentException(s"Invalid Dict entry (missing '='): $trimmed")
+                    else
+                        rk(trimmed.substring(0, eqIdx).trim) match
+                            case Left(e) => error = e
+                            case Right(key) =>
+                                rv(trimmed.substring(eqIdx + 1).trim) match
+                                    case Left(e)      => error = e
+                                    case Right(value) => discard(builder.add(key, value))
+                    end if
+                    i += 1
+                end while
+                if error ne null then Left(error)
+                else Right(builder.result())
+        end apply
+
+        def typeName: String = s"Dict[${rk.typeName}, ${rv.typeName}]"
+    end given
+
 end Dict

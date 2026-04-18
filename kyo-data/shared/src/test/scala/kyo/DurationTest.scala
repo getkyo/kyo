@@ -283,4 +283,93 @@ class DurationTest extends Test:
             assert(result.isFailure)
         }
     }
+    "Flag.Reader" - {
+        val reader = summon[Flag.Reader[Duration]]
+
+        "typeName" in {
+            assert(reader.typeName == "Duration")
+        }
+
+        "seconds" in {
+            assert(reader("5s") == Right(5.seconds))
+        }
+
+        "milliseconds" in {
+            assert(reader("100ms") == Right(100.millis))
+        }
+
+        "nanoseconds" in {
+            assert(reader("500ns") == Right(500.nanos))
+        }
+
+        "minutes" in {
+            assert(reader("2minutes") == Right(2.minutes))
+        }
+
+        "hours" in {
+            assert(reader("1hours") == Right(1.hour))
+        }
+
+        "days" in {
+            assert(reader("3d") == Right(3.days))
+        }
+
+        "with whitespace between value and unit" in {
+            assert(reader("10 seconds") == Right(10.seconds))
+        }
+
+        "infinity" in {
+            assert(reader("infinity") == Right(Duration.Infinity))
+        }
+
+        "inf" in {
+            assert(reader("inf") == Right(Duration.Infinity))
+        }
+
+        "invalid format" in {
+            assert(reader("not-a-duration").isLeft)
+        }
+
+        "invalid unit" in {
+            assert(reader("5xyz").isLeft)
+        }
+
+        "5m parses as minutes" in {
+            assert(reader("5m") == Right(5.minutes))
+        }
+
+        "5mo parses as months (not minutes)" in {
+            // "mo" should not accidentally match "minutes" via prefix
+            assert(reader("5months") == Right(Duration.fromUnits(5, Duration.Units.Months)))
+        }
+
+        "0s parses as zero duration" in {
+            assert(reader("0s") == Right(Duration.Zero))
+        }
+
+        "0 without unit is invalid" in {
+            assert(reader("0").isLeft)
+        }
+
+        "single-letter abbreviation s" in {
+            assert(reader("1s") == Right(1.second))
+        }
+
+        "single-letter abbreviation h" in {
+            assert(reader("1h") == Right(1.hour))
+        }
+
+        "single-letter abbreviation d" in {
+            assert(reader("1d") == Right(1.day))
+        }
+
+        "single-letter abbreviation w" in {
+            assert(reader("1w") == Right(Duration.fromUnits(1, Duration.Units.Weeks)))
+        }
+
+        "single-letter abbreviation y" in {
+            assert(reader("1y") == Right(Duration.fromUnits(1, Duration.Units.Years)))
+        }
+    }
+
 end DurationTest

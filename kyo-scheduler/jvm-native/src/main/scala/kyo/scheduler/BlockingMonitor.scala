@@ -3,7 +3,6 @@ package kyo.scheduler
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.locks.LockSupport
-import kyo.scheduler.util.Flag
 import kyo.scheduler.util.ThreadUserTime
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
@@ -66,7 +65,7 @@ private[scheduler] class BlockingMonitor(
         this(null, () => 0, capacity, null)
 
     // Periodic scan interval for blocking compensation (default 2ms).
-    private val intervalNs = Flag("blockingMonitorIntervalNs", 2000000)
+    private val intervalNs = blockingMonitorIntervalNs()
 
     // Minimum interval between scans. Probed at startup to match the platform's CPU time
     // counter resolution — the smallest interval where cross-thread samples reliably advance.
@@ -74,7 +73,7 @@ private[scheduler] class BlockingMonitor(
     // pressure-scaled block threshold handles load-dependent false positives on top of this.
     // Can be overridden via system property.
     private val minIntervalNs: Long = {
-        val override_ = Flag("blockingMonitorMinIntervalNs", -1)
+        val override_ = blockingMonitorMinIntervalNs()
         if (override_ > 0) override_.toLong
         else if (executor ne null) Math.max(ThreadUserTime.probeResolution(), 2000000L) // 2ms floor
         else 2000000L                                                                   // test-only constructor
@@ -82,7 +81,7 @@ private[scheduler] class BlockingMonitor(
 
     // Base block threshold: consecutive idle samples required before marking a worker as blocked.
     // Dynamically scaled by scheduling pressure (see effectiveBlockThreshold).
-    private val blockThreshold = Flag("blockingMonitorBlockThreshold", 2)
+    private val blockThreshold = blockingMonitorBlockThreshold()
 
     // Pre-allocated arrays — reused each cycle, single-threaded access
     private val threadIds     = new Array[Long](maxWorkers)
