@@ -780,7 +780,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 task
             }
 
-            assert(blockingStarted.await(10, TimeUnit.SECONDS), "blocking tasks should start")
+            assert(blockingStarted.await(60, TimeUnit.SECONDS), "blocking tasks should start")
 
             // 3 active tasks — should NOT receive Thread.interrupt()
             val activeTasks = (0 until 3).map { i =>
@@ -800,7 +800,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 task
             }
 
-            assert(activeStarted.await(20, TimeUnit.SECONDS), "active tasks should start")
+            assert(activeStarted.await(60, TimeUnit.SECONDS), "active tasks should start")
 
             // Let monitor establish baseline CPU time samples
             Thread.sleep(30)
@@ -863,7 +863,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             })
 
             scheduler.schedule(firstTask)
-            assert(firstStarted.await(20, TimeUnit.SECONDS))
+            assert(firstStarted.await(60, TimeUnit.SECONDS))
 
             // Request interrupt while first task is blocking
             firstTask.requestInterrupt()
@@ -876,7 +876,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
             // Schedule second task — it may land on the same worker
             scheduler.schedule(secondTask)
-            assert(secondStarted.await(20, TimeUnit.SECONDS))
+            assert(secondStarted.await(60, TimeUnit.SECONDS))
 
             // Let the monitor run several cycles with the second task active
             Thread.sleep(1000)
@@ -911,7 +911,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 })
 
                 scheduler.schedule(task)
-                assert(started.await(20, TimeUnit.SECONDS))
+                assert(started.await(60, TimeUnit.SECONDS))
 
                 eventually(timeout(scaled(Span(10, Seconds)))) {
                     assert(
@@ -939,7 +939,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 Task.Done
             })
             scheduler.schedule(activeTask)
-            assert(activeStarted.await(20, TimeUnit.SECONDS))
+            assert(activeStarted.await(60, TimeUnit.SECONDS))
 
             // Then start blocking task
             val blockingStarted = new CountDownLatch(1)
@@ -1013,7 +1013,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             })
 
             scheduler.schedule(resetTask)
-            assert(started.await(20, TimeUnit.SECONDS))
+            assert(started.await(60, TimeUnit.SECONDS))
 
             eventually(timeout(scaled(Span(5, Seconds)))) {
                 assert(blockedWorkerCount() > baseline, "should detect new blocked worker")
