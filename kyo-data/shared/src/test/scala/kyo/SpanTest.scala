@@ -1833,4 +1833,40 @@ class SpanTest extends Test:
         }
     }
 
+    "Flag.Reader" - {
+        val reader = summon[Flag.Reader[Span[Int]]]
+
+        "typeName" in {
+            assert(reader.typeName == "Span[Int]")
+        }
+
+        "parses comma-separated ints" in {
+            val result = reader("1,2,3")
+            assert(result.isRight)
+            val span = result.toOption.get
+            assert(span.size == 3)
+            assert(span(0) == 1)
+            assert(span(1) == 2)
+            assert(span(2) == 3)
+        }
+
+        "single element" in {
+            val result = reader("42")
+            assert(result.isRight)
+            val span = result.toOption.get
+            assert(span.size == 1)
+            assert(span(0) == 42)
+        }
+
+        "empty string" in {
+            val result = reader("")
+            assert(result.isRight)
+            assert(result.toOption.get.size == 0)
+        }
+
+        "Span[Span[Int]] rejected at compile time" in {
+            typeCheckFailure("""summon[Flag.Reader[Span[Span[Int]]]]""")("Scalar")
+        }
+    }
+
 end SpanTest

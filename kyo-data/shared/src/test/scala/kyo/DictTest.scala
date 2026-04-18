@@ -917,4 +917,91 @@ class DictTest extends Test:
         }
     }
 
+    "Flag.Reader" - {
+        "Dict[String, Int]" - {
+            val reader = summon[Flag.Reader[Dict[String, Int]]]
+
+            "typeName" in {
+                assert(reader.typeName == "Dict[String, Int]")
+            }
+
+            "parses key=value pairs" in {
+                val result = reader("a=1,b=2")
+                assert(result.isRight)
+                val dict = result.toOption.get
+                assert(dict("a") == 1)
+                assert(dict("b") == 2)
+                assert(dict.size == 2)
+            }
+
+            "handles whitespace" in {
+                val result = reader(" a = 1 , b = 2 ")
+                assert(result.isRight)
+                val dict = result.toOption.get
+                assert(dict("a") == 1)
+                assert(dict("b") == 2)
+            }
+
+            "single entry" in {
+                val result = reader("key=42")
+                assert(result.isRight)
+                val dict = result.toOption.get
+                assert(dict("key") == 42)
+                assert(dict.size == 1)
+            }
+
+            "empty string" in {
+                val result = reader("")
+                assert(result.isRight)
+                assert(result.toOption.get.isEmpty)
+            }
+
+            "missing equals sign" in {
+                assert(reader("noequals").isLeft)
+            }
+        }
+
+        "Dict[Int, String]" - {
+            val reader = summon[Flag.Reader[Dict[Int, String]]]
+
+            "parses with int keys" in {
+                val result = reader("1=a,2=b")
+                assert(result.isRight)
+                val dict = result.toOption.get
+                assert(dict(1) == "a")
+                assert(dict(2) == "b")
+            }
+        }
+
+        "Dict[String, String] edge cases" - {
+            val reader = summon[Flag.Reader[Dict[String, String]]]
+
+            "value containing equals sign" in {
+                val result = reader("key=a=b")
+                assert(result.isRight)
+                assert(result.toOption.get("key") == "a=b")
+            }
+
+            "empty key" in {
+                val result = reader("=value")
+                assert(result.isRight)
+                assert(result.toOption.get("") == "value")
+            }
+
+            "empty value" in {
+                val result = reader("key=")
+                assert(result.isRight)
+                assert(result.toOption.get("key") == "")
+            }
+
+            "Dict[String, Dict[...]] rejected at compile time" in {
+                typeCheckFailure("""summon[Flag.Reader[Dict[String, Dict[String, Int]]]]""")("Scalar")
+            }
+
+            "Dict[String, Seq[Int]] rejected at compile time" in {
+                typeCheckFailure("""summon[Flag.Reader[Dict[String, Seq[Int]]]]""")("Scalar")
+            }
+        }
+    }
+
 end DictTest

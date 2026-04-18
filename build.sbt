@@ -120,6 +120,7 @@ lazy val kyoJVM = project
         `kyo-direct`.jvm,
         `kyo-stm`.jvm,
         `kyo-stats-registry`.jvm,
+        `kyo-config`.jvm,
         `kyo-stats-otlp`.jvm,
         `kyo-logging-jpl`.jvm,
         `kyo-logging-slf4j`.jvm,
@@ -157,6 +158,7 @@ lazy val kyoJS = project
         `kyo-direct`.js,
         `kyo-stm`.js,
         `kyo-stats-registry`.js,
+        `kyo-config`.js,
         `kyo-reactive-streams`.js,
         `kyo-sttp`.js,
         `kyo-stats-otlp`.js,
@@ -182,6 +184,7 @@ lazy val kyoNative = project
         `kyo-parse`.native,
         `kyo-kernel`.native,
         `kyo-stats-registry`.native,
+        `kyo-config`.native,
         `kyo-scheduler`.native,
         `kyo-core`.native,
         `kyo-offheap`.native,
@@ -452,7 +455,22 @@ lazy val `kyo-stats-registry` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
+        .dependsOn(`kyo-config`)
         .in(file("kyo-stats-registry"))
+        .settings(
+            `kyo-settings`,
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
+            crossScalaVersions := List(scala3LTSVersion, scala213Version)
+        )
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-config` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-config"))
         .settings(
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
@@ -554,7 +572,7 @@ lazy val `kyo-http` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
-        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-core`, `kyo-config`)
         .settings(
             `kyo-settings`,
             libraryDependencies += "dev.zio" %%% "zio-schema"            % "1.6.4",

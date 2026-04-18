@@ -230,6 +230,32 @@ object Duration:
         private[kyo] def isFinite: Boolean = self < Duration.Infinity
     end extension
 
+    /** Parses a Duration from a string like "5s", "100ms", "2 hours", "infinity".
+      *
+      * This reimplements Duration's parsing logic directly to avoid the Frame requirement of Duration.parse.
+      */
+    given Flag.Reader.Scalar[Duration] with
+        private val pattern = """(\d+)\s*([a-zA-Z]+)""".r
+
+        def apply(s: String): Either[Throwable, Duration] =
+            s.trim.toLowerCase match
+                case "infinity" | "inf" => Right(Duration.Infinity)
+                case pattern(value, unit) =>
+                    val parsedLong: Either[Throwable, Long] =
+                        try Right(value.toLong)
+                        catch case _: NumberFormatException => Left(new IllegalArgumentException(s"Invalid duration number: $value"))
+                    parsedLong.flatMap { longValue =>
+                        Duration.Units.values.find(_.names.exists(_ == unit))
+                            .orElse(Duration.Units.values.find(_.names.exists(_.startsWith(unit)))) match
+                            case None           => Left(new IllegalArgumentException(s"Invalid duration unit: $unit"))
+                            case Some(unitEnum) => Right(Duration.fromUnits(longValue, unitEnum))
+                    }
+                case _ => Left(new IllegalArgumentException(s"Invalid duration format: $s"))
+        end apply
+
+        def typeName: String = "Duration"
+    end given
+
 end Duration
 
 extension (value: Long)

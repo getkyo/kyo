@@ -279,4 +279,54 @@ object Record:
     private[kyo] def init[F](dict: Dict[String, Any]): Record[F] =
         new Record(dict)
 
+    /** Parses comma-separated key=value pairs into a typed Record, delegating each value to its field's reader. Requires
+      * [[Flag.Reader.Scalar]] evidence for each field type, ensuring that no field's serialized format contains commas (which would
+      * conflict with the Record's own comma separator).
+      */
+    inline given [F](using f: Fields[F], readers: Fields.SummonAll[F, Flag.Reader.Scalar]): Flag.Reader[Record[F]] with
+        def apply(s: String): Either[Throwable, Record[F]] =
+            if s.trim.isEmpty then
+                val missing = f.names
+                if missing.nonEmpty then
+                    Left(new IllegalArgumentException(s"Missing required fields: ${missing.toList.sorted.mkString(", ")}"))
+                else Right(Record.init[F](Dict.empty[String, Any]))
+            else
+                // Parse key=value pairs, short-circuiting on first error
+                val entries          = s.split(",")
+                var parsed           = Map.empty[String, String]
+                var error: Throwable = null
+                var i                = 0
+                while i < entries.length && (error eq null) do
+                    val trimmed = entries(i).trim
+                    val eqIdx   = trimmed.indexOf('=')
+                    if eqIdx < 0 then
+                        error = new IllegalArgumentException(s"Invalid Record entry (missing '='): $trimmed")
+                    else
+                        parsed = parsed.updated(trimmed.substring(0, eqIdx).trim, trimmed.substring(eqIdx + 1).trim)
+                    end if
+                    i += 1
+                end while
+                if error ne null then Left(error)
+                else
+                    val missing = f.names -- parsed.keySet
+                    if missing.nonEmpty then
+                        Left(new IllegalArgumentException(s"Missing required fields: ${missing.toList.sorted.mkString(", ")}"))
+                    else
+                        val builder = DictBuilder.init[String, Any]
+                        parsed.foreach { (key, raw) =>
+                            if (error eq null) && readers.contains(key) then
+                                readers.get(key).asInstanceOf[Flag.Reader[Any]](raw) match
+                                    case Left(e)  => error = e
+                                    case Right(a) => discard(builder.add(key, a))
+                        }
+                        if error ne null then Left(error)
+                        else Right(Record.init[F](builder.result()))
+                    end if
+                end if
+        end apply
+
+        def typeName: String =
+            s"Record[${f.names.toList.sorted.mkString(", ")}]"
+    end given
+
 end Record
