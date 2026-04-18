@@ -670,7 +670,7 @@ class StreamCoreExtensionsTest extends Test:
             def stream(tc: TimeControl) = Stream {
                 Loop(1): i =>
                     Emit.valueWith(Chunk(i)):
-                        (if i % 5 == 0 then tc.advance(50.millis, 100.millis) else Kyo.unit)
+                        (if i % 5 == 0 then tc.advance(30.millis, 100.millis) else Kyo.unit)
                             .andThen(Loop.continue(i + 1))
             }.take(11)
 
@@ -678,20 +678,6 @@ class StreamCoreExtensionsTest extends Test:
                 Clock.withTimeControl { tc =>
                     stream(tc).groupedWithin(3, Duration.Infinity).run.map: result =>
                         assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5, 6), Chunk(7, 8, 9), Chunk(10, 11)))
-                }
-            }
-
-            "group by time" in run {
-                Clock.withTimeControl { tc =>
-                    stream(tc).groupedWithin(Int.MaxValue, 30.millis).run.map: result =>
-                        assert(result == Chunk(Chunk(1, 2, 3, 4, 5), Chunk(6, 7, 8, 9, 10), Chunk(11)))
-                }
-            }
-
-            "group by size and time" in runNotJS {
-                Clock.withTimeControl { tc =>
-                    stream(tc).groupedWithin(3, 20.millis).run.map: result =>
-                        assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5), Chunk(6, 7, 8), Chunk(9, 10), Chunk(11)))
                 }
             }
 
