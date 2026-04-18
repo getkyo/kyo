@@ -32,7 +32,7 @@ class FlowEngineTest extends Test:
                     Abort.panic(new AssertionError(s"pump timed out — last state: $state"))
                 }
             else
-                tc.advance(100.millis).map { _ =>
+                tc.advance(10.millis).map { _ =>
                     store.getExecution(eid).map {
                         case Present(state) if predicate(state.status) => state.status
                         case _                                         => go(remaining - 1)
