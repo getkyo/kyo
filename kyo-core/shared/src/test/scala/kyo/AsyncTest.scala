@@ -1137,27 +1137,24 @@ class AsyncTest extends Test:
             }
 
             "varargs-based with max" in run {
-                Latch.init(1).map { latch =>
-                    Emit.run {
-                        Emit.isolate.merge[String].use {
-                            Async.gather(1)(
-                                for
-                                    _ <- Emit.value("a1")
-                                    _ <- latch.await
-                                    _ <- Emit.value("a2")
-                                yield 1,
-                                for
-                                    _ <- Emit.value("b1")
-                                    _ <- latch.release
-                                    _ <- Emit.value("b2")
-                                yield 2
-                            )
-                        }
-                    }.map { result =>
-                        assert(result._1.size == 2)
-                        assert(result._2.size == 1)
-                        assert(result._2.head == 2)
+                Emit.run {
+                    Emit.isolate.merge[String].use {
+                        Async.gather(1)(
+                            for
+                                _ <- Emit.value("a1")
+                                _ <- Async.sleep(1.minute)
+                                _ <- Emit.value("a2")
+                            yield 1,
+                            for
+                                _ <- Emit.value("b1")
+                                _ <- Emit.value("b2")
+                            yield 2
+                        )
                     }
+                }.map { result =>
+                    assert(result._1.size == 2)
+                    assert(result._2.size == 1)
+                    assert(result._2.head == 2)
                 }
             }
 
