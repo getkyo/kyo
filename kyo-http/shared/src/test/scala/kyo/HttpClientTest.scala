@@ -12,11 +12,20 @@ class HttpClientTest extends Test:
 
     val client = internal.HttpTestPlatformBackend.client
 
-    def runServer(handlers: HttpHandler[?, ?, ?]*)(
+    private def tlsTest(handlers: Seq[HttpHandler[?, ?, ?]])(
         test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
-    )(using Frame): Unit = runServer(jvmTlsOnly = false)(handlers*)(test)
+    )(using Frame): Assertion < (Async & Abort[Any] & Scope) =
+        initTrustAllClient().map { httpClient =>
+            HttpServer.init(
+                HttpServerConfig.default.port(0).host("localhost").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
+            )(handlers*).map(s =>
+                HttpClient.let(httpClient) {
+                    test(HttpUrl.parse(s"https://localhost:${s.port}").getOrThrow)
+                }
+            )
+        }
 
-    def runServer(jvmTlsOnly: Boolean)(handlers: HttpHandler[?, ?, ?]*)(
+    def runServer(handlers: HttpHandler[?, ?, ?]*)(
         test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
     )(using Frame): Unit =
         "plain" in run {
@@ -28,19 +37,27 @@ class HttpClientTest extends Test:
                 )
             }
         }
-        val tlsRun = if jvmTlsOnly then runJVM else runNotNative
-        "tls" in tlsRun {
+        "tls" in runNotNative {
+            tlsTest(handlers)(test)
+        }
+    end runServer
+
+    def runServerJvmTls(handlers: HttpHandler[?, ?, ?]*)(
+        test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
+    )(using Frame): Unit =
+        "plain" in run {
             initTrustAllClient().map { httpClient =>
-                HttpServer.init(
-                    HttpServerConfig.default.port(0).host("localhost").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
-                )(handlers*).map(s =>
+                HttpServer.init(0, "localhost")(handlers*).map(s =>
                     HttpClient.let(httpClient) {
-                        test(HttpUrl.parse(s"https://localhost:${s.port}").getOrThrow)
+                        test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
                     }
                 )
             }
         }
-    end runServer
+        "tls" in runJVM {
+            tlsTest(handlers)(test)
+        }
+    end runServerJvmTls
 
     def withServer(handlers: HttpHandler[?, ?, ?]*)(
         test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
@@ -1237,7 +1254,7 @@ class HttpClientTest extends Test:
         "connection reuse with varying data" - {
             val route = HttpRoute.postText("echo-reuse")
             val ep    = route.handler(req => HttpResponse.ok(req.fields.body))
-            runServer(jvmTlsOnly = true)(ep) { url =>
+            runServerJvmTls(ep) { url =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
                 (for
@@ -1471,7 +1488,7 @@ class HttpClientTest extends Test:
                 ))
                 HttpResponse.ok.addField("body", chunks)
             }
-            runServer(jvmTlsOnly = true)(textEp, streamEp) { url =>
+            runServerJvmTls(textEp, streamEp) { url =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
                 (for
