@@ -14,6 +14,10 @@ class HttpClientTest extends Test:
 
     def runServer(handlers: HttpHandler[?, ?, ?]*)(
         test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
+    )(using Frame): Unit = runServer(jvmTlsOnly = false)(handlers*)(test)
+
+    def runServer(jvmTlsOnly: Boolean)(handlers: HttpHandler[?, ?, ?]*)(
+        test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
     )(using Frame): Unit =
         "plain" in run {
             initTrustAllClient().map { httpClient =>
@@ -24,7 +28,8 @@ class HttpClientTest extends Test:
                 )
             }
         }
-        "tls" in runNotNative /* OpenSSL's recursive ASN.1 parser overflows Scala Native thread stacks */ {
+        val tlsRun = if jvmTlsOnly then runJVM else runNotNative
+        "tls" in tlsRun {
             initTrustAllClient().map { httpClient =>
                 HttpServer.init(
                     HttpServerConfig.default.port(0).host("localhost").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
@@ -1232,7 +1237,7 @@ class HttpClientTest extends Test:
         "connection reuse with varying data" - {
             val route = HttpRoute.postText("echo-reuse")
             val ep    = route.handler(req => HttpResponse.ok(req.fields.body))
-            runServer(ep) { url =>
+            runServer(jvmTlsOnly = true)(ep) { url =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
                 (for
@@ -1466,7 +1471,7 @@ class HttpClientTest extends Test:
                 ))
                 HttpResponse.ok.addField("body", chunks)
             }
-            runServer(textEp, streamEp) { url =>
+            runServer(jvmTlsOnly = true)(textEp, streamEp) { url =>
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
                 (for
