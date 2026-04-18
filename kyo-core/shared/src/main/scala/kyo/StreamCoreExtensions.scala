@@ -1082,7 +1082,7 @@ object StreamCoreExtensions:
                     val tick: Fiber[Unit, Abort[Closed]] < (Sync & Scope) =
                         if maxTime == Duration.Infinity then Fiber.unit
                         else
-                            Scope.acquireRelease(Clock.repeatWithDelay(maxTime, maxTime)(channel.put(Tick)))(_.interrupt)
+                            Scope.acquireRelease(Clock.repeatWithDelay(maxTime)(channel.put(Tick)))(_.interrupt)
 
                     // Loop collecting values from the channel and re-emitting them as chunks.
                     // Chunks are emitted when the buffer exceeds the max size or a flush is requested.
@@ -1110,7 +1110,7 @@ object StreamCoreExtensions:
                     (for
                         _     <- tick
                         fiber <- push
-                        _     <- Abort.run[Closed](pull) // ignore Closed channel, join the push fiber to capture any Abort.
+                        _     <- Abort.run[Closed](pull)
                         _     <- fiber.get
                     yield ()).handle(Scope.run, Abort.run[Closed], _.unit)
                 }

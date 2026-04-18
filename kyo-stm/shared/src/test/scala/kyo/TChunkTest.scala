@@ -202,6 +202,7 @@ class TChunkTest extends Test:
         }
 
         "concurrent filtering" in run {
+            val retries = STM.defaultRetrySchedule.forever
             (for
                 size  <- Choice.eval(1, 10, 100)
                 chunk <- TChunk.init[Int]()
@@ -209,7 +210,7 @@ class TChunkTest extends Test:
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
                 }
                 _ <- Async.fill(5, 5)(
-                    STM.run(chunk.filter(_ % 2 == 0))
+                    STM.run(retries)(chunk.filter(_ % 2 == 0))
                 )
                 snapshot <- STM.run(chunk.snapshot)
             yield assert(
