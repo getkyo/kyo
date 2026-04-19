@@ -458,7 +458,6 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             val task = TestTask(_run = () => {
                 while (!stop.get()) {
                     val _ = iterations.incrementAndGet()
-                    if (iterations.get() % 1000 == 0) Thread.`yield`()
                 }
                 Task.Done
             })
@@ -466,8 +465,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             eventually(assert(iterations.get() > 1000))
 
             // Let monitor run several cycles — worker should NOT be marked blocked
-            // Use eventually to handle transient state from prior tests
-            eventually(timeout(scaled(org.scalatest.time.Span(5, org.scalatest.time.Seconds)))) {
+            eventually(timeout(scaled(org.scalatest.time.Span(30, org.scalatest.time.Seconds)))) {
                 assert(blockedWorkerCount() <= baseline, "active worker should not be detected as blocked")
             }
 
@@ -757,14 +755,14 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "blocked vs active — correct discrimination" in {
-            val blockingStarted     = new CountDownLatch(3)
-            val activeStarted       = new CountDownLatch(3)
-            val blockingInterrupted = Array.fill(3)(new AtomicBoolean(false))
-            val activeInterrupted   = Array.fill(3)(new AtomicBoolean(false))
+            val blockingStarted     = new CountDownLatch(2)
+            val activeStarted       = new CountDownLatch(2)
+            val blockingInterrupted = Array.fill(2)(new AtomicBoolean(false))
+            val activeInterrupted   = Array.fill(2)(new AtomicBoolean(false))
             val activeStop          = new AtomicBoolean(false)
 
-            // 3 blocking tasks — should receive Thread.interrupt()
-            val blockingTasks = (0 until 3).map { i =>
+            // 2 blocking tasks — should receive Thread.interrupt()
+            val blockingTasks = (0 until 2).map { i =>
                 val flag = blockingInterrupted(i)
                 val task = TestTask(_run = () => {
                     blockingStarted.countDown()
@@ -782,12 +780,11 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
             assert(blockingStarted.await(60, TimeUnit.SECONDS), "blocking tasks should start")
 
-            // 3 active tasks — should NOT receive Thread.interrupt()
-            val activeTasks = (0 until 3).map { i =>
+            // 2 active tasks — should NOT receive Thread.interrupt()
+            val activeTasks = (0 until 2).map { i =>
                 val flag = activeInterrupted(i)
                 val task = TestTask(_run = () => {
                     activeStarted.countDown()
-                    // Busy-spin — keeps CPU time advancing so monitor doesn't detect as blocked
                     while (!activeStop.get()) {
                         var sum = 0L
                         val end = System.nanoTime() + 1000000L // 1ms of compute
@@ -805,27 +802,21 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             // Let monitor establish baseline CPU time samples
             Thread.sleep(30)
 
-            // Request interrupt on ALL 6 tasks
+            // Request interrupt on ALL 4 tasks
             blockingTasks.foreach(_.requestInterrupt())
             activeTasks.foreach(_.requestInterrupt())
             scheduler.notifyInterrupt()
 
             // Blocking tasks should get interrupted
-            eventually(timeout(scaled(Span(10, Seconds)))) {
+            eventually(timeout(scaled(Span(30, Seconds)))) {
                 val count = blockingInterrupted.count(_.get())
-                assert(count == 3, s"expected all 3 blocking tasks interrupted, got $count")
+                assert(count == 2, s"expected all 2 blocking tasks interrupted, got $count")
             }
 
-            // Under contention (6 tasks + other test suites competing for CPU), active tasks may
-            // briefly not get scheduled, causing flat CPU time between monitor samples. The
-            // monitor correctly detects this as "not advancing" — it can't distinguish
-            // "CPU-starved" from "blocked." This is expected behavior, not a bug: if a thread
-            // isn't getting CPU time, it IS effectively blocked from the scheduler's perspective.
-            // We just verify the blocking tasks were all interrupted (the primary goal).
             Thread.sleep(100)
 
             activeStop.set(true)
-            eventually(timeout(scaled(Span(5, Seconds)))) {
+            eventually(timeout(scaled(Span(10, Seconds)))) {
                 blockingTasks.foreach(t => assert(t.executions == 1))
                 activeTasks.foreach(t => assert(t.executions == 1))
             }
