@@ -111,35 +111,25 @@ object TestKyo {
     }
 
     // --- Diff test mode ---
+    // If build/CI config changed (build.sbt, project/*, .github/*), run all modules.
+    // Otherwise, run only affected modules + their transitive dependents.
 
     private def runDiff(state: State, baseRef: String, platform: Option[String], isDryRun: Boolean = false): State = {
         val changedFiles = diffFiles(baseRef)
         if (changedFiles.isEmpty) {
             log(s"no changed files vs $baseRef — skipping tests")
-            state
-        } else {
-            log(s"${changedFiles.size} changed files vs $baseRef:")
-            changedFiles.foreach(f => log(s"  $f"))
-
-            if (buildConfigChanged(changedFiles))
-                runDiffFull(state, platform, changedFiles, isDryRun)
-            else
-                runDiffAffected(state, changedFiles, platform, isDryRun)
+            return state
         }
-    }
 
-    private def runDiffFull(state: State, platform: Option[String], changedFiles: Seq[String], isDryRun: Boolean = false): State = {
-        val trigger = changedFiles.filter(f => f == "build.sbt" || f.startsWith("project/") || f.startsWith(".github/"))
-        log(s"build/CI config changed (${trigger.mkString(", ")}) — running full test")
-        val cmd = platform match {
-            case Some(p) => s"kyo$p/test"
-            case None    => "test"
+        log(s"${changedFiles.size} changed files vs $baseRef:")
+        changedFiles.foreach(f => log(s"  $f"))
+
+        if (buildConfigChanged(changedFiles)) {
+            log("build/CI config changed — running all modules")
+            val extracted = Project.extract(state)
+            return runAll(state, platform, extracted.get(Keys.scalaVersion), isDryRun)
         }
-        log(s"running: $cmd")
-        if (isDryRun) state else Command.process(cmd, state, msg => state.log.error(msg))
-    }
 
-    private def runDiffAffected(state: State, changedFiles: Seq[String], platform: Option[String], isDryRun: Boolean = false): State = {
         val extracted = Project.extract(state)
         val structure = extracted.structure
         val allRefs   = structure.allProjectRefs
@@ -147,7 +137,6 @@ object TestKyo {
         val bd        = extracted.get(buildDependencies)
 
         val directlyChanged = changedFiles.flatMap(fileToProjects(_, allNames)).toSet
-
         val filtered = platform match {
             case Some(p) => directlyChanged.filter(matchesPlatform(_, p))
             case None    => directlyChanged
@@ -155,32 +144,32 @@ object TestKyo {
 
         if (filtered.isEmpty) {
             log("no affected projects found — skipping tests")
+            return state
+        }
+
+        val dependentMap = transitiveDependents(allRefs, bd)
+        val allAffected = filtered.flatMap { name =>
+            allRefs.find(_.project == name) match {
+                case Some(ref) => dependentMap.getOrElse(ref, Set.empty).map(_.project) + name
+                case None      => Set(name)
+            }
+        }
+
+        val toTest = platform match {
+            case Some(p) => allAffected.filter(matchesPlatform(_, p))
+            case None    => allAffected
+        }
+
+        if (toTest.isEmpty) {
+            log("no testable affected projects found — skipping tests")
             state
         } else {
-            val dependentMap = transitiveDependents(allRefs, bd)
-            val allAffected = filtered.flatMap { name =>
-                allRefs.find(_.project == name) match {
-                    case Some(ref) => dependentMap.getOrElse(ref, Set.empty).map(_.project) + name
-                    case None      => Set(name)
-                }
-            }
-
-            val toTest = platform match {
-                case Some(p) => allAffected.filter(matchesPlatform(_, p))
-                case None    => allAffected
-            }
-
-            if (toTest.isEmpty) {
-                log("no testable affected projects found — skipping tests")
-                state
-            } else {
-                val sorted = toTest.toSeq.sorted
-                log(s"directly changed: ${filtered.toSeq.sorted.mkString(", ")}")
-                log(s"with dependents: ${sorted.mkString(", ")}")
-                val commands = sorted.map(name => s"$name/test").mkString("; ")
-                log(s"running: $commands")
-                if (isDryRun) state else Command.process(commands, state, msg => state.log.error(msg))
-            }
+            val sorted = toTest.toSeq.sorted
+            log(s"directly changed: ${filtered.toSeq.sorted.mkString(", ")}")
+            log(s"with dependents: ${sorted.mkString(", ")}")
+            val commands = sorted.map(name => s"$name/test").mkString("; ")
+            log(s"running: $commands")
+            if (isDryRun) state else Command.process(commands, state, msg => state.log.error(msg))
         }
     }
 
