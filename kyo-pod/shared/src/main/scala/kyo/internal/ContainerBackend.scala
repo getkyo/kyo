@@ -13,6 +13,25 @@ import kyo.*
   *   [[kyo.Container.BackendConfig]] Configuration for backend selection
   */
 abstract private[kyo] class ContainerBackend:
+
+    /** Parse a container state string (from Docker/Podman API) to the State enum. */
+    protected def parseState(s: String): Container.State =
+        s.toLowerCase match
+            case "created"            => Container.State.Created
+            case "running"            => Container.State.Running
+            case "paused"             => Container.State.Paused
+            case "restarting"         => Container.State.Restarting
+            case "removing"           => Container.State.Removing
+            case "exited" | "stopped" => Container.State.Stopped
+            case "dead"               => Container.State.Dead
+            case _                    => Container.State.Stopped
+
+    /** Parse an ISO-8601 timestamp string to an Instant. Returns Absent for null, empty, or zero-value timestamps. */
+    // Java interop boundary: zio-json may deserialize absent/null JSON strings as null
+    protected def parseInstant(s: String): Maybe[Instant] =
+        if s == null || s.isEmpty || s == "0001-01-01T00:00:00Z" then Absent
+        else Instant.parse(s).toMaybe
+
     // Container lifecycle
     def create(config: Container.Config)(using Frame): Container.Id < (Async & Abort[ContainerException])
     def start(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException])
@@ -182,7 +201,41 @@ abstract private[kyo] class ContainerBackend:
     def volumeRemove(id: Container.Volume.Id, force: Boolean)(using Frame): Unit < (Async & Abort[ContainerException])
     def volumePrune(filters: Map[String, Seq[String]])(using Frame): Container.PruneResult < (Async & Abort[ContainerException])
     // RegistryAuth
-    def registryAuthFromConfig(using Frame): ContainerImage.RegistryAuth < (Async & Abort[ContainerException])
+    def registryAuthFromConfig(using Frame): ContainerImage.RegistryAuth < (Async & Abort[ContainerException]) =
+        // Try docker config first, then podman
+        val configPaths = Seq(
+            sys.props.get("user.home").map(_ + "/.docker/config.json"),
+            sys.env.get("XDG_RUNTIME_DIR").map(_ + "/containers/auth.json"),
+            sys.env.get("DOCKER_CONFIG").map(_ + "/config.json")
+        ).flatten
+
+        def findExisting(paths: Seq[String]): Maybe[String] < Sync =
+            if paths.isEmpty then Absent
+            else
+                val head = paths.head
+                Path(head).exists.map { exists =>
+                    if exists then Present(head)
+                    else findExisting(paths.tail)
+                }
+
+        findExisting(configPaths).map {
+            case Present(configPath) =>
+                Abort.run[FileReadException](Path(configPath).read).map {
+                    case Result.Success(content) =>
+                        Json[ContainerBackend.AuthConfigJson].decode(content) match
+                            case Result.Success(dto) =>
+                                ContainerImage.RegistryAuth(dto.auths.getOrElse(Map.empty).map { case (k, v) =>
+                                    ContainerImage.Registry(k) -> v
+                                })
+                            case Result.Failure(_) => ContainerImage.RegistryAuth(Map.empty)
+                        end match
+                    case Result.Failure(_) =>
+                        ContainerImage.RegistryAuth(Map.empty)
+                }
+            case Absent =>
+                ContainerImage.RegistryAuth(Map.empty)
+        }
+    end registryAuthFromConfig
     // Backend detection
     def detect()(using Frame): Unit < (Async & Abort[ContainerException])
 end ContainerBackend
@@ -205,6 +258,10 @@ private[kyo] object ContainerBackend:
 
     private def detectShell()(using Frame): ContainerBackend < (Async & Abort[ContainerException]) =
         ShellBackend.detect().map(b => b: ContainerBackend)
+
+    private[internal] case class AuthConfigJson(
+        auths: Option[Map[String, String]] = None
+    ) derives Json
 
 end ContainerBackend
 

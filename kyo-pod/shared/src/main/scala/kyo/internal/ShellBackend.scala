@@ -23,10 +23,8 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
 
     def create(config: Config)(using Frame): Container.Id < (Async & Abort[ContainerException]) =
         val restartStr = config.restartPolicy match
-            case Config.RestartPolicy.No                 => "no"
-            case Config.RestartPolicy.Always             => "always"
-            case Config.RestartPolicy.UnlessStopped      => "unless-stopped"
-            case Config.RestartPolicy.OnFailure(retries) => s"on-failure:$retries"
+            case p @ Config.RestartPolicy.OnFailure(retries) => s"${p.cliName}:$retries"
+            case p                                           => p.cliName
 
         // Pre-resolve bind mount paths (effectful due to symlink resolution)
         Kyo.foreach(config.mounts) {
@@ -56,10 +54,7 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
                 config.labels.flatMap { case (k, v) => Chunk("--label", s"$k=$v") } ++
                 // Ports
                 config.ports.flatMap { pb =>
-                    val proto = pb.protocol match
-                        case Config.Protocol.TCP  => "tcp"
-                        case Config.Protocol.UDP  => "udp"
-                        case Config.Protocol.SCTP => "sctp"
+                    val proto = pb.protocol.cliName
                     val binding = (pb.hostIp, pb.hostPort) match
                         case (ip, hp) if ip.nonEmpty && hp != 0 => s"$ip:$hp:${pb.containerPort}/$proto"
                         case ("", hp) if hp != 0                => s"$hp:${pb.containerPort}/$proto"
@@ -306,17 +301,6 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
             )
         )
     end mapInspectToInfo
-
-    private def parseState(status: String): State =
-        status.toLowerCase match
-            case "created"            => State.Created
-            case "running"            => State.Running
-            case "paused"             => State.Paused
-            case "restarting"         => State.Restarting
-            case "removing"           => State.Removing
-            case "exited" | "stopped" => State.Stopped
-            case "dead"               => State.Dead
-            case _                    => State.Stopped
 
     def state(id: Container.Id)(using Frame): State < (Async & Abort[ContainerException]) =
         run("inspect", "--format", "{{.State.Status}}", id.value).map(parseState)
@@ -1801,45 +1785,6 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
         }
     end volumePrune
 
-    // --- RegistryAuth ---
-
-    def registryAuthFromConfig(using Frame): ContainerImage.RegistryAuth < (Async & Abort[ContainerException]) =
-        // Try docker config first, then podman
-        val configPaths = Chunk.from(Seq(
-            sys.props.get("user.home").map(_ + "/.docker/config.json"),
-            sys.env.get("XDG_RUNTIME_DIR").map(_ + "/containers/auth.json"),
-            sys.env.get("DOCKER_CONFIG").map(_ + "/config.json")
-        ).flatten)
-
-        // Find first existing config path using kyo Path.exists
-        def findExisting(paths: Seq[String]): Maybe[String] < Sync =
-            if paths.isEmpty then Absent
-            else
-                val head = paths.head
-                Path(head).exists.map { exists =>
-                    if exists then Present(head)
-                    else findExisting(paths.tail)
-                }
-
-        findExisting(configPaths).map {
-            case Present(configPath) =>
-                Abort.run[FileReadException](Path(configPath).read).map {
-                    case Result.Success(content) =>
-                        Json[AuthConfigJson].decode(content) match
-                            case Result.Success(dto) =>
-                                ContainerImage.RegistryAuth(dto.auths.getOrElse(Map.empty).map { case (k, v) =>
-                                    ContainerImage.Registry(k) -> v
-                                })
-                            case Result.Failure(_) => ContainerImage.RegistryAuth(Map.empty)
-                        end match
-                    case Result.Failure(_) =>
-                        ContainerImage.RegistryAuth(Map.empty)
-                }
-            case Absent =>
-                ContainerImage.RegistryAuth(Map.empty)
-        }
-    end registryAuthFromConfig
-
     // --- Backend Detection ---
 
     def detect()(using Frame): Unit < (Async & Abort[ContainerException]) =
@@ -1987,12 +1932,6 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
             case Result.Success(a)   => a
             case Result.Failure(err) => Abort.fail(ContainerException.ParseError("JSON decode", err))
     end decodeJson
-
-    /** Parse an ISO-8601 timestamp or similar format. */
-    private def parseInstant(s: String): Maybe[Instant] =
-        if s == null || s.isEmpty || s == "0001-01-01T00:00:00Z" then Absent
-        else
-            Instant.parse(s).toMaybe
 
     /** Parse a timestamp string trying multiple formats. */
     private def parseTimestamp(s: String): Instant =
@@ -2362,12 +2301,6 @@ private[kyo] object ShellBackend:
         Options: Option[Map[String, String]] = None,
         CreatedAt: String = "",
         Scope: String = ""
-    ) derives Json
-
-    // --- JSON DTOs for registry auth config ---
-
-    private[internal] case class AuthConfigJson(
-        auths: Option[Map[String, String]] = None
     ) derives Json
 
 end ShellBackend

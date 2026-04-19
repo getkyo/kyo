@@ -114,26 +114,13 @@ final private[kyo] class HttpContainerBackend(
                     case Absent                => Chunk.empty
             case Absent => Chunk.empty
 
-    /** Split an image reference into (name, tag) for Docker API query params. */
-    private def splitImageRef(image: ContainerImage): (String, String) =
-        val ref = image.reference
-        val tag = image.tag.getOrElse("latest")
-        // The "fromImage" param should be the full name without the tag
-        val nameRef = image.copy(tag = Absent, digest = Absent).reference
-        (if nameRef.isEmpty then ref else nameRef, tag)
-    end splitImageRef
-
     // --- Container Lifecycle ---
 
     def create(config: Config)(using Frame): Container.Id < (Async & Abort[ContainerException]) =
         val envVars = config.command.env.map { case (k, v) => s"$k=$v" }.toSeq
 
         val portBindings: Map[String, Seq[PortBindingEntry]] = config.ports.toSeq.groupBy { pb =>
-            val proto = pb.protocol match
-                case Config.Protocol.TCP  => "tcp"
-                case Config.Protocol.UDP  => "udp"
-                case Config.Protocol.SCTP => "sctp"
-            s"${pb.containerPort}/$proto"
+            s"${pb.containerPort}/${pb.protocol.cliName}"
         }.map { case (key, bindings) =>
             key -> bindings.map(pb => PortBindingEntry(pb.hostIp, if pb.hostPort != 0 then pb.hostPort.toString else ""))
         }
@@ -161,10 +148,8 @@ final private[kyo] class HttpContainerBackend(
         }
 
         val restartPol = config.restartPolicy match
-            case Config.RestartPolicy.No                 => RestartPolicyEntry("no", 0)
-            case Config.RestartPolicy.Always             => RestartPolicyEntry("always", 0)
-            case Config.RestartPolicy.UnlessStopped      => RestartPolicyEntry("unless-stopped", 0)
-            case Config.RestartPolicy.OnFailure(retries) => RestartPolicyEntry("on-failure", retries)
+            case Config.RestartPolicy.OnFailure(retries) => RestartPolicyEntry(config.restartPolicy.cliName, retries)
+            case _                                       => RestartPolicyEntry(config.restartPolicy.cliName, 0)
 
         val hostConfig = HostConfig(
             Binds = if binds.nonEmpty then binds else Seq.empty,
@@ -750,11 +735,10 @@ final private[kyo] class HttpContainerBackend(
         maxProcesses: Maybe[Long],
         restartPolicy: Maybe[Container.Config.RestartPolicy]
     )(using Frame): Unit < (Async & Abort[ContainerException]) =
-        val restartPol = restartPolicy.map {
-            case Config.RestartPolicy.No                 => RestartPolicyEntry("no", 0)
-            case Config.RestartPolicy.Always             => RestartPolicyEntry("always", 0)
-            case Config.RestartPolicy.UnlessStopped      => RestartPolicyEntry("unless-stopped", 0)
-            case Config.RestartPolicy.OnFailure(retries) => RestartPolicyEntry("on-failure", retries)
+        val restartPol = restartPolicy.map { rp =>
+            rp match
+                case Config.RestartPolicy.OnFailure(retries) => RestartPolicyEntry(rp.cliName, retries)
+                case _                                       => RestartPolicyEntry(rp.cliName, 0)
         }
         val body = UpdateRequest(
             Memory = memory.getOrElse(0L),
@@ -1342,44 +1326,6 @@ final private[kyo] class HttpContainerBackend(
         }
     end volumePrune
 
-    // --- RegistryAuth ---
-
-    def registryAuthFromConfig(using Frame): ContainerImage.RegistryAuth < (Async & Abort[ContainerException]) =
-        // Try docker config first, then podman
-        val configPaths = Seq(
-            sys.props.get("user.home").map(_ + "/.docker/config.json"),
-            sys.env.get("XDG_RUNTIME_DIR").map(_ + "/containers/auth.json"),
-            sys.env.get("DOCKER_CONFIG").map(_ + "/config.json")
-        ).flatten
-
-        def findExisting(paths: Seq[String]): Maybe[String] < Sync =
-            if paths.isEmpty then Absent
-            else
-                val head = paths.head
-                Path(head).exists.map { exists =>
-                    if exists then Present(head)
-                    else findExisting(paths.tail)
-                }
-
-        findExisting(configPaths).map {
-            case Present(configPath) =>
-                Abort.run[FileReadException](Path(configPath).read).map {
-                    case Result.Success(content) =>
-                        Json[AuthConfigJson].decode(content) match
-                            case Result.Success(dto) =>
-                                ContainerImage.RegistryAuth(dto.auths.getOrElse(Map.empty).map { case (k, v) =>
-                                    ContainerImage.Registry(k) -> v
-                                })
-                            case Result.Failure(_) => ContainerImage.RegistryAuth(Map.empty)
-                        end match
-                    case Result.Failure(_) =>
-                        ContainerImage.RegistryAuth(Map.empty)
-                }
-            case Absent =>
-                ContainerImage.RegistryAuth(Map.empty)
-        }
-    end registryAuthFromConfig
-
     // --- Backend detection ---
 
     def detect()(using Frame): Unit < (Async & Abort[ContainerException]) =
@@ -1401,13 +1347,6 @@ final private[kyo] class HttpContainerBackend(
                     s"Failed to ping container API at $socketPath: ${e.getMessage}"
                 ))
         }
-
-    // --- Instant parsing ---
-
-    // Java interop boundary: zio-json may deserialize absent/null JSON strings as null
-    private def parseInstant(s: String): Maybe[Instant] =
-        if s == null || s.isEmpty || s == "0001-01-01T00:00:00Z" then Absent
-        else Instant.parse(s).toMaybe
 
     /** Check if a container was created with TTY mode enabled. */
     private def isContainerTty(id: Container.Id)(using Frame): Boolean < (Async & Abort[ContainerException]) =
@@ -1690,19 +1629,6 @@ final private[kyo] class HttpContainerBackend(
             scope = dto.Scope
         )
 
-    // --- State parsing ---
-
-    private def parseState(s: String): Container.State =
-        s.toLowerCase match
-            case "created"    => Container.State.Created
-            case "running"    => Container.State.Running
-            case "paused"     => Container.State.Paused
-            case "restarting" => Container.State.Restarting
-            case "removing"   => Container.State.Removing
-            case "exited"     => Container.State.Stopped
-            case "dead"       => Container.State.Dead
-            case _            => Container.State.Stopped
-
     // --- DTO case classes for Docker API ---
 
     private case class CreateContainerRequest(
@@ -1773,10 +1699,6 @@ final private[kyo] class HttpContainerBackend(
         CpusetCpus: String = "",
         PidsLimit: Long = 0,
         RestartPolicy: RestartPolicyEntry = RestartPolicyEntry()
-    ) derives Json
-
-    private case class UpdateResponse(
-        Warnings: Seq[String] = Seq.empty
     ) derives Json
 
     private case class ListContainerEntry(
@@ -2032,36 +1954,11 @@ final private[kyo] class HttpContainerBackend(
         Id: String = ""
     ) derives Json
 
-    private case class PullProgressDto(
-        id: Option[String] = None,
-        status: String = "",
-        progress: Option[String] = None,
-        error: Option[String] = None
-    ) derives Json
-
-    private case class BuildProgressDto(
-        stream: Option[String] = None,
-        status: Option[String] = None,
-        progress: Option[String] = None,
-        error: Option[String] = None,
-        aux: Option[AuxDto] = None
-    ) derives Json
-
-    private case class AuxDto(
-        ID: String = ""
-    ) derives Json
-
-    private case class AuthConfigJson(
-        auths: Option[Map[String, String]] = None
-    ) derives Json
-
     // --- DTOs for checkpoint ---
 
     private case class CheckpointCreateRequest(
         CheckpointID: String = ""
     ) derives Json
-
-    private case class EmptyResponse() derives Json
 
     // --- DTOs for network operations ---
 

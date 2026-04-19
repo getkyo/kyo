@@ -568,6 +568,12 @@ object Container:
         enum Protocol derives CanEqual:
             case TCP, UDP, SCTP
 
+            def cliName: String = this match
+                case TCP  => "tcp"
+                case UDP  => "udp"
+                case SCTP => "sctp"
+        end Protocol
+
         enum NetworkMode derives CanEqual:
             case Bridge, Host, None
             case Shared(containerId: Container.Id)
@@ -579,6 +585,12 @@ object Container:
             case Always
             case UnlessStopped
             case OnFailure(maxRetries: Int)
+
+            def cliName: String = this match
+                case No            => "no"
+                case Always        => "always"
+                case UnlessStopped => "unless-stopped"
+                case OnFailure(_)  => "on-failure"
         end RestartPolicy
 
         case class ExtraHost(hostname: String, ip: String) derives CanEqual
