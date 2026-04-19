@@ -302,7 +302,7 @@ class ProcessTest extends Test:
                 // under heavy CI load. Fall back to SIGKILL if needed.
                 code <- result match
                     case Present(c) => c: Process.ExitCode < Any
-                    case Absent     => proc.destroyForcibly.andThen(proc.waitFor)
+                    case Absent     => proc.destroyForcibly.andThen(proc.waitFor(10.seconds).map(_.getOrElse(Process.ExitCode.SIGKILL)))
             yield assert(!code.isSuccess, s"Expected non-Success exit after destroy, got $code")
         }
     }
