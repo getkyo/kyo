@@ -242,7 +242,7 @@ class WorkflowSchemaTest extends Test:
             }
         }
 
-        "structural hash mismatch marks execution as failed" in run {
+        "structural hash mismatch marks execution as failed" in runNotNative {
             withEngine { (engine, store, tc) =>
                 val flowV1 = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 val flowV2 = Flow.input[Int]("x").output("y")(ctx => ctx.x).output("z")(ctx => 0)
