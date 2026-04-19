@@ -83,10 +83,9 @@ private[kyo] class HttpContainerBackend(
         v: A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[ContainerException]) =
         Abort.runWith[HttpException](v) {
-            case Result.Success(a)                         => a
-            case Result.Failure(e)                         => mapHttpError(e, id, mapNotFound)
-            case Result.Panic(e: HttpException @unchecked) => mapHttpError(e, id, mapNotFound)
-            case Result.Panic(e)                           => Abort.fail(ContainerException.General(s"Unexpected error for $id", e))
+            case Result.Success(a) => a
+            case Result.Failure(e) => mapHttpError(e, id, mapNotFound)
+            case Result.Panic(e)   => Abort.fail(ContainerException.General(s"Unexpected error for $id", e))
         }
 
     /** POST with empty body, accepting 200/201/204 as success. */
@@ -101,7 +100,6 @@ private[kyo] class HttpContainerBackend(
             case Result.Success(_)                                              => ()
             case Result.Failure(e: HttpStatusException) if e.status.code == 304 => ()
             case Result.Failure(e)                                              => mapHttpError(e, id)
-            case Result.Panic(e: HttpException @unchecked)                      => mapHttpError(e, id)
             case Result.Panic(e) => Abort.fail(ContainerException.General(s"Unexpected error for container $id", e))
         }
 
@@ -110,9 +108,9 @@ private[kyo] class HttpContainerBackend(
         auth match
             case Present(ra) =>
                 // Encode the first auth entry as X-Registry-Auth header
-                ra.auths.headOption match
-                    case Some((_, encoded)) => Seq("X-Registry-Auth" -> encoded)
-                    case None               => Seq.empty
+                Maybe.fromOption(ra.auths.headOption) match
+                    case Present((_, encoded)) => Seq("X-Registry-Auth" -> encoded)
+                    case Absent                => Seq.empty
             case Absent => Seq.empty
 
     /** Split an image reference into (name, tag) for Docker API query params. */
@@ -153,7 +151,7 @@ private[kyo] class HttpContainerBackend(
                 target.toString -> sizeBytes.map(s => s"size=$s").getOrElse("")
         }.toMap
 
-        val networkModeStr: Option[String] = config.networkMode.toOption.map {
+        val networkModeStr: Maybe[String] = config.networkMode.map {
             case Config.NetworkMode.Bridge       => "bridge"
             case Config.NetworkMode.Host         => "host"
             case Config.NetworkMode.None         => "none"
@@ -207,7 +205,7 @@ private[kyo] class HttpContainerBackend(
             HostConfig = hostConfig
         )
 
-        val params        = config.name.toOption.map(n => Seq("name" -> n)).getOrElse(Seq.empty)
+        val params        = config.name.map(n => Seq("name" -> n)).getOrElse(Seq.empty)
         val nameForErrors = config.name.getOrElse("new-container")
 
         Abort.runWith[HttpException](
@@ -456,11 +454,16 @@ private[kyo] class HttpContainerBackend(
         createAttachSession(args.toSeq, s"attach failed for ${id.value}")
     end attach
 
-    /** Spawn a CLI subprocess and wrap it as an AttachSession. */
+    /** Spawn a CLI subprocess and wrap it as an AttachSession.
+      *
+      * Uses PipedOutputStream/PipedInputStream as a subprocess IO boundary — the CLI process requires a java.io.InputStream for stdin, so a
+      * Channel cannot be used here.
+      */
     private def createAttachSession(args: Seq[String], errorMsg: String)(
         using Frame
     ): AttachSession < (Async & Abort[ContainerException] & Scope) =
         Sync.defer {
+            // Subprocess IO boundary: CLI process requires java.io.InputStream for stdin
             val pipedOut  = new java.io.PipedOutputStream()
             val pipedIn   = new java.io.PipedInputStream(pipedOut)
             val dockerCmd = Command((cliCommand +: args)*).stdin(Process.Input.FromStream(pipedIn))
@@ -571,9 +574,8 @@ private[kyo] class HttpContainerBackend(
                         }
                     }
                 ) {
-                    case Result.Success(_)                         => ()
-                    case Result.Failure(e)                         => mapHttpError(e, id.value).unit
-                    case Result.Panic(e: HttpException @unchecked) => mapHttpError(e, id.value).unit
+                    case Result.Success(_) => ()
+                    case Result.Failure(e) => mapHttpError(e, id.value).unit
                     case Result.Panic(e) =>
                         Abort.fail(ContainerException.General(s"Unexpected error for log stream ${id.value}", e))
                 }
@@ -711,8 +713,7 @@ private[kyo] class HttpContainerBackend(
                             "stat",
                             s"Missing X-Docker-Container-Path-Stat header for container ${id.value}"
                         ))
-            case Result.Failure(e)                         => mapHttpError(e, id.value)
-            case Result.Panic(e: HttpException @unchecked) => mapHttpError(e, id.value)
+            case Result.Failure(e) => mapHttpError(e, id.value)
             case Result.Panic(e) =>
                 Abort.fail(ContainerException.General(s"Unexpected error for stat on container ${id.value}", e))
         }
@@ -729,9 +730,8 @@ private[kyo] class HttpContainerBackend(
                     }
                 }
             ) {
-                case Result.Success(_)                         => ()
-                case Result.Failure(e)                         => mapHttpError(e, id.value).unit
-                case Result.Panic(e: HttpException @unchecked) => mapHttpError(e, id.value).unit
+                case Result.Success(_) => ()
+                case Result.Failure(e) => mapHttpError(e, id.value).unit
                 case Result.Panic(e) =>
                     Abort.fail(ContainerException.General(s"Unexpected error for export ${id.value}", e))
             }
@@ -1178,8 +1178,7 @@ private[kyo] class HttpContainerBackend(
                     case Result.Success(dto) => dto.Id
                     case Result.Failure(_) =>
                         Abort.fail(ContainerException.ParseError("imageCommit", s"Failed to parse commit response"))
-            case Result.Failure(e)                         => mapHttpError(e, container.value)
-            case Result.Panic(e: HttpException @unchecked) => mapHttpError(e, container.value)
+            case Result.Failure(e) => mapHttpError(e, container.value)
             case Result.Panic(e) =>
                 Abort.fail(ContainerException.General(s"Unexpected error committing container ${container.value}", e))
         }
@@ -1401,6 +1400,7 @@ private[kyo] class HttpContainerBackend(
 
     // --- Instant parsing ---
 
+    // Java interop boundary: zio-json may deserialize absent/null JSON strings as null
     private def parseInstant(s: String): Maybe[Instant] =
         if s == null || s.isEmpty || s == "0001-01-01T00:00:00Z" then Absent
         else Instant.parse(s).toMaybe
