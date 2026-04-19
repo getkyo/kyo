@@ -578,6 +578,43 @@ object HttpClient:
             else sendUrl(u, routeDeleteBinary, resolveHeaders(headers), resolveQuery(query))(identity)
         }
 
+    // ==================== Unit methods ====================
+
+    /** Sends a POST and discards the response body. Fails with HttpStatusException on non-2xx. */
+    def postUnit(
+        url: String | HttpUrl,
+        body: String = "",
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): Unit < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrlBody(u, routePostText, body, resolveHeaders(headers), resolveQuery(query))(_ => ()))
+
+    /** Sends a PUT and discards the response body. Fails with HttpStatusException on non-2xx. */
+    def putUnit(
+        url: String | HttpUrl,
+        body: String = "",
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): Unit < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrlBody(u, routePutText, body, resolveHeaders(headers), resolveQuery(query))(_ => ()))
+
+    /** Sends a PATCH and discards the response body. Fails with HttpStatusException on non-2xx. */
+    def patchUnit(
+        url: String | HttpUrl,
+        body: String = "",
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): Unit < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrlBody(u, routePatchText, body, resolveHeaders(headers), resolveQuery(query))(_ => ()))
+
+    /** Sends a DELETE and discards the response body. Fails with HttpStatusException on non-2xx. */
+    def deleteUnit(
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame): Unit < (Async & Abort[HttpException]) =
+        resolveUrl(url).map(u => sendUrlBody(u, routeDeleteText, resolveHeaders(headers), resolveQuery(query))(_ => ()))
+
     // ==================== Streaming methods ====================
 
     // --- SSE JSON ---

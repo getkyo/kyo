@@ -3231,4 +3231,101 @@ class HttpClientTest extends Test:
         }
     }
 
+    "unit methods" - {
+
+        "postUnit succeeds on 200" - {
+            val route = HttpRoute.postText("unit-post")
+            val ep    = route.handler(_ => HttpResponse.ok("ignored"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.postUnit(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/unit-post", "data").map { _ =>
+                        succeed
+                    }
+                }
+            }
+        }
+
+        "postUnit succeeds on 204" - {
+            val route = HttpRoute.postText("unit-post-204")
+            val ep    = route.handler(_ => HttpResponse(HttpStatus.NoContent).addField("body", ""))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.postUnit(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/unit-post-204", "data").map { _ =>
+                        succeed
+                    }
+                }
+            }
+        }
+
+        "postUnit fails on 404" - {
+            val route = HttpRoute.postText("unit-post-404")
+            val ep    = route.handler(_ => HttpResponse.notFound("not found"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.postUnit(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/unit-post-404", "data")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.status == HttpStatus.NotFound)
+                        case other =>
+                            fail(s"Expected HttpStatusException(404), got $other")
+                    }
+                }
+            }
+        }
+
+        "deleteUnit succeeds on 200" - {
+            val route = HttpRoute.deleteText("unit-delete")
+            val ep    = route.handler(_ => HttpResponse.ok("deleted"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.deleteUnit(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/unit-delete").map { _ =>
+                        succeed
+                    }
+                }
+            }
+        }
+
+        "deleteUnit fails on 500" - {
+            val route = HttpRoute.deleteText("unit-delete-500")
+            val ep    = route.handler(_ => HttpResponse.serverError("server error"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.deleteUnit(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/unit-delete-500")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.status == HttpStatus.InternalServerError)
+                        case other =>
+                            fail(s"Expected HttpStatusException(500), got $other")
+                    }
+                }
+            }
+        }
+
+        "putUnit succeeds on 200" - {
+            val route = HttpRoute.putText("unit-put")
+            val ep    = route.handler(_ => HttpResponse.ok("updated"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.putUnit(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/unit-put", "data").map { _ =>
+                        succeed
+                    }
+                }
+            }
+        }
+
+        "patchUnit succeeds on 200" - {
+            val route = HttpRoute.patchText("unit-patch")
+            val ep    = route.handler(_ => HttpResponse.ok("patched"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.patchUnit(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/unit-patch", "fix").map { _ =>
+                        succeed
+                    }
+                }
+            }
+        }
+    }
+
 end HttpClientTest
