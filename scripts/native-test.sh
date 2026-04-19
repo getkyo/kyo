@@ -78,6 +78,12 @@ echo "Tests: succeeded 100, failed 0"
 exit 1'
     assert "scalafmt fail, no tests"        1  'echo "scalafmt: failed for 1 sources"; exit 1'
 
+    # ── individual FAILED detection (no Tests: summary) ──
+    assert "individual FAILED, no summary"  1  'echo "  - my test *** FAILED *** (5 seconds)"; sleep 600'
+    assert "individual FAILED with passing" 1  'echo "  - good test (1 ms)"
+echo "  - bad test *** FAILED *** (15 seconds)"
+sleep 600'
+
     # ── retry behavior ──
     rm -f /tmp/native-test-retry-flag
     assert "retry succeeds on 2nd attempt"  0  '
@@ -110,16 +116,16 @@ log() { echo "=== [native-test] $(date '+%H:%M:%S') $* ==="; }
 
 file_size() { wc -c < "$1" 2>/dev/null | tr -d ' '; }
 
-# Kill a process and all its descendants
+# Kill a process and all its descendants (recursive)
 kill_tree() {
     local pid=$1 sig=${2:-TERM}
     # Try process-group kill first (works when setsid was used)
     kill -$sig -- -$pid 2>/dev/null
-    # Also kill direct children in case process-group kill missed
+    # Recursively kill all descendants, not just direct children
     local children
     children=$(pgrep -P $pid 2>/dev/null) || true
     for child in $children; do
-        kill -$sig $child 2>/dev/null
+        kill_tree $child $sig
     done
     kill -$sig $pid 2>/dev/null
 }
@@ -128,6 +134,10 @@ kill_tree() {
 check_log() {
     if grep -qE "Tests:.*failed [1-9]" "$LOG"; then
         log "tests FAILED (real test failures detected)"
+        return 1
+    fi
+    if grep -qE "\*\*\* FAILED \*\*\*" "$LOG"; then
+        log "tests FAILED (individual test failures detected)"
         return 1
     fi
     if grep -qE "Tests:" "$LOG"; then
@@ -183,10 +193,11 @@ for attempt in $(seq 1 $MAX_RETRIES); do
                 log "no output for ${STALE_TIMEOUT}s — killing hung process (pid $sbt_pid)"
                 kill_tree $sbt_pid TERM
                 sleep 3
-                if kill -0 $sbt_pid 2>/dev/null; then
-                    log "process still alive — sending SIGKILL"
-                    kill_tree $sbt_pid KILL
-                fi
+                # Always SIGKILL the entire process group to ensure no orphaned
+                # native test binaries or h2o servers survive and hold ports
+                log "sending SIGKILL to process group"
+                kill_tree $sbt_pid KILL
+                sleep 2
                 break
             fi
         else
