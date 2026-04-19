@@ -2786,6 +2786,182 @@ abstract class ContainerTest(val runtime: String) extends Test:
         }
     }
 
+    // =========================================================================
+    // initUnscoped
+    // =========================================================================
+
+    "initUnscoped" - {
+        "creates container without scope cleanup" taggedAs containerOnly in run {
+            val name   = uniqueName("kyo-unscoped")
+            val config = alpine.name(name).autoRemove(false)
+            Container.initUnscoped(config).map { c =>
+                c.state.map { s =>
+                    c.stop(0.seconds).andThen {
+                        c.remove(force = true).andThen {
+                            assert(s == Container.State.Running)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // exec edge cases
+    // =========================================================================
+
+    "exec edge cases" - {
+        "exec with command not found" taggedAs containerOnly in run {
+            Container.init(alpine).map { c =>
+                c.exec("nonexistent-cmd-xyz").map { r =>
+                    assert(r.exitCode == ExitCode.Failure(127), s"Expected exit code 127 but got ${r.exitCode}")
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // config edge cases
+    // =========================================================================
+
+    "config edge cases" - {
+        "hostname is reflected in container" taggedAs containerOnly in run {
+            val config = alpine.hostname("myhost")
+            Container.init(config).map { c =>
+                c.exec("hostname").map { r =>
+                    assert(
+                        r.stdout.trim.contains("myhost"),
+                        s"Expected hostname to contain 'myhost', got: '${r.stdout.trim}'"
+                    )
+                }
+            }
+        }
+
+        "user sets container user" taggedAs containerOnly in run {
+            val config = alpine.user("nobody")
+            Container.init(config).map { c =>
+                c.exec("whoami").map { r =>
+                    assert(
+                        r.stdout.trim == "nobody",
+                        s"Expected 'nobody', got: '${r.stdout.trim}'"
+                    )
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // log edge cases
+    // =========================================================================
+
+    "log edge cases" - {
+        "logStream on stopped container terminates" taggedAs containerOnly in run {
+            val config = Container.Config("alpine")
+                .command("sh", "-c", "echo done")
+                .autoRemove(false)
+                .stopTimeout(0.seconds)
+            Container.initUnscoped(config).map { c =>
+                Async.sleep(2.seconds).andThen {
+                    Scope.run {
+                        c.logStream.take(1).run.map { entries =>
+                            // Stream should terminate without hanging because container exited
+                            c.remove(force = true).andThen {
+                                assert(entries.size <= 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // stats edge cases
+    // =========================================================================
+
+    "stats edge cases" - {
+        "stats on paused container returns valid data" taggedAs containerOnly in run {
+            Container.init(alpine).map { c =>
+                c.pause.andThen {
+                    c.stats.map { s =>
+                        c.unpause.andThen {
+                            assert(
+                                s.memory.usage > 0,
+                                s"Expected non-zero memory usage for paused container, got: ${s.memory.usage}"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // network edge cases
+    // =========================================================================
+
+    "network edge cases" - {
+        "container connected to multiple networks" taggedAs containerOnly in run {
+            val netName1 = uniqueName("kyo-net-multi1")
+            val netName2 = uniqueName("kyo-net-multi2")
+            for
+                netId1 <- Container.Network.create(Container.Network.Config(name = netName1))
+                netId2 <- Container.Network.create(Container.Network.Config(name = netName2))
+                result <- Container.use(alpine) { c =>
+                    for
+                        _    <- c.connectToNetwork(netId1)
+                        _    <- c.connectToNetwork(netId2)
+                        info <- c.inspect
+                    yield
+                        assert(
+                            info.networkSettings.networks.contains(netId1),
+                            s"Expected network $netId1 in inspect, got: ${info.networkSettings.networks.keys}"
+                        )
+                        assert(
+                            info.networkSettings.networks.contains(netId2),
+                            s"Expected network $netId2 in inspect, got: ${info.networkSettings.networks.keys}"
+                        )
+                    end for
+                }
+                _ <- Container.Network.remove(netId1)
+                _ <- Container.Network.remove(netId2)
+            yield result
+            end for
+        }
+    }
+
+    // =========================================================================
+    // scope cleanup
+    // =========================================================================
+
+    "scope cleanup" - {
+        "scope cleanup works when container crashes" taggedAs containerOnly in run {
+            val name = uniqueName("kyo-crash")
+            val config = Container.Config("alpine")
+                .command("sh", "-c", "exit 1")
+                .name(name)
+                .autoRemove(false)
+                .stopTimeout(0.seconds)
+            Abort.run[ContainerException] {
+                Container.use(config) { c =>
+                    // Container exits with code 1 immediately.
+                    // Wait briefly for the process to exit.
+                    Async.sleep(2.seconds).andThen {
+                        c.state
+                    }
+                }
+            }.map { _ =>
+                // After scope cleanup, the container should be removed.
+                // Trying to inspect it should fail.
+                Abort.run[ContainerException] {
+                    Container.attach(Container.Id(name)).map(_.inspect)
+                }.map { r =>
+                    assert(r.isFailure, "Expected container to be removed after scope cleanup")
+                }
+            }
+        }
+    }
+
 end ContainerTest
 
 class ContainerTestPodman extends ContainerTest("podman")
