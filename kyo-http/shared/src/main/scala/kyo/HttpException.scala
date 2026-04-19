@@ -124,9 +124,7 @@ end HttpRedirectLoopException
 /** Non-success status code when the response body can't be decoded. */
 case class HttpStatusException private (status: HttpStatus, method: String, url: String)(using Frame)
     extends HttpRequestException(
-        s"""${HttpException.showRequest(method, url)} returned ${status.code} (${status.name}).
-           |
-           |  The response body could not be decoded into the route's expected type.""".stripMargin
+        s"${HttpException.showRequest(method, url)} returned ${status.code} (${status.name})."
     )
 object HttpStatusException:
     def apply(status: HttpStatus, method: String, url: String)(using Frame): HttpStatusException =

@@ -3101,4 +3101,43 @@ class HttpClientTest extends Test:
         }
     }
 
+    "HttpStatusException message" - {
+
+        "HttpStatusException message does not mention route" - {
+            val route = HttpRoute.getText("status-msg-1")
+            val ep    = route.handler(_ => HttpResponse.notFound("not found"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/status-msg-1")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(!e.getMessage.contains("route"))
+                            assert(!e.getMessage.contains("expected type"))
+                        case other =>
+                            fail(s"Expected HttpStatusException, got $other")
+                    }
+                }
+            }
+        }
+
+        "HttpStatusException message includes status code and name" - {
+            val route = HttpRoute.getText("status-msg-2")
+            val ep    = route.handler(_ => HttpResponse.notFound("not found"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/status-msg-2")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.getMessage.contains("404"))
+                            assert(e.getMessage.contains("Not Found"))
+                        case other =>
+                            fail(s"Expected HttpStatusException, got $other")
+                    }
+                }
+            }
+        }
+    }
+
 end HttpClientTest
