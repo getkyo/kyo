@@ -41,31 +41,48 @@ private[kyo] class HttpContainerBackend(
 
     // --- Error mapping ---
 
-    /** Maps an HttpException to the appropriate ContainerException subtype based on HTTP status code. */
+    /** Maps an HttpException to the appropriate ContainerException subtype based on HTTP status code.
+      *
+      * @param mapNotFound
+      *   Function to create the appropriate NotFound exception subtype for the resource being accessed. Defaults to
+      *   `ContainerException.NotFound` for container operations.
+      */
     private def mapHttpError(
         httpEx: HttpException,
-        id: String
+        id: String,
+        mapNotFound: Maybe[String => ContainerException] = Absent
     )(using Frame): Nothing < Abort[ContainerException] =
+        val notFoundMapper: String => ContainerException =
+            mapNotFound.getOrElse((s: String) => ContainerException.NotFound(Container.Id(s)))
         httpEx match
             case e: HttpStatusException =>
                 e.status.code match
                     case 304 => Abort.fail(ContainerException.AlreadyStopped(Container.Id(id)))
-                    case 404 => Abort.fail(ContainerException.NotFound(Container.Id(id)))
+                    case 404 => Abort.fail(notFoundMapper(id))
                     case 409 => Abort.fail(ContainerException.AlreadyExists(id))
-                    case _   => Abort.fail(ContainerException.General(s"HTTP ${e.status.code} for container $id", e))
+                    case _   => Abort.fail(ContainerException.General(s"HTTP ${e.status.code} for $id", e))
             case other =>
-                Abort.fail(ContainerException.General(s"HTTP request failed for container $id", other))
+                Abort.fail(ContainerException.General(s"HTTP request failed for $id", other))
+        end match
     end mapHttpError
 
-    /** Runs an HTTP call, catching HttpException and mapping to ContainerException. */
-    private def withErrorMapping[A](id: String)(
+    /** Runs an HTTP call, catching HttpException and mapping to ContainerException.
+      *
+      * @param mapNotFound
+      *   Function to create the appropriate NotFound exception subtype for the resource being accessed. Defaults to
+      *   `ContainerException.NotFound` for container operations.
+      */
+    private def withErrorMapping[A](
+        id: String,
+        mapNotFound: Maybe[String => ContainerException] = Absent
+    )(
         v: A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[ContainerException]) =
         Abort.runWith[HttpException](v) {
             case Result.Success(a)                         => a
-            case Result.Failure(e)                         => mapHttpError(e, id)
-            case Result.Panic(e: HttpException @unchecked) => mapHttpError(e, id)
-            case Result.Panic(e) => Abort.fail(ContainerException.General(s"Unexpected error for container $id", e))
+            case Result.Failure(e)                         => mapHttpError(e, id, mapNotFound)
+            case Result.Panic(e: HttpException @unchecked) => mapHttpError(e, id, mapNotFound)
+            case Result.Panic(e)                           => Abort.fail(ContainerException.General(s"Unexpected error for $id", e))
         }
 
     /** POST with empty body, accepting 200/201/204 as success. */
@@ -444,13 +461,25 @@ private[kyo] class HttpContainerBackend(
         ) ++
             (if tail != Int.MaxValue then Seq("tail" -> tail.toString) else Seq.empty) ++
             (if since != Instant.Min then Seq("since" -> since.toJava.getEpochSecond.toString) else Seq.empty)
-        // For streaming logs, we poll since true HTTP streaming requires chunked transfer
+        // Use streaming HTTP to avoid buffering the entire (potentially infinite) response.
+        // getStreamBytes returns chunks incrementally as they arrive from Docker.
+        val byteStream: Stream[Span[Byte], Async & Abort[HttpException]] =
+            HttpClient.getStreamBytes(url(s"/containers/${id.value}/logs", params*))
+        // Demux each byte span into log entries, forwarding them via Emit.
+        // Wrap in Abort.runWith to map HttpException to ContainerException.
         Stream {
-            withErrorMapping(id.value) {
-                HttpClient.getBinary(url(s"/containers/${id.value}/logs", params*))
-            }.map { bytes =>
-                val entries = demuxStream(bytes)
-                Emit.value(entries)
+            Abort.runWith[HttpException](
+                byteStream.foreachChunk { chunk =>
+                    Kyo.foreachDiscard(chunk) { span =>
+                        Emit.value(demuxStream(span))
+                    }
+                }
+            ) {
+                case Result.Success(_)                         => ()
+                case Result.Failure(e)                         => mapHttpError(e, id.value).unit
+                case Result.Panic(e: HttpException @unchecked) => mapHttpError(e, id.value).unit
+                case Result.Panic(e) =>
+                    Abort.fail(ContainerException.General(s"Unexpected error for log stream ${id.value}", e))
             }
         }
     end logStream
@@ -655,6 +684,9 @@ private[kyo] class HttpContainerBackend(
 
     // --- Image operations ---
 
+    private def imageNotFound(using Frame): String => ContainerException =
+        s => ContainerException.ImageNotFound(ContainerImage.parse(s).getOrElse(ContainerImage(s)))
+
     def imagePull(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
@@ -662,7 +694,7 @@ private[kyo] class HttpContainerBackend(
         val params = Seq("fromImage" -> nameRef, "tag" -> tag) ++
             platform.map(p => Seq("platform" -> p.reference)).getOrElse(Seq.empty)
         val headers = authHeaders(auth)
-        withErrorMapping(image.reference) {
+        withErrorMapping(image.reference, Present(imageNotFound)) {
             HttpClient.postText(url("/images/create", params*), "", headers = headers).unit
         }
     end imagePull
@@ -673,7 +705,7 @@ private[kyo] class HttpContainerBackend(
         // Check if image exists locally first
         val ref = image.reference
         Abort.run[ContainerException](
-            withErrorMapping(ref) {
+            withErrorMapping(ref, Present(imageNotFound)) {
                 HttpClient.getJson[ImageInspectDto](url(s"/images/$ref/json"))
             }
         ).map {
@@ -689,7 +721,7 @@ private[kyo] class HttpContainerBackend(
             val ref = image.reference
             // Check locally first
             Abort.run[ContainerException](
-                withErrorMapping(ref) {
+                withErrorMapping(ref, Present(imageNotFound)) {
                     HttpClient.getJson[ImageInspectDto](url(s"/images/$ref/json"))
                 }
             ).map {
@@ -707,7 +739,7 @@ private[kyo] class HttpContainerBackend(
                     val params = Seq("fromImage" -> nameRef, "tag" -> tag) ++
                         platform.map(p => Seq("platform" -> p.reference)).getOrElse(Seq.empty)
                     val headers = authHeaders(auth)
-                    withErrorMapping(ref) {
+                    withErrorMapping(ref, Present(imageNotFound)) {
                         HttpClient.postText(url("/images/create", params*), "", headers = headers)
                     }.map { body =>
                         val entries = Chunk.from(body.split("\n").filter(_.trim.nonEmpty).flatMap { line =>
@@ -758,7 +790,7 @@ private[kyo] class HttpContainerBackend(
 
     def imageInspect(image: ContainerImage)(using Frame): ContainerImage.Info < (Async & Abort[ContainerException]) =
         val ref = image.reference
-        withErrorMapping(ref) {
+        withErrorMapping(ref, Present(imageNotFound)) {
             HttpClient.getJson[ImageInspectDto](url(s"/images/$ref/json"))
         }.map { dto =>
             ContainerImage.Info(
@@ -780,7 +812,7 @@ private[kyo] class HttpContainerBackend(
         using Frame
     ): Chunk[ContainerImage.DeleteResponse] < (Async & Abort[ContainerException]) =
         val ref = image.reference
-        withErrorMapping(ref) {
+        withErrorMapping(ref, Present(imageNotFound)) {
             HttpClient.deleteJson[Seq[ImageDeleteEntryDto]](
                 url(s"/images/$ref", "force" -> force.toString, "noprune" -> noPrune.toString)
             )
@@ -796,7 +828,7 @@ private[kyo] class HttpContainerBackend(
 
     def imageTag(source: ContainerImage, repo: String, tag: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         val ref = source.reference
-        withErrorMapping(ref) {
+        withErrorMapping(ref, Present(imageNotFound)) {
             HttpClient.postText(url(s"/images/$ref/tag", "repo" -> repo, "tag" -> tag), "").unit
         }
     end imageTag
@@ -888,7 +920,7 @@ private[kyo] class HttpContainerBackend(
     ): Unit < (Async & Abort[ContainerException]) =
         val ref     = image.reference
         val headers = authHeaders(auth)
-        withErrorMapping(ref) {
+        withErrorMapping(ref, Present(imageNotFound)) {
             HttpClient.postText(url(s"/images/$ref/push"), "", headers = headers).unit
         }
     end imagePush
@@ -916,7 +948,7 @@ private[kyo] class HttpContainerBackend(
 
     def imageHistory(image: ContainerImage)(using Frame): Chunk[ContainerImage.HistoryEntry] < (Async & Abort[ContainerException]) =
         val ref = image.reference
-        withErrorMapping(ref) {
+        withErrorMapping(ref, Present(imageNotFound)) {
             HttpClient.getJson[Seq[ImageHistoryEntryDto]](url(s"/images/$ref/history"))
         }.map { entries =>
             Chunk.from(entries.map { e =>
@@ -1006,13 +1038,16 @@ private[kyo] class HttpContainerBackend(
         }.map(entries => Chunk.from(entries.map(mapNetworkInfo)))
     end networkList
 
+    private def networkNotFound(using Frame): String => ContainerException =
+        s => ContainerException.NetworkNotFound(Container.Network.Id(s))
+
     def networkInspect(id: Container.Network.Id)(using Frame): Container.Network.Info < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value) {
+        withErrorMapping(id.value, Present(networkNotFound)) {
             HttpClient.getJson[NetworkInfoDto](url(s"/networks/${id.value}"))
         }.map(mapNetworkInfo)
 
     def networkRemove(id: Container.Network.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value) {
+        withErrorMapping(id.value, Present(networkNotFound)) {
             HttpClient.deleteText(url(s"/networks/${id.value}")).unit
         }
 
@@ -1026,7 +1061,7 @@ private[kyo] class HttpContainerBackend(
             Container = container.value,
             EndpointConfig = endpointConfig.getOrElse(EndpointConfigDto())
         )
-        withErrorMapping(network.value) {
+        withErrorMapping(network.value, Present(networkNotFound)) {
             HttpClient.postJson[EmptyResponse](url(s"/networks/${network.value}/connect"), body)
         }.unit
     end networkConnect
@@ -1035,7 +1070,7 @@ private[kyo] class HttpContainerBackend(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
         val body = NetworkDisconnectRequest(Container = container.value, Force = force)
-        withErrorMapping(network.value) {
+        withErrorMapping(network.value, Present(networkNotFound)) {
             HttpClient.postJson[EmptyResponse](url(s"/networks/${network.value}/disconnect"), body)
         }.unit
     end networkDisconnect
@@ -1080,13 +1115,15 @@ private[kyo] class HttpContainerBackend(
         }
     end volumeList
 
+    private def volumeNotFound(using Frame): String => ContainerException = s => ContainerException.VolumeNotFound(Container.Volume.Id(s))
+
     def volumeInspect(id: Container.Volume.Id)(using Frame): Container.Volume.Info < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value) {
+        withErrorMapping(id.value, Present(volumeNotFound)) {
             HttpClient.getJson[VolumeInfoDto](url(s"/volumes/${id.value}"))
         }.map(mapVolumeInfo)
 
     def volumeRemove(id: Container.Volume.Id, force: Boolean)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value) {
+        withErrorMapping(id.value, Present(volumeNotFound)) {
             HttpClient.deleteText(url(s"/volumes/${id.value}", "force" -> force.toString)).unit
         }
 
@@ -1253,7 +1290,7 @@ private[kyo] class HttpContainerBackend(
             blockIo = Stats.BlockIo(readBytes = readBytes, writeBytes = writeBytes),
             pids = Stats.Pids(
                 current = dto.pids_stats.current,
-                limit = Maybe.fromOption(dto.pids_stats.limit.filter(_ > 0))
+                limit = Maybe.fromOption(dto.pids_stats.limit.filter(_ > 0).filter(_ < Long.MaxValue.toDouble).map(_.toLong))
             )
         )
     end mapStatsResponse
@@ -1637,7 +1674,7 @@ private[kyo] class HttpContainerBackend(
 
     private case class PidsStatsDto(
         current: Long = 0,
-        limit: Option[Long] = None
+        limit: Option[Double] = None
     ) derives Json
 
     // --- DTOs for top, changes, exec ---
