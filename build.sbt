@@ -584,33 +584,41 @@ lazy val `kyo-http` =
             libraryDependencies += "dev.zio" %%% "zio-schema-derivation" % "1.6.4"
         )
         .jvmSettings(
-            mimaCheck(false),
-            libraryDependencies += "io.netty" % "netty-codec-http"              % "4.2.1.Final",
-            libraryDependencies += "io.netty" % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-x86_64",
-            libraryDependencies += "io.netty" % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-aarch_64",
-            libraryDependencies += "io.netty" % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-x86_64",
-            libraryDependencies += "io.netty" % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-aarch_64"
+            mimaCheck(false)
         )
         .jsSettings(
             `js-settings`,
-            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
         .nativeSettings(
             `native-settings`,
             nativeConfig ~= { c =>
-                import scala.sys.process.*
-                val h2oCompileFlags =
-                    try "pkg-config --cflags libh2o-evloop".!!.trim.split("\\s+").toSeq
-                    catch { case _: Exception => Seq.empty }
-                val h2oLinkFlags =
-                    try "pkg-config --libs libh2o-evloop".!!.trim.split("\\s+").toSeq
-                    catch { case _: Exception => Seq("-lh2o-evloop") }
-                val curlLinkFlags =
-                    try "pkg-config --libs libcurl".!!.trim.split("\\s+").toSeq
-                    catch { case _: Exception => Seq("-lcurl") }
-                c.withCompileOptions(c.compileOptions ++ Seq("-DH2O_USE_LIBUV=0") ++ h2oCompileFlags)
-                    .withLinkingOptions(c.linkingOptions ++ curlLinkFlags ++ h2oLinkFlags)
+                val opensslOpts =
+                    if (System.getProperty("os.name").toLowerCase.contains("mac")) {
+                        val prefix = {
+                            val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
+                            val p1 = new java.io.File("/opt/homebrew/opt/openssl")
+                            val p0 = new java.io.File("/usr/local/opt/openssl")
+                            if (p3.exists()) p3.getAbsolutePath
+                            else if (p1.exists()) p1.getAbsolutePath
+                            else p0.getAbsolutePath
+                        }
+                        Seq(s"-L$prefix/lib", s"-I$prefix/include", "-lssl", "-lcrypto")
+                    } else Seq("-lssl", "-lcrypto")
+                c.withLinkingOptions(c.linkingOptions ++ opensslOpts)
+                    .withCompileOptions(c.compileOptions ++ {
+                        if (System.getProperty("os.name").toLowerCase.contains("mac")) {
+                            val prefix = {
+                                val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
+                                val p1 = new java.io.File("/opt/homebrew/opt/openssl")
+                                val p0 = new java.io.File("/usr/local/opt/openssl")
+                                if (p3.exists()) p3.getAbsolutePath
+                                else if (p1.exists()) p1.getAbsolutePath
+                                else p0.getAbsolutePath
+                            }
+                            Seq(s"-I$prefix/include")
+                        } else Nil
+                    })
             }
         )
 
@@ -852,7 +860,7 @@ lazy val `native-settings` = Seq(
     fork                                              := false,
     bspEnabled                                        := false,
     Test / testForkedParallel                         := false,
-    Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "16777216",
+    Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "33554432",
     libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.6.0"
 )
 

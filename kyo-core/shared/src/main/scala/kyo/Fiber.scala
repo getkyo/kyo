@@ -329,7 +329,7 @@ object Fiber:
           * @return
           *   Whether the Fiber was successfully interrupted
           */
-        def interrupt(error: Result.Error[E])(using Frame): Boolean < Sync =
+        inline def interrupt(inline error: => Result.Error[E])(using Frame): Boolean < Sync =
             Sync.Unsafe.defer(Unsafe.interrupt(self)(error))
 
         /** Interrupts the Fiber with a specific error, discarding the return value.
@@ -337,7 +337,7 @@ object Fiber:
           * @param error
           *   The error to interrupt the Fiber with
           */
-        def interruptDiscard(error: Result.Error[E])(using Frame): Unit < Sync =
+        inline def interruptDiscard(inline error: => Result.Error[E])(using Frame): Unit < Sync =
             Sync.Unsafe.defer(Unsafe.interruptDiscard(self)(error))
 
         /** Polls the Fiber for a result without blocking.
@@ -405,13 +405,14 @@ object Fiber:
         end extension
 
         extension [E, A, S](self: Unsafe[A, Abort[E] & S])
+            private[kyo] def lower: IOPromise[E, A < S] = self.asInstanceOf[IOPromise[E, A < S]]
 
             def onComplete(f: Result[E, A < S] => Unit)(using AllowUnsafe): Unit = self.lower.onComplete(f)
+            def onInterrupt(f: Result.Error[E] => Unit)(using Frame): Unit       = self.lower.onInterrupt(f)
 
-            def onInterrupt(f: Result.Error[E] => Unit)(using Frame): Unit        = self.lower.onInterrupt(f)
-            def interrupt()(using frame: Frame, allow: AllowUnsafe): Boolean      = self.lower.interrupt(Panic(Interrupted(frame)))
-            def interrupt(error: Result.Error[E])(using AllowUnsafe): Boolean     = self.lower.interrupt(error)
-            def interruptDiscard(error: Result.Error[E])(using AllowUnsafe): Unit = discard(self.lower.interrupt(error))
+            def interrupt()(using frame: Frame, allow: AllowUnsafe): Boolean = self.lower.interrupt(Panic(Interrupted(frame)))
+            inline def interrupt(inline error: => Result.Error[E])(using AllowUnsafe): Boolean     = self.lower.interrupt(error)
+            inline def interruptDiscard(inline error: => Result.Error[E])(using AllowUnsafe): Unit = discard(self.lower.interrupt(error))
 
             def block(deadline: Clock.Deadline.Unsafe)(using AllowUnsafe, Frame): Result[E | Timeout, A < S] =
                 self.lower.block(deadline)
@@ -597,7 +598,7 @@ object Fiber:
 
             def initMasked[A, S]()(using AllowUnsafe): Unsafe[A, S] =
                 new IOPromise[Any, A < S]:
-                    override def interrupt(error: Result.Error[Any]): Boolean = false
+                    override def preInterrupt() = false
 
             private[kyo] def fromIOPromise[A, S](p: IOPromise[?, A < S]): Unsafe[A, S] = p.asInstanceOf[Unsafe[A, S]]
 
@@ -705,7 +706,7 @@ object Fiber:
                                     this.completeDiscard(Result.succeed(Chunk.fromNoCopy(results)))
                             end complete
                             def apply(result: Result[E, Unit]): Unit =
-                                result.foldError(_ => (), this.interruptDiscard)
+                                result.foldError(_ => (), e => this.interruptDiscard(e))
                         end State
                         val state = new State
                         Isolate.internal.runDetached { (trace, context) =>
