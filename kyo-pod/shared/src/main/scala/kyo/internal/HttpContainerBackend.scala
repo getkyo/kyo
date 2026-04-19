@@ -231,7 +231,12 @@ private[kyo] class HttpContainerBackend(
 
     def stop(id: Container.Id, timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException]) =
         val seconds = timeout.toMillis / 1000
-        postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", id.value)
+        postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", id.value).andThen {
+            // Docker HTTP API returns before the container fully transitions to "exited".
+            // Wait for the container to complete (consistent with ShellBackend's blocking `docker stop`).
+            Abort.run[ContainerException](waitForExit(id)).unit
+        }
+    end stop
 
     def kill(id: Container.Id, signal: Container.Signal)(using Frame): Unit < (Async & Abort[ContainerException]) =
         postUnit(s"/containers/${id.value}/kill?signal=${signal.name}", id.value)
@@ -850,30 +855,25 @@ private[kyo] class HttpContainerBackend(
     def imagePull(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
-        // Use java.lang.Process directly to avoid Scope/Fiber overhead and HTTP streaming
-        // issues. Docker's /images/create is a streaming endpoint that can cause connection
-        // problems when cancelled mid-stream.
         val ref = image.reference
-        val args = Seq(cliCommand, "pull") ++
-            platform.map(p => Seq("--platform", p.reference)).getOrElse(Seq.empty) ++
-            Seq(ref)
-        Sync.defer {
-            val pb = new java.lang.ProcessBuilder(args*)
-            pb.redirectErrorStream(true)
-            val proc   = pb.start()
-            val is     = proc.getInputStream
-            val output = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
-            is.close()
-            val exit = proc.waitFor()
-            if exit == 0 then ()
-            else if output.contains("not found") || output.contains("manifest unknown") then
-                Abort.fail[ContainerException](imageNotFound(ref))
-            else
-                Abort.fail[ContainerException](ContainerException.General(
-                    s"Pull failed for $ref: $output",
-                    new RuntimeException(output)
-                ))
-            end if
+        val args = Chunk(cliCommand, "pull") ++
+            platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
+            Chunk(ref)
+        val pullCmd = Command(args.toSeq*).redirectErrorStream(true)
+        Abort.runWith[CommandException](pullCmd.textWithExitCode) {
+            case Result.Success((output, exitCode)) =>
+                if exitCode.isSuccess then ()
+                else if output.contains("not found") || output.contains("manifest unknown") then
+                    Abort.fail[ContainerException](imageNotFound(ref))
+                else
+                    Abort.fail[ContainerException](ContainerException.General(
+                        s"Pull failed for $ref: $output",
+                        new RuntimeException(output)
+                    ))
+            case Result.Failure(cmdEx) =>
+                Abort.fail[ContainerException](ContainerException.General(s"Pull failed for $ref", cmdEx))
+            case Result.Panic(ex) =>
+                Abort.fail[ContainerException](ContainerException.General(s"Pull panicked for $ref", ex))
         }
     end imagePull
 
@@ -912,20 +912,34 @@ private[kyo] class HttpContainerBackend(
                         error = Absent
                     )))
                 case _ =>
-                    // Use CLI subprocess for streaming — HTTP streaming has issues with Docker's
-                    // chunked responses over Unix sockets.
-                    // Use java.lang.Process directly to avoid Scope.run inside Stream, which
-                    // causes process leaks when take(n) terminates the stream early.
+                    // Use CLI subprocess for streaming pull progress
                     val args = Chunk("pull") ++
                         platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
                         Chunk(ref)
-                    cliStreamLines(cliCommand +: args.toSeq) { line =>
-                        ContainerImage.PullProgress(
-                            id = Absent,
-                            status = line,
-                            progress = Absent,
-                            error = Absent
-                        )
+                    val pullCmd = Command((cliCommand +: args.toSeq)*).redirectErrorStream(true)
+                    Scope.run {
+                        Abort.runWith[CommandException](pullCmd.spawn) {
+                            case Result.Success(proc) =>
+                                proc.stdout.mapChunk { bytes =>
+                                    val text = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
+                                    Chunk.from(text.split("\n").filter(_.trim.nonEmpty).map { line =>
+                                        ContainerImage.PullProgress(
+                                            id = Absent,
+                                            status = line,
+                                            progress = Absent,
+                                            error = Absent
+                                        )
+                                    })
+                                }.emit
+                            case Result.Failure(cmdEx) =>
+                                Abort.fail[ContainerException](
+                                    ContainerException.General(s"pull failed for $ref", cmdEx)
+                                ).unit
+                            case Result.Panic(ex) =>
+                                Abort.fail[ContainerException](
+                                    ContainerException.General(s"pull panicked for $ref", ex)
+                                ).unit
+                        }
                     }
             }
         }
@@ -1036,10 +1050,6 @@ private[kyo] class HttpContainerBackend(
         platform: Maybe[Container.Platform],
         auth: Maybe[ContainerImage.RegistryAuth]
     )(using Frame): Stream[ContainerImage.BuildProgress, Async & Abort[ContainerException]] =
-        // Use CLI subprocess for streaming — HTTP streaming has issues with Docker's
-        // chunked responses over Unix sockets.
-        // Use java.lang.Process directly to avoid Scope.run inside Stream, which
-        // causes process leaks when take(n) terminates the stream early.
         Stream {
             val args = Chunk("build") ++
                 Chunk.from(tags.flatMap(t => Seq("-t", t))) ++
@@ -1051,14 +1061,31 @@ private[kyo] class HttpContainerBackend(
                 target.map(t => Chunk("--target", t)).getOrElse(Chunk.empty) ++
                 platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
                 Chunk(path.toString)
-            cliStreamLines(cliCommand +: args.toSeq) { line =>
-                ContainerImage.BuildProgress(
-                    stream = Present(line),
-                    status = Absent,
-                    progress = Absent,
-                    error = Absent,
-                    aux = Absent
-                )
+            val buildCmd = Command((cliCommand +: args.toSeq)*).redirectErrorStream(true)
+            Scope.run {
+                Abort.runWith[CommandException](buildCmd.spawn) {
+                    case Result.Success(proc) =>
+                        proc.stdout.mapChunk { bytes =>
+                            val text = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
+                            Chunk.from(text.split("\n").filter(_.trim.nonEmpty).map { line =>
+                                ContainerImage.BuildProgress(
+                                    stream = Present(line),
+                                    status = Absent,
+                                    progress = Absent,
+                                    error = Absent,
+                                    aux = Absent
+                                )
+                            })
+                        }.emit
+                    case Result.Failure(cmdEx) =>
+                        Abort.fail[ContainerException](
+                            ContainerException.General(s"build failed for $path", cmdEx)
+                        ).unit
+                    case Result.Panic(ex) =>
+                        Abort.fail[ContainerException](
+                            ContainerException.General(s"build panicked for $path", ex)
+                        ).unit
+                }
             }
         }
 
@@ -1459,55 +1486,6 @@ private[kyo] class HttpContainerBackend(
             (Absent, line)
         end if
     end parseTimestampLine
-
-    /** Stream output lines from a CLI subprocess, emitting each line as a typed value.
-      *
-      * Uses java.lang.Process directly (not kyo's Scope.run+spawn) because Scope.run inside a Stream body doesn't clean up properly when
-      * take(n) terminates the stream early. This method reads lines synchronously with a BufferedReader and destroys the process when done
-      * (or on interruption).
-      */
-    private def cliStreamLines[A](args: Seq[String])(f: String => A)(using Frame, Tag[Emit[Chunk[A]]]): Unit < (Emit[Chunk[A]] & Async) =
-        Sync.defer {
-            val pb = new java.lang.ProcessBuilder(args*)
-            pb.redirectErrorStream(true)
-            val proc = pb.start()
-            // A daemon thread reads all process output into a queue. This ensures the process
-            // never blocks on stdout even if the stream consumer stops early (e.g. via take(n)),
-            // allowing the process to run to completion regardless of stream lifecycle.
-            val queue    = new java.util.concurrent.LinkedBlockingQueue[Maybe[String]]()
-            val sentinel = Absent: Maybe[String]
-            val drainThread = new Thread(
-                () =>
-                    val reader =
-                        new java.io.BufferedReader(new java.io.InputStreamReader(
-                            proc.getInputStream,
-                            java.nio.charset.StandardCharsets.UTF_8
-                        ))
-                    var line = reader.readLine()
-                    while line != null do
-                        queue.put(Present(line))
-                        line = reader.readLine()
-                    reader.close()
-                    queue.put(sentinel)
-                ,
-                "kyo-cli-drain"
-            )
-            drainThread.setDaemon(true)
-            drainThread.start()
-            Loop(()) { _ =>
-                Sync.defer {
-                    queue.take() match
-                        case Present(line) =>
-                            val entry = f(line)
-                            Emit.valueWith(Chunk(entry)) {
-                                Loop.continue(())
-                            }
-                        case _ =>
-                            Loop.done(())
-                }
-            }
-        }
-    end cliStreamLines
 
     // --- Stats mapping ---
 
