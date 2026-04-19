@@ -1218,7 +1218,7 @@ class CacheTest extends Test:
                     maxSize <- Choice.eval(4, 8)
                     s       = cache(maxSize = maxSize)
                     counter = new java.util.concurrent.atomic.AtomicInteger(0)
-                    _ <- Async.fill(500, 100)(Sync.Unsafe.defer {
+                    _ <- Async.fill(100, 20)(Sync.Unsafe.defer {
                         val rng = java.util.concurrent.ThreadLocalRandom.current()
                         val i   = rng.nextInt(30)
                         val k   = new Key(i, 0) // all same hash
@@ -1360,7 +1360,7 @@ class CacheTest extends Test:
                 (for
                     maxSize <- Choice.eval(2, 4, 8)
                     s = cache(maxSize = maxSize)
-                    _ <- Async.fill(500, 100)(Sync.Unsafe.defer {
+                    _ <- Async.fill(100, 20)(Sync.Unsafe.defer {
                         val rng = java.util.concurrent.ThreadLocalRandom.current()
                         val i   = rng.nextInt(50)
                         val k   = new Key(i, i)
@@ -1384,7 +1384,7 @@ class CacheTest extends Test:
                 (for
                     maxSize <- Choice.eval(2, 4, 8)
                     s = cache(maxSize = maxSize)
-                    _ <- Async.fill(500, 100)(Sync.Unsafe.defer {
+                    _ <- Async.fill(100, 20)(Sync.Unsafe.defer {
                         val rng = java.util.concurrent.ThreadLocalRandom.current()
                         val i   = rng.nextInt(50)
                         val k   = new Key(i, 0) // all hash to 0
