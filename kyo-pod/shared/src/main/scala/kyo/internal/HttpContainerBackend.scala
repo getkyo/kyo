@@ -70,11 +70,13 @@ private[kyo] class HttpContainerBackend(
 
     /** POST with empty body, accepting 200/201/204 as success. */
     private def postUnit(endpoint: String, id: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        withErrorMapping(id)(HttpClient.postTextResponse(url(endpoint), "").map(_ => ()))
+        withErrorMapping(id)(HttpClient.postText(url(endpoint), "").unit)
 
-    /** POST with empty body, accepting 200/201/204/304 as success. */
+    /** POST with empty body, accepting 200/201/204/304 as success. 304 means "already in this state" — not an error for idempotent
+      * operations.
+      */
     private def postUnitAccept304(endpoint: String, id: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        Abort.runWith[HttpException](HttpClient.postTextResponse(url(endpoint), "")) {
+        Abort.run[HttpException](HttpClient.postText(url(endpoint), "")).map {
             case Result.Success(_)                                              => ()
             case Result.Failure(e: HttpStatusException) if e.status.code == 304 => ()
             case Result.Failure(e)                                              => mapHttpError(e, id)
@@ -170,6 +172,10 @@ private[kyo] class HttpContainerBackend(
             Tmpfs = tmpfs
         )
 
+        val exposedPorts: Option[Map[String, Map[String, String]]] =
+            if portBindings.isEmpty then None
+            else Some(portBindings.keys.map(_ -> Map.empty[String, String]).toMap)
+
         val body = CreateContainerRequest(
             Image = config.image.reference,
             Cmd = config.command.args.toSeq,
@@ -181,15 +187,27 @@ private[kyo] class HttpContainerBackend(
             OpenStdin = config.interactive,
             StopSignal = config.stopSignal.map(_.name).getOrElse(""),
             WorkingDir = config.command.workDir.map(_.toString).getOrElse(""),
+            ExposedPorts = exposedPorts,
             HostConfig = hostConfig
         )
 
         val params        = config.name.toOption.map(n => Seq("name" -> n)).getOrElse(Seq.empty)
         val nameForErrors = config.name.getOrElse("new-container")
 
-        withErrorMapping(nameForErrors) {
+        Abort.runWith[HttpException](
             HttpClient.postJson[CreateContainerResponse](url("/containers/create", params*), body)
-        }.map(resp => Container.Id(resp.Id))
+        ) {
+            case Result.Success(resp) => Container.Id(resp.Id)
+            case Result.Failure(e: HttpStatusException) =>
+                e.status.code match
+                    case 404 => Abort.fail(ContainerException.ImageNotFound(config.image))
+                    case 409 => Abort.fail(ContainerException.AlreadyExists(nameForErrors))
+                    case _   => Abort.fail(ContainerException.General(s"HTTP ${e.status.code} creating container", e))
+            case Result.Failure(e) =>
+                Abort.fail(ContainerException.General(s"Failed creating container $nameForErrors", e))
+            case Result.Panic(e) =>
+                Abort.fail(ContainerException.General(s"Unexpected error creating container $nameForErrors", e))
+        }
     end create
 
     def start(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
@@ -214,9 +232,9 @@ private[kyo] class HttpContainerBackend(
 
     def remove(id: Container.Id, force: Boolean, removeVolumes: Boolean)(using Frame): Unit < (Async & Abort[ContainerException]) =
         withErrorMapping(id.value) {
-            HttpClient.deleteTextResponse(
+            HttpClient.deleteText(
                 url(s"/containers/${id.value}", "force" -> force.toString, "v" -> removeVolumes.toString)
-            ).map(_ => ())
+            ).unit
         }
 
     def rename(id: Container.Id, newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
@@ -233,7 +251,7 @@ private[kyo] class HttpContainerBackend(
         val body = CheckpointCreateRequest(CheckpointID = name)
         withErrorMapping(id.value) {
             HttpClient.postJson[EmptyResponse](url(s"/containers/${id.value}/checkpoints"), body)
-        }.map(_ => ())
+        }.unit
     end checkpoint
 
     def restore(id: Container.Id, checkpoint: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
@@ -302,46 +320,24 @@ private[kyo] class HttpContainerBackend(
 
     // --- Exec ---
 
+    private def execCreateBody(command: Command): ExecCreateRequest =
+        val envVars = command.env.map { case (k, v) => s"$k=$v" }.toSeq
+        ExecCreateRequest(
+            Cmd = command.args.toSeq,
+            Env = envVars,
+            WorkingDir = command.workDir.map(_.toString).getOrElse("")
+        )
+    end execCreateBody
+
     def exec(id: Container.Id, command: Command)(using Frame): Container.ExecResult < (Async & Abort[ContainerException]) =
         // Phase 1: Create exec instance
-        val createBody = ExecCreateRequest(Cmd = command.args.toSeq)
+        val createBody = execCreateBody(command)
         withErrorMapping(id.value) {
             HttpClient.postJson[ExecCreateResponse](url(s"/containers/${id.value}/exec"), createBody)
-        }.map { createResp =>
-            val execId = createResp.Id
-            // Phase 2: Start exec and collect output
-            val startBody = ExecStartRequest(Detach = false)
-            withErrorMapping(id.value) {
-                HttpClient.postBinary(
-                    url(s"/exec/$execId/start"),
-                    Span.from(Json[ExecStartRequest].encode(startBody).getBytes),
-                    headers = Seq("Content-Type" -> "application/json")
-                )
-            }.map { outputBytes =>
-                // Phase 3: Inspect exec for exit code
-                val entries = demuxStream(outputBytes)
-                val stdout  = entries.filter(_.source == LogEntry.Source.Stdout).map(_.content).toSeq.mkString("\n")
-                val stderr  = entries.filter(_.source == LogEntry.Source.Stderr).map(_.content).toSeq.mkString("\n")
-                withErrorMapping(id.value) {
-                    HttpClient.getJson[ExecInspectResponse](url(s"/exec/$execId/json"))
-                }.map { inspectResp =>
-                    val exitCode = if inspectResp.ExitCode == 0 then ExitCode.Success else ExitCode.Failure(inspectResp.ExitCode)
-                    ExecResult(exitCode, stdout, stderr)
-                }
-            }
         }
-    end exec
-
-    def execStream(id: Container.Id, command: Command)(
-        using Frame
-    ): Stream[Container.LogEntry, Async & Abort[ContainerException]] =
-        // For streaming, we use the same exec approach but emit entries as a stream
-        Stream {
-            val createBody = ExecCreateRequest(Cmd = command.args.toSeq)
-            withErrorMapping(id.value) {
-                HttpClient.postJson[ExecCreateResponse](url(s"/containers/${id.value}/exec"), createBody)
-            }.map { createResp =>
-                val execId    = createResp.Id
+            .map { createResp =>
+                val execId = createResp.Id
+                // Phase 2: Start exec and collect output
                 val startBody = ExecStartRequest(Detach = false)
                 withErrorMapping(id.value) {
                     HttpClient.postBinary(
@@ -350,10 +346,44 @@ private[kyo] class HttpContainerBackend(
                         headers = Seq("Content-Type" -> "application/json")
                     )
                 }.map { outputBytes =>
+                    // Phase 3: Inspect exec for exit code
                     val entries = demuxStream(outputBytes)
-                    Emit.value(entries)
+                    val stdout  = entries.filter(_.source == LogEntry.Source.Stdout).map(_.content).toSeq.mkString("\n")
+                    val stderr  = entries.filter(_.source == LogEntry.Source.Stderr).map(_.content).toSeq.mkString("\n")
+                    withErrorMapping(id.value) {
+                        HttpClient.getJson[ExecInspectResponse](url(s"/exec/$execId/json"))
+                    }
+                        .map { inspectResp =>
+                            val exitCode = if inspectResp.ExitCode == 0 then ExitCode.Success else ExitCode.Failure(inspectResp.ExitCode)
+                            ExecResult(exitCode, stdout, stderr)
+                        }
                 }
             }
+    end exec
+
+    def execStream(id: Container.Id, command: Command)(
+        using Frame
+    ): Stream[Container.LogEntry, Async & Abort[ContainerException]] =
+        // For streaming, we use the same exec approach but emit entries as a stream
+        Stream {
+            val createBody = execCreateBody(command)
+            withErrorMapping(id.value) {
+                HttpClient.postJson[ExecCreateResponse](url(s"/containers/${id.value}/exec"), createBody)
+            }
+                .map { createResp =>
+                    val execId    = createResp.Id
+                    val startBody = ExecStartRequest(Detach = false)
+                    withErrorMapping(id.value) {
+                        HttpClient.postBinary(
+                            url(s"/exec/$execId/start"),
+                            Span.from(Json[ExecStartRequest].encode(startBody).getBytes),
+                            headers = Seq("Content-Type" -> "application/json")
+                        )
+                    }.map { outputBytes =>
+                        val entries = demuxStream(outputBytes)
+                        Emit.value(entries)
+                    }
+                }
         }
 
     def execInteractive(id: Container.Id, command: Command)(
@@ -545,8 +575,8 @@ private[kyo] class HttpContainerBackend(
             RestartPolicy = restartPol.getOrElse(RestartPolicyEntry("", 0))
         )
         withErrorMapping(id.value) {
-            HttpClient.postJson[UpdateResponse](url(s"/containers/${id.value}/update"), body)
-        }.map(_ => ())
+            HttpClient.postJson[UpdateResponse](url(s"/containers/${id.value}/update"), body).unit
+        }
     end update
 
     // --- Network on container ---
@@ -633,8 +663,8 @@ private[kyo] class HttpContainerBackend(
             platform.map(p => Seq("platform" -> p.reference)).getOrElse(Seq.empty)
         val headers = authHeaders(auth)
         withErrorMapping(image.reference) {
-            HttpClient.postTextResponse(url("/images/create", params*), "", headers = headers)
-        }.map(_ => ())
+            HttpClient.postText(url("/images/create", params*), "", headers = headers).unit
+        }
     end imagePull
 
     def imageEnsure(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
@@ -767,8 +797,8 @@ private[kyo] class HttpContainerBackend(
     def imageTag(source: ContainerImage, repo: String, tag: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         val ref = source.reference
         withErrorMapping(ref) {
-            HttpClient.postTextResponse(url(s"/images/$ref/tag", "repo" -> repo, "tag" -> tag), "")
-        }.map(_ => ())
+            HttpClient.postText(url(s"/images/$ref/tag", "repo" -> repo, "tag" -> tag), "").unit
+        }
     end imageTag
 
     def imageBuild(
@@ -859,8 +889,8 @@ private[kyo] class HttpContainerBackend(
         val ref     = image.reference
         val headers = authHeaders(auth)
         withErrorMapping(ref) {
-            HttpClient.postTextResponse(url(s"/images/$ref/push"), "", headers = headers)
-        }.map(_ => ())
+            HttpClient.postText(url(s"/images/$ref/push"), "", headers = headers).unit
+        }
     end imagePush
 
     def imageSearch(term: String, limit: Int, filters: Map[String, Seq[String]])(
@@ -983,7 +1013,7 @@ private[kyo] class HttpContainerBackend(
 
     def networkRemove(id: Container.Network.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
         withErrorMapping(id.value) {
-            HttpClient.deleteTextResponse(url(s"/networks/${id.value}")).map(_ => ())
+            HttpClient.deleteText(url(s"/networks/${id.value}")).unit
         }
 
     def networkConnect(network: Container.Network.Id, container: Container.Id, aliases: Seq[String])(
@@ -998,7 +1028,7 @@ private[kyo] class HttpContainerBackend(
         )
         withErrorMapping(network.value) {
             HttpClient.postJson[EmptyResponse](url(s"/networks/${network.value}/connect"), body)
-        }.map(_ => ())
+        }.unit
     end networkConnect
 
     def networkDisconnect(network: Container.Network.Id, container: Container.Id, force: Boolean)(
@@ -1007,7 +1037,7 @@ private[kyo] class HttpContainerBackend(
         val body = NetworkDisconnectRequest(Container = container.value, Force = force)
         withErrorMapping(network.value) {
             HttpClient.postJson[EmptyResponse](url(s"/networks/${network.value}/disconnect"), body)
-        }.map(_ => ())
+        }.unit
     end networkDisconnect
 
     def networkPrune(filters: Map[String, Seq[String]])(
@@ -1057,7 +1087,7 @@ private[kyo] class HttpContainerBackend(
 
     def volumeRemove(id: Container.Volume.Id, force: Boolean)(using Frame): Unit < (Async & Abort[ContainerException]) =
         withErrorMapping(id.value) {
-            HttpClient.deleteTextResponse(url(s"/volumes/${id.value}", "force" -> force.toString)).map(_ => ())
+            HttpClient.deleteText(url(s"/volumes/${id.value}", "force" -> force.toString)).unit
         }
 
     def volumePrune(filters: Map[String, Seq[String]])(using Frame): Container.PruneResult < (Async & Abort[ContainerException]) =
@@ -1116,7 +1146,7 @@ private[kyo] class HttpContainerBackend(
 
     def detect()(using Frame): Unit < (Async & Abort[ContainerException]) =
         Abort.runWith[HttpException](HttpClient.getText(url("/_ping"))) {
-            case Result.Success(response) if response == "OK" => ()
+            case Result.Success(response) if response.trim == "OK" => ()
             case Result.Success(response) =>
                 Abort.fail(ContainerException.BackendUnavailable(
                     "http",
@@ -1223,7 +1253,7 @@ private[kyo] class HttpContainerBackend(
             blockIo = Stats.BlockIo(readBytes = readBytes, writeBytes = writeBytes),
             pids = Stats.Pids(
                 current = dto.pids_stats.current,
-                limit = if dto.pids_stats.limit > 0 then Present(dto.pids_stats.limit) else Absent
+                limit = Maybe.fromOption(dto.pids_stats.limit.filter(_ > 0))
             )
         )
     end mapStatsResponse
@@ -1235,7 +1265,7 @@ private[kyo] class HttpContainerBackend(
             .flatMap(h => if h.Status.nonEmpty then Present(h.Status) else Absent)
         val healthStatus = healthStatusStr.map(HealthStatus.parse).getOrElse(HealthStatus.NoHealthcheck)
 
-        val portsSeq = dto.NetworkSettings.Ports.getOrElse(Map.empty).flatMap { case (portProto, mappings) =>
+        val portsSeq = dto.NetworkSettings.Ports.getOrElse(Map.empty).flatMap { case (portProto, maybeMappings) =>
             val parts         = portProto.split("/")
             val containerPort = parts(0).toIntOption.getOrElse(0)
             val protocol = if parts.length > 1 then
@@ -1244,16 +1274,26 @@ private[kyo] class HttpContainerBackend(
                     case "sctp" => Config.Protocol.SCTP
                     case _      => Config.Protocol.TCP
             else Config.Protocol.TCP
-            mappings.map { m =>
-                Config.PortBinding(
+            val mappings = maybeMappings.getOrElse(Seq.empty)
+            if mappings.nonEmpty then
+                mappings.map { m =>
+                    Config.PortBinding(
+                        containerPort = containerPort,
+                        hostPort = if m.HostPort.nonEmpty then
+                            Result.catching[NumberFormatException](m.HostPort.toInt).getOrElse(0)
+                        else 0,
+                        hostIp = if m.HostIp.nonEmpty then m.HostIp else "",
+                        protocol = protocol
+                    )
+                }
+            else
+                Seq(Config.PortBinding(
                     containerPort = containerPort,
-                    hostPort = if m.HostPort.nonEmpty then
-                        Result.catching[NumberFormatException](m.HostPort.toInt).getOrElse(0)
-                    else 0,
-                    hostIp = if m.HostIp.nonEmpty then m.HostIp else "",
+                    hostPort = 0,
+                    hostIp = "",
                     protocol = protocol
-                )
-            }
+                ))
+            end if
         }
 
         val networks = dto.NetworkSettings.Networks.getOrElse(Map.empty).map { case (name, ep) =>
@@ -1384,6 +1424,7 @@ private[kyo] class HttpContainerBackend(
         OpenStdin: Boolean = false,
         StopSignal: String = "",
         WorkingDir: String = "",
+        ExposedPorts: Option[Map[String, Map[String, String]]] = None,
         HostConfig: HostConfig = HostConfig()
     ) derives Json
 
@@ -1520,7 +1561,7 @@ private[kyo] class HttpContainerBackend(
         IPAddress: String = "",
         Gateway: String = "",
         MacAddress: String = "",
-        Ports: Option[Map[String, Seq[InspectPortMappingDto]]] = None,
+        Ports: Option[Map[String, Option[Seq[InspectPortMappingDto]]]] = None,
         Networks: Option[Map[String, InspectNetworkEndpointDto]] = None
     ) derives Json
 
@@ -1596,7 +1637,7 @@ private[kyo] class HttpContainerBackend(
 
     private case class PidsStatsDto(
         current: Long = 0,
-        limit: Long = 0
+        limit: Option[Long] = None
     ) derives Json
 
     // --- DTOs for top, changes, exec ---
@@ -1614,7 +1655,9 @@ private[kyo] class HttpContainerBackend(
     private case class ExecCreateRequest(
         Cmd: Seq[String] = Seq.empty,
         AttachStdout: Boolean = true,
-        AttachStderr: Boolean = true
+        AttachStderr: Boolean = true,
+        Env: Seq[String] = Seq.empty,
+        WorkingDir: String = ""
     ) derives Json
 
     private case class ExecCreateResponse(
