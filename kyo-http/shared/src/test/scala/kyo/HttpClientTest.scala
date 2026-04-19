@@ -2814,4 +2814,291 @@ class HttpClientTest extends Test:
         }
     }
 
+    "non-2xx status handling" - {
+
+        // Body-only methods throw on non-2xx
+
+        "getText throws HttpStatusException on 404" - {
+            val route = HttpRoute.getText("not-here")
+            val ep    = route.handler(_ => HttpResponse.notFound("not found"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/not-here")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.status == HttpStatus.NotFound)
+                        case other =>
+                            fail(s"Expected HttpStatusException(404), got $other")
+                    }
+                }
+            }
+        }
+
+        "postText throws HttpStatusException on 409" - {
+            val route = HttpRoute.postText("conflict-ep")
+            val ep    = route.handler(_ => HttpResponse.conflict("conflict"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.postText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/conflict-ep", "data")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.status == HttpStatus.Conflict)
+                        case other =>
+                            fail(s"Expected HttpStatusException(409), got $other")
+                    }
+                }
+            }
+        }
+
+        "deleteText throws HttpStatusException on 500" - {
+            val route = HttpRoute.deleteText("fail-ep")
+            val ep    = route.handler(_ => HttpResponse.serverError("server error"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.deleteText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/fail-ep")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.status == HttpStatus.InternalServerError)
+                        case other =>
+                            fail(s"Expected HttpStatusException(500), got $other")
+                    }
+                }
+            }
+        }
+
+        "getJson throws HttpStatusException on 404" - {
+            val route = HttpRoute.getJson[User]("no-user")
+            val ep    = route.handler(_ => HttpResponse.notFound(User(0, "not found")))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getJson[User](s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/no-user")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.status == HttpStatus.NotFound)
+                        case other =>
+                            fail(s"Expected HttpStatusException(404), got $other")
+                    }
+                }
+            }
+        }
+
+        "getBinary throws HttpStatusException on 500" - {
+            val route = HttpRoute.getBinary("bin-fail")
+            val ep    = route.handler(_ => HttpResponse.serverError(Span.fromUnsafe(Array[Byte](1, 2, 3))))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getBinary(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/bin-fail")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.status == HttpStatus.InternalServerError)
+                        case other =>
+                            fail(s"Expected HttpStatusException(500), got $other")
+                    }
+                }
+            }
+        }
+
+        "getText succeeds on 200" - {
+            val route = HttpRoute.getText("ok-text")
+            val ep    = route.handler(_ => HttpResponse.ok("success"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/ok-text").map { body =>
+                        assert(body == "success")
+                    }
+                }
+            }
+        }
+
+        "postText succeeds on 204" - {
+            val route = HttpRoute.postText("no-content-ep")
+            val ep    = route.handler(_ => HttpResponse.noContent.addField("body", ""))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.postText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/no-content-ep", "data").map { body =>
+                        assert(body == "")
+                    }
+                }
+            }
+        }
+
+        // Response methods throw on non-2xx by default (same as body-only)
+
+        "getTextResponse throws HttpStatusException on 404 by default" - {
+            val route = HttpRoute.getText("not-here-resp")
+            val ep    = route.handler(_ => HttpResponse.notFound("error body"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getTextResponse(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/not-here-resp")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.status == HttpStatus.NotFound)
+                        case other =>
+                            fail(s"Expected HttpStatusException(404), got $other")
+                    }
+                }
+            }
+        }
+
+        "postTextResponse throws HttpStatusException on 409 by default" - {
+            val route = HttpRoute.postText("conflict-resp")
+            val ep    = route.handler(_ => HttpResponse.conflict("conflict body"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.postTextResponse(
+                            s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/conflict-resp",
+                            "data"
+                        )
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.status == HttpStatus.Conflict)
+                        case other =>
+                            fail(s"Expected HttpStatusException(409), got $other")
+                    }
+                }
+            }
+        }
+
+        "getJsonResponse throws HttpStatusException on 404 by default" - {
+            val route = HttpRoute.getJson[User]("no-user-resp")
+            val ep    = route.handler(_ => HttpResponse.notFound(User(0, "missing")))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getJsonResponse[User](
+                            s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/no-user-resp"
+                        )
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.status == HttpStatus.NotFound)
+                        case other =>
+                            fail(s"Expected HttpStatusException(404), got $other")
+                    }
+                }
+            }
+        }
+
+        "getBinaryResponse throws HttpStatusException on 500 by default" - {
+            val route = HttpRoute.getBinary("bin-fail-resp")
+            val data  = Span.fromUnsafe(Array[Byte](9, 8, 7))
+            val ep    = route.handler(_ => HttpResponse.serverError(data))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getBinaryResponse(
+                            s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/bin-fail-resp"
+                        )
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.status == HttpStatus.InternalServerError)
+                        case other =>
+                            fail(s"Expected HttpStatusException(500), got $other")
+                    }
+                }
+            }
+        }
+
+        // Response methods with failOnError=false return non-2xx without throwing
+
+        "getTextResponse with failOnError=false returns 404 response" - {
+            val route = HttpRoute.getText("not-here-noerr")
+            val ep    = route.handler(_ => HttpResponse.notFound("error body"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.getTextResponse(
+                        s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/not-here-noerr",
+                        failOnError = false
+                    ).map { resp =>
+                        assert(resp.status == HttpStatus.NotFound)
+                        assert(resp.fields.body == "error body")
+                    }
+                }
+            }
+        }
+
+        "postTextResponse with failOnError=false returns 409 response" - {
+            val route = HttpRoute.postText("conflict-noerr")
+            val ep    = route.handler(_ => HttpResponse.conflict("conflict body"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.postTextResponse(
+                        s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/conflict-noerr",
+                        "data",
+                        failOnError = false
+                    ).map { resp =>
+                        assert(resp.status == HttpStatus.Conflict)
+                        assert(resp.fields.body == "conflict body")
+                    }
+                }
+            }
+        }
+
+        "getJsonResponse with failOnError=false returns 404 response" - {
+            val route = HttpRoute.getJson[User]("no-user-noerr")
+            val ep    = route.handler(_ => HttpResponse.notFound(User(0, "missing")))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.getJsonResponse[User](
+                        s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/no-user-noerr",
+                        failOnError = false
+                    ).map { resp =>
+                        assert(resp.status == HttpStatus.NotFound)
+                        assert(resp.fields.body == User(0, "missing"))
+                    }
+                }
+            }
+        }
+
+        "getBinaryResponse with failOnError=false returns 500 response" - {
+            val route = HttpRoute.getBinary("bin-fail-noerr")
+            val data  = Span.fromUnsafe(Array[Byte](9, 8, 7))
+            val ep    = route.handler(_ => HttpResponse.serverError(data))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.getBinaryResponse(
+                        s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/bin-fail-noerr",
+                        failOnError = false
+                    ).map { resp =>
+                        assert(resp.status == HttpStatus.InternalServerError)
+                        assert(resp.fields.body.toArrayUnsafe.toSeq == Seq[Byte](9, 8, 7))
+                    }
+                }
+            }
+        }
+
+        // Edge cases
+
+        "getTextResponse default vs failOnError=false differ on non-2xx" - {
+            val route = HttpRoute.getText("differ-ep")
+            val ep    = route.handler(_ => HttpResponse.notFound("not found body"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    val textUrl = s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/differ-ep"
+                    // getTextResponse (default) should throw
+                    Abort.run[HttpException](HttpClient.getTextResponse(textUrl)).map { textResult =>
+                        assert(textResult.isFailure)
+                        textResult match
+                            case Result.Failure(e: HttpStatusException) =>
+                                assert(e.status == HttpStatus.NotFound)
+                            case _ => fail("Expected HttpStatusException")
+                        end match
+                    }.map { _ =>
+                        // getTextResponse with failOnError=false should return the response
+                        HttpClient.getTextResponse(textUrl, failOnError = false).map { resp =>
+                            assert(resp.status == HttpStatus.NotFound)
+                            assert(resp.fields.body == "not found body")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end HttpClientTest
