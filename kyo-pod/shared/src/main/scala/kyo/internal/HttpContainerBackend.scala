@@ -17,7 +17,7 @@ import kyo.*
   * @see
   *   [[HttpContainerBackend.detect]] auto-detection logic
   */
-private[kyo] class HttpContainerBackend(
+final private[kyo] class HttpContainerBackend(
     socketPath: String,
     apiVersion: String = "v1.43"
 ) extends ContainerBackend:
@@ -39,6 +39,7 @@ private[kyo] class HttpContainerBackend(
       */
     private[internal] def url(path: String, params: (String, String)*): String =
         val encoded = socketPath.replace("/", "%2F")
+        // Java interop boundary: URL-encoding query parameters for Docker API
         val query = if params.isEmpty then "" else "?" + params.map((k, v) => s"$k=${java.net.URLEncoder.encode(v, "UTF-8")}").mkString("&")
         s"http+unix://$encoded/$apiVersion$path$query"
     end url
@@ -104,14 +105,14 @@ private[kyo] class HttpContainerBackend(
         }
 
     /** Build auth headers for registry operations. */
-    private def authHeaders(auth: Maybe[ContainerImage.RegistryAuth]): Seq[(String, String)] =
+    private def authHeaders(auth: Maybe[ContainerImage.RegistryAuth]): Chunk[(String, String)] =
         auth match
             case Present(ra) =>
                 // Encode the first auth entry as X-Registry-Auth header
                 Maybe.fromOption(ra.auths.headOption) match
-                    case Present((_, encoded)) => Seq("X-Registry-Auth" -> encoded)
-                    case Absent                => Seq.empty
-            case Absent => Seq.empty
+                    case Present((_, encoded)) => Chunk("X-Registry-Auth" -> encoded)
+                    case Absent                => Chunk.empty
+            case Absent => Chunk.empty
 
     /** Split an image reference into (name, tag) for Docker API query params. */
     private def splitImageRef(image: ContainerImage): (String, String) =
@@ -791,7 +792,8 @@ private[kyo] class HttpContainerBackend(
         using Frame
     ): Chunk[Container.Summary] < (Async & Abort[ContainerException]) =
         val params = Seq("all" -> all.toString) ++
-            (if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters)) else Seq.empty)
+            (if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
+             else Seq.empty)
         withErrorMapping("list") {
             HttpClient.getJson[Seq[ListContainerEntry]](url("/containers/json", params*))
         }.map { entries =>
@@ -826,7 +828,7 @@ private[kyo] class HttpContainerBackend(
 
     def prune(filters: Map[String, Seq[String]])(using Frame): Container.PruneResult < (Async & Abort[ContainerException]) =
         val params =
-            if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters))
+            if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
             else Seq.empty
         withErrorMapping("prune") {
             HttpClient.postJson[PruneContainersResponse](url("/containers/prune", params*), "")
@@ -948,7 +950,8 @@ private[kyo] class HttpContainerBackend(
         using Frame
     ): Chunk[ContainerImage.Summary] < (Async & Abort[ContainerException]) =
         val params = Seq("all" -> all.toString) ++
-            (if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters)) else Seq.empty)
+            (if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
+             else Seq.empty)
         withErrorMapping("imageList") {
             HttpClient.getJson[Seq[ImageListEntryDto]](url("/images/json", params*))
         }.map { entries =>
@@ -1052,7 +1055,7 @@ private[kyo] class HttpContainerBackend(
     )(using Frame): Stream[ContainerImage.BuildProgress, Async & Abort[ContainerException]] =
         Stream {
             val args = Chunk("build") ++
-                Chunk.from(tags.flatMap(t => Seq("-t", t))) ++
+                tags.flatMap(t => Chunk("-t", t)) ++
                 (if dockerfile != "Dockerfile" then Chunk("-f", dockerfile) else Chunk.empty) ++
                 Chunk.from(buildArgs.toSeq.flatMap { case (k, v) => Seq("--build-arg", s"$k=$v") }) ++
                 Chunk.from(labels.toSeq.flatMap { case (k, v) => Seq("--label", s"$k=$v") }) ++
@@ -1104,7 +1107,8 @@ private[kyo] class HttpContainerBackend(
     ): Chunk[ContainerImage.SearchResult] < (Async & Abort[ContainerException]) =
         val params = Seq("term" -> term) ++
             (if limit != Int.MaxValue then Seq("limit" -> limit.toString) else Seq.empty) ++
-            (if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters)) else Seq.empty)
+            (if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
+             else Seq.empty)
         withErrorMapping("imageSearch") {
             HttpClient.getJson[Seq[ImageSearchEntryDto]](url("/images/search", params*))
         }.map { entries =>
@@ -1141,7 +1145,7 @@ private[kyo] class HttpContainerBackend(
 
     def imagePrune(filters: Map[String, Seq[String]])(using Frame): Container.PruneResult < (Async & Abort[ContainerException]) =
         val params =
-            if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters))
+            if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
             else Seq.empty
         withErrorMapping("imagePrune") {
             HttpClient.postJson[ImagePruneResponseDto](url("/images/prune", params*), "")
@@ -1218,7 +1222,7 @@ private[kyo] class HttpContainerBackend(
         using Frame
     ): Chunk[Container.Network.Info] < (Async & Abort[ContainerException]) =
         val params =
-            if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters))
+            if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
             else Seq.empty
         withErrorMapping("networkList") {
             HttpClient.getJson[Seq[NetworkInfoDto]](url("/networks", params*))
@@ -1242,7 +1246,7 @@ private[kyo] class HttpContainerBackend(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
         val endpointConfig =
-            if aliases.nonEmpty then Present(EndpointConfigDto(Aliases = aliases))
+            if aliases.nonEmpty then Present(EndpointConfigDto(Aliases = aliases.toSeq))
             else Absent
         val body = NetworkConnectRequest(
             Container = container.value,
@@ -1276,7 +1280,7 @@ private[kyo] class HttpContainerBackend(
         using Frame
     ): Chunk[Container.Network.Id] < (Async & Abort[ContainerException]) =
         val params =
-            if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters))
+            if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
             else Seq.empty
         withErrorMapping("networkPrune") {
             HttpClient.postJson[NetworkPruneResponse](url("/networks/prune", params*), "")
@@ -1303,7 +1307,7 @@ private[kyo] class HttpContainerBackend(
         using Frame
     ): Chunk[Container.Volume.Info] < (Async & Abort[ContainerException]) =
         val params =
-            if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters))
+            if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
             else Seq.empty
         withErrorMapping("volumeList") {
             HttpClient.getJson[VolumeListResponse](url("/volumes", params*))
@@ -1326,7 +1330,7 @@ private[kyo] class HttpContainerBackend(
 
     def volumePrune(filters: Map[String, Seq[String]])(using Frame): Container.PruneResult < (Async & Abort[ContainerException]) =
         val params =
-            if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters))
+            if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
             else Seq.empty
         withErrorMapping("volumePrune") {
             HttpClient.postJson[VolumePruneResponse](url("/volumes/prune", params*), "")
@@ -1342,13 +1346,13 @@ private[kyo] class HttpContainerBackend(
 
     def registryAuthFromConfig(using Frame): ContainerImage.RegistryAuth < (Async & Abort[ContainerException]) =
         // Try docker config first, then podman
-        val configPaths = Chunk.from(Seq(
+        val configPaths = Seq(
             sys.props.get("user.home").map(_ + "/.docker/config.json"),
             sys.env.get("XDG_RUNTIME_DIR").map(_ + "/containers/auth.json"),
             sys.env.get("DOCKER_CONFIG").map(_ + "/config.json")
-        ).flatten)
+        ).flatten
 
-        def findExisting(paths: Chunk[String]): Maybe[String] < Sync =
+        def findExisting(paths: Seq[String]): Maybe[String] < Sync =
             if paths.isEmpty then Absent
             else
                 val head = paths.head
@@ -1439,34 +1443,36 @@ private[kyo] class HttpContainerBackend(
       *   When true, attempt to parse Docker timestamp prefix from each line (format: `2024-01-01T00:00:00.000000000Z content`)
       */
     private def demuxStream(bytes: Span[Byte], timestamps: Boolean = false): Chunk[LogEntry] =
-        val result = Chunk.newBuilder[LogEntry]
-        var offset = 0
-        val len    = bytes.size
-        while offset + 8 <= len do
-            val streamType = bytes(offset) & 0xff
-            val size = ((bytes(offset + 4) & 0xff) << 24) |
-                ((bytes(offset + 5) & 0xff) << 16) |
-                ((bytes(offset + 6) & 0xff) << 8) |
-                (bytes(offset + 7) & 0xff)
-            if offset + 8 + size <= len then
-                val payload = new Array[Byte](size)
-                var i       = 0
-                while i < size do
-                    payload(i) = bytes(offset + 8 + i)
-                    i += 1
-                val content = new String(payload, java.nio.charset.StandardCharsets.UTF_8)
-                val source  = if streamType == 2 then LogEntry.Source.Stderr else LogEntry.Source.Stdout
-                content.split("\n").filter(_.nonEmpty).foreach { line =>
-                    if timestamps then
-                        val (maybeTs, rest) = parseTimestampLine(line)
-                        result.addOne(LogEntry(source, rest, maybeTs))
-                    else
-                        result.addOne(LogEntry(source, line))
-                }
-            end if
-            offset += 8 + size
-        end while
-        result.result()
+        val arr = bytes.toArray
+        val len = arr.length
+
+        def parseLines(content: String, source: LogEntry.Source): Chunk[LogEntry] =
+            Chunk.from(content.split("\n").iterator.filter(_.nonEmpty).map { line =>
+                if timestamps then
+                    val (maybeTs, rest) = parseTimestampLine(line)
+                    LogEntry(source, rest, maybeTs)
+                else
+                    LogEntry(source, line)
+            }.toSeq)
+
+        @scala.annotation.tailrec
+        def parse(offset: Int, acc: Chunk[LogEntry]): Chunk[LogEntry] =
+            if offset + 8 > len then acc
+            else
+                val streamType = arr(offset) & 0xff
+                val size = ((arr(offset + 4) & 0xff) << 24) |
+                    ((arr(offset + 5) & 0xff) << 16) |
+                    ((arr(offset + 6) & 0xff) << 8) |
+                    (arr(offset + 7) & 0xff)
+                if offset + 8 + size > len then acc
+                else
+                    val content = new String(arr, offset + 8, size, java.nio.charset.StandardCharsets.UTF_8)
+                    val source  = if streamType == 2 then LogEntry.Source.Stderr else LogEntry.Source.Stdout
+                    parse(offset + 8 + size, acc ++ parseLines(content, source))
+                end if
+        end parse
+
+        parse(0, Chunk.empty)
     end demuxStream
 
     /** Parse a Docker timestamp prefix from a log line.
@@ -1516,6 +1522,7 @@ private[kyo] class HttpContainerBackend(
         val readBytes    = blkioEntries.filter(_.op.equalsIgnoreCase("read")).map(_.value).sum
         val writeBytes   = blkioEntries.filter(_.op.equalsIgnoreCase("write")).map(_.value).sum
 
+        // Non-effectful Java interop boundary: fallback timestamp for stats
         val readAt = parseInstant(dto.read).getOrElse(Instant.fromJava(java.time.Instant.now()))
 
         Stats(
@@ -2168,7 +2175,7 @@ private[kyo] object HttpContainerBackend:
       */
     def detect()(using Frame): HttpContainerBackend < (Async & Abort[ContainerException]) =
         candidateSocketPaths.map { candidates =>
-            def tryNext(remaining: Chunk[String]): HttpContainerBackend < (Async & Abort[ContainerException]) =
+            def tryNext(remaining: Seq[String]): HttpContainerBackend < (Async & Abort[ContainerException]) =
                 if remaining.isEmpty then
                     Abort.fail(ContainerException.BackendUnavailable(
                         "http",
@@ -2192,7 +2199,7 @@ private[kyo] object HttpContainerBackend:
         }
 
     /** Collect candidate socket paths from environment, filtering to those that exist on disk. */
-    private def candidateSocketPaths(using Frame): Chunk[String] < (Async & Abort[ContainerException]) =
+    private def candidateSocketPaths(using Frame): Seq[String] < (Async & Abort[ContainerException]) =
         // Build the ordered list of candidate paths
         val dockerHost: Maybe[String] < Sync =
             kyo.System.env[String]("DOCKER_HOST").map {
@@ -2221,9 +2228,8 @@ private[kyo] object HttpContainerBackend:
             xdgPodman.map { xp =>
                 homeDocker.map { hd =>
                     // Build ordered candidate list
-                    val candidates = Chunk.from(
-                        dh.toList ++ xp.toList ++ List(defaultSocket) ++ hd.toList
-                    )
+                    val candidates =
+                        dh.toList ++ xp.toList ++ Seq(defaultSocket) ++ hd.toList
                     // Filter to paths that exist on disk
                     Kyo.filter(candidates)(path => Path(path).exists).map { staticPaths =>
                         if staticPaths.nonEmpty then staticPaths
@@ -2240,7 +2246,7 @@ private[kyo] object HttpContainerBackend:
       *   - `docker context inspect --format '{{.Endpoints.docker.Host}}'` (returns `unix:///path`)
       *   - `podman info --format '{{.Host.RemoteSocket.Path}}'` (returns socket path)
       */
-    private def discoverSocketsViaCli()(using Frame): Chunk[String] < (Async & Abort[ContainerException]) =
+    private def discoverSocketsViaCli()(using Frame): Seq[String] < (Async & Abort[ContainerException]) =
         val dockerSocket = discoverViaCli(
             Command("docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}")
         )
@@ -2249,7 +2255,7 @@ private[kyo] object HttpContainerBackend:
         )
         dockerSocket.map { ds =>
             podmanSocket.map { ps =>
-                Chunk.from(ps.toList ++ ds.toList)
+                ps.toList ++ ds.toList
             }
         }
     end discoverSocketsViaCli

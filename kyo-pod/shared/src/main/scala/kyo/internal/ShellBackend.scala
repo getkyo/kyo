@@ -14,7 +14,7 @@ import kyo.*
   * @see
   *   [[ContainerBackend.detect]] auto-detection logic
   */
-private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
+final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
 
     import Container.*
     import ShellBackend.*
@@ -37,12 +37,12 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
                 }
             case Config.Mount.Volume(name, target, readOnly) =>
                 val ro = if readOnly then ":ro" else ""
-                Chunk("-v", s"${name.value}:${target}$ro"): Chunk[String] < (Async & Abort[ContainerException])
+                Chunk("-v", s"${name.value}:${target}$ro"): Seq[String] < (Async & Abort[ContainerException])
             case Config.Mount.Tmpfs(target, sizeBytes) =>
                 Chunk(
                     "--tmpfs",
                     sizeBytes.map(s => s"${target}:size=$s").getOrElse(target.toString)
-                ): Chunk[String] < (Async & Abort[ContainerException])
+                ): Seq[String] < (Async & Abort[ContainerException])
         }.map { mountArgs =>
             // Build base args
             val args = Chunk("create") ++
@@ -355,6 +355,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
             Result.catching[NumberFormatException](dto.PIDs.trim.toLong).getOrElse(0L)
 
         Stats(
+            // Non-effectful Java interop boundary: timestamp for stats snapshot
             readAt = Instant.fromJava(java.time.Instant.now()),
             cpu = Stats.Cpu(
                 totalUsage = Absent,
@@ -405,6 +406,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
         else 0
 
         Stats(
+            // Non-effectful Java interop boundary: timestamp for stats snapshot
             readAt = Instant.fromJava(java.time.Instant.now()),
             cpu = Stats.Cpu(
                 totalUsage = if dto.CPUNano > 0 then Present(dto.CPUNano) else Absent,
@@ -885,7 +887,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
                     end if
                 end val
                 // Extract just the filename from the full path
-                val baseName = name.split("/").lastOption.getOrElse(name)
+                val baseName = Maybe.fromOption(name.split("/").lastOption).getOrElse(name)
                 Result.catching[NumberFormatException] {
                     FileStat(
                         name = baseName,
@@ -904,7 +906,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
                 end match
             else
                 FileStat(
-                    name = containerPath.toString.split("/").lastOption.getOrElse(containerPath.toString),
+                    name = Maybe.fromOption(containerPath.toString.split("/").lastOption).getOrElse(containerPath.toString),
                     size = 0,
                     mode = 0,
                     modifiedAt = Instant.Epoch,
@@ -970,7 +972,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
         val args = Chunk("network", "connect") ++
-            Chunk.from(aliases.flatMap(a => Seq("--alias", a))) ++
+            aliases.flatMap(a => Chunk("--alias", a)) ++
             Chunk(networkId.value) ++
             Chunk(id.value)
         runUnit(args.toSeq*)
@@ -994,7 +996,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
         val args = Chunk("ps") ++
             (if all then Chunk("--all") else Chunk.empty) ++
             Chunk.from(filters.toSeq.flatMap { case (k, vs) =>
-                vs.flatMap(v => Seq("--filter", s"$k=$v"))
+                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             }) ++
             Chunk("--no-trunc", "--format", "{{json .}}")
         run(args.toSeq*).map { output =>
@@ -1018,7 +1020,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
     end list
 
     /** Parse a single Docker port entry like "0.0.0.0:8080->80/tcp", ":::8080->80/tcp", or "80/tcp". */
-    private def parseDockerPortEntry(entry: String): Option[Config.PortBinding] =
+    private def parseDockerPortEntry(entry: String): Maybe[Config.PortBinding] =
         // Split protocol: "0.0.0.0:8080->80/tcp" -> ("0.0.0.0:8080->80", "tcp")
         val slashIdx      = entry.lastIndexOf('/')
         val (main, proto) = if slashIdx >= 0 then (entry.substring(0, slashIdx), entry.substring(slashIdx + 1)) else (entry, "tcp")
@@ -1037,16 +1039,16 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
             if lastColon >= 0 then
                 val hostIp   = hostPart.substring(0, lastColon)
                 val hostPort = hostPart.substring(lastColon + 1).toIntOption.getOrElse(0)
-                Some(Config.PortBinding(
+                Present(Config.PortBinding(
                     containerPort = containerPort,
                     hostPort = hostPort,
                     hostIp = if hostIp.nonEmpty then hostIp else "",
                     protocol = protocol
                 ))
             else
-                // No colon in host part — shouldn't happen, but handle gracefully
+                // No colon in host part -- handle gracefully
                 val hostPort = hostPart.toIntOption.getOrElse(0)
-                Some(Config.PortBinding(
+                Present(Config.PortBinding(
                     containerPort = containerPort,
                     hostPort = hostPort,
                     protocol = protocol
@@ -1054,9 +1056,9 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
             end if
         else
             // No host mapping: just "80" (containerPort only)
-            main.toIntOption.map { containerPort =>
+            Maybe.fromOption(main.toIntOption.map { containerPort =>
                 Config.PortBinding(containerPort = containerPort, protocol = protocol)
-            }
+            })
         end if
     end parseDockerPortEntry
 
@@ -1071,7 +1073,9 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
         val createdAt = if dto.CreatedAt.nonEmpty then parseTimestamp(dto.CreatedAt) else Instant.Epoch
         val ports =
             if dto.Ports.nonEmpty then
-                Chunk.from(dto.Ports.split(",").iterator.map(_.trim).filter(_.nonEmpty).flatMap(parseDockerPortEntry).toSeq)
+                Chunk.from(dto.Ports.split(",").iterator.map(_.trim).filter(_.nonEmpty).map(parseDockerPortEntry).collect {
+                    case Present(pb) => pb
+                }.toSeq)
             else Chunk.empty[Config.PortBinding]
         val mounts =
             if dto.Mounts.nonEmpty then Chunk.from(dto.Mounts.split(",").map(_.trim).filter(_.nonEmpty))
@@ -1133,7 +1137,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
     def prune(filters: Map[String, Seq[String]])(using Frame): PruneResult < (Async & Abort[ContainerException]) =
         val args = Chunk("container", "prune", "-f") ++
             Chunk.from(filters.toSeq.flatMap { case (k, vs) =>
-                vs.flatMap(v => Seq("--filter", s"$k=$v"))
+                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             })
         run(args.toSeq*).map { output =>
             // Parse prune output: lists deleted container IDs, then space reclaimed
@@ -1237,7 +1241,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
         val args = Chunk("images") ++
             (if all then Chunk("--all") else Chunk.empty) ++
             Chunk.from(filters.toSeq.flatMap { case (k, vs) =>
-                vs.flatMap(v => Seq("--filter", s"$k=$v"))
+                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             }) ++
             Chunk("--format", "{{json .}}")
         run(args.toSeq*).map { output =>
@@ -1365,7 +1369,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
     )(using Frame): Stream[ContainerImage.BuildProgress, Async & Abort[ContainerException]] =
         Stream {
             val args = Chunk("build") ++
-                Chunk.from(tags.flatMap(t => Seq("-t", t))) ++
+                tags.flatMap(t => Chunk("-t", t)) ++
                 (if dockerfile != "Dockerfile" then Chunk("-f", dockerfile) else Chunk.empty) ++
                 Chunk.from(buildArgs.toSeq.flatMap { case (k, v) => Seq("--build-arg", s"$k=$v") }) ++
                 Chunk.from(labels.toSeq.flatMap { case (k, v) => Seq("--label", s"$k=$v") }) ++
@@ -1414,7 +1418,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
         val args = Chunk("search") ++
             (if limit != Int.MaxValue then Chunk("--limit", limit.toString) else Chunk.empty) ++
             Chunk.from(filters.toSeq.flatMap { case (k, vs) =>
-                vs.flatMap(v => Seq("--filter", s"$k=$v"))
+                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             }) ++
             Chunk("--format", "{{json .}}") ++
             Chunk(term)
@@ -1482,7 +1486,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
     def imagePrune(filters: Map[String, Seq[String]])(using Frame): PruneResult < (Async & Abort[ContainerException]) =
         val args = Chunk("image", "prune", "-f") ++
             Chunk.from(filters.toSeq.flatMap { case (k, vs) =>
-                vs.flatMap(v => Seq("--filter", s"$k=$v"))
+                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             })
         run(args.toSeq*).map { output =>
             val lines = output.split("\n")
@@ -1548,7 +1552,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
     ): Chunk[Network.Info] < (Async & Abort[ContainerException]) =
         val args = Chunk("network", "ls") ++
             Chunk.from(filters.toSeq.flatMap { case (k, vs) =>
-                vs.flatMap(v => Seq("--filter", s"$k=$v"))
+                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             }) ++
             Chunk("--format", "{{json .}}")
         run(args.toSeq*).map { output =>
@@ -1654,7 +1658,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
         val args = Chunk("network", "connect") ++
-            Chunk.from(aliases.flatMap(a => Seq("--alias", a))) ++
+            aliases.flatMap(a => Chunk("--alias", a)) ++
             Chunk(network.value) ++
             Chunk(container.value)
         runUnit(args.toSeq*)
@@ -1675,7 +1679,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
     ): Chunk[Network.Id] < (Async & Abort[ContainerException]) =
         val args = Chunk("network", "prune", "-f") ++
             Chunk.from(filters.toSeq.flatMap { case (k, vs) =>
-                vs.flatMap(v => Seq("--filter", s"$k=$v"))
+                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             })
         run(args.toSeq*).map { output =>
             Chunk.from(output.split("\n")
@@ -1705,7 +1709,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
     ): Chunk[Volume.Info] < (Async & Abort[ContainerException]) =
         val args = Chunk("volume", "ls") ++
             Chunk.from(filters.toSeq.flatMap { case (k, vs) =>
-                vs.flatMap(v => Seq("--filter", s"$k=$v"))
+                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             }) ++
             Chunk("--format", "{{json .}}")
         run(args.toSeq*).map { output =>
@@ -1784,7 +1788,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
     def volumePrune(filters: Map[String, Seq[String]])(using Frame): PruneResult < (Async & Abort[ContainerException]) =
         val args = Chunk("volume", "prune", "-f") ++
             Chunk.from(filters.toSeq.flatMap { case (k, vs) =>
-                vs.flatMap(v => Seq("--filter", s"$k=$v"))
+                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             })
         run(args.toSeq*).map { output =>
             val lines   = output.split("\n")
@@ -1808,7 +1812,7 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
         ).flatten)
 
         // Find first existing config path using kyo Path.exists
-        def findExisting(paths: Chunk[String]): Maybe[String] < Sync =
+        def findExisting(paths: Seq[String]): Maybe[String] < Sync =
             if paths.isEmpty then Absent
             else
                 val head = paths.head
@@ -1888,9 +1892,9 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
     private def mapError(output: String, args: Seq[String])(using Frame): ContainerException =
         // Normalize
         val lower  = output.toLowerCase
-        val target = args.lastOption.getOrElse("unknown")
+        val target = Maybe.fromOption(args.lastOption).getOrElse("unknown")
 
-        def matchesAny(patterns: Chunk[String]): Boolean =
+        def matchesAny(patterns: Seq[String]): Boolean =
             patterns.exists(lower.contains)
 
         // Match patterns
@@ -1913,7 +1917,8 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
         else if matchesAny(ErrorPatterns.PortConflict) then
             // Try to extract port number from output
             val portPattern = """(\d+)""".r
-            val port        = portPattern.findFirstIn(output.split("port").lastOption.getOrElse("")).flatMap(_.toIntOption).getOrElse(0)
+            val port =
+                portPattern.findFirstIn(Maybe.fromOption(output.split("port").lastOption).getOrElse("")).flatMap(_.toIntOption).getOrElse(0)
             ContainerException.PortConflict(port, output)
         else if matchesAny(ErrorPatterns.AuthFailed) then
             ContainerException.AuthenticationError(target, output)
@@ -1932,44 +1937,44 @@ private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
       */
     private object ErrorPatterns:
         /** Container not found — Docker: "No such container", Podman: "no such container", "no such object" */
-        val NoSuchContainer: Chunk[String] =
-            Chunk("no such container", "no such object", "no container with name or id")
+        val NoSuchContainer: Seq[String] =
+            Seq("no such container", "no such object", "no container with name or id")
 
         /** Image not found — Docker: "manifest unknown", Podman: "image not found" */
-        val ImageNotFound: Chunk[String] =
-            Chunk("no such image", "image not found", "manifest unknown", "requested access to the resource is denied")
+        val ImageNotFound: Seq[String] =
+            Seq("no such image", "image not found", "manifest unknown", "requested access to the resource is denied")
 
         /** Name/ID conflict — Docker & Podman both use "conflict" or "already in use" */
-        val Conflict: Chunk[String] =
-            Chunk("conflict", "already in use", "name is already in use")
+        val Conflict: Seq[String] =
+            Seq("conflict", "already in use", "name is already in use")
 
         /** Container already running — Docker: "is already running", Podman: "container already started" */
-        val AlreadyRunning: Chunk[String] =
-            Chunk("is already running", "container already started")
+        val AlreadyRunning: Seq[String] =
+            Seq("is already running", "container already started")
 
         /** Container already stopped — Docker: "is not running", Podman: "already stopped" */
-        val AlreadyStopped: Chunk[String] =
-            Chunk("is not running", "already stopped", "is already stopped", "container already stopped")
+        val AlreadyStopped: Seq[String] =
+            Seq("is not running", "already stopped", "is already stopped", "container already stopped")
 
         /** Volume not found — Docker & Podman */
-        val VolumeNotFound: Chunk[String] =
-            Chunk("no such volume", "volume not found")
+        val VolumeNotFound: Seq[String] =
+            Seq("no such volume", "volume not found")
 
         /** Backend unavailable — Docker daemon not running or socket not reachable */
-        val BackendUnavailable: Chunk[String] =
-            Chunk("cannot connect", "connection refused", "is the docker daemon running")
+        val BackendUnavailable: Seq[String] =
+            Seq("cannot connect", "connection refused", "is the docker daemon running")
 
         /** Port conflict — address already bound */
-        val PortConflict: Chunk[String] =
-            Chunk("port is already allocated", "address already in use", "bind: address already in use")
+        val PortConflict: Seq[String] =
+            Seq("port is already allocated", "address already in use", "bind: address already in use")
 
         /** Authentication failures — registry auth required */
-        val AuthFailed: Chunk[String] =
-            Chunk("unauthorized", "authentication required", "insufficient_scope", "denied")
+        val AuthFailed: Seq[String] =
+            Seq("unauthorized", "authentication required", "insufficient_scope", "denied")
 
         /** Volume in use — cannot remove a volume that is referenced by containers */
-        val VolumeInUse: Chunk[String] =
-            Chunk("volume is in use", "volume being used")
+        val VolumeInUse: Seq[String] =
+            Seq("volume is in use", "volume being used")
     end ErrorPatterns
 
     /** Decode JSON using a Json[A] instance, stripping outer array brackets if present. */

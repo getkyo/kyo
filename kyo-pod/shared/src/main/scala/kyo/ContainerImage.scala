@@ -52,6 +52,82 @@ end ContainerImage
 
 object ContainerImage:
 
+    // --- Factory methods ---
+
+    def apply(name: String): ContainerImage              = new ContainerImage(name, tag = Present("latest"))
+    def apply(name: String, tag: String): ContainerImage = new ContainerImage(name, tag = Present(tag))
+
+    /** Parse a Docker image reference string into a ContainerImage.
+      *
+      * Supports formats like:
+      *   - "alpine" -> name=alpine, tag=latest
+      *   - "alpine:3.19" -> name=alpine, tag=3.19
+      *   - "myregistry.com:5000/myapp:v1" -> registry=myregistry.com:5000, name=myapp, tag=v1
+      *   - "ghcr.io/owner/repo:v1.2.3" -> registry=ghcr.io, namespace=owner, name=repo, tag=v1.2.3
+      *   - "myapp@sha256:abc123" -> name=myapp, digest=sha256:abc123
+      */
+    def parse(ref: String): Result[String, ContainerImage] =
+        if ref.isEmpty then Result.fail("Empty image reference")
+        else
+            // Split off digest if present
+            val (beforeDigest, digestPart) = ref.indexOf('@') match
+                case -1  => (ref, Absent: Maybe[String])
+                case idx => (ref.substring(0, idx), Present(ref.substring(idx + 1)))
+
+            // Split off tag if present and no digest
+            val (beforeTag, tagPart) =
+                if digestPart.nonEmpty then (beforeDigest, Absent: Maybe[String])
+                else
+                    // Find last colon that's not part of a registry port
+                    // Registry ports look like "host:port/" - colon followed by digits then /
+                    val lastColon = beforeDigest.lastIndexOf(':')
+                    if lastColon == -1 then (beforeDigest, Absent: Maybe[String])
+                    else
+                        val afterColon = beforeDigest.substring(lastColon + 1)
+                        // If there's a / after the colon, it's a registry:port, not a tag
+                        if afterColon.contains('/') then (beforeDigest, Absent: Maybe[String])
+                        else (beforeDigest.substring(0, lastColon), Present(afterColon))
+                    end if
+
+            // Parse the path components: registry/namespace/name or namespace/name or name
+            val parts = beforeTag.split("/").toSeq
+            val (registryVal, namespaceVal, nameVal) = parts match
+                case Seq(single) => (Absent: Maybe[Registry], Absent: Maybe[String], single)
+                case Seq(first, rest*) if first.contains('.') || first.contains(':') =>
+                    // First segment looks like a registry (has dots or port)
+                    rest match
+                        case Seq(name)      => (Present(Registry(first)), Absent: Maybe[String], name)
+                        case Seq(ns, name)  => (Present(Registry(first)), Present(ns), name)
+                        case Seq(ns, more*) => (Present(Registry(first)), Present(ns), more.mkString("/"))
+                        case _              => (Absent: Maybe[Registry], Absent: Maybe[String], first)
+                case Seq(first, name)            => (Absent: Maybe[Registry], Present(first), name)
+                case Seq(first, ns, name, rest*) =>
+                    // If first segment looks like a registry
+                    if first.contains('.') || first.contains(':') then
+                        (Present(Registry(first)), Present(ns), (Seq(name) ++ rest).mkString("/"))
+                    else
+                        (Absent: Maybe[Registry], Present(first), (Seq(ns, name) ++ rest).mkString("/"))
+                case _ => (Absent: Maybe[Registry], Absent: Maybe[String], beforeTag)
+
+            val finalTag = (tagPart, digestPart) match
+                case (Absent, Absent) => Present("latest")
+                case _                => tagPart
+
+            val finalDigest = digestPart.map(d => Digest(d))
+
+            Result.succeed(new ContainerImage(nameVal, namespaceVal, registryVal, finalTag, finalDigest))
+        end if
+    end parse
+
+    // --- Predefined images ---
+
+    val Alpine   = new ContainerImage("alpine", Present("library"), Present(Registry.DockerHub), Present("latest"))
+    val Ubuntu   = new ContainerImage("ubuntu", Present("library"), Present(Registry.DockerHub), Present("latest"))
+    val BusyBox  = new ContainerImage("busybox", Present("library"), Present(Registry.DockerHub), Present("latest"))
+    val Nginx    = new ContainerImage("nginx", Present("library"), Present(Registry.DockerHub), Present("latest"))
+    val Postgres = new ContainerImage("postgres", Present("library"), Present(Registry.DockerHub), Present("latest"))
+    val Redis    = new ContainerImage("redis", Present("library"), Present(Registry.DockerHub), Present("latest"))
+
     // --- Operations ---
 
     /** Pull an image from a registry. Checks locally first. */
@@ -185,82 +261,6 @@ object ContainerImage:
             currentBackend.map(_.imagePullWithProgress(image, platform, auth).emit)
         }
 
-    // --- Factory methods ---
-
-    def apply(name: String): ContainerImage              = new ContainerImage(name, tag = Present("latest"))
-    def apply(name: String, tag: String): ContainerImage = new ContainerImage(name, tag = Present(tag))
-
-    /** Parse a Docker image reference string into a ContainerImage.
-      *
-      * Supports formats like:
-      *   - "alpine" -> name=alpine, tag=latest
-      *   - "alpine:3.19" -> name=alpine, tag=3.19
-      *   - "myregistry.com:5000/myapp:v1" -> registry=myregistry.com:5000, name=myapp, tag=v1
-      *   - "ghcr.io/owner/repo:v1.2.3" -> registry=ghcr.io, namespace=owner, name=repo, tag=v1.2.3
-      *   - "myapp@sha256:abc123" -> name=myapp, digest=sha256:abc123
-      */
-    def parse(ref: String): Result[String, ContainerImage] =
-        if ref.isEmpty then Result.fail("Empty image reference")
-        else
-            // Split off digest if present
-            val (beforeDigest, digestPart) = ref.indexOf('@') match
-                case -1  => (ref, Absent: Maybe[String])
-                case idx => (ref.substring(0, idx), Present(ref.substring(idx + 1)))
-
-            // Split off tag if present and no digest
-            val (beforeTag, tagPart) =
-                if digestPart.nonEmpty then (beforeDigest, Absent: Maybe[String])
-                else
-                    // Find last colon that's not part of a registry port
-                    // Registry ports look like "host:port/" - colon followed by digits then /
-                    val lastColon = beforeDigest.lastIndexOf(':')
-                    if lastColon == -1 then (beforeDigest, Absent: Maybe[String])
-                    else
-                        val afterColon = beforeDigest.substring(lastColon + 1)
-                        // If there's a / after the colon, it's a registry:port, not a tag
-                        if afterColon.contains('/') then (beforeDigest, Absent: Maybe[String])
-                        else (beforeDigest.substring(0, lastColon), Present(afterColon))
-                    end if
-
-            // Parse the path components: registry/namespace/name or namespace/name or name
-            val parts = beforeTag.split("/").toList
-            val (registryVal, namespaceVal, nameVal) = parts match
-                case single :: Nil                                               => (Absent: Maybe[Registry], Absent: Maybe[String], single)
-                case first :: rest if first.contains('.') || first.contains(':') =>
-                    // First segment looks like a registry (has dots or port)
-                    rest match
-                        case name :: Nil       => (Present(Registry(first)), Absent: Maybe[String], name)
-                        case ns :: name :: Nil => (Present(Registry(first)), Present(ns), name)
-                        case ns :: more        => (Present(Registry(first)), Present(ns), more.mkString("/"))
-                        case Nil               => (Absent: Maybe[Registry], Absent: Maybe[String], first)
-                case first :: name :: Nil        => (Absent: Maybe[Registry], Present(first), name)
-                case first :: ns :: name :: rest =>
-                    // If first segment looks like a registry
-                    if first.contains('.') || first.contains(':') then
-                        (Present(Registry(first)), Present(ns), (name :: rest).mkString("/"))
-                    else
-                        (Absent: Maybe[Registry], Present(first), (ns :: name :: rest).mkString("/"))
-                case _ => (Absent: Maybe[Registry], Absent: Maybe[String], beforeTag)
-
-            val finalTag = (tagPart, digestPart) match
-                case (Absent, Absent) => Present("latest")
-                case _                => tagPart
-
-            val finalDigest = digestPart.map(d => Digest(d))
-
-            Result.succeed(new ContainerImage(nameVal, namespaceVal, registryVal, finalTag, finalDigest))
-        end if
-    end parse
-
-    // --- Predefined images ---
-
-    val Alpine   = new ContainerImage("alpine", Present("library"), Present(Registry.DockerHub), Present("latest"))
-    val Ubuntu   = new ContainerImage("ubuntu", Present("library"), Present(Registry.DockerHub), Present("latest"))
-    val BusyBox  = new ContainerImage("busybox", Present("library"), Present(Registry.DockerHub), Present("latest"))
-    val Nginx    = new ContainerImage("nginx", Present("library"), Present(Registry.DockerHub), Present("latest"))
-    val Postgres = new ContainerImage("postgres", Present("library"), Present(Registry.DockerHub), Present("latest"))
-    val Redis    = new ContainerImage("redis", Present("library"), Present(Registry.DockerHub), Present("latest"))
-
     // --- Nested types ---
 
     opaque type Registry = String
@@ -330,7 +330,7 @@ object ContainerImage:
         createdAt: Instant,
         createdBy: String,
         size: Long,
-        tags: Chunk[String],
+        tags: Seq[String],
         comment: String
     ) derives CanEqual
 
@@ -362,6 +362,7 @@ object ContainerImage:
             password: String,
             server: String = "https://index.docker.io/v1/"
         ): RegistryAuth =
+            // Java interop boundary: Base64 encoding for Docker registry authentication
             RegistryAuth(Map(Registry(server) -> java.util.Base64.getEncoder.encodeToString(s"$username:$password".getBytes)))
     end RegistryAuth
 

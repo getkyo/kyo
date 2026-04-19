@@ -48,6 +48,7 @@ final class Container private[kyo] (
     def start(using Frame): Unit < (Async & Abort[ContainerException]) =
         backend.start(id)
 
+    /** Send SIGTERM and wait 3 seconds for graceful shutdown. */
     def stop(using Frame): Unit < (Async & Abort[ContainerException]) =
         stop(3.seconds)
 
@@ -55,6 +56,7 @@ final class Container private[kyo] (
     def stop(timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException]) =
         backend.stop(id, timeout)
 
+    /** Send SIGTERM to the container process. */
     def kill(using Frame): Unit < (Async & Abort[ContainerException]) =
         kill(Signal.SIGTERM)
 
@@ -62,6 +64,7 @@ final class Container private[kyo] (
     def kill(signal: Signal)(using Frame): Unit < (Async & Abort[ContainerException]) =
         backend.kill(id, signal)
 
+    /** Restart with a 3-second stop timeout. */
     def restart(using Frame): Unit < (Async & Abort[ContainerException]) =
         restart(3.seconds)
 
@@ -77,6 +80,7 @@ final class Container private[kyo] (
     def unpause(using Frame): Unit < (Async & Abort[ContainerException]) =
         backend.unpause(id)
 
+    /** Remove this container (must be stopped). */
     def remove(using Frame): Unit < (Async & Abort[ContainerException]) =
         remove(force = false, removeVolumes = false)
 
@@ -130,6 +134,7 @@ final class Container private[kyo] (
     def stats(using Frame): Stats < (Async & Abort[ContainerException]) =
         backend.stats(id)
 
+    /** Continuous resource usage polling at 200ms intervals. */
     def statsStream(using Frame): Stream[Stats, Async & Abort[ContainerException]] =
         statsStream(200.millis)
 
@@ -137,6 +142,7 @@ final class Container private[kyo] (
     def statsStream(interval: Duration)(using Frame): Stream[Stats, Async & Abort[ContainerException]] =
         backend.statsStream(id, interval)
 
+    /** List running processes with default ps arguments. */
     def top(using Frame): TopResult < (Async & Abort[ContainerException]) =
         top("aux")
 
@@ -272,8 +278,9 @@ final class Container private[kyo] (
 
     // --- Resource updates ---
 
+    /** Update resource limits on a running container without restarting it. No-arg overload is a no-op. */
     def update(using Frame): Unit < (Async & Abort[ContainerException]) =
-        update(memory = Absent, memorySwap = Absent, cpuLimit = Absent, cpuAffinity = Absent, maxProcesses = Absent, restartPolicy = Absent)
+        update(Absent)
 
     /** Update resource limits on a running container without restarting it. Only provided fields are changed. */
     def update(
@@ -289,7 +296,9 @@ final class Container private[kyo] (
     // --- Network ---
 
     /** Attach this container to a network, optionally with DNS aliases. */
-    def connectToNetwork(networkId: Network.Id, aliases: Seq[String] = Seq.empty)(using Frame): Unit < (Async & Abort[ContainerException]) =
+    def connectToNetwork(networkId: Network.Id, aliases: Seq[String] = Seq.empty)(using
+        Frame
+    ): Unit < (Async & Abort[ContainerException]) =
         backend.connectToNetwork(id, networkId, aliases)
 
     /** Detach this container from a network. */
@@ -351,7 +360,7 @@ object Container:
         image: ContainerImage,
         command: Command = Command("sh", "-c", "trap 'exit 0' TERM; sleep infinity"),
         name: Maybe[String] = Absent,
-        ports: Seq[(Int, Int)] = Seq.empty,
+        ports: Chunk[(Int, Int)] = Chunk.empty,
         healthCheck: HealthCheck = HealthCheck.default
     )(using Frame): Container < (Async & Abort[ContainerException] & Scope) =
         val portBindings = Chunk.from(ports.map { case (container, host) => Config.PortBinding(container, host) })
@@ -453,7 +462,7 @@ object Container:
         ports: Chunk[Config.PortBinding] = Chunk.empty,
         mounts: Chunk[Config.Mount] = Chunk.empty,
         networkMode: Maybe[Config.NetworkMode] = Absent,
-        dns: Chunk[String] = Chunk.empty,
+        dns: Seq[String] = Seq.empty,
         extraHosts: Chunk[Config.ExtraHost] = Chunk.empty,
         // Resource limits
         memory: Maybe[Long] = Absent,
@@ -734,11 +743,11 @@ object Container:
 
     // --- TopResult ---
 
-    case class TopResult(titles: Chunk[String], processes: Chunk[Chunk[String]]) derives CanEqual
+    case class TopResult(titles: Seq[String], processes: Seq[Seq[String]]) derives CanEqual
 
     // --- PruneResult ---
 
-    case class PruneResult(deleted: Chunk[String], spaceReclaimed: Long) derives CanEqual
+    case class PruneResult(deleted: Seq[String], spaceReclaimed: Long) derives CanEqual
 
     // --- ExecResult ---
 
@@ -859,7 +868,7 @@ object Container:
 
     case class Summary(
         id: Id,
-        names: Chunk[String],
+        names: Seq[String],
         image: ContainerImage,
         imageId: ContainerImage.Id,
         command: String,
@@ -867,7 +876,7 @@ object Container:
         status: String,
         ports: Chunk[Config.PortBinding],
         labels: Map[String, String],
-        mounts: Chunk[String],
+        mounts: Seq[String],
         createdAt: Instant
     ) derives CanEqual
 
@@ -1227,10 +1236,13 @@ object Container:
         given Render[Platform] = Render.from(_.reference)
 
         def parse(ref: String): Result[String, Platform] =
-            ref.split("/").toList match
-                case os :: arch :: Nil            => Result.succeed(Platform(os, arch))
-                case os :: arch :: variant :: Nil => Result.succeed(Platform(os, arch, Present(variant)))
-                case _                            => Result.fail(s"Invalid platform: $ref")
+            val parts = ref.split("/")
+            parts.length match
+                case 2 => Result.succeed(Platform(parts(0), parts(1)))
+                case 3 => Result.succeed(Platform(parts(0), parts(1), Present(parts(2))))
+                case _ => Result.fail(s"Invalid platform: $ref")
+            end match
+        end parse
 
         // Linux
         val LinuxAmd64    = Platform("linux", "amd64")
@@ -1327,7 +1339,7 @@ object Container:
                     def loop(
                         schedule: Schedule,
                         attempts: Int,
-                        recentErrors: Chunk[String]
+                        recentErrors: Seq[String]
                     ): Unit < (Async & Abort[ContainerException]) =
                         Abort.runWith[ContainerException](hc.check(container)) {
                             case Result.Success(_) =>
@@ -1338,8 +1350,8 @@ object Container:
                                     case _                 => "unknown error"
                                 // Keep last 5 errors for diagnostics
                                 val updatedErrors =
-                                    if recentErrors.length >= 5 then recentErrors.tail.append(errorMsg)
-                                    else recentErrors.append(errorMsg)
+                                    if recentErrors.length >= 5 then recentErrors.tail :+ errorMsg
+                                    else recentErrors :+ errorMsg
                                 val nextAttempts = attempts + 1
                                 // Check if container is still running before retrying
                                 Abort.runWith[ContainerException](container.backend.state(container.id)) {
@@ -1355,14 +1367,14 @@ object Container:
                                                     val elapsedStr =
                                                         if elapsed >= 1000 then s"${elapsed / 1000}s"
                                                         else s"${elapsed}ms"
-                                                    val errorsStr = updatedErrors.toSeq.map(e => s"[$e]").mkString(" ")
+                                                    val errorsStr = updatedErrors.map(e => s"[$e]").mkString(" ")
                                                     val msg = s"Health check failed for container ${container.id.value} " +
                                                         s"after $nextAttempts attempts ($elapsedStr). Last errors: $errorsStr"
                                                     Abort.fail(ContainerException.General(msg, "health check exhausted"))
                                         }
                                 }
                         }
-                    loop(hc.schedule, 0, Chunk.empty)
+                    loop(hc.schedule, 0, Seq.empty)
                 }
         }
 
