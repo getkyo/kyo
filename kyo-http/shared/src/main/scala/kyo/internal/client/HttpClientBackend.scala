@@ -37,6 +37,11 @@ final private[kyo] class HttpClientBackend[Handle] private (
     private val CrLf          = Span.fromUnsafe(Http1StreamContext.CRLF)
     private val TerminalChunk = Span.fromUnsafe(Http1StreamContext.LAST_CHUNK)
 
+    private def hostPort(url: HttpUrl): (String, Int) =
+        url.unixSocket match
+            case Present(path) => (s"unix:$path", 0)
+            case Absent        => (url.host, url.port)
+
     def connect(url: HttpUrl, connectTimeout: Duration, tlsConfig: HttpTlsConfig)(using
         AllowUnsafe,
         Frame
@@ -72,8 +77,9 @@ final private[kyo] class HttpClientBackend[Handle] private (
                             resultPromise.completeDiscard(Result.panic(t))
                     end try
                 case Result.Failure(closed) =>
+                    val (h, p) = hostPort(url)
                     resultPromise.completeDiscard(
-                        Result.fail(HttpConnectException(url.host, url.port, new IOException(closed.getMessage)))
+                        Result.fail(HttpConnectException(h, p, new IOException(closed.getMessage)))
                     )
                 case Result.Panic(t) =>
                     resultPromise.completeDiscard(Result.panic(t))
@@ -478,9 +484,10 @@ final private[kyo] class HttpClientBackend[Handle] private (
     )(
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        val host = url.host
-        val port = url.port
-        val ssl  = url.ssl
+        val host     = url.host
+        val port     = url.port
+        val ssl      = url.ssl
+        val (eh, ep) = hostPort(url)
 
         val connectFiber = Sync.Unsafe.defer {
             (url.unixSocket, ssl) match
@@ -496,11 +503,11 @@ final private[kyo] class HttpClientBackend[Handle] private (
             case Result.Success(connection) =>
                 runWsSessionWith(connection, url, headers, config)(f)
             case Result.Failure(_: Timeout) =>
-                Abort.fail(HttpConnectTimeoutException(host, port, connectTimeout))
+                Abort.fail(HttpConnectTimeoutException(eh, ep, connectTimeout))
             case Result.Failure(closed: Closed) =>
                 Abort.fail(HttpConnectException(
-                    host,
-                    port,
+                    eh,
+                    ep,
                     new IOException(Option(closed.getMessage).getOrElse("Connection closed"))
                 ))
             case Result.Panic(t) => throw t
@@ -743,9 +750,10 @@ final private[kyo] class HttpClientBackend[Handle] private (
                             }
                         }
                     else
+                        val (h, p) = hostPort(url)
                         Abort.fail(HttpPoolExhaustedException(
-                            url.host,
-                            url.port,
+                            h,
+                            p,
                             maxConnectionsPerHost,
                             clientFrame
                         ))

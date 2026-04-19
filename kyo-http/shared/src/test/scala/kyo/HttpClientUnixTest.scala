@@ -756,6 +756,54 @@ class HttpClientUnixTest extends Test with internal.UnixSocketTestHelperImpl:
         }
     }
 
+    // ── Unix Socket Error Messages ────────────────────────────────────────────
+
+    "unix socket error messages" - {
+
+        "unix socket connect failure mentions socket path" in run {
+            val socketPath = "/tmp/kyo-nonexistent-test.sock"
+            val url        = mkUrl(socketPath, "/test")
+            Abort.run[HttpException] {
+                HttpClient.getText(url)
+            }.map { result =>
+                assert(result.isFailure)
+                val msg = result.failure.get.getMessage
+                assert(msg.contains(socketPath), s"Expected message to contain '$socketPath' but got: $msg")
+            }
+        }
+
+        "unix socket connect failure does not say localhost" in run {
+            val socketPath = "/tmp/kyo-nonexistent-test.sock"
+            val url        = mkUrl(socketPath, "/test")
+            Abort.run[HttpException] {
+                HttpClient.getText(url)
+            }.map { result =>
+                assert(result.isFailure)
+                val msg = result.failure.get.getMessage
+                assert(!msg.contains("localhost"), s"Expected message to NOT contain 'localhost' but got: $msg")
+            }
+        }
+
+        "unix socket timeout mentions socket path" in run {
+            val route = HttpRoute.getRaw("slow").response(_.bodyText)
+            val handler = route.handler { _ =>
+                Async.sleep(10.seconds).andThen(HttpResponse.ok("done"))
+            }
+            withUnixServer(handler) { (server, sockPath) =>
+                val url = mkUrl(sockPath, "/slow")
+                Abort.run[HttpException] {
+                    HttpClient.withConfig(_.timeout(100.millis)) {
+                        HttpClient.getText(url)
+                    }
+                }.map { result =>
+                    assert(result.isFailure)
+                    val msg = result.failure.get.getMessage
+                    assert(!msg.contains("localhost"), s"Expected message to NOT contain 'localhost' but got: $msg")
+                }
+            }
+        }
+    }
+
     // ── Error Recovery ───────────────────────────────────────────────────────
 
     "error recovery" - {
