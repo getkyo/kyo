@@ -6,6 +6,7 @@
  *   - macOS/BSD: kqueue (sys/event.h)
  *   - Linux: epoll (sys/epoll.h)
  */
+#define _GNU_SOURCE
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/resource.h>
