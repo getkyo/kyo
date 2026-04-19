@@ -2357,6 +2357,97 @@ class HttpClientTest extends Test:
             }
         }
 
+        "getStreamBytes returns chunks" - {
+            val route = HttpRoute.getRaw("bytes").response(_.bodyStream)
+            val ep = route.handler { _ =>
+                HttpResponse.ok.addField(
+                    "body",
+                    Stream.init(Seq(
+                        Span.fromUnsafe("hello ".getBytes("UTF-8")),
+                        Span.fromUnsafe("world".getBytes("UTF-8"))
+                    ))
+                )
+            }
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.getStreamBytes(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/bytes").run.map { chunks =>
+                        val text = chunks.foldLeft("")((acc, span) =>
+                            acc + new String(span.toArrayUnsafe, "UTF-8")
+                        )
+                        assert(text.nonEmpty)
+                        assert(text == "hello world")
+                    }
+                }
+            }
+        }
+
+        "getStreamBytes completes when server closes" - {
+            val route = HttpRoute.getRaw("finish").response(_.bodyStream)
+            val ep = route.handler { _ =>
+                HttpResponse.ok.addField(
+                    "body",
+                    Stream.init(Seq(
+                        Span.fromUnsafe("a".getBytes("UTF-8")),
+                        Span.fromUnsafe("b".getBytes("UTF-8")),
+                        Span.fromUnsafe("c".getBytes("UTF-8"))
+                    ))
+                )
+            }
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    HttpClient.getStreamBytes(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/finish").run.map { chunks =>
+                        val text = chunks.foldLeft("")((acc, span) =>
+                            acc + new String(span.toArrayUnsafe, "UTF-8")
+                        )
+                        assert(text == "abc")
+                    }
+                }
+            }
+        }
+
+        "getStreamBytes fails on non-2xx" - {
+            val route = HttpRoute.getRaw("error").response(_.bodyStream)
+            val ep = route.handler { _ =>
+                HttpResponse(HttpStatus.InternalServerError).addField(
+                    "body",
+                    Stream.init(Seq(Span.fromUnsafe("error".getBytes("UTF-8"))))
+                )
+            }
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException] {
+                        HttpClient.getStreamBytes(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/error").run
+                    }.map { result =>
+                        assert(result.isFailure)
+                    }
+                }
+            }
+        }
+
+        "postStreamBytes sends body and streams response" - {
+            val route = HttpRoute.postRaw("echo")
+                .request(_.bodyBinary)
+                .response(_.bodyStream)
+            val ep = route.handler { req =>
+                val body = req.fields.body
+                HttpResponse.ok.addField(
+                    "body",
+                    Stream.init(Seq(body))
+                )
+            }
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    val data = Span.fromUnsafe("streamed echo".getBytes("UTF-8"))
+                    HttpClient.postStreamBytes(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/echo", data).run.map { chunks =>
+                        val text = chunks.foldLeft("")((acc, span) =>
+                            acc + new String(span.toArrayUnsafe, "UTF-8")
+                        )
+                        assert(text == "streamed echo")
+                    }
+                }
+            }
+        }
+
         "invalid URL returns ParseError" in run {
             HttpClient.withConfig(noTimeout) {
                 Abort.run(HttpClient.getText("not a valid url")).map { result =>

@@ -65,6 +65,8 @@ object HttpClient:
     private val routeHeadRaw      = HttpRoute.headRaw("")
     private val routeOptionsRaw   = HttpRoute.optionsRaw("")
     private val routeSseText      = HttpRoute.getRaw("").response(_.bodySseText)
+    private val routeGetStream    = HttpRoute.getRaw("").response(_.bodyStream)
+    private val routePostStream   = HttpRoute.postRaw("").request(_.bodyBinary).response(_.bodyStream)
 
     extension (self: HttpClient)
         /** Sends a typed request using the given route and processes the response with `f`. Applies the current fiber-local configuration
@@ -621,6 +623,40 @@ object HttpClient:
             sendUrlBody(
                 u,
                 HttpRoute.getRaw("").response(_.bodyNdjson[V]),
+                resolveHeaders(headers),
+                resolveQuery(query)
+            )(_.fields.body).map(_.emit)
+        ))
+
+    // --- Byte Stream ---
+
+    /** Streams the response body as raw byte chunks. Fails with HttpStatusException on non-2xx. */
+    def getStreamBytes(
+        url: String | HttpUrl,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame, Tag[Emit[Chunk[Span[Byte]]]]): Stream[Span[Byte], Async & Abort[HttpException]] =
+        Stream(resolveUrl(url).map(u =>
+            sendUrlBody(
+                u,
+                routeGetStream,
+                resolveHeaders(headers),
+                resolveQuery(query)
+            )(_.fields.body).map(_.emit)
+        ))
+
+    /** Streams the response body as raw byte chunks. Fails with HttpStatusException on non-2xx. */
+    def postStreamBytes(
+        url: String | HttpUrl,
+        body: Span[Byte],
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+    )(using Frame, Tag[Emit[Chunk[Span[Byte]]]]): Stream[Span[Byte], Async & Abort[HttpException]] =
+        Stream(resolveUrl(url).map(u =>
+            sendUrlBody(
+                u,
+                routePostStream,
+                body,
                 resolveHeaders(headers),
                 resolveQuery(query)
             )(_.fields.body).map(_.emit)
