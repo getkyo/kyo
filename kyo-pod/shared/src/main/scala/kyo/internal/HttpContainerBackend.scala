@@ -144,11 +144,6 @@ private[kyo] class HttpContainerBackend(
                 s"${name.value}:$target$ro"
         }
 
-        val mountsList = config.mounts.toSeq.collect {
-            case Config.Mount.Volume(name, target, _) =>
-                MountEntry("volume", name.value, target.toString)
-        }
-
         val tmpfs: Map[String, String] = config.mounts.toSeq.collect {
             case Config.Mount.Tmpfs(target, sizeBytes) =>
                 target.toString -> sizeBytes.map(s => s"size=$s").getOrElse("")
@@ -185,7 +180,7 @@ private[kyo] class HttpContainerBackend(
             ReadonlyRootfs = config.readOnlyFilesystem,
             AutoRemove = config.autoRemove,
             RestartPolicy = restartPol,
-            Mounts = mountsList,
+            Mounts = Seq.empty,
             Tmpfs = tmpfs
         )
 
@@ -265,9 +260,14 @@ private[kyo] class HttpContainerBackend(
     // --- Checkpoint/Restore ---
 
     def checkpoint(id: Container.Id, name: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        val body = CheckpointCreateRequest(CheckpointID = name)
+        val body     = CheckpointCreateRequest(CheckpointID = name)
+        val jsonBody = Json[CheckpointCreateRequest].encode(body)
         withErrorMapping(id.value) {
-            HttpClient.postJson[EmptyResponse](url(s"/containers/${id.value}/checkpoints"), body)
+            HttpClient.postText(
+                url(s"/containers/${id.value}/checkpoints"),
+                jsonBody,
+                headers = Seq("Content-Type" -> "application/json")
+            )
         }.unit
     end checkpoint
 
@@ -490,9 +490,28 @@ private[kyo] class HttpContainerBackend(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
         // Create tar archive of the source file, then PUT to /containers/{id}/archive
-        val sourceDir  = source.parent.map(_.toString).getOrElse(".")
-        val sourceFile = source.name.getOrElse(source.toString)
-        val tarCmd     = Command("tar", "-c", "-f", "-", "-C", sourceDir, sourceFile)
+        // Docker API extracts the tar at `path`, so we use the parent directory of containerPath
+        // and rename the file in the tar to match the desired container filename.
+        val sourceDir     = source.parent.map(_.toString).getOrElse(".")
+        val sourceFile    = source.name.getOrElse(source.toString)
+        val containerDir  = containerPath.parent.map(_.toString).getOrElse("/")
+        val containerFile = containerPath.name.getOrElse(containerPath.toString)
+        // BSD tar -s for portable rename when filenames differ
+        val tarCmd =
+            if sourceFile == containerFile then
+                Command("tar", "-c", "-f", "-", "-C", sourceDir, sourceFile)
+            else
+                Command(
+                    "tar",
+                    "-c",
+                    "-f",
+                    "-",
+                    "-s",
+                    s"/$sourceFile/$containerFile/",
+                    "-C",
+                    sourceDir,
+                    sourceFile
+                )
         Scope.run {
             Abort.runWith[CommandException](tarCmd.spawn) {
                 case Result.Success(proc) =>
@@ -500,16 +519,25 @@ private[kyo] class HttpContainerBackend(
                         val tarSpan = Span.from(tarBytes.toArray)
                         withErrorMapping(id.value) {
                             HttpClient.putBinary(
-                                url(s"/containers/${id.value}/archive", "path" -> containerPath.toString),
+                                url(
+                                    s"/containers/${id.value}/archive",
+                                    "path" -> containerDir
+                                ),
                                 tarSpan,
                                 headers = Seq("Content-Type" -> "application/x-tar")
                             )
                         }.map(_ => ())
                     }
                 case Result.Failure(cmdEx) =>
-                    Abort.fail(ContainerException.General(s"Failed to create tar for copyTo: ${id.value}", cmdEx))
+                    Abort.fail(ContainerException.General(
+                        s"Failed to create tar for copyTo: ${id.value}",
+                        cmdEx
+                    ))
                 case Result.Panic(ex) =>
-                    Abort.fail(ContainerException.General(s"Unexpected error creating tar for copyTo: ${id.value}", ex))
+                    Abort.fail(ContainerException.General(
+                        s"Unexpected error creating tar for copyTo: ${id.value}",
+                        ex
+                    ))
             }
         }
     end copyTo
@@ -603,9 +631,14 @@ private[kyo] class HttpContainerBackend(
             PidsLimit = maxProcesses.getOrElse(0L),
             RestartPolicy = restartPol.getOrElse(RestartPolicyEntry("", 0))
         )
+        val jsonBody = Json[UpdateRequest].encode(body)
         withErrorMapping(id.value) {
-            HttpClient.postJson[UpdateResponse](url(s"/containers/${id.value}/update"), body).unit
-        }
+            HttpClient.postText(
+                url(s"/containers/${id.value}/update"),
+                jsonBody,
+                headers = Seq("Content-Type" -> "application/json")
+            )
+        }.unit
     end update
 
     // --- Network on container ---
@@ -690,12 +723,36 @@ private[kyo] class HttpContainerBackend(
     def imagePull(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
+        val ref            = image.reference
         val (nameRef, tag) = splitImageRef(image)
         val params = Seq("fromImage" -> nameRef, "tag" -> tag) ++
             platform.map(p => Seq("platform" -> p.reference)).getOrElse(Seq.empty)
         val headers = authHeaders(auth)
-        withErrorMapping(image.reference, Present(imageNotFound)) {
-            HttpClient.postText(url("/images/create", params*), "", headers = headers).unit
+        Abort.runWith[HttpException](
+            HttpClient.postTextResponse(
+                url("/images/create", params*),
+                "",
+                headers = headers,
+                failOnError = false
+            )
+        ) {
+            case Result.Success(resp) if resp.status.isSuccess => ()
+            case Result.Success(resp) =>
+                resp.status.code match
+                    case 404 => Abort.fail(imageNotFound(ref))
+                    case _ => Abort.fail(ContainerException.General(
+                            s"HTTP ${resp.status.code} pulling image $ref",
+                            new RuntimeException(s"HTTP ${resp.status.code}")
+                        ))
+            case Result.Failure(e) =>
+                mapHttpError(e, ref, Present(imageNotFound))
+            case Result.Panic(e: HttpException @unchecked) =>
+                mapHttpError(e, ref, Present(imageNotFound))
+            case Result.Panic(e) =>
+                Abort.fail(ContainerException.General(
+                    s"Unexpected error pulling image $ref",
+                    e
+                ))
         }
     end imagePull
 
@@ -739,21 +796,46 @@ private[kyo] class HttpContainerBackend(
                     val params = Seq("fromImage" -> nameRef, "tag" -> tag) ++
                         platform.map(p => Seq("platform" -> p.reference)).getOrElse(Seq.empty)
                     val headers = authHeaders(auth)
-                    withErrorMapping(ref, Present(imageNotFound)) {
-                        HttpClient.postText(url("/images/create", params*), "", headers = headers)
-                    }.map { body =>
-                        val entries = Chunk.from(body.split("\n").filter(_.trim.nonEmpty).flatMap { line =>
-                            Json[PullProgressDto].decode(line.trim) match
-                                case Result.Success(dto) =>
-                                    Seq(ContainerImage.PullProgress(
-                                        id = Maybe.fromOption(dto.id),
-                                        status = dto.status,
-                                        progress = Maybe.fromOption(dto.progress),
-                                        error = Maybe.fromOption(dto.error)
-                                    ))
-                                case _ => Seq.empty
-                        })
-                        Emit.value(entries)
+                    Abort.runWith[HttpException](
+                        HttpClient.postTextResponse(
+                            url("/images/create", params*),
+                            "",
+                            headers = headers,
+                            failOnError = false
+                        )
+                    ) {
+                        case Result.Success(resp) =>
+                            if !resp.status.isSuccess then
+                                resp.status.code match
+                                    case 404 => Abort.fail(imageNotFound(ref))
+                                    case _ => Abort.fail(ContainerException.General(
+                                            s"HTTP ${resp.status.code} pulling image $ref",
+                                            new RuntimeException(s"HTTP ${resp.status.code}")
+                                        ))
+                            else
+                                val body = resp.fields.body
+                                val entries = Chunk.from(body.split("\n").filter(_.trim.nonEmpty).flatMap { line =>
+                                    Json[PullProgressDto].decode(line.trim) match
+                                        case Result.Success(dto) =>
+                                            Seq(ContainerImage.PullProgress(
+                                                id = Maybe.fromOption(dto.id),
+                                                status = dto.status,
+                                                progress = Maybe.fromOption(dto.progress),
+                                                error = Maybe.fromOption(dto.error)
+                                            ))
+                                        case _ => Seq.empty
+                                })
+                                Emit.value(entries)
+                            end if
+                        case Result.Failure(e) =>
+                            mapHttpError(e, ref, Present(imageNotFound)).unit
+                        case Result.Panic(e: HttpException @unchecked) =>
+                            mapHttpError(e, ref, Present(imageNotFound)).unit
+                        case Result.Panic(e) =>
+                            Abort.fail(ContainerException.General(
+                                s"Unexpected error pulling image $ref",
+                                e
+                            )).unit
                     }
             }
         }
@@ -1061,17 +1143,27 @@ private[kyo] class HttpContainerBackend(
             Container = container.value,
             EndpointConfig = endpointConfig.getOrElse(EndpointConfigDto())
         )
+        val jsonBody = Json[NetworkConnectRequest].encode(body)
         withErrorMapping(network.value, Present(networkNotFound)) {
-            HttpClient.postJson[EmptyResponse](url(s"/networks/${network.value}/connect"), body)
+            HttpClient.postText(
+                url(s"/networks/${network.value}/connect"),
+                jsonBody,
+                headers = Seq("Content-Type" -> "application/json")
+            )
         }.unit
     end networkConnect
 
     def networkDisconnect(network: Container.Network.Id, container: Container.Id, force: Boolean)(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
-        val body = NetworkDisconnectRequest(Container = container.value, Force = force)
+        val body     = NetworkDisconnectRequest(Container = container.value, Force = force)
+        val jsonBody = Json[NetworkDisconnectRequest].encode(body)
         withErrorMapping(network.value, Present(networkNotFound)) {
-            HttpClient.postJson[EmptyResponse](url(s"/networks/${network.value}/disconnect"), body)
+            HttpClient.postText(
+                url(s"/networks/${network.value}/disconnect"),
+                jsonBody,
+                headers = Seq("Content-Type" -> "application/json")
+            )
         }.unit
     end networkDisconnect
 
