@@ -15,7 +15,7 @@ import kyo.*
 abstract private[kyo] class ContainerBackend:
 
     /** Parse a container state string (from Docker/Podman API) to the State enum. */
-    protected def parseState(s: String): Container.State =
+    def parseState(s: String): Container.State =
         s.toLowerCase match
             case "created"            => Container.State.Created
             case "running"            => Container.State.Running
@@ -26,11 +26,11 @@ abstract private[kyo] class ContainerBackend:
             case "dead"               => Container.State.Dead
             case _                    => Container.State.Stopped
 
-    /** Parse an ISO-8601 timestamp string to an Instant. Returns Absent for null, empty, or zero-value timestamps. */
-    // Java interop boundary: zio-json may deserialize absent/null JSON strings as null
-    protected def parseInstant(s: String): Maybe[Instant] =
-        if s == null || s.isEmpty || s == "0001-01-01T00:00:00Z" then Absent
-        else Instant.parse(s).toMaybe
+    /** Parse an ISO-8601 timestamp string to an Instant. Returns Absent for None, empty, or zero-value timestamps. */
+    def parseInstant(s: Option[String]): Maybe[Instant] =
+        s match
+            case None | Some("") | Some("0001-01-01T00:00:00Z") => Absent
+            case Some(v)                                        => Instant.parse(v).toMaybe
 
     // Container lifecycle
     def create(config: Container.Config)(using Frame): Container.Id < (Async & Abort[ContainerException])

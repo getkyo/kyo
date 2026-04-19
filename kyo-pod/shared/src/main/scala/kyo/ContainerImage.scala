@@ -263,6 +263,7 @@ object ContainerImage:
 
     // --- Nested types ---
 
+    /** Container registry hostname (e.g. docker.io, ghcr.io). */
     opaque type Registry = String
     object Registry:
         given CanEqual[Registry, Registry]           = CanEqual.derived
@@ -275,6 +276,7 @@ object ContainerImage:
         extension (self: Registry) def value: String = self
     end Registry
 
+    /** Content-addressable image digest (sha256:...). */
     opaque type Digest = String
     object Digest:
         given CanEqual[Digest, Digest] = CanEqual.derived
@@ -284,6 +286,7 @@ object ContainerImage:
         extension (self: Digest) def value: String = self
     end Digest
 
+    /** Unique image identifier. */
     opaque type Id = String
     object Id:
         given CanEqual[Id, Id]                 = CanEqual.derived
@@ -292,10 +295,9 @@ object ContainerImage:
         extension (self: Id) def value: String = self
     end Id
 
-    given Render[ContainerImage] = Render.from(_.reference)
-
     // --- Data Types ---
 
+    /** Detailed image inspection result. */
     case class Info(
         id: ContainerImage.Id,
         repoTags: Chunk[ContainerImage],
@@ -307,6 +309,7 @@ object ContainerImage:
         os: String
     ) derives CanEqual
 
+    /** Lightweight image listing entry. */
     case class Summary(
         id: ContainerImage.Id,
         repoTags: Chunk[ContainerImage],
@@ -316,6 +319,7 @@ object ContainerImage:
         labels: Map[String, String]
     ) derives CanEqual
 
+    /** Progress event during an image pull operation. */
     case class PullProgress(
         id: Maybe[String],
         status: String,
@@ -323,17 +327,20 @@ object ContainerImage:
         error: Maybe[String]
     ) derives CanEqual
 
+    /** Result of deleting an image layer. */
     case class DeleteResponse(untagged: Maybe[String], deleted: Maybe[String]) derives CanEqual
 
+    /** Image layer history entry. */
     case class HistoryEntry(
         id: String,
         createdAt: Instant,
         createdBy: String,
         size: Long,
-        tags: Seq[String],
+        tags: Chunk[String],
         comment: String
     ) derives CanEqual
 
+    /** Registry search result entry. */
     case class SearchResult(
         name: String,
         description: String,
@@ -342,6 +349,7 @@ object ContainerImage:
         isAutomated: Boolean
     ) derives CanEqual
 
+    /** Progress event during an image build operation. */
     case class BuildProgress(
         stream: Maybe[String],
         status: Maybe[String],
@@ -350,6 +358,7 @@ object ContainerImage:
         aux: Maybe[String]
     ) derives CanEqual
 
+    /** Registry authentication credentials. */
     case class RegistryAuth(auths: Map[ContainerImage.Registry, String]) derives CanEqual
 
     object RegistryAuth:
@@ -365,6 +374,8 @@ object ContainerImage:
             // Java interop boundary: Base64 encoding for Docker registry authentication
             RegistryAuth(Map(Registry(server) -> java.util.Base64.getEncoder.encodeToString(s"$username:$password".getBytes)))
     end RegistryAuth
+
+    given Render[ContainerImage] = Render.from(_.reference)
 
     // --- Private ---
 

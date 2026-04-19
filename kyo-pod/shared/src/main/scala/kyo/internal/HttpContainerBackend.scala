@@ -680,7 +680,7 @@ final private[kyo] class HttpContainerBackend(
                         val decoded = new String(java.util.Base64.getDecoder.decode(encoded), java.nio.charset.StandardCharsets.UTF_8)
                         Json[FileStatDto].decode(decoded) match
                             case Result.Success(dto) =>
-                                val modifiedAt = parseInstant(dto.mtime).getOrElse(Instant.Epoch)
+                                val modifiedAt = parseInstant(Option(dto.mtime).filter(_.nonEmpty)).getOrElse(Instant.Epoch)
                                 FileStat(
                                     name = dto.name,
                                     size = dto.size,
@@ -972,7 +972,7 @@ final private[kyo] class HttpContainerBackend(
                     .map(s => ContainerImage.parse(s).getOrElse(ContainerImage(s)))),
                 repoDigests = Chunk.from(dto.RepoDigests.getOrElse(Seq.empty)
                     .map(s => ContainerImage.parse(s).getOrElse(ContainerImage(s)))),
-                createdAt = parseInstant(dto.Created).getOrElse(Instant.Epoch),
+                createdAt = parseInstant(Option(dto.Created).filter(_.nonEmpty)).getOrElse(Instant.Epoch),
                 size = dto.Size,
                 labels = dto.Config.Labels.getOrElse(Map.empty),
                 architecture = dto.Architecture,
@@ -1424,7 +1424,7 @@ final private[kyo] class HttpContainerBackend(
         val spaceIdx = line.indexOf(' ')
         if spaceIdx >= 20 then
             val tsStr = line.substring(0, spaceIdx)
-            parseInstant(tsStr) match
+            parseInstant(Some(tsStr)) match
                 case Present(ts) => (Present(ts), line.substring(spaceIdx + 1))
                 case Absent      => (Absent, line)
         else
@@ -1462,7 +1462,7 @@ final private[kyo] class HttpContainerBackend(
         val writeBytes   = blkioEntries.filter(_.op.equalsIgnoreCase("write")).map(_.value).sum
 
         // Non-effectful Java interop boundary: fallback timestamp for stats
-        val readAt = parseInstant(dto.read).getOrElse(Instant.fromJava(java.time.Instant.now()))
+        val readAt = parseInstant(Option(dto.read).filter(_.nonEmpty)).getOrElse(Instant.fromJava(java.time.Instant.now()))
 
         Stats(
             readAt = readAt,
@@ -1567,15 +1567,15 @@ final private[kyo] class HttpContainerBackend(
             state = parseState(dto.State.Status),
             exitCode = if dto.State.ExitCode == 0 then ExitCode.Success else ExitCode.Failure(dto.State.ExitCode),
             pid = dto.State.Pid,
-            startedAt = parseInstant(dto.State.StartedAt),
-            finishedAt = parseInstant(dto.State.FinishedAt),
+            startedAt = parseInstant(Option(dto.State.StartedAt).filter(_.nonEmpty)),
+            finishedAt = parseInstant(Option(dto.State.FinishedAt).filter(_.nonEmpty)),
             healthStatus = healthStatus,
             ports = Chunk.from(portsSeq),
             mounts = mounts,
             labels = dto.Config.Labels.getOrElse(Map.empty),
             env = envMap,
             command = dto.Config.Cmd.getOrElse(Seq.empty).mkString(" "),
-            createdAt = parseInstant(dto.Created).getOrElse(Instant.Epoch),
+            createdAt = parseInstant(Option(dto.Created).filter(_.nonEmpty)).getOrElse(Instant.Epoch),
             restartCount = dto.RestartCount,
             driver = dto.Driver,
             platform = platform,
@@ -1612,7 +1612,7 @@ final private[kyo] class HttpContainerBackend(
             labels = dto.Labels.getOrElse(Map.empty),
             options = dto.Options.getOrElse(Map.empty),
             containers = containers,
-            createdAt = parseInstant(dto.Created).getOrElse(Instant.Epoch)
+            createdAt = parseInstant(Option(dto.Created).filter(_.nonEmpty)).getOrElse(Instant.Epoch)
         )
     end mapNetworkInfo
 
@@ -1625,7 +1625,7 @@ final private[kyo] class HttpContainerBackend(
             mountpoint = dto.Mountpoint,
             labels = dto.Labels.getOrElse(Map.empty),
             options = dto.Options.getOrElse(Map.empty),
-            createdAt = parseInstant(dto.CreatedAt).getOrElse(Instant.Epoch),
+            createdAt = parseInstant(Option(dto.CreatedAt).filter(_.nonEmpty)).getOrElse(Instant.Epoch),
             scope = dto.Scope
         )
 

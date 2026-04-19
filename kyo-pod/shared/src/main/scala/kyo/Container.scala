@@ -44,7 +44,6 @@ final class Container private[kyo] (
 
     // --- Lifecycle ---
 
-    /** Start a created container. */
     def start(using Frame): Unit < (Async & Abort[ContainerException]) =
         backend.start(id)
 
@@ -438,10 +437,9 @@ object Container:
     def withBackend[A, S](f: BackendConfig.type => BackendConfig)(v: => A < S)(using Frame): A < (Async & Abort[ContainerException] & S) =
         withBackend(f(BackendConfig))(v)
 
-    given CanEqual[Container, Container] = CanEqual.derived
-
     // --- Typed Primitives ---
 
+    /** Unique container identifier assigned by the runtime. */
     opaque type Id = String
     object Id:
         given CanEqual[Id, Id]                 = CanEqual.derived
@@ -452,6 +450,7 @@ object Container:
 
     // --- Config ---
 
+    /** Container creation configuration — image, command, resources, networking, and lifecycle settings. */
     case class Config(
         image: ContainerImage,
         command: Command = Command("sh", "-c", "trap 'exit 0' TERM; sleep infinity"),
@@ -462,7 +461,7 @@ object Container:
         ports: Chunk[Config.PortBinding] = Chunk.empty,
         mounts: Chunk[Config.Mount] = Chunk.empty,
         networkMode: Maybe[Config.NetworkMode] = Absent,
-        dns: Seq[String] = Seq.empty,
+        dns: Chunk[String] = Chunk.empty,
         extraHosts: Chunk[Config.ExtraHost] = Chunk.empty,
         // Resource limits
         memory: Maybe[Long] = Absent,
@@ -599,6 +598,7 @@ object Container:
 
     // --- HealthCheck ---
 
+    /** Periodic health check configuration for a container. */
     abstract class HealthCheck private[kyo]:
         def check(container: Container)(using Frame): Unit < (Async & Abort[ContainerException])
         def schedule: Schedule
@@ -746,6 +746,7 @@ object Container:
 
     // --- State ---
 
+    /** Runtime state of a container. */
     enum State derives CanEqual:
         case Created, Running, Paused, Restarting, Removing, Stopped, Dead
 
@@ -755,20 +756,24 @@ object Container:
 
     // --- TopResult ---
 
-    case class TopResult(titles: Seq[String], processes: Seq[Seq[String]]) derives CanEqual
+    /** Process listing inside a running container. */
+    case class TopResult(titles: Chunk[String], processes: Chunk[Chunk[String]]) derives CanEqual
 
     // --- PruneResult ---
 
-    case class PruneResult(deleted: Seq[String], spaceReclaimed: Long) derives CanEqual
+    /** Result of pruning stopped containers or unused resources. */
+    case class PruneResult(deleted: Chunk[String], spaceReclaimed: Long) derives CanEqual
 
     // --- ExecResult ---
 
+    /** Result of executing a command inside a container. */
     case class ExecResult(exitCode: ExitCode, stdout: String, stderr: String) derives CanEqual:
         def isSuccess: Boolean = exitCode.isSuccess
     end ExecResult
 
     // --- LogEntry ---
 
+    /** A single log line with source (stdout/stderr) and optional timestamp. */
     case class LogEntry(source: LogEntry.Source, content: String, timestamp: Maybe[Instant] = Absent) derives CanEqual
 
     object LogEntry:
@@ -778,6 +783,7 @@ object Container:
 
     // --- AttachSession ---
 
+    /** Bidirectional connection to a container's stdin/stdout/stderr. */
     // CanEqual not derived — contains function-like methods (write, read, resize)
     abstract class AttachSession:
         def write(data: String)(using Frame): Unit < (Async & Abort[ContainerException])
@@ -788,6 +794,7 @@ object Container:
 
     // --- Info ---
 
+    /** Detailed inspection result for a running or stopped container. */
     case class Info(
         id: Id,
         name: String,
@@ -831,6 +838,7 @@ object Container:
 
     // --- Stats ---
 
+    /** Point-in-time resource usage snapshot. */
     case class Stats(
         readAt: Instant,
         cpu: Stats.Cpu,
@@ -859,6 +867,7 @@ object Container:
 
     // --- FilesystemChange ---
 
+    /** Filesystem diff entry showing what changed in the container layer. */
     case class FilesystemChange(path: String, kind: FilesystemChange.Kind) derives CanEqual
 
     object FilesystemChange:
@@ -868,6 +877,7 @@ object Container:
 
     // --- FileStat ---
 
+    /** Filesystem metadata for a file inside a container. */
     case class FileStat(
         name: String,
         size: Long,
@@ -878,9 +888,10 @@ object Container:
 
     // --- Summary ---
 
+    /** Lightweight container listing entry. */
     case class Summary(
         id: Id,
-        names: Seq[String],
+        names: Chunk[String],
         image: ContainerImage,
         imageId: ContainerImage.Id,
         command: String,
@@ -888,13 +899,13 @@ object Container:
         status: String,
         ports: Chunk[Config.PortBinding],
         labels: Map[String, String],
-        mounts: Seq[String],
+        mounts: Chunk[String],
         createdAt: Instant
     ) derives CanEqual
 
     // --- Backend selection ---
-    // Default is auto-detect. Users can override with `Container.withBackend`.
 
+    /** Controls which container runtime backend to use. */
     enum BackendConfig derives CanEqual:
         case AutoDetect
         case UnixSocket(path: Path)
@@ -903,8 +914,10 @@ object Container:
 
     // --- Network ---
 
+    /** Container network operations — create, inspect, connect, disconnect, remove. */
     object Network:
 
+        /** Unique network identifier. */
         opaque type Id = String
         object Id:
             given CanEqual[Id, Id]                 = CanEqual.derived
@@ -913,6 +926,7 @@ object Container:
             extension (self: Id) def value: String = self
         end Id
 
+        /** Network creation configuration. */
         case class Config(
             name: String,
             driver: NetworkDriver = NetworkDriver.Bridge,
@@ -935,6 +949,7 @@ object Container:
             ipRange: Maybe[String] = Absent
         ) derives CanEqual
 
+        /** Network inspection result. */
         case class Info(
             id: Id,
             name: String,
@@ -949,7 +964,10 @@ object Container:
             createdAt: Instant
         ) derives CanEqual
 
-        /** Create a new Docker/Podman network. Returns the network ID. */
+        /** Create a new Docker/Podman network. Returns the network ID.
+          *
+          * Note: named `create` instead of `init` because it is a remote resource creation, not a local lifecycle operation.
+          */
         def create(config: Config)(using Frame): Id < (Async & Abort[ContainerException]) =
             currentBackend.map(_.networkCreate(config))
 
@@ -1001,8 +1019,10 @@ object Container:
 
     // --- Volume ---
 
+    /** Container volume operations — create, inspect, remove. */
     object Volume:
 
+        /** Unique volume identifier. */
         opaque type Id = String
         object Id:
             given CanEqual[Id, Id]                 = CanEqual.derived
@@ -1011,6 +1031,7 @@ object Container:
             extension (self: Id) def value: String = self
         end Id
 
+        /** Volume creation configuration. */
         case class Config(
             name: Maybe[Volume.Id] = Absent,
             driver: String = "local",
@@ -1018,6 +1039,7 @@ object Container:
             labels: Map[String, String] = Map.empty
         ) derives CanEqual
 
+        /** Volume inspection result. */
         case class Info(
             name: Volume.Id,
             driver: String,
@@ -1028,7 +1050,10 @@ object Container:
             scope: String
         ) derives CanEqual
 
-        /** Create a new volume. Returns full volume info including the generated name. */
+        /** Create a new volume. Returns full volume info including the generated name.
+          *
+          * Note: named `create` instead of `init` because it is a remote resource creation, not a local lifecycle operation.
+          */
         def create(config: Config)(using Frame): Info < (Async & Abort[ContainerException]) =
             currentBackend.map(_.volumeCreate(config))
 
@@ -1315,6 +1340,8 @@ object Container:
                 case other     => other.toString.toLowerCase
         end extension
     end NetworkDriver
+
+    given CanEqual[Container, Container] = CanEqual.derived
 
     // --- Private internals ---
 

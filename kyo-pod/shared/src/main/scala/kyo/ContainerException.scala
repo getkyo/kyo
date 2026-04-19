@@ -31,7 +31,7 @@ object ContainerException:
         extends ContainerException(s"Container already stopped: ${id.value}", id.value) derives CanEqual
     case class StartFailed(id: Container.Id, reason: String)(using Frame)
         extends ContainerException(s"Container start failed: $reason", reason) derives CanEqual
-    case class ExecFailed(id: Container.Id, cmd: Seq[String], exitCode: ExitCode, stderr: String)(using Frame)
+    case class ExecFailed(id: Container.Id, cmd: Chunk[String], exitCode: ExitCode, stderr: String)(using Frame)
         extends ContainerException(s"Exec failed: ${cmd.mkString(" ")}", stderr) derives CanEqual
     case class NetworkNotFound(id: Container.Network.Id)(using Frame)
         extends ContainerException(s"Network not found: ${id.value}", id.value) derives CanEqual

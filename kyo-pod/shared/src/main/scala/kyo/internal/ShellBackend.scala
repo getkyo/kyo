@@ -281,15 +281,15 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
             state = parseState(dto.State.Status),
             exitCode = if dto.State.ExitCode == 0 then ExitCode.Success else ExitCode.Failure(dto.State.ExitCode),
             pid = dto.State.Pid,
-            startedAt = parseInstant(dto.State.StartedAt),
-            finishedAt = parseInstant(dto.State.FinishedAt),
+            startedAt = parseInstant(Option(dto.State.StartedAt).filter(_.nonEmpty)),
+            finishedAt = parseInstant(Option(dto.State.FinishedAt).filter(_.nonEmpty)),
             healthStatus = healthStatus,
             ports = portsChunk,
             mounts = mounts,
             labels = dto.Config.Labels.getOrElse(Map.empty),
             env = envMap,
             command = dto.Config.Cmd.getOrElse(Seq.empty).mkString(" "),
-            createdAt = parseInstant(dto.Created).getOrElse(Instant.Epoch),
+            createdAt = parseInstant(Option(dto.Created).filter(_.nonEmpty)).getOrElse(Instant.Epoch),
             restartCount = dto.RestartCount,
             driver = dto.Driver,
             platform = platform,
@@ -1288,7 +1288,7 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
                     repoDigests = Chunk.from(dto.RepoDigests.getOrElse(Seq.empty).map(s =>
                         ContainerImage.parse(s).getOrElse(ContainerImage(s))
                     )),
-                    createdAt = parseInstant(dto.Created).getOrElse(Instant.Epoch),
+                    createdAt = parseInstant(Option(dto.Created).filter(_.nonEmpty)).getOrElse(Instant.Epoch),
                     size = dto.Size,
                     labels = dto.Config.Labels.getOrElse(Map.empty),
                     architecture = dto.Architecture,
@@ -1575,7 +1575,7 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
             labels = labelsMap,
             options = Map.empty,
             containers = Map.empty,
-            createdAt = if dto.CreatedAt.nonEmpty then parseInstant(dto.CreatedAt).getOrElse(Instant.Epoch) else Instant.Epoch
+            createdAt = parseInstant(Option(dto.CreatedAt).filter(_.nonEmpty)).getOrElse(Instant.Epoch)
         )
     end mapDockerNetworkListToInfo
 
@@ -1591,7 +1591,7 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
             labels = dto.labels.getOrElse(Map.empty),
             options = Map.empty,
             containers = Map.empty,
-            createdAt = if dto.created.nonEmpty then parseInstant(dto.created).getOrElse(Instant.Epoch) else Instant.Epoch
+            createdAt = parseInstant(Option(dto.created).filter(_.nonEmpty)).getOrElse(Instant.Epoch)
         )
     end mapPodmanNetworkListToInfo
 
@@ -1630,7 +1630,7 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
                     labels = dto.Labels.orElse(dto.labels).getOrElse(Map.empty),
                     options = dto.Options.orElse(dto.options).getOrElse(Map.empty),
                     containers = containers,
-                    createdAt = if createdStr.nonEmpty then parseInstant(createdStr).getOrElse(Instant.Epoch) else Instant.Epoch
+                    createdAt = parseInstant(Option(createdStr).filter(_.nonEmpty)).getOrElse(Instant.Epoch)
                 )
             }
         }
@@ -1746,7 +1746,7 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
                     mountpoint = dto.Mountpoint,
                     labels = dto.Labels.getOrElse(Map.empty),
                     options = dto.Options.getOrElse(Map.empty),
-                    createdAt = if dto.CreatedAt.nonEmpty then parseInstant(dto.CreatedAt).getOrElse(Instant.Epoch) else Instant.Epoch,
+                    createdAt = parseInstant(Option(dto.CreatedAt).filter(_.nonEmpty)).getOrElse(Instant.Epoch),
                     scope = if dto.Scope.nonEmpty then dto.Scope else "local"
                 )
             }
@@ -1937,7 +1937,7 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
     private def parseTimestamp(s: String): Instant =
         if s.isEmpty then Instant.Epoch
         else
-            parseInstant(s).getOrElse {
+            parseInstant(Some(s)).getOrElse {
                 val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss Z")
                 Result.catching[java.time.format.DateTimeParseException](
                     Instant.fromJava(java.time.ZonedDateTime.parse(s, formatter).toInstant)
