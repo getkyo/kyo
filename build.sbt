@@ -59,7 +59,7 @@ Global / commands += TestKyo.command
 Global / concurrentRestrictions ++= {
     val taskLimit   = sys.env.getOrElse("SBT_TASK_LIMIT", "0")
     val updateLimit = sys.env.getOrElse("SBT_UPDATE_LIMIT", "0")
-    val testLimit   = 1 max (Runtime.getRuntime.availableProcessors() / 2)
+    val testLimit   = 1 max (java.lang.Runtime.getRuntime.availableProcessors() / 2)
     (if (taskLimit != "0") Seq(Tags.limitAll(taskLimit.toInt)) else Nil) ++
         (if (updateLimit != "0") Seq(Tags.limit(Tags.Update, updateLimit.toInt)) else Nil) ++
         Seq(Tags.limit(Tags.Test, testLimit))
