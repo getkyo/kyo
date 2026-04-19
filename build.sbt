@@ -54,11 +54,15 @@ Global / commands += TestKyo.command
 // CI concurrency controls:
 // - SBT_TASK_LIMIT: serialize ALL tasks (for OOM prevention on memory-constrained runners)
 // - SBT_UPDATE_LIMIT: serialize only dependency resolution (for Windows file lock avoidance)
+// - Test limit: cap concurrent test projects to cores/2, reducing resource contention
+//   between forked test JVMs without serializing compilation
 Global / concurrentRestrictions ++= {
     val taskLimit   = sys.env.getOrElse("SBT_TASK_LIMIT", "0")
     val updateLimit = sys.env.getOrElse("SBT_UPDATE_LIMIT", "0")
+    val testLimit   = 1 max (Runtime.getRuntime.availableProcessors() / 2)
     (if (taskLimit != "0") Seq(Tags.limitAll(taskLimit.toInt)) else Nil) ++
-        (if (updateLimit != "0") Seq(Tags.limit(Tags.Update, updateLimit.toInt)) else Nil)
+        (if (updateLimit != "0") Seq(Tags.limit(Tags.Update, updateLimit.toInt)) else Nil) ++
+        Seq(Tags.limit(Tags.Test, testLimit))
 }
 
 lazy val `kyo-settings` = Seq(
