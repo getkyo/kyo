@@ -49,22 +49,18 @@ object TestKyo {
             case _ => state
         }
 
-        // When a specific --scala version is set, always use runAll (filters by version).
-        // runDiff's full-test fallback (kyoJVM/test) would include modules that don't support the version.
-        val state2 =
-            if (isAll || scalaVersionOpt.isDefined) runAll(state1, platform, targetScala, isDryRun)
-            else runDiff(state1, baseRef, platform, isDryRun)
+        def runForScala(st: State, sv: String): State =
+            if (isAll || scalaVersionOpt.isDefined) runAll(st, platform, sv, isDryRun)
+            else runDiff(st, baseRef, platform, sv, isDryRun)
 
-        // If no --scala specified, also run Scala 2.x cross-build modules
+        val state2 = runForScala(state1, targetScala)
+
         if (runBothScala) {
-            val scala2 = findScala2Version(extracted)
-            scala2 match {
+            findScala2Version(extracted) match {
                 case Some(v) =>
                     log(s"switching to Scala $v for cross-build modules")
                     val state3 = if (isDryRun) state2 else Command.process(s"++$v", state2, msg => state2.log.error(msg))
-                    val state4 = runAll(state3, platform, v, isDryRun)
-                    // Restore Scala 3 so sbt doesn't resolve the root project under 2.x,
-                    // which causes cross-version conflicts (e.g. kyo-dataJS scala-java-time)
+                    val state4 = runForScala(state3, v)
                     log(s"restoring Scala $scala3")
                     if (isDryRun) state4 else Command.process(s"++$scala3", state4, msg => state4.log.error(msg))
                 case None =>
@@ -114,7 +110,7 @@ object TestKyo {
     // If build/CI config changed (build.sbt, project/*, .github/*), run all modules.
     // Otherwise, run only affected modules + their transitive dependents.
 
-    private def runDiff(state: State, baseRef: String, platform: Option[String], isDryRun: Boolean = false): State = {
+    private def runDiff(state: State, baseRef: String, platform: Option[String], scalaVersion: String, isDryRun: Boolean = false): State = {
         val changedFiles = diffFiles(baseRef)
         if (changedFiles.isEmpty) {
             log(s"no changed files vs $baseRef — skipping tests")
@@ -126,8 +122,7 @@ object TestKyo {
 
         if (buildConfigChanged(changedFiles)) {
             log("build/CI config changed — running all modules")
-            val extracted = Project.extract(state)
-            return runAll(state, platform, extracted.get(Keys.scalaVersion), isDryRun)
+            return runAll(state, platform, scalaVersion, isDryRun)
         }
 
         val extracted = Project.extract(state)
@@ -155,9 +150,13 @@ object TestKyo {
             }
         }
 
-        val toTest = platform match {
+        val toTest = (platform match {
             case Some(p) => allAffected.filter(matchesPlatform(_, p))
             case None    => allAffected
+        }).filter { name =>
+            allRefs.find(_.project == name).exists { ref =>
+                (ref / crossScalaVersions).get(structure.data).getOrElse(Nil).contains(scalaVersion)
+            }
         }
 
         if (toTest.isEmpty) {
