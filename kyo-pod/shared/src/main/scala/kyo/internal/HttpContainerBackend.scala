@@ -292,9 +292,16 @@ private[kyo] class HttpContainerBackend(
         }.map(resp => parseState(resp.State.Status))
 
     def stats(id: Container.Id)(using Frame): Container.Stats < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value) {
-            HttpClient.getJson[StatsResponse](url(s"/containers/${id.value}/stats", "stream" -> "false"))
-        }.map(mapStatsResponse)
+        // Check container state first — Docker returns zero-valued stats for stopped
+        // containers, so we need to detect and fail explicitly (consistent with ShellBackend).
+        state(id).map { s =>
+            if s == Container.State.Stopped || s == Container.State.Dead then
+                Abort.fail[ContainerException](ContainerException.AlreadyStopped(id))
+            else
+                withErrorMapping(id.value) {
+                    HttpClient.getJson[StatsResponse](url(s"/containers/${id.value}/stats", "stream" -> "false"))
+                }.map(mapStatsResponse)
+        }
 
     def statsStream(id: Container.Id)(using Frame): Stream[Container.Stats, Async & Abort[ContainerException]] =
         statsStream(id, 200.millis)
@@ -442,7 +449,7 @@ private[kyo] class HttpContainerBackend(
             (if until != Instant.Max then Seq("until" -> until.toJava.getEpochSecond.toString) else Seq.empty)
         withErrorMapping(id.value) {
             HttpClient.getBinary(url(s"/containers/${id.value}/logs", params*))
-        }.map(demuxStream)
+        }.map(demuxStream(_, timestamps))
     end logs
 
     def logStream(
@@ -471,7 +478,7 @@ private[kyo] class HttpContainerBackend(
             Abort.runWith[HttpException](
                 byteStream.foreachChunk { chunk =>
                     Kyo.foreachDiscard(chunk) { span =>
-                        Emit.value(demuxStream(span))
+                        Emit.value(demuxStream(span, timestamps))
                     }
                 }
             ) {
@@ -546,13 +553,37 @@ private[kyo] class HttpContainerBackend(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
         // GET tar archive from container, pipe to tar -x via stdin
+        // Docker returns the file with its container-side name inside the tar,
+        // so we extract to a temp dir and move the file to the desired destination.
         withErrorMapping(id.value) {
             HttpClient.getBinary(url(s"/containers/${id.value}/archive", "path" -> containerPath.toString))
         }.map { tarBytes =>
-            val destDir    = destination.parent.map(_.toString).getOrElse(".")
+            val containerFileName = containerPath.name.getOrElse(containerPath.toString)
+            val destDir           = destination.parent.map(_.toString).getOrElse(".")
+            val destFileName      = destination.name.getOrElse(destination.toString)
+            // Extract to destDir, then rename if needed
             val extractCmd = Command("tar", "-x", "-C", destDir).stdin(tarBytes)
             Abort.runWith[CommandException](extractCmd.text) {
-                case Result.Success(_) => ()
+                case Result.Success(_) =>
+                    // If the container filename differs from the destination filename, rename
+                    if containerFileName != destFileName then
+                        val extractedPath = Path(destDir + "/" + containerFileName)
+                        Abort.runWith[CommandException](
+                            Command("mv", extractedPath.toString, destination.toString).text
+                        ) {
+                            case Result.Success(_) => ()
+                            case Result.Failure(cmdEx) =>
+                                Abort.fail(ContainerException.General(
+                                    s"Failed to rename extracted file for copyFrom: ${id.value}",
+                                    cmdEx
+                                ))
+                            case Result.Panic(ex) =>
+                                Abort.fail(ContainerException.General(
+                                    s"Unexpected error renaming file for copyFrom: ${id.value}",
+                                    ex
+                                ))
+                        }
+                    else ()
                 case Result.Failure(cmdEx) =>
                     Abort.fail(ContainerException.General(s"Failed to extract tar for copyFrom: ${id.value}", cmdEx))
                 case Result.Panic(ex) =>
@@ -597,14 +628,25 @@ private[kyo] class HttpContainerBackend(
         }
 
     def exportFs(id: Container.Id)(using Frame): Stream[Byte, Async & Abort[ContainerException]] =
-        // GET /containers/{id}/export returns raw tar stream
+        // GET /containers/{id}/export returns raw tar stream — use streaming to avoid loading entire FS
+        val byteStream: Stream[Span[Byte], Async & Abort[HttpException]] =
+            HttpClient.getStreamBytes(url(s"/containers/${id.value}/export"))
         Stream {
-            withErrorMapping(id.value) {
-                HttpClient.getBinary(url(s"/containers/${id.value}/export"))
-            }.map { bytes =>
-                Emit.value(Chunk.from(bytes.toArray))
+            Abort.runWith[HttpException](
+                byteStream.foreachChunk { chunk =>
+                    Kyo.foreachDiscard(chunk) { span =>
+                        Emit.value(Chunk.from(span.toArray))
+                    }
+                }
+            ) {
+                case Result.Success(_)                         => ()
+                case Result.Failure(e)                         => mapHttpError(e, id.value).unit
+                case Result.Panic(e: HttpException @unchecked) => mapHttpError(e, id.value).unit
+                case Result.Panic(e) =>
+                    Abort.fail(ContainerException.General(s"Unexpected error for export ${id.value}", e))
             }
         }
+    end exportFs
 
     // --- Resource updates ---
 
@@ -791,29 +833,20 @@ private[kyo] class HttpContainerBackend(
                         error = Absent
                     )))
                 case _ =>
-                    // Pull and parse NDJSON progress
+                    // Pull and parse NDJSON progress — use streaming for incremental output
                     val (nameRef, tag) = splitImageRef(image)
                     val params = Seq("fromImage" -> nameRef, "tag" -> tag) ++
                         platform.map(p => Seq("platform" -> p.reference)).getOrElse(Seq.empty)
                     val headers = authHeaders(auth)
+                    val responseStream = HttpClient.postStreamBytes(
+                        url("/images/create", params*),
+                        Span.empty[Byte],
+                        headers = headers
+                    )
                     Abort.runWith[HttpException](
-                        HttpClient.postTextResponse(
-                            url("/images/create", params*),
-                            "",
-                            headers = headers,
-                            failOnError = false
-                        )
-                    ) {
-                        case Result.Success(resp) =>
-                            if !resp.status.isSuccess then
-                                resp.status.code match
-                                    case 404 => Abort.fail(imageNotFound(ref))
-                                    case _ => Abort.fail(ContainerException.General(
-                                            s"HTTP ${resp.status.code} pulling image $ref",
-                                            new RuntimeException(s"HTTP ${resp.status.code}")
-                                        ))
-                            else
-                                val body = resp.fields.body
+                        responseStream.foreachChunk { chunk =>
+                            Kyo.foreachDiscard(chunk) { span =>
+                                val body = new String(span.toArray, java.nio.charset.StandardCharsets.UTF_8)
                                 val entries = Chunk.from(body.split("\n").filter(_.trim.nonEmpty).flatMap { line =>
                                     Json[PullProgressDto].decode(line.trim) match
                                         case Result.Success(dto) =>
@@ -826,11 +859,12 @@ private[kyo] class HttpContainerBackend(
                                         case _ => Seq.empty
                                 })
                                 Emit.value(entries)
-                            end if
-                        case Result.Failure(e) =>
-                            mapHttpError(e, ref, Present(imageNotFound)).unit
-                        case Result.Panic(e: HttpException @unchecked) =>
-                            mapHttpError(e, ref, Present(imageNotFound)).unit
+                            }
+                        }
+                    ) {
+                        case Result.Success(_)                         => ()
+                        case Result.Failure(e)                         => mapHttpError(e, ref, Present(imageNotFound)).unit
+                        case Result.Panic(e: HttpException @unchecked) => mapHttpError(e, ref, Present(imageNotFound)).unit
                         case Result.Panic(e) =>
                             Abort.fail(ContainerException.General(
                                 s"Unexpected error pulling image $ref",
@@ -966,23 +1000,37 @@ private[kyo] class HttpContainerBackend(
                                 target.map(t => Seq("target" -> t)).getOrElse(Seq.empty) ++
                                 platform.map(p => Seq("platform" -> p.reference)).getOrElse(Seq.empty)
                             val headers = Seq("Content-Type" -> "application/x-tar") ++ authHeaders(auth)
-                            withErrorMapping("build") {
-                                HttpClient.postBinary(url("/build", params*), tarSpan, headers = headers)
-                            }.map { responseBytes =>
-                                val body = new String(responseBytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                val entries = Chunk.from(body.split("\n").filter(_.trim.nonEmpty).flatMap { line =>
-                                    Json[BuildProgressDto].decode(line.trim) match
-                                        case Result.Success(dto) =>
-                                            Seq(ContainerImage.BuildProgress(
-                                                stream = Maybe.fromOption(dto.stream),
-                                                status = Maybe.fromOption(dto.status),
-                                                progress = Maybe.fromOption(dto.progress),
-                                                error = Maybe.fromOption(dto.error),
-                                                aux = Maybe.fromOption(dto.aux.map(_.ID))
-                                            ))
-                                        case _ => Seq.empty
-                                })
-                                Emit.value(entries)
+                            // Use streaming to emit build progress incrementally
+                            val responseStream = HttpClient.postStreamBytes(
+                                url("/build", params*),
+                                tarSpan,
+                                headers = headers
+                            )
+                            Abort.runWith[HttpException](
+                                responseStream.foreachChunk { chunk =>
+                                    Kyo.foreachDiscard(chunk) { span =>
+                                        val body = new String(span.toArray, java.nio.charset.StandardCharsets.UTF_8)
+                                        val entries = Chunk.from(body.split("\n").filter(_.trim.nonEmpty).flatMap { line =>
+                                            Json[BuildProgressDto].decode(line.trim) match
+                                                case Result.Success(dto) =>
+                                                    Seq(ContainerImage.BuildProgress(
+                                                        stream = Maybe.fromOption(dto.stream),
+                                                        status = Maybe.fromOption(dto.status),
+                                                        progress = Maybe.fromOption(dto.progress),
+                                                        error = Maybe.fromOption(dto.error),
+                                                        aux = Maybe.fromOption(dto.aux.map(_.ID))
+                                                    ))
+                                                case _ => Seq.empty
+                                        })
+                                        Emit.value(entries)
+                                    }
+                                }
+                            ) {
+                                case Result.Success(_)                         => ()
+                                case Result.Failure(e)                         => mapHttpError(e, "build").unit
+                                case Result.Panic(e: HttpException @unchecked) => mapHttpError(e, "build").unit
+                                case Result.Panic(e) =>
+                                    Abort.fail(ContainerException.General("build streaming error", e))
                             }
                         }
                     case Result.Failure(cmdEx) =>
@@ -1074,9 +1122,23 @@ private[kyo] class HttpContainerBackend(
             (if tag.nonEmpty then Seq("tag" -> tag) else Seq.empty) ++
             (if comment.nonEmpty then Seq("comment" -> comment) else Seq.empty) ++
             (if author.nonEmpty then Seq("author" -> author) else Seq.empty)
-        withErrorMapping(container.value) {
-            HttpClient.postJson[ImageCommitResponseDto](url("/commit", params*), "")
-        }.map(_.Id)
+        Abort.runWith[HttpException](
+            HttpClient.postText(
+                url("/commit", params*),
+                "{}",
+                headers = Seq("Content-Type" -> "application/json")
+            )
+        ) {
+            case Result.Success(body) =>
+                Json[ImageCommitResponseDto].decode(body) match
+                    case Result.Success(dto) => dto.Id
+                    case Result.Failure(_) =>
+                        Abort.fail(ContainerException.ParseError("imageCommit", s"Failed to parse commit response"))
+            case Result.Failure(e)                         => mapHttpError(e, container.value)
+            case Result.Panic(e: HttpException @unchecked) => mapHttpError(e, container.value)
+            case Result.Panic(e) =>
+                Abort.fail(ContainerException.General(s"Unexpected error committing container ${container.value}", e))
+        }
     end imageCommit
 
     // --- Network operations ---
@@ -1305,8 +1367,11 @@ private[kyo] class HttpContainerBackend(
       *
       * Each frame: byte[0]=stream type (1=stdout,2=stderr), bytes[1-3]=padding, bytes[4-7]=uint32 big-endian size, then `size` bytes
       * payload.
+      *
+      * @param timestamps
+      *   When true, attempt to parse Docker timestamp prefix from each line (format: `2024-01-01T00:00:00.000000000Z content`)
       */
-    private def demuxStream(bytes: Span[Byte]): Chunk[LogEntry] =
+    private def demuxStream(bytes: Span[Byte], timestamps: Boolean = false): Chunk[LogEntry] =
         val result = Chunk.newBuilder[LogEntry]
         var offset = 0
         val len    = bytes.size
@@ -1325,13 +1390,35 @@ private[kyo] class HttpContainerBackend(
                 val content = new String(payload, java.nio.charset.StandardCharsets.UTF_8)
                 val source  = if streamType == 2 then LogEntry.Source.Stderr else LogEntry.Source.Stdout
                 content.split("\n").filter(_.nonEmpty).foreach { line =>
-                    result.addOne(LogEntry(source, line))
+                    if timestamps then
+                        val (maybeTs, rest) = parseTimestampLine(line)
+                        result.addOne(LogEntry(source, rest, maybeTs))
+                    else
+                        result.addOne(LogEntry(source, line))
                 }
             end if
             offset += 8 + size
         end while
         result.result()
     end demuxStream
+
+    /** Parse a Docker timestamp prefix from a log line.
+      *
+      * Docker timestamp format: `2024-01-01T00:00:00.000000000Z content` The timestamp is followed by a space, then the content.
+      */
+    private def parseTimestampLine(line: String): (Maybe[Instant], String) =
+        // Docker timestamps are like: 2024-01-01T00:00:00.000000000Z
+        // Minimum length is ~20 chars for the timestamp + space
+        val spaceIdx = line.indexOf(' ')
+        if spaceIdx >= 20 then
+            val tsStr = line.substring(0, spaceIdx)
+            parseInstant(tsStr) match
+                case Present(ts) => (Present(ts), line.substring(spaceIdx + 1))
+                case Absent      => (Absent, line)
+        else
+            (Absent, line)
+        end if
+    end parseTimestampLine
 
     // --- Stats mapping ---
 
@@ -1426,7 +1513,9 @@ private[kyo] class HttpContainerBackend(
         }
 
         val networks = dto.NetworkSettings.Networks.getOrElse(Map.empty).map { case (name, ep) =>
-            Network.Id(name) -> Info.NetworkEndpoint(
+            // Use the actual network ID as key (not the name) so lookups by Network.Id work
+            val key = if ep.NetworkID.nonEmpty then Network.Id(ep.NetworkID) else Network.Id(name)
+            key -> Info.NetworkEndpoint(
                 networkId = Network.Id(ep.NetworkID),
                 endpointId = ep.EndpointID,
                 gateway = ep.Gateway,
