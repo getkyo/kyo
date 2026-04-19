@@ -101,6 +101,7 @@ fi
 MAX_RETRIES=${MAX_RETRIES:-3}
 STALE_TIMEOUT=${STALE_TIMEOUT:-180}  # seconds without output before killing
 POLL_INTERVAL=${POLL_INTERVAL:-10}   # check output freshness interval
+WALL_TIMEOUT=${WALL_TIMEOUT:-2400}   # hard wall-clock limit per attempt (40 min)
 SBT_CMD="${1:-kyoNative/test}"
 LOG=$(mktemp)
 tail_pid=""
@@ -153,13 +154,26 @@ for attempt in $(seq 1 $MAX_RETRIES); do
     tail -f "$LOG" 2>/dev/null &
     tail_pid=$!
 
-    # Watchdog: poll log file size, kill sbt if it stops growing
+    # Watchdog: kill sbt if output stops growing OR wall-clock limit exceeded
     last_size=$(file_size "$LOG")
     stale_seconds=0
+    wall_seconds=0
 
     while kill -0 $sbt_pid 2>/dev/null; do
         sleep $POLL_INTERVAL
         current_size=$(file_size "$LOG")
+        wall_seconds=$((wall_seconds + POLL_INTERVAL))
+
+        if [ $wall_seconds -ge $WALL_TIMEOUT ]; then
+            log "wall-clock limit ${WALL_TIMEOUT}s exceeded — killing process (pid $sbt_pid)"
+            kill_tree $sbt_pid TERM
+            sleep 3
+            if kill -0 $sbt_pid 2>/dev/null; then
+                log "process still alive — sending SIGKILL"
+                kill_tree $sbt_pid KILL
+            fi
+            break
+        fi
 
         if [ "$current_size" = "$last_size" ]; then
             stale_seconds=$((stale_seconds + POLL_INTERVAL))
