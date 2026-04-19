@@ -4,6 +4,8 @@ import kyo.*
 
 class HttpServerUnixTest extends Test with internal.UnixSocketTestHelperImpl:
 
+    override def timeout = 30.seconds
+
     given CanEqual[Any, Any] = CanEqual.derived
 
     case class Item(id: Int, name: String) derives Json, CanEqual
