@@ -30,7 +30,7 @@ class StreamCoreExtensionsTest extends Test:
             }.andThen(succeed)
         }
 
-        "multiple effects" in run {
+        "multiple effects" in runNotNative {
             // Env[Int] & Abort[String]
             val s1 = Stream:
                 Env.get[Int].map(i =>
@@ -107,7 +107,7 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
-        "multiple effects" in run {
+        "multiple effects" in runNotNative {
             // Env[Int] & Abort[String]
             val s1 = Stream:
                 Env.get[Int].map(i =>
@@ -144,7 +144,7 @@ class StreamCoreExtensionsTest extends Test:
                 Choice.run(test).andThen(succeed)
             }
 
-            "should preserve order when first transformation is delayed" in run {
+            "should preserve order when first transformation is delayed" in runNotNative {
                 val stream = Stream.init(1 to 4)
                 val test =
                     for
@@ -197,7 +197,7 @@ class StreamCoreExtensionsTest extends Test:
                 Choice.run(test).andThen(succeed)
             }
 
-            "should not preserve order when first transformation is delayed" in run {
+            "should not preserve order when first transformation is delayed" in runNotNative {
                 val stream = Stream.init(1 to 4)
                 val test =
                     for
@@ -248,7 +248,7 @@ class StreamCoreExtensionsTest extends Test:
                 Choice.run(test).andThen(succeed)
             }
 
-            "should preserve order when first transformation is delayed" in run {
+            "should preserve order when first transformation is delayed" in runNotNative {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
                 val test =
                     for
@@ -302,7 +302,7 @@ class StreamCoreExtensionsTest extends Test:
                 Choice.run(test).andThen(succeed)
             }
 
-            "should not preserve order when first transformation is delayed" in run {
+            "should not preserve order when first transformation is delayed" in runNotNative {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
                 val test =
                     for
