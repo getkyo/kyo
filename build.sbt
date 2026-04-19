@@ -497,7 +497,7 @@ lazy val `kyo-stats-otlp` =
             `kyo-settings`
         )
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
@@ -595,34 +595,7 @@ lazy val `kyo-http` =
         )
         .nativeSettings(
             `native-settings`,
-            nativeConfig ~= { c =>
-                val opensslOpts =
-                    if (System.getProperty("os.name").toLowerCase.contains("mac")) {
-                        val prefix = {
-                            val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
-                            val p1 = new java.io.File("/opt/homebrew/opt/openssl")
-                            val p0 = new java.io.File("/usr/local/opt/openssl")
-                            if (p3.exists()) p3.getAbsolutePath
-                            else if (p1.exists()) p1.getAbsolutePath
-                            else p0.getAbsolutePath
-                        }
-                        Seq(s"-L$prefix/lib", s"-I$prefix/include", "-lssl", "-lcrypto")
-                    } else Seq("-lssl", "-lcrypto")
-                c.withLinkingOptions(c.linkingOptions ++ opensslOpts)
-                    .withCompileOptions(c.compileOptions ++ {
-                        if (System.getProperty("os.name").toLowerCase.contains("mac")) {
-                            val prefix = {
-                                val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
-                                val p1 = new java.io.File("/opt/homebrew/opt/openssl")
-                                val p0 = new java.io.File("/usr/local/opt/openssl")
-                                if (p3.exists()) p3.getAbsolutePath
-                                else if (p1.exists()) p1.getAbsolutePath
-                                else p0.getAbsolutePath
-                            }
-                            Seq(s"-I$prefix/include")
-                        } else Nil
-                    })
-            }
+            `openssl-native-settings`
         )
 
 lazy val `kyo-flow` =
@@ -634,7 +607,7 @@ lazy val `kyo-flow` =
         .dependsOn(`kyo-direct` % Test)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
@@ -858,6 +831,23 @@ lazy val readme =
             `kyo-caliban`,
             `kyo-combinators`
         )
+
+lazy val `openssl-native-settings` = Seq(
+    nativeConfig ~= { c =>
+        val isMac = System.getProperty("os.name").toLowerCase.contains("mac")
+        val opensslPrefix =
+            if (isMac) {
+                val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
+                val p1 = new java.io.File("/opt/homebrew/opt/openssl")
+                val p0 = new java.io.File("/usr/local/opt/openssl")
+                Some(if (p3.exists()) p3.getAbsolutePath else if (p1.exists()) p1.getAbsolutePath else p0.getAbsolutePath)
+            } else None
+        val linkOpts    = opensslPrefix.map(p => Seq(s"-L$p/lib", "-lssl", "-lcrypto")).getOrElse(Seq("-lssl", "-lcrypto"))
+        val compileOpts = opensslPrefix.map(p => Seq(s"-I$p/include")).getOrElse(Nil)
+        c.withLinkingOptions(c.linkingOptions ++ linkOpts)
+            .withCompileOptions(c.compileOptions ++ compileOpts)
+    }
+)
 
 lazy val `native-settings` = Seq(
     fork                                              := false,
