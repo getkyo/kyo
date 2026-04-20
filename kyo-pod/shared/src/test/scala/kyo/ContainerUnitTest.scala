@@ -65,32 +65,14 @@ class ContainerUnitTest extends Test:
             assert(r.isFailure)
         }
 
-        "just a tag ':latest' — empty name" in {
-            // BUG: parse(":latest") produces an image with empty name.
-            // This is nonsensical but not rejected by the parser.
+        "just a tag ':latest' — empty name is rejected" in {
             val r = ContainerImage.parse(":latest")
-            // The parser should ideally fail, but currently it doesn't.
-            // If it succeeds, the name will be empty.
-            r match
-                case Result.Success(img) =>
-                    assert(img.name == "")
-                case Result.Failure(_) =>
-                    // This would be the correct behavior
-                    succeed
-                case _ => fail("Unexpected result type")
-            end match
+            assert(r.isFailure)
         }
 
-        "digest only '@sha256:abc' — empty name" in {
-            // BUG: parse("@sha256:abc") produces an image with empty name.
+        "digest only '@sha256:abc' — empty name is rejected" in {
             val r = ContainerImage.parse("@sha256:abc")
-            r match
-                case Result.Success(img) =>
-                    assert(img.name == "")
-                case Result.Failure(_) =>
-                    succeed
-                case _ => fail("Unexpected result type")
-            end match
+            assert(r.isFailure)
         }
 
         "namespace without registry (library/alpine)" in {
@@ -214,8 +196,7 @@ class ContainerUnitTest extends Test:
     "HealthCheck.all with zero checks" - {
 
         "empty composite check uses defaultSchedule" in {
-            // BUG: HealthCheck.all() with no checks always passes,
-            // even for a dead container, since Kyo.foreach(Seq.empty) returns unit.
+            // NOTE: empty all() trivially passes — no health requirements
             val hc = Container.HealthCheck.all()
             assert(hc.schedule == Container.HealthCheck.defaultSchedule)
         }

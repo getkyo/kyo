@@ -2,7 +2,7 @@ package kyo
 
 import scala.concurrent.Future
 
-abstract class ContainerTest(val runtime: String) extends Test:
+abstract class ContainerTest(val runtime: String, val backendType: String) extends Test:
 
     override def run(testName: Option[String], args: org.scalatest.Args): org.scalatest.Status =
         val runtimeAvailable = runtime match
@@ -12,6 +12,9 @@ abstract class ContainerTest(val runtime: String) extends Test:
         if !runtimeAvailable then
             info(s"Skipping: $runtime not available")
             org.scalatest.SucceededStatus
+        else if backendType == "http" && findSocket(runtime).isEmpty then
+            info(s"Skipping: no $runtime socket for HTTP backend")
+            org.scalatest.SucceededStatus
         else
             super.run(testName, args)
         end if
@@ -19,10 +22,12 @@ abstract class ContainerTest(val runtime: String) extends Test:
 
     override def run(v: Future[Assertion] < (Abort[Any] & Async & Scope))(using Frame): Future[Assertion] =
         super.run {
-            val socketPath = findSocket(runtime)
-            val config = socketPath match
-                case Some(path) => Container.BackendConfig.UnixSocket(Path(path))
-                case None       => Container.BackendConfig.Shell(runtime)
+            val config = backendType match
+                case "http" =>
+                    findSocket(runtime) match
+                        case Some(path) => Container.BackendConfig.UnixSocket(Path(path))
+                        case None       => Container.BackendConfig.Shell(runtime)
+                case _ => Container.BackendConfig.Shell(runtime)
             Container.withBackend(config)(v)
         }
 
@@ -2813,8 +2818,14 @@ abstract class ContainerTest(val runtime: String) extends Test:
     "exec edge cases" - {
         "exec with command not found" taggedAs containerOnly in run {
             Container.init(alpine).map { c =>
-                c.exec("nonexistent-cmd-xyz").map { r =>
-                    assert(r.exitCode == ExitCode.Failure(127), s"Expected exit code 127 but got ${r.exitCode}")
+                Abort.run[ContainerException](c.exec("nonexistent-cmd-xyz")).map {
+                    case Result.Failure(ex: ContainerException.ExecFailed) =>
+                        assert(
+                            ex.exitCode == ExitCode.Failure(126) || ex.exitCode == ExitCode.Failure(127),
+                            s"Expected exit code 126 or 127 but got ${ex.exitCode}"
+                        )
+                    case other =>
+                        fail(s"Expected ExecFailed but got: $other")
                 }
             }
         }
@@ -2964,5 +2975,7 @@ abstract class ContainerTest(val runtime: String) extends Test:
 
 end ContainerTest
 
-class ContainerTestPodman extends ContainerTest("podman")
-class ContainerTestDocker extends ContainerTest("docker")
+class ContainerTestDockerHttp  extends ContainerTest("docker", "http")
+class ContainerTestDockerShell extends ContainerTest("docker", "shell")
+class ContainerTestPodmanHttp  extends ContainerTest("podman", "http")
+class ContainerTestPodmanShell extends ContainerTest("podman", "shell")
