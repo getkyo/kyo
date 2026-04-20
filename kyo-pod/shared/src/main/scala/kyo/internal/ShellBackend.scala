@@ -485,7 +485,11 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
     // --- Exec ---
 
     def exec(id: Container.Id, command: Command)(using Frame): ExecResult < (Async & Abort[ContainerException]) =
-        execOnce(id, command)
+        Abort.run[Closed](meter.run(execOnce(id, command))).map {
+            case Result.Success(r) => r
+            case Result.Failure(_) => Abort.fail(ContainerException.General("Meter closed", new Exception("Meter closed")))
+            case Result.Panic(e)   => throw e
+        }
     end exec
 
     /** Execute a command inside the container, mapping exit codes to typed errors.
