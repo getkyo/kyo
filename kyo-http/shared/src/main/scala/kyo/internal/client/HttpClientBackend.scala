@@ -514,6 +514,123 @@ final private[kyo] class HttpClientBackend[Handle] private (
         }
     end connectWebSocket
 
+    // -- Raw connection support --
+
+    /** Connect to a server and upgrade the connection to raw bidirectional byte streaming.
+      *
+      * Bypasses the HTTP connection pool — raw connections aren't poolable. Sends the HTTP request, validates the response status (101 or
+      * 2xx), then exposes the transport channels as a raw byte stream. The connection is closed when the enclosing Scope exits.
+      */
+    def connectRaw(
+        url: HttpUrl,
+        method: HttpMethod,
+        body: Span[Byte],
+        headers: HttpHeaders,
+        connectTimeout: Duration
+    )(using Frame): HttpRawConnection < (Async & Abort[HttpException] & Scope) =
+        val host     = url.host
+        val port     = url.port
+        val ssl      = url.ssl
+        val (eh, ep) = hostPort(url)
+
+        val connectFiber = Sync.Unsafe.defer {
+            (url.unixSocket, ssl) match
+                case (Present(path), _) => transport.connectUnix(path)
+                case (_, true)          => transport.connect(host, port, defaultTlsConfig)
+                case _                  => transport.connect(host, port)
+        }
+        val connect = connectFiber.map(_.safe.get)
+        val timed =
+            if connectTimeout == Duration.Infinity then connect
+            else Async.timeout(connectTimeout)(connect)
+        Abort.runWith[Closed | Timeout](timed) {
+            case Result.Success(connection) =>
+                setupRawConnection(connection, url, method, body, headers)
+            case Result.Failure(_: Timeout) =>
+                Abort.fail(HttpConnectTimeoutException(eh, ep, connectTimeout))
+            case Result.Failure(closed: Closed) =>
+                Abort.fail(HttpConnectException(
+                    eh,
+                    ep,
+                    new IOException(Option(closed.getMessage).getOrElse("Connection closed"))
+                ))
+            case Result.Panic(t) => throw t
+        }
+    end connectRaw
+
+    /** Set up a raw connection after transport connect succeeds.
+      *
+      * Creates an Http1ClientConnection, sends the HTTP request, validates the response, then wraps the transport channels as a raw byte
+      * stream.
+      */
+    private def setupRawConnection(
+        connection: Connection[Handle],
+        url: HttpUrl,
+        method: HttpMethod,
+        body: Span[Byte],
+        headers: HttpHeaders
+    )(using Frame): HttpRawConnection < (Async & Abort[HttpException] & Scope) =
+        // Create Http1ClientConnection and send the request in an unsafe block.
+        // Capture http1 in a var so we can access lastBodySpan after the response.
+        var http1: Http1ClientConnection = null
+        Sync.Unsafe.defer {
+            http1 = Http1ClientConnection.init(
+                connection.inbound,
+                connection.outbound,
+                transportConfig.maxHeaderSize
+            )
+            // Compute host header
+            val isDefaultPort   = if url.ssl then url.port == 443 else url.port == 80
+            val hostHeaderValue = if isDefaultPort || url.host.isEmpty then url.host else s"${url.host}:${url.port}"
+            // Build path with query string
+            val path = url.rawQuery match
+                case Present(q) => s"${url.path}?$q"
+                case Absent     => url.path
+            // Send the HTTP request
+            val responsePromise = http1.sendDirect(
+                method,
+                path,
+                headers,
+                body,
+                hostHeaderValue,
+                contentLength = body.size.toInt,
+                chunked = false
+            )
+            // Wait for the parsed response
+            val responseFiber = responsePromise.asInstanceOf[Fiber.Unsafe[ParsedResponse, Any]]
+            responseFiber.safe.get
+        }.map { parsed =>
+            val status = parsed.statusCode
+            // Accept 101 (Switching Protocols) or any 2xx
+            if status != 101 && (status < 200 || status >= 300) then
+                Abort.fail(HttpStatusException(
+                    HttpStatus(status),
+                    method.name,
+                    url.baseUrl
+                ))
+            else
+                Sync.Unsafe.defer {
+                    val lastBody   = http1.lastBodySpan
+                    val rawInbound = connection.inbound.safe.streamUntilClosed()
+                    val readStream =
+                        if lastBody.isEmpty then rawInbound
+                        else Stream.init(Seq(lastBody)).concat(rawInbound)
+                    val transportStream = new ConnectionBackedStream(connection)
+                    new HttpRawConnection(
+                        readStream,
+                        data => transportStream.write(data)
+                    )
+                }
+            end if
+        }.map { rawConn =>
+            Scope.ensure {
+                Sync.Unsafe.defer {
+                    connection.close()
+                }
+            }.andThen(rawConn)
+        }
+    end setupRawConnection
+
     /** Run a HttpWebSocket session: upgrade, then read/write/user fibers.
       *
       * Sends HTTP upgrade request through the connection, reads 101 response, then switches to WS frame codec using ConnectionBackedStream

@@ -765,6 +765,24 @@ object HttpClient:
             client.connectWebSocket(url, headers, config, clientConfig.connectTimeout)(f)
         }
 
+    // ==================== Raw connection methods ====================
+
+    /** Sends an HTTP request and upgrades the connection to raw bidirectional byte streaming. Used for protocols that upgrade HTTP
+      * connections (Docker exec/attach, CONNECT proxies). The connection is removed from the pool and closed when the Scope exits. Fails
+      * with HttpStatusException if the server returns a non-2xx/non-101 status.
+      */
+    def connectRaw(
+        url: String | HttpUrl,
+        method: HttpMethod = HttpMethod.POST,
+        body: Span[Byte] = Span.empty,
+        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty
+    )(using Frame): HttpRawConnection < (Async & Abort[HttpException] & Scope) =
+        local.use { (client, clientConfig) =>
+            resolveUrl(url).map(parsed =>
+                client.connectRaw(parsed, method, body, resolveHeaders(headers), clientConfig.connectTimeout)
+            )
+        }
+
     // --- Internal helpers ---
 
     private def resolveUrl(url: String | HttpUrl)(using Frame): HttpUrl < Abort[HttpException] =
