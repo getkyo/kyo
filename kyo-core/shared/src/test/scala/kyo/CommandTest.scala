@@ -250,6 +250,18 @@ class CommandTest extends Test:
         }
     }
 
+    "redirectErrorStream(true) merges stderr into stdout" in {
+        assumeUnix("stderr redirect");
+        run {
+            val cmd = Command("sh", "-c", "echo stdout_data; echo stderr_data >&2")
+                .redirectErrorStream(true)
+            cmd.text.map { output =>
+                assert(output.contains("stdout_data"), s"Expected stdout_data in: $output")
+                assert(output.contains("stderr_data"), s"Expected stderr_data merged into stdout: $output")
+            }
+        }
+    }
+
     "inheritIO returns success" in run {
         trueCmd.inheritIO.waitFor.map { code =>
             assert(code == ExitCode.Success)

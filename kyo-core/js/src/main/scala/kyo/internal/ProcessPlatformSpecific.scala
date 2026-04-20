@@ -64,15 +64,26 @@ final private[kyo] class NodeInputStream(readable: NodeReadableStream) extends I
     discard(readable.on(
         "data",
         { (chunk: js.Any) =>
-            val arr = chunk.asInstanceOf[Uint8Array]
-            var i   = 0
-            while i < arr.length do
-                discard(buffer += arr(i).toByte)
-                i += 1
+            appendChunk(chunk)
         }
     ))
     discard(readable.on("end", { (_: js.Any) => ended = true }))
     discard(readable.on("error", { (_: js.Any) => ended = true }))
+
+    private def appendChunk(chunk: js.Any): Unit =
+        val arr = chunk.asInstanceOf[Uint8Array]
+        var i   = 0
+        while i < arr.length do
+            discard(buffer += arr(i).toByte)
+            i += 1
+    end appendChunk
+
+    /** Merge another readable stream's data into this stream (for redirectErrorStream). */
+    def mergeFrom(other: NodeReadableStream): Unit =
+        discard(other.on("data", { (chunk: js.Any) => appendChunk(chunk) }))
+        discard(other.on("end", { (_: js.Any) => () }))
+        discard(other.on("error", { (_: js.Any) => () }))
+    end mergeFrom
 
     override def read(): Int =
         if pos < buffer.length then
@@ -247,7 +258,12 @@ final private[kyo] class NodeProcessUnsafe(
 
     private val _stdout: InputStream =
         if child.stdout == null || js.isUndefined(child.stdout) then NodeInputStream.empty
-        else new NodeInputStream(child.stdout)
+        else
+            val nis = new NodeInputStream(child.stdout)
+            // When redirectError=true, merge stderr data into stdout (matching JVM behavior)
+            if stderrEnded && child.stderr != null && !js.isUndefined(child.stderr) then
+                nis.mergeFrom(child.stderr)
+            nis
     private val _stderr: InputStream =
         if stderrEnded || child.stderr == null || js.isUndefined(child.stderr) then NodeInputStream.empty
         else new NodeInputStream(child.stderr)
@@ -366,10 +382,10 @@ final private[kyo] class NodeCommandUnsafe(
             else "pipe"
 
         val stdioErr: js.Any =
-            // When redirectError=true, discard child stderr (/dev/null) so no data flows
-            // through the stderr pipe.  Callers that ask for proc.stderr receive an
-            // already-ended stream (stderrEnded=true on NodeProcessUnsafe).
-            if redirectError then "ignore"
+            // When redirectError=true, still pipe stderr so we can merge its data events
+            // into the stdout NodeInputStream (matching JVM's ProcessBuilder behavior).
+            // The proc.stderr stream will be marked as ended (stderrEnded=true).
+            if redirectError then "pipe"
             else if stderrSink == NodeStdioSink.Pipe then "pipe"
             else if stderrSink == NodeStdioSink.Inherit then "inherit"
             else "pipe"
