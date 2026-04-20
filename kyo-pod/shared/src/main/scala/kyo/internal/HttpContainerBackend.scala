@@ -19,8 +19,9 @@ import kyo.*
   */
 final private[kyo] class HttpContainerBackend(
     socketPath: String,
-    apiVersion: String = "v1.43"
-) extends ContainerBackend:
+    apiVersion: String = "v1.43",
+    meter: Meter = Meter.Noop
+) extends ContainerBackend(meter):
 
     import Container.*
 
@@ -83,10 +84,16 @@ final private[kyo] class HttpContainerBackend(
     )(
         v: A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[ContainerException]) =
-        Abort.runWith[HttpException](v) {
+        Abort.runWith[Closed](meter.run {
+            Abort.runWith[HttpException](v) {
+                case Result.Success(a) => a
+                case Result.Failure(e) => mapHttpError(e, id, mapNotFound)
+                case Result.Panic(e)   => Abort.fail(ContainerException.General(s"Unexpected error for $id", e))
+            }
+        }) {
             case Result.Success(a) => a
-            case Result.Failure(e) => mapHttpError(e, id, mapNotFound)
-            case Result.Panic(e)   => Abort.fail(ContainerException.General(s"Unexpected error for $id", e))
+            case Result.Failure(_) => Abort.fail(ContainerException.General("Meter closed", "concurrency meter was closed"))
+            case Result.Panic(ex)  => Abort.fail(ContainerException.General("Meter panicked", ex))
         }
 
     /** POST with empty body, accepting 200/201/204 as success. */
@@ -97,11 +104,17 @@ final private[kyo] class HttpContainerBackend(
       * operations.
       */
     private def postUnitAccept304(endpoint: String, id: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        Abort.run[HttpException](HttpClient.postText(url(endpoint), "")).map {
-            case Result.Success(_)                                              => ()
-            case Result.Failure(e: HttpStatusException) if e.status.code == 304 => ()
-            case Result.Failure(e)                                              => mapHttpError(e, id)
-            case Result.Panic(e) => Abort.fail(ContainerException.General(s"Unexpected error for container $id", e))
+        Abort.runWith[Closed](meter.run {
+            Abort.run[HttpException](HttpClient.postText(url(endpoint), "")).map {
+                case Result.Success(_)                                              => ()
+                case Result.Failure(e: HttpStatusException) if e.status.code == 304 => ()
+                case Result.Failure(e)                                              => mapHttpError(e, id)
+                case Result.Panic(e) => Abort.fail(ContainerException.General(s"Unexpected error for container $id", e))
+            }
+        }) {
+            case Result.Success(a) => a
+            case Result.Failure(_) => Abort.fail(ContainerException.General("Meter closed", "concurrency meter was closed"))
+            case Result.Panic(ex)  => Abort.fail(ContainerException.General("Meter panicked", ex))
         }
 
     /** Build auth headers for registry operations. */
@@ -2099,7 +2112,7 @@ private[kyo] object HttpContainerBackend:
       *
       * Tries `_ping` on each, returns first that responds with `OK`.
       */
-    def detect()(using Frame): HttpContainerBackend < (Async & Abort[ContainerException]) =
+    def detect(meter: Meter = Meter.Noop)(using Frame): HttpContainerBackend < (Async & Abort[ContainerException]) =
         candidateSocketPaths.map { candidates =>
             def tryNext(remaining: Seq[String]): HttpContainerBackend < (Async & Abort[ContainerException]) =
                 if remaining.isEmpty then
@@ -2110,7 +2123,7 @@ private[kyo] object HttpContainerBackend:
                     ))
                 else
                     val path    = remaining.head
-                    val backend = new HttpContainerBackend(path)
+                    val backend = new HttpContainerBackend(path, meter = meter)
                     Abort.run[ContainerException](backend.detect()).map {
                         case Result.Success(_) => backend
                         case Result.Failure(_) => tryNext(remaining.tail)

@@ -12,7 +12,7 @@ import kyo.*
   * @see
   *   [[kyo.Container.BackendConfig]] Configuration for backend selection
   */
-abstract private[kyo] class ContainerBackend:
+abstract private[kyo] class ContainerBackend(val meter: Meter):
 
     /** Parse a container state string (from Docker/Podman API) to the State enum. */
     def parseState(s: String): Container.State =
@@ -253,18 +253,18 @@ private[kyo] object ContainerBackend:
       *
       * Tries HTTP backend via Unix domain socket first, falls back to ShellBackend via CLI.
       */
-    def detect()(using Frame): ContainerBackend < (Async & Abort[ContainerException]) =
-        Abort.run[ContainerException](HttpContainerBackend.detect()).map {
+    def detect(meter: Meter = Meter.Noop)(using Frame): ContainerBackend < (Async & Abort[ContainerException]) =
+        Abort.run[ContainerException](HttpContainerBackend.detect(meter)).map {
             case Result.Success(backend) => backend: ContainerBackend
-            case Result.Failure(_)       => detectShell()
+            case Result.Failure(_)       => detectShell(meter)
             case Result.Panic(ex) =>
                 Log.warn("Unexpected error during HTTP backend detection", ex).andThen(
-                    detectShell()
+                    detectShell(meter)
                 )
         }
 
-    private def detectShell()(using Frame): ContainerBackend < (Async & Abort[ContainerException]) =
-        ShellBackend.detect().map(b => b: ContainerBackend)
+    private def detectShell(meter: Meter)(using Frame): ContainerBackend < (Async & Abort[ContainerException]) =
+        ShellBackend.detect(meter).map(b => b: ContainerBackend)
 
     private[internal] case class AuthConfigJson(
         auths: Option[Map[String, String]] = None

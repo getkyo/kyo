@@ -918,9 +918,9 @@ object Container:
 
     /** Controls which container runtime backend to use. */
     enum BackendConfig derives CanEqual:
-        case AutoDetect
-        case UnixSocket(path: Path)
-        case Shell(command: String)
+        case AutoDetect(meter: Meter = Meter.Noop)
+        case UnixSocket(path: Path, meter: Meter = Meter.Noop)
+        case Shell(command: String, meter: Meter = Meter.Noop)
     end BackendConfig
 
     // --- Network ---
@@ -1366,13 +1366,13 @@ object Container:
 
     private def resolveBackend(config: BackendConfig)(using Frame): ContainerBackend < (Async & Abort[ContainerException]) =
         config match
-            case BackendConfig.AutoDetect =>
-                ContainerBackend.detect()
-            case BackendConfig.UnixSocket(path) =>
-                val backend = new HttpContainerBackend(path.toString)
+            case BackendConfig.AutoDetect(meter) =>
+                ContainerBackend.detect(meter)
+            case BackendConfig.UnixSocket(path, meter) =>
+                val backend = new HttpContainerBackend(path.toString, meter = meter)
                 backend.detect().andThen(backend)
-            case BackendConfig.Shell(cmd) =>
-                val backend = new ShellBackend(cmd)
+            case BackendConfig.Shell(cmd, meter) =>
+                val backend = new ShellBackend(cmd, meter)
                 backend.detect().andThen(backend)
 
     private def runHealthCheck(container: Container, hc: HealthCheck)(using Frame): Unit < (Async & Abort[ContainerException]) =

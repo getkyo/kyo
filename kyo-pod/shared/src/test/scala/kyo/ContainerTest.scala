@@ -10,19 +10,21 @@ abstract class ContainerTest(val runtime: String) extends Test:
         s"Container runtime '$runtime' is not available"
     )
 
-    private val backends: Seq[(String, Container.BackendConfig)] =
-        val shell = Seq("shell" -> Container.BackendConfig.Shell(runtime))
+    private def backends(meter: Meter): Seq[(String, Container.BackendConfig)] =
+        val shell = Seq("shell" -> Container.BackendConfig.Shell(runtime, meter))
         val http = ContainerRuntime.findSocket(runtime).map(path =>
-            "http" -> Container.BackendConfig.UnixSocket(Path(path))
+            "http" -> Container.BackendConfig.UnixSocket(Path(path), meter)
         ).toSeq
         http ++ shell
     end backends
 
     override def run(v: Future[Assertion] < (Abort[Any] & Async & Scope))(using Frame): Future[Assertion] =
         super.run {
-            Kyo.foreach(backends) { (_, config) =>
-                Scope.run(Container.withBackend(config)(v))
-            }.map(_.last)
+            Meter.initSemaphore(8).map { meter =>
+                Kyo.foreach(backends(meter)) { (_, config) =>
+                    Scope.run(Container.withBackend(config)(v))
+                }.map(_.last)
+            }
         }
 
     val alpine = Container.Config(ContainerImage("alpine", "latest"))
@@ -2512,19 +2514,13 @@ abstract class ContainerTest(val runtime: String) extends Test:
         // moby/moby#32633 — high-concurrency exec throttling
         "high concurrency exec — 20 parallel calls" in run {
             Container.init(alpine).map { c =>
-                Abort.run[ContainerException] {
-                    Kyo.foreach((1 to 20).toSeq) { i =>
-                        Fiber.init(c.exec("echo", i.toString))
-                    }.map { fibers =>
-                        Kyo.foreach(fibers)(_.get).map { results =>
-                            assert(results.forall(_.isSuccess))
-                            assert(results.map(_.stdout.trim.toInt).toSet == (1 to 20).toSet)
-                        }
+                Kyo.foreach((1 to 20).toSeq) { i =>
+                    Fiber.init(c.exec("echo", i.toString))
+                }.map { fibers =>
+                    Kyo.foreach(fibers)(_.get).map { results =>
+                        assert(results.forall(_.isSuccess))
+                        assert(results.map(_.stdout.trim.toInt).toSet == (1 to 20).toSet)
                     }
-                }.map {
-                    case Result.Success(_)                                        => succeed
-                    case Result.Failure(_: ContainerException.BackendUnavailable) => succeed // Podman SSH limit
-                    case Result.Failure(e)                                        => fail(s"Unexpected: $e")
                 }
             }
         }

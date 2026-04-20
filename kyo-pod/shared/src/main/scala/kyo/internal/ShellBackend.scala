@@ -14,7 +14,7 @@ import kyo.*
   * @see
   *   [[ContainerBackend.detect]] auto-detection logic
   */
-final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
+final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) extends ContainerBackend(meter):
 
     import Container.*
     import ShellBackend.*
@@ -1807,15 +1807,21 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
       * stderr instead of piping it to stdout). On non-zero exit, the combined output is passed to [[mapError]] for classification.
       */
     private def run(args: String*)(using Frame): String < (Async & Abort[ContainerException]) =
-        val shellCmd = (cmd +: args).map(a => "'" + a.replace("'", "'\\''") + "'").mkString(" ")
-        Abort.runWith[CommandException](Command("sh", "-c", s"$shellCmd 2>&1").textWithExitCode) {
-            case Result.Success((stdout, exitCode)) =>
-                if exitCode == ExitCode.Success then stdout.trim
-                else Abort.fail(mapError(stdout.trim, args))
-            case Result.Failure(cmdEx) =>
-                Abort.fail(ContainerException.General(s"Command failed: ${(cmd +: args).mkString(" ")}", cmdEx))
-            case Result.Panic(ex) =>
-                Abort.fail(ContainerException.General(s"Command panicked: ${(cmd +: args).mkString(" ")}", ex))
+        Abort.runWith[Closed](meter.run {
+            val shellCmd = (cmd +: args).map(a => "'" + a.replace("'", "'\\''") + "'").mkString(" ")
+            Abort.runWith[CommandException](Command("sh", "-c", s"$shellCmd 2>&1").textWithExitCode) {
+                case Result.Success((stdout, exitCode)) =>
+                    if exitCode == ExitCode.Success then stdout.trim
+                    else Abort.fail(mapError(stdout.trim, args))
+                case Result.Failure(cmdEx) =>
+                    Abort.fail(ContainerException.General(s"Command failed: ${(cmd +: args).mkString(" ")}", cmdEx))
+                case Result.Panic(ex) =>
+                    Abort.fail(ContainerException.General(s"Command panicked: ${(cmd +: args).mkString(" ")}", ex))
+            }
+        }) {
+            case Result.Success(v) => v
+            case Result.Failure(_) => Abort.fail(ContainerException.General("Meter closed", "concurrency meter was closed"))
+            case Result.Panic(ex)  => Abort.fail(ContainerException.General("Meter panicked", ex))
         }
     end run
 
@@ -1988,14 +1994,14 @@ end ShellBackend
 private[kyo] object ShellBackend:
 
     /** Auto-detect an available container runtime. Tries podman first, then docker. */
-    def detect()(using Frame): ShellBackend < (Async & Abort[ContainerException]) =
+    def detect(meter: Meter = Meter.Noop)(using Frame): ShellBackend < (Async & Abort[ContainerException]) =
         Abort.runWith[CommandException](Command("podman", "version").textWithExitCode) {
             case Result.Success((_, exitCode)) if exitCode == ExitCode.Success =>
-                new ShellBackend("podman")
+                new ShellBackend("podman", meter)
             case _ =>
                 Abort.runWith[CommandException](Command("docker", "version").textWithExitCode) {
                     case Result.Success((_, exitCode)) if exitCode == ExitCode.Success =>
-                        new ShellBackend("docker")
+                        new ShellBackend("docker", meter)
                     case _ =>
                         Abort.fail(ContainerException.BackendUnavailable(
                             "auto-detect",
