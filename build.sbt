@@ -54,11 +54,15 @@ Global / commands += TestKyo.command
 // CI concurrency controls:
 // - SBT_TASK_LIMIT: serialize ALL tasks (for OOM prevention on memory-constrained runners)
 // - SBT_UPDATE_LIMIT: serialize only dependency resolution (for Windows file lock avoidance)
+// - Test limit: cap concurrent test projects to cores/2, reducing resource contention
+//   between forked test JVMs without serializing compilation
 Global / concurrentRestrictions ++= {
     val taskLimit   = sys.env.getOrElse("SBT_TASK_LIMIT", "0")
     val updateLimit = sys.env.getOrElse("SBT_UPDATE_LIMIT", "0")
+    val testLimit   = 1 max (java.lang.Runtime.getRuntime.availableProcessors() / 2)
     (if (taskLimit != "0") Seq(Tags.limitAll(taskLimit.toInt)) else Nil) ++
-        (if (updateLimit != "0") Seq(Tags.limit(Tags.Update, updateLimit.toInt)) else Nil)
+        (if (updateLimit != "0") Seq(Tags.limit(Tags.Update, updateLimit.toInt)) else Nil) ++
+        Seq(Tags.limit(Tags.Test, testLimit))
 }
 
 lazy val `kyo-settings` = Seq(
@@ -120,6 +124,7 @@ lazy val kyoJVM = project
         `kyo-direct`.jvm,
         `kyo-stm`.jvm,
         `kyo-stats-registry`.jvm,
+        `kyo-config`.jvm,
         `kyo-stats-otlp`.jvm,
         `kyo-logging-jpl`.jvm,
         `kyo-logging-slf4j`.jvm,
@@ -128,6 +133,7 @@ lazy val kyoJVM = project
         `kyo-sttp`.jvm,
         `kyo-tapir`.jvm,
         `kyo-http`.jvm,
+        `kyo-flow`.jvm,
         `kyo-caliban`.jvm,
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
@@ -156,6 +162,7 @@ lazy val kyoJS = project
         `kyo-direct`.js,
         `kyo-stm`.js,
         `kyo-stats-registry`.js,
+        `kyo-config`.js,
         `kyo-reactive-streams`.js,
         `kyo-sttp`.js,
         `kyo-stats-otlp`.js,
@@ -164,7 +171,8 @@ lazy val kyoJS = project
         `kyo-cats`.js,
         `kyo-combinators`.js,
         `kyo-actor`.js,
-        `kyo-http`.js
+        `kyo-http`.js,
+        `kyo-flow`.js
     )
 
 lazy val kyoNative = project
@@ -180,6 +188,7 @@ lazy val kyoNative = project
         `kyo-parse`.native,
         `kyo-kernel`.native,
         `kyo-stats-registry`.native,
+        `kyo-config`.native,
         `kyo-scheduler`.native,
         `kyo-core`.native,
         `kyo-offheap`.native,
@@ -189,6 +198,7 @@ lazy val kyoNative = project
         `kyo-sttp`.native,
         `kyo-actor`.native,
         `kyo-http`.native,
+        `kyo-flow`.native,
         `kyo-scheduler-zio`.native,
         `kyo-zio`.native,
         `kyo-zio-test`.native,
@@ -449,7 +459,22 @@ lazy val `kyo-stats-registry` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
+        .dependsOn(`kyo-config`)
         .in(file("kyo-stats-registry"))
+        .settings(
+            `kyo-settings`,
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
+            crossScalaVersions := List(scala3LTSVersion, scala213Version)
+        )
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-config` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-config"))
         .settings(
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
@@ -551,7 +576,7 @@ lazy val `kyo-http` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
-        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-core`, `kyo-config`)
         .settings(
             `kyo-settings`,
             libraryDependencies += "dev.zio" %%% "zio-schema"            % "1.6.4",
@@ -587,6 +612,21 @@ lazy val `kyo-http` =
                 c.withCompileOptions(c.compileOptions ++ Seq("-DH2O_USE_LIBUV=0") ++ h2oCompileFlags)
                     .withLinkingOptions(c.linkingOptions ++ curlLinkFlags ++ h2oLinkFlags)
             }
+        )
+
+lazy val `kyo-flow` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-flow"))
+        .dependsOn(`kyo-http`)
+        .dependsOn(`kyo-direct` % Test)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
 
 lazy val `kyo-caliban` =

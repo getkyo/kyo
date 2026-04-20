@@ -6,8 +6,8 @@ import java.util.function.DoubleSupplier
 import java.util.function.LongSupplier
 import kyo.scheduler.*
 import kyo.scheduler.InternalTimer
+import kyo.scheduler.regulator.*
 import kyo.scheduler.top.AdmissionStatus
-import kyo.scheduler.util.Flag
 import scala.annotation.nowarn
 import scala.concurrent.duration.*
 import scala.util.hashing.MurmurHash3
@@ -92,7 +92,7 @@ final class Admission(
     nowMillis: LongSupplier,
     timer: InternalTimer,
     config: Config = Admission.defaultConfig,
-    rotationWindow: Duration = Flag("admission.rotationWindowMinutes", 60).minutes
+    rotationWindow: Duration = rotationWindowMinutes().minutes
 ) extends Regulator(loadAvg, timer, config) {
 
     private val largePrime = (Math.pow(2, 31) - 1).toInt
@@ -240,12 +240,12 @@ object Admission {
 
     val defaultConfig: Config =
         Config(
-            collectWindow = Flag("admission.collectWindow", 40),
-            collectInterval = Flag("admission.collectIntervalMs", 100).millis,
-            regulateInterval = Flag("admission.regulateIntervalMs", 1000).millis,
-            jitterUpperThreshold = Flag("admission.jitterUpperThreshold", 100),
-            jitterLowerThreshold = Flag("admission.jitterLowerThreshold", 80),
-            loadAvgTarget = Flag("admission.loadAvgTarget", 0.8),
-            stepExp = Flag("admission.stepExp", 1.5)
+            collectWindow = admissionCollectWindow(),
+            collectInterval = admissionCollectIntervalMs().millis,
+            regulateInterval = admissionRegulateIntervalMs().millis,
+            jitterUpperThreshold = admissionJitterUpperThreshold(),
+            jitterLowerThreshold = admissionJitterLowerThreshold(),
+            loadAvgTarget = admissionLoadAvgTarget(),
+            stepExp = admissionStepExp()
         )
 }

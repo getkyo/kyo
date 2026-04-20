@@ -832,4 +832,24 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
             override def foreach[U](f: A => U): Unit                   = discard(f(value))
         end Single
     end internal
+
+    /** Parses a comma-separated string into a Chunk, delegating element parsing to the inner reader. */
+    given [A](using r: Flag.Reader.Scalar[A]): Flag.Reader[Chunk[A]] with
+        def apply(s: String): Either[Throwable, Chunk[A]] =
+            if s.trim.isEmpty then Right(Chunk.empty)
+            else
+                val elements         = s.split(",").iterator.map(_.trim)
+                val builder          = Chunk.newBuilder[A]
+                var error: Throwable = null
+                while elements.hasNext && (error eq null) do
+                    r(elements.next()) match
+                        case Left(e)  => error = e
+                        case Right(a) => discard(builder += a)
+                end while
+                if error ne null then Left(error)
+                else Right(builder.result())
+
+        def typeName: String = s"Chunk[${r.typeName}]"
+    end given
+
 end Chunk

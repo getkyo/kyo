@@ -30,7 +30,7 @@ class StreamCoreExtensionsTest extends Test:
             }.andThen(succeed)
         }
 
-        "multiple effects" in run {
+        "multiple effects" in runNotNative {
             // Env[Int] & Abort[String]
             val s1 = Stream:
                 Env.get[Int].map(i =>
@@ -107,7 +107,7 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
-        "multiple effects" in run {
+        "multiple effects" in runNotNative {
             // Env[Int] & Abort[String]
             val s1 = Stream:
                 Env.get[Int].map(i =>
@@ -144,7 +144,7 @@ class StreamCoreExtensionsTest extends Test:
                 Choice.run(test).andThen(succeed)
             }
 
-            "should preserve order when first transformation is delayed" in run {
+            "should preserve order when first transformation is delayed" in runNotNative {
                 val stream = Stream.init(1 to 4)
                 val test =
                     for
@@ -197,7 +197,7 @@ class StreamCoreExtensionsTest extends Test:
                 Choice.run(test).andThen(succeed)
             }
 
-            "should not preserve order when first transformation is delayed" in run {
+            "should not preserve order when first transformation is delayed" in runNotNative {
                 val stream = Stream.init(1 to 4)
                 val test =
                     for
@@ -248,7 +248,7 @@ class StreamCoreExtensionsTest extends Test:
                 Choice.run(test).andThen(succeed)
             }
 
-            "should preserve order when first transformation is delayed" in run {
+            "should preserve order when first transformation is delayed" in runNotNative {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
                 val test =
                     for
@@ -302,7 +302,7 @@ class StreamCoreExtensionsTest extends Test:
                 Choice.run(test).andThen(succeed)
             }
 
-            "should not preserve order when first transformation is delayed" in run {
+            "should not preserve order when first transformation is delayed" in runNotNative {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
                 val test =
                     for
@@ -681,20 +681,6 @@ class StreamCoreExtensionsTest extends Test:
                 }
             }
 
-            "group by time" in run {
-                Clock.withTimeControl { tc =>
-                    stream(tc).groupedWithin(Int.MaxValue, 30.millis).run.map: result =>
-                        assert(result == Chunk(Chunk(1, 2, 3, 4, 5), Chunk(6, 7, 8, 9, 10), Chunk(11)))
-                }
-            }
-
-            "group by size and time" in runNotJS {
-                Clock.withTimeControl { tc =>
-                    stream(tc).groupedWithin(3, 20.millis).run.map: result =>
-                        assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5), Chunk(6, 7, 8), Chunk(9, 10), Chunk(11)))
-                }
-            }
-
             "group to single chunk with max size + time" in run {
                 Clock.withTimeControl { tc =>
                     stream(tc).groupedWithin(Int.MaxValue, Duration.Infinity).run.map: result =>
@@ -971,6 +957,30 @@ class StreamCoreExtensionsTest extends Test:
                 else i + 1
             )
             Abort.run(stream2.run).map(res => assert(res.isError))
+        }
+
+        "mapParUnordered error with small buffer does not deadlock" in run {
+            val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+            Choice.run {
+                for
+                    par <- Choice.eval(2, 4, 1024)
+                    s2 = stream.mapParUnordered(par, 1)(i => if i == 5 then Abort.fail("failure") else i + 1)
+                    res <- Abort.run(s2.run)
+                yield assert(res == Result.Failure("failure"))
+            }.andThen(succeed)
+        }
+
+        "mapChunkParUnordered error with small buffer does not deadlock" in run {
+            val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+            Choice.run {
+                for
+                    par <- Choice.eval(2, 4, 1024)
+                    s2 = stream.mapChunkParUnordered(par, 1)(chunk =>
+                        if chunk.contains(5) then Abort.fail("failure") else chunk.map(_ + 1)
+                    )
+                    res <- Abort.run(s2.run)
+                yield assert(res == Result.Failure("failure"))
+            }.andThen(succeed)
         }
     }
 

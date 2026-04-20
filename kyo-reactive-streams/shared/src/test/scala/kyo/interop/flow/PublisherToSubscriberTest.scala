@@ -195,6 +195,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                         .andThen(latchPub.release).andThen(Async.never)
                 )))
                 _ <- latchPub.await
+                _ <- Async.sleep(50.millis)
                 _ <- publisherFiber.interrupt.unit
                 // Publisher scope closure should propagate cancellation to subscribers.
                 // Under heavy CI load the propagation can be slow, so interrupt

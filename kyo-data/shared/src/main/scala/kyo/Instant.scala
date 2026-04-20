@@ -2,6 +2,7 @@ package kyo
 
 import java.time.DateTimeException
 import java.time.Instant as JInstant
+import java.time.OffsetDateTime
 import java.time.format.DateTimeParseException
 
 /** Represents a point in time with nanosecond precision by wrapping 'java.time.Instant'.
@@ -222,5 +223,20 @@ object Instant:
             else instant - Epoch
 
     end extension
+
+    /** Parses an ISO-8601 formatted string into an Instant. */
+    given Flag.Reader.Scalar[Instant] with
+        def apply(s: String): Either[Throwable, Instant] =
+            val trimmed = s.trim
+            try Right(Instant.fromJava(JInstant.parse(trimmed)))
+            catch
+                case e: DateTimeParseException =>
+                    try Right(Instant.fromJava(OffsetDateTime.parse(trimmed).toInstant))
+                    catch case _: Throwable => Left(new IllegalArgumentException(s"Invalid Instant format: $s", e))
+            end try
+        end apply
+
+        def typeName: String = "Instant"
+    end given
 
 end Instant

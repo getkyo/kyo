@@ -46,9 +46,10 @@ class ProcessTest extends Test:
     "destroy causes waitFor to return non-Success exit code" in run {
         Scope.run {
             for
-                proc <- Command("sleep", "5").spawn
-                _    <- proc.destroy
-                code <- proc.waitFor
+                proc   <- Command("sleep", "5").spawn
+                _      <- proc.destroy
+                result <- proc.waitFor(10.seconds)
+                code = result.getOrElse(Process.ExitCode.SIGTERM)
             yield assert(code != ExitCode.Success)
         }
     }
@@ -56,9 +57,10 @@ class ProcessTest extends Test:
     "destroyForcibly force-kills a process" in run {
         Scope.run {
             for
-                proc <- Command("sleep", "60").spawn
-                _    <- proc.destroyForcibly
-                code <- proc.waitFor
+                proc   <- Command("sleep", "60").spawn
+                _      <- proc.destroyForcibly
+                result <- proc.waitFor(10.seconds)
+                code = result.getOrElse(Process.ExitCode.SIGKILL)
             yield assert(code != ExitCode.Success)
         }
     }
@@ -302,7 +304,7 @@ class ProcessTest extends Test:
                 // under heavy CI load. Fall back to SIGKILL if needed.
                 code <- result match
                     case Present(c) => c: Process.ExitCode < Any
-                    case Absent     => proc.destroyForcibly.andThen(proc.waitFor)
+                    case Absent     => proc.destroyForcibly.andThen(proc.waitFor(10.seconds).map(_.getOrElse(Process.ExitCode.SIGKILL)))
             yield assert(!code.isSuccess, s"Expected non-Success exit after destroy, got $code")
         }
     }

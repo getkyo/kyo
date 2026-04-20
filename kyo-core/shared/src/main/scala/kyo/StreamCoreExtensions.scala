@@ -515,7 +515,12 @@ object StreamCoreExtensions:
                             // Drain channelPar, waiting for each fiber to complete before finishing.
                             // Use getResult to inspect fiber errors without re-raising through
                             // Abort.run[Closed]. Store errors for propagation after background.
+                            // On error, run cleanup to close channels and interrupt fibers,
+                            // unblocking the foreground emitElementsFromChannel loop.
                             AtomicRef.init[Maybe[Either[Throwable, Any]]](Absent).map: fiberError =>
+                                def setError(error: Either[Throwable, Any]) =
+                                    fiberError.compareAndSet(Absent, Present(error)).andThen(cleanup.unit)
+
                                 val handlePar =
                                     Abort.run[Closed](
                                         Loop.forever:
@@ -523,11 +528,11 @@ object StreamCoreExtensions:
                                                 fiber.getResult.map:
                                                     case Result.Success(_) => ()
                                                     case Result.Panic(ex) =>
-                                                        fiberError.set(Present(Left(ex)))
+                                                        setError(Left(ex))
                                                     case Result.Failure(closed: Closed) =>
-                                                        fiberError.set(Present(Left(closed)))
+                                                        setError(Left(closed))
                                                     case Result.Failure(e) =>
-                                                        fiberError.set(Present(Right(e)))
+                                                        setError(Right(e))
                                     ).unit
 
                                 // Run stream handler in background, closing the output channel when finished
@@ -733,7 +738,12 @@ object StreamCoreExtensions:
                             // Drain channelPar, waiting for each fiber to complete before finishing.
                             // Use getResult to inspect fiber errors without re-raising through
                             // Abort.run[Closed]. Store errors for propagation after background.
+                            // On error, run cleanup to close channels and interrupt fibers,
+                            // unblocking the foreground emit loop.
                             AtomicRef.init[Maybe[Either[Throwable, Any]]](Absent).map: fiberError =>
+                                def setError(error: Either[Throwable, Any]) =
+                                    fiberError.compareAndSet(Absent, Present(error)).andThen(cleanup.unit)
+
                                 val handlePar =
                                     Abort.run[Closed](
                                         Loop.forever:
@@ -741,11 +751,11 @@ object StreamCoreExtensions:
                                                 fiber.getResult.map:
                                                     case Result.Success(_) => ()
                                                     case Result.Panic(ex) =>
-                                                        fiberError.set(Present(Left(ex)))
+                                                        setError(Left(ex))
                                                     case Result.Failure(closed: Closed) =>
-                                                        fiberError.set(Present(Left(closed)))
+                                                        setError(Left(closed))
                                                     case Result.Failure(e) =>
-                                                        fiberError.set(Present(Right(e)))
+                                                        setError(Right(e))
                                     ).unit
 
                                 // Run stream handler in background, closing the output channel when finished
@@ -1100,7 +1110,7 @@ object StreamCoreExtensions:
                     (for
                         _     <- tick
                         fiber <- push
-                        _     <- Abort.run[Closed](pull) // ignore Closed channel, join the push fiber to capture any Abort.
+                        _     <- Abort.run[Closed](pull)
                         _     <- fiber.get
                     yield ()).handle(Scope.run, Abort.run[Closed], _.unit)
                 }

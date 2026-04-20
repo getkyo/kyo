@@ -19,8 +19,8 @@ jobs:
        github.event.comment.body == '/release')
     runs-on: ubuntu-latest
     env:
-      JAVA_OPTS: -Xms1G -Xmx1G
-      JVM_OPTS:  -Xms1G -Xmx1G
+      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
+      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       - uses: actions/checkout@v6.0.2
         with:
@@ -35,21 +35,36 @@ jobs:
         with:
           jvm: corretto:24
           apps: sbt
-      - run: sbt -Dplatform=JVM "ci-release"
+      - name: Publish JVM
+        uses: nick-fields/retry@v3
+        with:
+          max_attempts: 3
+          timeout_minutes: 15
+          command: sbt -Dplatform=JVM "ci-release"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
-      - run: sbt -Dplatform=JS "ci-release"
+      - name: Publish JS
+        uses: nick-fields/retry@v3
+        with:
+          max_attempts: 3
+          timeout_minutes: 15
+          command: sbt -Dplatform=JS "ci-release"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
-      # - run: sbt -Dplatform=Native "ci-release"
-      #   env:
-      #     PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
-      #     PGP_SECRET: ${{ secrets.PGP_SECRET }}
-      #     SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
-      #     SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+      - name: Publish Native
+        uses: nick-fields/retry@v3
+        with:
+          max_attempts: 3
+          timeout_minutes: 15
+          command: sbt -Dplatform=Native "ci-release"
+        env:
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          PGP_SECRET: ${{ secrets.PGP_SECRET }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
