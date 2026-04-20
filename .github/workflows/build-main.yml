@@ -6,32 +6,9 @@ on:
 
 jobs:
   build:
-    runs-on: build
-    timeout-minutes: 30
-    env:
-      JAVA_OPTS: -Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
-      JVM_OPTS:  -Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
-
-    steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-    - uses: coursier/cache-action@v6
-    - name: Install Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libidn2-0-dev
-    - uses: coursier/setup-action@v1
-      with:
-        jvm: corretto:24
-        apps: sbt
-
-    - name: Build JVM
-      run: sbt '+kyoJVM/test'
-
-    - name: Build JS
-      run: sbt '+kyoJS/test'
-
-    - name: Build Native
-      run: sbt '+kyoNative/Test/compile'
+    uses: ./.github/workflows/build.yml
+    with:
+      # Full matrix (enable when budget allows):
+      # os-matrix: '["linux-x64", "linux-arm64", "macos-x64", "macos-arm64", "windows-x64", "windows-arm64"]'
+      os-matrix: '["linux-x64", "linux-arm64"]'
+      test-command: test

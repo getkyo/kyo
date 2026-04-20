@@ -28,7 +28,9 @@ object Registry:
     end loadAll
 
     private def findClasses(packageName: String): Seq[Class[?]] =
-        Files.list(Path.of(getClass.getResource(".").getPath().toString().replace("test-", "")))
+        val resourcePath = Path.of(getClass.getResource(".").toURI())
+        val targetPath   = resourcePath.toString.replace("test-", "")
+        Files.list(Path.of(targetPath))
             .collect(Collectors.toList())
             .asScala.toSeq
             .map(_.getFileName.toString)

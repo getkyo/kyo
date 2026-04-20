@@ -54,9 +54,8 @@ Kyo is structured as a monorepo, published to Maven Central:
 | kyo-zio              | ✅   | ✅   | ❌      | Bidirectional ZIO interop with support for ZIO, ZLayer, and ZStream  |
 | kyo-zio-test         | ✅   | ✅   | ❌      | ZIO Test framework integration for testing Kyo effects               |
 | kyo-cats             | ✅   | ✅   | ❌      | Bidirectional Cats IO interop with support for Sync, Async and Abort |
-| kyo-cache            | ✅   | ❌   | ❌      | High-performance caching using Caffeine with memoization             |
 | kyo-stats-registry   | ✅   | ✅   | ✅      | Metrics collection with counters, histograms, and gauges             |
-| kyo-stats-otel       | ✅   | ❌   | ❌      | OpenTelemetry integration for metrics and tracing export             |
+| kyo-stats-otlp       | ✅   | ✅   | ✅      | OpenTelemetry integration for metrics and tracing export             |
 | kyo-playwright       | ✅   | ❌   | ❌      | Browser automation testing using Microsoft Playwright                |
 | kyo-reactive-streams | ✅   | ❌   | ❌      | Bidirectional Reactive Streams interop implementation                |
 | kyo-aeron            | ✅   | ❌   | ❌      | High-performance messaging using Aeron transport                     |
@@ -2036,7 +2035,7 @@ Note that like `Console`, `Log` methods accept `Text` values. This means they ca
 
 `Stat` is a pluggable implementation that provides counters, histograms, gauges, and tracing. It uses Java's [service loading](https://docs.oracle.com/javase/8/docs/api/java/util/ServiceLoader.html) to locate exporters. 
 
-The module [`kyo-stats-otel`](https://central.sonatype.com/artifact/io.getkyo/kyo-stats-otel_3) provides exporters for [OpenTelemetry](https://opentelemetry.io/).
+The module [`kyo-stats-otlp`](https://central.sonatype.com/artifact/io.getkyo/kyo-stats-otlp_3) provides exporters for [OpenTelemetry](https://opentelemetry.io/).
 
 ```scala
 import kyo.*
@@ -2100,11 +2099,11 @@ import kyo.*
 val path: Path = Path("tmp", "file.txt")
 
 // Read the entire contents of a file as a String
-val content: String < Sync =
+val content: String < (Sync & Abort[FileReadException]) =
     path.read
 
 // Write a String to a file
-val writeResult: Unit < Sync =
+val writeResult: Unit < (Sync & Abort[FileWriteException]) =
     path.write("Hello, world!")
 
 // Check if a path exists
@@ -2112,7 +2111,7 @@ val exists: Boolean < Sync =
     path.exists
 
 // Create a directory
-val createDir: Unit < Sync =
+val createDir: Unit < (Sync & Abort[FileFsException]) =
     Path("tmp", "test").mkDir
 ```
 
@@ -2121,35 +2120,34 @@ val createDir: Unit < Sync =
 - Reading: `read`, `readBytes`, `readLines`, `readStream`, `readLinesStream`, `readBytesStream`
 - Writing: `write`, `writeBytes`, `writeLines`, `append`, `appendBytes`, `appendLines`
 - Directory operations: `list`, `walk`
-- File metadata: `exists`, `isDir`, `isFile`, `isLink`
+- File metadata: `exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink`
 - File manipulation: `mkDir`, `mkFile`, `move`, `copy`, `remove`, `removeAll`
 
 All methods that perform side effects are suspended using the `Sync` effect, ensuring referential transparency. Methods that work with streams of data, such as `readStream` and `walk`, return a `Stream` of the appropriate type, suspended using the `Scope` effect to ensure proper resource handling.
 
 ```scala
 import kyo.*
-import java.io.IOException
 
 val path: Path = Path("tmp", "file.txt")
 
 // Read a file as a stream of lines
-val lines: Stream[String, Scope & Sync] =
-    path.readLinesStream()
+val lines: Stream[String, Scope & Sync & Abort[FileReadException]] =
+    path.readLinesStream
 
 // Process the stream
-val result: Unit < (Scope & Console & Async & Abort[IOException]) =
+val result: Unit < (Scope & Console & Async & Abort[FileReadException]) =
     lines.map(line => Console.printLine(line)).discard
 
 // Walk a directory tree
-val tree: Stream[Path, Sync] =
+val tree: Stream[Path, Sync & Scope & Abort[FileFsException]] =
     Path("tmp").walk
 
 // Process each file in the tree
-val processedTree: Unit < (Console & Async & Abort[IOException]) =
+val processedTree: Unit < (Console & Scope & Async & Abort[FileFsException | FileReadException]) =
     tree.map(file => file.read.map(content => Console.printLine(s"File: ${file}, Content: $content"))).discard
 ```
 
-`Path` integrates with Kyo's `Stream` API, allowing for efficient processing of file contents using streams. The `sink` and `sinkLines` extension methods on `Stream` enable writing streams of data back to files.
+`Path` integrates with Kyo's `Stream` API, allowing for efficient processing of file contents using streams. The `writeTo` and `writeLinesTo` extension methods on `Stream` enable writing streams of data back to files.
 
 ```scala
 import kyo.*
@@ -2158,81 +2156,143 @@ import kyo.*
 val bytes: Stream[Byte, Sync] = Stream.init(Seq[Byte](1, 2, 3))
 
 // Write the stream to a file
-val sinkResult: Unit < (Scope & Sync) =
-    bytes.sink(Path("path", "to", "file.bin"))
+val sinkResult: Unit < (Scope & Sync & Abort[FileException]) =
+    bytes.writeTo(Path("path", "to", "file.bin"))
 ```
 
-### Process: Process Execution
+### Command & Process: Process Execution
 
-`Process` provides a way to spawn and interact with external processes from within Kyo. It offers a purely functional interface for process creation, execution, and management.
+`Command` and `Process` provide a way to spawn and interact with external processes from within Kyo. `Command` is an immutable builder that describes what to run, and `Process` is the handle to a running process.
 
 ```scala
 import kyo.*
 
 // Create a simple command
-val command: Process.Command = Process.Command("echo", "Hello, World!")
+val command: Command = Command("echo", "Hello, World!")
 
 // Spawn the process and obtain the result
-val result: String < Sync = command.text
+val result: String < (Async & Abort[CommandException]) = command.text
 ```
 
-The core of `Process` is the `Process.Command` type, which represents a command to be executed. It can be created using the `Process.Command.apply` method, which takes a variable number of arguments representing the command and its arguments.
+`Command` is created using `Command.apply`, which takes the program name and its arguments. Arguments are passed as-is to the OS — no shell interpretation — avoiding shell injection vulnerabilities.
 
-The `Process` object also provides a `jvm` sub-object for spawning JVM processes directly.
+Once a `Command` is created, it can be executed using various methods:
 
-```scala
-import kyo.*
+- `spawn`: Spawns the process and returns a `Process` instance (scope-managed).
+- `text`: Spawns the process, waits for it to complete, and returns stdout as a string.
+- `stream`: Spawns the process and returns a `Stream[Byte, ...]` of stdout.
+- `waitFor`: Spawns the process, waits for it to complete, and returns the `ExitCode`.
+- `waitForSuccess`: Like `waitFor`, but aborts on non-zero exit codes.
 
-class MyClass extends KyoApp:
-    run {
-        Console.printLine(s"Executed with args: $args")
-    }
-end MyClass
-
-// Spawn a new JVM process
-val jvmProcess: Process < Sync =
-    Process.jvm.spawn(classOf[MyClass], List("arg1", "arg2"))
-```
-
-Once a `Process.Command` is created, it can be executed using various methods:
-
-- `spawn`: Spawns the process and returns a `Process` instance.
-- `text`: Spawns the process, waits for it to complete, and returns the standard output as a string.
-- `stream`: Spawns the process and returns an `InputStream` of the standard output.
-- `exitValue`: Spawns the process, waits for it to complete, and returns the exit code.
-- `waitFor`: Spawns the process, waits for it to complete, and returns the exit code.
-
-`Process.Command` instances can be transformed and combined using methods like `pipe`, `andThen`, `+`, `map`, and `cwd`, `env`, `stdin`, `stdout`, `stderr` for modifying the process's properties.
+`Command` instances can be configured and composed using builder methods like `andThen` (piping), `cwd`, `envAppend`, `stdin`, `stdoutToFile`, and `stderrToFile`.
 
 ```scala
-import java.io.File
-import java.nio.file.Path
 import kyo.*
 
 // Create a piped command
-val pipedCommand = Process.Command("echo", "Hello, World!").pipe(Process.Command("wc", "-w"))
+val pipedCommand = Command("echo", "Hello, World!").andThen(Command("wc", "-w"))
 
 // Modify the command's environment and working directory
-val modifiedCommand = pipedCommand.env(Map("VAR" -> "value")).cwd(Path.of("/path/to/dir"))
+val modifiedCommand = pipedCommand.envAppend(Map("VAR" -> "value")).cwd(Path("path", "to", "dir"))
 
 // Spawn the modified command
-val modifiedResult: String < Sync = modifiedCommand.text
+val modifiedResult: String < (Async & Abort[CommandException]) = modifiedCommand.text
 ```
 
-`Process` also provides `Input` and `Output` types for fine-grained control over the process's standard input, output, and error streams.
+`Command` provides methods for fine-grained control over the process's standard input, output, and error streams.
 
 ```scala
-import java.io.File
 import kyo.*
 
-// Create a command with custom input and output
-val command = Process.Command("my-command")
-    .stdin(Process.Input.fromString("input data"))
-    .stdout(Process.Output.FileRedirect(new File("output.txt")))
-    .stderr(Process.Output.Inherit)
+// Create a command with custom input and file output
+val command = Command("my-command")
+    .stdin("input data")
+    .stdoutToFile(Path("output.txt"))
+    .inheritStderr
 ```
 
-The `Process` type returned by `spawn` provides methods for interacting with the spawned process, such as `waitFor`, `exitValue`, `destroy`, and `isAlive`.
+The `Process` type returned by `spawn` provides methods for interacting with the running process, such as `waitFor`, `exitCode`, `destroy`, `destroyForcibly`, and `isAlive`.
+
+### Parse: Syntactic and lexical analysis
+
+`Parse` provides a way to transform a sequence of tokens (typically chars if the input is textual) into data structures such as an AST by doing lexical/syntactic analysis. `Parse` provides many combinators to build complex parsers upon basic ones.
+
+```scala
+import kyo.*
+
+def term: Int < Parse[Char] =
+    Parse.firstOf(
+        Parse.int,
+        Parse.between(
+            Parse.literal('('),
+            expr,
+            Parse.literal(')')
+        )
+    )
+
+def expr: Int < Parse[Char] =
+    Parse.firstOf(
+        for
+            left  <- term
+            _     <- Parse.require(Parse.literal('+'))
+            right <- expr
+        yield left + right,
+        term
+    )
+
+val parser: Int < Parse[Char] = Parse.entireInput(expr)
+
+Parse.runResult("1")(parser)       // 1
+Parse.runResult("1+2")(parser)     // 3
+Parse.runResult("1+(4+5)")(parser) // 10
+Parse.runResult("1*2")(parser)     // Error: Expected: +, Got: * at position 1
+```
+
+Unlike most parsing combinators libraries, Kyo's `Parse` provides ways to accumulate errors and recover from them.
+
+```scala
+import kyo.*
+
+val array: Chunk[Int] < Parse[Char] = Parse.entireInput(
+    Parse.between(
+        Parse.literal('['),
+        Parse.separatedBy(
+            Parse.recoverWith(
+                Parse.int,
+                RecoverStrategy.skipThenRetryUntil(Parse.any, Parse.literal(','))
+            ),
+            Parse.literal(',')
+        ),
+        Parse.literal(']')
+    )
+)
+
+Parse.runResult("[]")(array)      // Chunk()
+Parse.runResult("[1,2,3]")(array) // Chunk(1, 2, 3)
+
+/*
+Errors:
+- Invalid int at position 1
+- Invalid int at position 5
+
+Recovered result: Chunk(2, 4)
+*/
+Parse.runResult("[a,2,c,4]")(array)
+```
+
+`Parse.runResult` returns a `ParseResult` which contains both errors and a `Maybe` of the result. Note that it is possible to have both errors and an output in the case of a recovered output like in the last example.
+
+`Parse` also provides `runOrAbort` to abort if the parsing was, entirely or partially, unsuccessful.
+
+```scala mdoc:nest
+Abort.run(Parse.runOrAbort("[1,2,3]")(array)) //Chunk(1, 2, 3)
+Abort.run(Parse.runOrAbort("[1,a,3]")(array)) //Failure
+
+array.handle(
+    Parse.runOrAbort("[1,2,3]"),
+    Abort.run
+) //Chunk(1, 2, 3)
+```
 
 ## Concurrent Effects
 
@@ -2767,51 +2827,63 @@ val d: Int < Sync =
     a.map(_.pending)
 ```
 
-### Barrier: Multi-party Rendezvous
+### Gate: Coordinated Concurrent Passage
 
-The `Barrier` effect provides a synchronization primitive that allows a fixed number of parties to wait for each other to reach a common point of execution. It's particularly useful in scenarios where multiple fibers need to synchronize their progress.
+`Gate` coordinates concurrent parties through a shared passage point — parties arrive and wait until all expected parties are present, then everyone passes through together. The gate then resets for the next group, like a revolving door.
+
+Two variants are available: `Gate` for a fixed set of participants (similar to Java's `CyclicBarrier` but with pass tracking and non-blocking arrival), and `Gate.Dynamic` for dynamic membership with `join`/`leave` and hierarchical subgroups (similar to Java's `Phaser`).
+
+Unlike `Latch`, which is asymmetric (some tasks release while others wait), `Gate` is symmetric: all parties participate equally and pass through together.
 
 ```scala
 import kyo.*
 
-// Initialize a barrier for 3 parties
-val a: Barrier < Sync =
-    Barrier.init(3)
+// Initialize a gate for 3 parties
+val a: Gate < Sync =
+    Gate.initUnscoped(3)
 
-// Wait for the barrier to be released
-val b: Unit < Async =
-    a.map(_.await)
+// Pass through the gate (blocks until all parties arrive)
+val b: Unit < (Async & Abort[Closed]) =
+    a.map(_.pass)
 
-// Get the number of parties still waiting
-val c: Int < Sync =
-    a.map(_.pending)
+// Signal arrival without waiting for others
+val c: Unit < Sync =
+    a.map(_.arrive)
+
+// Get the number of parties still expected
+val d: Int < Sync =
+    a.map(_.pendingCount)
+
+// Get how many times the gate has been fully passed through
+val e: Int < Sync =
+    a.map(_.passCount)
 
 // Example usage with multiple fibers
-val d: Unit < Async =
+val f: Unit < (Async & Abort[Closed]) =
     for
-        barrier <- Barrier.init(3)
-        _       <- Async.zip(
-                     barrier.await,
-                     barrier.await,
-                     barrier.await
-                   )
+        gate <- Gate.initUnscoped(3)
+        _   <- Async.zip(
+                 gate.pass,
+                 gate.pass,
+                 gate.pass
+               )
     yield ()
 
-// Fibers can join the barrier at different points of the computation
-val e: Unit < Async =
+// Fibers can join the gate at different points of the computation
+val g: Unit < (Async & Abort[Closed]) =
     for
-        barrier <- Barrier.init(3)
-        fiber1  <- Fiber.initUnscoped(Async.sleep(1.second))
-        fiber2  <- Fiber.initUnscoped(Async.sleep(2.seconds))
-        _       <- Async.zip(
-                     fiber1.get.map(_ => barrier.await),
-                     fiber2.get.map(_ => barrier.await),
-                     Fiber.initUnscoped(barrier.await).map(_.get)
-                   )
+        gate   <- Gate.initUnscoped(3)
+        fiber1 <- Fiber.initUnscoped(Async.sleep(1.second))
+        fiber2 <- Fiber.initUnscoped(Async.sleep(2.seconds))
+        _      <- Async.zip(
+                    fiber1.get.map(_ => gate.pass),
+                    fiber2.get.map(_ => gate.pass),
+                    Fiber.initUnscoped(gate.pass).map(_.get)
+                  )
     yield ()
 ```
 
-The `Barrier` is initialized with a specific number of parties. Each party calls `await` when it reaches the barrier point. The barrier releases all waiting parties when the last party arrives. After all parties have been released, the barrier cannot be reset or reused.
+Use `init` (with `Scope`) for automatic cleanup or `initUnscoped` with manual `close`. A custom stop condition or fixed pass count can be provided at creation to auto-close the gate.
 
 ### Atomic: Concurrent State
 
@@ -3238,139 +3310,34 @@ The code highlighting feature supports basic syntax highlighting for Scala keywo
 
 ## Integrations
 
-### Cache: Memoized Functions via Caffeine
+### Cache: Lock-free Caching with Memoization
 
-Kyo provides caching through memoization. A single `Cache` instance can be reused by multiple memoized functions. This allows for flexible scoping of caches, enabling users to use the same cache for various operations.
+Kyo provides a lock-free, bounded cache with CLOCK eviction and optional time-based expiration. It can be used directly as a key-value store or to memoize functions.
 
 ```scala
 import kyo.*
 
-val a: Int < Async =
+// Direct key-value caching
+val a: String < Sync =
     for
+        cache <- Cache.init[String, String](maxSize = 100)
+        _     <- cache.add("key", "value")
+        v     <- cache.getOrElse("key", "default")
+    yield v
 
-        // The initialization takes a
-        // builder function that mirrors
-        // Caffeine's builder
-        cache <- Cache.init(_.maxSize(100))
-
-        // Create a memoized function
-        fun = cache.memo { (v: String) =>
-            // Note how the implementation
-            // can use other effects
+// Function memoization
+val b: Int < (Async & Sync) =
+    for
+        fun <- Cache.memo(maxSize = 100) { (v: String) =>
+            // The implementation can use
+            // other effects
             Sync.defer(v.toInt)
         }
-
-        // Use the function
         v <- fun("10")
     yield v
 ```
 
-Although multiple memoized functions can reuse the same `Cache`, each function operates as an isolated cache and doesn't share any values with others. Internally, cache entries include the instance of the function as part of the key to ensure this separation. Only the cache space is shared, allowing for efficient use of resources without compromising the independence of each function's cache.
-
-### Requests: HTTP Client via Sttp
-
-`Requests` provides a simplified API for [Sttp 3](https://github.com/softwaremill/sttp) implemented on top of Kyo's concurrent package.
-
-To perform a request, use the `apply` method. It takes a builder function based on Sttp's request building API.
-
-```scala
-import kyo.*
-import kyo.Requests.Backend
-import sttp.client3.*
-
-// Perform a request using a builder function
-val a: String < (Async & Abort[FailedRequest]) =
-    Requests(_.get(uri"https://httpbin.org/get"))
-
-// Alternatively, requests can be
-// defined separately
-val b: String < (Async & Abort[FailedRequest]) =
-    Requests.request(Requests.basicRequest.get(uri"https://httpbin.org/get"))
-
-// It's possible to use the default implementation or provide
-// a custom `Backend` via `let`
-
-// An example request
-val c: String < (Async & Abort[FailedRequest]) =
-    Requests(_.get(uri"https://httpbin.org/get"))
-
-// Implementing a custom mock backend
-val backend: Backend =
-    new Backend:
-        def send[T](r: Request[T, Any])(using Frame) =
-            Response.ok(Right("mocked")).asInstanceOf[Response[T]]
-
-// Use the custom backend
-val d: String < (Async & Abort[FailedRequest]) =
-    Requests.let(backend)(a)
-```
-
-Please refer to Sttp's documentation for details on how to build requests. Streaming is currently unsupported.
-
-Users are free to use any JSON libraries supported by Sttp; however, [zio-json](https://github.com/zio/zio-json) is recommended, as it is used in Kyo's tests and modules requiring HTTP communication, such as `AIs`.
-
-### Routes: HTTP Server via Tapir
-
-`Routes` integrates with the Tapir library to help set up HTTP servers. The method `Routes.add` is used for adding routes. This method requires the definition of a route, which can be a Tapir Endpoint instance or a builder function. Additionally, the method requires the implementation of the endpoint, which is provided as the second parameter group. To start the server, the `Routes` effect is handled, which initializes the HTTP server with the specified routes.
-
-```scala
-import kyo.*
-import sttp.tapir.*
-import sttp.tapir.server.netty.*
-
-// A simple health route using an endpoint builder
-val a: Unit < Routes =
-    Routes.add(
-        _.get.in("health")
-            .out(stringBody)
-    ) { _ =>
-        "ok"
-    }
-
-// The endpoint can also be defined separately
-val health2 = endpoint.get.in("health2").out(stringBody)
-
-val b: Unit < Routes =
-    Routes.add(health2)(_ => "ok")
-
-// Starting the server by handling the effect
-val c: NettyKyoServerBinding < Async =
-    Routes.run(a.andThen(b))
-
-// Alternatively, a customized server configuration can be used
-val d: NettyKyoServerBinding < Async =
-    Routes.run(NettyKyoServer().port(9999))(a.andThen(b))
-```
-
-The parameters for Tapir's endpoint type are aligned with Kyo effects as follows:
-
-`Endpoint[SECURITY_INPUT, INPUT, ERROR_OUTPUT, OUTPUT, CAPABILITIES]`
-
-This translates to the endpoint function format:
-
-`INPUT => OUTPUT < (Env[SECURITY_INPUT] & Abort[ERROR_OUTPUT])`
-
-Currently, the `CAPABILITIES` parameter is not supported in Kyo since streaming functionality is not available. An example of using these parameters is shown below:
-
-```scala
-import kyo.*
-import sttp.model.*
-import sttp.tapir.*
-
-// An endpoint with an 'Int' path input and 'StatusCode' error output
-val a: Unit < Routes =
-    Routes.add(
-        _.get.in("test" / path[Int]("id"))
-            .errorOut(statusCode)
-            .out(stringBody)
-    ) { (id: Int) =>
-        if id == 42 then "ok"
-        else Abort.fail(StatusCode.NotFound)
-        // returns a 'String < Abort[StatusCode]'
-    }
-```
-
-For further examples, refer to TechEmpower's benchmark [subproject](https://github.com/TechEmpower/FrameworkBenchmarks/tree/master/frameworks/Scala/kyo-tapir) for a simple runnable demonstration, and  Kyo's [example ledger service](https://github.com/getkyo/kyo/tree/main/kyo-examples/jvm/src/main/scala/examples/ledger) for practical applications of these concepts.
+`Cache.memo` creates a self-contained cache for a function's results and deduplicates concurrent calls to the same key — only one fiber computes while others wait on the result. Expiration policies (`expireAfterAccess`, `expireAfterWrite`) can be configured independently on both `Cache.init` and `Cache.memo`.
 
 ### ZIOs: Integration with ZIO
 
@@ -3503,28 +3470,29 @@ case class Query2(k: Int < CustomEffects) derives schema.SemiAuto
 
 Then, the `Resolvers` effect allows easily turning these schemas into a GraphQL server.
 The method `Resolvers.get` is used for importing a `GraphQL` object from Caliban into Kyo.
-You can then run this effect using `Resolvers.run` to get an HTTP server. This effect requires `ZIO` because Caliban uses ZIO internally to run.
+You can then run this effect using `Resolvers.run` to get an `HttpServer`. This effect requires `Async` because Caliban uses ZIO internally to run.
 
 ```scala
 import caliban.*
 import caliban.schema.*
 import kyo.*
 import kyo.given
-import sttp.tapir.server.netty.*
-import zio.Task
 
 case class Query(k: Int < Abort[Throwable]) derives Schema.SemiAuto
 val api = graphQL(RootResolver(Query(42)))
 
-val a: NettyKyoServerBinding < (Async & Abort[CalibanError]) =
-    Resolvers.run { Resolvers.get(api) }
+val a: HttpServer < (Async & Scope & Abort[CalibanError]) =
+    for
+        interpreter <- Resolvers.get(api)
+        server      <- Resolvers.run(interpreter)
+    yield server
 
-// similarly to the tapir integration, you can also pass a `NettyKyoServer` explicitly
-val b: NettyKyoServerBinding < (Async & Abort[CalibanError]) =
-    Resolvers.run(NettyKyoServer().port(9999)) { Resolvers.get(api) }
-
-// you can turn this into a ZIO as seen in the ZIO integration
-val c: Task[NettyKyoServerBinding] = ZIOs.run(b)
+// with custom configuration
+val b: HttpServer < (Async & Scope & Abort[CalibanError]) =
+    for
+        interpreter <- Resolvers.get(api)
+        server      <- Resolvers.run(interpreter, Resolvers.Config.default.path("custom/graphql"))
+    yield server
 ```
 
 When using arbitrary Kyo effects, you need to provide the `Runner` for that effect when calling the `run` function.
@@ -3533,7 +3501,6 @@ import caliban.*
 import caliban.schema.*
 import kyo.*
 import kyo.given
-import zio.Task
 
 type CustomEffects = Var[Int] & Env[String]
 object schema extends SchemaDerivation[Runner[CustomEffects]]
@@ -3543,9 +3510,13 @@ val api = graphQL(RootResolver(Query(42)))
 
 // runner for our CustomEffects
 val runner = new Runner[CustomEffects]:
-    def apply[T](v: T < CustomEffects): Task[T] = ZIOs.run(Env.run("kyo")(Var.run(0)(v)))
+    def apply[A](v: A < CustomEffects): A < (Abort[Throwable] & Async) = Env.run("kyo")(Var.run(0)(v))
 
-val d = Resolvers.run(runner) { Resolvers.get(api) }
+val d: HttpServer < (Async & Scope & Abort[CalibanError]) =
+    for
+        interpreter <- Resolvers.get(api)
+        server      <- Resolvers.run(interpreter, runner)
+    yield server
 ```
 
 ### AIs: LLM Abstractions via OpenAI
@@ -3574,7 +3545,7 @@ Being more modular than ZIO, Kyo separates effect constructors in the companion 
 
 ### Simple example
 
-```scala 3
+```scala mdoc:skip
 import kyo.*
 import scala.concurrent.duration.*
 import java.io.IOException

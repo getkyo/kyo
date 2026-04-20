@@ -159,6 +159,6 @@ class TraceTest extends Test:
                 val top    = full.linesIterator.takeWhile(!_.contains("@")).toList
                 val bottom = full.linesIterator.drop(top.length).takeWhile(_.contains("@")).toList
                 val trace  = (top.mkString("\n") + "\n" + bottom.mkString("\n")).trim()
-                assert(trace == expected.stripMargin.trim)
+                assert(trace == expected.stripMargin.trim.replace("\r", ""))
 
 end TraceTest

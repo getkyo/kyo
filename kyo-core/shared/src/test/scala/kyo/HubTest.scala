@@ -289,7 +289,7 @@ class HubTest extends Test:
                 .andThen(succeed)
         }
 
-        "message ordering" in run {
+        "message ordering" in runJVM {
             for
                 hub   <- Hub.init[Int](1000)
                 l1    <- hub.listen
@@ -353,7 +353,7 @@ class HubTest extends Test:
             yield assert(elapsed >= 8.millis && result == (1 to 10))
         }
 
-        "concurrent filtered listeners" in run {
+        "concurrent filtered listeners" in runJVM {
             for
                 hub   <- Hub.init[Int](100)
                 latch <- Latch.init(1)

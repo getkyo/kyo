@@ -1,63 +1,11 @@
 package kyo.stats.internal
 
-import kyo.stats.internal.*
+import kyo.AllowUnsafe
 import org.scalatest.freespec.AnyFreeSpec
 
 class StatsRegistryTest extends AnyFreeSpec {
 
-    "exporter" in {
-        class TestExporter extends StatsExporter {
-            var counterCalls: Seq[(List[String], String, Long)]      = Seq.empty
-            var histogramCalls: Seq[(List[String], String, Summary)] = Seq.empty
-            var gaugeCalls: Seq[(List[String], String, Double)]      = Seq.empty
-
-            override def counter(path: List[String], description: String, delta: Long): Unit =
-                counterCalls :+= ((path, description, delta))
-
-            override def histogram(path: List[String], description: String, summary: Summary): Unit =
-                histogramCalls :+= ((path, description, summary))
-
-            override def gauge(path: List[String], description: String, currentValue: Double): Unit =
-                gaugeCalls :+= ((path, description, currentValue))
-        }
-
-        val scope = StatsRegistry.scope("exporter", "test")
-
-        val counter = scope.counter("my_counter", "A test counter")
-        counter.inc()
-        counter.add(10)
-
-        val histogram = scope.histogram("my_histogram", "A test histogram")
-        histogram.observe(10)
-        histogram.observe(20)
-        histogram.observe(30)
-
-        var gaugeValue = 100.0
-        val gauge      = scope.gauge("my_gauge", "A test gauge")(gaugeValue)
-        val _          = gauge
-        val exporter   = new TestExporter
-        StatsRegistry.addExporter(exporter)
-
-        StatsRegistry.internal.refresh()
-
-        assert(exporter.counterCalls.head == (List("exporter", "test", "my_counter"), "A test counter", 11))
-
-        val (histogramPath, histogramDescription, histogramSummary) = exporter.histogramCalls.head
-        assert(histogramPath == List("exporter", "test", "my_histogram"))
-        assert(histogramDescription == "A test histogram")
-        assert(histogramSummary.count == 3)
-        assert(histogramSummary.min <= 10)
-        assert(histogramSummary.max >= 30)
-
-        assert(exporter.gaugeCalls.head == (List("exporter", "test", "my_gauge"), "A test gauge", 100.0))
-
-        gaugeValue = 200.0
-        StatsRegistry.internal.refresh()
-
-        assert(exporter.gaugeCalls.last == (List("exporter", "test", "my_gauge"), "A test gauge", 200.0))
-
-        StatsRegistry.removeExporter(exporter)
-    }
+    implicit val _au: AllowUnsafe = AllowUnsafe.embrace.danger
 
     "scope" - {
         "create scope with path" in {

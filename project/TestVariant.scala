@@ -89,7 +89,7 @@ object TestVariant {
 
                 var expectedSize: Option[Int] = None
 
-                val processed: State = content.split("\n").zipWithIndex.foldLeft(State.zero)({
+                val processed: State = content.split("\\r?\\n").zipWithIndex.foldLeft(State.zero)({
                     case (state, (str, n)) => {
                         val lineNumber = n + 1
 

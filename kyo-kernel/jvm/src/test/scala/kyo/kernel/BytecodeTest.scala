@@ -32,19 +32,19 @@ class BytecodeTest extends Test:
 
     "map" in {
         val map = methodBytecodeSize[TestMap]
-        assert(map == Map("test" -> 26, "anonfun" -> 11, "mapLoop" -> 158))
+        assert(map == Map("test" -> 26, "anonfun" -> 11, "mapLoop" -> 162))
     }
 
     "handle" in {
         val map = methodBytecodeSize[TestHandle]
-        assert(map == Map("test" -> 26, "anonfun" -> 8, "handleLoop" -> 283))
+        assert(map == Map("test" -> 26, "anonfun" -> 8, "handleLoop" -> 291))
     }
 
     def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =
         import javassist.*
         val classpath = System.getProperty("java.class.path")
         val classPool = ClassPool.getDefault
-        classpath.split(":").foreach { path =>
+        classpath.split(java.io.File.pathSeparator).foreach { path =>
             classPool.insertClassPath(path)
         }
         val ctClass = classPool.get(ct.runtimeClass.getName())

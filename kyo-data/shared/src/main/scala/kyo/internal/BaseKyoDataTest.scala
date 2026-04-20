@@ -29,7 +29,8 @@ private[kyo] trait BaseKyoDataTest:
         val result: Result[String, Unit] =
             try
                 val errors = typeCheckErrors(code)
-                if errors.isEmpty then Result.unit else Result.fail(errors.iterator.map(_.message).mkString("\n"))
+                if errors.isEmpty then Result.unit
+                else Result.fail(errors.iterator.map(_.message.replace("\r\n", "\n")).mkString("\n"))
             catch
                 case cause: Throwable =>
                     Result.panic(new RuntimeException("Compilation failed", cause))

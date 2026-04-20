@@ -1,0 +1,44 @@
+package kyo
+
+import scala.collection.immutable.Map
+
+/** A log of transactional operations performed on TRefs within an STM transaction.
+  *
+  * TRefLog maintains a mapping from transactional references to their pending read/write operations within a transaction. It tracks both
+  * read entries (which record the tick when the data was read) and write entries (which contain the new values to be committed).
+  *
+  * This type is used internally by the STM implementation and should not be accessed directly by application code.
+  *
+  * @note
+  *   This is a private implementation detail of the STM system
+  */
+opaque type TRefLog = Map[TRef[Any], TRefLog.Entry[Any]]
+
+private[kyo] object TRefLog:
+
+    val empty: TRefLog = Map.empty
+
+    extension (self: TRefLog)
+
+        def put[A](ref: TRef[A], entry: Entry[A]): TRefLog =
+            val refAny   = ref.asInstanceOf[TRef[Any]]
+            val entryAny = entry.asInstanceOf[TRefLog.Entry[Any]]
+            self.updated(refAny, entryAny)
+        end put
+
+        def get[A](ref: TRef[A]): Maybe[Entry[A]] =
+            val refAny = ref.asInstanceOf[TRef[Any]]
+            Maybe.when(self.contains(refAny))(self(refAny).asInstanceOf[Entry[A]])
+
+        def toMap: Map[TRef[Any], TRefLog.Entry[Any]] = self
+    end extension
+
+    val isolate = Var.isolate.update[TRefLog]
+
+    sealed abstract class Entry[A] extends Serializable:
+        def tick: STM.Tick
+        def value: A
+
+    case class Read[A](tick: STM.Tick, value: A)  extends Entry[A]
+    case class Write[A](tick: STM.Tick, value: A) extends Entry[A]
+end TRefLog

@@ -695,6 +695,16 @@ class AbortTest extends Test:
                     val r = Abort.run(Abort.catching(throw new RuntimeException)).eval
                     assert(r.isPanic)
                 }
+                "Panic" in pendingUntilFixed {
+                    class Distinct1 extends Throwable derives CanEqual
+
+                    val d1: Distinct1                 = new Distinct1
+                    val a: Boolean < Abort[Distinct1] = Abort.catching[Distinct1](Abort.panic(d1)).andThen(true)
+                    val r: Result[Distinct1, Boolean] = Abort.run(a).eval
+
+                    assert(r == Result.fail(d1))
+                    ()
+                }
             }
             "with other effect" - {
                 def test(v: Int < Env[Int]): Int < Env[Int] =
@@ -955,7 +965,7 @@ class AbortTest extends Test:
 
     "Abort.run with parametrized type" in pendingUntilFixed {
         class Test[A]
-        typeCheck("Abort.run(Abort.fail(new Test[Int]))")
+        discard(typeCheck("Abort.run(Abort.fail(new Test[Int]))"))
     }
 
     "Abort.run with type unions" - {
@@ -1410,6 +1420,89 @@ class AbortTest extends Test:
 
             val _: String < Any = folded
             succeed
+        }
+    }
+
+    "ignore" - {
+        "discards Failure" in {
+            val result = Abort.run[Nothing](Abort.ignore[Ex1](Abort.fail(ex1))).eval
+            assert(result == Result.succeed(()))
+        }
+        "discards Success" in {
+            val result = Abort.run[Nothing](Abort.ignore[Ex1](42)).eval
+            assert(result == Result.succeed(()))
+        }
+        "propagates Panic" in {
+            val ex     = new Exception("boom")
+            val result = Abort.run[Nothing](Abort.ignore[Ex1](Abort.panic[Ex1](ex))).eval
+            assert(result == Result.panic(ex))
+        }
+        "union types - handles only specified type" in {
+            val result = Abort.run[Ex2](Abort.ignore[Ex1](Abort.fail[Ex1 | Ex2](ex2))).eval
+            assert(result == Result.fail(ex2))
+        }
+        "side effects run" in run {
+            Var.run(0) {
+                Abort.ignore[Ex1](Var.update[Int](_ + 1).andThen(Abort.fail(ex1))).andThen(
+                    Var.get[Int].map(v => assert(v == 1))
+                )
+            }
+        }
+        "inside Abort.run yields Panic" in {
+            val ex     = new RuntimeException("panic")
+            val result = Abort.run[Nothing](Abort.ignore[Ex1](throw ex)).eval
+            assert(result.isPanic)
+        }
+    }
+
+    "loopUntil" - {
+        case class Done() derives CanEqual
+
+        "loops until abort" in run {
+            Var.run(0) {
+                Abort.loopUntil[Done] {
+                    Var.update[Int](_ + 1).map { v =>
+                        if v >= 5 then Abort.fail(Done())
+                        else ()
+                    }
+                }.andThen(Var.get[Int].map(v => assert(v == 5)))
+            }
+        }
+        "first iteration aborts" in run {
+            Var.run(0) {
+                Abort.loopUntil[String] {
+                    Var.update[Int](_ + 1).andThen(Abort.fail("stop"))
+                }.andThen(Var.get[Int].map(v => assert(v == 1)))
+            }
+        }
+        "propagates Panic" in {
+            val ex     = new RuntimeException("panic")
+            val result = Abort.run[Nothing](Abort.loopUntil[String](throw ex)).eval
+            assert(result.isPanic)
+        }
+        "works with generic error type" in run {
+            Var.run(0) {
+                Abort.loopUntil[Int] {
+                    Var.update[Int](_ + 1).map { v =>
+                        if v >= 3 then Abort.fail(42)
+                        else ()
+                    }
+                }.andThen(Var.get[Int].map(v => assert(v == 3)))
+            }
+        }
+        "interacts with other effects" in run {
+            Var.run(0) {
+                Env.run(10) {
+                    Abort.loopUntil[String] {
+                        Env.get[Int].map { env =>
+                            Var.update[Int](_ + 1).map { v =>
+                                if v >= env then Abort.fail("done")
+                                else ()
+                            }
+                        }
+                    }
+                }.andThen(Var.get[Int].map(v => assert(v == 10)))
+            }
         }
     }
 

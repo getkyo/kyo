@@ -44,7 +44,102 @@ object ConcreteTag:
 
     inline given apply[A]: ConcreteTag[A] = ${ ConcreteTagMacro.derive[A] }
 
+    /** Creates a ConcreteTag from a Java class, mapping primitive classes to their corresponding Primitive tags.
+      *
+      * @param cls
+      *   the Java class
+      * @return
+      *   a ConcreteTag corresponding to the class
+      */
+    def fromClass[A](cls: Class[?]): ConcreteTag[A] =
+        (if cls eq java.lang.Integer.TYPE then IntTag
+         else if cls eq java.lang.Long.TYPE then LongTag
+         else if cls eq java.lang.Double.TYPE then DoubleTag
+         else if cls eq java.lang.Float.TYPE then FloatTag
+         else if cls eq java.lang.Byte.TYPE then ByteTag
+         else if cls eq java.lang.Short.TYPE then ShortTag
+         else if cls eq java.lang.Character.TYPE then CharTag
+         else if cls eq java.lang.Boolean.TYPE then BooleanTag
+         else cls) .asInstanceOf[ConcreteTag[A]]
+    end fromClass
+
+    /** Derives a ConcreteTag from an existing array's component type.
+      *
+      * @param array
+      *   the array to inspect
+      * @return
+      *   a ConcreteTag matching the array's primitive or reference component type
+      */
+    def fromArray[A](array: Array[A]): ConcreteTag[A] =
+        fromClass(array.getClass.getComponentType)
+
+    /** Creates a new array with the correct primitive or reference type.
+      *
+      * @param len
+      *   the length of the array to create
+      * @param ct
+      *   the ConcreteTag determining the array's component type
+      * @return
+      *   a new array of the appropriate type
+      */
+    def newArray[A](len: Int)(using ct: ConcreteTag[A]): Array[A] =
+        ((ct: @unchecked) match
+            case IntTag        => new Array[Int](len)
+            case LongTag       => new Array[Long](len)
+            case DoubleTag     => new Array[Double](len)
+            case FloatTag      => new Array[Float](len)
+            case ByteTag       => new Array[Byte](len)
+            case ShortTag      => new Array[Short](len)
+            case CharTag       => new Array[Char](len)
+            case BooleanTag    => new Array[Boolean](len)
+            case cls: Class[?] => java.lang.reflect.Array.newInstance(cls, len)
+            case _             => new Array[AnyRef](len)
+        ).asInstanceOf[Array[A]]
+    end newArray
+
+    /** Copies an array to a new length, preserving the component type.
+      *
+      * @param array
+      *   the source array
+      * @param newLen
+      *   the length of the new array
+      * @return
+      *   a new array with elements copied from the source
+      */
+    def copyOf[A](array: Array[A], newLen: Int): Array[A] =
+        val copy = java.lang.reflect.Array.newInstance(
+            array.getClass.getComponentType,
+            newLen
+        ).asInstanceOf[Array[A]]
+        System.arraycopy(array, 0, copy, 0, Math.min(array.length, newLen))
+        copy
+    end copyOf
+
     extension [A](self: ConcreteTag[A])
+
+        /** Returns the Java class corresponding to this ConcreteTag.
+          *
+          * For primitive tags, returns the primitive class (e.g. `java.lang.Integer.TYPE` for `Int`). For reference types, returns the
+          * class directly. For complex types (Union, Intersection, Literal, AnyVal, Nothing), returns `classOf[AnyRef]`.
+          *
+          * @return
+          *   the Java class for this tag
+          */
+        def toClass: Class[?] =
+            self match
+                case IntTag        => java.lang.Integer.TYPE
+                case LongTag       => java.lang.Long.TYPE
+                case DoubleTag     => java.lang.Double.TYPE
+                case FloatTag      => java.lang.Float.TYPE
+                case ByteTag       => java.lang.Byte.TYPE
+                case ShortTag      => java.lang.Short.TYPE
+                case CharTag       => java.lang.Character.TYPE
+                case BooleanTag    => java.lang.Boolean.TYPE
+                case UnitTag       => java.lang.Void.TYPE
+                case cls: Class[?] => cls
+                case _             => classOf[AnyRef]
+            end match
+        end toClass
 
         /** Checks if the given value is accepted by this ConcreteTag
           *

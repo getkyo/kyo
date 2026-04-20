@@ -252,9 +252,9 @@ class TTableTest extends Test:
                     indexFields = table.indexFields
                 yield
                     assert(indexFields.size == 2)
-                    assert(indexFields.exists(_.name == "name"))
-                    assert(indexFields.exists(_.name == "age"))
-                    assert(!indexFields.exists(_.name == "email"))
+                    assert(indexFields.exists(_ == "name"))
+                    assert(indexFields.exists(_ == "age"))
+                    assert(!indexFields.exists(_ == "email"))
             }
 
             "should handle single index field" in run {
@@ -263,9 +263,9 @@ class TTableTest extends Test:
                     indexFields = table.indexFields
                 yield
                     assert(indexFields.size == 1)
-                    assert(indexFields.exists(_.name == "age"))
-                    assert(!indexFields.exists(_.name == "name"))
-                    assert(!indexFields.exists(_.name == "email"))
+                    assert(indexFields.exists(_ == "age"))
+                    assert(!indexFields.exists(_ == "name"))
+                    assert(!indexFields.exists(_ == "email"))
             }
         }
     }

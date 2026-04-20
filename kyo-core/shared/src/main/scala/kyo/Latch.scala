@@ -6,15 +6,19 @@ import scala.annotation.tailrec
 /** A synchronization primitive that allows one or more tasks to wait until a set of operations being performed in other tasks completes.
   *
   * Latch provides a countdown mechanism where tasks can wait for a counter to reach zero before proceeding. The counter is decremented
-  * through `release` operations, with waiting tasks unblocked once the count reaches zero.
+  * through `release` operations, with waiting tasks unblocked once the count reaches zero. Similar to
+  * `java.util.concurrent.CountDownLatch`.
   *
   * Latches are commonly used for coordinating startup sequences, signaling completion of distributed work, or implementing simple fork-join
   * patterns where one task must wait for multiple operations to complete.
   *
+  * Unlike [[kyo.Gate]], which is symmetric (all parties pass through together), Latch is asymmetric: some tasks count down while others
+  * wait.
+  *
   * When initialized with count <= 0, the latch behaves as a no-op with all await operations completing immediately.
   *
   * @see
-  *   [[kyo.Barrier]] A related primitive that synchronizes a fixed number of tasks at a specific execution point
+  *   [[kyo.Gate]] for symmetric synchronization where all parties pass through together
   */
 final case class Latch private (unsafe: Latch.Unsafe):
 
@@ -23,21 +27,21 @@ final case class Latch private (unsafe: Latch.Unsafe):
       * @return
       *   Unit wrapped in an Async effect
       */
-    def await(using Frame): Unit < Async = Sync.Unsafe(unsafe.await().safe.get)
+    def await(using Frame): Unit < Async = Sync.Unsafe.defer(unsafe.await().safe.get)
 
     /** Decrements the count of the latch, releasing it if the count reaches zero.
       *
       * @return
       *   Unit wrapped in an Sync effect
       */
-    def release(using Frame): Unit < Sync = Sync.Unsafe(unsafe.release())
+    def release(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.release())
 
     /** Returns the current count of the latch.
       *
       * @return
       *   The current count wrapped in an Sync effect
       */
-    def pending(using Frame): Int < Sync = Sync.Unsafe(unsafe.pending())
+    def pending(using Frame): Int < Sync = Sync.Unsafe.defer(unsafe.pending())
 
 end Latch
 
@@ -63,7 +67,7 @@ object Latch:
       *   The result of applying the function
       */
     inline def initWith[A, S](count: Int)(inline f: Latch => A < S)(using inline frame: Frame): A < (S & Sync) =
-        Sync.Unsafe(f(Latch(Unsafe.init(count))))
+        Sync.Unsafe.defer(f(Latch(Unsafe.init(count))))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:

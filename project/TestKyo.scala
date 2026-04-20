@@ -1,0 +1,269 @@
+import sbt.*
+import sbt.Keys.*
+import sbt.internal.BuildDependencies
+import scala.sys.process.*
+
+/** Unified test command for CI and local use.
+  *
+  * Usage: testKyo diff vs origin/main, all platforms, current Scala testKyo JVM diff vs origin/main, JVM only testKyo --all full test, all
+  * platforms testKyo --all JVM full test, JVM only testKyo --scala 2.13.18 JVM diff, Scala 2.13, JVM only (auto-discovers modules) testKyo
+  * --all --scala 2.13.18 JVM full test, Scala 2.13, JVM only testKyo origin/feature JVM diff vs specific ref, JVM only testKyo --dry-run
+  * JVM show what would run without executing
+  */
+object TestKyo {
+
+    private val platformNames = Set("JVM", "JS", "Native")
+
+    private def log(msg: String): Unit = println(s"[testKyo] $msg")
+
+    def command: Command = Command.args("testKyo", "") { (state, args) =>
+        val isAll           = args.contains("--all")
+        val isDryRun        = args.contains("--dry-run")
+        val scalaIdx        = args.indexOf("--scala")
+        val scalaVersionArg = if (scalaIdx >= 0 && scalaIdx + 1 < args.length) Some(args(scalaIdx + 1)) else None
+
+        val remaining = args
+            .filterNot(a => a == "--all" || a == "--dry-run")
+            .filterNot(a => a == "--scala" || (scalaIdx >= 0 && args.indexOf(a) == scalaIdx + 1))
+
+        val (platformArgs, refArgs) = remaining.partition(a => platformNames.exists(_.equalsIgnoreCase(a)))
+        val platform                = platformArgs.headOption.map(a => platformNames.find(_.equalsIgnoreCase(a)).get)
+        val baseRef                 = refArgs.headOption.getOrElse("origin/main")
+
+        val extracted = Project.extract(state)
+        val scala3    = extracted.get(scalaVersion)
+
+        // Resolve --scala 2 / --scala 3 to actual versions from the build
+        val scalaVersionOpt = scalaVersionArg.map(resolveScalaVersion(_, extracted))
+        val runBothScala    = scalaVersionOpt.isEmpty
+
+        log(s"scala: ${scalaVersionOpt.getOrElse(s"$scala3 + 2.x")}, platform: ${platform.getOrElse("all")}, mode: ${if (isAll) "all"
+            else s"diff vs $baseRef"}")
+
+        // Run for the specified or primary Scala version
+        val targetScala = scalaVersionOpt.getOrElse(scala3)
+        val state1 = scalaVersionOpt match {
+            case Some(v) if v != scala3 =>
+                log(s"switching to Scala $v")
+                Command.process(s"++$v", state, msg => state.log.error(msg))
+            case _ => state
+        }
+
+        def runForScala(st: State, sv: String): State =
+            if (isAll || scalaVersionOpt.isDefined) runAll(st, platform, sv, isDryRun)
+            else runDiff(st, baseRef, platform, sv, isDryRun)
+
+        val state2 = runForScala(state1, targetScala)
+
+        if (runBothScala) {
+            findScala2Version(extracted) match {
+                case Some(v) =>
+                    log(s"switching to Scala $v for cross-build modules")
+                    val state3 = if (isDryRun) state2 else Command.process(s"++$v", state2, msg => state2.log.error(msg))
+                    val state4 = runForScala(state3, v)
+                    log(s"restoring Scala $scala3")
+                    if (isDryRun) state4 else Command.process(s"++$scala3", state4, msg => state4.log.error(msg))
+                case None =>
+                    log("no Scala 2.x cross-build modules found")
+                    state2
+            }
+        } else {
+            state2
+        }
+    }
+
+    // --- Full test mode ---
+
+    private def runAll(state: State, platform: Option[String], scalaVersion: String, isDryRun: Boolean = false): State = {
+        val extracted = Project.extract(state)
+        val structure = extracted.structure
+        val allRefs   = structure.allProjectRefs
+
+        // Exclude aggregate projects
+        val excluded = Set("kyoJVM", "kyoJS", "kyoNative")
+        val testable = allRefs.filter { ref =>
+            val name        = ref.project
+            val versions    = (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
+            val isAggregate = excluded.contains(name)
+            val platformMatch = if (isAggregate) false
+            else platform match {
+                case Some(p) => matchesPlatform(name, p)
+                case None    => true
+            }
+            val matchesScala = versions.contains(scalaVersion)
+            platformMatch && matchesScala
+        }
+
+        if (testable.isEmpty) {
+            log("no projects found for current Scala version and platform")
+            state
+        } else {
+            val sorted = testable.map(_.project).sorted
+            log(s"testing ${sorted.size} projects: ${sorted.mkString(", ")}")
+            val commands = sorted.map(name => s"$name/test").mkString("; ")
+            log(s"running: $commands")
+            if (isDryRun) state else Command.process(commands, state, msg => state.log.error(msg))
+        }
+    }
+
+    // --- Diff test mode ---
+    // If build/CI config changed (build.sbt, project/*, .github/*), run all modules.
+    // Otherwise, run only affected modules + their transitive dependents.
+
+    private def runDiff(state: State, baseRef: String, platform: Option[String], scalaVersion: String, isDryRun: Boolean = false): State = {
+        val changedFiles = diffFiles(baseRef)
+        if (changedFiles.isEmpty) {
+            log(s"no changed files vs $baseRef — skipping tests")
+            return state
+        }
+
+        log(s"${changedFiles.size} changed files vs $baseRef:")
+        changedFiles.foreach(f => log(s"  $f"))
+
+        if (buildConfigChanged(changedFiles)) {
+            log("build/CI config changed — running all modules")
+            return runAll(state, platform, scalaVersion, isDryRun)
+        }
+
+        val extracted = Project.extract(state)
+        val structure = extracted.structure
+        val allRefs   = structure.allProjectRefs
+        val allNames  = allRefs.map(_.project).toSet
+        val bd        = extracted.get(buildDependencies)
+
+        val directlyChanged = changedFiles.flatMap(fileToProjects(_, allNames)).toSet
+        val filtered = platform match {
+            case Some(p) => directlyChanged.filter(matchesPlatform(_, p))
+            case None    => directlyChanged
+        }
+
+        if (filtered.isEmpty) {
+            log("no affected projects found — skipping tests")
+            return state
+        }
+
+        val dependentMap = transitiveDependents(allRefs, bd)
+        val allAffected = filtered.flatMap { name =>
+            allRefs.find(_.project == name) match {
+                case Some(ref) => dependentMap.getOrElse(ref, Set.empty).map(_.project) + name
+                case None      => Set(name)
+            }
+        }
+
+        val toTest = (platform match {
+            case Some(p) => allAffected.filter(matchesPlatform(_, p))
+            case None    => allAffected
+        }).filter { name =>
+            allRefs.find(_.project == name).exists { ref =>
+                (ref / crossScalaVersions).get(structure.data).getOrElse(Nil).contains(scalaVersion)
+            }
+        }
+
+        if (toTest.isEmpty) {
+            log("no testable affected projects found — skipping tests")
+            state
+        } else {
+            val sorted = toTest.toSeq.sorted
+            log(s"directly changed: ${filtered.toSeq.sorted.mkString(", ")}")
+            log(s"with dependents: ${sorted.mkString(", ")}")
+            val commands = sorted.map(name => s"$name/test").mkString("; ")
+            log(s"running: $commands")
+            if (isDryRun) state else Command.process(commands, state, msg => state.log.error(msg))
+        }
+    }
+
+    // --- Helpers ---
+
+    /** Check if a project name matches the given platform. JVM projects use bare names (e.g. "kyo-core") while JS/Native use suffixed
+      * names.
+      */
+    private def matchesPlatform(name: String, platform: String): Boolean =
+        platform match {
+            case "JVM"    => !name.endsWith("JS") && !name.endsWith("Native")
+            case "JS"     => name.endsWith("JS")
+            case "Native" => name.endsWith("Native")
+            case _        => false
+        }
+
+    /** Map a changed file path to affected sbt project names.
+      *
+      * Cross-projects use shared/jvm/js/native subdirectories. Modules with flat src/ layout (e.g. kyo-bench) hit the default case which
+      * tries all platforms; the .filter(allProjectNames.contains) ensures only actually-existing projects are returned.
+      */
+    private def fileToProjects(file: String, allProjectNames: Set[String]): Set[String] = {
+        val parts = file.split("/").toList
+        parts match {
+            case module :: sub :: _ =>
+                val affectedPlatforms = sub match {
+                    case "shared" => Seq("JVM", "JS", "Native")
+                    case "jvm"    => Seq("JVM")
+                    case "js"     => Seq("JS")
+                    case "native" => Seq("Native")
+                    case _        => Seq("JVM", "JS", "Native")
+                }
+                affectedPlatforms.flatMap { p =>
+                    // JVM projects may use bare name (e.g. "kyo-core") or suffixed (e.g. "kyo-coreJVM")
+                    val suffixed = s"$module$p"
+                    if (allProjectNames.contains(suffixed)) Seq(suffixed)
+                    else if (p == "JVM" && allProjectNames.contains(module)) Seq(module)
+                    else Seq.empty
+                }.toSet
+            case _ => Set.empty
+        }
+    }
+
+    private def diffFiles(baseRef: String): Seq[String] =
+        try Seq("git", "diff", "--name-only", baseRef).!!.trim.split("\n").filter(_.nonEmpty).toSeq
+        catch {
+            case e: Exception =>
+                log(s"Failed to run git diff: ${e.getMessage}")
+                Seq.empty
+        }
+
+    private def buildConfigChanged(files: Seq[String]): Boolean =
+        files.exists { f =>
+            f == "build.sbt" ||
+            f.startsWith("project/") ||
+            f.startsWith(".github/")
+        }
+
+    private def transitiveDependents(
+        allRefs: Seq[ProjectRef],
+        bd: BuildDependencies
+    ): Map[ProjectRef, Set[ProjectRef]] = {
+        val directDependents = scala.collection.mutable.Map[ProjectRef, Set[ProjectRef]]()
+        for {
+            (project, deps) <- bd.classpath
+            dep             <- deps
+        } {
+            directDependents(dep.project) =
+                directDependents.getOrElse(dep.project, Set.empty) + project
+        }
+
+        def closure(ref: ProjectRef, visited: Set[ProjectRef]): Set[ProjectRef] = {
+            val direct = directDependents.getOrElse(ref, Set.empty) -- visited
+            direct ++ direct.flatMap(d => closure(d, visited + d))
+        }
+
+        allRefs.map(ref => ref -> closure(ref, Set(ref))).toMap
+    }
+
+    /** Resolve shorthand scala versions: "2" → "2.13.18", "3" → "3.8.2", or pass through exact versions. */
+    private def resolveScalaVersion(input: String, extracted: Extracted): String =
+        input match {
+            case "2" =>
+                findScala2Version(extracted).getOrElse(
+                    sys.error("No Scala 2.x version found in crossScalaVersions")
+                )
+            case "3" => extracted.get(scalaVersion)
+            case v   => v
+        }
+
+    /** Find the Scala 2.x version used in crossScalaVersions across all projects. */
+    private def findScala2Version(extracted: Extracted): Option[String] = {
+        val structure = extracted.structure
+        structure.allProjectRefs.flatMap { ref =>
+            (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
+        }.find(_.startsWith("2."))
+    }
+}
