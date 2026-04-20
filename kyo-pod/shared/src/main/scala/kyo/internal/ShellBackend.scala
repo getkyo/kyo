@@ -625,52 +625,42 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
     private def createAttachSession(args: Seq[String], errorMsg: String)(
         using Frame
     ): AttachSession < (Async & Abort[ContainerException] & Scope) =
-        // Create pipes
-        Sync.defer {
-            val pipedOut = new java.io.PipedOutputStream()
-            val pipedIn  = new java.io.PipedInputStream(pipedOut)
-            // Spawn process
-            val dockerCmd = Command((cmd +: args)*).stdin(Process.Input.FromStream(pipedIn))
-            Abort.runWith[CommandException](dockerCmd.spawn) {
-                case Result.Failure(cmdEx) =>
-                    Abort.fail[ContainerException](ContainerException.General(errorMsg, cmdEx))
-                case Result.Panic(ex) =>
-                    Abort.fail[ContainerException](ContainerException.General(errorMsg, ex))
-                case Result.Success(proc) =>
-                    // Build session
-                    Scope.ensure(Sync.defer {
-                        pipedOut.close()
-                        pipedIn.close()
-                    }).andThen {
-                        new AttachSession:
-                            def write(data: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-                                Sync.defer {
-                                    pipedOut.write(data.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-                                    pipedOut.flush()
-                                }
+        // Use an empty stdin stream — interactive write requires HTTP backend
+        val emptyIn   = new java.io.ByteArrayInputStream(Array.empty[Byte])
+        val dockerCmd = Command((cmd +: args)*).stdin(Process.Input.FromStream(emptyIn))
+        Abort.runWith[CommandException](dockerCmd.spawn) {
+            case Result.Failure(cmdEx) =>
+                Abort.fail[ContainerException](ContainerException.General(errorMsg, cmdEx))
+            case Result.Panic(ex) =>
+                Abort.fail[ContainerException](ContainerException.General(errorMsg, ex))
+            case Result.Success(proc) =>
+                new AttachSession:
+                    def write(data: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
+                        Abort.fail(ContainerException.NotSupported(
+                            "attach write",
+                            "Shell backend does not support interactive stdin — use HTTP backend"
+                        ))
 
-                            def write(data: Chunk[Byte])(using Frame): Unit < (Async & Abort[ContainerException]) =
-                                Sync.defer {
-                                    pipedOut.write(data.toArray)
-                                    pipedOut.flush()
-                                }
+                    def write(data: Chunk[Byte])(using Frame): Unit < (Async & Abort[ContainerException]) =
+                        Abort.fail(ContainerException.NotSupported(
+                            "attach write",
+                            "Shell backend does not support interactive stdin — use HTTP backend"
+                        ))
 
-                            def read(using Frame): Stream[LogEntry, Async & Abort[ContainerException]] =
-                                Stream {
-                                    Scope.run {
-                                        proc.stdout.mapChunk { bytes =>
-                                            val text  = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                            val lines = text.split("\n").filter(_.trim.nonEmpty)
-                                            Chunk.from(lines.map(line => LogEntry(LogEntry.Source.Stdout, line)))
-                                        }.emit
-                                    }
-                                }
+                    def read(using Frame): Stream[LogEntry, Async & Abort[ContainerException]] =
+                        Stream {
+                            Scope.run {
+                                proc.stdout.mapChunk { bytes =>
+                                    val text  = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
+                                    val lines = text.split("\n").filter(_.trim.nonEmpty)
+                                    Chunk.from(lines.map(line => LogEntry(LogEntry.Source.Stdout, line)))
+                                }.emit
+                            }
+                        }
 
-                            def resize(width: Int, height: Int)(using Frame): Unit < (Async & Abort[ContainerException]) =
-                                () // Not supported via CLI
-                        end new
-                    }
-            }
+                    def resize(width: Int, height: Int)(using Frame): Unit < (Async & Abort[ContainerException]) =
+                        () // Not supported via CLI
+                end new
         }
     end createAttachSession
 
@@ -1869,6 +1859,20 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
             ContainerException.AuthenticationError(target, output)
         else if matchesAny(ErrorPatterns.VolumeInUse) then
             ContainerException.VolumeInUse(Container.Volume.Id(target), output)
+        else if lower.contains("initializing source") then
+            // Podman auto-pull failed with registry errors (TLS, auth, network, etc.)
+            // when the image doesn't exist locally — treat as ImageNotFound
+            // Extract image ref from "docker://name:tag:" in the error message
+            val dockerIdx = output.indexOf("docker://")
+            val imageRef =
+                if dockerIdx >= 0 then
+                    val afterPrefix = output.substring(dockerIdx + "docker://".length)
+                    // Take until ": " which separates ref from error detail
+                    val colonSpace = afterPrefix.indexOf(": ")
+                    if colonSpace >= 0 then afterPrefix.substring(0, colonSpace)
+                    else afterPrefix.takeWhile(!_.isWhitespace)
+                else target
+            ContainerException.ImageNotFound(ContainerImage.parse(imageRef).getOrElse(ContainerImage(imageRef)))
         else
             // Build exception
             ContainerException.General(s"${cmd} ${args.mkString(" ")} failed", output)
@@ -1887,7 +1891,15 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
 
         /** Image not found — Docker: "manifest unknown", Podman: "image not found" */
         val ImageNotFound: Seq[String] =
-            Seq("no such image", "image not found", "manifest unknown", "requested access to the resource is denied")
+            Seq(
+                "no such image",
+                "image not found",
+                "manifest unknown",
+                "requested access to the resource is denied",
+                "image not known",
+                "repository does not exist",
+                "name unknown"
+            )
 
         /** Name/ID conflict — Docker & Podman both use "conflict" or "already in use" */
         val Conflict: Seq[String] =

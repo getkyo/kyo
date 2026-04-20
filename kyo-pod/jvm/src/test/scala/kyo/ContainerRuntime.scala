@@ -38,9 +38,18 @@ object ContainerRuntime:
                 val home = java.lang.System.getProperty("user.home", "")
                 Seq(s"$home/.docker/run/docker.sock", "/var/run/docker.sock")
             case "podman" =>
-                val xdg = java.lang.System.getenv("XDG_RUNTIME_DIR")
-                if xdg != null then Seq(s"$xdg/podman/podman.sock") else Seq("/run/podman/podman.sock")
+                val xdg        = java.lang.System.getenv("XDG_RUNTIME_DIR")
+                val xdgSockets = if xdg != null then Seq(s"$xdg/podman/podman.sock") else Seq.empty
+                // macOS Podman Machine socket paths
+                val macSockets = findPodmanMachineSocket()
+                xdgSockets ++ macSockets ++ Seq("/run/podman/podman.sock")
             case _ => Seq("/var/run/docker.sock")
         candidates.find(p => java.nio.file.Files.exists(java.nio.file.Path.of(p)))
     end findSocket
+
+    private def findPodmanMachineSocket(): Seq[String] =
+        // On macOS, Podman Machine communicates via SSH, not a local REST API socket.
+        // The socket reported by `podman machine inspect` is for SSH tunneling, not the
+        // Docker-compatible REST API. Return empty since the HTTP backend cannot use it.
+        Seq.empty
 end ContainerRuntime

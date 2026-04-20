@@ -708,8 +708,41 @@ lazy val `kyo-pod` =
             `kyo-settings`
         )
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`)
+        .nativeSettings(
+            `native-settings`,
+            nativeConfig ~= { c =>
+                val opensslOpts =
+                    if (System.getProperty("os.name").toLowerCase.contains("mac")) {
+                        val prefix = {
+                            val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
+                            val p1 = new java.io.File("/opt/homebrew/opt/openssl")
+                            val p0 = new java.io.File("/usr/local/opt/openssl")
+                            if (p3.exists()) p3.getAbsolutePath
+                            else if (p1.exists()) p1.getAbsolutePath
+                            else p0.getAbsolutePath
+                        }
+                        Seq(s"-L$prefix/lib", s"-I$prefix/include", "-lssl", "-lcrypto")
+                    } else Seq("-lssl", "-lcrypto")
+                c.withLinkingOptions(c.linkingOptions ++ opensslOpts)
+                    .withCompileOptions(c.compileOptions ++ {
+                        if (System.getProperty("os.name").toLowerCase.contains("mac")) {
+                            val prefix = {
+                                val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
+                                val p1 = new java.io.File("/opt/homebrew/opt/openssl")
+                                val p0 = new java.io.File("/usr/local/opt/openssl")
+                                if (p3.exists()) p3.getAbsolutePath
+                                else if (p1.exists()) p1.getAbsolutePath
+                                else p0.getAbsolutePath
+                            }
+                            Seq(s"-I$prefix/include")
+                        } else Nil
+                    })
+            }
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
 
 lazy val `kyo-playwright` =
     crossProject(JVMPlatform)
