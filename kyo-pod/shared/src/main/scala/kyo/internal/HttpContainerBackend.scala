@@ -434,78 +434,94 @@ final private[kyo] class HttpContainerBackend(
     def execInteractive(id: Container.Id, command: Command)(
         using Frame
     ): Container.AttachSession < (Async & Abort[ContainerException] & Scope) =
-        Abort.fail(ContainerException.NotSupported(
-            "execInteractive",
-            "Interactive exec requires bidirectional streaming not supported via HTTP API"
-        ))
+        val createBody = execCreateBody(command).copy(AttachStdin = true)
+        withErrorMapping(id.value) {
+            HttpClient.postJson[ExecCreateResponse](url(s"/containers/${id.value}/exec"), createBody)
+        }.map { resp =>
+            val execId    = resp.Id
+            val startBody = ExecStartRequest(Detach = false)
+            val bodyBytes = Span.from(Json[ExecStartRequest].encode(startBody).getBytes("UTF-8"))
+            Abort.runWith[HttpException](
+                HttpClient.connectRaw(
+                    url(s"/exec/$execId/start"),
+                    body = bodyBytes,
+                    headers = Seq(
+                        "Content-Type" -> "application/json",
+                        "Connection"   -> "Upgrade",
+                        "Upgrade"      -> "tcp"
+                    )
+                )
+            ) {
+                case Result.Success(conn) => buildAttachSession(conn, isTty = false)
+                case Result.Failure(e)    => mapHttpError(e, id.value)
+                case Result.Panic(e) =>
+                    Abort.fail(ContainerException.General(s"Unexpected error for ${id.value}", e))
+            }
+        }
+    end execInteractive
 
     // --- Attach ---
 
     def attach(id: Container.Id, stdin: Boolean, stdout: Boolean, stderr: Boolean)(
         using Frame
     ): Container.AttachSession < (Async & Abort[ContainerException] & Scope) =
-        val args = Chunk("attach") ++
-            (if !stdin then Chunk("--no-stdin") else Chunk.empty) ++
-            (if !stdout then Chunk("--no-stdout") else Chunk.empty) ++
-            (if !stderr then Chunk("--no-stderr") else Chunk.empty) ++
-            Chunk(id.value)
-        createAttachSession(args.toSeq, s"attach failed for ${id.value}")
-    end attach
-
-    /** Spawn a CLI subprocess and wrap it as an AttachSession.
-      *
-      * Uses PipedOutputStream/PipedInputStream as a subprocess IO boundary — the CLI process requires a java.io.InputStream for stdin, so a
-      * Channel cannot be used here.
-      */
-    private def createAttachSession(args: Seq[String], errorMsg: String)(
-        using Frame
-    ): AttachSession < (Async & Abort[ContainerException] & Scope) =
-        Sync.defer {
-            // Subprocess IO boundary: CLI process requires java.io.InputStream for stdin
-            val pipedOut  = new java.io.PipedOutputStream()
-            val pipedIn   = new java.io.PipedInputStream(pipedOut)
-            val dockerCmd = Command((cliCommand +: args)*).stdin(Process.Input.FromStream(pipedIn))
-            Abort.runWith[CommandException](dockerCmd.spawn) {
-                case Result.Failure(cmdEx) =>
-                    Abort.fail[ContainerException](ContainerException.General(errorMsg, cmdEx))
-                case Result.Panic(ex) =>
-                    Abort.fail[ContainerException](ContainerException.General(errorMsg, ex))
-                case Result.Success(proc) =>
-                    Scope.ensure(Sync.defer {
-                        pipedOut.close()
-                        pipedIn.close()
-                    }).andThen {
-                        new AttachSession:
-                            def write(data: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-                                Sync.defer {
-                                    pipedOut.write(data.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-                                    pipedOut.flush()
-                                }
-
-                            def write(data: Chunk[Byte])(using Frame): Unit < (Async & Abort[ContainerException]) =
-                                Sync.defer {
-                                    pipedOut.write(data.toArray)
-                                    pipedOut.flush()
-                                }
-
-                            def read(using Frame): Stream[LogEntry, Async & Abort[ContainerException]] =
-                                Stream {
-                                    Scope.run {
-                                        proc.stdout.mapChunk { bytes =>
-                                            val text  = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                            val lines = text.split("\n").filter(_.trim.nonEmpty)
-                                            Chunk.from(lines.map(line => LogEntry(LogEntry.Source.Stdout, line)))
-                                        }.emit
-                                    }
-                                }
-
-                            def resize(width: Int, height: Int)(using Frame): Unit < (Async & Abort[ContainerException]) =
-                                () // Not supported via CLI
-                        end new
-                    }
+        isContainerTty(id).map { isTty =>
+            Abort.runWith[HttpException](
+                HttpClient.connectRaw(
+                    url(
+                        s"/containers/${id.value}/attach",
+                        "stream" -> "true",
+                        "logs"   -> "true",
+                        "stdin"  -> stdin.toString,
+                        "stdout" -> stdout.toString,
+                        "stderr" -> stderr.toString
+                    ),
+                    headers = Seq(
+                        "Content-Type" -> "application/vnd.docker.raw-stream",
+                        "Connection"   -> "Upgrade",
+                        "Upgrade"      -> "tcp"
+                    )
+                )
+            ) {
+                case Result.Success(conn) => buildAttachSession(conn, isTty)
+                case Result.Failure(e)    => mapHttpError(e, id.value)
+                case Result.Panic(e) =>
+                    Abort.fail(ContainerException.General(s"Unexpected error for ${id.value}", e))
             }
         }
-    end createAttachSession
+    end attach
+
+    /** Build an AttachSession from an HttpRawConnection.
+      *
+      * Wraps the bidirectional raw byte connection as an AttachSession with proper demultiplexing. In TTY mode, raw bytes are treated as
+      * stdout text. In non-TTY mode, Docker's 8-byte multiplexed stream headers are parsed to separate stdout/stderr.
+      */
+    private def buildAttachSession(conn: HttpRawConnection, isTty: Boolean): AttachSession =
+        new AttachSession:
+            def write(data: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
+                conn.write(Span.from(data.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+
+            def write(data: Chunk[Byte])(using Frame): Unit < (Async & Abort[ContainerException]) =
+                conn.write(Span.from(data.toArray))
+
+            def read(using Frame): Stream[LogEntry, Async & Abort[ContainerException]] =
+                if isTty then
+                    conn.read.mapChunk { spans =>
+                        spans.flatMap { bytes =>
+                            val text  = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
+                            val lines = text.split("\n").filter(_.nonEmpty)
+                            Chunk.from(lines.map(line => LogEntry(LogEntry.Source.Stdout, line)))
+                        }
+                    }
+                else
+                    conn.read.mapChunk { spans =>
+                        spans.flatMap(demuxStream(_))
+                    }
+
+            def resize(width: Int, height: Int)(using Frame): Unit < (Async & Abort[ContainerException]) =
+                () // Resize can be added later via POST to resize endpoint
+        end new
+    end buildAttachSession
 
     // --- Logs ---
 
@@ -1881,6 +1897,7 @@ final private[kyo] class HttpContainerBackend(
 
     private case class ExecCreateRequest(
         Cmd: Seq[String] = Seq.empty,
+        AttachStdin: Boolean = false,
         AttachStdout: Boolean = true,
         AttachStderr: Boolean = true,
         Env: Seq[String] = Seq.empty,
