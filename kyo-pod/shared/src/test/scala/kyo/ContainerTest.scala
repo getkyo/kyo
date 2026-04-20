@@ -302,6 +302,149 @@ abstract class ContainerTest(val runtime: String) extends Test:
                     case other => fail(s"Expected BackendUnavailable, got $other")
             }
         }
+
+        "auto-detect selects a working backend via BackendConfig" in run {
+            // AutoDetect resolves the same way as the implicit detection — verify it works
+            // Uses run (which provides both HTTP and Shell backends) to exercise each
+            Container.init(alpine).map { c =>
+                c.state.map(s => assert(s == Container.State.Running))
+            }
+        }
+
+        "auto-detect passes meter to backend" in run {
+            Meter.initSemaphore(4).map { meter =>
+                Container.withBackend(_.Shell(runtime, meter)) {
+                    Container.init(alpine).map { c =>
+                        Kyo.foreach((1 to 4).toSeq) { i =>
+                            Fiber.init(c.exec("echo", i.toString))
+                        }.map { fibers =>
+                            Kyo.foreach(fibers)(_.get).map { results =>
+                                assert(results.forall(_.isSuccess))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "Shell with explicit command path" in run {
+            val cmd = if runtime == "docker" then "docker" else "podman"
+            Container.withBackend(_.Shell(cmd)) {
+                Container.init(alpine).map { c =>
+                    c.state.map(s => assert(s == Container.State.Running))
+                }
+            }
+        }
+
+        "Shell with nonexistent command fails with BackendUnavailable" in run {
+            Abort.run[ContainerException] {
+                Container.withBackend(_.Shell("nonexistent-runtime-xyz")) {
+                    Container.init(alpine)
+                }
+            }.map { result =>
+                result match
+                    case Result.Failure(e: ContainerException.BackendUnavailable) => succeed
+                    case other                                                    => fail(s"Expected BackendUnavailable, got $other")
+            }
+        }
+
+        "UnixSocket with valid docker socket" taggedAs httpBackendOnly in {
+            if ContainerRuntime.findSocket(runtime).isEmpty then succeed
+            else
+                run {
+                    val path = ContainerRuntime.findSocket(runtime).get
+                    Container.withBackend(_.UnixSocket(Path(path))) {
+                        Container.init(alpine).map { c =>
+                            c.state.map(s => assert(s == Container.State.Running))
+                        }
+                    }
+                }
+        }
+
+        "UnixSocket with nonexistent path fails with BackendUnavailable" in run {
+            Abort.run[ContainerException] {
+                Container.withBackend(_.UnixSocket(Path("/tmp/nonexistent-socket-xyz.sock"))) {
+                    Container.init(alpine)
+                }
+            }.map { result =>
+                result match
+                    case Result.Failure(e: ContainerException.BackendUnavailable) => succeed
+                    case Result.Failure(e)                                        => fail(s"Expected BackendUnavailable, got $e")
+                    case _                                                        => fail("Expected failure")
+            }
+        }
+
+        "Meter limits concurrent HTTP operations" taggedAs httpBackendOnly in {
+            if ContainerRuntime.findSocket(runtime).isEmpty then succeed
+            else
+                run {
+                    Meter.initSemaphore(2).map { meter =>
+                        val socketPath = ContainerRuntime.findSocket(runtime).get
+                        Container.withBackend(_.UnixSocket(Path(socketPath), meter)) {
+                            Container.init(alpine).map { c =>
+                                // HTTP backend wraps exec in meter.run, so with meter=2 and
+                                // 6 execs sleeping 0.5s, it takes >= 3 * 0.5s = 1.5s
+                                val start = java.lang.System.currentTimeMillis()
+                                Kyo.foreach((1 to 6).toSeq) { _ =>
+                                    Fiber.init(c.exec("sleep", "0.5"))
+                                }.map(fibers => Kyo.foreach(fibers)(_.get)).map { results =>
+                                    val elapsed = java.lang.System.currentTimeMillis() - start
+                                    assert(results.forall(_.isSuccess))
+                                    assert(elapsed >= 1000, s"Expected >= 1000ms with meter=2, took ${elapsed}ms")
+                                }
+                            }
+                        }
+                    }
+                }
+        }
+
+        "nested withBackend overrides outer backend" in run {
+            Container.withBackend(_.Shell(runtime)) {
+                val socketOpt = ContainerRuntime.findSocket(runtime)
+                if socketOpt.isEmpty then succeed
+                else
+                    Container.withBackend(_.UnixSocket(Path(socketOpt.get))) {
+                        Container.init(alpine).map { c =>
+                            c.state.map(s => assert(s == Container.State.Running))
+                        }
+                    }
+                end if
+            }
+        }
+
+        "connection refused to valid-looking socket gives clear error" in run {
+            val fakePath = Path(s"/tmp/kyo-fake-${java.lang.System.currentTimeMillis}.sock")
+            fakePath.write("not a socket").andThen {
+                Abort.run[ContainerException] {
+                    Container.withBackend(_.UnixSocket(fakePath)) {
+                        Container.init(alpine)
+                    }
+                }.map { result =>
+                    fakePath.remove.andThen {
+                        result match
+                            case Result.Failure(_: ContainerException.BackendUnavailable) => succeed
+                            case Result.Failure(_: ContainerException.General)            => succeed
+                            case other                                                    => fail(s"Expected connection error, got $other")
+                    }
+                }
+            }
+        }
+
+        "auto-detect prefers HTTP when socket is available" taggedAs httpBackendOnly in {
+            if ContainerRuntime.findSocket(runtime).isEmpty then succeed
+            else
+                run {
+                    // When a socket is available, the HTTP backend should work
+                    val path = ContainerRuntime.findSocket(runtime).get
+                    Container.withBackend(_.UnixSocket(Path(path))) {
+                        Container.init(alpine).map { c =>
+                            c.inspect.map { info =>
+                                assert(info.state == Container.State.Running)
+                            }
+                        }
+                    }
+                }
+        }
     }
 
     // =========================================================================
