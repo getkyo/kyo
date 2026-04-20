@@ -115,7 +115,8 @@ object ContainerImage:
 
             val finalDigest = digestPart.map(d => Digest(d))
 
-            Result.succeed(new ContainerImage(nameVal, namespaceVal, registryVal, finalTag, finalDigest))
+            if nameVal.isEmpty then Result.fail("Empty image name")
+            else Result.succeed(new ContainerImage(nameVal, namespaceVal, registryVal, finalTag, finalDigest))
         end if
     end parse
 

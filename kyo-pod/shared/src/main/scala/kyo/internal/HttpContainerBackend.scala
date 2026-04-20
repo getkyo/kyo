@@ -381,7 +381,19 @@ final private[kyo] class HttpContainerBackend(
                     }
                         .map { inspectResp =>
                             val exitCode = if inspectResp.ExitCode == 0 then ExitCode.Success else ExitCode.Failure(inspectResp.ExitCode)
-                            ExecResult(exitCode, stdout, stderr)
+                            val result   = ExecResult(exitCode, stdout, stderr)
+                            exitCode match
+                                case ExitCode.Failure(code) if code == 125 || code == 126 || code == 127 =>
+                                    Abort.fail[ContainerException](
+                                        ContainerException.ExecFailed(
+                                            id,
+                                            command.args,
+                                            exitCode,
+                                            stderr
+                                        )
+                                    )
+                                case _ => result
+                            end match
                         }
                 }
             }
