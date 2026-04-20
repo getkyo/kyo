@@ -2,7 +2,7 @@ package kyo
 
 import scala.concurrent.Future
 
-abstract class ContainerTest(val runtime: String, val backendType: String) extends Test:
+abstract class ContainerTest(val runtime: String) extends Test:
 
     override def run(testName: Option[String], args: org.scalatest.Args): org.scalatest.Status =
         val runtimeAvailable = runtime match
@@ -12,23 +12,24 @@ abstract class ContainerTest(val runtime: String, val backendType: String) exten
         if !runtimeAvailable then
             info(s"Skipping: $runtime not available")
             org.scalatest.SucceededStatus
-        else if backendType == "http" && findSocket(runtime).isEmpty then
-            info(s"Skipping: no $runtime socket for HTTP backend")
-            org.scalatest.SucceededStatus
         else
             super.run(testName, args)
         end if
     end run
 
+    private val backends: Seq[(String, Container.BackendConfig)] =
+        val shell = Seq("shell" -> Container.BackendConfig.Shell(runtime))
+        val http = findSocket(runtime).map(path =>
+            "http" -> Container.BackendConfig.UnixSocket(Path(path))
+        ).toSeq
+        http ++ shell
+    end backends
+
     override def run(v: Future[Assertion] < (Abort[Any] & Async & Scope))(using Frame): Future[Assertion] =
         super.run {
-            val config = backendType match
-                case "http" =>
-                    findSocket(runtime) match
-                        case Some(path) => Container.BackendConfig.UnixSocket(Path(path))
-                        case None       => Container.BackendConfig.Shell(runtime)
-                case _ => Container.BackendConfig.Shell(runtime)
-            Container.withBackend(config)(v)
+            Kyo.foreach(backends) { (_, config) =>
+                Container.withBackend(config)(v)
+            }.map(_.last)
         }
 
     private def findSocket(rt: String): Option[String] =
@@ -2975,7 +2976,5 @@ abstract class ContainerTest(val runtime: String, val backendType: String) exten
 
 end ContainerTest
 
-class ContainerTestDockerHttp  extends ContainerTest("docker", "http")
-class ContainerTestDockerShell extends ContainerTest("docker", "shell")
-class ContainerTestPodmanHttp  extends ContainerTest("podman", "http")
-class ContainerTestPodmanShell extends ContainerTest("podman", "shell")
+class ContainerTestPodman extends ContainerTest("podman")
+class ContainerTestDocker extends ContainerTest("docker")
