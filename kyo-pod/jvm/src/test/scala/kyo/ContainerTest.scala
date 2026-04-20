@@ -19,7 +19,7 @@ abstract class ContainerTest(val runtime: String) extends Test:
 
     private val backends: Seq[(String, Container.BackendConfig)] =
         val shell = Seq("shell" -> Container.BackendConfig.Shell(runtime))
-        val http = findSocket(runtime).map(path =>
+        val http = ContainerRuntime.findSocket(runtime).map(path =>
             "http" -> Container.BackendConfig.UnixSocket(Path(path))
         ).toSeq
         http ++ shell
@@ -31,18 +31,6 @@ abstract class ContainerTest(val runtime: String) extends Test:
                 Scope.run(Container.withBackend(config)(v))
             }.map(_.last)
         }
-
-    private def findSocket(rt: String): Option[String] =
-        val candidates = rt match
-            case "docker" =>
-                val home = java.lang.System.getProperty("user.home", "")
-                Seq(s"$home/.docker/run/docker.sock", "/var/run/docker.sock")
-            case "podman" =>
-                val xdg = java.lang.System.getenv("XDG_RUNTIME_DIR")
-                if xdg != null then Seq(s"$xdg/podman/podman.sock") else Seq("/run/podman/podman.sock")
-            case _ => Seq("/var/run/docker.sock")
-        candidates.find(p => java.nio.file.Files.exists(java.nio.file.Path.of(p)))
-    end findSocket
 
     val alpine = Container.Config(ContainerImage("alpine", "latest"))
         .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")
