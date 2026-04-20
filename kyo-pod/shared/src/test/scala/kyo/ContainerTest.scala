@@ -28,7 +28,7 @@ abstract class ContainerTest(val runtime: String) extends Test:
     override def run(v: Future[Assertion] < (Abort[Any] & Async & Scope))(using Frame): Future[Assertion] =
         super.run {
             Kyo.foreach(backends) { (_, config) =>
-                Container.withBackend(config)(v)
+                Scope.run(Container.withBackend(config)(v))
             }.map(_.last)
         }
 
@@ -48,7 +48,8 @@ abstract class ContainerTest(val runtime: String) extends Test:
         .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")
         .stopTimeout(0.seconds)
 
-    def uniqueName(prefix: String) = s"$prefix-${java.lang.System.currentTimeMillis}-${(Math.random() * 10000).toInt}"
+    private val nameCounter        = new java.util.concurrent.atomic.AtomicLong(0)
+    def uniqueName(prefix: String) = s"$prefix-${java.lang.System.currentTimeMillis}-${nameCounter.incrementAndGet()}"
 
     // =========================================================================
     // Config Builder
