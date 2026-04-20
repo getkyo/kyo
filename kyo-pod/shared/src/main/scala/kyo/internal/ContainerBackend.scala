@@ -26,11 +26,18 @@ abstract private[kyo] class ContainerBackend:
             case "dead"               => Container.State.Dead
             case _                    => Container.State.Stopped
 
-    /** Parse an ISO-8601 timestamp string to an Instant. Returns Absent for None, empty, or zero-value timestamps. */
+    /** Parse an ISO-8601 timestamp string to an Instant. Returns Absent for None, empty, or zero-value timestamps. Handles both Docker
+      * format (Z suffix) and Podman format (timezone offset like -07:00).
+      */
     def parseInstant(s: Option[String]): Maybe[Instant] =
         s match
             case None | Some("") | Some("0001-01-01T00:00:00Z") => Absent
-            case Some(v)                                        => Instant.parse(v).toMaybe
+            case Some(v) =>
+                Instant.parse(v).toMaybe.orElse {
+                    Result.catching[java.time.format.DateTimeParseException](
+                        Instant.fromJava(java.time.OffsetDateTime.parse(v).toInstant)
+                    ).toMaybe
+                }
 
     // Container lifecycle
     def create(config: Container.Config)(using Frame): Container.Id < (Async & Abort[ContainerException])

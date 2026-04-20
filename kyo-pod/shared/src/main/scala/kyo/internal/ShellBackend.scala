@@ -721,17 +721,26 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
     end logs
 
     /** Parse log output lines into LogEntry, handling optional timestamps. */
+    /** Parse a timestamp string from log output. Docker uses "2024-01-01T00:00:00.000000000Z" (Instant format). Podman uses
+      * "2024-01-01T00:00:00-07:00" (OffsetDateTime format).
+      */
+    private def parseLogTimestamp(tsStr: String): Maybe[Instant] =
+        Instant.parse(tsStr).toMaybe.orElse {
+            Result.catching[java.time.format.DateTimeParseException](
+                Instant.fromJava(java.time.OffsetDateTime.parse(tsStr).toInstant)
+            ).toMaybe
+        }
+
     private def parseLogLines(raw: String, source: LogEntry.Source, hasTimestamps: Boolean): Chunk[LogEntry] =
         if raw.trim.isEmpty then Chunk.empty
         else
             Chunk.from(raw.split("\n").filter(_.nonEmpty).map { line =>
                 if hasTimestamps then
-                    // Docker timestamps format: "2024-01-01T00:00:00.000000000Z content..."
                     val spaceIdx = line.indexOf(' ')
                     if spaceIdx > 0 then
                         val tsStr   = line.substring(0, spaceIdx)
                         val content = line.substring(spaceIdx + 1)
-                        val ts      = Instant.parse(tsStr).toMaybe
+                        val ts      = parseLogTimestamp(tsStr)
                         LogEntry(source, content, ts)
                     else LogEntry(source, line)
                     end if
@@ -745,7 +754,7 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
             if spaceIdx > 0 then
                 val tsStr   = line.substring(0, spaceIdx)
                 val content = line.substring(spaceIdx + 1)
-                val ts      = Instant.parse(tsStr).toMaybe
+                val ts      = parseLogTimestamp(tsStr)
                 LogEntry(source, content, ts)
             else LogEntry(source, line)
             end if
@@ -1794,12 +1803,12 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
 
     /** Run a container CLI command, returning stdout on success or mapping errors via [[mapError]].
       *
-      * Uses `redirectErrorStream(true)` so both stdout and stderr are captured together. On non-zero exit, the combined output is passed to
-      * [[mapError]] for classification. The exit code itself is not directly used for classification here — that happens in [[execOnce]]
-      * which has access to separate stdout/stderr streams and exit codes.
+      * Merges stderr into stdout using `sh -c "... 2>&1"` instead of `redirectErrorStream` which does not merge on JS (Node.js discards
+      * stderr instead of piping it to stdout). On non-zero exit, the combined output is passed to [[mapError]] for classification.
       */
     private def run(args: String*)(using Frame): String < (Async & Abort[ContainerException]) =
-        Abort.runWith[CommandException](Command((cmd +: args)*).redirectErrorStream(true).textWithExitCode) {
+        val shellCmd = (cmd +: args).map(a => "'" + a.replace("'", "'\\''") + "'").mkString(" ")
+        Abort.runWith[CommandException](Command("sh", "-c", s"$shellCmd 2>&1").textWithExitCode) {
             case Result.Success((stdout, exitCode)) =>
                 if exitCode == ExitCode.Success then stdout.trim
                 else Abort.fail(mapError(stdout.trim, args))
@@ -1808,6 +1817,7 @@ final private[kyo] class ShellBackend(cmd: String) extends ContainerBackend:
             case Result.Panic(ex) =>
                 Abort.fail(ContainerException.General(s"Command panicked: ${(cmd +: args).mkString(" ")}", ex))
         }
+    end run
 
     private def runUnit(args: String*)(using Frame): Unit < (Async & Abort[ContainerException]) =
         run(args*).unit

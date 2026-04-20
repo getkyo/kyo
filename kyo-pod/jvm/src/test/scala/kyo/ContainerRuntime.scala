@@ -48,8 +48,14 @@ object ContainerRuntime:
     end findSocket
 
     private def findPodmanMachineSocket(): Seq[String] =
-        // On macOS, Podman Machine communicates via SSH, not a local REST API socket.
-        // The socket reported by `podman machine inspect` is for SSH tunneling, not the
-        // Docker-compatible REST API. Return empty since the HTTP backend cannot use it.
-        Seq.empty
+        try
+            val pb = new java.lang.ProcessBuilder("podman", "machine", "inspect", "--format", "json")
+            pb.redirectErrorStream(true)
+            val proc   = pb.start()
+            val output = new String(proc.getInputStream.readAllBytes())
+            proc.waitFor()
+            // Parse JSON to extract ConnectionInfo.PodmanSocket.Path
+            val pathPattern = """"Path"\s*:\s*"([^"]+api\.sock[^"]*)"""".r
+            pathPattern.findFirstMatchIn(output).map(_.group(1)).toSeq
+        catch case _: Throwable => Seq.empty
 end ContainerRuntime
