@@ -310,7 +310,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
             parsed.statusCode == 204 ||
             parsed.statusCode == 304
         if noBody then
-            decodeAndComplete(Span.empty[Byte], parsed, resultPromise, route, request)
+            decodeAndComplete(conn, Span.empty[Byte], parsed, resultPromise, route, request)
         else
             val lastBodySpan = conn.http1.lastBodySpan
             if parsed.isChunked then
@@ -318,7 +318,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
                 ChunkedBodyDecoder.readBufferedUnsafe(conn.http1.bodyChannel, lastBodySpan, conn.http1.chunkedDecoderState) { result =>
                     result match
                         case Result.Success(bodyBytes) =>
-                            decodeAndComplete(bodyBytes, parsed, resultPromise, route, request)
+                            decodeAndComplete(conn, bodyBytes, parsed, resultPromise, route, request)
                         case Result.Failure(_) =>
                             resultPromise.completeDiscard(Result.fail(HttpConnectionClosedException()))
                         case Result.Panic(t) =>
@@ -328,7 +328,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
                 val remaining = parsed.contentLength - lastBodySpan.size
                 if remaining <= 0 then
                     // All body bytes were in the header chunk
-                    decodeAndComplete(lastBodySpan, parsed, resultPromise, route, request)
+                    decodeAndComplete(conn, lastBodySpan, parsed, resultPromise, route, request)
                 else
                     // Read remaining bytes from the inbound channel
                     val buf = new GrowableByteBuffer
@@ -337,10 +337,10 @@ final private[kyo] class HttpClientBackend[Handle] private (
                     readLoopUnsafe(conn, buf, remaining, parsed, resultPromise, route, request)
                 end if
             else if parsed.contentLength == 0 then
-                decodeAndComplete(Span.empty[Byte], parsed, resultPromise, route, request)
+                decodeAndComplete(conn, Span.empty[Byte], parsed, resultPromise, route, request)
             else
                 // No Content-Length and not chunked - use whatever we have
-                decodeAndComplete(lastBodySpan, parsed, resultPromise, route, request)
+                decodeAndComplete(conn, lastBodySpan, parsed, resultPromise, route, request)
             end if
         end if
     end readBufferedBody
@@ -358,7 +358,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
         request: HttpRequest[In]
     )(using AllowUnsafe, Frame): Unit =
         if remaining <= 0 then
-            decodeAndComplete(Span.fromUnsafe(buf.toByteArray), parsed, resultPromise, route, request)
+            decodeAndComplete(conn, Span.fromUnsafe(buf.toByteArray), parsed, resultPromise, route, request)
         else
             // Cast to IOPromise to get Result[Closed, Span[Byte]] directly (no `< S` wrapper)
             conn.http1.bodyChannel.takeFiber()
@@ -374,8 +374,11 @@ final private[kyo] class HttpClientBackend[Handle] private (
                 }
     end readLoopUnsafe
 
-    /** Decode response body and complete the result promise. */
+    /** Decode response body and complete the result promise. Closes the connection if the server indicated Connection: close
+      * (isKeepAlive=false) so it won't be reused from the pool.
+      */
     private def decodeAndComplete[In, Out](
+        conn: HttpConnection[Handle],
         bodyBytes: Span[Byte],
         parsed: ParsedResponse,
         resultPromise: Promise.Unsafe[HttpResponse[Out], Abort[HttpException]],
@@ -392,6 +395,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
                 request.url
             ) match
                 case Result.Success(response) =>
+                    if !parsed.isKeepAlive then conn.transport.close()
                     resultPromise.completeDiscard(Result.succeed(response))
                 case Result.Failure(e: HttpException) =>
                     resultPromise.completeDiscard(Result.fail(e))
