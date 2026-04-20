@@ -335,17 +335,18 @@ object Container:
         currentBackend.map { b =>
             backendLocal.let(Present(b)) {
                 b.create(config).map { cid =>
-                    b.start(cid).map { _ =>
-                        AtomicRef.init(ContainerHealthState(false, Absent)).map { healthRef =>
-                            val container = new Container(cid, config, b, healthRef)
-                            Scope.ensure {
-                                val shutdown = config.stopSignal match
-                                    case Present(signal) =>
-                                        Abort.run[ContainerException](b.kill(cid, signal)).unit
-                                    case Absent =>
-                                        Abort.run[ContainerException](b.stop(cid, config.stopTimeout)).unit
-                                shutdown.andThen(Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = false)).unit)
-                            }.andThen {
+                    // Register cleanup IMMEDIATELY after create, before start
+                    Scope.ensure {
+                        val shutdown = config.stopSignal match
+                            case Present(signal) =>
+                                Abort.run[ContainerException](b.kill(cid, signal)).unit
+                            case Absent =>
+                                Abort.run[ContainerException](b.stop(cid, config.stopTimeout)).unit
+                        shutdown.andThen(Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = false)).unit)
+                    }.andThen {
+                        b.start(cid).andThen {
+                            AtomicRef.init(ContainerHealthState(false, Absent)).map { healthRef =>
+                                val container = new Container(cid, config, b, healthRef)
                                 runHealthCheck(container, config.healthCheck).andThen(container)
                             }
                         }
@@ -384,9 +385,19 @@ object Container:
         currentBackend.map { b =>
             AtomicRef.init(ContainerHealthState(false, Absent)).map { healthRef =>
                 b.create(config).map { cid =>
-                    b.start(cid).andThen {
-                        val container = new Container(cid, config, b, healthRef)
-                        runHealthCheck(container, config.healthCheck).andThen(container)
+                    val container = new Container(cid, config, b, healthRef)
+                    Abort.run[ContainerException] {
+                        b.start(cid).andThen(runHealthCheck(container, config.healthCheck))
+                    }.map {
+                        case Result.Success(_)   => container
+                        case Result.Failure(err) =>
+                            // Cleanup on failure — best effort
+                            Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = false))
+                                .andThen(Abort.fail[ContainerException](err))
+                        case Result.Panic(ex) =>
+                            // Cleanup on panic — best effort
+                            Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = false))
+                                .andThen(Abort.panic[ContainerException](ex))
                     }
                 }
             }
