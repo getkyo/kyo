@@ -3139,6 +3139,239 @@ abstract class ContainerTest(val runtime: String) extends Test:
         }
     }
 
+    // =========================================================================
+    // improvements — failing (B1-B5, B8)
+    // =========================================================================
+
+    "improvements — failing" - {
+
+        "B1 — HealthCheck.exec with 'not ok' output must NOT match 'ok'" taggedAs containerOnly in run {
+            val hc = Container.HealthCheck.exec(
+                command = Command("echo", "not ok"),
+                expected = Present("ok"),
+                schedule = Schedule.fixed(100.millis).take(3)
+            )
+            Abort.run[ContainerException] {
+                Container.init(alpine.healthCheck(hc))
+            }.map { result =>
+                assert(
+                    result.isFailure,
+                    "Expected HealthCheck.exec to fail when output is 'not ok' (substring match is a bug)"
+                )
+            }
+        }
+
+        "B2 — isHealthy returns false in under 500ms when healthcheck fails" taggedAs containerOnly in run {
+            val config = Container.Config("alpine")
+                .command("sh", "-c", "trap 'exit 0' TERM; touch /tmp/healthy; sleep infinity")
+                .healthCheck(Container.HealthCheck(Schedule.fixed(200.millis).take(10)) { c =>
+                    c.exec("test", "-f", "/tmp/healthy").map { r =>
+                        if !r.isSuccess then
+                            Abort.fail(ContainerException.General("unhealthy", "file missing"))
+                        else ()
+                    }
+                })
+            Container.init(config).map { c =>
+                for
+                    _  <- c.isHealthy // warm up (should be healthy)
+                    _  <- c.exec("rm", "/tmp/healthy")
+                    t0 <- Clock.now
+                    h  <- c.isHealthy
+                    t1 <- Clock.now
+                yield
+                    val elapsedMs = t1.toJava.toEpochMilli - t0.toJava.toEpochMilli
+                    assert(!h, "Expected isHealthy to return false after rm")
+                    assert(
+                        elapsedMs < 500,
+                        s"Expected isHealthy to return in < 500ms when failing, took ${elapsedMs}ms — it is running the full retry schedule"
+                    )
+            }
+        }
+
+        "B3 — init completes under 2s when healthcheck fails and container is gone mid-retry" taggedAs containerOnly in run {
+            // Container lives ~300ms then auto-removes. Healthcheck always fails.
+            // Bug: once the container is auto-removed, the retry loop's state check returns
+            // NotFound, which falls into the catch-all branch and keeps retrying for the
+            // full schedule (3s total here).
+            val config = Container.Config("alpine")
+                .command("sh", "-c", "sleep 0.3; exit 0")
+                .autoRemove(true)
+                .healthCheck(Container.HealthCheck.exec(
+                    command = Command("false"),
+                    expected = Absent,
+                    schedule = Schedule.fixed(100.millis).take(30)
+                ))
+            for
+                t0 <- Clock.now
+                _  <- Abort.run[ContainerException](Container.init(config))
+                t1 <- Clock.now
+            yield
+                val elapsedMs = t1.toJava.toEpochMilli - t0.toJava.toEpochMilli
+                assert(
+                    elapsedMs < 2000,
+                    s"Expected init to complete in <2s when container auto-removes during healthcheck retries, " +
+                        s"took ${elapsedMs}ms — runHealthCheck is not short-circuiting on NotFound"
+                )
+            end for
+        }
+
+        "B4 — NotFound references container id, not rename target (shell backend)" taggedAs containerOnly in run {
+            // Force shell backend. The HTTP backend passes ids explicitly to its error-mapping layer;
+            // only the shell backend has the args.lastOption bug in mapError.
+            Container.withBackend(_.Shell(runtime)) {
+                Container.use(alpine.autoRemove(false)) { c =>
+                    for
+                        _ <- c.stop(0.seconds)
+                        _ <- c.remove(force = true)
+                        // docker/podman rename <id> <newName> — last arg is the new name, not the id.
+                        // mapError uses args.lastOption as the NotFound target → bug.
+                        r <- Abort.run[ContainerException](c.rename("kyo-b4-new-name-xyz"))
+                    yield r match
+                        case Result.Failure(e: ContainerException.NotFound) =>
+                            assert(
+                                e.id.value == c.id.value,
+                                s"Expected NotFound id='${c.id.value}', got id='${e.id.value}' — " +
+                                    "mapError uses args.lastOption (the new name), not the container id"
+                            )
+                        case Result.Failure(other) =>
+                            fail(s"Expected NotFound, got $other")
+                        case Result.Success(_) =>
+                            fail("Expected failure after remove")
+                }
+            }
+        }
+
+        "B5 — scope cleanup waits stopTimeout when stopSignal is Present" taggedAs containerOnly in run {
+            val config = Container.Config("alpine")
+                .command("sh", "-c", "trap 'sleep 3; exit 0' USR1; sleep infinity")
+                .stopSignal(Container.Signal.SIGUSR1)
+                .stopTimeout(2.seconds)
+                .autoRemove(false)
+            for
+                t0 <- Clock.now
+                _  <- Scope.run(Container.init(config).unit)
+                t1 <- Clock.now
+            yield
+                val elapsedMs = t1.toJava.toEpochMilli - t0.toJava.toEpochMilli
+                assert(
+                    elapsedMs >= 1800,
+                    s"Expected cleanup to wait ~stopTimeout (2s) when stopSignal is Present, took ${elapsedMs}ms — " +
+                        "the kill path is not honoring stopTimeout"
+                )
+                assert(
+                    elapsedMs < 20000,
+                    s"Cleanup took too long (${elapsedMs}ms); expected timeout then force-remove"
+                )
+            end for
+        }
+
+        "B8 — attachById preserves ports, labels, and mounts in returned Config" taggedAs containerOnly in run {
+            val hostDir = Path("/tmp/" + uniqueName("kyo-b8-bind"))
+            for
+                _ <- hostDir.mkDir
+                result <- Container.use(
+                    alpine
+                        .port(80, 18080)
+                        .label("kyo-b8-key", "kyo-b8-value")
+                        .bind(hostDir, Path("/mnt/b8-bind"))
+                ) { created =>
+                    Container.attach(created.id).map { attached =>
+                        val cfg = attached.config
+                        assert(
+                            cfg.ports.exists(_.containerPort == 80),
+                            s"Expected port 80 in reattached config, got: ${cfg.ports}"
+                        )
+                        assert(
+                            cfg.labels.get("kyo-b8-key").contains("kyo-b8-value"),
+                            s"Expected label kyo-b8-key=kyo-b8-value in reattached config, got: ${cfg.labels}"
+                        )
+                        assert(
+                            cfg.mounts.exists {
+                                case Container.Config.Mount.Bind(_, target, _) =>
+                                    target == Path("/mnt/b8-bind")
+                                case _ => false
+                            },
+                            s"Expected bind mount /mnt/b8-bind in reattached config, got: ${cfg.mounts}"
+                        )
+                    }
+                }
+                _ <- hostDir.removeAll
+            yield result
+            end for
+        }
+
+        "C1 — logs preserves stdout/stderr emission order" taggedAs containerOnly in run {
+            // Force shell backend: the HTTP backend already demuxes via Docker's framed stream;
+            // only the shell backend concatenates outEntries++errEntries losing interleaving.
+            Container.withBackend(_.Shell(runtime)) {
+                val config = Container.Config("alpine")
+                    .command(
+                        "sh",
+                        "-c",
+                        "trap 'exit 0' TERM; " +
+                            "echo o1; sleep 0.2; " +
+                            "echo e1 >&2; sleep 0.2; " +
+                            "echo o2; sleep 0.2; " +
+                            "echo e2 >&2; " +
+                            "sleep infinity"
+                    )
+                Container.init(config).map { c =>
+                    // Wait for all four lines to be emitted
+                    Async.sleep(1500.millis).andThen {
+                        c.logs(stdout = true, stderr = true).map { entries =>
+                            val contents = entries.map(_.content).toSeq
+                            val o1Idx    = contents.indexOf("o1")
+                            val e1Idx    = contents.indexOf("e1")
+                            val o2Idx    = contents.indexOf("o2")
+                            val e2Idx    = contents.indexOf("e2")
+                            assert(o1Idx >= 0, s"Expected 'o1' in logs, got: $contents")
+                            assert(e1Idx >= 0, s"Expected 'e1' in logs, got: $contents")
+                            assert(o2Idx >= 0, s"Expected 'o2' in logs, got: $contents")
+                            assert(e2Idx >= 0, s"Expected 'e2' in logs, got: $contents")
+                            // Emission order was o1, e1, o2, e2 — logs must return them in that order
+                            assert(
+                                o1Idx < e1Idx && e1Idx < o2Idx && o2Idx < e2Idx,
+                                s"Expected order o1, e1, o2, e2 but got ordering indices " +
+                                    s"[o1=$o1Idx, e1=$e1Idx, o2=$o2Idx, e2=$e2Idx] in contents=$contents"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        "C2 — 128KB single line arrives intact via logStream" taggedAs containerOnly in run {
+            // Force shell backend where chunk boundaries are observable.
+            // Container emits exactly ONE line of 128KB then a newline.
+            // Current code splits on \n per chunk: a line straddling chunk boundaries
+            // produces multiple partial LogEntry entries instead of one.
+            Container.withBackend(_.Shell(runtime)) {
+                val config = Container.Config("alpine")
+                    .command(
+                        "sh",
+                        "-c",
+                        "trap 'exit 0' TERM; " +
+                            "head -c 131072 /dev/urandom | base64 -w 0; " +
+                            "echo; " +
+                            "sleep infinity"
+                    )
+                Container.init(config).map { c =>
+                    Scope.run {
+                        c.logStream.take(1).run.map { entries =>
+                            assert(entries.nonEmpty, "Expected at least one log entry")
+                            val head = entries.head
+                            assert(
+                                head.content.length >= 131072,
+                                s"Expected first LogEntry to contain the full 128KB line, got length=${head.content.length} — " +
+                                    "chunk-boundary line splitting is breaking long lines apart"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end ContainerTest
 
 class ContainerTestPodman extends ContainerTest("podman")

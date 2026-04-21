@@ -202,4 +202,46 @@ class ContainerUnitTest extends Test:
         }
     }
 
+    // =========================================================================
+    // improvements — failing (B6, B7)
+    // =========================================================================
+
+    "ContainerImage.parse — empty tag" - {
+
+        "B6 — 'alpine:' defaults tag to 'latest' instead of empty string" in {
+            val r = ContainerImage.parse("alpine:")
+            r match
+                case Result.Success(img) =>
+                    assert(
+                        img.tag == Present("latest"),
+                        s"Expected tag 'latest' for 'alpine:', got '${img.tag}' — empty tag is a parse bug"
+                    )
+                case Result.Failure(err) =>
+                    fail(s"Expected parse to succeed with default tag, got failure: $err")
+            end match
+        }
+    }
+
+    "ContainerImage.RegistryAuth — toString redaction" - {
+
+        "B7 — toString does not expose username, password, or base64 credentials" in {
+            val auth = ContainerImage.RegistryAuth("user", "verysecretpass")
+            val s    = auth.toString
+            assert(
+                !s.contains("user"),
+                s"toString leaks username: $s"
+            )
+            assert(
+                !s.contains("verysecretpass"),
+                s"toString leaks password: $s"
+            )
+            // Base64 of "user:verysecretpass" is "dXNlcjp2ZXJ5c2VjcmV0cGFzcw==".
+            // Don't hardcode the full string; check the base64 class of characters is not present as a long run.
+            assert(
+                !s.contains("dXNlcjp2ZXJ5c2VjcmV0cGFzcw"),
+                s"toString leaks base64 credentials: $s"
+            )
+        }
+    }
+
 end ContainerUnitTest

@@ -102,22 +102,34 @@ final class Container private[kyo] (
         healthState.get.map { state =>
             state.check match
                 case Absent =>
-                    // No health check configured, check running state
                     backend.isHealthy(id)
                 case Present(hc) =>
-                    // Re-run the health check using the check's own schedule for retries
                     Abort.recover[ContainerException] { (_: ContainerException) =>
                         healthState.set(ContainerHealthState(false, Present(hc))).andThen(false)
                     } {
-                        Retry[ContainerException](hc.schedule) {
-                            hc.check(this)
-                        }.andThen {
+                        hc.check(this).andThen {
                             healthState.set(ContainerHealthState(true, Present(hc))).andThen(true)
                         }
                     }
             end match
         }
     end isHealthy
+
+    /** Block until the container's health check passes, retrying per its configured schedule.
+      *
+      * For a single-shot check use [[isHealthy]] instead.
+      */
+    def awaitHealthy(using Frame): Unit < (Async & Abort[ContainerException]) =
+        healthState.get.map { state =>
+            state.check match
+                case Absent => ()
+                case Present(hc) =>
+                    Retry[ContainerException](hc.schedule)(hc.check(this)).andThen {
+                        healthState.set(ContainerHealthState(true, Present(hc))).unit
+                    }
+            end match
+        }
+    end awaitHealthy
 
     // --- Inspection ---
 
@@ -193,21 +205,6 @@ final class Container private[kyo] (
         stderr: Boolean
     )(using Frame): AttachSession < (Async & Abort[ContainerException] & Scope) =
         backend.attach(id, stdin, stdout, stderr)
-
-    /** WebSocket-based attach for bidirectional I/O.
-      *
-      * Note: Not supported by the shell backend. Returns a failure immediately. Requires an HTTP backend implementation.
-      */
-    def attachWebSocket(using Frame): AttachSession < (Async & Abort[ContainerException] & Scope) =
-        attachWebSocket(stdin = true, stdout = true, stderr = true)
-
-    /** WebSocket-based attach selecting which streams to connect. Not yet implemented; always fails with NotSupported. */
-    def attachWebSocket(
-        stdin: Boolean,
-        stdout: Boolean,
-        stderr: Boolean
-    )(using Frame): AttachSession < (Async & Abort[ContainerException] & Scope) =
-        Abort.fail(ContainerException.NotSupported("WebSocket attach", "Not supported by the shell backend"))
 
     // --- Logs ---
 
@@ -337,12 +334,24 @@ object Container:
                 b.create(config).map { cid =>
                     // Register cleanup IMMEDIATELY after create, before start
                     Scope.ensure {
-                        val shutdown = config.stopSignal match
+                        def logFailure(op: String)(r: Result[Throwable, Unit])(using Frame): Unit < Sync = r match
+                            case Result.Success(_) => ()
+                            case Result.Failure(e) => Log.warn(s"Container ${cid.value} $op failed: ${e.getMessage}")
+                            case Result.Panic(e)   => Log.warn(s"Container ${cid.value} $op panicked: ${e.getMessage}")
+
+                        val shutdown: Unit < (Async & Abort[Nothing]) = config.stopSignal match
                             case Present(signal) =>
-                                Abort.run[ContainerException](b.kill(cid, signal)).unit
+                                Abort.run[ContainerException](b.kill(cid, signal)).map(logFailure("kill")).andThen(
+                                    Abort.run[ContainerException | Timeout](
+                                        Async.timeout(config.stopTimeout)(b.waitForExit(cid))
+                                    ).map(r => logFailure("waitForExit")(r.map(_ => ())))
+                                )
                             case Absent =>
-                                Abort.run[ContainerException](b.stop(cid, config.stopTimeout)).unit
-                        shutdown.andThen(Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = false)).unit)
+                                Abort.run[ContainerException](b.stop(cid, config.stopTimeout)).map(logFailure("stop"))
+
+                        shutdown.andThen(
+                            Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = false)).map(logFailure("remove"))
+                        )
                     }.andThen {
                         b.start(cid).andThen {
                             AtomicRef.init(ContainerHealthState(false, Absent)).map { healthRef =>
@@ -656,7 +665,7 @@ object Container:
                         else
                             exp match
                                 case Present(e) =>
-                                    if !result.stdout.trim.contains(e) then
+                                    if result.stdout.trim != e then
                                         Abort.fail(ContainerException.General(
                                             s"Health check failed for container ${container.id.value}: expected '$e' in output",
                                             s"expected '$e' in output"
@@ -916,7 +925,27 @@ object Container:
 
     // --- Backend selection ---
 
-    /** Controls which container runtime backend to use. */
+    /** Controls which container runtime backend to use.
+      *
+      * Two backends are available:
+      *   - [[BackendConfig.AutoDetect]]: probe Unix domain sockets (Podman first, then Docker), fall back to shell CLI.
+      *   - [[BackendConfig.UnixSocket]]: force the HTTP-over-Unix-socket backend at the given path.
+      *   - [[BackendConfig.Shell]]: force the shell CLI backend (binary name like "docker" or "podman").
+      *
+      * ==HTTP backend CLI fallbacks==
+      *
+      * The HTTP (UnixSocket) backend shells out to the `docker` / `podman` CLI for operations that need streaming progress or multi-step
+      * orchestration:
+      *
+      *   - [[ContainerImage.pull]], [[ContainerImage.pullWithProgress]], [[ContainerImage.ensure]]
+      *   - [[ContainerImage.buildFromPath]]
+      *   - [[Container.execStream]]
+      *
+      * These require the CLI binary on `PATH` even when the UnixSocket backend is selected.
+      *
+      * [[Container.copyTo]] and [[Container.copyFrom]] additionally require `tar` on `PATH` (used to build or extract the tar archives the
+      * Docker API expects).
+      */
     enum BackendConfig derives CanEqual:
         case AutoDetect(meter: Meter = Meter.Noop)
         case UnixSocket(path: Path, meter: Meter = Meter.Noop)
@@ -1396,7 +1425,7 @@ object Container:
                                 container.healthState.set(ContainerHealthState(true, Present(hc)))
                             case failure =>
                                 val errorMsg = failure match
-                                    case Result.Failure(e) => e.getMessage.take(100)
+                                    case Result.Failure(e) => e.getMessage.take(500)
                                     case _                 => "unknown error"
                                 // Keep last 5 errors for diagnostics
                                 val updatedErrors =
@@ -1407,6 +1436,8 @@ object Container:
                                 Abort.runWith[ContainerException](container.backend.state(container.id)) {
                                     case Result.Success(st) if st != State.Running && st != State.Created =>
                                         () // Container exited during health check, not a failure
+                                    case Result.Failure(_: ContainerException.NotFound) =>
+                                        () // Container was auto-removed during health check, not a failure
                                     case _ =>
                                         Clock.now.map { now =>
                                             schedule.next(now) match

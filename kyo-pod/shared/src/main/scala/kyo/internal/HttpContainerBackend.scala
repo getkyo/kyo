@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.internal.ResourceContext
 
 /** HTTP-based container backend that talks to Docker/Podman API via Unix domain socket.
   *
@@ -47,48 +48,46 @@ final private[kyo] class HttpContainerBackend(
 
     // --- Error mapping ---
 
-    /** Maps an HttpException to the appropriate ContainerException subtype based on HTTP status code.
-      *
-      * @param mapNotFound
-      *   Function to create the appropriate NotFound exception subtype for the resource being accessed. Defaults to
-      *   `ContainerException.NotFound` for container operations.
-      */
+    /** Maps an HttpException to the appropriate ContainerException subtype based on HTTP status code and resource context. */
     private def mapHttpError(
         httpEx: HttpException,
-        id: String,
-        mapNotFound: Maybe[String => ContainerException] = Absent
+        ctx: ResourceContext
     )(using Frame): Nothing < Abort[ContainerException] =
-        val notFoundMapper: String => ContainerException =
-            mapNotFound.getOrElse((s: String) => ContainerException.NotFound(Container.Id(s)))
         httpEx match
             case e: HttpStatusException =>
                 e.status.code match
-                    case 304 => Abort.fail(ContainerException.AlreadyStopped(Container.Id(id)))
-                    case 404 => Abort.fail(notFoundMapper(id))
-                    case 409 => Abort.fail(ContainerException.AlreadyExists(id))
-                    case _   => Abort.fail(ContainerException.General(s"HTTP ${e.status.code} for $id", e))
+                    case 304 =>
+                        ctx match
+                            case ResourceContext.Container(id) => Abort.fail(ContainerException.AlreadyStopped(id))
+                            case _                             => Abort.fail(ContainerException.General(s"HTTP 304 for ${ctx.describe}", e))
+                    case 404 =>
+                        ctx match
+                            case ResourceContext.Container(id) => Abort.fail(ContainerException.NotFound(id))
+                            case ResourceContext.Image(ref) =>
+                                Abort.fail(ContainerException.ImageNotFound(ContainerImage.parse(ref).getOrElse(ContainerImage(ref))))
+                            case ResourceContext.Network(id) => Abort.fail(ContainerException.NetworkNotFound(id))
+                            case ResourceContext.Volume(id)  => Abort.fail(ContainerException.VolumeNotFound(id))
+                            case ResourceContext.Op(name)    => Abort.fail(ContainerException.General(s"Not found during $name", e))
+                    case 409 =>
+                        ctx match
+                            case ResourceContext.Container(id) => Abort.fail(ContainerException.AlreadyExists(id.value))
+                            case ResourceContext.Op(name)      => Abort.fail(ContainerException.AlreadyExists(name))
+                            case other                         => Abort.fail(ContainerException.AlreadyExists(other.describe))
+                    case _ => Abort.fail(ContainerException.General(s"HTTP ${e.status.code} for ${ctx.describe}", e))
             case other =>
-                Abort.fail(ContainerException.General(s"HTTP request failed for $id", other))
+                Abort.fail(ContainerException.General(s"HTTP request failed for ${ctx.describe}", other))
         end match
     end mapHttpError
 
-    /** Runs an HTTP call, catching HttpException and mapping to ContainerException.
-      *
-      * @param mapNotFound
-      *   Function to create the appropriate NotFound exception subtype for the resource being accessed. Defaults to
-      *   `ContainerException.NotFound` for container operations.
-      */
-    private def withErrorMapping[A](
-        id: String,
-        mapNotFound: Maybe[String => ContainerException] = Absent
-    )(
+    /** Runs an HTTP call, catching HttpException and mapping to ContainerException. */
+    private def withErrorMapping[A](ctx: ResourceContext)(
         v: A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[ContainerException]) =
         Abort.runWith[Closed](meter.run {
             Abort.runWith[HttpException](v) {
                 case Result.Success(a) => a
-                case Result.Failure(e) => mapHttpError(e, id, mapNotFound)
-                case Result.Panic(e)   => Abort.fail(ContainerException.General(s"Unexpected error for $id", e))
+                case Result.Failure(e) => mapHttpError(e, ctx)
+                case Result.Panic(e)   => Abort.fail(ContainerException.General(s"Unexpected error for ${ctx.describe}", e))
             }
         }) {
             case Result.Success(a) => a
@@ -97,19 +96,19 @@ final private[kyo] class HttpContainerBackend(
         }
 
     /** POST with empty body, accepting 200/201/204 as success. */
-    private def postUnit(endpoint: String, id: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        withErrorMapping(id)(HttpClient.postText(url(endpoint), "").unit)
+    private def postUnit(endpoint: String, ctx: ResourceContext)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        withErrorMapping(ctx)(HttpClient.postText(url(endpoint), "").unit)
 
     /** POST with empty body, accepting 200/201/204/304 as success. 304 means "already in this state" — not an error for idempotent
       * operations.
       */
-    private def postUnitAccept304(endpoint: String, id: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
+    private def postUnitAccept304(endpoint: String, ctx: ResourceContext)(using Frame): Unit < (Async & Abort[ContainerException]) =
         Abort.runWith[Closed](meter.run {
             Abort.run[HttpException](HttpClient.postText(url(endpoint), "")).map {
                 case Result.Success(_)                                              => ()
                 case Result.Failure(e: HttpStatusException) if e.status.code == 304 => ()
-                case Result.Failure(e)                                              => mapHttpError(e, id)
-                case Result.Panic(e) => Abort.fail(ContainerException.General(s"Unexpected error for container $id", e))
+                case Result.Failure(e)                                              => mapHttpError(e, ctx)
+                case Result.Panic(e) => Abort.fail(ContainerException.General(s"Unexpected error for ${ctx.describe}", e))
             }
         }) {
             case Result.Success(a) => a
@@ -223,12 +222,14 @@ final private[kyo] class HttpContainerBackend(
         }
     end create
 
+    private def ctxContainer(id: Container.Id): ResourceContext = ResourceContext.Container(id)
+
     def start(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        postUnitAccept304(s"/containers/${id.value}/start", id.value)
+        postUnitAccept304(s"/containers/${id.value}/start", ctxContainer(id))
 
     def stop(id: Container.Id, timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException]) =
         val seconds = timeout.toMillis / 1000
-        postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", id.value).andThen {
+        postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id)).andThen {
             // Docker HTTP API returns before the container fully transitions to "exited".
             // Wait for the container to complete (consistent with ShellBackend's blocking `docker stop`).
             Abort.run[ContainerException](waitForExit(id)).unit
@@ -236,31 +237,31 @@ final private[kyo] class HttpContainerBackend(
     end stop
 
     def kill(id: Container.Id, signal: Container.Signal)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        postUnit(s"/containers/${id.value}/kill?signal=${signal.name}", id.value)
+        postUnit(s"/containers/${id.value}/kill?signal=${signal.name}", ctxContainer(id))
 
     def restart(id: Container.Id, timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException]) =
         val seconds = timeout.toMillis / 1000
-        postUnit(s"/containers/${id.value}/restart?t=$seconds", id.value)
+        postUnit(s"/containers/${id.value}/restart?t=$seconds", ctxContainer(id))
 
     def pause(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        postUnit(s"/containers/${id.value}/pause", id.value)
+        postUnit(s"/containers/${id.value}/pause", ctxContainer(id))
 
     def unpause(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        postUnit(s"/containers/${id.value}/unpause", id.value)
+        postUnit(s"/containers/${id.value}/unpause", ctxContainer(id))
 
     def remove(id: Container.Id, force: Boolean, removeVolumes: Boolean)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value) {
+        withErrorMapping(ctxContainer(id)) {
             HttpClient.deleteText(
                 url(s"/containers/${id.value}", "force" -> force.toString, "v" -> removeVolumes.toString)
             ).unit
         }
 
     def rename(id: Container.Id, newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        postUnit(s"/containers/${id.value}/rename?name=${java.net.URLEncoder.encode(newName, "UTF-8")}", id.value)
+        postUnit(s"/containers/${id.value}/rename?name=${java.net.URLEncoder.encode(newName, "UTF-8")}", ctxContainer(id))
 
     def waitForExit(id: Container.Id)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
         Abort.run[ContainerException](
-            withErrorMapping(id.value) {
+            withErrorMapping(ctxContainer(id)) {
                 HttpClient.postJson[WaitResponse](url(s"/containers/${id.value}/wait"), "")
             }.map(resp => ExitCode(resp.StatusCode))
         ).map {
@@ -277,7 +278,7 @@ final private[kyo] class HttpContainerBackend(
     def checkpoint(id: Container.Id, name: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         val body     = CheckpointCreateRequest(CheckpointID = name)
         val jsonBody = Json[CheckpointCreateRequest].encode(body)
-        withErrorMapping(id.value) {
+        withErrorMapping(ctxContainer(id)) {
             HttpClient.postText(
                 url(s"/containers/${id.value}/checkpoints"),
                 jsonBody,
@@ -287,7 +288,7 @@ final private[kyo] class HttpContainerBackend(
     end checkpoint
 
     def restore(id: Container.Id, checkpoint: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        postUnit(s"/containers/${id.value}/start?checkpoint=${java.net.URLEncoder.encode(checkpoint, "UTF-8")}", id.value)
+        postUnit(s"/containers/${id.value}/start?checkpoint=${java.net.URLEncoder.encode(checkpoint, "UTF-8")}", ctxContainer(id))
 
     // --- Health ---
 
@@ -297,12 +298,12 @@ final private[kyo] class HttpContainerBackend(
     // --- Inspection ---
 
     def inspect(id: Container.Id)(using Frame): Container.Info < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value) {
+        withErrorMapping(ctxContainer(id)) {
             HttpClient.getJson[InspectResponse](url(s"/containers/${id.value}/json"))
         }.map(mapInspectToInfo)
 
     def state(id: Container.Id)(using Frame): Container.State < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value) {
+        withErrorMapping(ctxContainer(id)) {
             HttpClient.getJson[InspectResponse](url(s"/containers/${id.value}/json"))
         }.map(resp => parseState(resp.State.Status))
 
@@ -313,7 +314,7 @@ final private[kyo] class HttpContainerBackend(
             if s == Container.State.Stopped || s == Container.State.Dead then
                 Abort.fail[ContainerException](ContainerException.AlreadyStopped(id))
             else
-                withErrorMapping(id.value) {
+                withErrorMapping(ctxContainer(id)) {
                     HttpClient.getJson[StatsResponse](url(s"/containers/${id.value}/stats", "stream" -> "false"))
                 }.map(mapStatsResponse)
         }
@@ -334,7 +335,7 @@ final private[kyo] class HttpContainerBackend(
         }
 
     def top(id: Container.Id, psArgs: String)(using Frame): Container.TopResult < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value) {
+        withErrorMapping(ctxContainer(id)) {
             HttpClient.getJson[TopResponse](url(s"/containers/${id.value}/top", "ps_args" -> psArgs))
         }.map { resp =>
             TopResult(
@@ -344,7 +345,7 @@ final private[kyo] class HttpContainerBackend(
         }
 
     def changes(id: Container.Id)(using Frame): Chunk[Container.FilesystemChange] < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value) {
+        withErrorMapping(ctxContainer(id)) {
             HttpClient.getJson[Seq[ChangeEntryDto]](url(s"/containers/${id.value}/changes"))
         }.map { entries =>
             Chunk.from(entries.map { e =>
@@ -371,14 +372,14 @@ final private[kyo] class HttpContainerBackend(
     def exec(id: Container.Id, command: Command)(using Frame): Container.ExecResult < (Async & Abort[ContainerException]) =
         // Phase 1: Create exec instance
         val createBody = execCreateBody(command)
-        withErrorMapping(id.value) {
+        withErrorMapping(ctxContainer(id)) {
             HttpClient.postJson[ExecCreateResponse](url(s"/containers/${id.value}/exec"), createBody)
         }
             .map { createResp =>
                 val execId = createResp.Id
                 // Phase 2: Start exec and collect output
                 val startBody = ExecStartRequest(Detach = false)
-                withErrorMapping(id.value) {
+                withErrorMapping(ctxContainer(id)) {
                     HttpClient.postBinary(
                         url(s"/exec/$execId/start"),
                         Span.from(Json[ExecStartRequest].encode(startBody).getBytes),
@@ -389,7 +390,7 @@ final private[kyo] class HttpContainerBackend(
                     val entries = demuxStream(outputBytes)
                     val stdout  = entries.filter(_.source == LogEntry.Source.Stdout).map(_.content).toSeq.mkString("\n")
                     val stderr  = entries.filter(_.source == LogEntry.Source.Stderr).map(_.content).toSeq.mkString("\n")
-                    withErrorMapping(id.value) {
+                    withErrorMapping(ctxContainer(id)) {
                         HttpClient.getJson[ExecInspectResponse](url(s"/exec/$execId/json"))
                     }
                         .map { inspectResp =>
@@ -424,13 +425,16 @@ final private[kyo] class HttpContainerBackend(
                 Chunk(id.value) ++
                 Chunk.from(command.args)
             val execCmd = Command((cliCommand +: baseArgs.toSeq)*).redirectErrorStream(true)
+            // Per-stream state: lines spanning chunk boundaries are re-assembled. No flush on
+            // termination — matches prior behavior of dropping trailing partial lines.
+            val assembler = new LineAssembler
             Scope.run {
                 Abort.runWith[CommandException](execCmd.spawn) {
                     case Result.Success(proc) =>
                         proc.stdout.mapChunk { bytes =>
                             val text  = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                            val lines = text.split("\n").filter(_.trim.nonEmpty)
-                            Chunk.from(lines.map(line => LogEntry(LogEntry.Source.Stdout, line)))
+                            val lines = assembler.feed(text)
+                            Chunk.from(lines.toSeq.filter(_.trim.nonEmpty).map(line => LogEntry(LogEntry.Source.Stdout, line)))
                         }.emit
                     case Result.Failure(cmdEx) =>
                         Abort.fail[ContainerException](
@@ -448,7 +452,7 @@ final private[kyo] class HttpContainerBackend(
         using Frame
     ): Container.AttachSession < (Async & Abort[ContainerException] & Scope) =
         val createBody = execCreateBody(command).copy(AttachStdin = true)
-        withErrorMapping(id.value) {
+        withErrorMapping(ctxContainer(id)) {
             HttpClient.postJson[ExecCreateResponse](url(s"/containers/${id.value}/exec"), createBody)
         }.map { resp =>
             val execId    = resp.Id
@@ -466,7 +470,7 @@ final private[kyo] class HttpContainerBackend(
                 )
             ) {
                 case Result.Success(conn) => buildAttachSession(conn, isTty = false)
-                case Result.Failure(e)    => mapHttpError(e, id.value)
+                case Result.Failure(e)    => mapHttpError(e, ctxContainer(id))
                 case Result.Panic(e) =>
                     Abort.fail(ContainerException.General(s"Unexpected error for ${id.value}", e))
             }
@@ -497,7 +501,7 @@ final private[kyo] class HttpContainerBackend(
                 )
             ) {
                 case Result.Success(conn) => buildAttachSession(conn, isTty)
-                case Result.Failure(e)    => mapHttpError(e, id.value)
+                case Result.Failure(e)    => mapHttpError(e, ctxContainer(id))
                 case Result.Panic(e) =>
                     Abort.fail(ContainerException.General(s"Unexpected error for ${id.value}", e))
             }
@@ -557,7 +561,7 @@ final private[kyo] class HttpContainerBackend(
             (if until != Instant.Max then Seq("until" -> until.toJava.getEpochSecond.toString) else Seq.empty)
         // Check if container uses TTY — TTY mode returns raw output without multiplexing headers
         isContainerTty(id).map { isTty =>
-            withErrorMapping(id.value) {
+            withErrorMapping(ctxContainer(id)) {
                 HttpClient.getBinary(url(s"/containers/${id.value}/logs", params*))
             }.map { bytes =>
                 if isTty then parseRawLogStream(bytes, timestamps)
@@ -591,18 +595,23 @@ final private[kyo] class HttpContainerBackend(
         // Wrap in Abort.runWith to map HttpException to ContainerException.
         Stream {
             isContainerTty(id).map { isTty =>
+                // Per-stream state: lines spanning chunk boundaries are re-assembled.
+                // Demux frames maintain separate assemblers per source since stdout/stderr
+                // frames interleave at arbitrary boundaries.
+                val stdoutAsm = new LineAssembler
+                val stderrAsm = new LineAssembler
                 Abort.runWith[HttpException](
                     byteStream.foreachChunk { chunk =>
                         Kyo.foreachDiscard(chunk) { span =>
                             val entries =
-                                if isTty then parseRawLogStream(span, timestamps)
-                                else demuxStream(span, timestamps)
+                                if isTty then parseRawLogStreamAssembled(span, stdoutAsm, timestamps)
+                                else demuxStreamAssembled(span, stdoutAsm, stderrAsm, timestamps)
                             Emit.value(entries)
                         }
                     }
                 ) {
                     case Result.Success(_) => ()
-                    case Result.Failure(e) => mapHttpError(e, id.value).unit
+                    case Result.Failure(e) => mapHttpError(e, ctxContainer(id)).unit
                     case Result.Panic(e) =>
                         Abort.fail(ContainerException.General(s"Unexpected error for log stream ${id.value}", e))
                 }
@@ -643,7 +652,7 @@ final private[kyo] class HttpContainerBackend(
                 case Result.Success(proc) =>
                     proc.stdout.run.map { tarBytes =>
                         val tarSpan = Span.from(tarBytes.toArray)
-                        withErrorMapping(id.value) {
+                        withErrorMapping(ctxContainer(id)) {
                             HttpClient.putBinary(
                                 url(
                                     s"/containers/${id.value}/archive",
@@ -674,7 +683,7 @@ final private[kyo] class HttpContainerBackend(
         // GET tar archive from container, pipe to tar -x via stdin
         // Docker returns the file with its container-side name inside the tar,
         // so we extract to a temp dir and move the file to the desired destination.
-        withErrorMapping(id.value) {
+        withErrorMapping(ctxContainer(id)) {
             HttpClient.getBinary(url(s"/containers/${id.value}/archive", "path" -> containerPath.toString))
         }.map { tarBytes =>
             val containerFileName = containerPath.name.getOrElse(containerPath.toString)
@@ -740,7 +749,7 @@ final private[kyo] class HttpContainerBackend(
                             "stat",
                             s"Missing X-Docker-Container-Path-Stat header for container ${id.value}"
                         ))
-            case Result.Failure(e) => mapHttpError(e, id.value)
+            case Result.Failure(e) => mapHttpError(e, ctxContainer(id))
             case Result.Panic(e) =>
                 Abort.fail(ContainerException.General(s"Unexpected error for stat on container ${id.value}", e))
         }
@@ -758,7 +767,7 @@ final private[kyo] class HttpContainerBackend(
                 }
             ) {
                 case Result.Success(_) => ()
-                case Result.Failure(e) => mapHttpError(e, id.value).unit
+                case Result.Failure(e) => mapHttpError(e, ctxContainer(id)).unit
                 case Result.Panic(e) =>
                     Abort.fail(ContainerException.General(s"Unexpected error for export ${id.value}", e))
             }
@@ -790,7 +799,7 @@ final private[kyo] class HttpContainerBackend(
             RestartPolicy = restartPol.getOrElse(RestartPolicyEntry("", 0))
         )
         val jsonBody = Json[UpdateRequest].encode(body)
-        withErrorMapping(id.value) {
+        withErrorMapping(ctxContainer(id)) {
             HttpClient.postText(
                 url(s"/containers/${id.value}/update"),
                 jsonBody,
@@ -819,7 +828,7 @@ final private[kyo] class HttpContainerBackend(
         val params = Seq("all" -> all.toString) ++
             (if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
              else Seq.empty)
-        withErrorMapping("list") {
+        withErrorMapping(ResourceContext.Op("list")) {
             HttpClient.getJson[Seq[ListContainerEntry]](url("/containers/json", params*))
         }.map { entries =>
             Chunk.from(entries.map { e =>
@@ -855,7 +864,7 @@ final private[kyo] class HttpContainerBackend(
         val params =
             if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
             else Seq.empty
-        withErrorMapping("prune") {
+        withErrorMapping(ResourceContext.Op("prune")) {
             HttpClient.postJson[PruneContainersResponse](url("/containers/prune", params*), "")
         }.map { resp =>
             Container.PruneResult(
@@ -867,17 +876,23 @@ final private[kyo] class HttpContainerBackend(
 
     def attachById(idOrName: Container.Id)(using Frame): (Container.Id, Container.Config) < (Async & Abort[ContainerException]) =
         inspect(idOrName).map { info =>
-            val config = new Config(
+            val config0 = new Config(
                 image = info.image,
-                name = if info.name.nonEmpty then Present(info.name) else Absent
+                name = if info.name.nonEmpty then Present(info.name) else Absent,
+                labels = info.labels,
+                ports = info.ports,
+                mounts = info.mounts
             )
+            val config =
+                if info.command.isEmpty then config0
+                else
+                    val args = Chunk.from(info.command.split(" ").iterator.filter(_.nonEmpty).toSeq)
+                    val cmd  = if info.env.isEmpty then Command(args*) else Command(args*).envAppend(info.env)
+                    config0.command(cmd)
             (info.id, config)
         }
 
     // --- Image operations ---
-
-    private def imageNotFound(using Frame): String => ContainerException =
-        s => ContainerException.ImageNotFound(ContainerImage.parse(s).getOrElse(ContainerImage(s)))
 
     def imagePull(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
@@ -891,7 +906,7 @@ final private[kyo] class HttpContainerBackend(
             case Result.Success((output, exitCode)) =>
                 if exitCode.isSuccess then ()
                 else if output.contains("not found") || output.contains("manifest unknown") then
-                    Abort.fail[ContainerException](imageNotFound(ref))
+                    Abort.fail[ContainerException](ContainerException.ImageNotFound(image))
                 else
                     Abort.fail[ContainerException](ContainerException.General(
                         s"Pull failed for $ref: $output",
@@ -910,7 +925,7 @@ final private[kyo] class HttpContainerBackend(
         // Check if image exists locally first
         val ref = image.reference
         Abort.run[ContainerException](
-            withErrorMapping(ref, Present(imageNotFound)) {
+            withErrorMapping(ResourceContext.Image(ref)) {
                 HttpClient.getJson[ImageInspectDto](url(s"/images/$ref/json"))
             }
         ).map {
@@ -926,7 +941,7 @@ final private[kyo] class HttpContainerBackend(
             val ref = image.reference
             // Check locally first via HTTP API
             Abort.run[ContainerException](
-                withErrorMapping(ref, Present(imageNotFound)) {
+                withErrorMapping(ResourceContext.Image(ref)) {
                     HttpClient.getJson[ImageInspectDto](url(s"/images/$ref/json"))
                 }
             ).map {
@@ -977,7 +992,7 @@ final private[kyo] class HttpContainerBackend(
         val params = Seq("all" -> all.toString) ++
             (if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
              else Seq.empty)
-        withErrorMapping("imageList") {
+        withErrorMapping(ResourceContext.Op("imageList")) {
             HttpClient.getJson[Seq[ImageListEntryDto]](url("/images/json", params*))
         }.map { entries =>
             Chunk.from(entries.map { e =>
@@ -1004,7 +1019,7 @@ final private[kyo] class HttpContainerBackend(
 
     def imageInspect(image: ContainerImage)(using Frame): ContainerImage.Info < (Async & Abort[ContainerException]) =
         val ref = image.reference
-        withErrorMapping(ref, Present(imageNotFound)) {
+        withErrorMapping(ResourceContext.Image(ref)) {
             HttpClient.getJson[ImageInspectDto](url(s"/images/$ref/json"))
         }.map { dto =>
             ContainerImage.Info(
@@ -1026,7 +1041,7 @@ final private[kyo] class HttpContainerBackend(
         using Frame
     ): Chunk[ContainerImage.DeleteResponse] < (Async & Abort[ContainerException]) =
         val ref = image.reference
-        withErrorMapping(ref, Present(imageNotFound)) {
+        withErrorMapping(ResourceContext.Image(ref)) {
             HttpClient.deleteJson[Seq[ImageDeleteEntryDto]](
                 url(s"/images/$ref", "force" -> force.toString, "noprune" -> noPrune.toString)
             )
@@ -1042,7 +1057,7 @@ final private[kyo] class HttpContainerBackend(
 
     def imageTag(source: ContainerImage, repo: String, tag: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         val ref = source.reference
-        withErrorMapping(ref, Present(imageNotFound)) {
+        withErrorMapping(ResourceContext.Image(ref)) {
             HttpClient.postText(url(s"/images/$ref/tag", "repo" -> repo, "tag" -> tag), "").unit
         }
     end imageTag
@@ -1122,7 +1137,7 @@ final private[kyo] class HttpContainerBackend(
     ): Unit < (Async & Abort[ContainerException]) =
         val ref     = image.reference
         val headers = authHeaders(auth)
-        withErrorMapping(ref, Present(imageNotFound)) {
+        withErrorMapping(ResourceContext.Image(ref)) {
             HttpClient.postText(url(s"/images/$ref/push"), "", headers = headers).unit
         }
     end imagePush
@@ -1134,7 +1149,7 @@ final private[kyo] class HttpContainerBackend(
             (if limit != Int.MaxValue then Seq("limit" -> limit.toString) else Seq.empty) ++
             (if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
              else Seq.empty)
-        withErrorMapping("imageSearch") {
+        withErrorMapping(ResourceContext.Op("imageSearch")) {
             HttpClient.getJson[Seq[ImageSearchEntryDto]](url("/images/search", params*))
         }.map { entries =>
             Chunk.from(entries.map { e =>
@@ -1151,7 +1166,7 @@ final private[kyo] class HttpContainerBackend(
 
     def imageHistory(image: ContainerImage)(using Frame): Chunk[ContainerImage.HistoryEntry] < (Async & Abort[ContainerException]) =
         val ref = image.reference
-        withErrorMapping(ref, Present(imageNotFound)) {
+        withErrorMapping(ResourceContext.Image(ref)) {
             HttpClient.getJson[Seq[ImageHistoryEntryDto]](url(s"/images/$ref/history"))
         }.map { entries =>
             Chunk.from(entries.map { e =>
@@ -1172,7 +1187,7 @@ final private[kyo] class HttpContainerBackend(
         val params =
             if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
             else Seq.empty
-        withErrorMapping("imagePrune") {
+        withErrorMapping(ResourceContext.Op("imagePrune")) {
             HttpClient.postJson[ImagePruneResponseDto](url("/images/prune", params*), "")
         }.map { resp =>
             val deleted = Chunk.from(resp.ImagesDeleted.getOrElse(Seq.empty).flatMap { e =>
@@ -1207,7 +1222,7 @@ final private[kyo] class HttpContainerBackend(
                     case Result.Success(dto) => dto.Id
                     case Result.Failure(_) =>
                         Abort.fail(ContainerException.ParseError("imageCommit", s"Failed to parse commit response"))
-            case Result.Failure(e) => mapHttpError(e, container.value)
+            case Result.Failure(e) => mapHttpError(e, ctxContainer(container))
             case Result.Panic(e) =>
                 Abort.fail(ContainerException.General(s"Unexpected error committing container ${container.value}", e))
         }
@@ -1238,7 +1253,7 @@ final private[kyo] class HttpContainerBackend(
             Options = config.options,
             IPAM = ipamConfig
         )
-        withErrorMapping(config.name) {
+        withErrorMapping(ResourceContext.Op("networkCreate")) {
             HttpClient.postJson[NetworkCreateResponse](url("/networks/create"), body)
         }.map(resp => Container.Network.Id(resp.Id))
     end networkCreate
@@ -1249,21 +1264,18 @@ final private[kyo] class HttpContainerBackend(
         val params =
             if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
             else Seq.empty
-        withErrorMapping("networkList") {
+        withErrorMapping(ResourceContext.Op("networkList")) {
             HttpClient.getJson[Seq[NetworkInfoDto]](url("/networks", params*))
         }.map(entries => Chunk.from(entries.map(mapNetworkInfo)))
     end networkList
 
-    private def networkNotFound(using Frame): String => ContainerException =
-        s => ContainerException.NetworkNotFound(Container.Network.Id(s))
-
     def networkInspect(id: Container.Network.Id)(using Frame): Container.Network.Info < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value, Present(networkNotFound)) {
+        withErrorMapping(ResourceContext.Network(id)) {
             HttpClient.getJson[NetworkInfoDto](url(s"/networks/${id.value}"))
         }.map(mapNetworkInfo)
 
     def networkRemove(id: Container.Network.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value, Present(networkNotFound)) {
+        withErrorMapping(ResourceContext.Network(id)) {
             HttpClient.deleteText(url(s"/networks/${id.value}")).unit
         }
 
@@ -1278,7 +1290,7 @@ final private[kyo] class HttpContainerBackend(
             EndpointConfig = endpointConfig.getOrElse(EndpointConfigDto())
         )
         val jsonBody = Json[NetworkConnectRequest].encode(body)
-        withErrorMapping(network.value, Present(networkNotFound)) {
+        withErrorMapping(ResourceContext.Network(network)) {
             HttpClient.postText(
                 url(s"/networks/${network.value}/connect"),
                 jsonBody,
@@ -1292,7 +1304,7 @@ final private[kyo] class HttpContainerBackend(
     ): Unit < (Async & Abort[ContainerException]) =
         val body     = NetworkDisconnectRequest(Container = container.value, Force = force)
         val jsonBody = Json[NetworkDisconnectRequest].encode(body)
-        withErrorMapping(network.value, Present(networkNotFound)) {
+        withErrorMapping(ResourceContext.Network(network)) {
             HttpClient.postText(
                 url(s"/networks/${network.value}/disconnect"),
                 jsonBody,
@@ -1307,7 +1319,7 @@ final private[kyo] class HttpContainerBackend(
         val params =
             if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
             else Seq.empty
-        withErrorMapping("networkPrune") {
+        withErrorMapping(ResourceContext.Op("networkPrune")) {
             HttpClient.postJson[NetworkPruneResponse](url("/networks/prune", params*), "")
         }.map { resp =>
             Chunk.from(resp.NetworksDeleted.getOrElse(Seq.empty).map(Container.Network.Id(_)))
@@ -1323,7 +1335,7 @@ final private[kyo] class HttpContainerBackend(
             DriverOpts = config.driverOpts,
             Labels = config.labels
         )
-        withErrorMapping("volumeCreate") {
+        withErrorMapping(ResourceContext.Op("volumeCreate")) {
             HttpClient.postJson[VolumeInfoDto](url("/volumes/create"), body)
         }.map(mapVolumeInfo)
     end volumeCreate
@@ -1334,22 +1346,20 @@ final private[kyo] class HttpContainerBackend(
         val params =
             if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
             else Seq.empty
-        withErrorMapping("volumeList") {
+        withErrorMapping(ResourceContext.Op("volumeList")) {
             HttpClient.getJson[VolumeListResponse](url("/volumes", params*))
         }.map { resp =>
             Chunk.from(resp.Volumes.getOrElse(Seq.empty).map(mapVolumeInfo))
         }
     end volumeList
 
-    private def volumeNotFound(using Frame): String => ContainerException = s => ContainerException.VolumeNotFound(Container.Volume.Id(s))
-
     def volumeInspect(id: Container.Volume.Id)(using Frame): Container.Volume.Info < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value, Present(volumeNotFound)) {
+        withErrorMapping(ResourceContext.Volume(id)) {
             HttpClient.getJson[VolumeInfoDto](url(s"/volumes/${id.value}"))
         }.map(mapVolumeInfo)
 
     def volumeRemove(id: Container.Volume.Id, force: Boolean)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value, Present(volumeNotFound)) {
+        withErrorMapping(ResourceContext.Volume(id)) {
             HttpClient.deleteText(url(s"/volumes/${id.value}", "force" -> force.toString)).unit
         }
 
@@ -1357,7 +1367,7 @@ final private[kyo] class HttpContainerBackend(
         val params =
             if filters.nonEmpty then Seq("filters" -> Json[Map[String, Seq[String]]].encode(filters.map((k, v) => k -> v.toSeq)))
             else Seq.empty
-        withErrorMapping("volumePrune") {
+        withErrorMapping(ResourceContext.Op("volumePrune")) {
             HttpClient.postJson[VolumePruneResponse](url("/volumes/prune", params*), "")
         }.map { resp =>
             Container.PruneResult(
@@ -1391,7 +1401,7 @@ final private[kyo] class HttpContainerBackend(
 
     /** Check if a container was created with TTY mode enabled. */
     private def isContainerTty(id: Container.Id)(using Frame): Boolean < (Async & Abort[ContainerException]) =
-        withErrorMapping(id.value) {
+        withErrorMapping(ctxContainer(id)) {
             HttpClient.getJson[InspectResponse](url(s"/containers/${id.value}/json"))
         }.map(_.Config.Tty)
 
@@ -1454,6 +1464,76 @@ final private[kyo] class HttpContainerBackend(
 
         parse(0, Chunk.empty)
     end demuxStream
+
+    /** Streaming variant of [[parseRawLogStream]] that threads a [[LineAssembler]] across byte spans so lines straddling chunk boundaries
+      * are emitted as a single entry.
+      */
+    private def parseRawLogStreamAssembled(
+        bytes: Span[Byte],
+        assembler: LineAssembler,
+        timestamps: Boolean
+    ): Chunk[LogEntry] =
+        val text   = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
+        val lines  = assembler.feed(text)
+        val result = Chunk.newBuilder[LogEntry]
+        lines.foreach { line =>
+            if line.nonEmpty then
+                if timestamps then
+                    val (maybeTs, rest) = parseTimestampLine(line)
+                    result.addOne(LogEntry(LogEntry.Source.Stdout, rest, maybeTs))
+                else
+                    result.addOne(LogEntry(LogEntry.Source.Stdout, line))
+        }
+        result.result()
+    end parseRawLogStreamAssembled
+
+    /** Streaming variant of [[demuxStream]] that maintains per-source [[LineAssembler]]s. Frame payloads are demultiplexed as in the
+      * non-streaming version, but each payload is fed into its source's assembler so multi-frame / multi-chunk lines remain intact.
+      */
+    private def demuxStreamAssembled(
+        bytes: Span[Byte],
+        stdoutAsm: LineAssembler,
+        stderrAsm: LineAssembler,
+        timestamps: Boolean
+    ): Chunk[LogEntry] =
+        val arr    = bytes.toArray
+        val len    = arr.length
+        val result = Chunk.newBuilder[LogEntry]
+
+        def emitFromPayload(content: String, source: LogEntry.Source): Unit =
+            val asm   = if source == LogEntry.Source.Stderr then stderrAsm else stdoutAsm
+            val lines = asm.feed(content)
+            lines.foreach { line =>
+                if line.nonEmpty then
+                    if timestamps then
+                        val (maybeTs, rest) = parseTimestampLine(line)
+                        result.addOne(LogEntry(source, rest, maybeTs))
+                    else
+                        result.addOne(LogEntry(source, line))
+            }
+        end emitFromPayload
+
+        @scala.annotation.tailrec
+        def parse(offset: Int): Unit =
+            if offset + 8 > len then ()
+            else
+                val streamType = arr(offset) & 0xff
+                val size = ((arr(offset + 4) & 0xff) << 24) |
+                    ((arr(offset + 5) & 0xff) << 16) |
+                    ((arr(offset + 6) & 0xff) << 8) |
+                    (arr(offset + 7) & 0xff)
+                if offset + 8 + size > len then ()
+                else
+                    val content = new String(arr, offset + 8, size, java.nio.charset.StandardCharsets.UTF_8)
+                    val source  = if streamType == 2 then LogEntry.Source.Stderr else LogEntry.Source.Stdout
+                    emitFromPayload(content, source)
+                    parse(offset + 8 + size)
+                end if
+        end parse
+
+        parse(0)
+        result.result()
+    end demuxStreamAssembled
 
     /** Parse a Docker timestamp prefix from a log line.
       *

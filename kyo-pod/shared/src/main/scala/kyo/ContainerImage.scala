@@ -84,9 +84,12 @@ object ContainerImage:
                     if lastColon == -1 then (beforeDigest, Absent: Maybe[String])
                     else
                         val afterColon = beforeDigest.substring(lastColon + 1)
+                        // Empty tag (e.g. "alpine:") — strip the colon and default later to "latest"
+                        if afterColon.isEmpty then (beforeDigest.substring(0, lastColon), Absent: Maybe[String])
                         // If there's a / after the colon, it's a registry:port, not a tag
-                        if afterColon.contains('/') then (beforeDigest, Absent: Maybe[String])
+                        else if afterColon.contains('/') then (beforeDigest, Absent: Maybe[String])
                         else (beforeDigest.substring(0, lastColon), Present(afterColon))
+                        end if
                     end if
 
             // Parse the path components: registry/namespace/name or namespace/name or name
@@ -360,7 +363,9 @@ object ContainerImage:
     ) derives CanEqual
 
     /** Registry authentication credentials. */
-    case class RegistryAuth(auths: Map[ContainerImage.Registry, String]) derives CanEqual
+    case class RegistryAuth(auths: Map[ContainerImage.Registry, String]) derives CanEqual:
+        override def toString: String =
+            s"RegistryAuth(registries=${auths.keys.toSeq.map(_.value).mkString(",")}, credentials=<redacted>)"
 
     object RegistryAuth:
         /** Load registry credentials from the Docker config file (~/.docker/config.json). */

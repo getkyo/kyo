@@ -104,39 +104,39 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
                 // Command
                 Chunk.from(config.command.args)
 
-            // Run
-            run(args.toSeq*).map(output => Container.Id(output.trim))
+            // Run. Use Image context so mapError classifies image-not-found as ImageNotFound.
+            run(ResourceContext.Image(config.image.reference), args.toSeq*).map(output => Container.Id(output.trim))
         }
     end create
 
     def start(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        runUnit("start", id.value)
+        runUnit(ResourceContext.Container(id), "start", id.value)
 
     def stop(id: Container.Id, timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        runUnit("stop", "-t", parseDurationSeconds(timeout).toString, id.value)
+        runUnit(ResourceContext.Container(id), "stop", "-t", parseDurationSeconds(timeout).toString, id.value)
 
     def kill(id: Container.Id, signal: Container.Signal)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        runUnit("kill", "-s", signal.name, id.value)
+        runUnit(ResourceContext.Container(id), "kill", "-s", signal.name, id.value)
 
     def restart(id: Container.Id, timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        runUnit("restart", "-t", parseDurationSeconds(timeout).toString, id.value)
+        runUnit(ResourceContext.Container(id), "restart", "-t", parseDurationSeconds(timeout).toString, id.value)
 
     def pause(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        runUnit("pause", id.value)
+        runUnit(ResourceContext.Container(id), "pause", id.value)
 
     def unpause(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        runUnit("unpause", id.value)
+        runUnit(ResourceContext.Container(id), "unpause", id.value)
 
     def remove(id: Container.Id, force: Boolean, removeVolumes: Boolean)(using Frame): Unit < (Async & Abort[ContainerException]) =
         val args = Chunk("rm") ++
             (if force then Chunk("-f") else Chunk.empty) ++
             (if removeVolumes then Chunk("-v") else Chunk.empty) ++
             Chunk(id.value)
-        runUnit(args.toSeq*)
+        runUnit(ResourceContext.Container(id), args.toSeq*)
     end remove
 
     def rename(id: Container.Id, newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        runUnit("rename", id.value, newName)
+        runUnit(ResourceContext.Container(id), "rename", id.value, newName)
 
     def waitForExit(id: Container.Id)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
         val waitCmd = Command(cmd, "wait", id.value)
@@ -166,7 +166,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
 
     private def inspectExitCode(id: Container.Id)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
         Abort.runWith[ContainerException](
-            run("inspect", "--format", "{{.State.ExitCode}}", id.value)
+            run(ResourceContext.Container(id), "inspect", "--format", "{{.State.ExitCode}}", id.value)
         ) {
             case Result.Success(output) =>
                 parseExitCode(output.trim) match
@@ -181,15 +181,15 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
 
     def checkpoint(id: Container.Id, name: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         if cmd == "podman" then
-            runUnit("container", "checkpoint", id.value, "--export", s"/tmp/$name.tar")
+            runUnit(ResourceContext.Container(id), "container", "checkpoint", id.value, "--export", s"/tmp/$name.tar")
         else
-            runUnit("checkpoint", "create", id.value, name)
+            runUnit(ResourceContext.Container(id), "checkpoint", "create", id.value, name)
 
     def restore(id: Container.Id, checkpoint: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         if cmd == "podman" then
-            runUnit("container", "restore", "--import", s"/tmp/$checkpoint.tar")
+            runUnit(ResourceContext.Container(id), "container", "restore", "--import", s"/tmp/$checkpoint.tar")
         else
-            runUnit("start", "--checkpoint", checkpoint, id.value)
+            runUnit(ResourceContext.Container(id), "start", "--checkpoint", checkpoint, id.value)
 
     // --- Health ---
 
@@ -199,7 +199,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
     // --- Inspection ---
 
     def inspect(id: Container.Id)(using Frame): Info < (Async & Abort[ContainerException]) =
-        run("inspect", "--format", "{{json .}}", id.value).map { raw =>
+        run(ResourceContext.Container(id), "inspect", "--format", "{{json .}}", id.value).map { raw =>
             decodeJson[InspectJson](raw).map(mapInspectToInfo(id, _))
         }
 
@@ -303,7 +303,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
     end mapInspectToInfo
 
     def state(id: Container.Id)(using Frame): State < (Async & Abort[ContainerException]) =
-        run("inspect", "--format", "{{.State.Status}}", id.value).map(parseState)
+        run(ResourceContext.Container(id), "inspect", "--format", "{{.State.Status}}", id.value).map(parseState)
 
     def stats(id: Container.Id)(using Frame): Stats < (Async & Abort[ContainerException]) =
         // Check container state first — Docker returns zero-valued stats for stopped
@@ -314,7 +314,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
                     ContainerException.AlreadyStopped(id)
                 )
             else
-                run("stats", "--no-stream", "--format", "{{json .}}", id.value).map { raw =>
+                run(ResourceContext.Container(id), "stats", "--no-stream", "--format", "{{json .}}", id.value).map { raw =>
                     val trimmed = raw.trim
                     // Try Docker format (string fields) first, then Podman format (numeric fields)
                     Json[DockerStatsJson].decode(trimmed) match
@@ -452,7 +452,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
         }
 
     def top(id: Container.Id, psArgs: String)(using Frame): TopResult < (Async & Abort[ContainerException]) =
-        run("top", id.value, psArgs).map { output =>
+        run(ResourceContext.Container(id), "top", id.value, psArgs).map { output =>
             val lines = output.split("\n")
             if lines.isEmpty then TopResult(Chunk.empty, Chunk.empty)
             else
@@ -463,7 +463,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
         }
 
     def changes(id: Container.Id)(using Frame): Chunk[FilesystemChange] < (Async & Abort[ContainerException]) =
-        run("diff", id.value).map { output =>
+        run(ResourceContext.Container(id), "diff", id.value).map { output =>
             if output.trim.isEmpty then Chunk.empty
             else
                 Chunk.from(output.split("\n").flatMap { line =>
@@ -488,7 +488,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
         Abort.run[Closed](meter.run(execOnce(id, command))).map {
             case Result.Success(r) => r
             case Result.Failure(_) => Abort.fail(ContainerException.General("Meter closed", new Exception("Meter closed")))
-            case Result.Panic(e)   => throw e
+            case Result.Panic(e)   => Abort.panic(e)
         }
     end exec
 
@@ -527,7 +527,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
                         val stderrStr = new String(errBytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
                         // Parse exit code and classify result
                         if (rawExit == ExitCode.Failure(125) || isDockerDaemonError(stderrStr)) && stderrStr.nonEmpty then
-                            Abort.fail[ContainerException](mapError(stderrStr.trim, Seq("exec", id.value)))
+                            Abort.fail[ContainerException](mapError(stderrStr.trim, ResourceContext.Container(id), Seq("exec", id.value)))
                         // Exit code 126: command exists but cannot be invoked (permissions, not executable)
                         else if rawExit == ExitCode.Failure(126) then
                             Abort.fail[ContainerException](
@@ -579,14 +579,17 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
 
             // Redirect stderr to stdout so we get all output in one stream
             val execCmd = Command((cmd +: baseArgs.toSeq)*).redirectErrorStream(true)
+            // Per-stream state: lines spanning chunk boundaries are re-assembled. No flush on
+            // termination — matches prior behavior of dropping trailing partial lines.
+            val assembler = new LineAssembler
             Scope.run {
                 Abort.runWith[CommandException](execCmd.spawn) {
                     case Result.Success(proc) =>
                         // Stream stdout chunks as they arrive, converting bytes to LogEntry
                         proc.stdout.mapChunk { bytes =>
                             val text  = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                            val lines = text.split("\n").filter(_.trim.nonEmpty)
-                            Chunk.from(lines.map(line => LogEntry(LogEntry.Source.Stdout, line)))
+                            val lines = assembler.feed(text)
+                            Chunk.from(lines.toSeq.filter(_.trim.nonEmpty).map(line => LogEntry(LogEntry.Source.Stdout, line)))
                         }.emit
                     case Result.Failure(cmdEx) =>
                         Abort.fail[ContainerException](
@@ -679,11 +682,13 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
         tail: Int,
         timestamps: Boolean
     )(using Frame): Chunk[Container.LogEntry] < (Async & Abort[ContainerException]) =
+        val needMerge           = stdout && stderr
+        val effectiveTimestamps = timestamps || needMerge
         val args = Chunk("logs") ++
             (if tail != Int.MaxValue then Chunk("--tail", tail.toString) else Chunk.empty) ++
             (if since != Instant.Min then Chunk("--since", since.toString) else Chunk.empty) ++
             (if until != Instant.Max then Chunk("--until", until.toString) else Chunk.empty) ++
-            (if timestamps then Chunk("-t") else Chunk.empty) ++
+            (if effectiveTimestamps then Chunk("-t") else Chunk.empty) ++
             Chunk(id.value)
 
         // Container's stdout goes to command's stdout, container's stderr goes to command's stderr
@@ -702,15 +707,20 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
                         val outStr = new String(outBytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
                         val errStr = new String(errBytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
                         if !exitCode.isSuccess then
-                            Abort.fail[ContainerException](mapError((outStr + errStr).trim, args.toSeq))
+                            Abort.fail[ContainerException](mapError((outStr + errStr).trim, ResourceContext.Container(id), args.toSeq))
                         else
-                            val outEntries = if stdout then
-                                parseLogLines(outStr, LogEntry.Source.Stdout, timestamps)
-                            else Chunk.empty[LogEntry]
-                            val errEntries = if stderr then
-                                parseLogLines(errStr, LogEntry.Source.Stderr, timestamps)
-                            else Chunk.empty[LogEntry]
-                            outEntries.concat(errEntries)
+                            val outEntries =
+                                if stdout then parseLogLines(outStr, LogEntry.Source.Stdout, effectiveTimestamps)
+                                else Chunk.empty[LogEntry]
+                            val errEntries =
+                                if stderr then parseLogLines(errStr, LogEntry.Source.Stderr, effectiveTimestamps)
+                                else Chunk.empty[LogEntry]
+                            val merged: Chunk[LogEntry] =
+                                if needMerge then Chunk.from(mergeByTimestamp(outEntries.toSeq, errEntries.toSeq))
+                                else outEntries.concat(errEntries)
+                            if !timestamps && effectiveTimestamps then
+                                merged.map(_.copy(timestamp = Absent))
+                            else merged
                         end if
                 case Result.Failure(cmdEx) =>
                     Abort.fail[ContainerException](
@@ -764,6 +774,45 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             end if
         else LogEntry(source, line)
 
+    /** Merge two per-source log sequences into a single emission-order sequence.
+      *
+      * Entries are ordered primarily by timestamp. When timestamps tie (including when both are `Absent`), the two streams are interleaved
+      * in round-robin from the last-emitted source, so consecutive ties alternate between stdout and stderr. This heuristic recovers
+      * emission order when the CLI's timestamp resolution is coarser than the inter-event spacing (e.g., Podman emits second-precision
+      * timestamps).
+      */
+    private def mergeByTimestamp(out: Seq[LogEntry], err: Seq[LogEntry]): Seq[LogEntry] =
+        def key(e: LogEntry): Long             = e.timestamp.map(_.toJava.toEpochMilli).getOrElse(0L)
+        val outQ                               = out.toBuffer
+        val errQ                               = err.toBuffer
+        val result                             = Seq.newBuilder[LogEntry]
+        var lastSource: Maybe[LogEntry.Source] = Absent
+        while outQ.nonEmpty && errQ.nonEmpty do
+            val o = outQ.head
+            val e = errQ.head
+            val pickOut =
+                if key(o) < key(e) then true
+                else if key(e) < key(o) then false
+                else
+                    lastSource match
+                        case Present(LogEntry.Source.Stdout) => false // alternate away from stdout
+                        case Present(LogEntry.Source.Stderr) => true  // alternate away from stderr
+                        case _                               => true  // default: stdout first
+            if pickOut then
+                result += o
+                val _ = outQ.remove(0)
+                lastSource = Present(LogEntry.Source.Stdout)
+            else
+                result += e
+                val _ = errQ.remove(0)
+                lastSource = Present(LogEntry.Source.Stderr)
+            end if
+        end while
+        result ++= outQ
+        result ++= errQ
+        result.result()
+    end mergeByTimestamp
+
     def logStream(
         id: Container.Id,
         stdout: Boolean,
@@ -787,15 +836,17 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
                 if mergeStreams then Command((cmd +: args.toSeq)*).redirectErrorStream(true)
                 else Command((cmd +: args.toSeq)*)
 
+            // Per-stream state: lines spanning chunk boundaries are re-assembled. No flush on
+            // termination — matches prior behavior of dropping trailing partial lines.
+            val assembler = new LineAssembler
             Scope.run {
                 Abort.runWith[CommandException](logsCmd.spawn) {
                     case Result.Success(proc) =>
                         val byteStream = if source == LogEntry.Source.Stderr then proc.stderr else proc.stdout
                         byteStream.mapChunk { bytes =>
-                            val text = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                            Chunk.from(text.split("\n").filter(_.nonEmpty).map(line =>
-                                parseLogLine(line, source, timestamps)
-                            ))
+                            val text  = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
+                            val lines = assembler.feed(text)
+                            Chunk.from(lines.toSeq.filter(_.nonEmpty).map(line => parseLogLine(line, source, timestamps)))
                         }.emit
                     case Result.Failure(cmdEx) =>
                         Abort.fail[ContainerException](
@@ -834,7 +885,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
         resolveHostPath(source).map { resolved =>
-            runUnit("cp", resolved, s"${id.value}:${containerPath}")
+            runUnit(ResourceContext.Container(id), "cp", resolved, s"${id.value}:${containerPath}")
         }
 
     def copyFrom(id: Container.Id, containerPath: Path, destination: Path)(
@@ -847,18 +898,18 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
                 destination.name match
                     case Present(fileName) =>
                         resolveHostPath(parentPath).map { resolvedParent =>
-                            runUnit("cp", s"${id.value}:${containerPath}", s"$resolvedParent/$fileName")
+                            runUnit(ResourceContext.Container(id), "cp", s"${id.value}:${containerPath}", s"$resolvedParent/$fileName")
                         }
                     case Absent =>
-                        runUnit("cp", s"${id.value}:${containerPath}", destStr)
+                        runUnit(ResourceContext.Container(id), "cp", s"${id.value}:${containerPath}", destStr)
             case Absent =>
-                runUnit("cp", s"${id.value}:${containerPath}", destStr)
+                runUnit(ResourceContext.Container(id), "cp", s"${id.value}:${containerPath}", destStr)
         end match
     end copyFrom
 
     def stat(id: Container.Id, containerPath: Path)(using Frame): FileStat < (Async & Abort[ContainerException]) =
         // %N gives quoted name + link target for symlinks, %s=size, %f=hex mode, %Y=mtime epoch
-        run("exec", id.value, "stat", "-c", "%N|%s|%f|%Y", containerPath.toString).map { output =>
+        run(ResourceContext.Container(id), "exec", id.value, "stat", "-c", "%N|%s|%f|%Y", containerPath.toString).map { output =>
             val parts = output.trim.split("\\|")
             if parts.length >= 4 then
                 // %N returns 'name' for regular files, or 'name' -> 'target' for symlinks
@@ -948,7 +999,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             }.getOrElse(Chunk.empty)
         // Docker requires at least one flag; skip the command for no-op updates
         if args.length > 1 then
-            runUnit((args ++ Chunk(id.value)).toSeq*)
+            runUnit(ResourceContext.Container(id), (args ++ Chunk(id.value)).toSeq*)
         else ()
         end if
     end update
@@ -962,7 +1013,8 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             aliases.flatMap(a => Chunk("--alias", a)) ++
             Chunk(networkId.value) ++
             Chunk(id.value)
-        runUnit(args.toSeq*)
+        // Use Network context so network-not-found classifies as NetworkNotFound.
+        runUnit(ResourceContext.Network(networkId), args.toSeq*)
     end connectToNetwork
 
     def disconnectFromNetwork(id: Container.Id, networkId: Network.Id, force: Boolean)(
@@ -972,7 +1024,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             (if force then Chunk("-f") else Chunk.empty) ++
             Chunk(networkId.value) ++
             Chunk(id.value)
-        runUnit(args.toSeq*)
+        runUnit(ResourceContext.Network(networkId), args.toSeq*)
     end disconnectFromNetwork
 
     // --- Container Listing ---
@@ -986,7 +1038,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
                 vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             }) ++
             Chunk("--no-trunc", "--format", "{{json .}}")
-        run(args.toSeq*).map { output =>
+        run(ResourceContext.Op("list"), args.toSeq*).map { output =>
             if output.trim.isEmpty then Chunk.empty[Summary]
             else
                 // Parse each line independently — skip lines that fail to decode
@@ -1126,7 +1178,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             Chunk.from(filters.toSeq.flatMap { case (k, vs) =>
                 vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             })
-        run(args.toSeq*).map { output =>
+        run(ResourceContext.Op("prune"), args.toSeq*).map { output =>
             // Parse prune output: lists deleted container IDs, then space reclaimed
             val lines   = output.split("\n")
             val deleted = Chunk.from(lines.map(_.trim).filter(_.matches("^[a-f0-9]{12,64}$")))
@@ -1142,10 +1194,19 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
 
     def attachById(idOrName: Container.Id)(using Frame): (Container.Id, Config) < (Async & Abort[ContainerException]) =
         inspect(idOrName).map { info =>
-            val config = new Config(
+            val config0 = new Config(
                 image = info.image,
-                name = if info.name.nonEmpty then Present(info.name) else Absent
+                name = if info.name.nonEmpty then Present(info.name) else Absent,
+                labels = info.labels,
+                ports = info.ports,
+                mounts = info.mounts
             )
+            val config =
+                if info.command.isEmpty then config0
+                else
+                    val args = Chunk.from(info.command.split(" ").iterator.filter(_.nonEmpty).toSeq)
+                    val cmd  = if info.env.isEmpty then Command(args*) else Command(args*).envAppend(info.env)
+                    config0.command(cmd)
             (info.id, config)
         }
 
@@ -1158,22 +1219,23 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
         val args = Chunk("pull") ++
             platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
             Chunk(ref)
-        runUnit(args.toSeq*)
+        runUnit(ResourceContext.Image(ref), args.toSeq*)
     end imagePull
 
     def imageEnsure(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
         val ref = image.reference
+        val ctx = ResourceContext.Image(ref)
         Abort.runWith[ContainerException](
-            run("image", "inspect", "--format", "{{.Id}}", ref)
+            run(ctx, "image", "inspect", "--format", "{{.Id}}", ref)
         ) {
             case Result.Success(_) => () // Image exists locally, skip pull
             case _ =>
                 val args = Chunk("pull") ++
                     platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
                     Chunk(ref)
-                runUnit(args.toSeq*)
+                runUnit(ctx, args.toSeq*)
         }
     end imageEnsure
 
@@ -1182,9 +1244,10 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
     ): Stream[ContainerImage.PullProgress, Async & Abort[ContainerException]] =
         Stream {
             val ref = image.reference
+            val ctx = ResourceContext.Image(ref)
             // Check locally first to avoid hanging on registry rate limits
             Abort.runWith[ContainerException](
-                run("image", "inspect", "--format", "{{.Id}}", ref)
+                run(ctx, "image", "inspect", "--format", "{{.Id}}", ref)
             ) {
                 case Result.Success(_) =>
                     // Image exists locally — emit up-to-date status
@@ -1231,7 +1294,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
                 vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             }) ++
             Chunk("--format", "{{json .}}")
-        run(args.toSeq*).map { output =>
+        run(ResourceContext.Op("imageList"), args.toSeq*).map { output =>
             if output.trim.isEmpty then Chunk.empty[ContainerImage.Summary]
             else
                 Kyo.foreach(Chunk.from(output.trim.split("\n"))) { line =>
@@ -1281,7 +1344,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
     end mapPodmanImageListToSummary
 
     def imageInspect(image: ContainerImage)(using Frame): ContainerImage.Info < (Async & Abort[ContainerException]) =
-        run("image", "inspect", "--format", "{{json .}}", image.reference).map { raw =>
+        run(ResourceContext.Image(image.reference), "image", "inspect", "--format", "{{json .}}", image.reference).map { raw =>
             decodeJson[ImageInspectJson](raw).map { dto =>
                 ContainerImage.Info(
                     id = ContainerImage.Id(dto.Id),
@@ -1307,7 +1370,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             (if force then Chunk("-f") else Chunk.empty) ++
             (if noPrune then Chunk("--no-prune") else Chunk.empty) ++
             Chunk(image.reference)
-        run(args.toSeq*).map { output =>
+        run(ResourceContext.Image(image.reference), args.toSeq*).map { output =>
             Chunk.from(output.split("\n").flatMap { line =>
                 val trimmed = line.trim
                 if trimmed.startsWith("Untagged:") then
@@ -1321,7 +1384,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
     end imageRemove
 
     def imageTag(source: ContainerImage, repo: String, tag: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        runUnit("tag", source.reference, s"$repo:$tag")
+        runUnit(ResourceContext.Image(source.reference), "tag", source.reference, s"$repo:$tag")
 
     def imageBuild(
         context: Stream[Byte, Sync],
@@ -1397,7 +1460,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
     def imagePush(image: ContainerImage, auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
-        runUnit("push", image.reference)
+        runUnit(ResourceContext.Image(image.reference), "push", image.reference)
 
     def imageSearch(term: String, limit: Int, filters: Map[String, Seq[String]])(
         using Frame
@@ -1409,7 +1472,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             }) ++
             Chunk("--format", "{{json .}}") ++
             Chunk(term)
-        run(args.toSeq*).map { output =>
+        run(ResourceContext.Op("imageSearch"), args.toSeq*).map { output =>
             if output.trim.isEmpty then Chunk.empty[ContainerImage.SearchResult]
             else
                 Kyo.foreach(Chunk.from(output.trim.split("\n"))) { line =>
@@ -1448,7 +1511,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
     end mapPodmanImageSearchToResult
 
     def imageHistory(image: ContainerImage)(using Frame): Chunk[ContainerImage.HistoryEntry] < (Async & Abort[ContainerException]) =
-        run("history", "--format", "{{json .}}", image.reference).map { output =>
+        run(ResourceContext.Image(image.reference), "history", "--format", "{{json .}}", image.reference).map { output =>
             if output.trim.isEmpty then Chunk.empty[ContainerImage.HistoryEntry]
             else
                 Kyo.foreach(Chunk.from(output.trim.split("\n"))) { line =>
@@ -1475,7 +1538,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             Chunk.from(filters.toSeq.flatMap { case (k, vs) =>
                 vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             })
-        run(args.toSeq*).map { output =>
+        run(ResourceContext.Op("imagePrune"), args.toSeq*).map { output =>
             val lines = output.split("\n")
             val deleted = Chunk.from(lines.filter(l => l.startsWith("deleted:") || l.startsWith("untagged:"))
                 .map(_.split(":").last.trim))
@@ -1503,7 +1566,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             (if repo.nonEmpty && tag.nonEmpty then Chunk(s"$repo:$tag")
              else if repo.nonEmpty then Chunk(repo)
              else Chunk.empty)
-        run(args.toSeq*).map(_.trim)
+        run(ResourceContext.Container(container), args.toSeq*).map(_.trim)
     end imageCommit
 
     // --- Network Operations ---
@@ -1525,7 +1588,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
                     }
             }.getOrElse(Chunk.empty) ++
             Chunk(config.name)
-        run(args.toSeq*).map { _ =>
+        run(ResourceContext.Op("networkCreate"), args.toSeq*).map { _ =>
             // Always return the network name as the ID.
             // Docker returns a hash but uses names as keys in inspect/connect;
             // Podman already returns the name. Using the name consistently
@@ -1542,7 +1605,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
                 vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             }) ++
             Chunk("--format", "{{json .}}")
-        run(args.toSeq*).map { output =>
+        run(ResourceContext.Op("networkList"), args.toSeq*).map { output =>
             if output.trim.isEmpty then Chunk.empty[Network.Info]
             else
                 Kyo.foreach(Chunk.from(output.trim.split("\n"))) { line =>
@@ -1599,7 +1662,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
     end mapPodmanNetworkListToInfo
 
     def networkInspect(id: Network.Id)(using Frame): Network.Info < (Async & Abort[ContainerException]) =
-        run("network", "inspect", "--format", "{{json .}}", id.value).map { raw =>
+        run(ResourceContext.Network(id), "network", "inspect", "--format", "{{json .}}", id.value).map { raw =>
             decodeJson[NetworkInspectJson](raw).map { dto =>
                 val name = if dto.Name.nonEmpty then dto.Name else dto.name
                 // Use name as ID for consistency with networkCreate (which returns name for podman)
@@ -1639,7 +1702,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
         }
 
     def networkRemove(id: Network.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        runUnit("network", "rm", id.value)
+        runUnit(ResourceContext.Network(id), "network", "rm", id.value)
 
     def networkConnect(network: Network.Id, container: Container.Id, aliases: Seq[String])(
         using Frame
@@ -1648,7 +1711,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             aliases.flatMap(a => Chunk("--alias", a)) ++
             Chunk(network.value) ++
             Chunk(container.value)
-        runUnit(args.toSeq*)
+        runUnit(ResourceContext.Network(network), args.toSeq*)
     end networkConnect
 
     def networkDisconnect(network: Network.Id, container: Container.Id, force: Boolean)(
@@ -1658,7 +1721,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             (if force then Chunk("-f") else Chunk.empty) ++
             Chunk(network.value) ++
             Chunk(container.value)
-        runUnit(args.toSeq*)
+        runUnit(ResourceContext.Network(network), args.toSeq*)
     end networkDisconnect
 
     def networkPrune(filters: Map[String, Seq[String]])(
@@ -1668,7 +1731,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             Chunk.from(filters.toSeq.flatMap { case (k, vs) =>
                 vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             })
-        run(args.toSeq*).map { output =>
+        run(ResourceContext.Op("networkPrune"), args.toSeq*).map { output =>
             Chunk.from(output.split("\n")
                 .filter(_.trim.nonEmpty)
                 .filterNot(_.toLowerCase.contains("deleted"))
@@ -1685,7 +1748,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             config.driverOpts.flatMap { case (k, v) => Chunk("--opt", s"$k=$v") } ++
             config.labels.flatMap { case (k, v) => Chunk("--label", s"$k=$v") } ++
             config.name.map(n => Chunk(n.value)).getOrElse(Chunk.empty)
-        run(args.toSeq*).map(_.trim).map { name =>
+        run(ResourceContext.Op("volumeCreate"), args.toSeq*).map(_.trim).map { name =>
             // After create, inspect to get full info
             volumeInspect(Volume.Id(name))
         }
@@ -1699,7 +1762,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
                 vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             }) ++
             Chunk("--format", "{{json .}}")
-        run(args.toSeq*).map { output =>
+        run(ResourceContext.Op("volumeList"), args.toSeq*).map { output =>
             if output.trim.isEmpty then Chunk.empty[Volume.Info]
             else
                 Chunk.from(output.trim.split("\n")).flatMap { line =>
@@ -1741,7 +1804,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
     end volumeList
 
     def volumeInspect(id: Volume.Id)(using Frame): Volume.Info < (Async & Abort[ContainerException]) =
-        run("volume", "inspect", "--format", "{{json .}}", id.value).map { raw =>
+        run(ResourceContext.Volume(id), "volume", "inspect", "--format", "{{json .}}", id.value).map { raw =>
             decodeJson[VolumeInspectJson](raw).map { dto =>
                 Volume.Info(
                     name = if dto.Name.nonEmpty then Volume.Id(dto.Name) else id,
@@ -1756,8 +1819,9 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
         }
 
     def volumeRemove(id: Volume.Id, force: Boolean)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        val ctx = ResourceContext.Volume(id)
         // Check if any containers (including stopped) reference this volume
-        run("ps", "-a", "--filter", s"volume=${id.value}", "--format", "{{.ID}}").map { output =>
+        run(ctx, "ps", "-a", "--filter", s"volume=${id.value}", "--format", "{{.ID}}").map { output =>
             val ids = output.trim
             if ids.nonEmpty then
                 Abort.fail[ContainerException](
@@ -1767,7 +1831,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
                 val args = Chunk("volume", "rm") ++
                     (if force then Chunk("-f") else Chunk.empty) ++
                     Chunk(id.value)
-                runUnit(args.toSeq*)
+                runUnit(ctx, args.toSeq*)
             end if
         }
     end volumeRemove
@@ -1777,7 +1841,7 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
             Chunk.from(filters.toSeq.flatMap { case (k, vs) =>
                 vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
             })
-        run(args.toSeq*).map { output =>
+        run(ResourceContext.Op("volumePrune"), args.toSeq*).map { output =>
             val lines   = output.split("\n")
             val deleted = Chunk.from(lines.filter(_.trim.nonEmpty).filterNot(_.toLowerCase.contains("reclaimed")))
             val spaceReclaimed = lines.find(_.contains("reclaimed")).flatMap { line =>
@@ -1810,13 +1874,13 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
       * Merges stderr into stdout using `sh -c "... 2>&1"` instead of `redirectErrorStream` which does not merge on JS (Node.js discards
       * stderr instead of piping it to stdout). On non-zero exit, the combined output is passed to [[mapError]] for classification.
       */
-    private def run(args: String*)(using Frame): String < (Async & Abort[ContainerException]) =
+    private def run(ctx: ResourceContext, args: String*)(using Frame): String < (Async & Abort[ContainerException]) =
         Abort.runWith[Closed](meter.run {
             val shellCmd = (cmd +: args).map(a => "'" + a.replace("'", "'\\''") + "'").mkString(" ")
             Abort.runWith[CommandException](Command("sh", "-c", s"$shellCmd 2>&1").textWithExitCode) {
                 case Result.Success((stdout, exitCode)) =>
                     if exitCode == ExitCode.Success then stdout.trim
-                    else Abort.fail(mapError(stdout.trim, args))
+                    else Abort.fail(mapError(stdout.trim, ctx, args))
                 case Result.Failure(cmdEx) =>
                     Abort.fail(ContainerException.General(s"Command failed: ${(cmd +: args).mkString(" ")}", cmdEx))
                 case Result.Panic(ex) =>
@@ -1829,8 +1893,8 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
         }
     end run
 
-    private def runUnit(args: String*)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        run(args*).unit
+    private def runUnit(ctx: ResourceContext, args: String*)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        run(ctx, args*).unit
 
     /** Map shell command error output to a typed ContainerException.
       *
@@ -1844,57 +1908,72 @@ final private[kyo] class ShellBackend(cmd: String, meter: Meter = Meter.Noop) ex
       * String matching is needed because Docker always uses exit code 1 for daemon errors, while Podman uses 125. Both engines emit
       * descriptive error messages on stderr that we match against known patterns to produce specific exception types.
       */
-    private def mapError(output: String, args: Seq[String])(using Frame): ContainerException =
-        // Normalize
-        val lower  = output.toLowerCase
-        val target = Maybe.fromOption(args.lastOption).getOrElse("unknown")
+    private def mapError(output: String, ctx: ResourceContext, args: Seq[String])(using Frame): ContainerException =
+        val lower                                      = output.toLowerCase
+        def matchesAny(patterns: Seq[String]): Boolean = patterns.exists(lower.contains)
 
-        def matchesAny(patterns: Seq[String]): Boolean =
-            patterns.exists(lower.contains)
-
-        // Match patterns
         if matchesAny(ErrorPatterns.NoSuchContainer) then
-            ContainerException.NotFound(Container.Id(target))
+            ctx match
+                case ResourceContext.Container(id) => ContainerException.NotFound(id)
+                case ResourceContext.Image(ref) =>
+                    ContainerException.ImageNotFound(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)))
+                case ResourceContext.Network(id) => ContainerException.NetworkNotFound(id)
+                case ResourceContext.Volume(id)  => ContainerException.VolumeNotFound(id)
+                case ResourceContext.Op(name)    => ContainerException.General(s"Container not found during $name", output)
         else if matchesAny(ErrorPatterns.ImageNotFound) then
-            ContainerException.ImageNotFound(ContainerImage.parse(target).getOrElse(ContainerImage(target)))
+            ctx match
+                case ResourceContext.Image(ref) =>
+                    ContainerException.ImageNotFound(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)))
+                case _ => ContainerException.General(s"Image not found during ${ctx.describe}", output)
         else if matchesAny(ErrorPatterns.Conflict) then
-            ContainerException.AlreadyExists(target)
+            ctx match
+                case ResourceContext.Container(id) => ContainerException.AlreadyExists(id.value)
+                case ResourceContext.Op(name)      => ContainerException.AlreadyExists(name)
+                case other                         => ContainerException.AlreadyExists(other.describe)
         else if matchesAny(ErrorPatterns.AlreadyRunning) then
-            ContainerException.AlreadyRunning(Container.Id(target))
+            ctx match
+                case ResourceContext.Container(id) => ContainerException.AlreadyRunning(id)
+                case _                             => ContainerException.General(s"Already running: ${ctx.describe}", output)
         else if matchesAny(ErrorPatterns.AlreadyStopped) then
-            ContainerException.AlreadyStopped(Container.Id(target))
+            ctx match
+                case ResourceContext.Container(id) => ContainerException.AlreadyStopped(id)
+                case _                             => ContainerException.General(s"Already stopped: ${ctx.describe}", output)
         else if lower.contains("network") && lower.contains("not found") then
-            ContainerException.NetworkNotFound(Network.Id(target))
+            ctx match
+                case ResourceContext.Network(id) => ContainerException.NetworkNotFound(id)
+                case _                           => ContainerException.General(s"Network not found during ${ctx.describe}", output)
         else if matchesAny(ErrorPatterns.VolumeNotFound) then
-            ContainerException.VolumeNotFound(Volume.Id(target))
+            ctx match
+                case ResourceContext.Volume(id) => ContainerException.VolumeNotFound(id)
+                case _                          => ContainerException.General(s"Volume not found during ${ctx.describe}", output)
         else if matchesAny(ErrorPatterns.BackendUnavailable) then
             ContainerException.BackendUnavailable(cmd, s"Backend unavailable: $output")
         else if matchesAny(ErrorPatterns.PortConflict) then
-            // Try to extract port number from output
             val portPattern = """(\d+)""".r
-            val port =
-                portPattern.findFirstIn(Maybe.fromOption(output.split("port").lastOption).getOrElse("")).flatMap(_.toIntOption).getOrElse(0)
+            val port = portPattern.findFirstIn(
+                Maybe.fromOption(output.split("port").lastOption).getOrElse("")
+            ).flatMap(_.toIntOption).getOrElse(0)
             ContainerException.PortConflict(port, output)
         else if matchesAny(ErrorPatterns.AuthFailed) then
-            ContainerException.AuthenticationError(target, output)
+            ContainerException.AuthenticationError(ctx.describe, output)
         else if matchesAny(ErrorPatterns.VolumeInUse) then
-            ContainerException.VolumeInUse(Container.Volume.Id(target), output)
+            ctx match
+                case ResourceContext.Volume(id) => ContainerException.VolumeInUse(id, output)
+                case _                          => ContainerException.General(s"Volume in use during ${ctx.describe}", output)
         else if lower.contains("initializing source") then
-            // Podman auto-pull failed with registry errors (TLS, auth, network, etc.)
-            // when the image doesn't exist locally — treat as ImageNotFound
-            // Extract image ref from "docker://name:tag:" in the error message
             val dockerIdx = output.indexOf("docker://")
             val imageRef =
                 if dockerIdx >= 0 then
                     val afterPrefix = output.substring(dockerIdx + "docker://".length)
-                    // Take until ": " which separates ref from error detail
-                    val colonSpace = afterPrefix.indexOf(": ")
+                    val colonSpace  = afterPrefix.indexOf(": ")
                     if colonSpace >= 0 then afterPrefix.substring(0, colonSpace)
                     else afterPrefix.takeWhile(!_.isWhitespace)
-                else target
+                else
+                    ctx match
+                        case ResourceContext.Image(ref) => ref
+                        case other                      => other.describe
             ContainerException.ImageNotFound(ContainerImage.parse(imageRef).getOrElse(ContainerImage(imageRef)))
         else
-            // Build exception
             ContainerException.General(s"${cmd} ${args.mkString(" ")} failed", output)
         end if
     end mapError
