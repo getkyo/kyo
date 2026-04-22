@@ -4,19 +4,19 @@ Define a case class and get JSON serialization, Protobuf encoding, field validat
 
 ```scala
 // Schema-based JSON and Protobuf
-Json.encode(alice)      // {"id":1,"name":"Alice","password":"secret","address":{"city":"Portland","zip":"97201"}}
+Json.encode(alice)      // {"id":1,"name":"Alice","email":"alice@example.com","password":"secret","address":{"city":"Portland","zip":"97201"}}
 Protobuf.encode(alice)  // Span[Byte] (binary)
 
 // Type-safe lenses reach any depth
 Schema[User].focus(_.address.city).update(alice)(_.toUpperCase)
-// User(1, "Alice", "secret", Address("PORTLAND", "97201"))
+// User(1, "Alice", "alice@example.com", "secret", Address("PORTLAND", "97201"))
 
 // Type-level reshaping: drop sensitive fields, rename, add computed
 val publicView =
     Schema[User]
         .drop(_.password)
         .rename(_.name, "displayName")
-// Encodes alice as: {"id":1,"displayName":"Alice","address":{"city":"Portland","zip":"97201"}}
+// Encodes alice as: {"id":1,"displayName":"Alice","email":"alice@example.com","address":{"city":"Portland","zip":"97201"}}
 
 // Diffs as data: capture just what changed, ship, replay
 val renamed = alice.copy(name = "Alicia")
@@ -26,10 +26,10 @@ cs.applyTo(alice)                  // Result.Success(renamed)
 
 Everything flows from `Schema[A]`, the central type that captures a type's structure at compile time. It's the single source of truth that powers serialization, validation, navigation, and conversion.
 
-The module provides these primitives:
+These are the top-level entry points:
 
-| Primitive | Purpose |
-|-----------|---------|
+| Entry point | Purpose |
+|-------------|---------|
 | `Json` / `Protobuf` | Serialize to JSON strings or Protocol Buffers bytes |
 | `Focus` | Type-safe lens for reading, writing, and updating fields at any depth |
 | `Compare` | Read-only field-by-field comparison of two values |
@@ -56,21 +56,33 @@ import kyo.*
 Schemas are derived automatically on demand, but adding `derives Schema` caches the derivation and reduces compilation time in larger projects:
 
 ```scala
-case class User(name: String, age: Int) derives Schema
+case class Person(name: String, age: Int) derives Schema
 ```
+
+**Note:** nearly every method in this module takes an implicit `kyo.Frame` parameter used for source-location reporting in exceptions. The signatures shown throughout this document omit `(using Frame)` for readability; the compiler synthesizes it at the call site from the caller's frame.
 
 ## Schemas
 
 Every API in this module reads from a `Schema[A]`. Once you have one, serialization, navigation, validation, and conversion are methods you call on it:
 
 ```scala
-case class User(name: String, age: Int) derives Schema
+case class Address(city: String, zip: String)
+case class User(id: Int, name: String, email: String, password: String, address: Address) derives Schema
 
-val schema: Schema[User] = Schema[User]
+val alice = User(1, "Alice", "alice@example.com", "secret", Address("Portland", "97201"))
 
-Json.encode(User("Alice", 30))            // uses Schema[User] implicitly
-schema.focus(_.name).get(User("Alice", 30))  // "Alice"
-schema.validate(User("", -1))              // Chunk(ValidationFailedException(...))
+val schema: Schema[User] =
+    Schema[User]
+        .check(_.name)(_.nonEmpty, "name must not be blank")
+        .checkMin(_.id)(0)
+
+Json.encode(alice)                // uses Schema[User] implicitly
+schema.focus(_.name).get(alice)   // "Alice"
+schema.validate(alice.copy(name = "", id = -1))
+// Chunk(
+//   ValidationFailedException(path = List("name"), message = "name must not be blank", ...),
+//   ValidationFailedException(path = List("id"),   message = "must be >= 0.0", ...)
+// )
 ```
 
 Schemas compose: a case class whose fields already have a `Schema` gets one for free. Sealed traits, collections, tuples, and the built-in scalar types work the same way.
@@ -82,16 +94,14 @@ Schemas compose: a case class whose fields already have a `Schema` gets one for 
 `Json.encode` converts a value to a JSON string. `Json.decode` parses it back, returning a `Result` (Kyo's equivalent of `Either`, from `kyo-data`) rather than throwing:
 
 ```scala
-case class User(name: String, age: Int)
-
-val json: String = Json.encode(User("Alice", 30))
-// {"name":"Alice","age":30}
+val json: String = Json.encode(alice)
+// {"id":1,"name":"Alice","email":"alice@example.com","password":"secret","address":{"city":"Portland","zip":"97201"}}
 
 Json.decode[User](json)
-// Result.Success(User("Alice", 30))
+// Result.Success(alice)
 
-Json.decode[User]("""{"name": 42}""")
-// Result.Failure(DecodeException(...))
+Json.decode[User]("""{"id":1,"name": 42}""")
+// Result.Failure(TypeMismatchException(path = List("name"), expected = "string", actual = "number", ...))
 ```
 
 Sealed traits use wrapper-object encoding, where the outer key identifies the variant:
@@ -134,12 +144,12 @@ Json.decode[Config]("""{"host":"localhost"}""")
 For raw bytes, `Json.encodeBytes` and `Json.decodeBytes` work with `Span[Byte]` (the immutable byte sequence from `kyo-data`) instead of `String`:
 
 ```scala
-val bytes: Span[Byte] = Json.encodeBytes(User("Alice", 30))
+val bytes: Span[Byte] = Json.encodeBytes(alice)
 Json.decodeBytes[User](bytes)
-// Result.Success(User("Alice", 30))
+// Result.Success(alice)
 ```
 
-When accepting untrusted input, configure safety limits to protect against denial-of-service attacks. `maxDepth` limits nesting depth (default `Json.DefaultMaxDepth`) and `maxCollectionSize` limits the number of entries in any single collection or object (default `Json.DefaultMaxCollectionSize`):
+When accepting untrusted input, configure safety limits to protect against denial-of-service attacks. `maxDepth` limits nesting depth (default `Json.DefaultMaxDepth`, currently `512`) and `maxCollectionSize` limits the number of entries in any single collection or object (default `Json.DefaultMaxCollectionSize`, currently `100000`):
 
 ```scala
 Json.decode[User](untrustedInput, maxDepth = 64, maxCollectionSize = 10000)
@@ -152,10 +162,10 @@ Exceeding either limit returns `Result.Failure(LimitExceededException)`. `LimitE
 The same types that serialize to JSON also serialize to Protocol Buffers:
 
 ```scala
-val bytes: Span[Byte] = Protobuf.encode(User("Alice", 30))
+val bytes: Span[Byte] = Protobuf.encode(alice)
 
 Protobuf.decode[User](bytes)
-// Result.Success(User("Alice", 30))
+// Result.Success(alice)
 ```
 
 No annotations, no `.proto` files. Each field gets a stable numeric ID derived from its name via MurmurHash3. Adding, removing, or reordering fields in the case class does not break existing serialized data, because IDs are name-based rather than position-based.
@@ -167,8 +177,8 @@ For interoperability with existing `.proto` definitions, custom IDs can be assig
 ```scala
 val schema =
     Schema[User]
-        .fieldId(_.name)(1)
-        .fieldId(_.age)(2)
+        .fieldId(_.id)(1)
+        .fieldId(_.name)(2)
 ```
 
 `Protobuf.decode` accepts the same `maxDepth` and `maxCollectionSize` safety limits as `Json.decode`.
@@ -179,11 +189,21 @@ val schema =
 val proto = Protobuf.protoSchema[User]
 // syntax = "proto3";
 //
+// message Address {
+//   string city = 1;
+//   string zip = 2;
+// }
+//
 // message User {
-//   string name = 1;
-//   sint32 age = 2;
+//   sint32 id = 1;
+//   string name = 2;
+//   string email = 3;
+//   string password = 4;
+//   Address address = 5;
 // }
 ```
+
+The field numbers in the generated `.proto` are assigned in declaration order (`1`, `2`, `3`, ...) and do **not** reflect the MurmurHash3-derived wire IDs that kyo-schema's own Protobuf codec uses on the wire. If you plan to interoperate with an external consumer of the `.proto`, pin field IDs explicitly with `fieldId(_.name)(1)` so the wire format matches the `.proto`.
 
 ### Built-in Types
 
@@ -191,16 +211,18 @@ Schemas are provided for all common types out of the box:
 
 | Category | Types |
 |----------|-------|
-| Primitives | `String`, `Boolean`, `Int`, `Long`, `Float`, `Double`, `Short`, `Byte`, `Char`, `BigDecimal`, `BigInt` |
-| Time | `Instant`, `Duration`, `LocalDate`, `LocalTime`, `LocalDateTime` |
-| Identifiers | `UUID` |
+| Primitives | `String`, `Boolean`, `Int`, `Long`, `Float`, `Double`, `Short`, `Byte`, `Char`, `BigDecimal`, `BigInt`, `Unit` |
+| Time | `java.time.Instant`, `java.time.Duration`, `kyo.Instant`, `kyo.Duration`, `LocalDate`, `LocalTime`, `LocalDateTime` |
+| Text | `kyo.Text` |
+| Identifiers | `UUID`, `Frame`, `Tag[A]` |
 | Collections | `List[A]`, `Vector[A]`, `Set[A]`, `Seq[A]`, `Chunk[A]`, `Span[A]`, `Map[String, V]`, `Dict[K, V]` |
 | Optional | `Option[A]`, `Maybe[A]` |
-| Other | `(A, B)`, `(A, B, C)`, `Result[E, A]`, `Frame`, `Tag[A]`, `Unit` |
+| Sums | `Either[A, B]`, `Result[E, A]` |
+| Tuples | `(A, B)`, `(A, B, C)`, `(A, B, C, D)`, `(A, B, C, D, E)` |
 
 Any case class or sealed trait composed of these types derives a `Schema` automatically. Nested case classes work without additional setup.
 
-`Map[String, V]` and `Dict[String, V]` both serialize as JSON objects, because JSON object keys must be strings. `Dict[K, V]` with a non-string key type serializes as an array of `[key, value]` pairs.
+`Map[String, V]` and `Dict[String, V]` both serialize as JSON objects, because JSON object keys must be strings. `Dict[K, V]` with a non-string key type serializes as an array of `[key, value]` pairs. `Span[Byte]` is specialized to serialize as a primitive byte sequence rather than an array of individual bytes.
 
 ### Custom Types
 
@@ -423,22 +445,37 @@ val summary = Schema[Person].fold(person)(List.empty[String]) {
 // "name=Alice, age=30"
 ```
 
-The polymorphic function (the `[N <: String, V] => ...` syntax) receives the exact singleton name type `N` and value type `V` for each field along with a `Field[N, V]` descriptor carrying the field name, tag, default value, and metadata. `fold` respects active transforms: dropped fields are skipped, renamed fields use the new name, and computed fields are included.
+The polymorphic function (the `[N <: String, V] => ...` syntax) receives the exact singleton name type `N` and value type `V` for each field along with a `Field[N, V]` descriptor carrying the field name, tag, default value, and a list of nested field descriptors when the value is itself a `Record`. `fold` respects active transforms: dropped fields are skipped, renamed fields use the new name, and computed fields are included.
+
+### Metadata Accessors
+
+Every `Focus` carries the metadata associated with its field path, readable without round-tripping through `fieldDescriptors`:
+
+```scala
+val f = Schema[Person].focus(_.age)
+
+f.doc           // Maybe[String] — documentation attached via .doc(_.age)(...)
+f.deprecated    // Maybe[String] — deprecation reason, if any
+f.default       // Maybe[Int]    — compile-time default from the case class
+f.optional      // Boolean       — true if typed Option or Maybe
+f.fieldId       // Int           — stable wire ID (MurmurHash3-based unless pinned)
+f.constraints   // Chunk[Schema.Constraint] — validators targeting this path
+```
+
+These are useful when generating form UIs, API specs, or documentation from the schema.
 
 ## Transforms
 
 Sometimes the entire shape needs to change: omitting sensitive fields for an API response, renaming for a different convention, or adding computed values. Transforms reshape a schema's structural type without changing the source type `A` (case classes only). Because serialization, validation, and navigation all read the same structural description, a transform affects all of them consistently.
 
-Consider a `User` with `id`, `name`, `email`, `password`, and `signupDate`, where an API response should omit the password, rename `name` to `displayName`, and add a computed `active` field:
+For the `User` introduced at the top of this document (`id`, `name`, `email`, `password`, `address`), an API response might omit the password, rename `name` to `displayName`, and add a computed `active` field:
 
 ```scala
-case class User(id: Int, name: String, email: String, password: String, signupDate: Long)
-
 val apiSchema =
     Schema[User]
         .drop(_.password)
         .rename(_.name, "displayName")
-        .add("active")(user => user.signupDate > 0L)
+        .add("active")(user => user.id > 0)
 ```
 
 The password is absent from serialized output because it is absent from the structural type.
@@ -483,7 +520,7 @@ Schema[Person].flatten
 // Serialized: {"name":"Alice","city":"Portland","zip":"97201"}
 ```
 
-String-based overloads (`drop("field")`, `rename("from", "to")`, etc.) exist for when the field name isn't known at compile time.
+When the field name isn't known at compile time, `drop` and `rename` accept string-based overloads — `drop("field")`, `rename("from", "to")`, `select("f1", "f2")`. `flatten` takes no arguments. `add` always takes a string literal for the new field name (since the name doesn't exist yet to point a lambda at) plus a lambda that computes the value.
 
 ### Serializing transformed schemas
 
@@ -551,11 +588,12 @@ case class UserResponse(displayName: String, email: String, id: Int, active: Boo
 val toResponse: Convert[User, UserResponse] =
     Schema[User]
         .drop(_.password)
+        .drop(_.address)
         .rename(_.name, "displayName")
-        .add("active")(user => user.signupDate > 0L)
+        .add("active")(user => user.id > 0)
         .convert[UserResponse]
 
-toResponse(User(1, "Alice", "alice@example.com", "secret", 1000L))
+toResponse(alice)
 // UserResponse("Alice", "alice@example.com", 1, true)
 ```
 
@@ -628,9 +666,9 @@ val cs = Changeset(staging, production)
 cs.isEmpty  // false
 cs.operations
 // Chunk(
-//   StringPatch(Chunk("host"), 0, 23, "prod.example.com"),
+//   StringPatch(Chunk("host"), 0, 7, "prod"),
 //   NumericDelta(Chunk("port"), -7637),
-//   SetField(Chunk("ssl"), Bool(true))
+//   SetField(Chunk("ssl"), Structure.Value.Bool(true))
 // )
 ```
 
@@ -680,12 +718,14 @@ Fields with defaults are always optional. Calling `.result` before setting all r
 Both are exposed as `given` members on the schema instance, so you `import schema.order` (or `schema.canEqual`) to bring them into implicit scope:
 
 ```scala
-val schema = Schema[User]
+case class Person(name: String, age: Int) derives Schema
+
+val schema = Schema[Person]
 import schema.order
 
-val users = List(User("Charlie", 25), User("Alice", 30), User("Alice", 28))
-users.sorted
-// List(User("Alice", 28), User("Alice", 30), User("Charlie", 25))
+val people = List(Person("Charlie", 25), Person("Alice", 30), Person("Alice", 28))
+people.sorted
+// List(Person("Alice", 28), Person("Alice", 30), Person("Charlie", 25))
 // "Alice" < "Charlie" (primary key), then 28 < 30 (secondary key)
 ```
 
@@ -694,7 +734,7 @@ users.sorted
 ```scala
 import schema.canEqual
 
-User("Alice", 30) == User("Alice", 30)  // true
+Person("Alice", 30) == Person("Alice", 30)  // true
 ```
 
 The ordering always follows the case class field declaration order, regardless of any transforms applied to the schema.
@@ -739,7 +779,7 @@ val restored: Result[DecodeException, Person] = Structure.decode[Person](dynamic
 // Result.Success(Person("Alice", 30))
 ```
 
-Case classes become `Value.Record`, scalars become typed leaves (`Str`, `Integer`, `Decimal`, `Bool`, `BigNum`), sealed traits become `Value.VariantCase`, and collections become `Value.Sequence`.
+Case classes become `Value.Record`, scalars become typed leaves (`Str`, `Integer`, `Decimal`, `Bool`, `BigNum`), sealed traits become `Value.VariantCase`, collections become `Value.Sequence`, maps become `Value.MapEntries`, and absent/null values become `Value.Null`.
 
 `Structure.Path` navigates untyped value trees via `get` and `set`, composing segments with `/`:
 
@@ -749,6 +789,15 @@ path.get(dynamic)  // Result.Success(Chunk(Str("Alice")))
 ```
 
 Path segments include `Field("name")` for record fields, `Variant("Circle")` for sum variants, `Index(0)` for sequence elements, and `Each` for wildcard traversal of all elements.
+
+#### Type-level operations
+
+The `Structure.Type` tree ships with a small set of operations for runtime inspection:
+
+- `Structure.Type.compatible(a, b)` — structural equality check: returns `true` when two `Type`s have the same shape (same field names and types, same variants, recursively). Useful when verifying that a foreign-produced value matches an expected shape.
+- `Structure.Type.fold(tpe)(init)(f)` — depth-first walk that threads an accumulator across every node in the type tree.
+- `Structure.Type.fieldPaths(tpe)` — returns a `Chunk[Chunk[String]]` of all leaf paths through a `Product` type, flattening nested records.
+- `Structure.typedValue[A](value)` — bundles a `Structure.Type` descriptor (from `Structure.of[A]`) together with the encoded `Structure.Value` into a `Structure.TypedValue`, handy for passing fully-described data to a generic receiver.
 
 ## Custom Formats
 
@@ -772,12 +821,14 @@ abstract class Codec:
 
 | Structure | Writer calls | Reader calls |
 |-----------|--------------|--------------|
-| Case class | `objectStart(name, size)`, `field(name, id)`, value, ..., `objectEnd()` | `objectStart()`, `field()`, value, `hasNextField()`, ..., `objectEnd()` |
-| Sealed trait | wrapper object with one field per variant (or discriminator, see `Schema.discriminator`) | same |
+| Case class | `objectStart(name, size)`, `field(name, id)`, value, ..., `objectEnd()` | `objectStart()`, `fieldParse()` or `field()`, `matchField(nameBytes)` / `lastFieldName()`, value, `hasNextField()`, ..., `objectEnd()` |
+| Sealed trait | wrapper object with one field per variant (or discriminator, see `Schema.discriminator`) | wrapper object; `captureValue()` lets the variant dispatch defer reading until after the discriminator is known |
 | Collection | `arrayStart(size)`, element, ..., `arrayEnd()` | `arrayStart()`, element, `hasNextElement()`, ..., `arrayEnd()` |
 | Map | `mapStart(size)`, key, value, ..., `mapEnd()` | `mapStart()`, key, value, `hasNextEntry()`, ..., `mapEnd()` |
 | Primitive | `int(v)` / `string(v)` / `bool(v)` / ... | `int()` / `string()` / `boolean()` / ... |
 | Optional | `nil()` when absent, otherwise the inner value | `isNil()` to detect, otherwise the inner value |
+
+The Reader also exposes `initFields(n)`, `clearFields(n)`, `droppedFieldsMask(n)`, and `release()` as overridable hooks for pooled / allocation-sensitive implementations. See `JsonReader` for an example that uses all of them.
 
 `fieldBytes(nameBytes, fieldId)` is available for codecs that want to avoid `String` allocation on hot paths. Protobuf uses the numeric `fieldId`; JSON uses the name bytes. Codecs that do not care about one side can ignore it.
 
@@ -814,8 +865,29 @@ Schema[User].encode(alice)(using Lines)    // Span[Byte] in the Lines format
 Schema[User].decode(bytes)(using Lines)    // Result[DecodeException, User]
 ```
 
-For a complete example, read `JsonWriter` and `JsonReader` (or their Protobuf counterparts) in the same package: they implement the full contract and show the optional optimizations (`fieldBytes`, `initFields`, `matchField`, `release`) that pay off on hot paths.
+For a complete example, read `JsonWriter` and `JsonReader` (or their Protobuf counterparts) in the same package: they implement the full contract. Abstract members must be supplied (including `fieldParse`, `matchField`, `lastFieldName`, and `captureValue`); optional overrides like `fieldBytes`, `initFields`, `clearFields`, `droppedFieldsMask`, and `release` are where real codecs recover allocation-sensitive performance.
 
 ### Safety limits
 
-`Codec.Reader` enforces two DoS limits that the base class applies automatically: `maxDepth` (nesting) and `maxCollectionSize` (entries per collection). Implementations call `checkDepth()` inside `objectStart`/`arrayStart`/`mapStart` and `checkCollectionSize(size)` when a collection reports its length. The `Frame` captured at construction time is used to attribute any `LimitExceededException` to the caller, not to the codec internals.
+`Codec.Reader` provides two DoS limit hooks: `maxDepth` (nesting) and `maxCollectionSize` (entries per collection). Implementations must call `checkDepth()` inside `objectStart`/`arrayStart`/`mapStart` and `checkCollectionSize(size)` when a collection reports its length; the base class does not enforce these on its own. Both methods throw `LimitExceededException` when their limit is breached. The `Frame` captured at Reader construction is used to attribute the exception to the caller, not to the codec internals.
+
+## Exceptions
+
+All errors raised by kyo-schema extend the sealed `SchemaException` hierarchy. The most useful subtypes:
+
+| Exception | Raised when |
+|-----------|-------------|
+| `MissingFieldException` | a required field is absent on decode |
+| `TypeMismatchException` | a runtime value is the wrong shape for the schema |
+| `UnknownVariantException` | a sum-type discriminator names an undefined variant |
+| `ParseException` | raw input cannot be parsed by the codec |
+| `TruncatedInputException` | the input stream ends before decoding completes |
+| `LimitExceededException` | `maxDepth` or `maxCollectionSize` is exceeded |
+| `RangeException` | a numeric value overflows the target type |
+| `ValidationFailedException` | a `.check` / `checkMin` / ... predicate fails |
+| `TransformFailedException` | a schema transform cannot complete |
+| `PathNotFoundException` | a `Structure.Path` segment does not exist |
+| `SchemaNotSerializableException` | an internal schema has no write/read function |
+| `SchemaIndexOutOfBoundsException` | a sequence index falls outside the bounds |
+
+All of these subtype one of the sealed markers `DecodeException`, `ValidationException`, `TransformException`, or `NavigationException`, so pattern-matching on a marker catches a family at once.
