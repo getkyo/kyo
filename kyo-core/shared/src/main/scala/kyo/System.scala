@@ -42,6 +42,7 @@ abstract class System extends Serializable:
     def lineSeparator(using Frame): String < Sync
     def userName(using Frame): String < Sync
     def operatingSystem(using Frame): System.OS < Sync
+    def availableProcessors(using Frame): Int < Sync
 end System
 
 /** Companion object for System, containing utility methods and type classes. */
@@ -58,6 +59,7 @@ object System:
         def lineSeparator()(using AllowUnsafe): String
         def userName()(using AllowUnsafe): String
         def operatingSystem()(using AllowUnsafe): OS
+        def availableProcessors()(using AllowUnsafe): Int
         def safe: System = System(this)
     end Unsafe
 
@@ -75,10 +77,11 @@ object System:
                         case Absent     => Absent
                         case Present(v) => Abort.get(p(v).map(Maybe(_)))
                 }
-            def lineSeparator(using Frame): String < Sync = Sync.Unsafe.defer(u.lineSeparator())
-            def userName(using Frame): String < Sync      = Sync.Unsafe.defer(u.userName())
-            def operatingSystem(using Frame): OS < Sync   = Sync.Unsafe.defer(u.operatingSystem())
-            def unsafe: Unsafe                            = u
+            def lineSeparator(using Frame): String < Sync    = Sync.Unsafe.defer(u.lineSeparator())
+            def userName(using Frame): String < Sync         = Sync.Unsafe.defer(u.userName())
+            def operatingSystem(using Frame): OS < Sync      = Sync.Unsafe.defer(u.operatingSystem())
+            def availableProcessors(using Frame): Int < Sync = Sync.Unsafe.defer(u.availableProcessors())
+            def unsafe: Unsafe                               = u
 
     private val local = Local.init(live)
 
@@ -105,6 +108,7 @@ object System:
                         else OS.Unknown
                         end if
                     }.getOrElse(OS.Unknown)
+                def availableProcessors()(using AllowUnsafe): Int = Runtime.getRuntime.availableProcessors()
         )
 
     /** Executes a computation with a custom System implementation.
@@ -201,6 +205,9 @@ object System:
 
     /** Retrieves the current operating system. */
     def operatingSystem(using Frame): OS < Sync = local.use(_.operatingSystem)
+
+    /** Retrieves the number of processors available to the JVM. */
+    def availableProcessors(using Frame): Int < Sync = local.use(_.availableProcessors)
 
     /** Abstract class for parsing string values into specific types. */
     sealed abstract class Parser[E, A] extends Serializable:
