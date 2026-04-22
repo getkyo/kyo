@@ -825,11 +825,11 @@ lazy val `kyo-bench` =
             // JSON serialization benchmarks
             libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core"   % "2.28.2",
             libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.28.2" % "provided",
-            libraryDependencies += "dev.zio"              %% "zio-json"            % "0.7.45",
-            libraryDependencies += "io.circe"             %% "circe-core"          % "0.14.15",
-            libraryDependencies += "io.circe"             %% "circe-generic"       % "0.14.15",
-            libraryDependencies += "io.circe"             %% "circe-parser"        % "0.14.15",
-            libraryDependencies += "dev.zio"              %% "zio-blocks-schema"   % "0.017"
+            libraryDependencies += "dev.zio"                               %% "zio-json"              % "0.7.45",
+            libraryDependencies += "io.circe"                              %% "circe-core"            % "0.14.15",
+            libraryDependencies += "io.circe"                              %% "circe-generic"         % "0.14.15",
+            libraryDependencies += "io.circe"                              %% "circe-parser"          % "0.14.15",
+            libraryDependencies += "dev.zio"                               %% "zio-blocks-schema"     % "0.017"
         )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
