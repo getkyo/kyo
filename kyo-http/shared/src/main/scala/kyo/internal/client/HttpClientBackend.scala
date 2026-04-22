@@ -104,6 +104,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
                             resultPromise.completeDiscard(Result.fail(HttpConnectionClosedException()))
                         case Result.Panic(t) =>
                             resultPromise.completeDiscard(Result.panic(t))
+                    end match
                 }
             }
         catch
@@ -339,8 +340,15 @@ final private[kyo] class HttpClientBackend[Handle] private (
             else if parsed.contentLength == 0 then
                 decodeAndComplete(conn, Span.empty[Byte], parsed, resultPromise, route, request)
             else
-                // No Content-Length and not chunked - use whatever we have
-                decodeAndComplete(conn, lastBodySpan, parsed, resultPromise, route, request)
+                // Close-framed body (no Content-Length, no Transfer-Encoding: chunked).
+                // Per RFC 7230 §3.3.3 item 7, read bytes until the server closes the connection.
+                // The parser has already handed us any leading body bytes via lastBodySpan;
+                // drain the remaining bytes from the inbound channel until it closes (EOF),
+                // then concatenate everything and treat the close as the legitimate end-of-body.
+                val buf = new GrowableByteBuffer
+                if lastBodySpan.nonEmpty then
+                    buf.writeBytes(lastBodySpan.toArrayUnsafe, 0, lastBodySpan.size)
+                readUntilCloseUnsafe(conn, buf, parsed, resultPromise, route, request)
             end if
         end if
     end readBufferedBody
@@ -373,6 +381,33 @@ final private[kyo] class HttpClientBackend[Handle] private (
                             resultPromise.completeDiscard(Result.panic(t))
                 }
     end readLoopUnsafe
+
+    /** Read remaining bytes from the inbound channel until the connection closes (EOF-framed body).
+      *
+      * Per RFC 7230 §3.3.3 item 7, a response with neither Content-Length nor Transfer-Encoding: chunked is terminated by connection close;
+      * the EOF is the legitimate end-of-body signal, not an error. Used e.g. for Podman's `/exec/{id}/start` multiplexed-stream response.
+      */
+    private def readUntilCloseUnsafe[In, Out](
+        conn: HttpConnection[Handle],
+        buf: GrowableByteBuffer,
+        parsed: ParsedResponse,
+        resultPromise: Promise.Unsafe[HttpResponse[Out], Abort[HttpException]],
+        route: HttpRoute[In, Out, ?],
+        request: HttpRequest[In]
+    )(using AllowUnsafe, Frame): Unit =
+        conn.http1.bodyChannel.takeFiber()
+            .asInstanceOf[IOPromise[Closed, Span[Byte]]].onComplete { result =>
+                result match
+                    case Result.Success(span) =>
+                        buf.writeBytes(span.toArrayUnsafe, 0, span.size)
+                        readUntilCloseUnsafe(conn, buf, parsed, resultPromise, route, request)
+                    case Result.Failure(_) =>
+                        // EOF is expected for close-framed bodies — deliver what we have.
+                        decodeAndComplete(conn, Span.fromUnsafe(buf.toByteArray), parsed, resultPromise, route, request)
+                    case Result.Panic(t) =>
+                        resultPromise.completeDiscard(Result.panic(t))
+            }
+    end readUntilCloseUnsafe
 
     /** Decode response body and complete the result promise. Closes the connection if the server indicated Connection: close
       * (isKeepAlive=false) so it won't be reused from the pool.
@@ -607,11 +642,21 @@ final private[kyo] class HttpClientBackend[Handle] private (
             val status = parsed.statusCode
             // Accept 101 (Switching Protocols) or any 2xx
             if status != 101 && (status < 200 || status >= 300) then
-                Abort.fail(HttpStatusException(
-                    HttpStatus(status),
-                    method.name,
-                    url.baseUrl
-                ))
+                // Drain up to 4KB of the error body to surface the server's explanation.
+                Sync.Unsafe.defer {
+                    val lastBody = http1.lastBodySpan
+                    val bodyText =
+                        if lastBody.isEmpty then ""
+                        else
+                            val bytes = lastBody.take(4096).toArray
+                            new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
+                    Abort.fail(HttpStatusException(
+                        HttpStatus(status),
+                        method.name,
+                        url.baseUrl,
+                        bodyText
+                    ))
+                }
             else
                 Sync.Unsafe.defer {
                     val lastBody   = http1.lastBodySpan

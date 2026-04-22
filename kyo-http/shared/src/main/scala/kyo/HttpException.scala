@@ -122,13 +122,17 @@ object HttpRedirectLoopException:
 end HttpRedirectLoopException
 
 /** Non-success status code when the response body can't be decoded. */
-case class HttpStatusException private (status: HttpStatus, method: String, url: String)(using Frame)
+case class HttpStatusException private (status: HttpStatus, method: String, url: String, body: Maybe[String])(using Frame)
     extends HttpRequestException(
-        s"${HttpException.showRequest(method, url)} returned ${status.code} (${status.name})."
+        s"${HttpException.showRequest(method, url)} returned ${status.code} (${status.name})." +
+            body.map(b => s" Body: ${if b.length > 500 then b.take(500) + "..." else b}").getOrElse("")
     )
 object HttpStatusException:
     def apply(status: HttpStatus, method: String, url: String)(using Frame): HttpStatusException =
-        new HttpStatusException(status, method, HttpException.stripQuery(url))
+        new HttpStatusException(status, method, HttpException.stripQuery(url), Absent)
+    def apply(status: HttpStatus, method: String, url: String, body: String)(using Frame): HttpStatusException =
+        new HttpStatusException(status, method, HttpException.stripQuery(url), Present(body))
+end HttpStatusException
 
 // --- Server (server-side operational failures) ---
 

@@ -195,7 +195,20 @@ final private[kyo] class Http1ResponseParser(
                     end if
                 end val
                 scanHeaders(i + 4, nextCl, nextChunked, nextKa)
-        val (contentLengthVal, isChunked, isKeepAlive) = scanHeaders(0, -1, false, isKeepAliveInit)
+        val (contentLengthVal, isChunked, isKeepAliveHdr) = scanHeaders(0, -1, false, isKeepAliveInit)
+
+        // Per RFC 7230 §3.3.3 item 7: a response without Content-Length and without
+        // Transfer-Encoding: chunked is terminated by connection close. Such a
+        // connection MUST NOT be reused, regardless of what Connection header (if any)
+        // the server sent. Force keep-alive off so the pool discards the connection
+        // and the next request opens a fresh one.
+        // Responses that cannot carry a body (1xx, 204, 304, and responses to HEAD)
+        // are exempt — their framing is status-determined, not body-determined.
+        val noBodyAllowed =
+            statusCode < 200 || statusCode == 204 || statusCode == 304
+        val isKeepAlive =
+            if isKeepAliveHdr && !isChunked && contentLengthVal < 0 && !noBodyAllowed then false
+            else isKeepAliveHdr
 
         // Build packed header array compatible with HttpHeaders.fromPacked
         val packedHeaders = buildPackedHeaders()
