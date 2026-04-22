@@ -50,7 +50,8 @@ class KyoException private[kyo] (
     override def getMessage(): String =
         val detail =
             cause match
-                case _: Throwable           => Absent
+                case t: Throwable =>
+                    Maybe(s"${t.getClass.getSimpleName}: ${Maybe(t.getMessage).getOrElse("")}".take(maxMessageLength))
                 case cause: Text @unchecked => Maybe(cause.take(maxMessageLength))
 
         if Environment.isDevelopment then
