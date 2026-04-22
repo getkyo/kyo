@@ -214,7 +214,7 @@ object Protobuf:
               * preserve the exact value during round-trips. This is a deliberate mapping, not a silent default.
               *
               * Note: proto3 has no Unit (void) scalar type. Unit-typed fields are rejected with an IllegalArgumentException, consistent
-              * with Phase 8's rejection of other incompatible shapes (nested Optional, nested Collection, etc.).
+              * with the rejection of other incompatible shapes (nested Optional, nested Collection, etc.).
               */
             def primitiveProtoName(kind: Structure.PrimitiveKind): String =
                 kind match

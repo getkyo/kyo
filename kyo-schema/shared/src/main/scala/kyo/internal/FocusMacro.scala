@@ -552,7 +552,7 @@ import scala.quoted.*
                     // widens the singleton term-ref to the PARENT enum/sealed type, so
                     // `isInstanceOf[t]` collapses to `isInstanceOf[ParentEnum]` — a tautology
                     // that matches every variant. Use reference equality against the singleton
-                    // instead. See PR #1517 for the full write-up.
+                    // instead.
                     val checkExpr: Expr[A] => Expr[Boolean] =
                         if !child.isType then
                             val singletonRef: Expr[AnyRef] =

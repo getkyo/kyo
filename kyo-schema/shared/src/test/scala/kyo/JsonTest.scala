@@ -264,14 +264,6 @@ class JsonTest extends Test:
             end try
         }
 
-        // PR #1517 Gap 2 — JsonWriter needsComma Array[Long] bit-packing coverage.
-        //
-        // Commit fc0322bba bit-packed JsonWriter.needsComma from Array[Boolean]
-        // to Array[Long], using (depth >> 6) / (depth & 63) indexing and
-        // Arrays.copyOf-based doubling growth from an initial size of 1 Long
-        // (slots 0-63). These tests push depth past the first-word boundary
-        // to exercise multi-word indexing AND the grow path.
-
         "JsonWriter arrayStart nesting past 64-depth boundary round-trips" in {
             // 120 levels of array nesting: each arrayStart pushes depth by 1.
             // Depth 1..63 lives in word 0; depth 64..120 lives in word 1, so
@@ -534,7 +526,7 @@ class JsonTest extends Test:
             assert(decodedNaN.isNaN)
         }
 
-        // FastFloat / Eisel-Lemire fallback path regression tests (Phase 3).
+        // FastFloat / Eisel-Lemire fallback path regression tests.
         // These inputs are designed to trigger the slow-path fallback in JsonReader.double() /
         // JsonReader.float() and verify that the fallback produces the correct result.
 

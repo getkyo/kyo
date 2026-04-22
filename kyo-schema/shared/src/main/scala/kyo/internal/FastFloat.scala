@@ -50,8 +50,8 @@ private[internal] object FastFloat:
       * Uses 32-bit half splits and Long arithmetic. This is the same identity used by `java.lang.Math.unsignedMultiplyHigh` in the JDK.
       *
       * Divergence from Go: Go uses `math/bits.Mul64` which compiles to a single hardware instruction. The portable Scala version expands to
-      * ~5 Long multiplications. On JVM the JIT may not recognize and collapse this; Phase 4 can profile and swap to
-      * `Math.unsignedMultiplyHigh` if needed.
+      * ~5 Long multiplications. On JVM the JIT may not recognize and collapse this; profiling could determine whether swapping to
+      * `Math.unsignedMultiplyHigh` is worthwhile.
       */
     private inline def unsignedMultiplyHigh(a: Long, b: Long): Long =
         val aLo = a & 0xffffffffL

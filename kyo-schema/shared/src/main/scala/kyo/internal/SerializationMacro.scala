@@ -827,7 +827,7 @@ private[internal] object SerializationMacro:
         // The emitted read for field `idx`: a typed `Expr[Any]` producing the fresh field value. Primitive fields use
         // the direct `Reader` primitive; primitive-element containers use the specialized loop; `Result[E, A]` with
         // primitive inner types uses the inline discriminated-union read; Maybe/Option/reference fields go through the
-        // sub-schema cached in the closure (Phase 9's `_subSchemas`).
+        // sub-schema cached in the closure (`_subSchemas`).
         def fieldReadExpr(idx: Int): Expr[Any] =
             val idxExpr: Expr[Int]            = Expr(idx)
             val schemaExpr: Expr[Schema[Any]] = '{ $subSchemasExpr($idxExpr) }

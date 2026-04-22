@@ -5915,11 +5915,7 @@ class SchemaTest extends Test:
         }
 
         "discriminator unknown variant carries actual discriminator value (regression)" in {
-            // Regression: DiscriminatorReader previously inherited the default lastFieldName(),
-            // which read from a scaffolding field it never populated. As a result,
-            // UnknownVariantException.variantName came back as "" on the sealed-trait error
-            // path for discriminator-formatted sealed traits. This test asserts the actual
-            // mis-matched discriminator value makes it into the exception.
+            // DiscriminatorReader must override lastFieldName() to return the captured discriminator field; the default would return stale state and produce misleading UnknownVariantException messages.
             val schema = Schema[MTShape].discriminator("type")
             val result = schema.decodeString[Json]("""{"type":"MTTriangle","a":1.0}""")
             assert(result.isFailure)

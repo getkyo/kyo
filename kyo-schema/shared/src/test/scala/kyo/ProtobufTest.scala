@@ -656,10 +656,10 @@ case class WithUnitField(done: Unit) derives Schema
 // Types for error-path tests
 case class MTCollectionHolder(items: List[Int]) derives Schema, CanEqual
 
-// Dedicated to the Protobuf.decode[SealedTrait] regression tests above.
-// Unique names avoid conflicts with the RegressionEnum1517* types that are
-// reused across StructureTest and JsonTest (those are already covered by
-// full round-trip through Protobuf in StructureTest).
+// Dedicated to the Protobuf.decode[SealedTrait] tests above.
+// Named distinctly to avoid conflicts with similar all-no-arg enum types
+// defined in StructureTest (those are already covered by full round-trip
+// through Protobuf in StructureTest).
 sealed trait Protobuf1517Sealed derives Schema, CanEqual
 object Protobuf1517Sealed:
     case class Alpha(value: Int)    extends Protobuf1517Sealed derives CanEqual

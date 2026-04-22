@@ -26,34 +26,28 @@ case class AllPrimitives(
 ) derives Schema,
       CanEqual
 
-// PR #1517 Gap 1 — regression for commit 954af0fa2.
-// The FocusMacro variant-dispatch used `isInstanceOf[t]` where `t` came from
-// `child.termRef.widen` for Flags.Module children. Widening the singleton
-// term-ref gave the PARENT enum type, so `isInstanceOf[ParentEnum]` matched
-// every variant and the first no-arg case shadowed all subsequent ones.
-// These enums intentionally have THREE or more no-arg cases so the bug
-// would produce duplicate encodings if the fix regressed.
+// Variant dispatch for all-no-arg enums must use reference equality, not isInstanceOf — widening a singleton term-ref to the parent enum type would match every variant.
 
-enum RegressionEnum1517A derives Schema, CanEqual:
+enum AllNoArgEnumA derives Schema, CanEqual:
     case First
     case Second
     case Third
-end RegressionEnum1517A
+end AllNoArgEnumA
 
-enum RegressionEnum1517Mixed derives Schema, CanEqual:
+enum MixedArityEnum derives Schema, CanEqual:
     case Alpha(x: Int)
     case Beta
     case Gamma
-end RegressionEnum1517Mixed
+end MixedArityEnum
 
 // Scala 2 style sealed trait with mixed case class / case object cases.
-sealed trait RegressionSealed1517 derives Schema, CanEqual
-object RegressionSealed1517:
-    case class Labeled(name: String) extends RegressionSealed1517 derives CanEqual
-    case object Unit1                extends RegressionSealed1517 derives CanEqual
-    case object Unit2                extends RegressionSealed1517 derives CanEqual
-    case object Unit3                extends RegressionSealed1517 derives CanEqual
-end RegressionSealed1517
+sealed trait SealedNoArgVariants derives Schema, CanEqual
+object SealedNoArgVariants:
+    case class Labeled(name: String) extends SealedNoArgVariants derives CanEqual
+    case object Unit1                extends SealedNoArgVariants derives CanEqual
+    case object Unit2                extends SealedNoArgVariants derives CanEqual
+    case object Unit3                extends SealedNoArgVariants derives CanEqual
+end SealedNoArgVariants
 
 class StructureTest extends Test:
 
@@ -1324,70 +1318,61 @@ class StructureTest extends Test:
             assert(decoded == Result.succeed(v))
         }
 
-        // ================================================================
-        // PR #1517 Gap 1 — FocusMacro all-no-arg enum dispatch regression
-        // Regression for commit 954af0fa2. Before the fix, the variant check
-        // collapsed to `isInstanceOf[ParentEnum]` for Flags.Module children,
-        // so the first no-arg case matched every variant and encoded all
-        // cases identically. These tests assert the encodings of three or
-        // more no-arg cases are distinct and round-trip correctly.
-        // ================================================================
-
         "all-no-arg enum encodes each case distinctly through JSON" in {
-            val first: RegressionEnum1517A  = RegressionEnum1517A.First
-            val second: RegressionEnum1517A = RegressionEnum1517A.Second
-            val third: RegressionEnum1517A  = RegressionEnum1517A.Third
+            val first: AllNoArgEnumA  = AllNoArgEnumA.First
+            val second: AllNoArgEnumA = AllNoArgEnumA.Second
+            val third: AllNoArgEnumA  = AllNoArgEnumA.Third
 
-            val j1 = Json.encode[RegressionEnum1517A](first)
-            val j2 = Json.encode[RegressionEnum1517A](second)
-            val j3 = Json.encode[RegressionEnum1517A](third)
+            val j1 = Json.encode[AllNoArgEnumA](first)
+            val j2 = Json.encode[AllNoArgEnumA](second)
+            val j3 = Json.encode[AllNoArgEnumA](third)
 
             assert(j1 != j2, s"First vs Second should differ, got j1=$j1 j2=$j2")
             assert(j2 != j3, s"Second vs Third should differ, got j2=$j2 j3=$j3")
             assert(j1 != j3, s"First vs Third should differ, got j1=$j1 j3=$j3")
 
-            assert(Json.decode[RegressionEnum1517A](j1).getOrThrow == first)
-            assert(Json.decode[RegressionEnum1517A](j2).getOrThrow == second)
-            assert(Json.decode[RegressionEnum1517A](j3).getOrThrow == third)
+            assert(Json.decode[AllNoArgEnumA](j1).getOrThrow == first)
+            assert(Json.decode[AllNoArgEnumA](j2).getOrThrow == second)
+            assert(Json.decode[AllNoArgEnumA](j3).getOrThrow == third)
         }
 
         "all-no-arg enum round-trips each case distinctly through Protobuf" in {
             // Byte distinctness still exercises the FocusMacro variant-dispatch fix on
             // the write path. The decode round-trip additionally covers the top-level
             // sealed-trait read path now that ProtobufReader dispatches via matchField.
-            val first: RegressionEnum1517A  = RegressionEnum1517A.First
-            val second: RegressionEnum1517A = RegressionEnum1517A.Second
-            val third: RegressionEnum1517A  = RegressionEnum1517A.Third
+            val first: AllNoArgEnumA  = AllNoArgEnumA.First
+            val second: AllNoArgEnumA = AllNoArgEnumA.Second
+            val third: AllNoArgEnumA  = AllNoArgEnumA.Third
 
-            val b1 = Protobuf.encode[RegressionEnum1517A](first)
-            val b2 = Protobuf.encode[RegressionEnum1517A](second)
-            val b3 = Protobuf.encode[RegressionEnum1517A](third)
+            val b1 = Protobuf.encode[AllNoArgEnumA](first)
+            val b2 = Protobuf.encode[AllNoArgEnumA](second)
+            val b3 = Protobuf.encode[AllNoArgEnumA](third)
 
             assert(b1.toArray.toSeq != b2.toArray.toSeq, "First vs Second bytes should differ")
             assert(b2.toArray.toSeq != b3.toArray.toSeq, "Second vs Third bytes should differ")
             assert(b1.toArray.toSeq != b3.toArray.toSeq, "First vs Third bytes should differ")
 
-            assert(Protobuf.decode[RegressionEnum1517A](b1).getOrThrow == first)
-            assert(Protobuf.decode[RegressionEnum1517A](b2).getOrThrow == second)
-            assert(Protobuf.decode[RegressionEnum1517A](b3).getOrThrow == third)
+            assert(Protobuf.decode[AllNoArgEnumA](b1).getOrThrow == first)
+            assert(Protobuf.decode[AllNoArgEnumA](b2).getOrThrow == second)
+            assert(Protobuf.decode[AllNoArgEnumA](b3).getOrThrow == third)
         }
 
         "mixed parameterized and no-arg enum cases round-trip distinctly through JSON" in {
-            val alpha: RegressionEnum1517Mixed = RegressionEnum1517Mixed.Alpha(7)
-            val beta: RegressionEnum1517Mixed  = RegressionEnum1517Mixed.Beta
-            val gamma: RegressionEnum1517Mixed = RegressionEnum1517Mixed.Gamma
+            val alpha: MixedArityEnum = MixedArityEnum.Alpha(7)
+            val beta: MixedArityEnum  = MixedArityEnum.Beta
+            val gamma: MixedArityEnum = MixedArityEnum.Gamma
 
-            val ja = Json.encode[RegressionEnum1517Mixed](alpha)
-            val jb = Json.encode[RegressionEnum1517Mixed](beta)
-            val jg = Json.encode[RegressionEnum1517Mixed](gamma)
+            val ja = Json.encode[MixedArityEnum](alpha)
+            val jb = Json.encode[MixedArityEnum](beta)
+            val jg = Json.encode[MixedArityEnum](gamma)
 
             assert(ja != jb, s"Alpha vs Beta should differ, got ja=$ja jb=$jb")
             assert(jb != jg, s"Beta vs Gamma should differ, got jb=$jb jg=$jg")
             assert(ja != jg, s"Alpha vs Gamma should differ, got ja=$ja jg=$jg")
 
-            assert(Json.decode[RegressionEnum1517Mixed](ja).getOrThrow == alpha)
-            assert(Json.decode[RegressionEnum1517Mixed](jb).getOrThrow == beta)
-            assert(Json.decode[RegressionEnum1517Mixed](jg).getOrThrow == gamma)
+            assert(Json.decode[MixedArityEnum](ja).getOrThrow == alpha)
+            assert(Json.decode[MixedArityEnum](jb).getOrThrow == beta)
+            assert(Json.decode[MixedArityEnum](jg).getOrThrow == gamma)
         }
 
         "mixed parameterized and no-arg enum cases round-trip distinctly through Protobuf" in {
@@ -1395,43 +1380,43 @@ class StructureTest extends Test:
             // round-trip additionally exercises top-level sealed-trait decoding
             // via matchField (covering both the case-class variant Alpha(7) and
             // the two no-arg case-object variants Beta / Gamma).
-            val alpha: RegressionEnum1517Mixed = RegressionEnum1517Mixed.Alpha(7)
-            val beta: RegressionEnum1517Mixed  = RegressionEnum1517Mixed.Beta
-            val gamma: RegressionEnum1517Mixed = RegressionEnum1517Mixed.Gamma
+            val alpha: MixedArityEnum = MixedArityEnum.Alpha(7)
+            val beta: MixedArityEnum  = MixedArityEnum.Beta
+            val gamma: MixedArityEnum = MixedArityEnum.Gamma
 
-            val ba = Protobuf.encode[RegressionEnum1517Mixed](alpha)
-            val bb = Protobuf.encode[RegressionEnum1517Mixed](beta)
-            val bg = Protobuf.encode[RegressionEnum1517Mixed](gamma)
+            val ba = Protobuf.encode[MixedArityEnum](alpha)
+            val bb = Protobuf.encode[MixedArityEnum](beta)
+            val bg = Protobuf.encode[MixedArityEnum](gamma)
 
             assert(ba.toArray.toSeq != bb.toArray.toSeq, "Alpha vs Beta bytes should differ")
             assert(bb.toArray.toSeq != bg.toArray.toSeq, "Beta vs Gamma bytes should differ")
             assert(ba.toArray.toSeq != bg.toArray.toSeq, "Alpha vs Gamma bytes should differ")
 
-            assert(Protobuf.decode[RegressionEnum1517Mixed](ba).getOrThrow == alpha)
-            assert(Protobuf.decode[RegressionEnum1517Mixed](bb).getOrThrow == beta)
-            assert(Protobuf.decode[RegressionEnum1517Mixed](bg).getOrThrow == gamma)
+            assert(Protobuf.decode[MixedArityEnum](ba).getOrThrow == alpha)
+            assert(Protobuf.decode[MixedArityEnum](bb).getOrThrow == beta)
+            assert(Protobuf.decode[MixedArityEnum](bg).getOrThrow == gamma)
         }
 
         "sealed trait with mixed case class and case objects round-trips distinctly through JSON" in {
-            val labeled: RegressionSealed1517 = RegressionSealed1517.Labeled("hi")
-            val unit1: RegressionSealed1517   = RegressionSealed1517.Unit1
-            val unit2: RegressionSealed1517   = RegressionSealed1517.Unit2
-            val unit3: RegressionSealed1517   = RegressionSealed1517.Unit3
+            val labeled: SealedNoArgVariants = SealedNoArgVariants.Labeled("hi")
+            val unit1: SealedNoArgVariants   = SealedNoArgVariants.Unit1
+            val unit2: SealedNoArgVariants   = SealedNoArgVariants.Unit2
+            val unit3: SealedNoArgVariants   = SealedNoArgVariants.Unit3
 
-            val jl = Json.encode[RegressionSealed1517](labeled)
-            val j1 = Json.encode[RegressionSealed1517](unit1)
-            val j2 = Json.encode[RegressionSealed1517](unit2)
-            val j3 = Json.encode[RegressionSealed1517](unit3)
+            val jl = Json.encode[SealedNoArgVariants](labeled)
+            val j1 = Json.encode[SealedNoArgVariants](unit1)
+            val j2 = Json.encode[SealedNoArgVariants](unit2)
+            val j3 = Json.encode[SealedNoArgVariants](unit3)
 
             assert(jl != j1, s"Labeled vs Unit1 should differ, got jl=$jl j1=$j1")
             assert(j1 != j2, s"Unit1 vs Unit2 should differ, got j1=$j1 j2=$j2")
             assert(j2 != j3, s"Unit2 vs Unit3 should differ, got j2=$j2 j3=$j3")
             assert(j1 != j3, s"Unit1 vs Unit3 should differ, got j1=$j1 j3=$j3")
 
-            assert(Json.decode[RegressionSealed1517](jl).getOrThrow == labeled)
-            assert(Json.decode[RegressionSealed1517](j1).getOrThrow == unit1)
-            assert(Json.decode[RegressionSealed1517](j2).getOrThrow == unit2)
-            assert(Json.decode[RegressionSealed1517](j3).getOrThrow == unit3)
+            assert(Json.decode[SealedNoArgVariants](jl).getOrThrow == labeled)
+            assert(Json.decode[SealedNoArgVariants](j1).getOrThrow == unit1)
+            assert(Json.decode[SealedNoArgVariants](j2).getOrThrow == unit2)
+            assert(Json.decode[SealedNoArgVariants](j3).getOrThrow == unit3)
         }
     }
 

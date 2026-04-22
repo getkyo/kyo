@@ -284,8 +284,7 @@ class ChangesetTest extends Test:
     // --- Bug fix verification tests ---
 
     "applyTo returns failure Result on corrupted operations" in {
-        // Previously applyTo called getOrThrow and would throw on corrupted operations.
-        // Now it returns Result, so corrupted operations produce a failure instead of throwing.
+        // applyTo returns Result; corrupted operations produce a failure rather than throwing.
         val badOps = Chunk[Changeset.Patch](
             Changeset.Patch.SetField(Chunk("age"), Structure.Value.Str("not-a-number"))
         )
@@ -300,7 +299,6 @@ class ChangesetTest extends Test:
     // New comprehensive tests for identified coverage gaps
     // =====================================================================
 
-    // Gap 1. Decimal numeric delta
     "decimal numeric delta produces NumericDelta with correct difference" in {
         val item1  = MTItem("widget", 9.99)
         val item2  = MTItem("widget", 14.99)
@@ -311,7 +309,6 @@ class ChangesetTest extends Test:
         assert((numOps.head.delta - BigDecimal("5.0")).abs < BigDecimal("0.0001"))
     }
 
-    // Gap 2. BigDecimal numeric delta
     "BigDecimal field change produces NumericDelta" in {
         val v1     = MTBigDecimalField("acct", BigDecimal("100.50"))
         val v2     = MTBigDecimalField("acct", BigDecimal("250.75"))
@@ -322,7 +319,6 @@ class ChangesetTest extends Test:
         assert(numOps.head.delta == BigDecimal("150.25"))
     }
 
-    // Gap 3. SequencePatch removed elements
     "SequencePatch.removed contains correct indices when elements are removed" in {
         val o1     = MTOrder(42, List(MTItem("a", 1.0), MTItem("b", 2.0), MTItem("c", 3.0)))
         val o2     = MTOrder(42, List(MTItem("a", 1.0), MTItem("c", 3.0)))
@@ -334,7 +330,6 @@ class ChangesetTest extends Test:
         assert(seqOps.head.added.isEmpty)
     }
 
-    // Gap 4. SequencePatch round-trip
     "SequencePatch round-trip: apply produces expected list" in {
         val o1     = MTOrder(1, List(MTItem("x", 10.0)))
         val o2     = MTOrder(1, List(MTItem("x", 10.0), MTItem("y", 20.0), MTItem("z", 30.0)))
@@ -343,7 +338,6 @@ class ChangesetTest extends Test:
         assert(result == o2)
     }
 
-    // Gap 5. MapPatch for non-string-keyed maps (MapEntries constructed directly)
     "MapPatch ops: added, removed, updated entries on MapEntries" in {
         // MapEntries is not produced by standard Structure.encode (which uses Record for all maps)
         // Test MapPatch operations directly using Structure.Value.MapEntries
@@ -377,7 +371,6 @@ class ChangesetTest extends Test:
         end match
     }
 
-    // Gap 6. MapPatch round-trip via Changeset.compute on MapEntries
     "MapPatch round-trip: apply MapPatch ops reconstructs expected map" in {
         val k1      = Structure.Value.Integer(10L)
         val k2      = Structure.Value.Integer(20L)
@@ -410,7 +403,6 @@ class ChangesetTest extends Test:
         end match
     }
 
-    // Gap 7. Deep nested paths (3+ levels)
     "deep nested changeset (3+ levels) produces Nested ops at each level" in {
         // MTCompany(name, hq: MTTeam(name, lead: MTPersonAddr(name, age, address: MTAddress)))
         val addr1 = MTAddress("1 A St", "CityA", "11111")
@@ -440,7 +432,6 @@ class ChangesetTest extends Test:
         assert(leadNested.operations.nonEmpty)
     }
 
-    // Gap 8. Empty collections
     "empty to non-empty list produces SequencePatch with added elements" in {
         val o1     = MTOrder(5, Nil)
         val o2     = MTOrder(5, List(MTItem("p", 1.0), MTItem("q", 2.0)))
@@ -458,7 +449,6 @@ class ChangesetTest extends Test:
         assert(d.isEmpty)
     }
 
-    // Gap 9. Single-field case class
     "single-field case class changeset produces correct operation" in {
         val w1 = MTWrapper("hello")
         val w2 = MTWrapper("world")
@@ -471,7 +461,6 @@ class ChangesetTest extends Test:
         assert(d.applyTo(w1).getOrThrow == w2)
     }
 
-    // Gap 10. Nested null handling: Maybe field going from Present to Absent produces RemoveField
     "Maybe field going from Present to Absent produces RemoveField" in {
         val v1    = MTMaybeField("item", Maybe("tag"))
         val v2    = MTMaybeField("item", Maybe.empty)
@@ -498,7 +487,6 @@ class ChangesetTest extends Test:
         end match
     }
 
-    // Gap 11. Boolean field changes produce SetField (not NumericDelta)
     "boolean field change produces SetField, not NumericDelta" in {
         val c1     = MTConfig("localhost", 8080, ssl = false)
         val c2     = MTConfig("localhost", 8080, ssl = true)
@@ -511,7 +499,6 @@ class ChangesetTest extends Test:
         assert(setOps.head.value == Structure.Value.Bool(true))
     }
 
-    // Gap 12. Mixed changes: multiple field types changing simultaneously
     "mixed changes produce correct operations for each field type" in {
         val v1 = MTMixed("Alice", 30, active = false, 9.5)
         val v2 = MTMixed("Bob", 45, active = true, 12.0)
