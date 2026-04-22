@@ -1004,4 +1004,17 @@ class DictTest extends Test:
         }
     }
 
+    "toChunk" - {
+        "empty" in assert(Dict.empty[String, Int].toChunk == Chunk.empty)
+        "small" in {
+            val d = Dict("a" -> 1, "b" -> 2)
+            assert(d.toChunk.toSet == Set("a" -> 1, "b" -> 2))
+        }
+        "above threshold (9 entries)" in {
+            val entries = (1 to 9).map(i => s"k$i" -> i)
+            val d       = Dict.from(entries.toMap)
+            assert(d.toChunk.toSet == entries.toSet)
+        }
+    }
+
 end DictTest
