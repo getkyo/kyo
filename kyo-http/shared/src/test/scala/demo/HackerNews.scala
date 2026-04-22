@@ -18,10 +18,10 @@ object HackerNews extends KyoApp:
         score: Option[Int],
         time: Option[Long],
         descendants: Option[Int]
-    ) derives Json
+    ) derives Schema
 
     // Algolia HN Search models
-    case class AlgoliaResponse(hits: List[AlgoliaHit]) derives Json
+    case class AlgoliaResponse(hits: List[AlgoliaHit]) derives Schema
     case class AlgoliaHit(
         objectID: String,
         title: Option[String],
@@ -29,12 +29,12 @@ object HackerNews extends KyoApp:
         author: String,
         points: Option[Int],
         num_comments: Option[Int]
-    ) derives Json
+    ) derives Schema
 
     // Our response models
-    case class Story(id: Int, title: String, url: String, author: String, score: Int, comments: Int) derives Json
-    case class SearchStory(id: String, title: String, url: String, author: String, points: Int, comments: Int) derives Json
-    case class ApiError(error: String) derives Json
+    case class Story(id: Int, title: String, url: String, author: String, score: Int, comments: Int) derives Schema
+    case class SearchStory(id: String, title: String, url: String, author: String, points: Int, comments: Int) derives Schema
+    case class ApiError(error: String) derives Schema
 
     def hnItemToStory(item: HnItem): Story =
         Story(

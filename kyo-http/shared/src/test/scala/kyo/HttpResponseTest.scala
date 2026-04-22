@@ -94,7 +94,7 @@ class HttpResponseTest extends Test:
 
     "body overloads" - {
 
-        case class Item(id: Int) derives Json, CanEqual
+        case class Item(id: Int) derives Schema, CanEqual
 
         "ok" - {
             "text" in {

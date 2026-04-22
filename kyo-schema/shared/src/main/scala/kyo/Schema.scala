@@ -6,6 +6,8 @@ import kyo.Json.JsonSchema
 import kyo.internal.JsonWriter
 import kyo.internal.StructureValueReader
 import kyo.internal.StructureValueWriter
+import scala.annotation.nowarn
+import scala.annotation.publicInBinary
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.compiletime.*
@@ -51,9 +53,7 @@ import scala.language.dynamics
   * @see
   *   [[Structure]] for runtime structural introspection
   */
-final class Schema[A] private[kyo] (
-    private[kyo] val getter: A => Maybe[Any],
-    private[kyo] val setter: (A, Any) => A,
+abstract class Schema[A] @publicInBinary private[kyo] (
     private[kyo] val segments: Seq[String],
     val examples: Chunk[A] = Chunk.empty,
     val fieldDocs: Map[Seq[String], String] = Map.empty,
@@ -66,23 +66,44 @@ final class Schema[A] private[kyo] (
     private[kyo] val checks: Seq[A => Seq[ValidationFailedException]] = Seq.empty,
     private[kyo] val documentation: Maybe[String] = Maybe.empty,
     private[kyo] val fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
-    private[kyo] val serializeWrite: Maybe[(A, Writer) => Unit] = Maybe.empty,
-    private[kyo] val serializeRead: Maybe[Reader => A] = Maybe.empty,
     private[kyo] val discriminatorField: Maybe[String] = Maybe.empty
 ):
 
     /** The structural representation type. Set by factory/transforms. */
     type Focused
 
+    // --- Abstract codec and focus methods. Each concrete Schema[A] overrides
+    // these via `Schema.init` / `Schema.initFocused`, which inline the caller's
+    // lambda expression directly into the method body — no Function closure is
+    // materialized per derivation. See companion object `Schema.init`.
+
+    /** Serialize a value of A to the given Writer. */
+    @publicInBinary private[kyo] def serializeWrite(value: A, writer: Writer): Unit
+
+    /** Deserialize a value of A from the given Reader. */
+    @publicInBinary private[kyo] def serializeRead(reader: Reader): A
+
+    /** Get the focused value out of a root A. */
+    @publicInBinary private[kyo] def getter(value: A): Maybe[Any]
+
+    /** Set the focused value into a root A, returning the updated A. */
+    @publicInBinary private[kyo] def setter(value: A, next: Any): A
+
+    /** Precomputed flag: true iff this schema has any serialization-time transforms (dropped / renamed / computed fields or a
+      * discriminator). Enables a single boolean branch on the write hot path instead of four `isEmpty` probes.
+      */
+    private[kyo] val hasTransforms: Boolean =
+        droppedFields.nonEmpty || renamedFields.nonEmpty ||
+            computedFields.nonEmpty || discriminatorField.isDefined
+
     /** Pre-built root navigator for focus lambda resolution.
       *
-      * Casts getter/setter from Any to Focused once at construction time so that all focus-lambda methods can use it directly without
-      * per-call casts.
+      * Delegates to the abstract `getter` / `setter` methods rather than to deleted val fields.
       */
     private[kyo] val rootSelect: Focus.Select[A, Focused] =
         Focus.Select.create[A, Focused](
-            getter.asInstanceOf[A => Maybe[Focused]],
-            setter.asInstanceOf[(A, Focused) => A],
+            (a: A) => getter(a).asInstanceOf[Maybe[Focused]],
+            (a: A, v: Focused) => setter(a, v),
             segments,
             false,
             Maybe(this)
@@ -129,7 +150,10 @@ final class Schema[A] private[kyo] (
       *   the encoded value as a UTF-8 string
       */
     def encodeString[C <: Codec](value: A)(using codec: C, frame: Frame): String =
-        new String(encode[C](value).toArray, java.nio.charset.StandardCharsets.UTF_8)
+        val writer = codec.newWriter()
+        internal.SchemaSerializer.writeTo(this, value, writer)
+        writer.resultString
+    end encodeString
 
     /** Decodes a value from bytes using the given codec.
       *
@@ -165,7 +189,7 @@ final class Schema[A] private[kyo] (
       *   the decoded value, or a DecodeException if the input is malformed or does not match the schema
       */
     def decodeString[C <: Codec](input: String)(using codec: C, frame: Frame): Result[DecodeException, A] =
-        decode[C](Span.from(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+        decode[C](Span.fromUnsafe(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
 
     /** Adds a cross-field validation check.
       *
@@ -186,28 +210,29 @@ final class Schema[A] private[kyo] (
       *   a new Schema with the check accumulated
       */
     def check(pred: A => Boolean, msg: String)(using frame: Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        val self = this
         val segs = segments
         val rootCheck: A => Seq[ValidationFailedException] = (root: A) =>
             if pred(root) then Seq.empty
             else Seq(ValidationFailedException(segs, msg)(using frame))
         Schema.createWithFocused[A, Focused](
-            getter,
-            setter,
-            segments,
-            checks :+ rootCheck,
-            computedFields,
-            renamedFields,
-            sourceFields,
-            droppedFields,
-            documentation,
-            fieldDocs,
-            examples,
-            fieldDeprecated,
-            constraints,
-            fieldIdOverrides,
-            serializeWrite,
-            serializeRead,
-            discriminatorField
+            getterFn = (a: A) => self.getter(a),
+            setterFn = (a: A, v: Any) => self.setter(a, v),
+            writeFn = (a: A, w: Writer) => self.serializeWrite(a, w),
+            readFn = (r: Reader) => self.serializeRead(r),
+            segments = segments,
+            checks = checks :+ rootCheck,
+            computedFields = computedFields,
+            renamedFields = renamedFields,
+            sourceFields = sourceFields,
+            droppedFields = droppedFields,
+            doc = documentation,
+            fieldDocs = fieldDocs,
+            examples = examples,
+            fieldDeprecated = fieldDeprecated,
+            constraints = constraints,
+            fieldIds = fieldIdOverrides,
+            discriminatorField = discriminatorField
         )
     end check
 
@@ -247,25 +272,27 @@ final class Schema[A] private[kyo] (
       *   a new Schema with the description set
       */
     def doc(description: String): Schema[A] { type Focused = Schema.this.Focused } =
+        val self = this
         Schema.createWithFocused[A, Focused](
-            getter,
-            setter,
-            segments,
-            checks,
-            computedFields,
-            renamedFields,
-            sourceFields,
-            droppedFields,
-            Maybe(description),
-            fieldDocs,
-            examples,
-            fieldDeprecated,
-            constraints,
-            fieldIdOverrides,
-            serializeWrite,
-            serializeRead,
-            discriminatorField
+            getterFn = (a: A) => self.getter(a),
+            setterFn = (a: A, v: Any) => self.setter(a, v),
+            writeFn = (a: A, w: Writer) => self.serializeWrite(a, w),
+            readFn = (r: Reader) => self.serializeRead(r),
+            segments = segments,
+            checks = checks,
+            computedFields = computedFields,
+            renamedFields = renamedFields,
+            sourceFields = sourceFields,
+            droppedFields = droppedFields,
+            doc = Maybe(description),
+            fieldDocs = fieldDocs,
+            examples = examples,
+            fieldDeprecated = fieldDeprecated,
+            constraints = constraints,
+            fieldIds = fieldIdOverrides,
+            discriminatorField = discriminatorField
         )
+    end doc
 
     /** Returns the root-level documentation for this schema, or Maybe.empty if none set. */
     def doc: Maybe[String] = documentation
@@ -285,25 +312,27 @@ final class Schema[A] private[kyo] (
       *   a new Schema with the discriminator set
       */
     def discriminator(fieldName: String): Schema[A] { type Focused = Schema.this.Focused } =
+        val self = this
         Schema.createWithFocused[A, Focused](
-            getter,
-            setter,
-            segments,
-            checks,
-            computedFields,
-            renamedFields,
-            sourceFields,
-            droppedFields,
-            documentation,
-            fieldDocs,
-            examples,
-            fieldDeprecated,
-            constraints,
-            fieldIdOverrides,
-            serializeWrite,
-            serializeRead,
-            Maybe(fieldName)
+            getterFn = (a: A) => self.getter(a),
+            setterFn = (a: A, v: Any) => self.setter(a, v),
+            writeFn = (a: A, w: Writer) => self.serializeWrite(a, w),
+            readFn = (r: Reader) => self.serializeRead(r),
+            segments = segments,
+            checks = checks,
+            computedFields = computedFields,
+            renamedFields = renamedFields,
+            sourceFields = sourceFields,
+            droppedFields = droppedFields,
+            doc = documentation,
+            fieldDocs = fieldDocs,
+            examples = examples,
+            fieldDeprecated = fieldDeprecated,
+            constraints = constraints,
+            fieldIds = fieldIdOverrides,
+            discriminatorField = Maybe(fieldName)
         )
+    end discriminator
 
     /** Sets per-field documentation using a focus lambda to identify the field.
       *
@@ -326,25 +355,27 @@ final class Schema[A] private[kyo] (
       *   An example value of type A
       */
     def example(value: A): Schema[A] { type Focused = Schema.this.Focused } =
+        val self = this
         Schema.createWithFocused[A, Focused](
-            getter,
-            setter,
-            segments,
-            checks,
-            computedFields,
-            renamedFields,
-            sourceFields,
-            droppedFields,
-            documentation,
-            fieldDocs,
-            examples :+ value,
-            fieldDeprecated,
-            constraints,
-            fieldIdOverrides,
-            serializeWrite,
-            serializeRead,
-            discriminatorField
+            getterFn = (a: A) => self.getter(a),
+            setterFn = (a: A, v: Any) => self.setter(a, v),
+            writeFn = (a: A, w: Writer) => self.serializeWrite(a, w),
+            readFn = (r: Reader) => self.serializeRead(r),
+            segments = segments,
+            checks = checks,
+            computedFields = computedFields,
+            renamedFields = renamedFields,
+            sourceFields = sourceFields,
+            droppedFields = droppedFields,
+            doc = documentation,
+            fieldDocs = fieldDocs,
+            examples = examples :+ value,
+            fieldDeprecated = fieldDeprecated,
+            constraints = constraints,
+            fieldIds = fieldIdOverrides,
+            discriminatorField = discriminatorField
         )
+    end example
 
     /** Marks a field as deprecated using a focus lambda to identify the field.
       *
@@ -633,25 +664,26 @@ final class Schema[A] private[kyo] (
     )(using frame: Frame): Schema[A] { type Focused = Schema.this.Focused } =
         if id <= 0 then
             throw TransformFailedException(s"Field ID must be positive, got $id")(using frame)
+        val self      = this
         val navigated = focus(rootSelect)
         Schema.createWithFocused[A, Focused](
-            getter,
-            setter,
-            segments,
-            checks,
-            computedFields,
-            renamedFields,
-            sourceFields,
-            droppedFields,
-            documentation,
-            fieldDocs,
-            examples,
-            fieldDeprecated,
-            constraints,
-            fieldIdOverrides.updated(navigated.segments, id),
-            serializeWrite,
-            serializeRead,
-            discriminatorField
+            getterFn = (a: A) => self.getter(a),
+            setterFn = (a: A, v: Any) => self.setter(a, v),
+            writeFn = (a: A, w: Writer) => self.serializeWrite(a, w),
+            readFn = (r: Reader) => self.serializeRead(r),
+            segments = segments,
+            checks = checks,
+            computedFields = computedFields,
+            renamedFields = renamedFields,
+            sourceFields = sourceFields,
+            droppedFields = droppedFields,
+            doc = documentation,
+            fieldDocs = fieldDocs,
+            examples = examples,
+            fieldDeprecated = fieldDeprecated,
+            constraints = constraints,
+            fieldIds = fieldIdOverrides.updated(navigated.segments, id),
+            discriminatorField = discriminatorField
         )
     end fieldId
 
@@ -872,9 +904,9 @@ final class Schema[A] private[kyo] (
       */
     def transform[B](to: A => B)(from: B => A): Schema[B] =
         val self = this
-        Schema.primitive[B](
-            (b, writer) => self.serializeWrite.get(from(b), writer),
-            reader => to(self.serializeRead.get(reader))
+        Schema.init[B](
+            writeFn = (b: B, w: Writer) => self.serializeWrite(from(b), w),
+            readFn = (r: Reader) => to(self.serializeRead(r))
         )
     end transform
 
@@ -890,25 +922,27 @@ final class Schema[A] private[kyo] (
 
     /** Adds a computed field function. Used by addImpl. */
     private[kyo] def withComputedField[R](fieldName: String, f: A => Any): Schema[A] { type Focused = Schema.this.Focused } =
+        val self = this
         Schema.createWithFocused[A, Focused](
-            getter,
-            setter,
-            segments,
-            checks,
-            computedFields :+ (fieldName, f),
-            renamedFields,
-            sourceFields,
-            droppedFields,
-            documentation,
-            fieldDocs,
-            examples,
-            fieldDeprecated,
-            constraints,
-            fieldIdOverrides,
-            serializeWrite,
-            serializeRead,
-            discriminatorField
+            getterFn = (a: A) => self.getter(a),
+            setterFn = (a: A, v: Any) => self.setter(a, v),
+            writeFn = (a: A, w: Writer) => self.serializeWrite(a, w),
+            readFn = (r: Reader) => self.serializeRead(r),
+            segments = segments,
+            checks = checks,
+            computedFields = computedFields :+ (fieldName, f),
+            renamedFields = renamedFields,
+            sourceFields = sourceFields,
+            droppedFields = droppedFields,
+            doc = documentation,
+            fieldDocs = fieldDocs,
+            examples = examples,
+            fieldDeprecated = fieldDeprecated,
+            constraints = constraints,
+            fieldIds = fieldIdOverrides,
+            discriminatorField = discriminatorField
         )
+    end withComputedField
 
     /** Converts a value of type A to a Record containing the fields of Focused.
       *
@@ -994,7 +1028,7 @@ final class Schema[A] private[kyo] (
       */
     private[kyo] def fromStructureValue(value: Structure.Value)(using Frame): Result[DecodeException, A] =
         val r = StructureValueReader(value)
-        Result.catching[DecodeException](serializeRead.get(r))
+        Result.catching[DecodeException](serializeRead(r))
     end fromStructureValue
 
     /** Combines validation checks from another Schema into this one.
@@ -1006,25 +1040,27 @@ final class Schema[A] private[kyo] (
       *   Another Schema[A] whose checks should be combined with this Schema's checks
       */
     private[kyo] def mergeChecks(other: Schema[A]): Schema[A] { type Focused = Schema.this.Focused } =
+        val self = this
         Schema.createWithFocused[A, Focused](
-            getter,
-            setter,
-            segments,
-            checks ++ other.checks,
-            computedFields,
-            renamedFields,
-            sourceFields,
-            droppedFields,
-            documentation,
-            fieldDocs,
-            examples,
-            fieldDeprecated,
-            constraints ++ other.constraints,
-            fieldIdOverrides ++ other.fieldIdOverrides,
-            serializeWrite,
-            serializeRead,
-            discriminatorField
+            getterFn = (a: A) => self.getter(a),
+            setterFn = (a: A, v: Any) => self.setter(a, v),
+            writeFn = (a: A, w: Writer) => self.serializeWrite(a, w),
+            readFn = (r: Reader) => self.serializeRead(r),
+            segments = segments,
+            checks = checks ++ other.checks,
+            computedFields = computedFields,
+            renamedFields = renamedFields,
+            sourceFields = sourceFields,
+            droppedFields = droppedFields,
+            doc = documentation,
+            fieldDocs = fieldDocs,
+            examples = examples,
+            fieldDeprecated = fieldDeprecated,
+            constraints = constraints ++ other.constraints,
+            fieldIds = fieldIdOverrides ++ other.fieldIdOverrides,
+            discriminatorField = discriminatorField
         )
+    end mergeChecks
 
 end Schema
 
@@ -1047,6 +1083,104 @@ end Schema
   */
 
 object Schema:
+
+    /** Core factory — inlines the caller's four lambdas into the abstract method bodies of a fresh `new Schema[A] { ... }` subclass.
+      * Because `writeFn`, `readFn`, `getterFn`, `setterFn` are `inline` parameters, Scala 3 substitutes the caller's expression directly
+      * into the method body — no `Function` closure is allocated.
+      *
+      * The `@nowarn("msg=anonymous")` suppresses the anonymous-class-creation warning emitted for every inline expansion (pattern copied
+      * from `SchemaOrdering.scala:19`).
+      */
+    @nowarn("msg=anonymous")
+    inline def init[A](
+        inline writeFn: (A, Writer) => Unit,
+        inline readFn: Reader => A,
+        inline getterFn: A => Maybe[Any] = (a: A) => Maybe(a).asInstanceOf[Maybe[Any]],
+        inline setterFn: (A, Any) => A = (_: A, v: Any) => v.asInstanceOf[A],
+        segments: Seq[String] = Seq.empty,
+        examples: Chunk[A] = Chunk.empty,
+        fieldDocs: Map[Seq[String], String] = Map.empty,
+        fieldDeprecated: Map[Seq[String], String] = Map.empty,
+        constraints: Seq[Schema.Constraint] = Seq.empty,
+        droppedFields: Set[String] = Set.empty,
+        renamedFields: Chunk[(String, String)] = Chunk.empty,
+        computedFields: Chunk[(String, A => Any)] = Chunk.empty,
+        sourceFields: Seq[Field[?, ?]] = Seq.empty,
+        checks: Seq[A => Seq[ValidationFailedException]] = Seq.empty,
+        documentation: Maybe[String] = Maybe.empty,
+        fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
+        discriminatorField: Maybe[String] = Maybe.empty
+    ): Schema[A] =
+        new Schema[A](
+            segments,
+            examples,
+            fieldDocs,
+            fieldDeprecated,
+            constraints,
+            droppedFields,
+            renamedFields,
+            computedFields,
+            sourceFields,
+            checks,
+            documentation,
+            fieldIdOverrides,
+            discriminatorField
+        ):
+            @publicInBinary def serializeWrite(value: A, writer: Writer): Unit = writeFn(value, writer)
+            @publicInBinary def serializeRead(reader: Reader): A               = readFn(reader)
+            @publicInBinary def getter(value: A): Maybe[Any]                   = getterFn(value)
+            @publicInBinary def setter(value: A, next: Any): A                 = setterFn(value, next)
+    end init
+
+    /** Typed-focus variant of `Schema.init`. Produces `Schema[A] { type Focused = F }`. Internally, the user's `getterFn` and `setterFn`
+      * are stored as `A => Maybe[Any]` / `(A, Any) => A` via erased Function-type casts, matching the pre-phase-4 runtime contract that
+      * avoided JVM type-casts on `F` (F is commonly a structural `Record.~` type with no runtime class).
+      */
+    @nowarn("msg=anonymous")
+    inline def initFocused[A, F](
+        inline writeFn: (A, Writer) => Unit,
+        inline readFn: Reader => A,
+        inline getterFn: A => Maybe[F],
+        inline setterFn: (A, F) => A,
+        segments: Seq[String] = Seq.empty,
+        sourceFields: Seq[Field[?, ?]] = Seq.empty,
+        examples: Chunk[A] = Chunk.empty,
+        fieldDocs: Map[Seq[String], String] = Map.empty,
+        fieldDeprecated: Map[Seq[String], String] = Map.empty,
+        constraints: Seq[Schema.Constraint] = Seq.empty,
+        droppedFields: Set[String] = Set.empty,
+        renamedFields: Chunk[(String, String)] = Chunk.empty,
+        computedFields: Chunk[(String, A => Any)] = Chunk.empty,
+        checks: Seq[A => Seq[ValidationFailedException]] = Seq.empty,
+        documentation: Maybe[String] = Maybe.empty,
+        fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
+        discriminatorField: Maybe[String] = Maybe.empty
+    ): Schema[A] { type Focused = F } =
+        // Erase the F-typed Function signatures to (A, Any) via asInstanceOf on the Function
+        // value itself (no runtime effect — purely a Function-type cast). This mirrors the
+        // pre-phase-4 `identityGetter` / `identitySetter` macro shape (`((_: Any, v: Any) => v).asInstanceOf[(A, F) => A]`)
+        // which keeps the JVM bytecode parameter types erased to `Object` and avoids a
+        // `checkcast` on F (F is often a structural `Record.~` with no runtime class).
+        Schema.init[A](
+            writeFn = writeFn,
+            readFn = readFn,
+            getterFn = getterFn.asInstanceOf[A => Maybe[Any]],
+            setterFn = setterFn.asInstanceOf[(A, Any) => A],
+            segments = segments,
+            examples = examples,
+            fieldDocs = fieldDocs,
+            fieldDeprecated = fieldDeprecated,
+            constraints = constraints,
+            droppedFields = droppedFields,
+            renamedFields = renamedFields,
+            computedFields = computedFields,
+            sourceFields = sourceFields,
+            checks = checks,
+            documentation = documentation,
+            fieldIdOverrides = fieldIdOverrides,
+            discriminatorField = discriminatorField
+        ).asInstanceOf[Schema[A] { type Focused = F }]
+    end initFocused
 
     // --- Factory methods ---
 
@@ -1095,84 +1229,112 @@ object Schema:
     // --- Primitive Schema givens ---
 
     /** Schema for String values. */
-    given stringSchema: Schema[String] = primitive[String]((v, w) => w.string(v), _.string())
+    given stringSchema: Schema[String] = Schema.init[String](writeFn = (v, w) => w.string(v), readFn = _.string())
 
     /** Schema for Boolean values. */
-    given booleanSchema: Schema[Boolean] = primitive[Boolean]((v, w) => w.boolean(v), _.boolean())
+    given booleanSchema: Schema[Boolean] = Schema.init[Boolean](writeFn = (v, w) => w.boolean(v), readFn = _.boolean())
 
     /** Schema for Int values. */
-    given intSchema: Schema[Int] = primitive[Int]((v, w) => w.int(v), _.int())
+    given intSchema: Schema[Int] = Schema.init[Int](writeFn = (v, w) => w.int(v), readFn = _.int())
 
     /** Schema for Long values. */
-    given longSchema: Schema[Long] = primitive[Long]((v, w) => w.long(v), _.long())
+    given longSchema: Schema[Long] = Schema.init[Long](writeFn = (v, w) => w.long(v), readFn = _.long())
 
     /** Schema for Float values. */
-    given floatSchema: Schema[Float] = primitive[Float]((v, w) => w.float(v), _.float())
+    given floatSchema: Schema[Float] = Schema.init[Float](writeFn = (v, w) => w.float(v), readFn = _.float())
 
     /** Schema for Double values. */
-    given doubleSchema: Schema[Double] = primitive[Double]((v, w) => w.double(v), _.double())
+    given doubleSchema: Schema[Double] = Schema.init[Double](writeFn = (v, w) => w.double(v), readFn = _.double())
 
     /** Schema for Short values. */
-    given shortSchema: Schema[Short] = primitive[Short]((v, w) => w.short(v), _.short())
+    given shortSchema: Schema[Short] = Schema.init[Short](writeFn = (v, w) => w.short(v), readFn = _.short())
 
     /** Schema for Byte values. */
-    given byteSchema: Schema[Byte] = primitive[Byte]((v, w) => w.byte(v), _.byte())
+    given byteSchema: Schema[Byte] = Schema.init[Byte](writeFn = (v, w) => w.byte(v), readFn = _.byte())
 
     /** Schema for Char values. */
-    given charSchema: Schema[Char] = primitive[Char]((v, w) => w.char(v), _.char())
+    given charSchema: Schema[Char] = Schema.init[Char](writeFn = (v, w) => w.char(v), readFn = _.char())
 
     /** Schema for BigDecimal values. */
-    given bigDecimalSchema: Schema[BigDecimal] = primitive[BigDecimal]((v, w) => w.bigDecimal(v), _.bigDecimal())
+    given bigDecimalSchema: Schema[BigDecimal] =
+        Schema.init[BigDecimal](writeFn = (v, w) => w.bigDecimal(v), readFn = _.bigDecimal())
 
     /** Schema for BigInt values. */
-    given bigIntSchema: Schema[BigInt] = primitive[BigInt]((v, w) => w.bigInt(v), _.bigInt())
+    given bigIntSchema: Schema[BigInt] = Schema.init[BigInt](writeFn = (v, w) => w.bigInt(v), readFn = _.bigInt())
 
     /** Schema for java.time.Instant values. */
-    given instantSchema: Schema[java.time.Instant] = primitive[java.time.Instant]((v, w) => w.instant(v), _.instant())
+    given instantSchema: Schema[java.time.Instant] =
+        Schema.init[java.time.Instant](writeFn = (v, w) => w.instant(v), readFn = _.instant())
 
     /** Schema for java.time.Duration values. */
-    given durationSchema: Schema[java.time.Duration] = primitive[java.time.Duration]((v, w) => w.duration(v), _.duration())
+    given durationSchema: Schema[java.time.Duration] =
+        Schema.init[java.time.Duration](writeFn = (v, w) => w.duration(v), readFn = _.duration())
+
+    /** Schema for kyo.Instant values. */
+    given kyoInstantSchema: Schema[kyo.Instant] =
+        instantSchema.transform[kyo.Instant](kyo.Instant.fromJava)(_.toJava)
+
+    /** Schema for kyo.Duration values. */
+    given kyoDurationSchema: Schema[kyo.Duration] =
+        longSchema.transform[kyo.Duration](kyo.Duration.fromNanos)(_.toNanos)
+
+    /** Schema for kyo.Text values. */
+    given kyoTextSchema: Schema[kyo.Text] =
+        stringSchema.transform[kyo.Text](kyo.Text.apply)(_.show)
 
     /** Schema for Span[Byte] values. */
-    given spanByteSchema: Schema[Span[Byte]] = primitive[Span[Byte]]((v, w) => w.bytes(v), _.bytes())
+    given spanByteSchema: Schema[Span[Byte]] =
+        Schema.init[Span[Byte]](writeFn = (v, w) => w.bytes(v), readFn = _.bytes())
 
     /** Frame schema — serializes as the raw encoded string. Frame is an opaque type backed by String at runtime.
       */
-    given frameSchema: Schema[Frame] = primitive[Frame](
-        (v, w) => w.string(v.toString),
-        reader => reader.string().asInstanceOf[Frame]
+    given frameSchema: Schema[Frame] = Schema.init[Frame](
+        writeFn = (v, w) => w.string(v.toString),
+        readFn = reader => reader.string().asInstanceOf[Frame]
     )
 
     /** Tag schema — serializes as the string representation. Tags are opaque types backed by String at runtime for static tags.
       */
-    given tagSchema[A]: Schema[Tag[A]] = primitive[Tag[A]](
-        (v, w) =>
+    given tagSchema[A]: Schema[Tag[A]] = Schema.init[Tag[A]](
+        writeFn = (v, w) =>
             v match
                 case s: String => w.string(s)
                 case _         => w.string(v.show),
-        reader => reader.string().asInstanceOf[Tag[A]]
+        readFn = reader => reader.string().asInstanceOf[Tag[A]]
     )
 
     /** Schema for java.time.LocalDate values. Serializes as ISO-8601 string. */
     given localDateSchema: Schema[java.time.LocalDate] =
-        primitive[java.time.LocalDate]((v, w) => w.string(v.toString), r => java.time.LocalDate.parse(r.string()))
+        Schema.init[java.time.LocalDate](
+            writeFn = (v, w) => w.string(v.toString),
+            readFn = r => java.time.LocalDate.parse(r.string())
+        )
 
     /** Schema for java.time.LocalTime values. Serializes as ISO-8601 string. */
     given localTimeSchema: Schema[java.time.LocalTime] =
-        primitive[java.time.LocalTime]((v, w) => w.string(v.toString), r => java.time.LocalTime.parse(r.string()))
+        Schema.init[java.time.LocalTime](
+            writeFn = (v, w) => w.string(v.toString),
+            readFn = r => java.time.LocalTime.parse(r.string())
+        )
 
     /** Schema for java.time.LocalDateTime values. Serializes as ISO-8601 string. */
     given localDateTimeSchema: Schema[java.time.LocalDateTime] =
-        primitive[java.time.LocalDateTime]((v, w) => w.string(v.toString), r => java.time.LocalDateTime.parse(r.string()))
+        Schema.init[java.time.LocalDateTime](
+            writeFn = (v, w) => w.string(v.toString),
+            readFn = r => java.time.LocalDateTime.parse(r.string())
+        )
 
     /** Schema for java.util.UUID values. Serializes as string. */
     given uuidSchema: Schema[java.util.UUID] =
-        primitive[java.util.UUID]((v, w) => w.string(v.toString), r => java.util.UUID.fromString(r.string()))
+        Schema.init[java.util.UUID](
+            writeFn = (v, w) => w.string(v.toString),
+            readFn = r => java.util.UUID.fromString(r.string())
+        )
 
     /** Schema for Unit values. */
-    given unitSchema: Schema[Unit] = primitive[Unit](
-        (_, w) => w.nil(),
-        r =>
+    given unitSchema: Schema[Unit] = Schema.init[Unit](
+        writeFn = (_, w) => w.nil(),
+        readFn = r =>
             r.skip(); ()
     )
 
@@ -1180,20 +1342,20 @@ object Schema:
 
     /** Schema for List[A] values. */
     given listSchema[A](using inner: Schema[A]): Schema[List[A]] =
-        primitive[List[A]](
-            (value, writer) =>
+        Schema.init[List[A]](
+            writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
-                value.foreach(inner.serializeWrite.get(_, writer))
+                value.foreach(inner.serializeWrite(_, writer))
                 writer.arrayEnd()
             ,
-            reader =>
+            readFn = reader =>
                 discard(reader.arrayStart())
                 val builder = List.newBuilder[A]
                 @tailrec
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead.get(reader)
+                        builder += inner.serializeRead(reader)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -1202,20 +1364,20 @@ object Schema:
 
     /** Schema for Vector[A] values. */
     given vectorSchema[A](using inner: Schema[A]): Schema[Vector[A]] =
-        primitive[Vector[A]](
-            (value, writer) =>
+        Schema.init[Vector[A]](
+            writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
-                value.foreach(inner.serializeWrite.get(_, writer))
+                value.foreach(inner.serializeWrite(_, writer))
                 writer.arrayEnd()
             ,
-            reader =>
+            readFn = reader =>
                 discard(reader.arrayStart())
                 val builder = Vector.newBuilder[A]
                 @tailrec
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead.get(reader)
+                        builder += inner.serializeRead(reader)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -1224,20 +1386,20 @@ object Schema:
 
     /** Schema for Set[A] values. */
     given setSchema[A](using inner: Schema[A]): Schema[Set[A]] =
-        primitive[Set[A]](
-            (value, writer) =>
+        Schema.init[Set[A]](
+            writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
-                value.foreach(inner.serializeWrite.get(_, writer))
+                value.foreach(inner.serializeWrite(_, writer))
                 writer.arrayEnd()
             ,
-            reader =>
+            readFn = reader =>
                 discard(reader.arrayStart())
                 val builder = Set.newBuilder[A]
                 @tailrec
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead.get(reader)
+                        builder += inner.serializeRead(reader)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -1246,20 +1408,20 @@ object Schema:
 
     /** Schema for Chunk[A] values. */
     given chunkSchema[A](using inner: Schema[A]): Schema[Chunk[A]] =
-        primitive[Chunk[A]](
-            (value, writer) =>
+        Schema.init[Chunk[A]](
+            writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
-                value.foreach(inner.serializeWrite.get(_, writer))
+                value.foreach(inner.serializeWrite(_, writer))
                 writer.arrayEnd()
             ,
-            reader =>
+            readFn = reader =>
                 discard(reader.arrayStart())
                 val builder = Chunk.newBuilder[A]
                 @tailrec
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead.get(reader)
+                        builder += inner.serializeRead(reader)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -1268,19 +1430,19 @@ object Schema:
 
     /** Schema for Seq[A] values. */
     given seqSchema[A](using inner: Schema[A]): Schema[Seq[A]] =
-        primitive[Seq[A]](
-            (value, writer) =>
+        Schema.init[Seq[A]](
+            writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
-                value.foreach(inner.serializeWrite.get(_, writer))
+                value.foreach(inner.serializeWrite(_, writer))
                 writer.arrayEnd()
             ,
-            reader =>
+            readFn = reader =>
                 discard(reader.arrayStart())
                 val builder = List.newBuilder[A]
                 @tailrec
                 def loop(): Unit =
                     if reader.hasNextElement() then
-                        builder += inner.serializeRead.get(reader)
+                        builder += inner.serializeRead(reader)
                         loop()
                 loop()
                 reader.arrayEnd()
@@ -1289,19 +1451,19 @@ object Schema:
 
     /** Schema for Span[A] values. */
     given spanSchema[A](using inner: Schema[A], ct: scala.reflect.ClassTag[A]): Schema[Span[A]] =
-        primitive[Span[A]](
-            (value, writer) =>
+        Schema.init[Span[A]](
+            writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
-                value.foreach(inner.serializeWrite.get(_, writer))
+                value.foreach(inner.serializeWrite(_, writer))
                 writer.arrayEnd()
             ,
-            reader =>
+            readFn = reader =>
                 discard(reader.arrayStart())
                 val builder = Chunk.newBuilder[A]
                 @tailrec
                 def loop(): Unit =
                     if reader.hasNextElement() then
-                        builder += inner.serializeRead.get(reader)
+                        builder += inner.serializeRead(reader)
                         loop()
                 loop()
                 reader.arrayEnd()
@@ -1313,44 +1475,44 @@ object Schema:
       * Encodes as null when Absent, delegates to inner schema when Present.
       */
     given maybeSchema[A](using inner: Schema[A]): Schema[Maybe[A]] =
-        primitive[Maybe[A]](
-            (value, writer) =>
+        Schema.init[Maybe[A]](
+            writeFn = (value, writer) =>
                 value match
-                    case Maybe.Present(v) => inner.serializeWrite.get(v, writer)
+                    case Maybe.Present(v) => inner.serializeWrite(v, writer)
                     case _ =>
                         writer.nil()
             ,
-            reader =>
+            readFn = reader =>
                 if reader.isNil() then Maybe.empty
-                else Maybe(inner.serializeRead.get(reader))
+                else Maybe(inner.serializeRead(reader))
         )
 
     /** Schema for Option[A] values. */
     given optionSchema[A](using inner: Schema[A]): Schema[Option[A]] =
-        primitive[Option[A]](
-            (value, writer) =>
+        Schema.init[Option[A]](
+            writeFn = (value, writer) =>
                 value match
-                    case Some(v) => inner.serializeWrite.get(v, writer)
+                    case Some(v) => inner.serializeWrite(v, writer)
                     case None =>
                         writer.nil()
             ,
-            reader =>
+            readFn = reader =>
                 if reader.isNil() then None
-                else Some(inner.serializeRead.get(reader))
+                else Some(inner.serializeRead(reader))
         )
 
     /** Schema for Map[String, V] values (object encoding). */
     given stringMapSchema[V](using valueSchema: Schema[V]): Schema[Map[String, V]] =
-        primitive[Map[String, V]](
-            (value, writer) =>
+        Schema.init[Map[String, V]](
+            writeFn = (value, writer) =>
                 writer.mapStart(value.size)
                 value.iterator.zipWithIndex.foreach { case ((k, v), idx) =>
                     writer.field(k, idx)
-                    valueSchema.serializeWrite.get(v, writer)
+                    valueSchema.serializeWrite(v, writer)
                 }
                 writer.mapEnd()
             ,
-            reader =>
+            readFn = reader =>
                 discard(reader.mapStart())
                 val builder = Map.newBuilder[String, V]
                 @tailrec
@@ -1358,7 +1520,7 @@ object Schema:
                     if reader.hasNextEntry() then
                         reader.checkCollectionSize(count)
                         val k = reader.field()
-                        val v = valueSchema.serializeRead.get(reader)
+                        val v = valueSchema.serializeRead(reader)
                         builder += (k -> v)
                         loop(count + 1)
                 loop(1)
@@ -1377,22 +1539,22 @@ object Schema:
 
     /** Schema for Result[E, A] values - serialized as discriminated union. */
     given resultSchema[E, A](using eSchema: Schema[E], aSchema: Schema[A]): Schema[Result[E, A]] =
-        primitive[Result[E, A]](
-            (value, writer) =>
+        Schema.init[Result[E, A]](
+            writeFn = (value, writer) =>
                 value match
                     case Result.Success(a) =>
                         writer.objectStart("Result", 2)
                         writer.field("$type", 0)
                         writer.string("success")
                         writer.field("value", 1)
-                        aSchema.serializeWrite.get(a.asInstanceOf[A], writer)
+                        aSchema.serializeWrite(a.asInstanceOf[A], writer)
                         writer.objectEnd()
                     case Result.Failure(e) =>
                         writer.objectStart("Result", 2)
                         writer.field("$type", 0)
                         writer.string("failure")
                         writer.field("value", 1)
-                        eSchema.serializeWrite.get(e.asInstanceOf[E], writer)
+                        eSchema.serializeWrite(e.asInstanceOf[E], writer)
                         writer.objectEnd()
                     case Result.Panic(ex) =>
                         writer.objectStart("Result", 2)
@@ -1404,7 +1566,7 @@ object Schema:
                             case _                  => writer.nil()
                         writer.objectEnd()
             ,
-            reader =>
+            readFn = reader =>
                 discard(reader.objectStart())
                 @tailrec
                 def loop(typeName: Maybe[String], captured: Maybe[Reader]): (Maybe[String], Maybe[Reader]) =
@@ -1422,8 +1584,8 @@ object Schema:
                     throw kyo.MissingFieldException(Seq.empty, "value")(using reader.frame)
                 val capturedReader = captured.get
                 typeName.get match
-                    case "success" => Result.succeed(aSchema.serializeRead.get(capturedReader))
-                    case "failure" => Result.fail(eSchema.serializeRead.get(capturedReader))
+                    case "success" => Result.succeed(aSchema.serializeRead(capturedReader))
+                    case "failure" => Result.fail(eSchema.serializeRead(capturedReader))
                     case "panic" =>
                         val msg: Maybe[String] =
                             if capturedReader.isNil() then Maybe.empty
@@ -1433,26 +1595,70 @@ object Schema:
                 end match
         )
 
+    /** Schema for Either[A, B] values - serialized as discriminated union with Left/Right variants. */
+    given eitherSchema[A, B](using aSchema: Schema[A], bSchema: Schema[B]): Schema[Either[A, B]] =
+        Schema.init[Either[A, B]](
+            writeFn = (value, writer) =>
+                value match
+                    case Left(a) =>
+                        writer.objectStart("Either", 2)
+                        writer.field("$type", 0)
+                        writer.string("Left")
+                        writer.field("value", 1)
+                        aSchema.serializeWrite(a.asInstanceOf[A], writer)
+                        writer.objectEnd()
+                    case Right(b) =>
+                        writer.objectStart("Either", 2)
+                        writer.field("$type", 0)
+                        writer.string("Right")
+                        writer.field("value", 1)
+                        bSchema.serializeWrite(b.asInstanceOf[B], writer)
+                        writer.objectEnd()
+            ,
+            readFn = reader =>
+                discard(reader.objectStart())
+                @tailrec
+                def loop(typeName: Maybe[String], captured: Maybe[Reader]): (Maybe[String], Maybe[Reader]) =
+                    if reader.hasNextField() then
+                        reader.field() match
+                            case "$type" => loop(Maybe(reader.string()), captured)
+                            case "value" => loop(typeName, Maybe(reader.captureValue()))
+                            case _       => reader.skip(); loop(typeName, captured)
+                    else (typeName, captured)
+                val (typeName, captured) = loop(Maybe.empty, Maybe.empty)
+                reader.objectEnd()
+                if typeName.isEmpty then
+                    throw kyo.MissingFieldException(Seq.empty, "$type")(using reader.frame)
+                if captured.isEmpty then
+                    throw kyo.MissingFieldException(Seq.empty, "value")(using reader.frame)
+                val capturedReader = captured.get
+                typeName.get match
+                    case "Left"  => Left(aSchema.serializeRead(capturedReader))
+                    case "Right" => Right(bSchema.serializeRead(capturedReader))
+                    case other   => throw kyo.UnknownVariantException(Seq.empty, other)(using reader.frame)
+                end match
+        )
+
     /** Schema for Dict[String, V] - serializes as a JSON object. */
     given stringDictSchema[V](using vSchema: Schema[V]): Schema[Dict[String, V]] =
-        primitive[Dict[String, V]](
-            (value, writer) =>
+        Schema.init[Dict[String, V]](
+            writeFn = (value, writer) =>
                 writer.mapStart(value.size)
                 discard(value.foldLeft(0) { (idx, k, v) =>
                     writer.field(k, idx)
-                    vSchema.serializeWrite.get(v, writer)
+                    vSchema.serializeWrite(v, writer)
                     idx + 1
                 })
                 writer.mapEnd()
             ,
-            reader =>
+            readFn = reader =>
                 discard(reader.mapStart())
                 @tailrec
                 def loop(dict: Dict[String, V], count: Int): Dict[String, V] =
                     if reader.hasNextEntry() then
                         reader.checkCollectionSize(count)
                         val k = reader.field()
-                        val v = vSchema.serializeRead.get(reader)
+                        val v = vSchema.serializeRead(reader)
                         loop(dict.update(k, v), count + 1)
                     else dict
                 val dict = loop(Dict.empty[String, V], 1)
@@ -1462,26 +1668,26 @@ object Schema:
 
     /** Schema for Dict[K, V] with non-String keys - serializes as array of [k, v] pairs. */
     given dictSchema[K, V](using kSchema: Schema[K], vSchema: Schema[V]): Schema[Dict[K, V]] =
-        primitive[Dict[K, V]](
-            (value, writer) =>
+        Schema.init[Dict[K, V]](
+            writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
                 value.foreach { (k, v) =>
                     writer.arrayStart(2)
-                    kSchema.serializeWrite.get(k, writer)
-                    vSchema.serializeWrite.get(v, writer)
+                    kSchema.serializeWrite(k, writer)
+                    vSchema.serializeWrite(v, writer)
                     writer.arrayEnd()
                 }
                 writer.arrayEnd()
             ,
-            reader =>
+            readFn = reader =>
                 discard(reader.arrayStart())
                 @tailrec
                 def loop(dict: Dict[K, V], count: Int): Dict[K, V] =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
                         discard(reader.arrayStart())
-                        val k = kSchema.serializeRead.get(reader)
-                        val v = vSchema.serializeRead.get(reader)
+                        val k = kSchema.serializeRead(reader)
+                        val v = vSchema.serializeRead(reader)
                         reader.arrayEnd()
                         loop(dict.update(k, v), count + 1)
                     else dict
@@ -1572,35 +1778,52 @@ object Schema:
     ): Schema[A] { type Focused = meta.Focused } =
         internal.SchemaValidation.withFieldDeprecated(meta, fieldPath, reason)
 
+    /** Message used by the sentinel codec lambdas in `create`/`createFrom`/`createWithFocused` for schemas that cannot directly
+      * (de)serialize (e.g. focused / record schemas). Thrown as a `SchemaNotSerializableException` at the user's call site, with the Frame
+      * propagated from the inline factory's caller.
+      */
+    private[kyo] val notSerializableMessage: String =
+        "This schema does not have serialization. " +
+            "Focused schemas and Record schemas cannot serialize directly."
+
     /** Internal factory for macro-generated Schema instances. Not part of public API.
       *
       * The F type parameter becomes the Focused type member on the returned Schema.
       */
-    private[kyo] def create[A, F](
-        getter: A => Maybe[F],
-        setter: (A, F) => A,
+    @nowarn("msg=anonymous")
+    inline def create[A, F](
+        inline getterFn: A => Maybe[F],
+        inline setterFn: (A, F) => A,
         segments: Seq[String],
         sourceFields: Seq[Field[?, ?]] = Seq.empty
-    ): Schema[A] { type Focused = F } =
-        internal.SchemaFactory.create(getter, setter, segments, sourceFields)
+    )(using frame: Frame): Schema[A] { type Focused = F } =
+        Schema.initFocused[A, F](
+            writeFn = (_: A, _: Writer) => throw SchemaNotSerializableException(Schema.notSerializableMessage)(using frame),
+            readFn = (_: Reader) => throw SchemaNotSerializableException(Schema.notSerializableMessage)(using frame),
+            getterFn = getterFn,
+            setterFn = setterFn,
+            segments = segments,
+            sourceFields = sourceFields
+        )
 
     /** Internal factory for macro-generated Schema instances with serialization. */
-    private[kyo] def create[A, F](
-        getter: A => Maybe[F],
-        setter: (A, F) => A,
+    @nowarn("msg=anonymous")
+    inline def create[A, F](
+        inline getterFn: A => Maybe[F],
+        inline setterFn: (A, F) => A,
         segments: Seq[String],
         sourceFields: Seq[Field[?, ?]],
-        writeFn: (A, Writer) => Unit,
-        readFn: Reader => A
+        inline writeFn: (A, Writer) => Unit,
+        inline readFn: Reader => A
     ): Schema[A] { type Focused = F } =
-        internal.SchemaFactory.create(getter, setter, segments, sourceFields, writeFn, readFn)
-
-    /** Creates a primitive Schema with hand-written serialization functions. */
-    private[kyo] def primitive[A](
-        writeFn: (A, Writer) => Unit,
-        readFn: Reader => A
-    ): Schema[A] =
-        internal.SchemaFactory.primitive(writeFn, readFn)
+        Schema.initFocused[A, F](
+            writeFn = writeFn,
+            readFn = readFn,
+            getterFn = getterFn,
+            setterFn = setterFn,
+            segments = segments,
+            sourceFields = sourceFields
+        )
 
     /** Internal factory for transform macros. Copies internal state from a source Schema. Not part of public API.
       *
@@ -1615,14 +1838,17 @@ object Schema:
         renamedFields: Chunk[(String, String)],
         droppedFields: Set[String] = Set.empty
     ): Schema[A] { type Focused = F2 } =
-        internal.SchemaFactory.createFrom(source, checks, computedFields, renamedFields, droppedFields)
+        internal.SchemaFactory.createFrom[A, F2](source, checks, computedFields, renamedFields, droppedFields)
 
     /** Internal factory for creating Schema with a specific Focused type, preserving all state. Used by methods that return
       * `Schema[A] { type Focused = E }` without changing E.
       */
-    private[kyo] def createWithFocused[A, E](
-        getter: A => Maybe[Any],
-        setter: (A, Any) => A,
+    @nowarn("msg=anonymous")
+    inline def createWithFocused[A, E](
+        inline getterFn: A => Maybe[Any],
+        inline setterFn: (A, Any) => A,
+        inline writeFn: (A, Writer) => Unit,
+        inline readFn: Reader => A,
         segments: Seq[String],
         checks: Seq[A => Seq[ValidationFailedException]],
         computedFields: Chunk[(String, A => Any)],
@@ -1635,28 +1861,26 @@ object Schema:
         fieldDeprecated: Map[Seq[String], String] = Map.empty,
         constraints: Seq[Constraint] = Seq.empty,
         fieldIds: Map[Seq[String], Int] = Map.empty,
-        serializeWrite: Maybe[(A, Codec.Writer) => Unit] = Maybe.empty,
-        serializeRead: Maybe[Codec.Reader => A] = Maybe.empty,
         discriminatorField: Maybe[String] = Maybe.empty
     ): Schema[A] { type Focused = E } =
-        internal.SchemaFactory.createWithFocused(
-            getter,
-            setter,
-            segments,
-            checks,
-            computedFields,
-            renamedFields,
-            sourceFields,
-            droppedFields,
-            doc,
-            fieldDocs,
-            examples,
-            fieldDeprecated,
-            constraints,
-            fieldIds,
-            serializeWrite,
-            serializeRead,
-            discriminatorField
-        )
+        Schema.init[A](
+            writeFn = writeFn,
+            readFn = readFn,
+            getterFn = getterFn,
+            setterFn = setterFn,
+            segments = segments,
+            examples = examples,
+            fieldDocs = fieldDocs,
+            fieldDeprecated = fieldDeprecated,
+            constraints = constraints,
+            droppedFields = droppedFields,
+            renamedFields = renamedFields,
+            computedFields = computedFields,
+            sourceFields = sourceFields,
+            checks = checks,
+            documentation = doc,
+            fieldIdOverrides = fieldIds,
+            discriminatorField = discriminatorField
+        ).asInstanceOf[Schema[A] { type Focused = E }]
 
 end Schema

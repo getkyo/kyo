@@ -86,6 +86,18 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             loop(0)
     end matchField
 
+    override def lastFieldName(): String =
+        if lastFieldLen <= 0 then ""
+        else
+            val buf = new Array[Byte](lastFieldLen)
+            @tailrec def copy(i: Int): Unit =
+                if i < lastFieldLen then
+                    buf(i) = input(lastFieldStart + i)
+                    copy(i + 1)
+            copy(0)
+            new String(buf, java.nio.charset.StandardCharsets.UTF_8)
+    end lastFieldName
+
     /** Initialize reusable field values array for n fields. Returns the array. Only reuses the pooled array at depth 0; nested objects
       * allocate fresh.
       */
@@ -226,7 +238,17 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             else error(s"Invalid Float value: '$s'")
             end if
         else
-            parseNumberStr("Float")(_.toFloat)
+            val start    = pos
+            val inputArr = input.toArrayUnsafe
+            val end      = FastFloat.scanNumberEnd(inputArr, start, input.size)
+            val bits     = FastFloat.parseFloat(inputArr, start, end)
+            if bits == FastFloat.FloatBailOut then
+                pos = start
+                parseNumberStr("Float")(_.toFloat)
+            else
+                pos = end
+                java.lang.Float.intBitsToFloat(bits)
+            end if
         end if
     end float
 
@@ -241,34 +263,16 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             else error(s"Invalid Double value: '$s'")
             end if
         else
-            // Try integer fast path first
-            val start = pos
-            val neg   = pos < input.size && input(pos) == '-'
-            if neg then pos += 1
-            if pos < input.size && input(pos) >= '0' && input(pos) <= '9' then
-                @tailrec def parseDigits(result: Long, overflow: Boolean): (Long, Boolean) =
-                    if pos < input.size && input(pos) >= '0' && input(pos) <= '9' then
-                        val digit       = input(pos) - '0'
-                        val newOverflow = overflow || result > (Long.MaxValue - digit) / 10
-                        val newResult   = if newOverflow then result else result * 10 + digit
-                        pos += 1
-                        parseDigits(newResult, newOverflow)
-                    else
-                        (result, overflow)
-                val (result, overflow) = parseDigits(0L, false)
-                // Check if it's a pure integer (no decimal point or exponent)
-                if !overflow && (pos >= input.size || (input(pos) != '.' && input(pos) != 'e' && input(pos) != 'E')) then
-                    val v = if neg then -result else result
-                    v.toDouble
-                else
-                    // Fall back to general path
-                    pos = start
-                    parseNumberStr("Double")(_.toDouble)
-                end if
-            else
-                // Fall back to general path
+            val start    = pos
+            val inputArr = input.toArrayUnsafe
+            val end      = FastFloat.scanNumberEnd(inputArr, start, input.size)
+            val bits     = FastFloat.parseDouble(inputArr, start, end)
+            if bits == FastFloat.DoubleBailOut then
                 pos = start
                 parseNumberStr("Double")(_.toDouble)
+            else
+                pos = end
+                java.lang.Double.longBitsToDouble(bits)
             end if
         end if
     end double

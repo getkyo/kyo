@@ -12,7 +12,7 @@ import kyo.*
   */
 object ChatRoom extends KyoApp:
 
-    case class Message(id: Int, user: String, text: String) derives Json
+    case class Message(id: Int, user: String, text: String) derives Schema
 
     case class Store(messages: List[Message], nextId: Int)
 

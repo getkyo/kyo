@@ -15,11 +15,21 @@ import kyo.Builder
   * @tparam Name
   *   The singleton string type of the field name
   */
-final class BuilderAt[Root, Remaining, Focus, Name <: String](
-    private[kyo] val builder: Builder[Root, Remaining]
-):
-    /** Sets the field value. The macro generates the return type with this field removed from Remaining. */
-    transparent inline def apply(value: Focus): Any =
-        ${ BuilderMacro.setImpl[Root, Remaining, Focus, Name]('this, 'value) }
+opaque type BuilderAt[Root, Remaining, Focus, Name <: String] = Builder[Root, Remaining]
+
+object BuilderAt:
+    private[kyo] inline def wrap[Root, Remaining, Focus, Name <: String](
+        b: Builder[Root, Remaining]
+    ): BuilderAt[Root, Remaining, Focus, Name] = b
+
+    extension [Root, Remaining, Focus, Name <: String](
+        self: BuilderAt[Root, Remaining, Focus, Name]
+    )
+        /** Sets the field value. The macro generates the return type with this field removed from Remaining. */
+        transparent inline def apply(value: Focus): Any =
+            ${ BuilderMacro.setImpl[Root, Remaining, Focus, Name]('self, 'value) }
+
+        private[kyo] inline def builder: Builder[Root, Remaining] = self
+    end extension
 
 end BuilderAt

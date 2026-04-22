@@ -67,19 +67,19 @@ object HttpResponse:
 
     def ok(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.OK).addField("body", body)
     @targetName("okJson")
-    def ok[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.OK).addField("body", body)
+    def ok[A: Schema](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.OK).addField("body", body)
     @targetName("okBinary")
     def ok(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.OK).addField("body", body)
 
     def created(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.Created).addField("body", body)
     @targetName("createdJson")
-    def created[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Created).addField("body", body)
+    def created[A: Schema](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Created).addField("body", body)
     @targetName("createdBinary")
     def created(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.Created).addField("body", body)
 
     def accepted(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.Accepted).addField("body", body)
     @targetName("acceptedJson")
-    def accepted[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Accepted).addField("body", body)
+    def accepted[A: Schema](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Accepted).addField("body", body)
     @targetName("acceptedBinary")
     def accepted(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.Accepted).addField("body", body)
 
@@ -101,44 +101,44 @@ object HttpResponse:
 
     def badRequest(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.BadRequest).addField("body", body)
     @targetName("badRequestJson")
-    def badRequest[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.BadRequest).addField("body", body)
+    def badRequest[A: Schema](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.BadRequest).addField("body", body)
     @targetName("badRequestBinary")
     def badRequest(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.BadRequest).addField("body", body)
 
     def unauthorized(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.Unauthorized).addField("body", body)
     @targetName("unauthorizedJson")
-    def unauthorized[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Unauthorized).addField("body", body)
+    def unauthorized[A: Schema](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Unauthorized).addField("body", body)
     @targetName("unauthorizedBinary")
     def unauthorized(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.Unauthorized).addField("body", body)
 
     def forbidden(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.Forbidden).addField("body", body)
     @targetName("forbiddenJson")
-    def forbidden[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Forbidden).addField("body", body)
+    def forbidden[A: Schema](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Forbidden).addField("body", body)
     @targetName("forbiddenBinary")
     def forbidden(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.Forbidden).addField("body", body)
 
     def notFound(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.NotFound).addField("body", body)
     @targetName("notFoundJson")
-    def notFound[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.NotFound).addField("body", body)
+    def notFound[A: Schema](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.NotFound).addField("body", body)
     @targetName("notFoundBinary")
     def notFound(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.NotFound).addField("body", body)
 
     def conflict(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.Conflict).addField("body", body)
     @targetName("conflictJson")
-    def conflict[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Conflict).addField("body", body)
+    def conflict[A: Schema](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.Conflict).addField("body", body)
     @targetName("conflictBinary")
     def conflict(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.Conflict).addField("body", body)
 
     def unprocessableEntity(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.UnprocessableEntity).addField("body", body)
     @targetName("unprocessableEntityJson")
-    def unprocessableEntity[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.UnprocessableEntity).addField("body", body)
+    def unprocessableEntity[A: Schema](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.UnprocessableEntity).addField("body", body)
     @targetName("unprocessableEntityBinary")
     def unprocessableEntity(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] =
         apply(HttpStatus.UnprocessableEntity).addField("body", body)
 
     def tooManyRequests(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.TooManyRequests).addField("body", body)
     @targetName("tooManyRequestsJson")
-    def tooManyRequests[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.TooManyRequests).addField("body", body)
+    def tooManyRequests[A: Schema](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.TooManyRequests).addField("body", body)
     @targetName("tooManyRequestsBinary")
     def tooManyRequests(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.TooManyRequests).addField("body", body)
 
@@ -148,13 +148,13 @@ object HttpResponse:
 
     def serverError(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.InternalServerError).addField("body", body)
     @targetName("serverErrorJson")
-    def serverError[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.InternalServerError).addField("body", body)
+    def serverError[A: Schema](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.InternalServerError).addField("body", body)
     @targetName("serverErrorBinary")
     def serverError(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] = apply(HttpStatus.InternalServerError).addField("body", body)
 
     def serviceUnavailable(body: String): HttpResponse["body" ~ String] = apply(HttpStatus.ServiceUnavailable).addField("body", body)
     @targetName("serviceUnavailableJson")
-    def serviceUnavailable[A: Json](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.ServiceUnavailable).addField("body", body)
+    def serviceUnavailable[A: Schema](body: A): HttpResponse["body" ~ A] = apply(HttpStatus.ServiceUnavailable).addField("body", body)
     @targetName("serviceUnavailableBinary")
     def serviceUnavailable(body: Span[Byte]): HttpResponse["body" ~ Span[Byte]] =
         apply(HttpStatus.ServiceUnavailable).addField("body", body)

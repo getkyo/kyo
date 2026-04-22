@@ -25,7 +25,7 @@ import scala.annotation.tailrec
   * @see
   *   [[Modify]] for accumulating imperative mutations in a single step
   */
-final case class Changeset[A](operations: Chunk[Changeset.Op]) derives Schema:
+final case class Changeset[A](operations: Chunk[Changeset.Patch]) derives Schema:
 
     /** Returns true when the two values are identical (no operations). */
     def isEmpty: Boolean = operations.isEmpty
@@ -55,30 +55,30 @@ object Changeset:
     /** A single patch operation targeting a field path within the Structure.Value tree.
       *
       * Variants:
-      *   - [[Op.SetField]]: replace a field with an entirely new value
-      *   - [[Op.RemoveField]]: delete a field from a record
-      *   - [[Op.SetNull]]: clear an optional field to null
-      *   - [[Op.NumericDelta]]: store a numeric delta rather than the absolute value
-      *   - [[Op.StringPatch]]: insert/delete/replace a character range within a string
-      *   - [[Op.Nested]]: recursively patch a nested record
-      *   - [[Op.SequencePatch]]: add, remove, or reorder sequence elements
-      *   - [[Op.MapPatch]]: add, remove, or update map entries
+      *   - [[Patch.SetField]]: replace a field with an entirely new value
+      *   - [[Patch.RemoveField]]: delete a field from a record
+      *   - [[Patch.SetNull]]: clear an optional field to null
+      *   - [[Patch.NumericDelta]]: store a numeric delta rather than the absolute value
+      *   - [[Patch.StringPatch]]: insert/delete/replace a character range within a string
+      *   - [[Patch.Nested]]: recursively patch a nested record
+      *   - [[Patch.SequencePatch]]: add, remove, or reorder sequence elements
+      *   - [[Patch.MapPatch]]: add, remove, or update map entries
       */
-    sealed abstract class Op derives CanEqual, Schema:
+    sealed abstract class Patch derives CanEqual, Schema:
         def fieldPath: Chunk[String]
 
-    object Op:
+    object Patch:
         /** Replaces the field at `fieldPath` with `value`. */
-        case class SetField(fieldPath: Chunk[String], value: Structure.Value) extends Op
+        case class SetField(fieldPath: Chunk[String], value: Structure.Value) extends Patch
 
         /** Removes the field at `fieldPath` from the enclosing record. */
-        case class RemoveField(fieldPath: Chunk[String]) extends Op
+        case class RemoveField(fieldPath: Chunk[String]) extends Patch
 
         /** Clears the optional field at `fieldPath` by setting it to null. */
-        case class SetNull(fieldPath: Chunk[String]) extends Op
+        case class SetNull(fieldPath: Chunk[String]) extends Patch
 
         /** Applies a numeric delta to the field at `fieldPath` (stores the difference, not the absolute value). */
-        case class NumericDelta(fieldPath: Chunk[String], delta: BigDecimal) extends Op
+        case class NumericDelta(fieldPath: Chunk[String], delta: BigDecimal) extends Patch
 
         /** Applies a character-range edit to the string field at `fieldPath`.
           *
@@ -89,10 +89,10 @@ object Changeset:
           * @param insert
           *   string to insert at `offset` after deletion
           */
-        case class StringPatch(fieldPath: Chunk[String], offset: Int, deleteCount: Int, insert: String) extends Op
+        case class StringPatch(fieldPath: Chunk[String], offset: Int, deleteCount: Int, insert: String) extends Patch
 
         /** Recursively patches the nested record at `fieldPath` using the given sub-operations. */
-        case class Nested(fieldPath: Chunk[String], operations: Chunk[Op]) extends Op
+        case class Nested(fieldPath: Chunk[String], operations: Chunk[Patch]) extends Patch
 
         /** Adds, removes, or reorders elements in the sequence at `fieldPath`. */
         case class SequencePatch(
@@ -100,7 +100,7 @@ object Changeset:
             added: Chunk[Structure.Value],
             removed: Chunk[Int],
             moved: Chunk[(Int, Int)]
-        ) extends Op
+        ) extends Patch
 
         /** Adds, removes, or updates entries in the map at `fieldPath`. */
         case class MapPatch(
@@ -108,9 +108,9 @@ object Changeset:
             added: Chunk[(Structure.Value, Structure.Value)],
             removed: Chunk[Structure.Value],
             updated: Chunk[(Structure.Value, Structure.Value)]
-        ) extends Op
+        ) extends Patch
 
-    end Op
+    end Patch
 
     /** Produces a serializable changeset by comparing two values field-by-field. */
     def apply[A](old: A, updated: A)(using schema: Schema[A], frame: Frame): Changeset[A] =
@@ -126,7 +126,7 @@ object Changeset:
         oldVal: Structure.Value,
         newVal: Structure.Value,
         path: Chunk[String]
-    ): Chunk[Op] =
+    ): Chunk[Patch] =
         if oldVal == newVal then Chunk.empty
         else
             (oldVal, newVal) match
@@ -135,22 +135,22 @@ object Changeset:
                 case (Structure.Value.Str(ov), Structure.Value.Str(nv)) =>
                     computeStringPatch(ov, nv, path)
                 case (Structure.Value.Integer(ov), Structure.Value.Integer(nv)) =>
-                    Chunk(Op.NumericDelta(path, BigDecimal(nv) - BigDecimal(ov)))
+                    Chunk(Patch.NumericDelta(path, BigDecimal(nv) - BigDecimal(ov)))
                 case (Structure.Value.Decimal(ov), Structure.Value.Decimal(nv)) =>
-                    Chunk(Op.NumericDelta(path, BigDecimal(nv) - BigDecimal(ov)))
+                    Chunk(Patch.NumericDelta(path, BigDecimal(nv) - BigDecimal(ov)))
                 case (Structure.Value.BigNum(ov), Structure.Value.BigNum(nv)) =>
-                    Chunk(Op.NumericDelta(path, nv - ov))
+                    Chunk(Patch.NumericDelta(path, nv - ov))
                 case (_, Structure.Value.Null) =>
-                    Chunk(Op.SetNull(path))
+                    Chunk(Patch.SetNull(path))
                 case (Structure.Value.Sequence(oldElems), Structure.Value.Sequence(newElems)) =>
                     computeSequenceOps(oldElems, newElems, path)
                 case (Structure.Value.MapEntries(oldEntries), Structure.Value.MapEntries(newEntries)) =>
                     computeMapOps(oldEntries, newEntries, path)
                 case _ =>
-                    Chunk(Op.SetField(path, newVal))
+                    Chunk(Patch.SetField(path, newVal))
     end computeOps
 
-    private def computeStringPatch(oldStr: String, newStr: String, path: Chunk[String]): Chunk[Op] =
+    private def computeStringPatch(oldStr: String, newStr: String, path: Chunk[String]): Chunk[Patch] =
         val minLen = math.min(oldStr.length, newStr.length)
 
         @tailrec def prefix(i: Int): Int =
@@ -168,14 +168,14 @@ object Changeset:
         val suffixLen   = suffix(0)
         val deleteCount = oldStr.length - prefixLen - suffixLen
         val insert      = newStr.substring(prefixLen, newStr.length - suffixLen)
-        Chunk(Op.StringPatch(path, prefixLen, deleteCount, insert))
+        Chunk(Patch.StringPatch(path, prefixLen, deleteCount, insert))
     end computeStringPatch
 
     private def computeRecordOps(
         oldFields: Chunk[(String, Structure.Value)],
         newFields: Chunk[(String, Structure.Value)],
         path: Chunk[String]
-    ): Chunk[Op] =
+    ): Chunk[Patch] =
         val oldMap = oldFields.toMap
         val newMap = newFields.toMap
 
@@ -191,13 +191,13 @@ object Changeset:
                             case (Structure.Value.Record(of), Structure.Value.Record(nf)) =>
                                 val nested = computeRecordOps(of, nf, Chunk.empty)
                                 if nested.isEmpty then Chunk.empty
-                                else Chunk(Op.Nested(fieldPath, nested))
+                                else Chunk(Patch.Nested(fieldPath, nested))
                             case _ =>
                                 computeOps(ov, nv, fieldPath)
                 case (Some(_), None) =>
-                    Chunk(Op.RemoveField(fieldPath))
+                    Chunk(Patch.RemoveField(fieldPath))
                 case (None, Some(nv)) =>
-                    Chunk(Op.SetField(fieldPath, nv))
+                    Chunk(Patch.SetField(fieldPath, nv))
                 case (None, None) =>
                     Chunk.empty
             end match
@@ -208,7 +208,7 @@ object Changeset:
         oldElems: Chunk[Structure.Value],
         newElems: Chunk[Structure.Value],
         path: Chunk[String]
-    ): Chunk[Op] =
+    ): Chunk[Patch] =
         val oldSet = oldElems.toSet
         val newSet = newElems.toSet
 
@@ -216,14 +216,14 @@ object Changeset:
         val removed = Chunk.from(oldElems.zipWithIndex.filter { case (v, _) => !newSet.contains(v) }.map(_._2))
 
         if added.isEmpty && removed.isEmpty then Chunk.empty
-        else Chunk(Op.SequencePatch(path, added, removed, Chunk.empty))
+        else Chunk(Patch.SequencePatch(path, added, removed, Chunk.empty))
     end computeSequenceOps
 
     private def computeMapOps(
         oldEntries: Chunk[(Structure.Value, Structure.Value)],
         newEntries: Chunk[(Structure.Value, Structure.Value)],
         path: Chunk[String]
-    ): Chunk[Op] =
+    ): Chunk[Patch] =
         val oldMap = oldEntries.toMap
         val newMap = newEntries.toMap
 
@@ -242,23 +242,23 @@ object Changeset:
         val updated = Chunk.from(categorized.flatMap(_._3))
 
         if added.isEmpty && removed.isEmpty && updated.isEmpty then Chunk.empty
-        else Chunk(Op.MapPatch(path, added, removed, updated))
+        else Chunk(Patch.MapPatch(path, added, removed, updated))
     end computeMapOps
 
     // --- Internal: apply operations to a Structure.Value ---
 
-    private[kyo] def applyOps(value: Structure.Value, ops: Chunk[Op]): Structure.Value =
+    private[kyo] def applyOps(value: Structure.Value, ops: Chunk[Patch]): Structure.Value =
         ops.foldLeft(value) { (v, op) => applyOp(v, op) }
 
-    private def applyOp(value: Structure.Value, op: Op): Structure.Value =
+    private def applyOp(value: Structure.Value, op: Patch): Structure.Value =
         op match
-            case Op.SetField(fieldPath, newVal) =>
+            case Patch.SetField(fieldPath, newVal) =>
                 setAtPath(value, fieldPath, newVal)
-            case Op.RemoveField(fieldPath) =>
+            case Patch.RemoveField(fieldPath) =>
                 removeAtPath(value, fieldPath)
-            case Op.SetNull(fieldPath) =>
+            case Patch.SetNull(fieldPath) =>
                 setAtPath(value, fieldPath, Structure.Value.Null)
-            case Op.NumericDelta(fieldPath, delta) =>
+            case Patch.NumericDelta(fieldPath, delta) =>
                 modifyAtPath(value, fieldPath) {
                     case Structure.Value.Integer(v) =>
                         val newValue = BigDecimal(v) + delta
@@ -270,7 +270,7 @@ object Changeset:
                         Structure.Value.BigNum(v + delta)
                     case other => other
                 }
-            case Op.StringPatch(fieldPath, offset, deleteCount, insert) =>
+            case Patch.StringPatch(fieldPath, offset, deleteCount, insert) =>
                 modifyAtPath(value, fieldPath) {
                     case Structure.Value.Str(s) =>
                         val before = s.substring(0, math.min(offset, s.length))
@@ -278,11 +278,11 @@ object Changeset:
                         Structure.Value.Str(before + insert + after)
                     case other => other
                 }
-            case Op.Nested(fieldPath, nestedOps) =>
+            case Patch.Nested(fieldPath, nestedOps) =>
                 modifyAtPath(value, fieldPath) { nested =>
                     applyOps(nested, nestedOps)
                 }
-            case Op.SequencePatch(fieldPath, added, removed, _) =>
+            case Patch.SequencePatch(fieldPath, added, removed, _) =>
                 modifyAtPath(value, fieldPath) {
                     case Structure.Value.Sequence(elems) =>
                         val removedSet = removed.toSet
@@ -290,7 +290,7 @@ object Changeset:
                         Structure.Value.Sequence(kept ++ Chunk.from(added))
                     case other => other
                 }
-            case Op.MapPatch(fieldPath, added, removed, updated) =>
+            case Patch.MapPatch(fieldPath, added, removed, updated) =>
                 modifyAtPath(value, fieldPath) {
                     case Structure.Value.MapEntries(entries) =>
                         val removedSet  = removed.toSet

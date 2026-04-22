@@ -30,6 +30,7 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
 
     private var stack: List[StackFrame]       = Nil
     private var currentValue: Structure.Value = root
+    private var _lastFieldName: String        = ""
 
     def objectStart(): Int =
         currentValue match
@@ -79,12 +80,24 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
                     val entry = f.fields.next()
                     f.current = Maybe(entry)
                     currentValue = entry._2
+                    _lastFieldName = entry._1
                     entry._1
                 else
                     throw MissingFieldException(Seq.empty, "<next>")
             case _ =>
                 throw TypeMismatchException(Seq.empty, "ObjectFrame", "no active object")
     end field
+
+    def fieldParse(): Unit =
+        val _ = field()
+
+    def matchField(nameBytes: Array[Byte]): Boolean =
+        if _lastFieldName.isEmpty then false
+        else
+            val expected = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
+            _lastFieldName == expected
+
+    def lastFieldName(): String = _lastFieldName
 
     def hasNextField(): Boolean =
         stack match

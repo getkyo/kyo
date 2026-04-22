@@ -30,11 +30,11 @@ object StructureMacro:
             end match
         // 2. Check primitives
         else if isPrimitive(dealiased) then
-            val name = dealiased.typeSymbol.name
+            val kindExpr = primitiveKindExpr(dealiased)
             dealiased.asType match
                 case '[a] =>
                     val tagExpr = summonTag[a]
-                    '{ Structure.Type.Primitive(${ Expr(name) }, $tagExpr) }
+                    '{ Structure.Type.Primitive($kindExpr, $tagExpr) }
             end match
         else
             // 3-5. Check optional, map, and collection types
@@ -165,12 +165,16 @@ object StructureMacro:
                     '{ Structure.Type.Product(${ Expr(name) }, $tagExpr, kyo.Chunk.empty, kyo.Chunk.from($fieldsSeqExpr)) }
             end match
         else
-            // 8. Fallback — treat as primitive
+            // 8. Fallback — treat as a nominal, fieldless Product.
+            // We can no longer emit Primitive here: Primitive now carries a typed
+            // PrimitiveKind enum and this branch handles arbitrary non-primitive,
+            // non-case-class, non-sealed types (e.g. Java classes, opaque types)
+            // for which there is no corresponding kind.
             val name = dealiased.typeSymbol.name
             dealiased.asType match
                 case '[a] =>
                     val tagExpr = summonTag[a]
-                    '{ Structure.Type.Primitive(${ Expr(name) }, $tagExpr) }
+                    '{ Structure.Type.Product(${ Expr(name) }, $tagExpr, kyo.Chunk.empty, kyo.Chunk.empty) }
             end match
         end if
     end deriveCaseClassOrFallback
@@ -189,6 +193,38 @@ object StructureMacro:
         import quotes.reflect.*
         MacroUtils.extendedPrimitiveSymbols.contains(tpe.dealias.typeSymbol)
     end isPrimitive
+
+    /** Maps a primitive TypeRepr to the corresponding `Structure.PrimitiveKind` expression.
+      *
+      * Scala BigInt / java.math.BigInteger both map to `PrimitiveKind.BigInt`; Scala BigDecimal / java.math.BigDecimal both map to
+      * `PrimitiveKind.BigDecimal`. Any type that passes `isPrimitive` but has no matching kind is rejected with `report.errorAndAbort`.
+      */
+    private def primitiveKindExpr(using Quotes)(tpe: quotes.reflect.TypeRepr): Expr[Structure.PrimitiveKind] =
+        import quotes.reflect.*
+        given CanEqual[Symbol, Symbol] = CanEqual.derived
+
+        val sym = tpe.dealias.typeSymbol
+        if sym == TypeRepr.of[Int].typeSymbol then '{ Structure.PrimitiveKind.Int }
+        else if sym == TypeRepr.of[Long].typeSymbol then '{ Structure.PrimitiveKind.Long }
+        else if sym == TypeRepr.of[Short].typeSymbol then '{ Structure.PrimitiveKind.Short }
+        else if sym == TypeRepr.of[Byte].typeSymbol then '{ Structure.PrimitiveKind.Byte }
+        else if sym == TypeRepr.of[Char].typeSymbol then '{ Structure.PrimitiveKind.Char }
+        else if sym == TypeRepr.of[Float].typeSymbol then '{ Structure.PrimitiveKind.Float }
+        else if sym == TypeRepr.of[Double].typeSymbol then '{ Structure.PrimitiveKind.Double }
+        else if sym == TypeRepr.of[String].typeSymbol then '{ Structure.PrimitiveKind.String }
+        else if sym == TypeRepr.of[Boolean].typeSymbol then '{ Structure.PrimitiveKind.Boolean }
+        else if sym == TypeRepr.of[BigInt].typeSymbol || sym == TypeRepr.of[java.math.BigInteger].typeSymbol then
+            '{ Structure.PrimitiveKind.BigInt }
+        else if sym == TypeRepr.of[BigDecimal].typeSymbol || sym == TypeRepr.of[java.math.BigDecimal].typeSymbol then
+            '{ Structure.PrimitiveKind.BigDecimal }
+        else if sym == TypeRepr.of[Unit].typeSymbol then '{ Structure.PrimitiveKind.Unit }
+        else
+            report.errorAndAbort(
+                s"No PrimitiveKind mapping for primitive type: ${tpe.show}. " +
+                    "Add a case to Structure.PrimitiveKind or remove the type from extendedPrimitiveSymbols."
+            )
+        end if
+    end primitiveKindExpr
 
     private def isOptionalType(using Quotes)(tycon: quotes.reflect.TypeRepr): Boolean =
         MacroUtils.optionalSymbols.contains(tycon.typeSymbol)

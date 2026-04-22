@@ -112,7 +112,7 @@ object BuilderMacro:
 
         valueType.asType match
             case '[v] =>
-                '{ new kyo.internal.BuilderAt[Root, Remaining, v, Name]($builder) }
+                '{ kyo.internal.BuilderAt.wrap[Root, Remaining, v, Name]($builder) }
     end selectImpl
 
     /** Sets a field value and returns Builder with that field removed from Remaining. */

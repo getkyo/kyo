@@ -590,12 +590,9 @@ lazy val `kyo-http` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
-        .dependsOn(`kyo-core`, `kyo-config`)
+        .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema`)
         .settings(
-            `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio-schema"            % "1.6.4",
-            libraryDependencies += "dev.zio" %%% "zio-schema-json"       % "1.6.4",
-            libraryDependencies += "dev.zio" %%% "zio-schema-derivation" % "1.6.4"
+            `kyo-settings`
         )
         .jvmSettings(
             mimaCheck(false),
@@ -771,6 +768,7 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-sttp`)
         .dependsOn(`kyo-tapir`)
         .dependsOn(`kyo-http`)
+        .dependsOn(`kyo-schema`)
         .dependsOn(`kyo-stm`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-scheduler-zio`)
@@ -821,7 +819,15 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "1.0.0-M44",
             libraryDependencies += "dev.zio"              %% "zio-http"            % "3.8.0",
             libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.7",
-            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.7"
+            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.7",
+            // JSON serialization benchmarks
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core"   % "2.28.2",
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.28.2" % "provided",
+            libraryDependencies += "dev.zio"              %% "zio-json"            % "0.7.45",
+            libraryDependencies += "io.circe"             %% "circe-core"          % "0.14.15",
+            libraryDependencies += "io.circe"             %% "circe-generic"       % "0.14.15",
+            libraryDependencies += "io.circe"             %% "circe-parser"        % "0.14.15",
+            libraryDependencies += "dev.zio"              %% "zio-blocks-schema"   % "0.017"
         )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")

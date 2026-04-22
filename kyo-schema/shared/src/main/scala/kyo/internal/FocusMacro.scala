@@ -4,6 +4,7 @@ import kyo.*
 import kyo.Codec.Reader
 import kyo.Codec.Writer
 import kyo.Record.*
+import scala.annotation.publicInBinary
 import scala.quoted.*
 
 /** Macro implementations for Focus navigation, Schema.apply[A], and Schema.derived[A].
@@ -15,7 +16,7 @@ import scala.quoted.*
   *
   * Schema.derived provides auto-derivation for case classes and sealed traits during implicit search.
   */
-private[kyo] object FocusMacro:
+@publicInBinary private[kyo] object FocusMacro:
 
     /** selectDynamic implementation for Focus.Select[A, F] with state composition.
       *
@@ -381,10 +382,21 @@ private[kyo] object FocusMacro:
             val fieldResolverPairs: List[(String, SerializationMacro.SchemaResolver[A])] =
                 fieldSchemaBuilders.map { (name, _, builder) => (name, builder) }
 
+            // Per-field flag: does the emitted lambda body read the sub-schema slot for this field?
+            // Primitive / primitive-element container / primitive-arg Result specializations leave slots null.
+            val needsSubSchema: List[Boolean] =
+                computeFieldNeedsSubSchema(fields, tpe, maybeFields, optionFields)
+
             if isRecursive then
                 '{
                     lazy val self: kyo.Schema[A] { type Focused = F } =
                         val _fieldBytes: Array[Array[Byte]] = ${ CodecMacro.mkFieldBytesPublic(preEncodedExprs) }
+                        val _fieldNames: Array[String]      = ${ Expr(fields.map(_.name).toArray) }
+                        // `_subSchemas` is `lazy` because, for recursive schemas, slots may contain `self` — eagerly populating
+                        // the array while `self` is still being initialized would cause infinite recursion / SOE. Lazy allocation
+                        // defers array construction to first serializeWrite/Read call, by which time `self` is fully bound.
+                        lazy val _subSchemas: Array[kyo.Schema[Any]] =
+                            ${ buildSubSchemasArrayExpr[A](needsSubSchema, fieldResolvers, '{ self }) }
                         kyo.Schema.create[A, F](
                             ${ MacroUtils.identityGetter[A, F] },
                             ${ MacroUtils.identitySetter[A, F] },
@@ -401,6 +413,7 @@ private[kyo] object FocusMacro:
                                         optionFields,
                                         fieldResolvers,
                                         '{ _fieldBytes },
+                                        '{ _subSchemas },
                                         '{ self },
                                         '{ value },
                                         '{ writer }
@@ -411,7 +424,9 @@ private[kyo] object FocusMacro:
                                     SerializationMacro.caseClassReadBodyResolved[A](
                                         '{ reader },
                                         '{ _fieldBytes },
+                                        '{ _fieldNames },
                                         fieldResolverPairs,
+                                        '{ _subSchemas },
                                         '{ self }
                                     )
                                 }
@@ -430,6 +445,9 @@ private[kyo] object FocusMacro:
 
                 '{
                     val _fieldBytes: Array[Array[Byte]] = ${ CodecMacro.mkFieldBytesPublic(preEncodedExprs) }
+                    val _fieldNames: Array[String]      = ${ Expr(fields.map(_.name).toArray) }
+                    val _subSchemas: Array[kyo.Schema[Any]] =
+                        ${ buildSubSchemasArrayExpr[A](needsSubSchema, fieldResolvers, '{ null.asInstanceOf[Schema[A]] }) }
                     kyo.Schema.create[A, F](
                         ${ MacroUtils.identityGetter[A, F] },
                         ${ MacroUtils.identitySetter[A, F] },
@@ -447,12 +465,22 @@ private[kyo] object FocusMacro:
                                     optionFields,
                                     fieldResolvers,
                                     '{ _fieldBytes },
+                                    '{ _subSchemas },
                                     dummySelf,
                                     '{ value },
                                     '{ writer }
                                 )
                             },
-                        (reader: Reader) => ${ SerializationMacro.caseClassReadBody[A]('{ reader }, '{ _fieldBytes }, fieldSchemaExprs) }
+                        (reader: Reader) =>
+                            ${
+                                SerializationMacro.caseClassReadBody[A](
+                                    '{ reader },
+                                    '{ _fieldBytes },
+                                    '{ _fieldNames },
+                                    fieldSchemaExprs,
+                                    '{ _subSchemas }
+                                )
+                            }
                     )
                 }
             end if
@@ -471,6 +499,7 @@ private[kyo] object FocusMacro:
         checkSerializability: Boolean
     )(using Quotes): Expr[Any] =
         import quotes.reflect.*
+        given CanEqual[Symbol, Symbol] = CanEqual.derived
 
         val tpe      = TypeRepr.of[A].dealias
         val sym      = tpe.typeSymbol
@@ -517,6 +546,30 @@ private[kyo] object FocusMacro:
                         if child.isType then child.typeRef
                         else if child.flags.is(Flags.Module) then child.termRef.widen
                         else child.typeRef
+
+                    // Variant check: for class-like children (child.isType) use isInstanceOf[t].
+                    // For module children (no-arg enum cases, case objects), `child.termRef.widen`
+                    // widens the singleton term-ref to the PARENT enum/sealed type, so
+                    // `isInstanceOf[t]` collapses to `isInstanceOf[ParentEnum]` — a tautology
+                    // that matches every variant. Use reference equality against the singleton
+                    // instead. See PR #1517 for the full write-up.
+                    val checkExpr: Expr[A] => Expr[Boolean] =
+                        if !child.isType then
+                            val singletonRef: Expr[AnyRef] =
+                                if child.flags.is(Flags.Module) && child.companionModule != Symbol.noSymbol then
+                                    Ref(child.companionModule).asExprOf[AnyRef]
+                                else
+                                    val parentSym = child.owner
+                                    if parentSym.companionModule != Symbol.noSymbol then
+                                        Select.unique(Ref(parentSym.companionModule), child.name).asExprOf[AnyRef]
+                                    else
+                                        Ref(child).asExprOf[AnyRef]
+                                    end if
+                            (v: Expr[A]) => '{ $v.asInstanceOf[AnyRef] eq $singletonRef }
+                        else
+                            childType.asType match
+                                case '[t] => (v: Expr[A]) => '{ $v.isInstanceOf[t] }
+
                     childType.asType match
                         case '[t] =>
                             val schemaResolver: SerializationMacro.SchemaResolver[A] =
@@ -537,7 +590,7 @@ private[kyo] object FocusMacro:
                                             buildVariantSchemaResolver[A, t](childType, tpe, child)
                             SerializationMacro.VariantInfo[A](
                                 child.name,
-                                (v: Expr[A]) => '{ $v.isInstanceOf[t] },
+                                checkExpr,
                                 (v: Expr[A]) => '{ $v.asInstanceOf[t].asInstanceOf[Any] },
                                 schemaResolver
                             )
@@ -570,7 +623,7 @@ private[kyo] object FocusMacro:
                                     val schemaExprs = variants.map { info =>
                                         (info.name, info.schemaResolver('{ self }))
                                     }
-                                    SerializationMacro.sealedReadBody[A]('{ reader }, schemaExprs)
+                                    SerializationMacro.sealedReadBody[A]('{ reader }, '{ _fieldBytes }, schemaExprs)
                                 }
                         )
                     end self
@@ -602,7 +655,7 @@ private[kyo] object FocusMacro:
                                 val schemaExprs = variants.map { info =>
                                     (info.name, info.schemaResolver('{ null.asInstanceOf[Schema[A]] }))
                                 }
-                                SerializationMacro.sealedReadBody[A]('{ reader }, schemaExprs)
+                                SerializationMacro.sealedReadBody[A]('{ reader }, '{ _fieldBytes }, schemaExprs)
                             }
                     )
                 }
@@ -675,11 +728,11 @@ private[kyo] object FocusMacro:
 
             (self: Expr[Schema[A]]) =>
                 '{
-                    kyo.Schema.primitive[T](
-                        (_, w) =>
+                    kyo.Schema.init[T](
+                        writeFn = (_, w) =>
                             w.objectStart(${ Expr(child.name) }, 0); w.objectEnd()
                         ,
-                        r =>
+                        readFn = r =>
                             kyo.discard(r.objectStart()); r.objectEnd(); $singletonRef
                     ).asInstanceOf[Schema[Any]]
                 }
@@ -732,11 +785,17 @@ private[kyo] object FocusMacro:
                 Expr(f.name.getBytes(java.nio.charset.StandardCharsets.UTF_8))
             }
             val fieldBytesExpr = CodecMacro.mkFieldBytesPublic(preEncodedFieldExprs)
+            val fieldNamesExpr: Expr[Array[String]] =
+                Expr(childFields.map(_.name).toArray)
 
             // Compute field IDs
             val fieldIds: List[(String, Int)] = childFields.map(f => f.name -> CodecMacro.fieldId(f.name))
 
             val childTypeName = childSym.name
+
+            // Per-field flag: does the emitted lambda body read the sub-schema slot for this variant field?
+            val needsSubSchema: List[Boolean] =
+                computeFieldNeedsSubSchema(childFields, childType, maybeFields, optionFields)
 
             (self: Expr[Schema[A]]) =>
                 // Resolve all field schemas eagerly with the parent's self, then create
@@ -757,40 +816,47 @@ private[kyo] object FocusMacro:
                 val fieldNamesList = childFields.map(_.name)
                 val dummySelf      = '{ null.asInstanceOf[Schema[T]] }
 
-                // Generate write body
-                val writeFn: Expr[(T, Writer) => Unit] =
-                    '{ (value: T, writer: Writer) =>
-                        ${
-                            SerializationMacro.caseClassWriteBody[T](
-                                childTypeName,
-                                childFields.length,
-                                fieldNamesList,
-                                fieldIds,
-                                maybeFields,
-                                optionFields,
-                                resolversForT,
-                                fieldBytesExpr,
-                                dummySelf,
-                                '{ value },
-                                '{ writer }
-                            )
-                        }
-                    }
+                // Build the sub-schemas array expression. Cache each variant field's resolved sub-schema
+                // at lambda construction rather than resolving it per encode/decode.
+                val subSchemasArrExpr: Expr[Array[kyo.Schema[Any]]] =
+                    buildSubSchemasArrayFromResolved(
+                        needsSubSchema,
+                        resolversForT.map(r => r(dummySelf))
+                    )
 
-                // Generate read body
-                val readFn: Expr[Reader => T] =
-                    '{ (reader: Reader) =>
-                        ${
-                            SerializationMacro.caseClassReadBodyResolved[T](
-                                '{ reader },
-                                fieldBytesExpr,
-                                namedResolversForT,
-                                dummySelf
-                            )
-                        }
-                    }
-
-                '{ kyo.Schema.primitive[T]($writeFn, $readFn).asInstanceOf[Schema[Any]] }
+                '{
+                    val _subSchemas: Array[kyo.Schema[Any]] = $subSchemasArrExpr
+                    kyo.Schema.init[T](
+                        writeFn = (value: T, writer: Writer) =>
+                            ${
+                                SerializationMacro.caseClassWriteBody[T](
+                                    childTypeName,
+                                    childFields.length,
+                                    fieldNamesList,
+                                    fieldIds,
+                                    maybeFields,
+                                    optionFields,
+                                    resolversForT,
+                                    fieldBytesExpr,
+                                    '{ _subSchemas },
+                                    dummySelf,
+                                    '{ value },
+                                    '{ writer }
+                                )
+                            },
+                        readFn = (reader: Reader) =>
+                            ${
+                                SerializationMacro.caseClassReadBodyResolved[T](
+                                    '{ reader },
+                                    fieldBytesExpr,
+                                    fieldNamesExpr,
+                                    namedResolversForT,
+                                    '{ _subSchemas },
+                                    dummySelf
+                                )
+                            }
+                    ).asInstanceOf[Schema[Any]]
+                }
         end if
     end buildVariantSchemaResolver
 
@@ -852,11 +918,11 @@ private[kyo] object FocusMacro:
                 else
                     report.errorAndAbort(
                         s"Cannot derive Schema for field '$fieldName': recursive type in unsupported container ${tycon.show}. " +
-                            "Supported containers: List, Vector, Set, Seq, Chunk, Option, Maybe."
+                            "Supported containers: List, Vector, Set, Seq, Chunk, Option, Maybe, Map[String, _]."
                     )
                 end if
 
-            // Container[Tuple2[X, RecursiveType]] -- e.g. Chunk[(String, Value)]
+            // Container[Tuple2[X, RecursiveType]] or Option[Map[String, RecursiveType]] etc.
             case AppliedType(tycon, List(inner)) if containsRecursiveType(inner, parentType) =>
                 val containerSym = tycon.typeSymbol
                 // Build the inner schema resolver recursively, then wrap in the container
@@ -893,12 +959,43 @@ private[kyo] object FocusMacro:
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
                                 '{ kyo.Schema.seqSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[Any]] }
+                        else if containerSym == TypeRepr.of[Option[Any]].typeSymbol then
+                            (self: Expr[Schema[A]]) =>
+                                val innerSchema = innerResolver(self)
+                                '{
+                                    kyo.Schema.optionSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[
+                                        Any
+                                    ]]
+                                }
+                        else if containerSym == TypeRepr.of[kyo.Maybe[Any]].typeSymbol then
+                            (self: Expr[Schema[A]]) =>
+                                val innerSchema = innerResolver(self)
+                                '{
+                                    kyo.Schema.maybeSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[
+                                        Any
+                                    ]]
+                                }
                         else
                             report.errorAndAbort(
                                 s"Cannot derive Schema for field '$fieldName': recursive type in unsupported container ${tycon.show}. " +
-                                    "Supported containers: List, Vector, Set, Seq, Chunk, Option, Maybe."
+                                    "Supported containers: List, Vector, Set, Seq, Chunk, Option, Maybe, Map[String, _]."
                             )
                         end if
+                end match
+
+            // Map[String, RecursiveType] -- e.g. Map[String, SchemaObject]
+            case AppliedType(tycon, List(keyArg, valueArg))
+                if tycon.typeSymbol == TypeRepr.of[Map[Any, Any]].typeSymbol
+                    && keyArg.dealias =:= TypeRepr.of[String]
+                    && containsRecursiveType(valueArg, parentType) =>
+                val valueResolver = buildRecursiveResolver[A](valueArg, parentType, fieldName)
+                valueArg.asType match
+                    case '[vt] =>
+                        (self: Expr[Schema[A]]) =>
+                            val valueSchema = valueResolver(self)
+                            '{
+                                kyo.Schema.stringMapSchema[vt](using $valueSchema.asInstanceOf[Schema[vt]]).asInstanceOf[Schema[Any]]
+                            }
                 end match
 
             // Tuple2[A, B] where one or both contain RecursiveType
@@ -948,7 +1045,7 @@ private[kyo] object FocusMacro:
                 report.errorAndAbort(
                     s"Cannot derive Schema for field '$fieldName' of type ${fieldType.show}: " +
                         "unsupported recursive type structure. " +
-                        "Recursive references must be inside a supported container (List, Vector, Set, Seq, Chunk, Option, Maybe) or Tuple2."
+                        "Recursive references must be inside a supported container (List, Vector, Set, Seq, Chunk, Option, Maybe, Map[String, _]) or Tuple2."
                 )
         end match
     end buildRecursiveResolver
@@ -1033,6 +1130,74 @@ private[kyo] object FocusMacro:
             (fieldName, idx, resolver)
         }
     end summonFieldSchemaResolvers
+
+    /** Returns, for each field, whether that field's emitted lambda body will consult `subSchemasExpr(idx).serializeRead/Write` at runtime.
+      *
+      * Matches the branch structure in `SerializationMacro.caseClassWriteBody` / `caseClassReadBodyResolved`: the primitive,
+      * primitive-element container, and primitive-arg Result specializations do not consult the per-field sub-schema, so their slots can be
+      * left `null` in the cached array. All other field shapes (Maybe, Option, non-primitive nested, collections of non-primitives, Result
+      * with non-primitive arg, etc.) dispatch through the slot and must hold the resolved schema.
+      */
+    private def computeFieldNeedsSubSchema(using
+        Quotes
+    )(
+        fields: List[quotes.reflect.Symbol],
+        tpe: quotes.reflect.TypeRepr,
+        maybeFields: Set[Int],
+        optionFields: Set[Int]
+    ): List[Boolean] =
+        fields.zipWithIndex.map { (field, idx) =>
+            val fieldType = tpe.memberType(field)
+            if maybeFields.contains(idx) || optionFields.contains(idx) then true
+            else if SerializationMacro.isPrimitiveType(fieldType) then false
+            else if SerializationMacro.containerElementSpec(fieldType).isDefined then false
+            else if SerializationMacro.resultFieldSpec(fieldType).isDefined then false
+            else true
+            end if
+        }
+
+    /** Builds an `Expr[Array[kyo.Schema[Any]]]` of length `needsSubSchema.size` where slot `i` holds the resolved sub-schema for field `i`,
+      * or `null` when the emitted lambda body uses a specialization that does not consult the slot (primitive / primitive-element container
+      * / Result[primitive, primitive]).
+      *
+      * The returned Array is allocated once per Schema materialization and closed over by the write/read lambdas.
+      */
+    private def buildSubSchemasArrayExpr[A](using
+        Quotes,
+        Type[A]
+    )(
+        needsSubSchema: List[Boolean],
+        resolvers: List[SerializationMacro.SchemaResolver[A]],
+        selfSchema: Expr[Schema[A]]
+    ): Expr[Array[kyo.Schema[Any]]] =
+        import quotes.reflect.*
+        val slotExprs: List[Expr[kyo.Schema[Any]]] =
+            needsSubSchema.zipWithIndex.map { (needs, idx) =>
+                if needs then resolvers(idx)(selfSchema)
+                else '{ null.asInstanceOf[kyo.Schema[Any]] }
+            }
+        '{ Array[kyo.Schema[Any]](${ Varargs(slotExprs) }*) }
+    end buildSubSchemasArrayExpr
+
+    /** Variant of [[buildSubSchemasArrayExpr]] used when the macro already has each field's resolved sub-schema `Expr` in hand (the
+      * sealed-trait variant closure pre-resolves via `self`). Slot contents follow the same primitive-vs-generic rule.
+      */
+    private def buildSubSchemasArrayFromResolved(using
+        Quotes
+    )(
+        needsSubSchema: List[Boolean],
+        resolvedSchemas: List[Expr[kyo.Schema[Any]]]
+    ): Expr[Array[kyo.Schema[Any]]] =
+        import quotes.reflect.*
+        val slotExprs: List[Expr[kyo.Schema[Any]]] =
+            needsSubSchema.zipWithIndex.map { (needs, idx) =>
+                if needs then resolvedSchemas(idx)
+                else
+                    '{ null.asInstanceOf[kyo.Schema[Any]] }
+                end if
+            }
+        '{ Array[kyo.Schema[Any]](${ Varargs(slotExprs) }*) }
+    end buildSubSchemasArrayFromResolved
 
     /** Macro implementation for unified `focus` that auto-detects sum vs product navigation.
       *

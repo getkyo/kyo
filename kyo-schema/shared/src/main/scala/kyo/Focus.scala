@@ -115,10 +115,7 @@ final class Focus[Root, Value, Mode[_]] private[kyo] (
         path.nonEmpty && {
             val name = path.last
             schema.sourceFields.exists { sf =>
-                sf.name == name && {
-                    val s = sf.tag.show
-                    s.startsWith("scala.Option[") || s.startsWith("kyo.Maybe[")
-                }
+                sf.name == name && (sf.tag <:< Tag[Option[Any]] || sf.tag <:< Tag[Maybe[Any]])
             }
         }
 

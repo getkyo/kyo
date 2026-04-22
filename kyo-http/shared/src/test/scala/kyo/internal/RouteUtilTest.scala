@@ -8,7 +8,7 @@ class RouteUtilTest extends kyo.Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
-    case class User(name: String, age: Int) derives Json, CanEqual
+    case class User(name: String, age: Int) derives Schema, CanEqual
     case class LoginForm(username: String, password: String) derives HttpFormCodec
 
     // ==================== Route inspection ====================
@@ -756,6 +756,44 @@ class RouteUtilTest extends kyo.Test:
                 case Result.Success(req) =>
                     assert(req.fields.dict.isEmpty)
                 case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        // Unit body short-circuit: RouteUtil.decodeBufferedBodyValue short-circuits
+        // Unit-schema JSON handlers for empty body and JSON "null" body, replacing the
+        // tolerance that the old Json[Unit] typeclass override provided before the Json migration.
+        // bodyJson[Unit] cannot be expressed through the public route DSL (jsonSchema[Unit]
+        // fails at compile time), so the route is constructed by embedding Schema.unitSchema
+        // directly into ContentType.Json.
+        "Unit JSON body - empty body short-circuits to success" in {
+            val unitBodyField: HttpRoute.Field["body" ~ Unit] =
+                HttpRoute.Field.Body("body", HttpRoute.ContentType.Json(Schema.unitSchema, Json.JsonSchema.Bool), "")
+            val route = HttpRoute["body" ~ Unit, Any, Nothing](
+                HttpMethod.POST,
+                HttpRoute.RequestDef["body" ~ Unit](HttpPath.Literal("unit-action"), Chunk(unitBodyField))
+            )
+            val headers = HttpHeaders.empty.add("Content-Type", "application/json")
+
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, Span.empty[Byte]) match
+                case Result.Success(req) =>
+                    assert(req.fields.dict("body") == ())
+                case Result.Failure(err) => fail(s"expected success for empty body, got failure: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        // This test uses the public bodyJson[Unit] DSL (now that PrimitiveKind.Unit and
+        // JsonSchema.Null are in place), verifying the short-circuit for "null" body.
+        "Unit JSON body - null body short-circuits to success via public DSL" in {
+            val route     = HttpRoute.postRaw("unit-action").request(_.bodyJson[Unit])
+            val headers   = HttpHeaders.empty.add("Content-Type", "application/json")
+            val nullBytes = Span.fromUnsafe("null".getBytes("UTF-8"))
+
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, nullBytes) match
+                case Result.Success(req) =>
+                    assert(req.fields.dict("body") == ())
+                case Result.Failure(err) => fail(s"expected success for null body, got failure: $err")
                 case p: Result.Panic     => throw p.exception
             end match
         }

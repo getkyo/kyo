@@ -7,7 +7,7 @@ class HttpServerTest extends Test:
 
     import HttpPath.*
 
-    case class User(id: Int, name: String) derives Json, CanEqual
+    case class User(id: Int, name: String) derives Schema, CanEqual
     case class LoginForm(username: String, password: String) derives HttpFormCodec, CanEqual
 
     val client = kyo.internal.HttpPlatformBackend.client
@@ -597,6 +597,7 @@ class HttpServerTest extends Test:
                 }
             }
         }
+
     }
 
     "response encoding" - {
@@ -911,7 +912,7 @@ class HttpServerTest extends Test:
         }
 
         "Abort.fail with declared error mapping returns mapped status and body" in run {
-            case class ApiError(error: String) derives Json, CanEqual
+            case class ApiError(error: String) derives Schema, CanEqual
             val route = HttpRoute.getRaw("items" / HttpPath.Capture[Int]("id"))
                 .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
             val ep = route.handler { req =>
@@ -926,7 +927,7 @@ class HttpServerTest extends Test:
         }
 
         "Abort.fail with unmatched error type still returns 500" in run {
-            case class ApiError(error: String) derives Json, CanEqual
+            case class ApiError(error: String) derives Schema, CanEqual
             case class OtherError(msg: String)
             val route = HttpRoute.getRaw("items")
                 .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
@@ -941,8 +942,8 @@ class HttpServerTest extends Test:
         }
 
         "Abort.fail with multiple error mappings selects correct one" in run {
-            case class NotFoundError(error: String) derives Json, CanEqual
-            case class ValidationError(error: String) derives Json, CanEqual
+            case class NotFoundError(error: String) derives Schema, CanEqual
+            case class ValidationError(error: String) derives Schema, CanEqual
             val route = HttpRoute.getRaw("items")
                 .response(
                     _.bodyJson[User]
@@ -961,8 +962,8 @@ class HttpServerTest extends Test:
         }
 
         "Abort.fail with first of multiple error mappings" in run {
-            case class NotFoundError(error: String) derives Json, CanEqual
-            case class ValidationError(error: String) derives Json, CanEqual
+            case class NotFoundError(error: String) derives Schema, CanEqual
+            case class ValidationError(error: String) derives Schema, CanEqual
             val route = HttpRoute.getRaw("items2")
                 .response(
                     _.bodyJson[User]
@@ -981,7 +982,7 @@ class HttpServerTest extends Test:
         }
 
         "successful handler ignores error mappings" in run {
-            case class ApiError(error: String) derives Json, CanEqual
+            case class ApiError(error: String) derives Schema, CanEqual
             val route = HttpRoute.getRaw("ok-with-errors")
                 .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
             val ep = route.handler { _ =>
@@ -996,7 +997,7 @@ class HttpServerTest extends Test:
         }
 
         "route-declared status combined with error mapping - success path" in run {
-            case class ApiError(error: String) derives Json, CanEqual
+            case class ApiError(error: String) derives Schema, CanEqual
             val route = HttpRoute.getRaw("create-with-error")
                 .response(
                     _.bodyJson[User]
@@ -1014,7 +1015,7 @@ class HttpServerTest extends Test:
         }
 
         "route-declared status combined with error mapping - error path" in run {
-            case class ApiError(error: String) derives Json, CanEqual
+            case class ApiError(error: String) derives Schema, CanEqual
             val route = HttpRoute.getRaw("create-with-error2")
                 .response(
                     _.bodyJson[User]
@@ -1033,7 +1034,7 @@ class HttpServerTest extends Test:
         }
 
         "Halt still works alongside error mappings" in run {
-            case class ApiError(error: String) derives Json, CanEqual
+            case class ApiError(error: String) derives Schema, CanEqual
             val route = HttpRoute.getRaw("halt-test")
                 .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
             val ep = route.handler { _ =>
@@ -1047,7 +1048,7 @@ class HttpServerTest extends Test:
         }
 
         "error response body is valid JSON" in run {
-            case class ApiError(code: Int, message: String) derives Json, CanEqual
+            case class ApiError(code: Int, message: String) derives Schema, CanEqual
             val route = HttpRoute.getRaw("json-error")
                 .response(_.bodyJson[User].error[ApiError](HttpStatus.BadRequest))
             val ep = route.handler { _ =>
@@ -1064,7 +1065,7 @@ class HttpServerTest extends Test:
         }
 
         "error response has Content-Type application/json" in run {
-            case class ApiError(error: String) derives Json, CanEqual
+            case class ApiError(error: String) derives Schema, CanEqual
             val route = HttpRoute.getRaw("ct-error")
                 .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
             val ep = route.handler { _ =>
@@ -1734,10 +1735,10 @@ class HttpServerTest extends Test:
 
     "convenience method error responses" - {
 
-        case class Item(id: Int, name: String) derives Json, CanEqual
-        case class CreateItem(name: String) derives Json, CanEqual
-        case class ConflictError(error: String, existingId: Int) derives Json, CanEqual
-        case class ValidationError(error: String, field: String) derives Json, CanEqual
+        case class Item(id: Int, name: String) derives Schema, CanEqual
+        case class CreateItem(name: String) derives Schema, CanEqual
+        case class ConflictError(error: String, existingId: Int) derives Schema, CanEqual
+        case class ValidationError(error: String, field: String) derives Schema, CanEqual
 
         "postJson receives 409 typed error — error body should be accessible" in run {
             val route = HttpRoute
@@ -2926,7 +2927,7 @@ class HttpServerTest extends Test:
         }
 
         "Abort.fail with unmatched error type returns 500 with non-empty body" in run {
-            case class ApiError(error: String) derives Json, CanEqual
+            case class ApiError(error: String) derives Schema, CanEqual
             case class OtherError(msg: String)
             val route = HttpRoute.getRaw("unmatched-body")
                 .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
@@ -2942,7 +2943,7 @@ class HttpServerTest extends Test:
         }
 
         "unmatched Abort.fail does not leak internal class names in body" in run {
-            case class ApiError(error: String) derives Json, CanEqual
+            case class ApiError(error: String) derives Schema, CanEqual
             case class InternalDetail(secret: String)
             val route = HttpRoute.getRaw("leak-test")
                 .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
@@ -2981,7 +2982,7 @@ class HttpServerTest extends Test:
         }
 
         "unmatched error response has Content-Type application/json" in run {
-            case class ApiError(error: String) derives Json, CanEqual
+            case class ApiError(error: String) derives Schema, CanEqual
             case class OtherError(msg: String)
             val route = HttpRoute.getRaw("ct-unmatched")
                 .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
@@ -3002,7 +3003,7 @@ class HttpServerTest extends Test:
         }
 
         "unmatched error response body is valid JSON" in run {
-            case class ApiError(error: String) derives Json, CanEqual
+            case class ApiError(error: String) derives Schema, CanEqual
             case class OtherError(msg: String)
             val route = HttpRoute.getRaw("json-unmatched")
                 .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
@@ -3187,7 +3188,7 @@ class HttpServerTest extends Test:
         }
 
         "304 on route with error mapping does not leak error Content-Type" in run {
-            case class ApiError(error: String) derives Json, CanEqual
+            case class ApiError(error: String) derives Schema, CanEqual
             val route = HttpRoute.getRaw("nm-err")
                 .request(_.headerOpt[String]("if-none-match"))
                 .response(_.bodyText.error[ApiError](HttpStatus.NotFound))

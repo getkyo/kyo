@@ -70,7 +70,7 @@ final class FlowEngine private (
                                     case Present(value) =>
                                         val valid =
                                             try
-                                                discard(inputMeta.json.encode(value)); true
+                                                discard(inputMeta.schema.encodeString[Json](value)); true
                                             catch case _: Throwable => false
                                         if !valid then
                                             Abort.fail[FlowSignalTypeMismatchException](FlowSignalTypeMismatchException(
@@ -81,7 +81,7 @@ final class FlowEngine private (
                                         else
                                             store.putField[Any](eid, inputMeta.name, value)(using
                                                 inputMeta.tag,
-                                                inputMeta.json
+                                                inputMeta.schema
                                             )
                                         end if
                                     case _ => ()
@@ -151,7 +151,7 @@ final class FlowEngine private (
           * Fails if the execution is terminal, the input name doesn't exist in the workflow definition, the type doesn't match, or the
           * input was already delivered. Delivery is atomic (exactly-once via putFieldIfAbsent).
           */
-        def signal[V: Tag: Json](
+        def signal[V: Tag: Schema](
             executionId: Flow.Id.Execution,
             name: String,
             value: V
@@ -571,7 +571,7 @@ object FlowEngine:
       * query the execution without needing to pass the execution ID separately.
       */
     final class Handle(val executionId: Flow.Id.Execution, engine: FlowEngine):
-        def signal[V: Tag: Json](name: String, value: V)(using
+        def signal[V: Tag: Schema](name: String, value: V)(using
             Frame
         ): Unit < (Async & Abort[FlowExecutionStateException | FlowWorkflowNotRegisteredException | FlowSignalException]) =
             engine.executions.signal[V](executionId, name, value)
@@ -620,11 +620,11 @@ object FlowEngine:
         inputs: Seq[WorkflowInfo.InputInfo],
         outputs: Seq[String],
         structuralHash: String
-    ) derives Json
+    ) derives Schema
 
     object WorkflowInfo:
-        case class NodeInfo(name: String, nodeType: String, tag: Tag[Any], location: String, meta: Flow.Meta) derives Json
-        case class InputInfo(name: String, tag: Tag[Any]) derives Json
+        case class NodeInfo(name: String, nodeType: String, tag: Tag[Any], location: String, meta: Flow.Meta) derives Schema
+        case class InputInfo(name: String, tag: Tag[Any]) derives Schema
 
         private[kyo] def of(id: String, flow: Flow[?, ?, ?]): WorkflowInfo =
             val inputMetas  = FlowLint.inputMetas(flow)
@@ -633,9 +633,9 @@ object FlowEngine:
             val workflowMeta = FlowFold(flow)(new FlowVisitorCollect[Maybe[Flow.Meta]](Maybe.empty, (a, b) => a.orElse(b)):
                 override def onInit(name: String, frame: Frame, meta: Flow.Meta) = Maybe(meta)).getOrElse(Flow.Meta())
             val nodes = FlowFold(flow)(new FlowVisitorCollect[Seq[NodeInfo]](Seq.empty, _ ++ _):
-                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) =
+                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                     Seq(NodeInfo(name, "output", Tag[V].erased, frame.snippetShort, meta))
-                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) =
+                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                     Seq(NodeInfo(name, "input", Tag[V].erased, frame.snippetShort, meta))
                 override def onStep(name: String, frame: Frame, meta: Flow.Meta) =
                     Seq(NodeInfo(name, "step", Tag[Unit].erased, frame.snippetShort, meta))
@@ -694,9 +694,9 @@ object FlowEngine:
                     ((nodeType == NodeType.Loop || nodeType == NodeType.ForEach) &&
                         completedSteps.exists(IterationName.isIteration(_, name)))
             val rawNodes = FlowFold(flow)(new FlowVisitor[Chunk[NodeProgress]]:
-                def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) =
+                def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                     Chunk(NodeProgress(name, NodeType.Input, NodeStatus.Pending, frame.snippetShort))
-                def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) =
+                def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                     Chunk(NodeProgress(name, NodeType.Output, NodeStatus.Pending, frame.snippetShort))
                 def onStep(name: String, frame: Frame, meta: Flow.Meta) =
                     Chunk(NodeProgress(name, NodeType.Step, NodeStatus.Pending, frame.snippetShort))

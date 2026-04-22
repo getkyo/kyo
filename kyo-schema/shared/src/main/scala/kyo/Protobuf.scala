@@ -47,8 +47,8 @@ object Protobuf:
       */
     def decode[A](
         input: Span[Byte],
-        maxDepth: Int = 512,
-        maxCollectionSize: Int = 100000
+        maxDepth: Int = Json.DefaultMaxDepth,
+        maxCollectionSize: Int = Json.DefaultMaxCollectionSize
     )(using protobuf: Protobuf, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         val reader = protobuf.newReader(input)
         reader.resetLimits(maxDepth, maxCollectionSize)
@@ -88,7 +88,7 @@ object Protobuf:
             /** Accumulated state threaded through collection. */
             case class State(seen: Set[String], messages: List[String])
 
-            def collect(tpe: Structure.Type, state: State): State =
+            def collect(tpe: Structure.Type.Product | Structure.Type.Sum, state: State): State =
                 val name = tpe.name
                 if state.seen.contains(name) then state
                 else
@@ -99,7 +99,9 @@ object Protobuf:
                             sb.append(s"message $name {\n")
                             sb.append("  oneof value {\n")
                             val afterVariants = variants.toList.zipWithIndex.foldLeft(visited) { case (acc, (variant, idx)) =>
-                                val nextAcc   = collect(variant.variantType, acc)
+                                val nextAcc = variant.variantType match
+                                    case ps: (Structure.Type.Product | Structure.Type.Sum) => collect(ps, acc)
+                                    case _                                                 => acc
                                 val childName = variant.name
                                 val fieldName = childName.head.toLower +: childName.tail
                                 sb.append(s"    $childName $fieldName = ${idx + 1};\n")
@@ -119,8 +121,6 @@ object Protobuf:
                             }
                             sb.append("}\n")
                             afterFields.copy(messages = sb.toString :: afterFields.messages)
-
-                        case _ => visited
                     end match
                 end if
             end collect
@@ -128,64 +128,127 @@ object Protobuf:
             def protoFieldDecl(name: String, tpe: Structure.Type, fieldNumber: Int, state: State): (String, State) =
                 tpe match
                     case p: Structure.Type.Primitive =>
-                        val typeName = primitiveProtoName(p.name)
+                        val typeName = primitiveProtoName(p.kind)
                         (s"$typeName $name = $fieldNumber;", state)
 
                     case Structure.Type.Optional(_, _, inner) =>
-                        val (innerType, nextState) = protoTypeName(inner, state)
-                        (s"optional $innerType $name = $fieldNumber;", nextState)
+                        inner match
+                            case _: Structure.Type.Optional =>
+                                throw new IllegalArgumentException(
+                                    s"proto3 does not support nested Optional (Option[Option[_]]) in field '$name'"
+                                )
+                            case (_: Structure.Type.Primitive) | (_: Structure.Type.Collection) |
+                                (_: Structure.Type.Mapping) | (_: Structure.Type.Product) | (_: Structure.Type.Sum) =>
+                                val (innerType, nextState) = protoTypeName(inner, state)
+                                (s"optional $innerType $name = $fieldNumber;", nextState)
 
                     case Structure.Type.Collection(_, _, elem) =>
-                        val (innerType, nextState) = protoTypeName(elem, state)
-                        (s"repeated $innerType $name = $fieldNumber;", nextState)
+                        elem match
+                            case _: Structure.Type.Optional =>
+                                throw new IllegalArgumentException(
+                                    s"proto3 does not support List[Option[_]] (field '$name'): use a wrapper message instead"
+                                )
+                            case _: Structure.Type.Collection =>
+                                throw new IllegalArgumentException(
+                                    s"proto3 does not support nested repeated fields (List[List[_]]) in field '$name': use a wrapper message instead"
+                                )
+                            case _: Structure.Type.Mapping =>
+                                throw new IllegalArgumentException(
+                                    s"proto3 does not support List[Map[_, _]] (field '$name'): use a wrapper message instead"
+                                )
+                            case (_: Structure.Type.Primitive) | (_: Structure.Type.Product) | (_: Structure.Type.Sum) =>
+                                val (innerType, nextState) = protoTypeName(elem, state)
+                                (s"repeated $innerType $name = $fieldNumber;", nextState)
 
-                    case Structure.Type.Product(typeName, _, _, _) =>
-                        val nextState = collect(tpe, state)
-                        (s"$typeName $name = $fieldNumber;", nextState)
+                    case Structure.Type.Mapping(_, _, key, value) =>
+                        val (keyName, s1) = protoTypeName(key, state)
+                        val (valName, s2) = protoTypeName(value, s1)
+                        (s"map<$keyName, $valName> $name = $fieldNumber;", s2)
 
-                    case Structure.Type.Sum(typeName, _, _, _, _) =>
-                        val nextState = collect(tpe, state)
-                        (s"$typeName $name = $fieldNumber;", nextState)
+                    case p: Structure.Type.Product =>
+                        val nextState = collect(p, state)
+                        (s"${p.name} $name = $fieldNumber;", nextState)
 
-                    case _ =>
-                        val nextState = collect(tpe, state)
-                        (s"${tpe.name} $name = $fieldNumber;", nextState)
+                    case s: Structure.Type.Sum =>
+                        val nextState = collect(s, state)
+                        (s"${s.name} $name = $fieldNumber;", nextState)
                 end match
             end protoFieldDecl
 
             def protoTypeName(tpe: Structure.Type, state: State): (String, State) =
                 tpe match
                     case p: Structure.Type.Primitive =>
-                        (primitiveProtoName(p.name), state)
-                    case _ =>
-                        val nextState = collect(tpe, state)
-                        (tpe.name, nextState)
+                        (primitiveProtoName(p.kind), state)
+
+                    case Structure.Type.Optional(_, _, inner) =>
+                        // Optional-as-type-name (inside a repeated/map context) is not valid in proto3
+                        throw new IllegalArgumentException(
+                            s"proto3 does not support Optional as an element type in a repeated or map field"
+                        )
+
+                    case Structure.Type.Collection(_, _, elem) =>
+                        // Collection-as-type-name occurs when used inside another repeated/map — not valid in proto3
+                        throw new IllegalArgumentException(
+                            s"proto3 does not support nested repeated fields (List[List[_]] or map value List[_]): use a wrapper message instead"
+                        )
+
+                    case Structure.Type.Mapping(_, _, _, _) =>
+                        // Mapping-as-type-name occurs when used as an element inside repeated/map — not valid in proto3
+                        throw new IllegalArgumentException(
+                            s"proto3 does not support nested Mapping as a type name (map value Map[_, _]): use a wrapper message instead"
+                        )
+
+                    case p: Structure.Type.Product =>
+                        val nextState = collect(p, state)
+                        (p.name, nextState)
+
+                    case s: Structure.Type.Sum =>
+                        val nextState = collect(s, state)
+                        (s.name, nextState)
                 end match
             end protoTypeName
 
-            def primitiveProtoName(name: String): String =
-                name match
-                    case "Int"     => "sint32"
-                    case "Long"    => "sint64"
-                    case "Double"  => "double"
-                    case "Float"   => "float"
-                    case "String"  => "string"
-                    case "Boolean" => "bool"
-                    case "Short"   => "sint32"
-                    case "Byte"    => "sint32"
-                    case "Char"    => "sint32"
-                    case _         => "string"
+            /** Protobuf type name for a primitive kind.
+              *
+              * Note: proto3 does not define an arbitrary-precision numeric type. BigInt and BigDecimal are serialized as `string` to
+              * preserve the exact value during round-trips. This is a deliberate mapping, not a silent default.
+              *
+              * Note: proto3 has no Unit (void) scalar type. Unit-typed fields are rejected with an IllegalArgumentException, consistent
+              * with Phase 8's rejection of other incompatible shapes (nested Optional, nested Collection, etc.).
+              */
+            def primitiveProtoName(kind: Structure.PrimitiveKind): String =
+                kind match
+                    case Structure.PrimitiveKind.Int | Structure.PrimitiveKind.Short |
+                        Structure.PrimitiveKind.Byte | Structure.PrimitiveKind.Char => "sint32"
+                    case Structure.PrimitiveKind.Long                                        => "sint64"
+                    case Structure.PrimitiveKind.Double                                      => "double"
+                    case Structure.PrimitiveKind.Float                                       => "float"
+                    case Structure.PrimitiveKind.String                                      => "string"
+                    case Structure.PrimitiveKind.Boolean                                     => "bool"
+                    case Structure.PrimitiveKind.BigInt | Structure.PrimitiveKind.BigDecimal => "string"
+                    case Structure.PrimitiveKind.Unit =>
+                        throw new IllegalArgumentException(
+                            "Unit-typed fields are not supported in Protobuf; omit the field or wrap in Option[T]"
+                        )
                 end match
             end primitiveProtoName
 
-            val finalState = collect(rt, State(Set.empty, Nil))
-            val sb         = new StringBuilder
-            sb.append("syntax = \"proto3\";\n\n")
-            finalState.messages.reverse.foreach { msg =>
-                sb.append(msg)
-                sb.append('\n')
-            }
-            sb.toString.trim
+            rt match
+                case ps: (Structure.Type.Product | Structure.Type.Sum) =>
+                    val finalState = collect(ps, State(Set.empty, Nil))
+                    val sb         = new StringBuilder
+                    sb.append("syntax = \"proto3\";\n\n")
+                    finalState.messages.reverse.foreach { msg =>
+                        sb.append(msg)
+                        sb.append('\n')
+                    }
+                    sb.toString.trim
+                case (_: Structure.Type.Primitive) | (_: Structure.Type.Collection) |
+                    (_: Structure.Type.Optional) | (_: Structure.Type.Mapping) =>
+                    throw new IllegalArgumentException(
+                        s"Protobuf.protoSchema requires a case class or sealed trait as the top-level type, got: ${rt.name}"
+                    )
+            end match
         end fromStructure
 
     end ProtoSchema

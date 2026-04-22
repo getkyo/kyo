@@ -8,7 +8,7 @@ class HttpRouterTest extends kyo.Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
-    case class User(name: String, age: Int) derives Json
+    case class User(name: String, age: Int) derives Schema
 
     def mkEndpoint(route: HttpRoute[?, ?, ?]): HttpHandler[?, ?, ?] =
         HttpHandler.init(route.asInstanceOf[HttpRoute[Any, Any, Any]])(req => HttpResponse.ok)

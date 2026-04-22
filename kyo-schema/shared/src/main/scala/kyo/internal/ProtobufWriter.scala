@@ -26,9 +26,13 @@ final class ProtobufWriter extends Writer:
 
     private var bufferStack: List[java.io.ByteArrayOutputStream] =
         List(new java.io.ByteArrayOutputStream(256))
-    private var currentFieldNumber: Int  = 0
-    private var repeatedFieldNumber: Int = 0
-    private var inArray: Boolean         = false
+    private var currentFieldNumber: Int = 0
+    // Stack of field numbers captured at each nested objectStart. Pops in objectEnd
+    // and is used to emit the outer message's tag, so writes to inner fields don't
+    // clobber the nested-message field number before we length-prefix its bytes.
+    private var fieldNumberStack: List[Int] = Nil
+    private var repeatedFieldNumber: Int    = 0
+    private var inArray: Boolean            = false
 
     // Field ID overrides for interop with existing .proto definitions
     private var fieldIdOverrides: Map[String, Int] = Map.empty
@@ -51,7 +55,10 @@ final class ProtobufWriter extends Writer:
 
     def objectStart(name: String, size: Int): Unit =
         if currentFieldNumber > 0 then
-            // Nested message: push a new buffer. We'll length-prefix it at objectEnd.
+            // Nested message: push a new buffer and remember the outer field number
+            // so objectEnd can length-prefix the nested bytes under the correct tag,
+            // even after inner fieldBytes calls overwrite currentFieldNumber.
+            fieldNumberStack = currentFieldNumber :: fieldNumberStack
             bufferStack = new java.io.ByteArrayOutputStream(128) :: bufferStack
     end objectStart
 
@@ -59,10 +66,18 @@ final class ProtobufWriter extends Writer:
         if bufferStack.size > 1 then
             val nested = current.toByteArray
             bufferStack = bufferStack.tail
-            // Write tag for nested message field
-            writeTag(currentFieldNumber, LengthDelimited)
+            val outerFieldNumber = fieldNumberStack.head
+            fieldNumberStack = fieldNumberStack.tail
+            // Write tag for nested message field using the field number captured at
+            // objectStart, not the currentFieldNumber (which may have been clobbered
+            // by inner fieldBytes calls during the nested write).
+            writeTag(outerFieldNumber, LengthDelimited)
             writeVarint(nested.length.toLong)
             current.write(nested)
+            // Restore the outer field number so sibling writes after this objectEnd
+            // continue to use the parent message's currentFieldNumber (e.g. repeated
+            // nested messages in a List field share the same field number).
+            currentFieldNumber = outerFieldNumber
     end objectEnd
 
     def fieldBytes(nameBytes: Array[Byte], fieldId: Int): Unit =

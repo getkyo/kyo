@@ -17,8 +17,8 @@ class ChangesetTest extends Test:
         val d      = Changeset(alice, alice2)
         assert(!d.isEmpty)
         assert(d.operations.exists {
-            case Changeset.Op.StringPatch(Chunk("name"), _, _, "Bob") => true
-            case _                                                    => false
+            case Changeset.Patch.StringPatch(Chunk("name"), _, _, "Bob") => true
+            case _                                                       => false
         })
     }
 
@@ -32,7 +32,7 @@ class ChangesetTest extends Test:
     "numeric field change produces NumericDelta with correct difference" in {
         val alice2 = MTPerson("Alice", 35)
         val d      = Changeset(alice, alice2)
-        val numOps = d.operations.collect { case op: Changeset.Op.NumericDelta => op }
+        val numOps = d.operations.collect { case op: Changeset.Patch.NumericDelta => op }
         assert(numOps.size == 1)
         assert(numOps.head.delta == BigDecimal(5))
         assert(numOps.head.fieldPath == Chunk("age"))
@@ -67,7 +67,7 @@ class ChangesetTest extends Test:
         val pa1       = MTPersonAddr("Alice", 30, addr1)
         val pa2       = MTPersonAddr("Alice", 30, addr2)
         val d         = Changeset(pa1, pa2)
-        val nestedOps = d.operations.collect { case op: Changeset.Op.Nested => op }
+        val nestedOps = d.operations.collect { case op: Changeset.Patch.Nested => op }
         assert(nestedOps.size == 1)
         assert(nestedOps.head.fieldPath == Chunk("address"))
         assert(nestedOps.head.operations.nonEmpty)
@@ -88,7 +88,7 @@ class ChangesetTest extends Test:
         val o1     = MTOrder(1, List(MTItem("a", 1.0)))
         val o2     = MTOrder(1, List(MTItem("a", 1.0), MTItem("b", 2.0)))
         val d      = Changeset(o1, o2)
-        val seqOps = d.operations.collect { case op: Changeset.Op.SequencePatch => op }
+        val seqOps = d.operations.collect { case op: Changeset.Patch.SequencePatch => op }
         assert(seqOps.size == 1)
         assert(seqOps.head.added.nonEmpty)
     }
@@ -116,7 +116,7 @@ class ChangesetTest extends Test:
         val opt1  = MTOptional("Alice", Some("Ali"))
         val opt2  = MTOptional("Alice", None)
         val d     = Changeset(opt1, opt2)
-        val rmOps = d.operations.collect { case op: Changeset.Op.RemoveField => op }
+        val rmOps = d.operations.collect { case op: Changeset.Patch.RemoveField => op }
         assert(rmOps.size == 1)
         assert(rmOps.head.fieldPath == Chunk("nickname"))
     }
@@ -125,7 +125,7 @@ class ChangesetTest extends Test:
     "removed field produces RemoveField" in {
         // Simulate by testing the RemoveField op directly via applyTo on a value
         // where we remove a field from the Structure.Value tree
-        val ops       = Chunk(Changeset.Op.RemoveField(Chunk("age")))
+        val ops       = Chunk(Changeset.Patch.RemoveField(Chunk("age")))
         val changeset = new Changeset[MTPerson](ops)
         // The RemoveField should remove the "age" field from the record representation
         val schema = summon[Schema[MTPerson]]
@@ -143,7 +143,7 @@ class ChangesetTest extends Test:
     "string field partial edit produces StringPatch" in {
         val alice2 = MTPerson("Bobby", 30)
         val d      = Changeset(alice, alice2)
-        val strOps = d.operations.collect { case op: Changeset.Op.StringPatch => op }
+        val strOps = d.operations.collect { case op: Changeset.Patch.StringPatch => op }
         assert(strOps.size == 1)
         assert(strOps.head.fieldPath == Chunk("name"))
         assert(strOps.head.insert == "Bobby")
@@ -158,37 +158,37 @@ class ChangesetTest extends Test:
         val d  = Changeset(m1, m2)
         assert(!d.isEmpty)
         // Key "b" removed, key "c" added — changeset should have operations reflecting this
-        val nestedOps = d.operations.collect { case op: Changeset.Op.Nested => op }
+        val nestedOps = d.operations.collect { case op: Changeset.Patch.Nested => op }
         assert(nestedOps.size == 1)
         assert(nestedOps.head.fieldPath == Chunk("data"))
         val innerOps = nestedOps.head.operations
         // Should have a RemoveField for "b" and SetField for "c"
         assert(innerOps.exists {
-            case Changeset.Op.RemoveField(Seq("b")) => true
-            case _                                  => false
+            case Changeset.Patch.RemoveField(Seq("b")) => true
+            case _                                     => false
         })
         assert(innerOps.exists {
-            case Changeset.Op.SetField(Seq("c"), _) => true
-            case _                                  => false
+            case Changeset.Patch.SetField(Seq("c"), _) => true
+            case _                                     => false
         })
     }
 
     // 17. StringPatch.applyTo inserts/deletes/replaces character range correctly
     "StringPatch applyTo inserts deletes replaces correctly" in {
         // Test: replace "Alice" with "Bob" via StringPatch (offset=0, deleteCount=5, insert="Bob")
-        val d1 = new Changeset[MTPerson](Chunk(Changeset.Op.StringPatch(Chunk("name"), 0, 5, "Bob")))
+        val d1 = new Changeset[MTPerson](Chunk(Changeset.Patch.StringPatch(Chunk("name"), 0, 5, "Bob")))
         assert(d1.applyTo(alice).getOrThrow.name == "Bob")
 
         // Test: insert at position 5 (append)
-        val d2 = new Changeset[MTPerson](Chunk(Changeset.Op.StringPatch(Chunk("name"), 5, 0, "XX")))
+        val d2 = new Changeset[MTPerson](Chunk(Changeset.Patch.StringPatch(Chunk("name"), 5, 0, "XX")))
         assert(d2.applyTo(alice).getOrThrow.name == "AliceXX")
 
         // Test: delete middle characters
-        val d3 = new Changeset[MTPerson](Chunk(Changeset.Op.StringPatch(Chunk("name"), 1, 3, "")))
+        val d3 = new Changeset[MTPerson](Chunk(Changeset.Patch.StringPatch(Chunk("name"), 1, 3, "")))
         assert(d3.applyTo(alice).getOrThrow.name == "Ae")
 
         // Test: replace middle
-        val d4 = new Changeset[MTPerson](Chunk(Changeset.Op.StringPatch(Chunk("name"), 1, 2, "ZZ")))
+        val d4 = new Changeset[MTPerson](Chunk(Changeset.Patch.StringPatch(Chunk("name"), 1, 2, "ZZ")))
         assert(d4.applyTo(alice).getOrThrow.name == "AZZce")
     }
 
@@ -210,12 +210,12 @@ class ChangesetTest extends Test:
         val changeset = Changeset(alice, updated)
 
         // Encode operations to JSON
-        given Schema[Chunk[Changeset.Op]] = summon[Schema[Chunk[Changeset.Op]]]
-        val json                          = Json.encode(changeset.operations)
+        given Schema[Chunk[Changeset.Patch]] = summon[Schema[Chunk[Changeset.Patch]]]
+        val json                             = Json.encode(changeset.operations)
         assert(json.nonEmpty)
 
         // Decode operations back from JSON
-        val decoded = Json.decode[Chunk[Changeset.Op]](json).getOrThrow
+        val decoded = Json.decode[Chunk[Changeset.Patch]](json).getOrThrow
 
         // Build a new Changeset from decoded ops and apply
         val roundTripped = new Changeset[MTPerson](decoded)
@@ -230,17 +230,17 @@ class ChangesetTest extends Test:
         val changeset = Changeset(alice, updated)
 
         // Verify we have a NumericDelta operation
-        val numOps = changeset.operations.collect { case op: Changeset.Op.NumericDelta => op }
+        val numOps = changeset.operations.collect { case op: Changeset.Patch.NumericDelta => op }
         assert(numOps.size == 1)
         assert(numOps.head.delta == BigDecimal(12))
 
         // Encode and decode
-        given Schema[Chunk[Changeset.Op]] = summon[Schema[Chunk[Changeset.Op]]]
-        val json                          = Json.encode(changeset.operations)
-        val decoded                       = Json.decode[Chunk[Changeset.Op]](json).getOrThrow
+        given Schema[Chunk[Changeset.Patch]] = summon[Schema[Chunk[Changeset.Patch]]]
+        val json                             = Json.encode(changeset.operations)
+        val decoded                          = Json.decode[Chunk[Changeset.Patch]](json).getOrThrow
 
         // Verify the decoded NumericDelta is correct
-        val decodedNumOps = decoded.collect { case op: Changeset.Op.NumericDelta => op }
+        val decodedNumOps = decoded.collect { case op: Changeset.Patch.NumericDelta => op }
         assert(decodedNumOps.size == 1)
         assert(decodedNumOps.head.delta == BigDecimal(12))
         assert(decodedNumOps.head.fieldPath == Chunk("age"))
@@ -256,7 +256,7 @@ class ChangesetTest extends Test:
         val changeset = Changeset(alice, updated)
 
         // Verify we have a StringPatch operation with optimized prefix/suffix trimming
-        val strOps = changeset.operations.collect { case op: Changeset.Op.StringPatch => op }
+        val strOps = changeset.operations.collect { case op: Changeset.Patch.StringPatch => op }
         assert(strOps.size == 1)
         assert(strOps.head.fieldPath == Chunk("name"))
         // "Alice" -> "Charlie": common suffix "e", so insert is "Charli" (not "Charlie")
@@ -265,12 +265,12 @@ class ChangesetTest extends Test:
         assert(strOps.head.deleteCount == 4)
 
         // Encode and decode
-        given Schema[Chunk[Changeset.Op]] = summon[Schema[Chunk[Changeset.Op]]]
-        val json                          = Json.encode(changeset.operations)
-        val decoded                       = Json.decode[Chunk[Changeset.Op]](json).getOrThrow
+        given Schema[Chunk[Changeset.Patch]] = summon[Schema[Chunk[Changeset.Patch]]]
+        val json                             = Json.encode(changeset.operations)
+        val decoded                          = Json.decode[Chunk[Changeset.Patch]](json).getOrThrow
 
         // Verify the decoded StringPatch survives round-trip
-        val decodedStrOps = decoded.collect { case op: Changeset.Op.StringPatch => op }
+        val decodedStrOps = decoded.collect { case op: Changeset.Patch.StringPatch => op }
         assert(decodedStrOps.size == 1)
         assert(decodedStrOps.head.fieldPath == Chunk("name"))
 
@@ -286,8 +286,8 @@ class ChangesetTest extends Test:
     "applyTo returns failure Result on corrupted operations" in {
         // Previously applyTo called getOrThrow and would throw on corrupted operations.
         // Now it returns Result, so corrupted operations produce a failure instead of throwing.
-        val badOps = Chunk[Changeset.Op](
-            Changeset.Op.SetField(Chunk("age"), Structure.Value.Str("not-a-number"))
+        val badOps = Chunk[Changeset.Patch](
+            Changeset.Patch.SetField(Chunk("age"), Structure.Value.Str("not-a-number"))
         )
         val badChangeset = new Changeset[MTPerson](badOps)
 
@@ -305,7 +305,7 @@ class ChangesetTest extends Test:
         val item1  = MTItem("widget", 9.99)
         val item2  = MTItem("widget", 14.99)
         val d      = Changeset(item1, item2)
-        val numOps = d.operations.collect { case op: Changeset.Op.NumericDelta => op }
+        val numOps = d.operations.collect { case op: Changeset.Patch.NumericDelta => op }
         assert(numOps.size == 1)
         assert(numOps.head.fieldPath == Chunk("price"))
         assert((numOps.head.delta - BigDecimal("5.0")).abs < BigDecimal("0.0001"))
@@ -316,7 +316,7 @@ class ChangesetTest extends Test:
         val v1     = MTBigDecimalField("acct", BigDecimal("100.50"))
         val v2     = MTBigDecimalField("acct", BigDecimal("250.75"))
         val d      = Changeset(v1, v2)
-        val numOps = d.operations.collect { case op: Changeset.Op.NumericDelta => op }
+        val numOps = d.operations.collect { case op: Changeset.Patch.NumericDelta => op }
         assert(numOps.size == 1)
         assert(numOps.head.fieldPath == Chunk("amount"))
         assert(numOps.head.delta == BigDecimal("150.25"))
@@ -327,7 +327,7 @@ class ChangesetTest extends Test:
         val o1     = MTOrder(42, List(MTItem("a", 1.0), MTItem("b", 2.0), MTItem("c", 3.0)))
         val o2     = MTOrder(42, List(MTItem("a", 1.0), MTItem("c", 3.0)))
         val d      = Changeset(o1, o2)
-        val seqOps = d.operations.collect { case op: Changeset.Op.SequencePatch => op }
+        val seqOps = d.operations.collect { case op: Changeset.Patch.SequencePatch => op }
         assert(seqOps.size == 1)
         // "b" is at index 1 in the old list
         assert(seqOps.head.removed.contains(1))
@@ -360,7 +360,7 @@ class ChangesetTest extends Test:
         // Compute ops using applyOps (via a wrapper)
         val ops = Changeset.applyOps(
             Structure.Value.MapEntries(Chunk((k1, v1), (k2, v2))),
-            Chunk(Changeset.Op.MapPatch(
+            Chunk(Changeset.Patch.MapPatch(
                 Chunk.empty,
                 added = Chunk((k3, v3)),
                 removed = Chunk(k2),
@@ -391,7 +391,7 @@ class ChangesetTest extends Test:
         // add k3→vC, remove k1, update k2→vBprime
         val result = Changeset.applyOps(
             initial,
-            Chunk(Changeset.Op.MapPatch(
+            Chunk(Changeset.Patch.MapPatch(
                 Chunk.empty,
                 added = Chunk((k3, vC)),
                 removed = Chunk(k1),
@@ -424,18 +424,18 @@ class ChangesetTest extends Test:
         val d     = Changeset(co1, co2)
 
         // Should have a top-level Nested at "hq"
-        val topNested = d.operations.collect { case op: Changeset.Op.Nested => op }
+        val topNested = d.operations.collect { case op: Changeset.Patch.Nested => op }
         assert(topNested.exists(_.fieldPath == Chunk("hq")))
 
         // The "hq" Nested should itself contain a Nested at "lead"
         val hqNested = topNested.find(_.fieldPath == Chunk("hq")).get
         assert(hqNested.operations.exists {
-            case Changeset.Op.Nested(Chunk("lead"), _) => true
-            case _                                     => false
+            case Changeset.Patch.Nested(Chunk("lead"), _) => true
+            case _                                        => false
         })
 
         // The "lead" Nested should contain ops for the "address" field
-        val leadNested = hqNested.operations.collect { case op: Changeset.Op.Nested => op }
+        val leadNested = hqNested.operations.collect { case op: Changeset.Patch.Nested => op }
             .find(_.fieldPath == Chunk("lead")).get
         assert(leadNested.operations.nonEmpty)
     }
@@ -445,7 +445,7 @@ class ChangesetTest extends Test:
         val o1     = MTOrder(5, Nil)
         val o2     = MTOrder(5, List(MTItem("p", 1.0), MTItem("q", 2.0)))
         val d      = Changeset(o1, o2)
-        val seqOps = d.operations.collect { case op: Changeset.Op.SequencePatch => op }
+        val seqOps = d.operations.collect { case op: Changeset.Patch.SequencePatch => op }
         assert(seqOps.size == 1)
         assert(seqOps.head.added.size == 2)
         assert(seqOps.head.removed.isEmpty)
@@ -464,7 +464,7 @@ class ChangesetTest extends Test:
         val w2 = MTWrapper("world")
         val d  = Changeset(w1, w2)
         assert(!d.isEmpty)
-        val strOps = d.operations.collect { case op: Changeset.Op.StringPatch => op }
+        val strOps = d.operations.collect { case op: Changeset.Patch.StringPatch => op }
         assert(strOps.size == 1)
         assert(strOps.head.fieldPath == Chunk("value"))
         assert(strOps.head.insert == "world")
@@ -476,7 +476,7 @@ class ChangesetTest extends Test:
         val v1    = MTMaybeField("item", Maybe("tag"))
         val v2    = MTMaybeField("item", Maybe.empty)
         val d     = Changeset(v1, v2)
-        val rmOps = d.operations.collect { case op: Changeset.Op.RemoveField => op }
+        val rmOps = d.operations.collect { case op: Changeset.Patch.RemoveField => op }
         assert(rmOps.size == 1)
         assert(rmOps.head.fieldPath == Chunk("tag"))
     }
@@ -486,7 +486,7 @@ class ChangesetTest extends Test:
         val schema = summon[Schema[MTItem]]
         val item   = MTItem("pencil", 0.99)
         val dynVal = Structure.encode(item)
-        val ops    = Chunk(Changeset.Op.SetNull(Chunk("name")))
+        val ops    = Chunk(Changeset.Patch.SetNull(Chunk("name")))
         val result = Changeset.applyOps(dynVal, ops)
         result match
             case Structure.Value.Record(fields) =>
@@ -503,8 +503,8 @@ class ChangesetTest extends Test:
         val c1     = MTConfig("localhost", 8080, ssl = false)
         val c2     = MTConfig("localhost", 8080, ssl = true)
         val d      = Changeset(c1, c2)
-        val numOps = d.operations.collect { case op: Changeset.Op.NumericDelta => op }
-        val setOps = d.operations.collect { case op: Changeset.Op.SetField => op }
+        val numOps = d.operations.collect { case op: Changeset.Patch.NumericDelta => op }
+        val setOps = d.operations.collect { case op: Changeset.Patch.SetField => op }
         assert(numOps.isEmpty)
         assert(setOps.size == 1)
         assert(setOps.head.fieldPath == Chunk("ssl"))
@@ -517,9 +517,9 @@ class ChangesetTest extends Test:
         val v2 = MTMixed("Bob", 45, active = true, 12.0)
         val d  = Changeset(v1, v2)
 
-        val strOps = d.operations.collect { case op: Changeset.Op.StringPatch => op }
-        val numOps = d.operations.collect { case op: Changeset.Op.NumericDelta => op }
-        val setOps = d.operations.collect { case op: Changeset.Op.SetField => op }
+        val strOps = d.operations.collect { case op: Changeset.Patch.StringPatch => op }
+        val numOps = d.operations.collect { case op: Changeset.Patch.NumericDelta => op }
+        val setOps = d.operations.collect { case op: Changeset.Patch.SetField => op }
 
         // name: StringPatch
         assert(strOps.exists(_.fieldPath == Chunk("name")))
@@ -542,7 +542,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("Hello World")
         val v2 = MTStringField("Hello World!")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 11)
         assert(op.deleteCount == 0)
         assert(op.insert == "!")
@@ -554,7 +554,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("staging.example.com")
         val v2 = MTStringField("prod.example.com")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 0)
         assert(op.deleteCount == 7) // "staging"
         assert(op.insert == "prod")
@@ -566,7 +566,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("Hello World")
         val v2 = MTStringField("Hello Beautiful World")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 6)
         assert(op.deleteCount == 0)
         assert(op.insert == "Beautiful ")
@@ -578,7 +578,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("abcXYZdef")
         val v2 = MTStringField("abcPQRdef")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 3)
         assert(op.deleteCount == 3)
         assert(op.insert == "PQR")
@@ -590,7 +590,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("abc")
         val v2 = MTStringField("xyz")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 0)
         assert(op.deleteCount == 3)
         assert(op.insert == "xyz")
@@ -601,7 +601,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("")
         val v2 = MTStringField("hello")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 0)
         assert(op.deleteCount == 0)
         assert(op.insert == "hello")
@@ -612,7 +612,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("hello")
         val v2 = MTStringField("")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 0)
         assert(op.deleteCount == 5)
         assert(op.insert == "")
@@ -623,7 +623,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("a" * 1000 + "X" + "b" * 1000)
         val v2 = MTStringField("a" * 1000 + "Y" + "b" * 1000)
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 1000)
         assert(op.deleteCount == 1)
         assert(op.insert == "Y")
@@ -640,7 +640,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("a")
         val v2 = MTStringField("b")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 0)
         assert(op.deleteCount == 1)
         assert(op.insert == "b")
@@ -651,7 +651,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("ab")
         val v2 = MTStringField("abc")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 2)
         assert(op.deleteCount == 0)
         assert(op.insert == "c")
@@ -662,7 +662,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("abc")
         val v2 = MTStringField("ab")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 2)
         assert(op.deleteCount == 1)
         assert(op.insert == "")
@@ -673,7 +673,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("world")
         val v2 = MTStringField("hello world")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 0)
         assert(op.deleteCount == 0)
         assert(op.insert == "hello ")
@@ -684,7 +684,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("abcXYZdef")
         val v2 = MTStringField("abcdef")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 3)
         assert(op.deleteCount == 3)
         assert(op.insert == "")
@@ -696,7 +696,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("abcdef")
         val v2 = MTStringField("abcdefghij")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 6)
         assert(op.deleteCount == 0)
         assert(op.insert == "ghij")
@@ -708,7 +708,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("abcdefghij")
         val v2 = MTStringField("abcdef")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.offset == 6)
         assert(op.deleteCount == 4)
         assert(op.insert == "")
@@ -720,7 +720,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("aaaa")
         val v2 = MTStringField("aabaa")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         // prefix "aa", suffix "aa", insert "b" at offset 2
         assert(op.offset == 2)
         assert(op.deleteCount == 0)
@@ -732,7 +732,7 @@ class ChangesetTest extends Test:
         val v1 = MTStringField("cafe\u0301")
         val v2 = MTStringField("cafe\u0301!")
         val d  = Changeset(v1, v2)
-        val op = d.operations.collect { case op: Changeset.Op.StringPatch => op }.head
+        val op = d.operations.collect { case op: Changeset.Patch.StringPatch => op }.head
         assert(op.insert == "!")
         assert(d.applyTo(v1).getOrThrow == v2)
     }
@@ -742,7 +742,7 @@ class ChangesetTest extends Test:
         val v1  = MTStringField("ABCDEFGH")
         val v2  = MTStringField("XBCDEFGX")
         val d   = Changeset(v1, v2)
-        val ops = d.operations.collect { case op: Changeset.Op.StringPatch => op }
+        val ops = d.operations.collect { case op: Changeset.Patch.StringPatch => op }
         assert(ops.size == 1) // single patch, not two
         assert(d.applyTo(v1).getOrThrow == v2)
     }

@@ -80,6 +80,18 @@ object Structure:
     sealed abstract class Type derives Schema:
         def name: String
 
+    /** The specific kind of a primitive (scalar) type.
+      *
+      * Enumerates the scalar types supported directly by Structure. Consumers (JSON, Protobuf, etc.) pattern-match exhaustively on this
+      * enum to produce format-specific representations, so there is no silent fallback path.
+      */
+    enum PrimitiveKind derives CanEqual, Schema:
+        case Int, Long, Short, Byte, Char
+        case Float, Double
+        case BigInt, BigDecimal
+        case String, Boolean, Unit
+    end PrimitiveKind
+
     object Type:
         /** A case class or tuple: named fields with individual types.
           *
@@ -122,15 +134,17 @@ object Structure:
 
         /** A scalar type with no sub-structure (Int, String, Boolean, etc.).
           *
-          * @param name
-          *   simple type name
+          * @param kind
+          *   the specific primitive kind (Int, Long, String, ...)
           * @param tag
           *   runtime tag for the primitive type
           */
         case class Primitive(
-            name: String,
+            kind: PrimitiveKind,
             tag: Tag[Any]
-        ) extends Type
+        ) extends Type:
+            def name: String = kind.toString
+        end Primitive
 
         /** A homogeneous sequence type (List, Vector, Chunk, etc.).
           *

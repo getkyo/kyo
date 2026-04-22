@@ -7,7 +7,7 @@ class HttpBackendTest extends Test:
 
     import HttpPath.*
 
-    case class User(id: Int, name: String) derives Json, CanEqual
+    case class User(id: Int, name: String) derives Schema, CanEqual
 
     val stubClient = new HttpBackend.Client:
         type Connection = Unit

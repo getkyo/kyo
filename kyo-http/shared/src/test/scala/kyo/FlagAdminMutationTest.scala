@@ -83,16 +83,12 @@ class FlagAdminMutationTest extends Test:
         send(port, postTextRoute, req)
     end sendPost
 
-    val jsonFlagInfo = Json[FlagAdmin.FlagInfo]
-    val jsonError    = Json[FlagAdmin.ErrorResponse]
-    val jsonReload   = Json[FlagAdmin.ReloadResponse]
-
     "PUT updates DynamicFlag expression" in run {
         val handlers = FlagAdmin.routes("flags")
         withServer(handlers*) { port =>
             sendPut(port, "/flags/kyo.flagAdminMutationTestFlags.dynamicStr", "newvalue").map { resp =>
                 assert(resp.status == HttpStatus.OK)
-                val info = jsonFlagInfo.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val info = Json.decode[FlagAdmin.FlagInfo](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(info.expression == Some("newvalue"))
             }
         }
@@ -103,7 +99,7 @@ class FlagAdminMutationTest extends Test:
         withServer(handlers*) { port =>
             sendPut(port, "/flags/kyo.flagAdminMutationTestFlags.dynamicStr", "updated-expr").map { resp =>
                 assert(resp.status == HttpStatus.OK)
-                val info = jsonFlagInfo.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val info = Json.decode[FlagAdmin.FlagInfo](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(info.name == "kyo.flagAdminMutationTestFlags.dynamicStr")
                 assert(info.expression == Some("updated-expr"))
             }
@@ -115,7 +111,7 @@ class FlagAdminMutationTest extends Test:
         withServer(handlers*) { port =>
             sendPut(port, "/flags/kyo.flagAdminMutationTestFlags.staticFlag", "123").map { resp =>
                 assert(resp.status == HttpStatus.Conflict)
-                val err = jsonError.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val err = Json.decode[FlagAdmin.ErrorResponse](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(err.error.contains("static"))
                 assert(err.error.contains("cannot be updated"))
             }
@@ -127,7 +123,7 @@ class FlagAdminMutationTest extends Test:
         withServer(handlers*) { port =>
             sendPut(port, "/flags/nonexistent.flag", "value").map { resp =>
                 assert(resp.status == HttpStatus.NotFound)
-                val err = jsonError.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val err = Json.decode[FlagAdmin.ErrorResponse](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(err.error.contains("not found"))
             }
         }
@@ -138,7 +134,7 @@ class FlagAdminMutationTest extends Test:
         withServer(handlers*) { port =>
             sendPut(port, "/flags/kyo.flagAdminMutationTestFlags.dynamicInt", "notanumber").map { resp =>
                 assert(resp.status == HttpStatus.BadRequest)
-                val err = jsonError.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val err = Json.decode[FlagAdmin.ErrorResponse](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(err.error.nonEmpty)
             }
         }
@@ -156,7 +152,7 @@ class FlagAdminMutationTest extends Test:
                 getResp <- sendRaw(port, HttpMethod.GET, "/flags/kyo.flagAdminMutationTestFlags.dynamicInt")
             yield
                 assert(badResp.status == HttpStatus.BadRequest)
-                val info = jsonFlagInfo.decode(getResp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val info = Json.decode[FlagAdmin.FlagInfo](getResp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(info.expression == Some("42"))
         }
     }
@@ -166,7 +162,7 @@ class FlagAdminMutationTest extends Test:
         withServer(handlers*) { port =>
             sendPut(port, "/flags/kyo.flagAdminMutationTestFlags.dynamicStr", "").map { resp =>
                 assert(resp.status == HttpStatus.OK)
-                val info = jsonFlagInfo.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val info = Json.decode[FlagAdmin.FlagInfo](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(info.expression == Some(""))
             }
         }
@@ -177,7 +173,8 @@ class FlagAdminMutationTest extends Test:
         withServer(handlers*) { port =>
             sendPost(port, "/flags/kyo.flagAdminMutationTestFlags.reloadFlag/reload").map { resp =>
                 assert(resp.status == HttpStatus.OK)
-                val reload = jsonReload.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val reload =
+                    Json.decode[FlagAdmin.ReloadResponse](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(reload.name == "kyo.flagAdminMutationTestFlags.reloadFlag")
             }
         }
@@ -188,7 +185,8 @@ class FlagAdminMutationTest extends Test:
         withServer(handlers*) { port =>
             sendPost(port, "/flags/kyo.flagAdminMutationTestFlags.reloadFlag/reload").map { resp =>
                 assert(resp.status == HttpStatus.OK)
-                val reload = jsonReload.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val reload =
+                    Json.decode[FlagAdmin.ReloadResponse](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 // Source is Default, so reloaded should be false with reason
                 assert(!reload.reloaded)
                 assert(reload.reason.isDefined)
@@ -201,7 +199,7 @@ class FlagAdminMutationTest extends Test:
         withServer(handlers*) { port =>
             sendPost(port, "/flags/kyo.flagAdminMutationTestFlags.staticFlag/reload").map { resp =>
                 assert(resp.status == HttpStatus.Conflict)
-                val err = jsonError.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val err = Json.decode[FlagAdmin.ErrorResponse](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(err.error.contains("static"))
                 assert(err.error.contains("cannot be reloaded"))
             }
@@ -213,7 +211,8 @@ class FlagAdminMutationTest extends Test:
         withServer(handlers*) { port =>
             sendPost(port, "/flags/kyo.flagAdminMutationTestFlags.reloadFlag/reload").map { resp =>
                 assert(resp.status == HttpStatus.OK)
-                val reload = jsonReload.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val reload =
+                    Json.decode[FlagAdmin.ReloadResponse](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(!reload.reloaded)
                 assert(reload.reason.exists(_.contains("Default")))
             }
@@ -237,8 +236,8 @@ class FlagAdminMutationTest extends Test:
                 getResp <- sendRaw(port, HttpMethod.GET, "/flags/kyo.flagAdminMutationTestFlags.dynamicStr")
             yield
                 assert(putResp.status == HttpStatus.OK)
-                val putInfo = jsonFlagInfo.decode(putResp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
-                val getInfo = jsonFlagInfo.decode(getResp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val putInfo = Json.decode[FlagAdmin.FlagInfo](putResp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val getInfo = Json.decode[FlagAdmin.FlagInfo](getResp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(putInfo.expression == getInfo.expression)
                 assert(getInfo.expression == Some("consistency-check"))
         }
@@ -249,7 +248,7 @@ class FlagAdminMutationTest extends Test:
         withServer(handlers*) { port =>
             sendPut(port, "/flags/kyo.flagAdminMutationTestFlags.dynamicStr", """{"expression":"true"}""").map { resp =>
                 assert(resp.status == HttpStatus.BadRequest)
-                val err = jsonError.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val err = Json.decode[FlagAdmin.ErrorResponse](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(err.error.contains("plain text"))
                 assert(err.error.contains("not JSON"))
             }
@@ -261,7 +260,7 @@ class FlagAdminMutationTest extends Test:
         withServer(handlers*) { port =>
             sendPut(port, "/flags/kyo.flagAdminMutationTestFlags.dynamicStr", """["a","b"]""").map { resp =>
                 assert(resp.status == HttpStatus.BadRequest)
-                val err = jsonError.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val err = Json.decode[FlagAdmin.ErrorResponse](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(err.error.contains("plain text"))
             }
         }

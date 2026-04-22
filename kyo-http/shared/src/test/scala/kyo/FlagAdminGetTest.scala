@@ -59,17 +59,13 @@ class FlagAdminGetTest extends Test:
     )(using Frame): HttpResponse["body" ~ String] < (Async & Abort[HttpException]) =
         send(port, textRoute, HttpRequest(method, HttpUrl.fromUri(path)))
 
-    val jsonFlagInfo  = Json[FlagAdmin.FlagInfo]
-    val jsonFlagInfos = Json[List[FlagAdmin.FlagInfo]]
-    val jsonError     = Json[FlagAdmin.ErrorResponse]
-
     "GET /flags returns all flags" in run {
         val handlers = FlagAdmin.routes("flags")
         withServer(handlers*) { port =>
             sendRaw(port, HttpMethod.GET, "/flags").map { resp =>
                 assert(resp.status == HttpStatus.OK)
                 val body  = resp.fields.body
-                val infos = jsonFlagInfos.decode(body)
+                val infos = Json.decode[List[FlagAdmin.FlagInfo]](body)
                 assert(infos.isSuccess)
                 val list = infos.getOrElse(throw new AssertionError("JSON decode failed"))
                 // Should contain our test flags
@@ -84,7 +80,7 @@ class FlagAdminGetTest extends Test:
         withServer(handlers*) { port =>
             sendRaw(port, HttpMethod.GET, "/flags/kyo.flagAdminTestFlags.staticInt").map { resp =>
                 assert(resp.status == HttpStatus.OK)
-                val info = jsonFlagInfo.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val info = Json.decode[FlagAdmin.FlagInfo](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(info.name == "kyo.flagAdminTestFlags.staticInt")
             }
         }
@@ -95,7 +91,7 @@ class FlagAdminGetTest extends Test:
         withServer(handlers*) { port =>
             sendRaw(port, HttpMethod.GET, "/flags/nonexistent.flag.name").map { resp =>
                 assert(resp.status == HttpStatus.NotFound)
-                val err = jsonError.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val err = Json.decode[FlagAdmin.ErrorResponse](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(err.error.contains("not found"))
             }
         }
@@ -106,7 +102,7 @@ class FlagAdminGetTest extends Test:
         withServer(handlers*) { port =>
             sendRaw(port, HttpMethod.GET, "/flags/kyo.flagAdminTestFlags.staticInt").map { resp =>
                 assert(resp.status == HttpStatus.OK)
-                val info = jsonFlagInfo.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val info = Json.decode[FlagAdmin.FlagInfo](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(info.name == "kyo.flagAdminTestFlags.staticInt")
                 assert(info.`type` == "static")
                 assert(info.value == Some("42"))
@@ -121,7 +117,7 @@ class FlagAdminGetTest extends Test:
         withServer(handlers*) { port =>
             sendRaw(port, HttpMethod.GET, "/flags/kyo.flagAdminTestFlags.dynamicBool").map { resp =>
                 assert(resp.status == HttpStatus.OK)
-                val info = jsonFlagInfo.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val info = Json.decode[FlagAdmin.FlagInfo](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(info.name == "kyo.flagAdminTestFlags.dynamicBool")
                 assert(info.`type` == "dynamic")
                 assert(info.expression.isDefined)
@@ -136,7 +132,7 @@ class FlagAdminGetTest extends Test:
         withServer(handlers*) { port =>
             sendRaw(port, HttpMethod.GET, "/flags/kyo.flagAdminTestFlags.staticStr").map { resp =>
                 assert(resp.status == HttpStatus.OK)
-                val info = jsonFlagInfo.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val info = Json.decode[FlagAdmin.FlagInfo](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(info.`type` == "static")
                 assert(info.expression == None)
                 assert(info.evaluations == None)
@@ -150,7 +146,7 @@ class FlagAdminGetTest extends Test:
         withServer(handlers*) { port =>
             sendRaw(port, HttpMethod.GET, "/flags?filter=kyo.flagAdminTestFlags.app*").map { resp =>
                 assert(resp.status == HttpStatus.OK)
-                val list = jsonFlagInfos.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val list = Json.decode[List[FlagAdmin.FlagInfo]](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 // Should match appDbPool, appDbTimeout, appCacheSize
                 assert(list.forall(_.name.startsWith("kyo.flagAdminTestFlags.app")))
                 assert(list.size >= 3)
@@ -163,7 +159,7 @@ class FlagAdminGetTest extends Test:
         withServer(handlers*) { port =>
             sendRaw(port, HttpMethod.GET, "/flags?filter=nonexistent.*").map { resp =>
                 assert(resp.status == HttpStatus.OK)
-                val list = jsonFlagInfos.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val list = Json.decode[List[FlagAdmin.FlagInfo]](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(list.isEmpty)
             }
         }
@@ -180,8 +176,8 @@ class FlagAdminGetTest extends Test:
             evaluations = None,
             history = None
         )
-        val encoded = jsonFlagInfo.encode(info)
-        val decoded = jsonFlagInfo.decode(encoded).getOrElse(throw new AssertionError("JSON decode failed"))
+        val encoded = Json.encode(info)
+        val decoded = Json.decode[FlagAdmin.FlagInfo](encoded).getOrElse(throw new AssertionError("JSON decode failed"))
         assert(decoded.name == info.name)
         assert(decoded.`type` == info.`type`)
         assert(decoded.value == info.value)
@@ -195,7 +191,7 @@ class FlagAdminGetTest extends Test:
         withServer(handlers*) { port =>
             sendRaw(port, HttpMethod.GET, "/flags/unknown.flag").map { resp =>
                 assert(resp.status == HttpStatus.NotFound)
-                val err = jsonError.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val err = Json.decode[FlagAdmin.ErrorResponse](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(err.error.nonEmpty)
                 assert(err.error.contains("unknown.flag"))
             }

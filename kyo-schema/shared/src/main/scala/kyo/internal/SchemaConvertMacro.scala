@@ -2,6 +2,7 @@ package kyo.internal
 
 import kyo.*
 import kyo.Record.*
+import scala.annotation.publicInBinary
 import scala.quoted.*
 
 /** Macro implementations for Convert[A, B] and Schema[A].convert[B].
@@ -12,7 +13,7 @@ import scala.quoted.*
   * critical for correctness: after transforms like drop/rename/add/map, Focused reflects the actual available fields, not A's original
   * fields.
   */
-private[kyo] object SchemaConvertMacro:
+@publicInBinary private[kyo] object SchemaConvertMacro:
 
     /** Derives a `Convert[A, B]` directly by generating a forward (A => B) total function.
       *

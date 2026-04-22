@@ -24,6 +24,12 @@ end Json
   *   [[kyo.Protobuf]] for binary Protocol Buffers serialization
   */
 object Json:
+    /** Default maximum nesting depth for objects/arrays in JSON decoding (DoS limit). */
+    val DefaultMaxDepth: Int = 512
+
+    /** Default maximum number of entries in any single collection or object in JSON decoding (DoS limit). */
+    val DefaultMaxCollectionSize: Int = 100000
+
     given Json = Json()
 
     /** Encodes a value of type A to a JSON string.
@@ -61,8 +67,8 @@ object Json:
       */
     def decode[A](
         input: String,
-        maxDepth: Int = 512,
-        maxCollectionSize: Int = 100000
+        maxDepth: Int = DefaultMaxDepth,
+        maxCollectionSize: Int = DefaultMaxCollectionSize
     )(using json: Json, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         val reader = json.newReader(Span.from(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
         reader.resetLimits(maxDepth, maxCollectionSize)
@@ -74,16 +80,16 @@ object Json:
       * @param input
       *   the raw UTF-8 JSON bytes to decode
       * @param maxDepth
-      *   maximum nesting depth for objects/arrays (default 512)
+      *   maximum nesting depth for objects/arrays (default `DefaultMaxDepth`)
       * @param maxCollectionSize
-      *   maximum number of entries in maps, sets, or arrays (default 100000)
+      *   maximum number of entries in maps, sets, or arrays (default `DefaultMaxCollectionSize`)
       * @return
       *   the decoded value, or a DecodeException if the input is malformed or does not match the schema
       */
     def decodeBytes[A](
         input: Span[Byte],
-        maxDepth: Int = 512,
-        maxCollectionSize: Int = 100000
+        maxDepth: Int = DefaultMaxDepth,
+        maxCollectionSize: Int = DefaultMaxCollectionSize
     )(using json: Json, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         val reader = json.newReader(input)
         reader.resetLimits(maxDepth, maxCollectionSize)
@@ -141,6 +147,7 @@ object Json:
         case Obj(
             properties: List[(String, JsonSchema)],
             required: List[String],
+            additionalProperties: Maybe[JsonSchema] = Maybe.empty,
             description: Maybe[String] = Maybe.empty,
             deprecated: Maybe[Boolean] = Maybe.empty,
             examples: Chunk[Structure.Value] = Chunk.empty
@@ -185,6 +192,9 @@ object Json:
         /** Boolean type. */
         case Bool
 
+        /** Null type (represents the JSON null value; maps to Unit in Scala). */
+        case Null
+
         /** Nullable wrapper (JSON Schema `oneOf` with null). */
         case Nullable(inner: JsonSchema)
 
@@ -211,13 +221,16 @@ object Json:
 
         private def fromStructure(rt: Structure.Type, seen: Set[String]): JsonSchema =
             rt match
-                case Structure.Type.Primitive(name, _) =>
-                    name match
-                        case "Int" | "Long" | "Short" | "Byte" | "BigInt" => Integer()
-                        case "Double" | "Float" | "BigDecimal"            => Num()
-                        case "String"                                     => Str()
-                        case "Boolean"                                    => Bool
-                        case _                                            => Str()
+                case p: Structure.Type.Primitive =>
+                    p.kind match
+                        case Structure.PrimitiveKind.Int | Structure.PrimitiveKind.Long |
+                            Structure.PrimitiveKind.Short | Structure.PrimitiveKind.Byte |
+                            Structure.PrimitiveKind.BigInt => Integer()
+                        case Structure.PrimitiveKind.Double | Structure.PrimitiveKind.Float |
+                            Structure.PrimitiveKind.BigDecimal => Num()
+                        case Structure.PrimitiveKind.String | Structure.PrimitiveKind.Char => Str()
+                        case Structure.PrimitiveKind.Boolean                               => Bool
+                        case Structure.PrimitiveKind.Unit                                  => Null
 
                 case Structure.Type.Optional(_, _, inner) =>
                     Nullable(fromStructure(inner, seen))
@@ -246,11 +259,19 @@ object Json:
                         }
                         OneOf(variantList)
 
-                case Structure.Type.Mapping(_, _, _, _) =>
-                    // Limitation: JSON Schema represents Map[String, V] as an object with
-                    // `additionalProperties` set to the value schema. The JsonSchema ADT does
-                    // not currently model `additionalProperties`, so we emit an empty Obj.
-                    Obj(List.empty, List.empty)
+                case Structure.Type.Mapping(_, _, keyType, valueType) =>
+                    // JSON Schema represents Map[String, V] as an object with `additionalProperties`.
+                    // For non-String keys (encoded as array-of-pairs), emit a plain empty Obj.
+                    keyType match
+                        case p: Structure.Type.Primitive
+                            if p.kind == Structure.PrimitiveKind.String || p.kind == Structure.PrimitiveKind.Char =>
+                            Obj(
+                                properties = List.empty,
+                                required = List.empty,
+                                additionalProperties = Maybe(fromStructure(valueType, seen))
+                            )
+                        case _ =>
+                            Obj(List.empty, List.empty)
         end fromStructure
     end JsonSchema
 

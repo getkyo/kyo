@@ -287,29 +287,29 @@ object HttpClient:
 
     // ==================== JSON methods ====================
 
-    def getJson[A: Json](url: String)(using Frame): A < (Async & Abort[HttpException]) =
+    def getJson[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpException]) =
         parseAndSend(url, HttpRoute.getJson[A](""))(_.fields.body)
-    def getJson[A: Json](url: HttpUrl)(using Frame): A < (Async & Abort[HttpException]) =
+    def getJson[A: Schema](url: HttpUrl)(using Frame): A < (Async & Abort[HttpException]) =
         sendUrl(url, HttpRoute.getJson[A](""))(_.fields.body)
 
-    def postJson[A: Json](using Frame)[B: Json](url: String, body: B): A < (Async & Abort[HttpException]) =
+    def postJson[A: Schema](using Frame)[B: Schema](url: String, body: B): A < (Async & Abort[HttpException]) =
         parseAndSend(url, HttpRoute.postJson[A, B](""), body)(_.fields.body)
-    def postJson[A: Json](using Frame)[B: Json](url: HttpUrl, body: B): A < (Async & Abort[HttpException]) =
+    def postJson[A: Schema](using Frame)[B: Schema](url: HttpUrl, body: B): A < (Async & Abort[HttpException]) =
         sendUrl(url, HttpRoute.postJson[A, B](""), body)(_.fields.body)
 
-    def putJson[A: Json](using Frame)[B: Json](url: String, body: B): A < (Async & Abort[HttpException]) =
+    def putJson[A: Schema](using Frame)[B: Schema](url: String, body: B): A < (Async & Abort[HttpException]) =
         parseAndSend(url, HttpRoute.putJson[A, B](""), body)(_.fields.body)
-    def putJson[A: Json](using Frame)[B: Json](url: HttpUrl, body: B): A < (Async & Abort[HttpException]) =
+    def putJson[A: Schema](using Frame)[B: Schema](url: HttpUrl, body: B): A < (Async & Abort[HttpException]) =
         sendUrl(url, HttpRoute.putJson[A, B](""), body)(_.fields.body)
 
-    def patchJson[A: Json](using Frame)[B: Json](url: String, body: B): A < (Async & Abort[HttpException]) =
+    def patchJson[A: Schema](using Frame)[B: Schema](url: String, body: B): A < (Async & Abort[HttpException]) =
         parseAndSend(url, HttpRoute.patchJson[A, B](""), body)(_.fields.body)
-    def patchJson[A: Json](using Frame)[B: Json](url: HttpUrl, body: B): A < (Async & Abort[HttpException]) =
+    def patchJson[A: Schema](using Frame)[B: Schema](url: HttpUrl, body: B): A < (Async & Abort[HttpException]) =
         sendUrl(url, HttpRoute.patchJson[A, B](""), body)(_.fields.body)
 
-    def deleteJson[A: Json](url: String)(using Frame): A < (Async & Abort[HttpException]) =
+    def deleteJson[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpException]) =
         parseAndSend(url, HttpRoute.deleteJson[A](""))(_.fields.body)
-    def deleteJson[A: Json](url: HttpUrl)(using Frame): A < (Async & Abort[HttpException]) =
+    def deleteJson[A: Schema](url: HttpUrl)(using Frame): A < (Async & Abort[HttpException]) =
         sendUrl(url, HttpRoute.deleteJson[A](""))(_.fields.body)
 
     // ==================== Text methods ====================
@@ -368,12 +368,12 @@ object HttpClient:
 
     // ==================== Streaming methods ====================
 
-    def getSseJson[V: Json: Tag](url: String)(using
+    def getSseJson[V: Schema: Tag](url: String)(using
         Frame,
         Tag[Emit[Chunk[HttpSseEvent[V]]]]
     ): Stream[HttpSseEvent[V], Async & Abort[HttpException]] =
         Stream(parseAndSend(url, HttpRoute.getRaw("").response(_.bodySseJson[V]))(_.fields.body).map(_.emit))
-    def getSseJson[V: Json: Tag](url: HttpUrl)(using
+    def getSseJson[V: Schema: Tag](url: HttpUrl)(using
         Frame,
         Tag[Emit[Chunk[HttpSseEvent[V]]]]
     ): Stream[HttpSseEvent[V], Async & Abort[HttpException]] =
@@ -390,12 +390,12 @@ object HttpClient:
     ): Stream[HttpSseEvent[String], Async & Abort[HttpException]] =
         Stream(sendUrl(url, HttpRoute.getRaw("").response(_.bodySseText))(_.fields.body).map(_.emit))
 
-    def getNdJson[V: Json: Tag](url: String)(using
+    def getNdJson[V: Schema: Tag](url: String)(using
         Frame,
         Tag[Emit[Chunk[V]]]
     ): Stream[V, Async & Abort[HttpException]] =
         Stream(parseAndSend(url, HttpRoute.getRaw("").response(_.bodyNdjson[V]))(_.fields.body).map(_.emit))
-    def getNdJson[V: Json: Tag](url: HttpUrl)(using
+    def getNdJson[V: Schema: Tag](url: HttpUrl)(using
         Frame,
         Tag[Emit[Chunk[V]]]
     ): Stream[V, Async & Abort[HttpException]] =

@@ -4,14 +4,14 @@ import kyo.*
 
 /** A typed entry linking a runtime type to its serialization codec and tag.
   *
-  * TypeEntry[V] ensures json, tag, and concreteTag are all for the same V. The type parameter is erased when stored in WorkflowSchema's
+  * TypeEntry[V] ensures schema, tag, and concreteTag are all for the same V. The type parameter is erased when stored in WorkflowSchema's
   * map, but Tag-based lookup provides a safe downcast.
   */
-private[kyo] case class TypeEntry[V](tag: Tag[V], json: Json[V], postDecode: Any => Any = identity):
-    def encode(value: V): FlowStore.FieldData = FlowStore.FieldData(json.encode(value), tag.erased)
-    def decode(data: FlowStore.FieldData): Maybe[V] =
+private[kyo] case class TypeEntry[V](tag: Tag[V], schema: Schema[V], postDecode: Any => Any = identity):
+    def encode(value: V)(using Frame): FlowStore.FieldData = FlowStore.FieldData(schema.encodeString[Json](value), tag.erased)
+    def decode(data: FlowStore.FieldData)(using Frame): Maybe[V] =
         if !(data.tag =:= tag.erased) then Maybe.empty
-        else json.decode(data.value).toMaybe.map(v => postDecode(v).asInstanceOf[V])
+        else schema.decodeString[Json](data.value).toMaybe.map(v => postDecode(v).asInstanceOf[V])
 end TypeEntry
 
 /** The schema of a workflow — all type entries for its inputs and outputs.
@@ -42,10 +42,10 @@ private[kyo] object WorkflowSchema:
     /** SHA-256 hash of the flow's structure (names, types, node types). */
     def structuralHash(flow: Flow[?, ?, ?]): String =
         val structure = FlowFold(flow)(new FlowVisitorCollect[String]("", _ + "|" + _):
-            override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) = s"O:$name:${Tag[V].show}"
-            override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V])  = s"I:$name:${Tag[V].show}"
-            override def onStep(name: String, frame: Frame, meta: Flow.Meta)                             = s"S:$name"
-            override def onSleep(name: String, duration: Duration, frame: Frame, meta: Flow.Meta)        = s"SL:$name:$duration"
+            override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = s"O:$name:${Tag[V].show}"
+            override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])  = s"I:$name:${Tag[V].show}"
+            override def onStep(name: String, frame: Frame, meta: Flow.Meta)                               = s"S:$name"
+            override def onSleep(name: String, duration: Duration, frame: Frame, meta: Flow.Meta)          = s"SL:$name:$duration"
             override def onDispatch(name: String, branches: Seq[Flow.BranchInfo], frame: Frame, meta: Flow.Meta) =
                 s"D:$name:${branches.map(_.name).mkString(",")}"
             override def onLoop(name: String, frame: Frame, meta: Flow.Meta)                              = s"L:$name"
@@ -60,8 +60,8 @@ private[kyo] object WorkflowSchema:
     private val empty: Maps                   = (Dict.empty, Dict.empty)
     private def merge(a: Maps, b: Maps): Maps = (a._1 ++ b._1, a._2 ++ b._2)
 
-    private def entry(name: String, tag: Tag[Any], json: Json[Any]): Maps =
-        val e = TypeEntry(tag, json)
+    private def entry(name: String, tag: Tag[Any], schema: Schema[Any]): Maps =
+        val e = TypeEntry(tag, schema)
         (Dict(tag -> e), Dict(name -> e))
 
     /** Build a schema by walking all AST nodes and collecting type entries. */
@@ -69,17 +69,17 @@ private[kyo] object WorkflowSchema:
         def loop(f: Flow[?, ?, ?]): Maps =
             f match
                 case n: Output[?, ?, ?, ?, ?] @unchecked =>
-                    entry(n.name, n.erased.tag, n.erased.json)
+                    entry(n.name, n.erased.tag, n.erased.schema)
                 case n: Input[?, ?] @unchecked =>
-                    entry(n.name, n.erased.tag, n.erased.json)
+                    entry(n.name, n.erased.tag, n.erased.schema)
                 case n: Dispatch[?, ?, ?, ?, ?] @unchecked =>
-                    entry(n.name, n.erased.tag, n.erased.json)
+                    entry(n.name, n.erased.tag, n.erased.schema)
                 case n: LoopNode[?, ?, ?, ?, ?] @unchecked =>
-                    entry(n.name, n.erased.tag, n.erased.json)
+                    entry(n.name, n.erased.tag, n.erased.schema)
                 case n: ForEach[?, ?, ?, ?, ?] @unchecked =>
-                    given Json[Any] = n.erased.json
-                    val seqJson     = summon[Json[Seq[Any]]].erased
-                    val e           = TypeEntry[Any](Tag[Any], seqJson, v => Chunk.from(v.asInstanceOf[Seq[Any]]))
+                    given Schema[Any] = n.erased.schema
+                    val seqSchema     = summon[Schema[Seq[Any]]].asInstanceOf[Schema[Any]]
+                    val e             = TypeEntry[Any](Tag[Any], seqSchema, v => Chunk.from(v.asInstanceOf[Seq[Any]]))
                     (Dict(Tag[Any] -> e), Dict(n.name -> e))
                 case n: Subflow[?, ?, ?, ?, ?, ?] @unchecked => loop(n.childFlow)
                 case _: Sleep                                => empty

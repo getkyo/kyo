@@ -35,11 +35,20 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
 
     def objectStart(): Int =
         checkDepth()
-        if currentWireType == LengthDelimited && limits.size > 1 || limits.size == 1 then
-            -1 // unknown field count
-        else
-            -1
+        // If the most recently parsed tag has LengthDelimited wire type, we're
+        // entering a nested message: consume its length prefix and push a limit
+        // so hasNextField() stops at the end of the nested payload. At the
+        // top-level call (no preceding tag), currentWireType is 0 (Varint), so
+        // we leave limits untouched — the top-level limit (data.length) set at
+        // construction already bounds the message.
+        if currentWireType == LengthDelimited then
+            val len = readVarint().toInt
+            if len < 0 || pos + len > data.length then
+                throw TruncatedInputException(Protobuf(), s"message length $len exceeds remaining data")
+            limits = (pos + len) :: limits
+            currentWireType = Varint // reset so nested objectStart calls don't re-consume a length
         end if
+        -1 // unknown field count — callers drive the loop via hasNextField()
     end objectStart
 
     def objectEnd(): Unit =
@@ -66,9 +75,19 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
         fieldNames.getOrElse(currentFieldNumber, currentFieldNumber.toString)
     end field
 
+    override def fieldParse(): Unit =
+        // Advance past the tag without allocating a String. matchField and
+        // lastFieldName read from currentFieldNumber directly.
+        val _ = field()
+    end fieldParse
+
     override def matchField(nameBytes: Array[Byte]): Boolean =
         val name = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
         currentFieldNumber == CodecMacro.fieldId(name)
+    end matchField
+
+    override def lastFieldName(): String =
+        fieldNames.getOrElse(currentFieldNumber, currentFieldNumber.toString)
 
     def hasNextField(): Boolean =
         pos < limits.head

@@ -100,21 +100,39 @@ object Codec:
         /** Clear field values to prevent reference leaks. Default is no-op. */
         def clearFields(n: Int): Unit = ()
 
-        /** Parse field name without allocating a String. Sets internal state for matchField. Default delegates to field() and stores the
-          * result for matchField fallback.
+        /** Returns a bitmask of fields that should be considered pre-satisfied during required-field validation.
+          *
+          * The macro-generated case-class decoder OR-s this mask into its local `seen` bitmap before checking required fields, so transform
+          * wrappers (e.g. [[kyo.internal.SchemaSerializer.TransformAwareReader]]) can signal that fields dropped by the schema should not
+          * trigger [[MissingFieldException]].
+          *
+          * Default returns `0L` — no fields pre-satisfied. Overrides must return a mask with bit `i` set iff field index `i` is
+          * pre-satisfied by this reader. Field index `i` corresponds to the case class constructor position (0-based). Only the low-order
+          * `n` bits are relevant; bits beyond that are ignored by the caller.
           */
-        private var _lastFieldString: Maybe[String] = Maybe.empty
-        def fieldParse(): Unit =
-            _lastFieldString = Maybe(field())
+        def droppedFieldsMask(n: Int): Long = 0L
 
-        /** Compare last parsed field name against pre-encoded name bytes. Default falls back to String comparison.
+        /** Parse the next field name and record it as internal state for [[matchField]] and [[lastFieldName]].
+          *
+          * Implementations should advance the wire stream past the field name (and any delimiters such as JSON's `:`) so subsequent value
+          * reads can proceed. Zero-allocation implementations may store raw byte positions instead of materializing a String.
           */
-        def matchField(nameBytes: Array[Byte]): Boolean =
-            if _lastFieldString.isEmpty then false
-            else
-                val name = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
-                _lastFieldString.get == name
-        end matchField
+        def fieldParse(): Unit
+
+        /** Compare the last field name parsed via [[fieldParse]] against pre-encoded UTF-8 name bytes.
+          *
+          * Implementations should return `true` iff the field name captured by the most recent [[fieldParse]] call matches `nameBytes`
+          * exactly. Called repeatedly against the schema's known field names to dispatch decoding.
+          */
+        def matchField(nameBytes: Array[Byte]): Boolean
+
+        /** Returns a string representation of the last field parsed via [[fieldParse]].
+          *
+          * Used for error reporting (e.g. [[UnknownVariantException]]) when [[matchField]] has rejected every known candidate and the
+          * decoder needs a human-readable name. Implementations should return the canonical field name when available, or a stable,
+          * identifiable surrogate (e.g. a numeric field ID) when the underlying wire format does not carry names (as in Protobuf).
+          */
+        def lastFieldName(): String
 
         /** Release this reader back to its pool. Default is no-op. */
         def release(): Unit = ()
@@ -170,6 +188,12 @@ object Codec:
         def instant(value: java.time.Instant): Unit
         def duration(value: java.time.Duration): Unit
         def result(): Span[Byte]
+
+        /** Materialize the output as a String. Default delegates to `result()` + UTF-8 decode; codecs with char-native or ASCII-fast paths
+          * should override to skip intermediate copies.
+          */
+        def resultString: String =
+            new String(result().toArrayUnsafe, java.nio.charset.StandardCharsets.UTF_8)
     end Writer
 
 end Codec

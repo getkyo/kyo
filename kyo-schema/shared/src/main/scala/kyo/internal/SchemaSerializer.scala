@@ -12,22 +12,14 @@ import scala.annotation.tailrec
   */
 private[kyo] object SchemaSerializer:
 
-    /** Writes a value to a Writer, dispatching to the direct or transform-aware path. */
+    /** Writes a value to a Writer, dispatching to the direct or transform-aware path.
+      *
+      * A non-serializable Schema throws `SchemaNotSerializableException` from inside its own `serializeWrite` body (the sentinel lambda
+      * installed by `Schema.create`/`createFrom`/`createWithFocused`). No outer Maybe match is needed.
+      */
     def writeTo[A](schema: Schema[A], value: A, writer: Writer)(using frame: Frame): Unit =
-        schema.serializeWrite match
-            case Maybe.Present(write) =>
-                if schema.droppedFields.isEmpty && schema.renamedFields.isEmpty &&
-                    schema.computedFields.isEmpty &&
-                    schema.discriminatorField.isEmpty
-                then
-                    write(value, writer)
-                else
-                    writeWithTransforms(schema, value, writer)
-            case _ =>
-                throw SchemaNotSerializableException(
-                    "This schema does not have serialization. " +
-                        "Focused schemas and Record schemas cannot serialize directly."
-                )
+        if schema.hasTransforms then writeWithTransforms(schema, value, writer)
+        else schema.serializeWrite(value, writer)
     end writeTo
 
     /** Transform-aware serialization path.
@@ -37,7 +29,7 @@ private[kyo] object SchemaSerializer:
       */
     def writeWithTransforms[A](schema: Schema[A], value: A, writer: Writer)(using Frame): Unit =
         val structWriter = StructureValueWriter()
-        schema.serializeWrite.get(value, structWriter)
+        schema.serializeWrite(value, structWriter)
         val original = structWriter.getResult
 
         val transformed = original match
@@ -117,21 +109,18 @@ private[kyo] object SchemaSerializer:
                 other
     end flattenWithDiscriminator
 
-    /** Reads a value from a Reader, dispatching to direct or transform-aware path. */
+    /** Reads a value from a Reader, dispatching to direct or transform-aware path.
+      *
+      * A non-serializable Schema throws `SchemaNotSerializableException` from inside its own `serializeRead` body (the sentinel lambda
+      * installed by `Schema.create`/`createFrom`/`createWithFocused`).
+      */
     def readFrom[A](schema: Schema[A], reader: Reader)(using frame: Frame): A =
-        schema.serializeRead match
-            case Maybe.Present(read) =>
-                if schema.discriminatorField.nonEmpty then
-                    readWithDiscriminator(schema, reader)
-                else if schema.renamedFields.nonEmpty || schema.droppedFields.nonEmpty then
-                    readWithTransforms(schema, reader)
-                else
-                    read(reader)
-            case _ =>
-                throw SchemaNotSerializableException(
-                    "This schema does not have serialization. " +
-                        "Focused schemas and Record schemas cannot serialize directly."
-                )
+        if schema.discriminatorField.nonEmpty then
+            readWithDiscriminator(schema, reader)
+        else if schema.renamedFields.nonEmpty || schema.droppedFields.nonEmpty then
+            readWithTransforms(schema, reader)
+        else
+            schema.serializeRead(reader)
     end readFrom
 
     /** Transform-aware deserialization path.
@@ -175,7 +164,7 @@ private[kyo] object SchemaSerializer:
             if reverseMap.isEmpty && renamedSources.isEmpty && droppedIndices.isEmpty then reader
             else new TransformAwareReader(reader, reverseMap, renamedSources, droppedIndices)
 
-        schema.serializeRead.get(transformReader)
+        schema.serializeRead(transformReader)
     end readWithTransforms
 
     /** Converts an arbitrary Scala value to Structure.Value for transform-aware serialization. */
@@ -257,8 +246,8 @@ private[kyo] object SchemaSerializer:
             else if show == "scala.Byte" then java.lang.Byte.valueOf(0.toByte)
             else if show == "scala.Boolean" then java.lang.Boolean.FALSE
             else if show == "scala.Char" then java.lang.Character.valueOf('\u0000')
-            else if show.startsWith("scala.Option[") then None.asInstanceOf[AnyRef]
-            else if show.startsWith("kyo.Maybe[") then Maybe.empty.asInstanceOf[AnyRef]
+            else if field.tag <:< Tag[Option[Any]] then None.asInstanceOf[AnyRef]
+            else if field.tag <:< Tag[Maybe[Any]] then Maybe.empty.asInstanceOf[AnyRef]
             else null // JVM null for unknown reference types — required by macro null-check protocol
             end if
         end zeroFromTag
@@ -283,7 +272,7 @@ private[kyo] object SchemaSerializer:
         if schema.renamedFields.nonEmpty || schema.droppedFields.nonEmpty then
             readWithTransforms(schema, discReader)
         else
-            schema.serializeRead.get(discReader)
+            schema.serializeRead(discReader)
         end if
     end readWithDiscriminator
 
@@ -452,6 +441,13 @@ private[kyo] object SchemaSerializer:
                 _parsedFieldName.get == expected
         end matchField
 
+        override def lastFieldName(): String =
+            if delegateReader.nonEmpty && delegateDepth > 0 then
+                delegateReader.get.lastFieldName()
+            else
+                _parsedFieldName.getOrElse("")
+        end lastFieldName
+
         def hasNextField(): Boolean =
             if delegateReader.nonEmpty && delegateDepth > 0 then
                 delegateReader.get.hasNextField()
@@ -577,8 +573,8 @@ private[kyo] object SchemaSerializer:
       *   - Renames: [[fieldParse]] reads the raw external name from the inner reader and translates it to the original field name via
       *     [[reverseMap]]. Names that were renamed away (present in [[renamedSources]]) are translated to a unique sentinel so they do not
       *     match any valid field slot.
-      *   - Drops: [[initFields]] pre-populates the slot for each dropped field with a zero value so the macro's required-field null check
-      *     does not throw [[MissingFieldException]].
+      *   - Drops: [[droppedFieldsMask]] reports the dropped-field bit positions so the macro's required-field bitmap check treats them as
+      *     already satisfied and does not throw [[MissingFieldException]].
       */
     final class TransformAwareReader(
         inner: Reader,
@@ -589,12 +585,22 @@ private[kyo] object SchemaSerializer:
 
         def frame: Frame = inner.frame
 
-        override def initFields(n: Int): Array[AnyRef] =
-            val arr = inner.initFields(n)
-            for (idx, field) <- droppedIndices do
-                if idx < n then arr(idx) = zeroForField(field)
-            arr
-        end initFields
+        // Pre-compute the dropped-field bitmask once per reader instance.
+        // Bit i is set iff field index i is dropped. Indices >= 64 are clamped to 63 (see the 64-field macro limit).
+        private val _droppedMask: Long =
+            var m = 0L
+            for (idx, _) <- droppedIndices do
+                if idx >= 0 && idx < 64 then m |= (1L << idx)
+            m
+        end _droppedMask
+
+        override def droppedFieldsMask(n: Int): Long =
+            val innerMask = inner.droppedFieldsMask(n)
+            if n >= 64 then _droppedMask | innerMask
+            else (_droppedMask & ((1L << n) - 1L)) | innerMask
+        end droppedFieldsMask
+
+        override def initFields(n: Int): Array[AnyRef] = inner.initFields(n)
 
         override def clearFields(n: Int): Unit = inner.clearFields(n)
 
@@ -619,6 +625,9 @@ private[kyo] object SchemaSerializer:
                 val expected = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
                 _translatedField.get == expected
         end matchField
+
+        override def lastFieldName(): String =
+            _translatedField.getOrElse("")
 
         def objectStart(): Int              = inner.objectStart()
         def objectEnd(): Unit               = inner.objectEnd()

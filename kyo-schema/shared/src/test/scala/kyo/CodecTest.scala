@@ -74,6 +74,7 @@ end TestWriter
 class TestReader(tokens: List[Token])(using _frame: Frame) extends Reader:
     override def frame: Frame = _frame
     private var pos           = 0
+    private var _lastField    = ""
 
     private def next(): Token =
         val t = tokens(pos)
@@ -100,8 +101,21 @@ class TestReader(tokens: List[Token])(using _frame: Frame) extends Reader:
         case t              => throw TypeMismatchException(scala.Nil, "ArrayEnd", t.toString)
 
     def field(): String = next() match
-        case Token.FieldName(name) => name
-        case t                     => throw TypeMismatchException(scala.Nil, "FieldName", t.toString)
+        case Token.FieldName(name) =>
+            _lastField = name
+            name
+        case t => throw TypeMismatchException(scala.Nil, "FieldName", t.toString)
+
+    def fieldParse(): Unit =
+        val _ = field()
+
+    def matchField(nameBytes: Array[Byte]): Boolean =
+        if _lastField.isEmpty then false
+        else
+            val expected = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
+            _lastField == expected
+
+    def lastFieldName(): String = _lastField
 
     def hasNextField(): Boolean =
         pos < tokens.size && (peek() match

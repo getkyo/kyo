@@ -98,6 +98,10 @@ case class Lit(value: Int)              extends Expr derives CanEqual
 case class Add(left: Expr, right: Expr) extends Expr derives CanEqual
 case class Neg(inner: Expr)             extends Expr derives CanEqual
 
+// Protobuf map/nested-wrapper test types
+case class MTProtoMapHolder(name: String, scores: Map[String, Int]) derives CanEqual
+case class MTListOfOption(name: String, tags: List[Option[Int]]) derives CanEqual
+
 // Discriminator test types
 sealed trait MTStatus derives CanEqual
 case object MTActive                   extends MTStatus derives CanEqual

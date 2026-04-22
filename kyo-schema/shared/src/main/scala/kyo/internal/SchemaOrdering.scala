@@ -2,6 +2,7 @@ package kyo.internal
 
 import kyo.*
 import scala.annotation.nowarn
+import scala.annotation.publicInBinary
 import scala.annotation.tailrec
 import scala.compiletime.*
 import scala.deriving.Mirror
@@ -10,7 +11,7 @@ import scala.deriving.Mirror
   *
   * Derives [[Ordering]] instances for case class types by comparing their fields in declaration order. Used by the `order` given on Schema.
   */
-private[kyo] object SchemaOrdering:
+@publicInBinary private[kyo] object SchemaOrdering:
 
     /** Derives an Ordering[A] for a case class by comparing fields in declaration order.
       *

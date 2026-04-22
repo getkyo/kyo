@@ -15,8 +15,12 @@ final class JsonWriter private (
     private var buf: Array[Byte],
     private var pos: Int,
     private var depth: Int,
-    private var needsComma: Array[Boolean]
+    private var needsComma: Array[Long]
 ) extends Writer:
+
+    private inline def getFlag(d: Int): Boolean = (needsComma(d >> 6) & (1L << (d & 63))) != 0L
+    private inline def setFlag(d: Int): Unit    = needsComma(d >> 6) |= (1L << (d & 63))
+    private inline def clearFlag(d: Int): Unit  = needsComma(d >> 6) &= ~(1L << (d & 63))
 
     def objectStart(name: String, size: Int): Unit =
         maybeComma()
@@ -39,8 +43,8 @@ final class JsonWriter private (
         writeByte(']')
 
     def fieldBytes(nameBytes: Array[Byte], index: Int): Unit =
-        if needsComma(depth) then writeByte(',')
-        needsComma(depth) = false
+        if getFlag(depth) then writeByte(',')
+        clearFlag(depth)
         writeByte('"')
         writeAsciiLiteral(nameBytes)
         writeByte('"')
@@ -49,8 +53,8 @@ final class JsonWriter private (
 
     // Override to properly escape field names (for Map keys with special characters)
     override def field(name: String, fieldId: Int): Unit =
-        if needsComma(depth) then writeByte(',')
-        needsComma(depth) = false
+        if getFlag(depth) then writeByte(',')
+        clearFlag(depth)
         writeQuotedString(name)
         writeByte(':')
     end field
@@ -176,11 +180,23 @@ final class JsonWriter private (
         maybeComma()
         writeQuotedString(value.toString)
 
-    def resultString: String =
-        val bytes = java.util.Arrays.copyOf(buf, pos)
+    override def resultString: String =
+        val s =
+            if hasNonAscii(buf, pos) then
+                // Non-ASCII: decode UTF-8 directly from buf → String allocates its internal byte[] once.
+                new String(buf, 0, pos, java.nio.charset.StandardCharsets.UTF_8)
+            else
+                // ASCII: trim to exact size, then AsciiStringFactory zero-copy-adopts the byte[].
+                AsciiStringFactory.fromAsciiBytes(java.util.Arrays.copyOf(buf, pos))
         release()
-        newString(bytes)
+        s
     end resultString
+
+    @tailrec
+    private def hasNonAscii(bs: Array[Byte], len: Int, i: Int = 0): Boolean =
+        if i >= len then false
+        else if bs(i) < 0 then true
+        else hasNonAscii(bs, len, i + 1)
 
     def result(): Span[Byte] =
         val bytes = java.util.Arrays.copyOf(buf, pos)
@@ -193,7 +209,7 @@ final class JsonWriter private (
         java.util.Arrays.fill(buf, 0, pos, 0.toByte)
         pos = 0
         depth = 0
-        java.util.Arrays.fill(needsComma, false)
+        java.util.Arrays.fill(needsComma, 0L)
         JsonWriter.cache.set(this)
     end release
 
@@ -209,14 +225,14 @@ final class JsonWriter private (
 
     // Internal: comma tracking per nesting level
     private def maybeComma(): Unit =
-        if needsComma(depth) then writeByte(',')
-        else needsComma(depth) = true
+        if getFlag(depth) then writeByte(',')
+        else setFlag(depth)
 
     private def push(): Unit =
         depth += 1
-        if depth >= needsComma.length then
+        if (depth >> 6) >= needsComma.length then
             needsComma = java.util.Arrays.copyOf(needsComma, needsComma.length * 2)
-        needsComma(depth) = false
+        clearFlag(depth)
     end push
 
     private def pop(): Unit =
@@ -289,11 +305,54 @@ final class JsonWriter private (
 
     // String escaping per RFC 8259, with direct UTF-8 encoding.
     // Uses a pre-computed lookup table for ASCII escape decisions.
+    //
+    // Scan-first bulk-copy fast path: walks the input once looking for the first
+    // index that is non-ASCII or requires escaping. The prefix [0, safeEnd) is
+    // pure ASCII with no escaping, so every UTF-16 code unit maps to exactly one
+    // UTF-8 byte — bulk-copy it with a tight `buf(pos + j) = charAt(j).toByte`
+    // loop. If safeEnd < len, fall through to the per-char slow path starting
+    // at safeEnd.
     private def writeQuotedString(s: String): Unit =
         writeByte('"')
         val escapeTable = JsonWriter.EscapeTable
+        val len         = s.length
+
+        // Scan for the first index that is non-ASCII or requires escaping.
+        @tailrec def scan(i: Int): Int =
+            if i >= len then i
+            else
+                val c = s.charAt(i)
+                if c >= 0x80 then i
+                else if escapeTable(c) != 0 then i
+                else scan(i + 1)
+        val safeEnd = scan(0)
+
+        if safeEnd > 0 then
+            // Bulk-copy the pure-ASCII, escape-free prefix (or entire string).
+            // charAt returned < 0x80 for every index in [0, safeEnd), so each
+            // UTF-16 code unit maps to exactly one UTF-8 byte.
+            ensure(safeEnd)
+            var j = 0
+            while j < safeEnd do
+                buf(pos + j) = s.charAt(j).toByte
+                j += 1
+            pos += safeEnd
+        end if
+
+        if safeEnd < len then
+            writeQuotedStringSlow(s, safeEnd)
+
+        writeByte('"')
+    end writeQuotedString
+
+    // Per-character escape/encode path. Handles everything the fast path cannot:
+    // ASCII chars requiring escape, 2/3/4-byte UTF-8, and surrogate pairs.
+    // Called with `start` = first index the fast-path scan stopped at.
+    private def writeQuotedStringSlow(s: String, start: Int): Unit =
+        val escapeTable = JsonWriter.EscapeTable
+        val len         = s.length
         @tailrec def loop(i: Int): Unit =
-            if i < s.length then
+            if i < len then
                 val c = s.charAt(i)
                 if c < 0x80 then
                     val esc = escapeTable(c)
@@ -320,7 +379,7 @@ final class JsonWriter private (
                     buf(pos + 1) = (0x80 | (c & 0x3f)).toByte
                     pos += 2
                     loop(i + 1)
-                else if c >= 0xd800 && c <= 0xdbff && i + 1 < s.length then
+                else if c >= 0xd800 && c <= 0xdbff && i + 1 < len then
                     // High surrogate — check for low surrogate
                     val lo = s.charAt(i + 1)
                     if lo >= 0xdc00 && lo <= 0xdfff then
@@ -351,9 +410,8 @@ final class JsonWriter private (
                     pos += 3
                     loop(i + 1)
                 end if
-        loop(0)
-        writeByte('"')
-    end writeQuotedString
+        loop(start)
+    end writeQuotedStringSlow
 
 end JsonWriter
 
@@ -397,7 +455,7 @@ object JsonWriter:
             case Maybe.Present(w) =>
                 cache.set(null) // Clear pool slot (Java API requires null)
                 w
-            case _ => new JsonWriter(new Array[Byte](256), 0, 0, new Array[Boolean](16))
+            case _ => new JsonWriter(new Array[Byte](256), 0, 0, new Array[Long](1))
         end match
     end apply
 

@@ -3237,6 +3237,33 @@ class SchemaTest extends Test:
             assert(decoded.toString == frame.toString)
         }
 
+        "kyo-data opaque type schemas" - {
+
+            "kyo.Instant roundtrip" in {
+                given Schema[kyo.Instant] = summon[Schema[kyo.Instant]]
+                val instant               = kyo.Instant.fromJava(java.time.Instant.parse("2024-01-01T00:00:00Z"))
+                val encoded               = Json.encode(instant)
+                val decoded               = Json.decode[kyo.Instant](encoded).getOrThrow
+                assert(decoded == instant)
+            }
+
+            "kyo.Duration roundtrip" in {
+                given Schema[kyo.Duration] = summon[Schema[kyo.Duration]]
+                val duration               = kyo.Duration.fromNanos(123456789L)
+                val encoded                = Json.encode(duration)
+                val decoded                = Json.decode[kyo.Duration](encoded).getOrThrow
+                assert(decoded == duration)
+            }
+
+            "kyo.Text roundtrip" in {
+                given Schema[kyo.Text] = summon[Schema[kyo.Text]]
+                val text               = kyo.Text("hello")
+                val encoded            = Json.encode(text)
+                val decoded            = Json.decode[kyo.Text](encoded).getOrThrow
+                assert(decoded == text)
+            }
+        }
+
         "Schema Tag encode/decode - static tag" in {
             given Schema[Tag[Int]] = summon[Schema[Tag[Int]]]
             val tag                = Tag[Int]
@@ -3269,9 +3296,9 @@ class SchemaTest extends Test:
 
             // Token-based round-trip
             val w = new TestWriter
-            resultSchema.serializeWrite.get(panic, w)
+            resultSchema.serializeWrite(panic, w)
             val r       = new TestReader(w.resultTokens)
-            val decoded = resultSchema.serializeRead.get(r)
+            val decoded = resultSchema.serializeRead(r)
 
             // The decoded value should be Result.Panic with the message
             decoded match
@@ -3295,9 +3322,9 @@ class SchemaTest extends Test:
             val dictSchema = summon[Schema[Dict[Int, String]]]
             val original   = Dict(1 -> "one", 2 -> "two")
             val w          = new TestWriter
-            dictSchema.serializeWrite.get(original, w)
+            dictSchema.serializeWrite(original, w)
             val r       = new TestReader(w.resultTokens)
-            val decoded = dictSchema.serializeRead.get(r)
+            val decoded = dictSchema.serializeRead(r)
             assert(decoded.size == original.size)
             assert(decoded.get(1) == Maybe("one"))
             assert(decoded.get(2) == Maybe("two"))
@@ -3406,14 +3433,14 @@ class SchemaTest extends Test:
             assert(decoded == value)
         }
 
-        "Changeset.Op round-trips through JSON (derived Schema)" in {
+        "Changeset.Patch round-trips through JSON (derived Schema)" in {
 
-            val op: Changeset.Op = Changeset.Op.SetField(
+            val op: Changeset.Patch = Changeset.Patch.SetField(
                 Chunk("name"),
                 Structure.Value.Str("Bob")
             )
             val encoded = Json.encode(op)
-            val decoded = Json.decode[Changeset.Op](encoded).getOrThrow
+            val decoded = Json.decode[Changeset.Patch](encoded).getOrThrow
             assert(decoded == op)
         }
 
@@ -4000,7 +4027,7 @@ class SchemaTest extends Test:
             "Structure.Field round-trip (simple)" in {
                 val v = Structure.Field(
                     "myField",
-                    Structure.Type.Primitive("String", Tag[String].asInstanceOf[Tag[Any]]),
+                    Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]]),
                     Maybe.empty,
                     Maybe.empty,
                     optional = false
@@ -4014,7 +4041,7 @@ class SchemaTest extends Test:
             "Structure.Field with doc round-trip" in {
                 val v = Structure.Field(
                     "email",
-                    Structure.Type.Primitive("String", Tag[String].asInstanceOf[Tag[Any]]),
+                    Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]]),
                     Maybe("The email address"),
                     Maybe.empty,
                     optional = true
@@ -4034,7 +4061,13 @@ class SchemaTest extends Test:
                         "Circle",
                         Tag[Any],
                         Chunk.empty,
-                        Chunk(Structure.Field("radius", Structure.Type.Primitive("Double", Tag[Any]), Maybe.empty, Maybe.empty, false))
+                        Chunk(Structure.Field(
+                            "radius",
+                            Structure.Type.Primitive(Structure.PrimitiveKind.Double, Tag[Any]),
+                            Maybe.empty,
+                            Maybe.empty,
+                            false
+                        ))
                     )
                 )
                 val decoded = roundTrip(v)(using summon[Schema[Structure.Variant]])
@@ -4050,8 +4083,20 @@ class SchemaTest extends Test:
                     Tag[Any],
                     Chunk.empty,
                     Chunk(
-                        Structure.Field("name", Structure.Type.Primitive("String", Tag[Any]), Maybe.empty, Maybe.empty, false),
-                        Structure.Field("age", Structure.Type.Primitive("Int", Tag[Any]), Maybe.empty, Maybe.empty, false)
+                        Structure.Field(
+                            "name",
+                            Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Any]),
+                            Maybe.empty,
+                            Maybe.empty,
+                            false
+                        ),
+                        Structure.Field(
+                            "age",
+                            Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Any]),
+                            Maybe.empty,
+                            Maybe.empty,
+                            false
+                        )
                     )
                 )
                 val decoded = roundTrip(v)(using summon[Schema[Structure.Type]])
@@ -4066,13 +4111,13 @@ class SchemaTest extends Test:
             }
 
             "Structure.Type Primitive round-trip" in {
-                val v       = Structure.Type.Primitive("String", Tag[Any])
+                val v       = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Any])
                 val decoded = roundTrip(v)(using summon[Schema[Structure.Type]])
                 assert(decoded.name == "String")
             }
 
             "Structure.Type Collection round-trip" in {
-                val v       = Structure.Type.Collection("List", Tag[Any], Structure.Type.Primitive("Int", Tag[Any]))
+                val v       = Structure.Type.Collection("List", Tag[Any], Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Any]))
                 val decoded = roundTrip(v)(using summon[Schema[Structure.Type]])
                 assert(decoded.name == "List")
                 decoded match
@@ -4084,51 +4129,51 @@ class SchemaTest extends Test:
 
             "Structure.TypedValue round-trip" in {
                 val v = Structure.TypedValue(
-                    Structure.Type.Primitive("Int", Tag[Any]),
+                    Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Any]),
                     Structure.Value.primitive(42)
                 )
                 val decoded = roundTrip(v)(using summon[Schema[Structure.TypedValue]])
                 assert(decoded.value == v.value)
             }
 
-            // Changeset.Op codec round-trips
+            // Changeset.Patch codec round-trips
 
-            "Changeset.Op.SetField round-trip" in {
-                val v = Changeset.Op.SetField(Chunk("name"), Structure.Value.primitive("Alice"))
-                assert(roundTrip(v)(using summon[Schema[Changeset.Op]]) == v)
+            "Changeset.Patch.SetField round-trip" in {
+                val v = Changeset.Patch.SetField(Chunk("name"), Structure.Value.primitive("Alice"))
+                assert(roundTrip(v)(using summon[Schema[Changeset.Patch]]) == v)
             }
 
-            "Changeset.Op.RemoveField round-trip" in {
-                val v = Changeset.Op.RemoveField(Chunk("someField"))
-                assert(roundTrip(v)(using summon[Schema[Changeset.Op]]) == v)
+            "Changeset.Patch.RemoveField round-trip" in {
+                val v = Changeset.Patch.RemoveField(Chunk("someField"))
+                assert(roundTrip(v)(using summon[Schema[Changeset.Patch]]) == v)
             }
 
-            "Changeset.Op.SetNull round-trip" in {
-                val v = Changeset.Op.SetNull(Chunk("optField"))
-                assert(roundTrip(v)(using summon[Schema[Changeset.Op]]) == v)
+            "Changeset.Patch.SetNull round-trip" in {
+                val v = Changeset.Patch.SetNull(Chunk("optField"))
+                assert(roundTrip(v)(using summon[Schema[Changeset.Patch]]) == v)
             }
 
-            "Changeset.Op.NumericDelta round-trip" in {
-                val v = Changeset.Op.NumericDelta(Chunk("age"), BigDecimal(5))
-                assert(roundTrip(v)(using summon[Schema[Changeset.Op]]) == v)
+            "Changeset.Patch.NumericDelta round-trip" in {
+                val v = Changeset.Patch.NumericDelta(Chunk("age"), BigDecimal(5))
+                assert(roundTrip(v)(using summon[Schema[Changeset.Patch]]) == v)
             }
 
-            "Changeset.Op.StringPatch round-trip" in {
-                val v = Changeset.Op.StringPatch(Chunk("name"), 0, 5, "Alice")
-                assert(roundTrip(v)(using summon[Schema[Changeset.Op]]) == v)
+            "Changeset.Patch.StringPatch round-trip" in {
+                val v = Changeset.Patch.StringPatch(Chunk("name"), 0, 5, "Alice")
+                assert(roundTrip(v)(using summon[Schema[Changeset.Patch]]) == v)
             }
 
-            "Changeset.Op.Nested round-trip" in {
-                val v = Changeset.Op.Nested(
+            "Changeset.Patch.Nested round-trip" in {
+                val v = Changeset.Patch.Nested(
                     Chunk("address"),
-                    Chunk(Changeset.Op.StringPatch(Chunk("city"), 0, 3, "NYC"))
+                    Chunk(Changeset.Patch.StringPatch(Chunk("city"), 0, 3, "NYC"))
                 )
-                assert(roundTrip(v)(using summon[Schema[Changeset.Op]]) == v)
+                assert(roundTrip(v)(using summon[Schema[Changeset.Patch]]) == v)
             }
 
-            "Changeset.Op.SetField JSON round-trip" in {
-                val v = Changeset.Op.SetField(Chunk("x"), Structure.Value.primitive(99))
-                assert(jsonRoundTrip(v)(using summon[Schema[Changeset.Op]]) == v)
+            "Changeset.Patch.SetField JSON round-trip" in {
+                val v = Changeset.Patch.SetField(Chunk("x"), Structure.Value.primitive(99))
+                assert(jsonRoundTrip(v)(using summon[Schema[Changeset.Patch]]) == v)
             }
 
             // Frame codec
@@ -5353,11 +5398,11 @@ class SchemaTest extends Test:
                     assert(fields.map(_.name) == Chunk("id", "name", "email", "password", "ssn"))
                     // Structure fields have correct types
                     fields.find(_.name == "name").get.fieldType match
-                        case Structure.Type.Primitive(n, _) => assert(n == "String")
-                        case other                          => fail(s"Expected Primitive for name, got $other")
+                        case Structure.Type.Primitive(kind, _) => assert(kind == Structure.PrimitiveKind.String)
+                        case other                             => fail(s"Expected Primitive for name, got $other")
                     fields.find(_.name == "id").get.fieldType match
-                        case Structure.Type.Primitive(n, _) => assert(n == "Int")
-                        case other                          => fail(s"Expected Primitive for id, got $other")
+                        case Structure.Type.Primitive(kind, _) => assert(kind == Structure.PrimitiveKind.Int)
+                        case other                             => fail(s"Expected Primitive for id, got $other")
                 case other =>
                     fail(s"Expected Product, got $other")
             end match
@@ -5867,6 +5912,27 @@ class SchemaTest extends Test:
         "discriminator survives transform chain" in {
             val schema = Schema[MTShape].discriminator("kind")
             assert(schema.discriminatorField == Maybe("kind"))
+        }
+
+        "discriminator unknown variant carries actual discriminator value (regression)" in {
+            // Regression: DiscriminatorReader previously inherited the default lastFieldName(),
+            // which read from a scaffolding field it never populated. As a result,
+            // UnknownVariantException.variantName came back as "" on the sealed-trait error
+            // path for discriminator-formatted sealed traits. This test asserts the actual
+            // mis-matched discriminator value makes it into the exception.
+            val schema = Schema[MTShape].discriminator("type")
+            val result = schema.decodeString[Json]("""{"type":"MTTriangle","a":1.0}""")
+            assert(result.isFailure)
+            result match
+                case Result.Failure(e: UnknownVariantException) =>
+                    assert(
+                        e.variantName == "MTTriangle",
+                        s"Expected variantName == \"MTTriangle\", got: \"${e.variantName}\""
+                    )
+                    assert(e.getMessage.contains("MTTriangle"))
+                case other =>
+                    fail(s"Expected Result.Failure(UnknownVariantException), got: $other")
+            end match
         }
     }
 
