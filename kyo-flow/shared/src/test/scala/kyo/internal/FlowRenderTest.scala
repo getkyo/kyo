@@ -6,7 +6,7 @@ class FlowRenderTest extends Test:
 
     // --- JSON DTOs for structural assertions ---
 
-    case class JsonGraph(nodes: Seq[JsonNode], edges: Seq[JsonEdge]) derives Json
+    case class JsonGraph(nodes: Seq[JsonNode], edges: Seq[JsonEdge]) derives Schema
     case class JsonNode(
         id: String,
         name: String,
@@ -14,13 +14,13 @@ class FlowRenderTest extends Test:
         tag: Option[String] = None,
         duration: Option[String] = None,
         status: Option[String] = None
-    ) derives Json
-    case class JsonEdge(source: String, target: String) derives Json
+    ) derives Schema
+    case class JsonEdge(source: String, target: String) derives Schema
 
     given CanEqual[Any, Any] = CanEqual.derived
 
     def parseJson(s: String): JsonGraph =
-        Json[JsonGraph].decode(s) match
+        Json.decode[JsonGraph](s) match
             case Result.Success(g) => g
             case other             => throw new AssertionError(s"Failed to parse JSON graph: $other\n$s")
 
@@ -428,7 +428,7 @@ class FlowRenderTest extends Test:
     "race rendering" - {
 
         "json renders race sub-flows" in run {
-            case class Approval(approved: Boolean) derives Json
+            case class Approval(approved: Boolean) derives Schema
             val left  = Flow.input[Approval]("approval")
             val right = Flow.input[Int]("x").output("fallback")(ctx => Approval(false))
             val flow  = Flow.race(left, right)
@@ -439,7 +439,7 @@ class FlowRenderTest extends Test:
         }
 
         "mermaid renders race fork-join" in run {
-            case class Approval(approved: Boolean) derives Json
+            case class Approval(approved: Boolean) derives Schema
             val left   = Flow.input[Approval]("approval")
             val right  = Flow.input[Int]("x").output("fallback")(ctx => Approval(false))
             val flow   = Flow.race(left, right)

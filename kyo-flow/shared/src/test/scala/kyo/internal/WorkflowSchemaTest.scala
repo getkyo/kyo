@@ -107,8 +107,8 @@ class WorkflowSchemaTest extends Test:
             val schema = WorkflowSchema.of(flow)
 
             val fields = Dict(
-                "x" -> FlowStore.FieldData(summon[Json[Int]].encode(5), Tag[Int].erased),
-                "b" -> FlowStore.FieldData(summon[Json[Int]].encode(50), Tag[Int].erased)
+                "x" -> FlowStore.FieldData(Json.encode(5), Tag[Int].erased),
+                "b" -> FlowStore.FieldData(Json.encode(50), Tag[Int].erased)
             )
 
             val record = rebuildRecord(fields, schema)

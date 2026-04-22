@@ -6,11 +6,11 @@ class FlowTest extends Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
-    case class OrderId(value: String) derives CanEqual, Json
-    case class Order(id: String, amount: Int) derives CanEqual, Json
-    case class Payment(orderId: String, total: Int) derives CanEqual, Json
-    case class Shipment(orderId: String) derives CanEqual, Json
-    case class Approval(approved: Boolean) derives CanEqual, Json
+    case class OrderId(value: String) derives CanEqual, Schema
+    case class Order(id: String, amount: Int) derives CanEqual, Schema
+    case class Payment(orderId: String, total: Int) derives CanEqual, Schema
+    case class Shipment(orderId: String) derives CanEqual, Schema
+    case class Approval(approved: Boolean) derives CanEqual, Schema
 
     "AST construction" - {
 
@@ -290,8 +290,8 @@ class FlowTest extends Test:
         "visits output and input" in run {
             val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1)
             val names = FlowFold(flow)(new FlowVisitorCollect[Chunk[String]](Chunk.empty, _ ++ _):
-                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V])  = Chunk(s"input:$name")
-                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) = Chunk(s"output:$name"))
+                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])  = Chunk(s"input:$name")
+                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = Chunk(s"output:$name"))
             assert(names.toSeq.contains("input:x"))
             assert(names.toSeq.contains("output:y"))
             succeed
@@ -352,10 +352,10 @@ class FlowTest extends Test:
         "traversal order" in run {
             val flow = Flow.input[Int]("a").output("b")(ctx => ctx.a).step("c")(ctx => ()).sleep("d", 1.second)
             val names = FlowFold(flow)(new FlowVisitorCollect[Chunk[String]](Chunk.empty, _ ++ _):
-                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V])  = Chunk(name)
-                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) = Chunk(name)
-                override def onStep(name: String, frame: Frame, meta: Flow.Meta)                             = Chunk(name)
-                override def onSleep(name: String, duration: Duration, frame: Frame, meta: Flow.Meta)        = Chunk(name))
+                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])  = Chunk(name)
+                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = Chunk(name)
+                override def onStep(name: String, frame: Frame, meta: Flow.Meta)                               = Chunk(name)
+                override def onSleep(name: String, duration: Duration, frame: Frame, meta: Flow.Meta)          = Chunk(name))
             assert(names.toSeq == Seq("a", "b", "c", "d"))
             succeed
         }
@@ -363,10 +363,10 @@ class FlowTest extends Test:
         "counts all nodes" in run {
             val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1).step("log")(ctx => ()).sleep("wait", 1.second)
             val count = FlowFold(flow)(new FlowVisitorCollect[Int](0, _ + _):
-                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V])  = 1
-                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) = 1
-                override def onStep(name: String, frame: Frame, meta: Flow.Meta)                             = 1
-                override def onSleep(name: String, duration: Duration, frame: Frame, meta: Flow.Meta)        = 1)
+                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])  = 1
+                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = 1
+                override def onStep(name: String, frame: Frame, meta: Flow.Meta)                               = 1
+                override def onSleep(name: String, duration: Duration, frame: Frame, meta: Flow.Meta)          = 1)
             assert(count == 4)
             succeed
         }
@@ -413,8 +413,8 @@ class FlowTest extends Test:
             val flow        = Flow.gather(f1, f2)
             var gatherCount = 0
             FlowFold(flow)(new FlowVisitorCollect[Int](0, _ + _):
-                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V])  = 1
-                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) = 1
+                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])  = 1
+                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = 1
                 override def onGather(results: Seq[Int], frame: Frame) =
                     gatherCount = results.length; results.sum)
             assert(gatherCount == 2)
@@ -429,8 +429,8 @@ class FlowTest extends Test:
                 .otherwise(ctx => "small", name = "default")
                 .output("z")(ctx => ctx.d)
             val names = FlowFold(flow)(new FlowVisitorCollect[Chunk[String]](Chunk.empty, _ ++ _):
-                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V])          = Chunk(name)
-                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V])         = Chunk(name)
+                override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])        = Chunk(name)
+                override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])       = Chunk(name)
                 override def onDispatch(name: String, branches: Seq[Flow.BranchInfo], frame: Frame, meta: Flow.Meta) = Chunk(name)
                 override def onSubflow(name: String, childFlow: Flow[?, ?, ?], frame: Frame, meta: Flow.Meta)        = Chunk(name))
             assert(names.toSeq == Seq("x", "y", "d", "z"))
