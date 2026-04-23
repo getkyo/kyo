@@ -26,7 +26,7 @@ final private[kyo] class Trace(
 
 private[kyo] object Trace:
 
-    private[kernel] def init: Trace = Trace(new Array[Frame](maxTraceFrames), 0)
+    private[kyo] def init: Trace = Trace(new Array[Frame](maxTraceFrames), 0)
 
     abstract private[kernel] class Owner extends TracePool.Local:
         final private var frames = new Array[Frame](maxTraceFrames)

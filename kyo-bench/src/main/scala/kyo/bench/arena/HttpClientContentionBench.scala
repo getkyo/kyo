@@ -8,6 +8,9 @@ class HttpClientContentionBench
 
     val concurrency = Runtime.getRuntime().availableProcessors()
     val url         = TestHttpServer.start(concurrency)
+    val parsedUrl =
+        import kyo.*
+        HttpUrl.parse(url).getOrThrow
 
     lazy val catsClient =
         import cats.effect.*
@@ -29,18 +32,10 @@ class HttpClientContentionBench
         Seq.fill(concurrency)(catsClient.expect[String](catsUrl)).parSequence
     end catsBench
 
-    lazy val kyoClient =
-        import kyo.*
-        PlatformBackend.default
-
-    val kyoUrl =
-        import sttp.client3.*
-        uri"$url"
-
     override def kyoBenchFiber() =
         import kyo.*
 
-        Async.fill(concurrency, concurrency)(Requests(_.get(kyoUrl)))
+        Async.fill(concurrency, concurrency)(HttpClient.getText(parsedUrl))
     end kyoBenchFiber
 
     val zioUrl =
