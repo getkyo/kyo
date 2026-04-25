@@ -22,7 +22,7 @@ case class HttpOpenApi(
     info: HttpOpenApi.Info,
     paths: Map[String, HttpOpenApi.PathItem],
     components: Option[HttpOpenApi.Components]
-) derives Json, CanEqual
+) derives Schema, CanEqual
 
 object HttpOpenApi:
 
@@ -32,63 +32,12 @@ object HttpOpenApi:
     transparent inline def fromFile(inline path: String): Any =
         ${ kyo.internal.OpenApiMacro.deriveImpl('path) }
 
-    def toJson(openApi: HttpOpenApi): String =
-        Json[HttpOpenApi].encode(openApi)
+    def toJson(openApi: HttpOpenApi)(using Frame): String =
+        Json.encode(openApi)
 
-    def toFile(openApi: HttpOpenApi, path: String): Unit =
+    def toFile(openApi: HttpOpenApi, path: String)(using Frame): Unit =
         val json = toJson(openApi)
         java.nio.file.Files.writeString(java.nio.file.Path.of(path), json): Unit
-
-    case class Info(
-        title: String,
-        version: String,
-        description: Option[String]
-    ) derives Json, CanEqual
-
-    case class PathItem(
-        get: Option[Operation],
-        post: Option[Operation],
-        put: Option[Operation],
-        delete: Option[Operation],
-        patch: Option[Operation],
-        head: Option[Operation],
-        options: Option[Operation]
-    ) derives Json, CanEqual
-
-    case class Operation(
-        tags: Option[List[String]],
-        summary: Option[String],
-        description: Option[String],
-        operationId: Option[String],
-        deprecated: Option[Boolean],
-        parameters: Option[List[Parameter]],
-        requestBody: Option[RequestBody],
-        responses: Map[String, Response],
-        security: Option[List[Map[String, List[String]]]]
-    ) derives Json, CanEqual
-
-    case class Parameter(
-        name: String,
-        in: String,
-        required: Option[Boolean],
-        json: SchemaObject,
-        description: Option[String]
-    ) derives Json, CanEqual
-
-    case class RequestBody(
-        required: Option[Boolean],
-        content: Map[String, MediaType],
-        description: Option[String]
-    ) derives Json, CanEqual
-
-    case class Response(
-        description: String,
-        content: Option[Map[String, MediaType]]
-    ) derives Json, CanEqual
-
-    case class MediaType(
-        json: SchemaObject
-    ) derives Json, CanEqual
 
     case class SchemaObject(
         `type`: Option[String],
@@ -100,7 +49,58 @@ object HttpOpenApi:
         oneOf: Option[List[SchemaObject]],
         `enum`: Option[List[String]],
         `$ref`: Option[String]
-    ) derives Json, CanEqual
+    ) derives Schema, CanEqual
+
+    case class Info(
+        title: String,
+        version: String,
+        description: Option[String]
+    ) derives Schema, CanEqual
+
+    case class MediaType(
+        json: SchemaObject
+    ) derives Schema, CanEqual
+
+    case class Parameter(
+        name: String,
+        in: String,
+        required: Option[Boolean],
+        json: SchemaObject,
+        description: Option[String]
+    ) derives Schema, CanEqual
+
+    case class RequestBody(
+        required: Option[Boolean],
+        content: Map[String, MediaType],
+        description: Option[String]
+    ) derives Schema, CanEqual
+
+    case class Response(
+        description: String,
+        content: Option[Map[String, MediaType]]
+    ) derives Schema, CanEqual
+
+    case class Operation(
+        tags: Option[List[String]],
+        summary: Option[String],
+        description: Option[String],
+        operationId: Option[String],
+        deprecated: Option[Boolean],
+        parameters: Option[List[Parameter]],
+        requestBody: Option[RequestBody],
+        responses: Map[String, Response],
+        security: Option[List[Map[String, List[String]]]]
+    ) derives Schema, CanEqual
+
+    case class PathItem(
+        get: Option[Operation],
+        post: Option[Operation],
+        put: Option[Operation],
+        delete: Option[Operation],
+        patch: Option[Operation],
+        head: Option[Operation],
+        options: Option[Operation]
+    ) derives Schema, CanEqual
 
     object SchemaObject:
         def string: SchemaObject  = SchemaObject(Some("string"), None, None, None, None, None, None, None, None)
@@ -116,7 +116,7 @@ object HttpOpenApi:
     case class Components(
         schemas: Option[Map[String, SchemaObject]],
         securitySchemes: Option[Map[String, SecurityScheme]]
-    ) derives Json, CanEqual
+    ) derives Schema, CanEqual
 
     case class SecurityScheme(
         `type`: String,
@@ -124,6 +124,6 @@ object HttpOpenApi:
         bearerFormat: Option[String],
         name: Option[String],
         in: Option[String]
-    ) derives Json, CanEqual
+    ) derives Schema, CanEqual
 
 end HttpOpenApi

@@ -4,22 +4,22 @@ import kyo.*
 
 private[kyo] object FlowApi:
 
-    case class CreateRequest(executionId: Option[String] = None) derives Json
-    case class CreateResponse(executionId: String) derives Json
-    case class OkResponse(ok: Boolean) derives Json
-    case class EventDto(kind: String, detail: String, timestamp: String) derives Json
-    case class HistoryResponse(events: Seq[EventDto], hasMore: Boolean) derives Json
-    case class InputInfoDto(name: String, tag: String, delivered: Boolean) derives Json
+    case class CreateRequest(executionId: Option[String] = None) derives Schema
+    case class CreateResponse(executionId: String) derives Schema
+    case class OkResponse(ok: Boolean) derives Schema
+    case class EventDto(kind: String, detail: String, timestamp: String) derives Schema
+    case class HistoryResponse(events: Seq[EventDto], hasMore: Boolean) derives Schema
+    case class InputInfoDto(name: String, tag: String, delivered: Boolean) derives Schema
     case class SearchRequest(
         workflowId: Option[String] = None,
         status: Option[String] = None,
         limit: Option[Int] = None,
         offset: Option[Int] = None
-    ) derives Json
-    case class SearchResponse(items: Seq[ExecutionInfoDto], total: Int) derives Json
-    case class ExecutionInfoDto(executionId: String, flowId: String, status: String) derives Json
-    case class CancelAllRequest(workflowId: Option[String] = None) derives Json
-    case class CancelAllResponse(cancelled: Int) derives Json
+    ) derives Schema
+    case class SearchResponse(items: Seq[ExecutionInfoDto], total: Int) derives Schema
+    case class ExecutionInfoDto(executionId: String, flowId: String, status: String) derives Schema
+    case class CancelAllRequest(workflowId: Option[String] = None) derives Schema
+    case class CancelAllResponse(cancelled: Int) derives Schema
 
     def handlers(engine: FlowEngine)(using Frame): Chunk[HttpHandler[?, ?, ?]] =
         Chunk(
@@ -157,9 +157,9 @@ private[kyo] object FlowApi:
                                 case Present(defn) =>
                                     Maybe.fromOption(defn.inputs.find(_.name == name)) match
                                         case Present(info) =>
-                                            info.json.decode(body) match
+                                            info.schema.decodeString[Json](body) match
                                                 case Result.Success(value) =>
-                                                    engine.store.putFieldIfAbsent[Any](eid, name, value)(using info.tag, info.json).map {
+                                                    engine.store.putFieldIfAbsent[Any](eid, name, value)(using info.tag, info.schema).map {
                                                         case true  => HttpResponse.ok(OkResponse(true))
                                                         case false => HttpResponse.halt(HttpResponse(HttpStatus.Conflict))
                                                     }

@@ -23,12 +23,32 @@ object FieldsMacros:
         end if
     end caseClassFields
 
+    /** If `tpe` is a case class, extract default value expressions for each field. Returns a map from field name to the default value
+      * expression, only for fields that have defaults.
+      */
+    private def caseClassDefaults(using Quotes)(tpe: quotes.reflect.TypeRepr): Map[String, Expr[Any]] =
+        import quotes.reflect.*
+        val sym = tpe.typeSymbol
+        if sym.isClassDef && sym.flags.is(Flags.Case) then
+            val companion = sym.companionModule
+            sym.caseFields.zipWithIndex.flatMap: (field, idx) =>
+                val methodName = s"$$lessinit$$greater$$default$$${idx + 1}"
+                companion.methodMember(methodName).headOption.map: method =>
+                    val call = Ref(companion).select(method)
+                    field.name -> call.asExprOf[Any]
+            .toMap
+        else
+            Map.empty
+        end if
+    end caseClassDefaults
+
     def deriveImpl[A: Type](using Quotes): Expr[Fields[A]] =
         import quotes.reflect.*
 
         def decompose(tpe: TypeRepr): Vector[TypeRepr] =
             tpe.dealias match
                 case AndType(l, r) => decompose(l) ++ decompose(r)
+                case OrType(l, r)  => decompose(l) ++ decompose(r)
                 case _ =>
                     if tpe =:= TypeRepr.of[Any] then Vector()
                     else
@@ -50,9 +70,17 @@ object FieldsMacros:
                 case h +: t => TypeRepr.of[*:].appliedTo(List(h, tupled(t)))
                 case _      => TypeRepr.of[EmptyTuple]
 
-        val components = decompose(TypeRepr.of[A].dealias)
+        val tpeA       = TypeRepr.of[A].dealias
+        val components = decompose(tpeA)
+        val defaults   = caseClassDefaults(tpeA)
 
-        case class ComponentInfo(name: String, nameExpr: Expr[String], tagExpr: Expr[Any], nestedExpr: Expr[List[Field[?, ?]]])
+        case class ComponentInfo(
+            name: String,
+            nameExpr: Expr[String],
+            tagExpr: Expr[Any],
+            nestedExpr: Expr[List[Field[?, ?]]],
+            defaultExpr: Expr[Maybe[Any]]
+        )
 
         def extractComponent(tpe: TypeRepr): Option[ComponentInfo] =
             tpe match
@@ -69,12 +97,22 @@ object FieldsMacros:
                                 case Some(fields) => '{ $fields.fields }
                                 case None         => '{ Nil: List[Field[?, ?]] }
                         case _ => '{ Nil: List[Field[?, ?]] }
-                    Some(ComponentInfo(name, nameExpr, tagExpr, nestedExpr))
+                    val defaultExpr = defaults.get(name) match
+                        case Some(defaultValue) => '{ Maybe(${ defaultValue }).asInstanceOf[Maybe[Any]] }
+                        case None               => '{ Maybe.empty[Any] }
+                    Some(ComponentInfo(name, nameExpr, tagExpr, nestedExpr, defaultExpr))
                 case _ => None
 
         val infos = components.flatMap(extractComponent)
         val fieldsList = Expr.ofList(infos.map(ci =>
-            '{ Field[String, Any](${ ci.nameExpr }, ${ ci.tagExpr }.asInstanceOf[Tag[Any]], ${ ci.nestedExpr }) }
+            '{
+                Field[String, Any](
+                    ${ ci.nameExpr },
+                    ${ ci.tagExpr }.asInstanceOf[Tag[Any]],
+                    ${ ci.nestedExpr },
+                    ${ ci.defaultExpr }.asInstanceOf[Maybe[Any]]
+                )
+            }
         ).toList)
 
         tupled(components).asType match
@@ -93,6 +131,8 @@ object FieldsMacros:
         def findValueType(tpe: TypeRepr): Option[TypeRepr] =
             tpe.dealias match
                 case AndType(l, r) =>
+                    findValueType(l).orElse(findValueType(r))
+                case OrType(l, r) =>
                     findValueType(l).orElse(findValueType(r))
                 case AppliedType(_, List(ConstantType(StringConstant(n)), valueType)) if n == nameStr =>
                     Some(valueType)
@@ -135,6 +175,7 @@ object FieldsMacros:
         def decompose(tpe: TypeRepr): Vector[(String, TypeRepr)] =
             tpe.dealias match
                 case AndType(l, r) => decompose(l) ++ decompose(r)
+                case OrType(l, r)  => decompose(l) ++ decompose(r)
                 case AppliedType(_, List(ConstantType(StringConstant(name)), valueType)) =>
                     Vector((name, valueType))
                 case _ =>
@@ -177,6 +218,7 @@ object FieldsMacros:
         def fieldNames(tpe: TypeRepr): Set[String] =
             tpe.dealias match
                 case AndType(l, r) => fieldNames(l) ++ fieldNames(r)
+                case OrType(l, r)  => fieldNames(l) ++ fieldNames(r)
                 case AppliedType(_, List(ConstantType(StringConstant(name)), _)) =>
                     Set(name)
                 case _ =>
@@ -257,5 +299,34 @@ object FieldsMacros:
                 }
         end match
     end fromProductImpl
+
+    def toProductImpl[A <: Product: Type](record: Expr[Record[?]])(using Quotes): Expr[A] =
+        import quotes.reflect.*
+
+        val tpe = TypeRepr.of[A].dealias
+        val sym = tpe.typeSymbol
+
+        if !sym.isClassDef || !sym.flags.is(Flags.Case) then
+            report.errorAndAbort(s"toProduct requires a case class, got: ${tpe.show}")
+
+        val fields    = sym.caseFields
+        val companion = Ref(sym.companionModule)
+
+        // Extract type arguments for generic case classes (e.g., Box[Int] -> List(Int))
+        val typeArgs = tpe match
+            case AppliedType(_, args) => args
+            case _                    => List.empty
+
+        // Build constructor arguments: record.dict(fieldName).asInstanceOf[FieldType]
+        val args: List[Term] = fields.map: field =>
+            val fieldName = Expr(field.name)
+            val fieldType = tpe.memberType(field)
+            fieldType.asType match
+                case '[t] =>
+                    '{ $record.dict($fieldName).asInstanceOf[t] }.asTerm
+
+        // Call the apply method on the companion object with type arguments
+        Select.overloaded(companion, "apply", typeArgs, args).asExprOf[A]
+    end toProductImpl
 
 end FieldsMacros

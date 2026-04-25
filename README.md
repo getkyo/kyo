@@ -3455,10 +3455,10 @@ The first integration is that you can use Kyo effects inside your Caliban schema
 
 ```scala
 import caliban.schema.*
-import kyo.*
+// exclude `kyo.Schema` (serialization) to use caliban's `Schema` (GraphQL)
+import kyo.{Schema as _, *}
 import kyo.given
 
-// this works by just importing kyo.*
 case class Query(k: Int < Abort[Throwable]) derives Schema.SemiAuto
 
 // for other effects, you need to extend `SchemaDerivation[Runner[YourCustomEffects]]`
@@ -3475,7 +3475,7 @@ You can then run this effect using `Resolvers.run` to get an `HttpServer`. This 
 ```scala
 import caliban.*
 import caliban.schema.*
-import kyo.*
+import kyo.{Schema as _, *}
 import kyo.given
 
 case class Query(k: Int < Abort[Throwable]) derives Schema.SemiAuto

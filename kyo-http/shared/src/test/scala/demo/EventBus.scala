@@ -8,8 +8,8 @@ import kyo.*
   */
 object EventBus extends KyoApp:
 
-    case class Event(source: String, kind: String, payload: String) derives Json
-    case class StoredEvent(id: Int, source: String, kind: String, payload: String, timestamp: String) derives Json
+    case class Event(source: String, kind: String, payload: String) derives Schema
+    case class StoredEvent(id: Int, source: String, kind: String, payload: String, timestamp: String) derives Schema
     case class FormEvent(source: String, kind: String, payload: String) derives HttpFormCodec
 
     def storeEvent(

@@ -12,9 +12,9 @@ import kyo.*
   */
 object ImageProxy extends KyoApp:
 
-    case class ImageMeta(id: Int, name: String, size: Int) derives Json
+    case class ImageMeta(id: Int, name: String, size: Int) derives Schema
 
-    case class NotFound(error: String) derives Json
+    case class NotFound(error: String) derives Schema
 
     case class Store(images: Map[Int, (ImageMeta, Span[Byte])], nextId: Int)
 

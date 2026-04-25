@@ -8,10 +8,10 @@ class HttpRouteTest extends Test:
     import HttpPath.*
     import HttpRoute.*
 
-    case class User(id: Int, name: String) derives Json, CanEqual
-    case class CreateUser(name: String, email: String) derives Json, CanEqual
-    case class NotFoundError(message: String) derives Json, CanEqual
-    case class ValidationError(field: String, message: String) derives Json, CanEqual
+    case class User(id: Int, name: String) derives Schema, CanEqual
+    case class CreateUser(name: String, email: String) derives Schema, CanEqual
+    case class NotFoundError(message: String) derives Schema, CanEqual
+    case class ValidationError(field: String, message: String) derives Schema, CanEqual
 
     "Path" - {
 
@@ -427,7 +427,7 @@ class HttpRouteTest extends Test:
             val r = HttpRoute.postRaw("users").request(_.bodyJson[CreateUser])
             assert(r.request.fields.size == 1)
             r.request.fields(0) match
-                case Field.Body(fn, ContentType.Json(_), _) =>
+                case Field.Body(fn, ContentType.Json(_, _), _) =>
                     assert(fn == "body")
                 case _ => fail("Expected Body with Json")
             end match
@@ -556,24 +556,24 @@ class HttpRouteTest extends Test:
         "body JSON" in {
             val r = HttpRoute.getRaw("users").response(_.bodyJson[Seq[User]])
             r.response.fields(0) match
-                case Field.Body(fn, ContentType.Json(_), _) => assert(fn == "body")
-                case _                                      => fail("Expected Json body")
+                case Field.Body(fn, ContentType.Json(_, _), _) => assert(fn == "body")
+                case _                                         => fail("Expected Json body")
             end match
         }
 
         "body SSE" in {
             val r = HttpRoute.getRaw("events").response(_.bodySseJson[User])
             r.response.fields(0) match
-                case Field.Body(fn, ContentType.Sse(_, _), _) => assert(fn == "body")
-                case _                                        => fail("Expected Sse body")
+                case Field.Body(fn, ContentType.Sse(_, _, _), _) => assert(fn == "body")
+                case _                                           => fail("Expected Sse body")
             end match
         }
 
         "body NDJSON" in {
             val r = HttpRoute.getRaw("data").response(_.bodyNdjson[User])
             r.response.fields(0) match
-                case Field.Body(fn, ContentType.Ndjson(_, _), _) => assert(fn == "body")
-                case _                                           => fail("Expected Ndjson body")
+                case Field.Body(fn, ContentType.Ndjson(_, _, _), _) => assert(fn == "body")
+                case _                                              => fail("Expected Ndjson body")
             end match
         }
 
@@ -695,8 +695,8 @@ class HttpRouteTest extends Test:
             assert(r.request.fields(1).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Header)
             assert(r.request.fields(1).asInstanceOf[Field.Param[?, ?, ?]].fieldName == "X-Tenant")
             r.request.fields(2) match
-                case Field.Body(fn, ContentType.Json(_), _) => assert(fn == "body")
-                case _                                      => fail("Expected Json body")
+                case Field.Body(fn, ContentType.Json(_, _), _) => assert(fn == "body")
+                case _                                         => fail("Expected Json body")
             end match
             typeCheck(
                 """val _: HttpRoute["id" ~ Int & "limit" ~ Int & "X-Tenant" ~ String & "body" ~ CreateUser, Any, Any] = r"""
@@ -754,8 +754,8 @@ class HttpRouteTest extends Test:
             assert(r.response.fields(0).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Header)
             assert(r.response.fields(1).asInstanceOf[Field.Param[?, ?, ?]].kind == Field.Param.Location.Cookie)
             r.response.fields(2) match
-                case Field.Body(fn, ContentType.Json(_), _) => assert(fn == "body")
-                case _                                      => fail("Expected Json body")
+                case Field.Body(fn, ContentType.Json(_, _), _) => assert(fn == "body")
+                case _                                         => fail("Expected Json body")
             end match
             assert(r.response.errors.size == 2)
             typeCheck(

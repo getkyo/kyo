@@ -7,7 +7,7 @@ class HttpHandlerTest extends Test:
 
     import HttpPath.*
 
-    case class User(id: Int, name: String) derives Json, CanEqual
+    case class User(id: Int, name: String) derives Schema, CanEqual
 
     "route.handler" - {
 

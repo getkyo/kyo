@@ -75,8 +75,6 @@ class FlagAdminSecurityTest extends Test:
         send(port, postTextRoute, req)
     end sendPost
 
-    val jsonError = Json[FlagAdmin.ErrorResponse]
-
     val testToken = "test-secret-token-12345"
 
     def setToken(): Unit   = discard(java.lang.System.setProperty("kyo.flag.admin.token", testToken))
@@ -173,7 +171,7 @@ class FlagAdminSecurityTest extends Test:
         val handlers = FlagAdmin.routes("flags", readOnly = true)
         withServer(handlers*) { port =>
             sendPut(port, "/flags/kyo.flagAdminSecurityTestFlags.dynamicFlag", "blocked").map { resp =>
-                val err = jsonError.decode(resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
+                val err = Json.decode[FlagAdmin.ErrorResponse](resp.fields.body).getOrElse(throw new AssertionError("JSON decode failed"))
                 assert(resp.status == HttpStatus.Forbidden)
                 assert(err.error.contains("read-only"))
             }

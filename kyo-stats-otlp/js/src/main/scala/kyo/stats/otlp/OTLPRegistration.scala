@@ -1,9 +1,9 @@
 package kyo.stats.otlp
 
-import scala.scalajs.js.annotation.JSExportTopLevel
 import kyo.HttpFilterFactory
-import kyo.stats.internal.JSServiceLoaderRegistry
 import kyo.stats.internal.ExporterFactory
+import kyo.stats.internal.JSServiceLoaderRegistry
+import scala.scalajs.js.annotation.JSExportTopLevel
 
 /** JS platform registration for OTLP factories.
   *
@@ -17,4 +17,5 @@ object OTLPRegistration:
         JSServiceLoaderRegistry.register(classOf[ExporterFactory], new OTLPExporterFactory())
         JSServiceLoaderRegistry.register(classOf[HttpFilterFactory], new OTLPHttpFilterFactory())
         true
+    end init
 end OTLPRegistration

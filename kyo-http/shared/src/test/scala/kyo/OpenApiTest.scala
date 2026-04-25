@@ -175,7 +175,7 @@ class HttpOpenApiTest extends kyo.Test:
 
         "roundtrip toJson/decode" in {
             val json   = HttpOpenApi.toJson(petStoreSpec)
-            val parsed = Json[HttpOpenApi].decode(json)
+            val parsed = Json.decode[HttpOpenApi](json)
             parsed match
                 case Result.Success(spec) =>
                     assert(spec.openapi == "3.0.0")
@@ -194,7 +194,7 @@ class HttpOpenApiTest extends kyo.Test:
 
         "roundtrip preserves operations" in {
             val json   = HttpOpenApi.toJson(petStoreSpec)
-            val parsed = Json[HttpOpenApi].decode(json)
+            val parsed = Json.decode[HttpOpenApi](json)
             parsed match
                 case Result.Success(spec) =>
                     val petsPath = spec.paths("/pets")
@@ -222,7 +222,7 @@ class HttpOpenApiTest extends kyo.Test:
 
         "roundtrip preserves components" in {
             val json   = HttpOpenApi.toJson(petStoreSpec)
-            val parsed = Json[HttpOpenApi].decode(json)
+            val parsed = Json.decode[HttpOpenApi](json)
             parsed match
                 case Result.Success(spec) =>
                     assert(spec.components.isDefined)
@@ -241,7 +241,7 @@ class HttpOpenApiTest extends kyo.Test:
 
         "decode with minimal spec" in {
             val json   = """{"openapi":"3.0.0","info":{"title":"Min","version":"0.1"},"paths":{}}"""
-            val parsed = Json[HttpOpenApi].decode(json)
+            val parsed = Json.decode[HttpOpenApi](json)
             parsed match
                 case Result.Success(spec) =>
                     assert(spec.openapi == "3.0.0")
@@ -256,7 +256,7 @@ class HttpOpenApiTest extends kyo.Test:
         }
 
         "decode with invalid JSON fails" in {
-            val parsed = Json[HttpOpenApi].decode("not json")
+            val parsed = Json.decode[HttpOpenApi]("not json")
             assert(!parsed.isSuccess)
         }
 

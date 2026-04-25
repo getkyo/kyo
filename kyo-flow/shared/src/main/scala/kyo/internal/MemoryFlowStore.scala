@@ -197,22 +197,22 @@ private[kyo] class MemoryFlowStore(
 
     // --- Fields ---
 
-    def putField[V: Tag: Json](
+    def putField[V: Tag: Schema](
         executionId: Flow.Id.Execution,
         name: String,
         value: V
     )(using Frame): Unit < Async =
-        val data = FlowStore.FieldData(summon[Json[V]].encode(value), Tag[V].erased)
+        val data = FlowStore.FieldData(summon[Schema[V]].encodeString[Json](value), Tag[V].erased)
         ref.getAndUpdate(d => d.copy(fields = d.fields + ((executionId, name) -> data))).unit
             .andThen(notify)
     end putField
 
-    def putFieldIfAbsent[V: Tag: Json](
+    def putFieldIfAbsent[V: Tag: Schema](
         executionId: Flow.Id.Execution,
         name: String,
         value: V
     )(using Frame): Boolean < Async =
-        val data = FlowStore.FieldData(summon[Json[V]].encode(value), Tag[V].erased)
+        val data = FlowStore.FieldData(summon[Schema[V]].encodeString[Json](value), Tag[V].erased)
         val key  = (executionId, name)
         ref.getAndUpdate { d =>
             if d.fields.contains(key) then d
@@ -223,14 +223,14 @@ private[kyo] class MemoryFlowStore(
         }
     end putFieldIfAbsent
 
-    def getField[V: Tag: Json](
+    def getField[V: Tag: Schema](
         executionId: Flow.Id.Execution,
         name: String
     )(using Frame): Maybe[V] < Async =
         ref.use { data =>
             data.fields.get((executionId, name)) match
                 case Some(fd) if fd.tag =:= Tag[V] =>
-                    summon[Json[V]].decode(fd.value).toMaybe
+                    summon[Schema[V]].decodeString[Json](fd.value).toMaybe
                 case _ => Maybe.empty
         }
 

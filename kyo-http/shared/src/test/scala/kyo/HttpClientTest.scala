@@ -7,7 +7,7 @@ class HttpClientTest extends Test:
 
     import HttpPath.*
 
-    case class User(id: Int, name: String) derives Json, CanEqual
+    case class User(id: Int, name: String) derives Schema, CanEqual
     case class LoginForm(username: String, password: String) derives HttpFormCodec, CanEqual
 
     val client = kyo.internal.HttpPlatformBackend.client

@@ -12,13 +12,13 @@ import kyo.*
   */
 object NotePad extends KyoApp:
 
-    case class Note(id: Int, title: String, content: String, updatedAt: String) derives Json
-    case class CreateNote(title: String, content: String) derives Json
-    case class PatchNote(title: Option[String], content: Option[String]) derives Json
-    case class NoteChange(kind: String, note: Note) derives Json
+    case class Note(id: Int, title: String, content: String, updatedAt: String) derives Schema
+    case class CreateNote(title: String, content: String) derives Schema
+    case class PatchNote(title: Option[String], content: Option[String]) derives Schema
+    case class NoteChange(kind: String, note: Note) derives Schema
 
-    case class NotFound(error: String) derives Json
-    case class ValidationError(error: String, field: String) derives Json
+    case class NotFound(error: String) derives Schema
+    case class ValidationError(error: String, field: String) derives Schema
 
     case class Store(notes: Map[Int, Note], nextId: Int)
 

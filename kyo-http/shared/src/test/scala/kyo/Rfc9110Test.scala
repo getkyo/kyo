@@ -14,7 +14,7 @@ class Rfc9110Test extends Test:
 
     import HttpPath.*
 
-    case class User(id: Int, name: String) derives Json, CanEqual
+    case class User(id: Int, name: String) derives Schema, CanEqual
 
     def withServer[A, S](handlers: HttpHandler[?, ?, ?]*)(
         test: Int => A < (S & Async & Abort[HttpException])

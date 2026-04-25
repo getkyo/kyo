@@ -56,7 +56,7 @@ object FlagAdmin:
                 case Present(glob) => flags.filter(f => matchGlob(glob, f.name))
                 case Absent        => flags
             val infos = filtered.map(toFlagInfo)
-            jsonOk(jsonFlagInfos.encode(infos))
+            jsonOk(Json.encode(infos)(using jsonFlagInfos))
         }
 
         // GET /{prefix}/:name — single flag detail
@@ -66,7 +66,7 @@ object FlagAdmin:
             val name = req.fields.name
             Flag.get(name) match
                 case Some(flag) =>
-                    jsonOk(jsonFlagInfo.encode(toFlagInfo(flag)))
+                    jsonOk(Json.encode(toFlagInfo(flag))(using jsonFlagInfo))
                 case None =>
                     errorResp(HttpStatus.NotFound, s"Flag '$name' not found")
             end match
@@ -96,7 +96,7 @@ object FlagAdmin:
                         else
                             try
                                 d.update(body)
-                                jsonOk(jsonFlagInfo.encode(toFlagInfo(d)))
+                                jsonOk(Json.encode(toFlagInfo(d))(using jsonFlagInfo))
                             catch
                                 case e: FlagException =>
                                     errorResp(HttpStatus.BadRequest, e.getMessage)
@@ -132,7 +132,7 @@ object FlagAdmin:
                                     reloaded = false,
                                     Some("source is Default — use PUT to update")
                                 )
-                        jsonOk(jsonReload.encode(resp))
+                        jsonOk(Json.encode(resp)(using jsonReload))
                     case Some(_) =>
                         errorResp(HttpStatus.Conflict, s"Flag '$name' is static and cannot be reloaded")
                 end match
@@ -153,19 +153,19 @@ object FlagAdmin:
         source: String,
         evaluations: Option[Map[String, Long]],
         history: Option[List[HistoryInfo]]
-    ) derives Json, CanEqual
+    ) derives Schema, CanEqual
 
     /** A single entry in a dynamic flag's update history. */
     case class HistoryInfo(
         timestamp: Long,
         from: String,
         to: String
-    ) derives Json, CanEqual
+    ) derives Schema, CanEqual
 
     /** Error response body for failed admin operations. */
     case class ErrorResponse(
         error: String
-    ) derives Json, CanEqual
+    ) derives Schema, CanEqual
 
     /** Response body for the reload endpoint. */
     case class ReloadResponse(
@@ -173,7 +173,7 @@ object FlagAdmin:
         expression: String,
         reloaded: Boolean,
         reason: Option[String]
-    ) derives Json, CanEqual
+    ) derives Schema, CanEqual
 
     // --- Internal ---
 
@@ -186,10 +186,10 @@ object FlagAdmin:
                 case Absent     => false
         }
 
-    private val jsonFlagInfo  = Json[FlagInfo]
-    private val jsonFlagInfos = Json[List[FlagInfo]]
-    private val jsonError     = Json[ErrorResponse]
-    private val jsonReload    = Json[ReloadResponse]
+    private val jsonFlagInfo: Schema[FlagInfo]        = summon[Schema[FlagInfo]]
+    private val jsonFlagInfos: Schema[List[FlagInfo]] = summon[Schema[List[FlagInfo]]]
+    private val jsonError: Schema[ErrorResponse]      = summon[Schema[ErrorResponse]]
+    private val jsonReload: Schema[ReloadResponse]    = summon[Schema[ReloadResponse]]
 
     private def jsonOk(body: String): HttpResponse["body" ~ String] =
         HttpResponse(HttpStatus.OK, HttpHeaders.empty, Record.empty)
@@ -201,8 +201,8 @@ object FlagAdmin:
             .addField("body", body)
             .setHeader("Content-Type", "application/json")
 
-    private def errorResp(status: HttpStatus, error: String): HttpResponse["body" ~ String] =
-        jsonResp(status, jsonError.encode(ErrorResponse(error)))
+    private def errorResp(status: HttpStatus, error: String)(using Frame): HttpResponse["body" ~ String] =
+        jsonResp(status, Json.encode(ErrorResponse(error))(using jsonError))
 
     private[kyo] def toFlagInfo(flag: Flag[?]): FlagInfo = flag match
         case f: StaticFlag[?] =>

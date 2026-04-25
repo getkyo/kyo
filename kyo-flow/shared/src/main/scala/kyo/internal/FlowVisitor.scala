@@ -6,8 +6,8 @@ import kyo.Flow.Meta
 import kyo.Flow.internal.*
 
 private[kyo] trait FlowVisitor[R]:
-    def onInput[V](name: String, frame: Frame, meta: Meta)(using Tag[V], Json[V]): R
-    def onOutput[V](name: String, frame: Frame, meta: Meta)(using Tag[V], Json[V]): R
+    def onInput[V](name: String, frame: Frame, meta: Meta)(using Tag[V], Schema[V]): R
+    def onOutput[V](name: String, frame: Frame, meta: Meta)(using Tag[V], Schema[V]): R
     def onStep(name: String, frame: Frame, meta: Meta): R
     def onSleep(name: String, duration: Duration, frame: Frame, meta: Meta): R
     def onDispatch(name: String, branches: Seq[BranchInfo], frame: Frame, meta: Meta): R
@@ -23,8 +23,8 @@ end FlowVisitor
 
 abstract private[kyo] class FlowVisitorCollect[R](empty: R, combine: (R, R) => R) extends FlowVisitor[R]:
     def onInit(name: String, frame: Frame, meta: Meta): R                                = empty
-    def onInput[V](name: String, frame: Frame, meta: Meta)(using Tag[V], Json[V]): R     = empty
-    def onOutput[V](name: String, frame: Frame, meta: Meta)(using Tag[V], Json[V]): R    = empty
+    def onInput[V](name: String, frame: Frame, meta: Meta)(using Tag[V], Schema[V]): R   = empty
+    def onOutput[V](name: String, frame: Frame, meta: Meta)(using Tag[V], Schema[V]): R  = empty
     def onStep(name: String, frame: Frame, meta: Meta): R                                = empty
     def onSleep(name: String, duration: Duration, frame: Frame, meta: Meta): R           = empty
     def onDispatch(name: String, branches: Seq[BranchInfo], frame: Frame, meta: Meta): R = empty
@@ -44,9 +44,9 @@ private[kyo] object FlowFold:
             f match
                 case n: Init => visitor.onInit(n.name, n.frame, n.meta)
                 case n: Output[?, ?, ?, ?, ?] @unchecked =>
-                    visitor.onOutput(n.name, n.frame, n.meta)(using n.tag, n.json)
+                    visitor.onOutput(n.name, n.frame, n.meta)(using n.tag, n.schema)
                 case n: Step[?, ?] @unchecked  => visitor.onStep(n.name, n.frame, n.meta)
-                case n: Input[?, ?] @unchecked => visitor.onInput(n.name, n.frame, n.meta)(using n.tag, n.json)
+                case n: Input[?, ?] @unchecked => visitor.onInput(n.name, n.frame, n.meta)(using n.tag, n.schema)
                 case n: Sleep                  => visitor.onSleep(n.name, n.duration, n.frame, n.meta)
                 case n: Dispatch[?, ?, ?, ?, ?] @unchecked =>
                     val infos = n.branches.toSeq.map(b => BranchInfo(b.name, b.frame, b.meta)) :+

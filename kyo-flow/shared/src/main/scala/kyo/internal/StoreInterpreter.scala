@@ -4,7 +4,7 @@ import kyo.*
 import kyo.kernel.Isolate
 
 /** Input metadata extracted from the flow AST at registration time. */
-private[kyo] case class InputMeta(name: String, tag: Tag[Any], json: Json[Any], frame: Frame)
+private[kyo] case class InputMeta(name: String, tag: Tag[Any], schema: Schema[Any], frame: Frame)
 
 /** Wraps the entire Flow.run computation to handle custom effects.
   *
@@ -117,10 +117,10 @@ private[kyo] class StoreInterpreter(
         end match
     end withTimeoutAndRetry
 
-    def getField[V](name: String)(using Tag[V], Json[V]): Maybe[V] < S =
+    def getField[V](name: String)(using Tag[V], Schema[V]): Maybe[V] < S =
         store.getField[V](eid, name)
 
-    def onOutput[V](name: String, computation: V < Sync, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]): V < S =
+    def onOutput[V](name: String, computation: V < Sync, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]): V < S =
         for
             _   <- checkClaim
             _   <- checkInFlight(name, meta.timeout)
@@ -143,7 +143,7 @@ private[kyo] class StoreInterpreter(
             _   <- store.updateStatus(eid, Flow.Status.Running, Flow.Event.StepCompleted(flowId, eid, name, ts2))
         yield ()
 
-    def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]): V < S =
+    def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]): V < S =
         store.getField[V](eid, name).map {
             case Present(v) => v
             case _ =>

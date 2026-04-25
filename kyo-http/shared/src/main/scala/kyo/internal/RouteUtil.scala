@@ -348,8 +348,8 @@ object RouteUtil:
                 else
                     val mapping = errors(i)
                     if mapping.tag.accepts(error) then
-                        val json    = mapping.json.asInstanceOf[Json[Any]].encode(error)
-                        val body    = stringToSpan(json)
+                        val jsonStr = Json.encode(error)(using mapping.schema.asInstanceOf[Schema[Any]])
+                        val body    = stringToSpan(jsonStr)
                         val headers = HttpHeaders.empty.add("Content-Type", "application/json")
                         Present((mapping.status, headers, body))
                     else loop(i + 1)
@@ -580,14 +580,14 @@ object RouteUtil:
 
     // ==================== Internal: body encoding ====================
 
-    private def encodeBufferedBodyValueWith[A](ct: HttpRoute.ContentType[?], value: Any)(f: (String, Span[Byte]) => A): A =
+    private def encodeBufferedBodyValueWith[A](ct: HttpRoute.ContentType[?], value: Any)(f: (String, Span[Byte]) => A)(using Frame): A =
         ct match
             case HttpRoute.ContentType.Text =>
                 f("text/plain; charset=utf-8", stringToSpan(value.asInstanceOf[String]))
             case HttpRoute.ContentType.Binary =>
                 f("application/octet-stream", value.asInstanceOf[Span[Byte]])
             case json: HttpRoute.ContentType.Json[?] =>
-                val str = json.json.asInstanceOf[Json[Any]].encode(value)
+                val str = Json.encode(value)(using json.schema.asInstanceOf[Schema[Any]])
                 f("application/json", stringToSpan(str))
             case form: HttpRoute.ContentType.Form[?] =>
                 val str = form.codec.asInstanceOf[HttpFormCodec[Any]].encode(value)
@@ -609,14 +609,14 @@ object RouteUtil:
                 f("application/octet-stream", value.asInstanceOf[Stream[Span[Byte], Async]])
             case ndjson: HttpRoute.ContentType.Ndjson[?] =>
                 val stream = value.asInstanceOf[Stream[Any, Async]]
-                val json   = ndjson.json.asInstanceOf[Json[Any]]
+                val schema = ndjson.schema.asInstanceOf[Schema[Any]]
                 val byteStream = stream.mapPure { v =>
-                    stringToSpan(json.encode(v) + "\n")
+                    stringToSpan(Json.encode(v)(using schema) + "\n")
                 }(using ndjson.emitTag.asInstanceOf[Tag[Emit[Chunk[Any]]]], Tag[Emit[Chunk[Span[Byte]]]])
                 f("application/x-ndjson", byteStream)
             case sse: HttpRoute.ContentType.Sse[?] =>
                 val stream = value.asInstanceOf[Stream[HttpSseEvent[Any], Async]]
-                val json   = sse.json.asInstanceOf[Json[Any]]
+                val schema = sse.schema.asInstanceOf[Schema[Any]]
                 val byteStream = stream.mapPure { event =>
                     val sb = new StringBuilder
                     event.event match
@@ -628,7 +628,7 @@ object RouteUtil:
                     event.retry match
                         case Present(r) => discard(sb.append("retry: ").append(r.toMillis).append('\n'))
                         case Absent     =>
-                    discard(sb.append("data: ").append(json.encode(event.data)).append("\n\n"))
+                    discard(sb.append("data: ").append(Json.encode(event.data)(using schema)).append("\n\n"))
                     stringToSpan(sb.toString)
                 }(using sse.emitTag.asInstanceOf[Tag[Emit[Chunk[HttpSseEvent[Any]]]]], Tag[Emit[Chunk[Span[Byte]]]])
                 f("text/event-stream", byteStream)
@@ -686,8 +686,20 @@ object RouteUtil:
                 if !checkContentType(headers, "application/json") then
                     Result.fail(HttpUnsupportedMediaTypeException("application/json", headers.get("Content-Type"), method, url))
                 else
-                    json.json.decode(spanToString(bytes))
-                        .mapFailure(msg => HttpJsonDecodeException(msg, method, url))
+                    val schema = json.schema.asInstanceOf[Schema[Any]]
+                    // Unit-valued JSON handlers tolerate empty bodies and JSON null, matching
+                    // the 204 No Content semantics the old kyo.Json[Unit] override provided.
+                    if isUnitSchema(schema) then
+                        val s = spanToString(bytes).trim
+                        if s.isEmpty || s == "null" then Result.succeed(())
+                        else
+                            Json.decode[Any](spanToString(bytes))(using summon[Json], schema, summon[Frame])
+                                .mapFailure(e => HttpJsonDecodeException(e.getMessage, method, url))
+                        end if
+                    else
+                        Json.decode[Any](spanToString(bytes))(using summon[Json], schema, summon[Frame])
+                            .mapFailure(e => HttpJsonDecodeException(e.getMessage, method, url))
+                    end if
             case form: HttpRoute.ContentType.Form[?] =>
                 if !checkContentType(headers, "application/x-www-form-urlencoded") then
                     Result.fail(HttpUnsupportedMediaTypeException(
@@ -716,18 +728,18 @@ object RouteUtil:
             case HttpRoute.ContentType.ByteStream =>
                 stream
             case ndjson: HttpRoute.ContentType.Ndjson[?] =>
-                val json = ndjson.json
+                val schema = ndjson.schema.asInstanceOf[Schema[Any]]
                 splitLines(stream, "\n").mapPure { line =>
-                    json.decode(line) match
-                        case Result.Success(v)   => v
-                        case Result.Failure(msg) => throw HttpJsonDecodeException(msg, method, url)
-                        case p: Result.Panic     => throw p.exception
+                    Json.decode[Any](line)(using summon[Json], schema, summon[Frame]) match
+                        case Result.Success(v) => v
+                        case Result.Failure(e) => throw HttpJsonDecodeException(e.getMessage, method, url)
+                        case p: Result.Panic   => throw p.exception
                     end match
-                }(using Tag[Emit[Chunk[String]]], ndjson.emitTag)
+                }(using Tag[Emit[Chunk[String]]], ndjson.emitTag.asInstanceOf[Tag[Emit[Chunk[Any]]]])
             case sse: HttpRoute.ContentType.Sse[?] =>
-                val json = sse.json.asInstanceOf[Json[Any]]
+                val schema = sse.schema.asInstanceOf[Schema[Any]]
                 splitLines(stream, "\n\n").mapPure { frame =>
-                    parseSseFrame(json, frame)
+                    parseSseFrame(schema, frame)
                 }(using Tag[Emit[Chunk[String]]], sse.emitTag.asInstanceOf[Tag[Emit[Chunk[HttpSseEvent[Any]]]]])
             case sseText: HttpRoute.ContentType.SseText =>
                 splitLines(stream, "\n\n").mapPure { frame =>
@@ -799,12 +811,12 @@ object RouteUtil:
     end parseSseFields
 
     /** Parses a single SSE frame string into an HttpSseEvent. */
-    private def parseSseFrame(json: Json[Any], frame: String): HttpSseEvent[Any] =
+    private def parseSseFrame(schema: Schema[Any], frame: String)(using Frame): HttpSseEvent[Any] =
         parseSseFields(frame) { data =>
-            json.decode(data) match
-                case Result.Success(v)   => v
-                case Result.Failure(msg) => throw new RuntimeException(s"SSE data decode failed: $msg")
-                case p: Result.Panic     => throw p.exception
+            Json.decode[Any](data)(using summon[Json], schema, summon[Frame]) match
+                case Result.Success(v) => v
+                case Result.Failure(e) => throw new RuntimeException(s"SSE data decode failed: ${e.getMessage}")
+                case p: Result.Panic   => throw p.exception
         }
 
     /** Parses a multipart byte stream into a stream of HttpRequest.Part. */
@@ -1040,6 +1052,12 @@ object RouteUtil:
     end appendMultipartPartBytes
 
     // ==================== Internal: helpers ====================
+
+    /** Whether the given schema is the canonical Schema[Unit] instance. Used for short-circuiting Unit-valued JSON decoding on empty or
+      * "null" bodies (mirrors the Json[Unit] override that existed in the old kyo-http Json typeclass).
+      */
+    private def isUnitSchema(schema: Schema[Any]): Boolean =
+        (schema: AnyRef) eq (Schema.unitSchema: AnyRef)
 
     private def isStreamingContentType(ct: HttpRoute.ContentType[?]): Boolean =
         ct match

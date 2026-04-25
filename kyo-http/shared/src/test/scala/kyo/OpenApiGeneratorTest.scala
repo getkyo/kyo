@@ -104,7 +104,7 @@ class OpenApiGeneratorTest extends kyo.Test:
         }
 
         "request body with Option fields excludes them from required" in {
-            case class UpdateItem(name: String, description: Option[String]) derives Json
+            case class UpdateItem(name: String, description: Option[String]) derives Schema
             val route = HttpRoute.putRaw("items" / HttpPath.Capture[Int]("id"))
                 .request(_.bodyJson[UpdateItem])
                 .response(_.bodyJson[String])
