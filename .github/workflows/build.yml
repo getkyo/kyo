@@ -67,6 +67,29 @@ jobs:
         if: contains(matrix.os, 'macos') && matrix.target == 'Native'
         run: brew install h2o libidn2
 
+      - name: Install + start Podman (Linux)
+        if: contains(matrix.os, 'linux')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+          # Start the rootless API socket — kyo-pod's HTTP backend probes
+          # $XDG_RUNTIME_DIR/podman/podman.sock first.
+          uid="$(id -u)"
+          export XDG_RUNTIME_DIR="/tmp/runtime-$uid"
+          mkdir -p "$XDG_RUNTIME_DIR/podman"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          nohup podman system service --time=0 \
+            "unix://$XDG_RUNTIME_DIR/podman/podman.sock" \
+            > /tmp/podman.log 2>&1 &
+          for _ in $(seq 1 10); do
+            [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] && break
+            sleep 1
+          done
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          ls -la "$XDG_RUNTIME_DIR/podman/" || true
+          podman version
+          docker version
+
       - uses: coursier/setup-action@v3.0.0
         if: matrix.os != 'windows-arm64'
         with:

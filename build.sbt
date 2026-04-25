@@ -146,6 +146,7 @@ lazy val kyoJVM = project
         `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
         `kyo-playwright`.jvm,
+        `kyo-pod`.jvm,
         `kyo-examples`.jvm,
         `kyo-actor`.jvm
     )
@@ -177,7 +178,8 @@ lazy val kyoJS = project
         `kyo-combinators`.js,
         `kyo-actor`.js,
         `kyo-http`.js,
-        `kyo-flow`.js
+        `kyo-flow`.js,
+        `kyo-pod`.js
     )
 
 lazy val kyoNative = project
@@ -208,7 +210,8 @@ lazy val kyoNative = project
         `kyo-zio`.native,
         `kyo-zio-test`.native,
         `kyo-stm`.native,
-        `kyo-stats-otlp`.native
+        `kyo-stats-otlp`.native,
+        `kyo-pod`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -704,6 +707,52 @@ lazy val `kyo-combinators` =
         .jsSettings(`js-settings`)
         .nativeSettings(`native-settings`)
         .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-pod` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-pod"))
+        .dependsOn(`kyo-core`, `kyo-http`)
+        .settings(
+            `kyo-settings`
+        )
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(
+            `native-settings`,
+            nativeConfig ~= { c =>
+                val opensslOpts =
+                    if (System.getProperty("os.name").toLowerCase.contains("mac")) {
+                        val prefix = {
+                            val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
+                            val p1 = new java.io.File("/opt/homebrew/opt/openssl")
+                            val p0 = new java.io.File("/usr/local/opt/openssl")
+                            if (p3.exists()) p3.getAbsolutePath
+                            else if (p1.exists()) p1.getAbsolutePath
+                            else p0.getAbsolutePath
+                        }
+                        Seq(s"-L$prefix/lib", s"-I$prefix/include", "-lssl", "-lcrypto")
+                    } else Seq("-lssl", "-lcrypto")
+                c.withLinkingOptions(c.linkingOptions ++ opensslOpts)
+                    .withCompileOptions(c.compileOptions ++ {
+                        if (System.getProperty("os.name").toLowerCase.contains("mac")) {
+                            val prefix = {
+                                val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
+                                val p1 = new java.io.File("/opt/homebrew/opt/openssl")
+                                val p0 = new java.io.File("/usr/local/opt/openssl")
+                                if (p3.exists()) p3.getAbsolutePath
+                                else if (p1.exists()) p1.getAbsolutePath
+                                else p0.getAbsolutePath
+                            }
+                            Seq(s"-I$prefix/include")
+                        } else Nil
+                    })
+            }
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
 
 lazy val `kyo-playwright` =
     crossProject(JVMPlatform)
