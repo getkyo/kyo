@@ -115,7 +115,10 @@ final private[kyo] class ShellBackend(
                 config.command.map(cmd => Chunk.from(cmd.args)).getOrElse(Chunk.empty)
 
             // Run. Use Image context so mapError classifies image-not-found as ImageNotFound.
-            run(ResourceContext.Image(config.image.reference), args.toSeq*).map(output => Container.Id(output.trim))
+            // Take the last non-empty line: docker auto-pulls (printing progress to stdout) and
+            // podman emits cgroupv2 fallback warnings before the ID; the actual container ID is
+            // always the final line.
+            run(ResourceContext.Image(config.image.reference), args.toSeq*).map(output => Container.Id(lastLine(output)))
         }
     end create
 
@@ -1826,7 +1829,7 @@ final private[kyo] class ShellBackend(
             Chunk.from(config.driverOpts.toMap.toSeq.flatMap { case (k, v) => Seq("--opt", s"$k=$v") }) ++
             Chunk.from(config.labels.toMap.toSeq.flatMap { case (k, v) => Seq("--label", s"$k=$v") }) ++
             config.name.map(n => Chunk(n.value)).getOrElse(Chunk.empty)
-        run(ResourceContext.Op("volumeCreate"), args.toSeq*).map(_.trim).map { name =>
+        run(ResourceContext.Op("volumeCreate"), args.toSeq*).map(lastLine).map { name =>
             // After create, inspect to get full info
             volumeInspect(Volume.Id(name))
         }
@@ -1977,6 +1980,8 @@ final private[kyo] class ShellBackend(
 
     private def runUnit(ctx: ResourceContext, args: String*)(using Frame): Unit < (Async & Abort[ContainerException]) =
         run(ctx, args*).unit
+
+    private def lastLine(output: String): String = ShellBackend.lastLine(output)
 
     /** Map shell command error output to a typed ContainerException.
       *
@@ -2178,6 +2183,14 @@ private[kyo] object ShellBackend:
       * `BackendConfig.Shell(... , streamBufferSize = N)`.
       */
     val defaultStreamBufferSize: Int = 256
+
+    /** Extract the last non-empty trimmed line from CLI output. Used to parse the resource ID emitted by `docker create`, `podman create`,
+      * and `docker/podman volume create` — those commands print the ID on the final line, but stdout may also include image-pull progress
+      * (docker auto-pull on missing image) or runtime warnings (podman cgroupv2 fallback when no systemd user session is available) before
+      * it.
+      */
+    def lastLine(output: String): String =
+        output.linesIterator.map(_.trim).filter(_.nonEmpty).toSeq.lastOption.getOrElse("")
 
     /** Auto-detect an available container runtime. Tries podman first, then docker. */
     def detect(
