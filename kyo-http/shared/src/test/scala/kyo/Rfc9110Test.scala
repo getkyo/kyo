@@ -40,7 +40,7 @@ class Rfc9110Test extends Test:
 
     // rawRoute: use to observe raw response status/headers without type-safe body decoding
     val rawRoute  = HttpRoute.getRaw("raw").response(_.bodyText)
-    val noTimeout = HttpClientConfig(timeout = Maybe.empty)
+    val noTimeout = HttpClientConfig(timeout = Duration.Infinity)
 
     // ==================== Section 9.3.2: HEAD ====================
 

@@ -55,6 +55,39 @@ val created =
 
 The same pattern applies to `putJson`, `patchJson`, and `deleteJson`.
 
+### Side-Effect Operations
+
+For requests where the response body is irrelevant (container start/stop, resource deletion), use the unit methods:
+
+```scala
+HttpClient.postUnit("https://api.example.com/containers/abc/start")
+HttpClient.deleteUnit("https://api.example.com/containers/abc")
+```
+
+`postUnit`, `putUnit`, `patchUnit`, and `deleteUnit` discard the response body and return `Unit`. They fail with `HttpStatusException` on non-2xx like all body-only methods.
+
+### Error Handling
+
+Body-only methods (`getText`, `getJson`, `getBinary`, etc.) fail with `HttpStatusException` when the server returns a non-2xx status code:
+
+```scala
+// Throws HttpStatusException(404) — the error body is not returned
+val user = HttpClient.getJson[User]("https://api.example.com/users/999")
+```
+
+To inspect non-2xx responses (status, headers, body), use `*Response` methods with `failOnError = false`:
+
+```scala
+val response = HttpClient.getTextResponse(
+  "https://api.example.com/users/999",
+  failOnError = false
+)
+// response.status.code == 404
+// response.fields.body contains the error text
+```
+
+By default, `*Response` methods also fail on non-2xx. Pass `failOnError = false` to opt out and handle status codes manually.
+
 ### Streaming
 
 SSE and NDJSON responses are returned as a `Stream` that emits values as they arrive from the server:
@@ -81,6 +114,15 @@ val events: Stream[HttpSseEvent[StockPrice], Async & Abort[HttpException]] =
 // Emits StockPrice values, performs Async IO and can fail with HttpException
 val items: Stream[StockPrice, Async & Abort[HttpException]] =
   HttpClient.getNdJson[StockPrice]("https://api.example.com/stream")
+```
+
+#### Byte Streams
+
+For raw byte streaming (chunked downloads, log tailing, etc.), `getStreamBytes` and `postStreamBytes` stream the response body without any framing:
+
+```scala
+val chunks: Stream[Span[Byte], Async & Abort[HttpException]] =
+  HttpClient.getStreamBytes("https://example.com/large-file.bin")
 ```
 
 ### Configuration
@@ -593,6 +635,8 @@ Client operations use `Abort[HttpException]`. The error type has subtypes for di
 - `HttpRequestException` for request-level failures (timeouts, redirect loops, non-success status codes)
 - `HttpDecodeException` for parsing and deserialization failures (URL parsing, JSON/form decoding, missing fields)
 - `HttpServerException` for server-side operational failures (bind errors, unhandled handler errors)
+
+Body-only convenience methods (`getText`, `getJson`, `getBinary`, etc.) automatically fail with `HttpStatusException` when the server returns a non-2xx status code. Use the `*Response` variants with `failOnError = false` to receive and inspect error responses.
 
 ### Response Helpers
 

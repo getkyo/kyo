@@ -2,35 +2,103 @@ package kyo
 
 import kyo.*
 
-/** An executable endpoint that pairs an HttpRoute with a request handler function.
+/** An executable endpoint that pairs an [[kyo.HttpRoute]] with a request handler function.
   *
-  * HttpHandler is what the server dispatches to when a request matches a route's method and path. It wraps the route's filter chain and the
-  * user's handler function so that filters are applied automatically on every request. The handler function receives an `HttpRequest[In]`
-  * with all declared fields type-safely accessible via `req.fields`.
+  * `HttpHandler` is what the server dispatches to when an incoming request matches the route's method and path. It wraps the route's filter
+  * chain so that server-side filters (contributed via [[kyo.HttpFilterFactory]]) and route-level filters are applied automatically on every
+  * request. The handler function receives a typed `HttpRequest[In]` with all declared fields accessible via `req.fields`.
   *
-  * For simple endpoints, use the convenience methods on the companion (`getJson`, `postText`, `getSseJson`, etc.) which create a route and
-  * handler in one call. These methods automatically wrap the return value in the appropriate `HttpResponse` factory (e.g.,
-  * `HttpResponse.ok`). For full control over the response, use `HttpRoute.handler` or `HttpHandler.init(route)(handler)` directly.
+  * For common use cases, use the convenience methods on the companion object (`getJson`, `postText`, `getSseJson`, etc.). These create both
+  * a route and a handler in one call and automatically wrap the return value in `HttpResponse.ok`. For full control over response status,
+  * headers, and cookies, use `HttpRoute.handler` or `HttpHandler.init(route)(handler)` directly.
+  *
+  * Route `E` errors that are mapped via `.error[E](status)` are caught and converted to the corresponding HTTP status before sending the
+  * response. Unmapped `Abort` failures propagate as `HttpHandlerException` with a 500 status.
   *
   * @tparam In
-  *   request field types (from the route's captures, query params, headers, cookies, body)
+  *   the request field record type, composed from path captures, query params, headers, cookies, and body declared on the route
   * @tparam Out
-  *   response field types (from the route's body, headers, cookies)
+  *   the response field record type, describing the body, headers, and cookies the handler returns
   * @tparam E
-  *   domain error types mapped to HTTP status codes via the route's `.error[E](status)`
+  *   domain error types that are mapped to HTTP status codes by the route's `.error[E](status)` declarations
   *
   * @see
-  *   [[kyo.HttpRoute.handler]] The primary way to create a handler from a route
+  *   [[kyo.HttpRoute.handler]] Primary way to build a handler from an existing route
   * @see
-  *   [[kyo.HttpServer]] Binds handlers to a port
+  *   [[kyo.HttpServer]] Registers handlers and binds them to a port
   * @see
-  *   [[kyo.HttpResponse.Halt]] Short-circuit mechanism for early exits
+  *   [[kyo.HttpResponse.Halt]] Short-circuit mechanism for early response exits
+  * @see
+  *   [[kyo.HttpFilterFactory]] SPI for contributing server-wide filters
   */
 sealed abstract class HttpHandler[In, Out, +E](val route: HttpRoute[In, Out, E]):
 
     def apply(request: HttpRequest[In])(using Frame): HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])
 
+    // These methods close over concrete In/Out/E types so the server dispatch
+    // can handle the existential HttpHandler[?, ?, ?] from the router without casting.
+
+    /** Decode a buffered request from raw wire data and invoke the handler. No casts needed — this method has access to the concrete types
+      * In, Out, E through `this`. Used by the server dispatch to serve requests without type erasure issues.
+      */
+    final private[kyo] def serveBuffered(
+        pathCaptures: Dict[String, String],
+        queryParam: Maybe[HttpUrl],
+        headers: HttpHeaders,
+        body: Span[Byte],
+        path: String,
+        method: HttpMethod
+    )(using Frame): Result[HttpException, HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])] =
+        internal.server.RouteUtil.decodeBufferedRequest(route, pathCaptures, queryParam, headers, body, path, Present(method))
+            .map(request => this(request))
+
+    /** Decode a streaming request from raw wire data and invoke the handler. */
+    final private[kyo] def serveStreaming(
+        pathCaptures: Dict[String, String],
+        queryParam: Maybe[HttpUrl],
+        headers: HttpHeaders,
+        body: Stream[Span[Byte], Async],
+        path: String,
+        method: HttpMethod
+    )(using Frame): Result[HttpException, HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])] =
+        internal.server.RouteUtil.decodeStreamingRequest(route, pathCaptures, queryParam, headers, body, path, Present(method))
+            .map(request => this(request))
+
+    /** Encode a successful response to wire format using RouteUtil callbacks. */
+    final private[kyo] def encodeResponse[A](response: HttpResponse[Out])(
+        onEmpty: (HttpStatus, HttpHeaders) => A,
+        onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A,
+        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A
+    )(using Frame): A =
+        internal.server.RouteUtil.encodeResponse(route, response)(onEmpty, onBuffered, onStreaming)
+
+    /** Encode a response from Any -- used by UnsafeServerDispatch where path-dependent types are erased through Abort.run. The response is
+      * always HttpResponse[Out] at runtime; the Any parameter avoids type mismatch errors from existential type loss.
+      */
+    final private[kyo] def encodeResponseUnchecked[A](response: Any)(
+        onEmpty: (HttpStatus, HttpHeaders) => A,
+        onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A,
+        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A
+    )(using Frame): A =
+        encodeResponse(response.asInstanceOf[HttpResponse[Out]])(onEmpty, onBuffered, onStreaming)
+
+    /** Try to encode a typed error via the route's error mappings. */
+    final private[kyo] def encodeError(error: Any)(using Frame): Maybe[(HttpStatus, HttpHeaders, Span[Byte])] =
+        internal.server.RouteUtil.encodeError(route, error)
+
 end HttpHandler
+
+/** A HttpWebSocket endpoint handler. Extends HttpHandler so it can be registered with HttpServer.init alongside normal HTTP handlers. The
+  * backend detects this type and performs a HttpWebSocket upgrade instead of normal request-response dispatch.
+  */
+final private[kyo] class WebSocketHttpHandler(
+    route: HttpRoute[Any, Any, Nothing],
+    private[kyo] val wsHandler: (HttpRequest[Any], HttpWebSocket) => Unit < (Async & Abort[Closed]),
+    private[kyo] val wsConfig: HttpWebSocket.Config
+) extends HttpHandler[Any, Any, Nothing](route):
+    def apply(request: HttpRequest[Any])(using Frame) =
+        HttpResponse(HttpStatus.SwitchingProtocols)
+end WebSocketHttpHandler
 
 object HttpHandler:
 
@@ -53,9 +121,7 @@ object HttpHandler:
         val h = handler
         new HttpHandler[In, Out, E](h.route):
             private def applyHeaders[F](response: HttpResponse[F]): HttpResponse[F] =
-                var r = response
-                addHeaders.foreach((k, v) => r = r.addHeader(k, v))
-                r
+                addHeaders.foldLeft(response)((r, kv) => r.addHeader(kv._1, kv._2))
             end applyHeaders
 
             def apply(request: HttpRequest[In])(using Frame) =
@@ -279,5 +345,22 @@ object HttpHandler:
         val route = HttpRoute.getRaw(path).response(_.bodyNdjson[V])
         route.handler(req => f(req).map(stream => HttpResponse.ok.addField("body", stream)))
     end getNdJson
+
+    // ==================== HttpWebSocket methods ====================
+
+    /** Creates a HttpWebSocket endpoint at the given path. The handler function receives the upgrade request (for auth, cookies,
+      * subprotocol negotiation) and a HttpWebSocket handle. The handler runs for the lifetime of the connection — when it returns, the
+      * connection closes.
+      */
+    def webSocket(path: String)(
+        f: (HttpRequest[Any], HttpWebSocket) => Unit < (Async & Abort[Closed])
+    )(using Frame): HttpHandler[Any, Any, Nothing] =
+        new WebSocketHttpHandler(HttpRoute.getRaw(path), f, HttpWebSocket.Config())
+
+    /** Creates a HttpWebSocket endpoint with custom configuration. */
+    def webSocket(path: String, config: HttpWebSocket.Config)(
+        f: (HttpRequest[Any], HttpWebSocket) => Unit < (Async & Abort[Closed])
+    )(using Frame): HttpHandler[Any, Any, Nothing] =
+        new WebSocketHttpHandler(HttpRoute.getRaw(path), f, config)
 
 end HttpHandler

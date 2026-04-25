@@ -510,7 +510,7 @@ lazy val `kyo-stats-otlp` =
             `kyo-settings`
         )
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
@@ -597,34 +597,15 @@ lazy val `kyo-http` =
             `kyo-settings`
         )
         .jvmSettings(
-            mimaCheck(false),
-            libraryDependencies += "io.netty" % "netty-codec-http"              % "4.2.1.Final",
-            libraryDependencies += "io.netty" % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-x86_64",
-            libraryDependencies += "io.netty" % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-aarch_64",
-            libraryDependencies += "io.netty" % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-x86_64",
-            libraryDependencies += "io.netty" % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-aarch_64"
+            mimaCheck(false)
         )
         .jsSettings(
             `js-settings`,
-            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
         .nativeSettings(
             `native-settings`,
-            nativeConfig ~= { c =>
-                import scala.sys.process.*
-                val h2oCompileFlags =
-                    try "pkg-config --cflags libh2o-evloop".!!.trim.split("\\s+").toSeq
-                    catch { case _: Exception => Seq.empty }
-                val h2oLinkFlags =
-                    try "pkg-config --libs libh2o-evloop".!!.trim.split("\\s+").toSeq
-                    catch { case _: Exception => Seq("-lh2o-evloop") }
-                val curlLinkFlags =
-                    try "pkg-config --libs libcurl".!!.trim.split("\\s+").toSeq
-                    catch { case _: Exception => Seq("-lcurl") }
-                c.withCompileOptions(c.compileOptions ++ Seq("-DH2O_USE_LIBUV=0") ++ h2oCompileFlags)
-                    .withLinkingOptions(c.linkingOptions ++ curlLinkFlags ++ h2oLinkFlags)
-            }
+            `openssl-native-settings`
         )
 
 lazy val `kyo-flow` =
@@ -636,7 +617,7 @@ lazy val `kyo-flow` =
         .dependsOn(`kyo-direct` % Test)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
@@ -870,11 +851,28 @@ lazy val readme =
             `kyo-combinators`
         )
 
+lazy val `openssl-native-settings` = Seq(
+    nativeConfig ~= { c =>
+        val isMac = System.getProperty("os.name").toLowerCase.contains("mac")
+        val opensslPrefix =
+            if (isMac) {
+                val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
+                val p1 = new java.io.File("/opt/homebrew/opt/openssl")
+                val p0 = new java.io.File("/usr/local/opt/openssl")
+                Some(if (p3.exists()) p3.getAbsolutePath else if (p1.exists()) p1.getAbsolutePath else p0.getAbsolutePath)
+            } else None
+        val linkOpts    = opensslPrefix.map(p => Seq(s"-L$p/lib", "-lssl", "-lcrypto")).getOrElse(Seq("-lssl", "-lcrypto"))
+        val compileOpts = opensslPrefix.map(p => Seq(s"-I$p/include")).getOrElse(Nil)
+        c.withLinkingOptions(c.linkingOptions ++ linkOpts)
+            .withCompileOptions(c.compileOptions ++ compileOpts)
+    }
+)
+
 lazy val `native-settings` = Seq(
     fork                                              := false,
     bspEnabled                                        := false,
     Test / testForkedParallel                         := false,
-    Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "16777216",
+    Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "33554432",
     libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.6.0"
 )
 
