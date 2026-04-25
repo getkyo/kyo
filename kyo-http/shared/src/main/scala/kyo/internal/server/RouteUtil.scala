@@ -150,11 +150,14 @@ private[kyo] object RouteUtil:
         end decodeBody
 
         val result = decodeBody()
-        // When the body decoding fails on a non-2xx response, return a StatusException
-        // with the original status code instead of a confusing decode error.
+        // When the body decoding fails on a non-2xx response, return an HttpStatusException
+        // with the original status code instead of a confusing decode error. Capture the raw
+        // body as text so callers can classify errors (e.g. "container name in use") even
+        // though the body didn't fit the route's success type.
         result match
             case Result.Error(_: HttpDecodeException) if !status.isSuccess =>
-                Result.fail(HttpStatusException(status, method, url.toString))
+                if body.isEmpty then Result.fail(HttpStatusException(status, method, url.toString))
+                else Result.fail(HttpStatusException(status, method, url.toString, spanToString(body)))
             case other => other
         end match
     end decodeBufferedResponse

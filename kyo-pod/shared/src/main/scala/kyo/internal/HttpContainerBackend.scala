@@ -50,39 +50,93 @@ final private[kyo] class HttpContainerBackend(
 
     // --- Error mapping ---
 
-    /** Maps an HttpException to the appropriate ContainerException subtype based on HTTP status code and resource context. */
+    /** Maps an HttpException to the appropriate ContainerException subtype based on HTTP status code, resource context, and (when
+      * available) the response body. The body covers cases where the daemon returns a non-standard status code (e.g. rootless podman
+      * returns HTTP 500 for name conflicts and HTTP 403 for missing images) but the body still names the underlying condition. When the
+      * status code has no canonical mapping AND the body is empty, we log a warning before falling through — that combination prevents
+      * accurate classification.
+      */
     private def mapHttpError(
         httpEx: HttpException,
         ctx: ResourceContext
-    )(using Frame): Nothing < Abort[ContainerException] =
+    )(using Frame): Nothing < (Sync & Abort[ContainerException]) =
         httpEx match
             case e: HttpStatusException =>
+                val bodyLower = e.body.getOrElse("").toLowerCase
                 e.status.code match
                     case 304 =>
                         ctx match
                             case ResourceContext.Container(id) => Abort.fail(ContainerAlreadyStoppedException(id))
                             case _ => Abort.fail(ContainerBackendException(s"Unexpected HTTP 304 for ${ctx.describe}", e))
                     case 404 =>
+                        Abort.fail(missingExceptionFor(ctx, e))
+                    case 409 =>
+                        Abort.fail(conflictExceptionFor(ctx))
+                    case _ if bodyContainsConflict(bodyLower) =>
+                        Abort.fail(conflictExceptionFor(ctx))
+                    case _ if bodyContainsImageMissing(bodyLower) =>
                         ctx match
-                            case ResourceContext.Container(id) => Abort.fail(ContainerMissingException(id))
                             case ResourceContext.Image(ref) =>
                                 Abort.fail(ContainerImageMissingException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref))))
-                            case ResourceContext.Network(id) => Abort.fail(ContainerNetworkMissingException(id))
-                            case ResourceContext.Volume(id)  => Abort.fail(ContainerVolumeMissingException(id))
-                            case ResourceContext.Op(name) => Abort.fail(ContainerOperationException(s"Resource not found during $name", e))
-                    case 409 =>
-                        ctx match
-                            case ResourceContext.Container(id) => Abort.fail(ContainerAlreadyExistsException(id.value))
-                            case ResourceContext.Op(name)      => Abort.fail(ContainerAlreadyExistsException(name))
-                            case other                         => Abort.fail(ContainerAlreadyExistsException(other.describe))
-                    case _ => Abort.fail(ContainerOperationException(
+                            case _ => Abort.fail(missingExceptionFor(ctx, e))
+                    case _ if bodyContainsResourceMissing(bodyLower) =>
+                        Abort.fail(missingExceptionFor(ctx, e))
+                    case _ =>
+                        warnIfMissingBody(e, ctx).andThen(Abort.fail(ContainerOperationException(
                             s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} for ${ctx.describe}",
                             e
-                        ))
+                        )))
+                end match
             case other =>
                 Abort.fail(ContainerBackendException(s"HTTP transport failed for ${ctx.describe}", other))
         end match
     end mapHttpError
+
+    private def missingExceptionFor(ctx: ResourceContext, e: HttpStatusException)(using Frame): ContainerException =
+        ctx match
+            case ResourceContext.Container(id) => ContainerMissingException(id)
+            case ResourceContext.Image(ref) =>
+                ContainerImageMissingException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)))
+            case ResourceContext.Network(id) => ContainerNetworkMissingException(id)
+            case ResourceContext.Volume(id)  => ContainerVolumeMissingException(id)
+            case ResourceContext.Op(name)    => ContainerOperationException(s"Resource not found during $name", e)
+
+    private def conflictExceptionFor(ctx: ResourceContext)(using Frame): ContainerException =
+        ctx match
+            case ResourceContext.Container(id) => ContainerAlreadyExistsException(id.value)
+            case ResourceContext.Op(name)      => ContainerAlreadyExistsException(name)
+            case other                         => ContainerAlreadyExistsException(other.describe)
+
+    /** Body says the resource (or its name) is already taken. */
+    private[kyo] def bodyContainsConflict(bodyLower: String): Boolean =
+        bodyLower.contains("already in use") ||
+            bodyLower.contains("is in use") ||
+            bodyLower.contains("name is reserved") ||
+            (bodyLower.contains("name") && bodyLower.contains("already") && bodyLower.contains("use"))
+
+    /** Body says the requested image was not found locally or in the registry. */
+    private[kyo] def bodyContainsImageMissing(bodyLower: String): Boolean =
+        bodyLower.contains("no such image") ||
+            bodyLower.contains("image not known") ||
+            bodyLower.contains("manifest unknown") ||
+            (bodyLower.contains("image") && bodyLower.contains("not found"))
+
+    /** Body says some non-image resource (container, network, volume) is missing. */
+    private[kyo] def bodyContainsResourceMissing(bodyLower: String): Boolean =
+        bodyLower.contains("no such container") ||
+            bodyLower.contains("no such network") ||
+            bodyLower.contains("no such volume") ||
+            bodyLower.contains("not found") && !bodyLower.contains("image")
+
+    /** Warn when a non-2xx error has no body and the status code lacks a canonical mapping. The combination prevents the classifier from
+      * doing better than `ContainerOperationException`, which obscures the real condition.
+      */
+    private def warnIfMissingBody(e: HttpStatusException, ctx: ResourceContext)(using Frame): Unit < Sync =
+        if e.body.getOrElse("").isEmpty then
+            Log.warn(
+                s"Daemon returned HTTP ${e.status.code} (${e.status.name}) for ${ctx.describe} with empty body — classification falls back to ContainerOperationException"
+            )
+        else Kyo.unit
 
     /** Runs an HTTP call, catching HttpException and mapping to ContainerException. */
     private def withErrorMapping[A](ctx: ResourceContext)(
@@ -234,10 +288,13 @@ final private[kyo] class HttpContainerBackend(
                     case 409                                      => Abort.fail(ContainerAlreadyExistsException(nameForErrors))
                     case _ if bodyContainsConflict(bodyLower)     => Abort.fail(ContainerAlreadyExistsException(nameForErrors))
                     case _ if bodyContainsImageMissing(bodyLower) => Abort.fail(ContainerImageMissingException(config.image))
-                    case _ => Abort.fail(ContainerOperationException(
-                            s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} creating container $nameForErrors",
-                            e
-                        ))
+                    case _ =>
+                        warnIfMissingBody(e, ResourceContext.Op(s"create:$nameForErrors")).andThen(
+                            Abort.fail(ContainerOperationException(
+                                s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} creating container $nameForErrors",
+                                e
+                            ))
+                        )
                 end match
             case Result.Failure(e) =>
                 Abort.fail(ContainerOperationException(s"Failed to create container $nameForErrors", e))
@@ -245,21 +302,6 @@ final private[kyo] class HttpContainerBackend(
                 Abort.fail(ContainerBackendException(s"Unexpected error creating container $nameForErrors", e))
         }
     end create
-
-    /** rootless podman's docker-compat shim sometimes returns 500 instead of 409 for name conflicts; the body still contains a recognisable
-      * phrase like "container name X is already in use".
-      */
-    private def bodyContainsConflict(bodyLower: String): Boolean =
-        bodyLower.contains("already in use") ||
-            bodyLower.contains("is in use") ||
-            bodyLower.contains("name is reserved") ||
-            (bodyLower.contains("name") && bodyLower.contains("already") && bodyLower.contains("use"))
-
-    /** Some daemon versions return non-404 status codes for missing images with the actual reason in the body. */
-    private def bodyContainsImageMissing(bodyLower: String): Boolean =
-        bodyLower.contains("no such image") ||
-            bodyLower.contains("image not known") ||
-            (bodyLower.contains("image") && bodyLower.contains("not found"))
 
     private def ctxContainer(id: Container.Id): ResourceContext = ResourceContext.Container(id)
 
