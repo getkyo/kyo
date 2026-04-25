@@ -96,8 +96,9 @@ jobs:
             sleep 1
           done
           echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-          # Verify systemd cgroup manager is selected — diagnostic for CI logs.
-          podman info --format '{{.Host.CgroupManager}} / {{.Host.CgroupVersion}}'
+          # Diagnostic: print cgroup-related fields so CI logs show which manager
+          # podman picked. Tolerate failures — the field names vary across versions.
+          podman info | grep -iE 'cgroup|rootless' || true
           podman version
           docker version
 
