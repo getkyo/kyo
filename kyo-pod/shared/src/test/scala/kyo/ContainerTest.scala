@@ -453,4 +453,41 @@ class ContainerTest extends Test:
         }
     }
 
+    // =========================================================================
+    // parseState — covers docker + podman state vocabularies.
+    // =========================================================================
+
+    "parseState" - {
+        import kyo.internal.ContainerBackend.parseState
+
+        "docker states" in {
+            assert(parseState("created") == Container.State.Created)
+            assert(parseState("running") == Container.State.Running)
+            assert(parseState("paused") == Container.State.Paused)
+            assert(parseState("restarting") == Container.State.Restarting)
+            assert(parseState("removing") == Container.State.Removing)
+            assert(parseState("exited") == Container.State.Stopped)
+            assert(parseState("dead") == Container.State.Dead)
+            succeed
+        }
+
+        "podman pre-start states map to Created" in {
+            assert(parseState("configured") == Container.State.Created)
+            assert(parseState("initialized") == Container.State.Created)
+            succeed
+        }
+
+        "case-insensitive" in {
+            assert(parseState("RUNNING") == Container.State.Running)
+            assert(parseState("Configured") == Container.State.Created)
+            succeed
+        }
+
+        "unknown states default to Stopped" in {
+            assert(parseState("unknown-state-xyz") == Container.State.Stopped)
+            assert(parseState("") == Container.State.Stopped)
+            succeed
+        }
+    }
+
 end ContainerTest

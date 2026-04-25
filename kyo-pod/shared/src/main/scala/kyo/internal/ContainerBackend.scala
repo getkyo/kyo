@@ -312,17 +312,22 @@ end ContainerBackend
 
 private[kyo] object ContainerBackend:
 
-    /** Parse a container state string (from Docker/Podman API) to the State enum. */
+    /** Parse a container state string (from Docker/Podman API) to the State enum.
+      *
+      * `configured` and `initialized` are podman-specific pre-start states that map to `Created`. Unknown states default to `Stopped` since
+      * that is the safest assumption — the alternative (treating unknowns as `Running`) would mask real failures.
+      */
     def parseState(s: String): Container.State =
         s.toLowerCase match
-            case "created"            => Container.State.Created
-            case "running"            => Container.State.Running
-            case "paused"             => Container.State.Paused
-            case "restarting"         => Container.State.Restarting
-            case "removing"           => Container.State.Removing
-            case "exited" | "stopped" => Container.State.Stopped
-            case "dead"               => Container.State.Dead
-            case _                    => Container.State.Stopped
+            case "created"                    => Container.State.Created
+            case "configured" | "initialized" => Container.State.Created
+            case "running"                    => Container.State.Running
+            case "paused"                     => Container.State.Paused
+            case "restarting"                 => Container.State.Restarting
+            case "removing"                   => Container.State.Removing
+            case "exited" | "stopped"         => Container.State.Stopped
+            case "dead"                       => Container.State.Dead
+            case _                            => Container.State.Stopped
 
     /** Parse an ISO-8601 timestamp string to an Instant. Returns Absent for None, empty, or zero-value timestamps. Handles both Docker
       * format (Z suffix) and Podman format (timezone offset like -07:00).

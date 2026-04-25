@@ -228,9 +228,12 @@ final private[kyo] class HttpContainerBackend(
         ) {
             case Result.Success(resp) => Container.Id(resp.Id)
             case Result.Failure(e: HttpStatusException) =>
+                val bodyLower = e.body.getOrElse("").toLowerCase
                 e.status.code match
-                    case 404 => Abort.fail(ContainerImageMissingException(config.image))
-                    case 409 => Abort.fail(ContainerAlreadyExistsException(nameForErrors))
+                    case 404                                      => Abort.fail(ContainerImageMissingException(config.image))
+                    case 409                                      => Abort.fail(ContainerAlreadyExistsException(nameForErrors))
+                    case _ if bodyContainsConflict(bodyLower)     => Abort.fail(ContainerAlreadyExistsException(nameForErrors))
+                    case _ if bodyContainsImageMissing(bodyLower) => Abort.fail(ContainerImageMissingException(config.image))
                     case _ => Abort.fail(ContainerOperationException(
                             s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} creating container $nameForErrors",
                             e
@@ -242,6 +245,21 @@ final private[kyo] class HttpContainerBackend(
                 Abort.fail(ContainerBackendException(s"Unexpected error creating container $nameForErrors", e))
         }
     end create
+
+    /** rootless podman's docker-compat shim sometimes returns 500 instead of 409 for name conflicts; the body still contains a recognisable
+      * phrase like "container name X is already in use".
+      */
+    private def bodyContainsConflict(bodyLower: String): Boolean =
+        bodyLower.contains("already in use") ||
+            bodyLower.contains("is in use") ||
+            bodyLower.contains("name is reserved") ||
+            (bodyLower.contains("name") && bodyLower.contains("already") && bodyLower.contains("use"))
+
+    /** Some daemon versions return non-404 status codes for missing images with the actual reason in the body. */
+    private def bodyContainsImageMissing(bodyLower: String): Boolean =
+        bodyLower.contains("no such image") ||
+            bodyLower.contains("image not known") ||
+            (bodyLower.contains("image") && bodyLower.contains("not found"))
 
     private def ctxContainer(id: Container.Id): ResourceContext = ResourceContext.Container(id)
 

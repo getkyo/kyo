@@ -71,13 +71,23 @@ jobs:
         if: contains(matrix.os, 'linux')
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman
+          sudo apt-get install -y podman uidmap
+          # Enable systemd lingering so podman uses the systemd cgroup manager
+          # instead of falling back to cgroupfs. Without this:
+          #   - podman emits cgroupv2 warnings to stderr on every command
+          #   - pause/unpause fail (cgroupfs in cgroup v2 has no unprivileged freezer)
+          #   - container lifecycle reporting becomes unreliable
+          uid="$(id -u)"
+          sudo loginctl enable-linger "$uid"
+          # Wait for the per-user systemd runtime dir to come up.
+          for _ in $(seq 1 20); do
+            [ -d "/run/user/$uid" ] && break
+            sleep 1
+          done
+          export XDG_RUNTIME_DIR="/run/user/$uid"
+          mkdir -p "$XDG_RUNTIME_DIR/podman"
           # Start the rootless API socket — kyo-pod's HTTP backend probes
           # $XDG_RUNTIME_DIR/podman/podman.sock first.
-          uid="$(id -u)"
-          export XDG_RUNTIME_DIR="/tmp/runtime-$uid"
-          mkdir -p "$XDG_RUNTIME_DIR/podman"
-          chmod 700 "$XDG_RUNTIME_DIR"
           nohup podman system service --time=0 \
             "unix://$XDG_RUNTIME_DIR/podman/podman.sock" \
             > /tmp/podman.log 2>&1 &
@@ -86,7 +96,8 @@ jobs:
             sleep 1
           done
           echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-          ls -la "$XDG_RUNTIME_DIR/podman/" || true
+          # Verify systemd cgroup manager is selected — diagnostic for CI logs.
+          podman info --format '{{.Host.CgroupManager}} / {{.Host.CgroupVersion}}'
           podman version
           docker version
 

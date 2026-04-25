@@ -378,10 +378,15 @@ object Container:
 
     // --- Entry points ---
 
-    /** Create and start a scoped container. Automatically stopped and removed on scope exit. */
+    /** Create and start a scoped container. Automatically stopped and removed on scope exit.
+      *
+      * `imageEnsure` runs first — a no-op when the image is already local, otherwise an `imagePull`. This makes init symmetric across
+      * backends (the shell backend's `docker create` / `podman create` auto-pull as a side effect; the HTTP backend's
+      * `POST /containers/create` returns 404 instead). Aligns with Testcontainers behavior.
+      */
     def init(config: Config)(using Frame): Container < (Async & Abort[ContainerException] & Scope) =
         currentBackend.map { b =>
-            b.create(config).map { cid =>
+            b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config)).map { cid =>
                 // Register cleanup IMMEDIATELY after create, before start
                 Scope.ensure {
                     def logFailure(op: String)(r: Result[Throwable, Unit])(using Frame): Unit < Sync = r match
@@ -452,7 +457,7 @@ object Container:
     def initUnscoped(config: Config)(using Frame): Container < (Async & Abort[ContainerException]) =
         currentBackend.map { b =>
             AtomicRef.init(ContainerHealthState(false, Absent)).map { healthRef =>
-                b.create(config).map { cid =>
+                b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config)).map { cid =>
                     val container = new Container(cid, config, b, healthRef)
                     Abort.run[ContainerException] {
                         b.start(cid).andThen(runHealthCheck(container, config.healthCheck))

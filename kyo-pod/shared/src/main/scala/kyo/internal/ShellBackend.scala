@@ -1954,16 +1954,18 @@ final private[kyo] class ShellBackend(
 
     /** Run a container CLI command, returning stdout on success or mapping errors via [[mapError]].
       *
-      * Merges stderr into stdout using `sh -c "... 2>&1"` instead of `redirectErrorStream` which does not merge on JS (Node.js discards
-      * stderr instead of piping it to stdout). On non-zero exit, the combined output is passed to [[mapError]] for classification.
+      * Spawns the process directly (no shell wrapper) and captures stdout and stderr on independent fibers. This keeps stdout clean for
+      * parsing (IDs, JSON) — important because rootless podman without a systemd user session emits `cgroupv2 manager` warnings to stderr
+      * on every command. On non-zero exit, stderr is the primary error source (with stdout as fallback for tools that emit errors there).
       */
     private def run(ctx: ResourceContext, args: String*)(using Frame): String < (Async & Abort[ContainerException]) =
         Abort.runWith[Closed](meter.run {
-            val shellCmd = (cmd +: args).map(a => "'" + a.replace("'", "'\\''") + "'").mkString(" ")
-            Abort.runWith[CommandException](Command("sh", "-c", s"$shellCmd 2>&1").textWithExitCode) {
-                case Result.Success((stdout, exitCode)) =>
+            Abort.runWith[CommandException](runWithStreams(args*)) {
+                case Result.Success((stdout, stderr, exitCode)) =>
                     if exitCode == ExitCode.Success then stdout.trim
-                    else Abort.fail(mapError(stdout.trim, ctx, args))
+                    else
+                        val errMsg = if stderr.trim.nonEmpty then stderr.trim else stdout.trim
+                        Abort.fail(mapError(errMsg, ctx, args))
                 case Result.Failure(cmdEx) =>
                     Abort.fail(ContainerOperationException(s"Command failed: ${(cmd +: args).mkString(" ")}", cmdEx))
                 case Result.Panic(ex) =>
@@ -1977,6 +1979,23 @@ final private[kyo] class ShellBackend(
                 Abort.fail(ContainerBackendException(s"Concurrency meter panicked during ${cmd} ${args.mkString(" ")}", ex))
         }
     end run
+
+    /** Spawn the underlying CLI directly and return (stdout, stderr, exitCode). */
+    private def runWithStreams(args: String*)(using Frame): (String, String, ExitCode) < (Async & Abort[CommandException]) =
+        Scope.run {
+            for
+                proc     <- Command((cmd +: args)*).spawn
+                outFib   <- Fiber.init(Scope.run(proc.stdout.run))
+                errFib   <- Fiber.init(Scope.run(proc.stderr.run))
+                code     <- proc.waitFor
+                outBytes <- outFib.get
+                errBytes <- errFib.get
+            yield (
+                new String(outBytes.toArray, java.nio.charset.StandardCharsets.UTF_8),
+                new String(errBytes.toArray, java.nio.charset.StandardCharsets.UTF_8),
+                code
+            )
+        }
 
     private def runUnit(ctx: ResourceContext, args: String*)(using Frame): Unit < (Async & Abort[ContainerException]) =
         run(ctx, args*).unit
