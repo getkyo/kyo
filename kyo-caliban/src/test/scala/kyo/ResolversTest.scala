@@ -31,6 +31,7 @@ class ResolverTest extends Test:
         for
             interpreter <- Resolvers.get(graphQL(RootResolver(defaultQuery)))
             server      <- Resolvers.run(interpreter)
+            _           <- Async.sleep(50.millis)
         yield server
 
     def send[In, Out](

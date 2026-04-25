@@ -154,7 +154,7 @@ object HttpClient:
     // --- GET ---
 
     /** Fails with `HttpStatusException` on non-2xx status codes. */
-    def getJson[A: Json](
+    def getJson[A: Schema](
         url: String | HttpUrl,
         headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
         query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
@@ -166,7 +166,7 @@ object HttpClient:
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
       * handling.
       */
-    def getJsonResponse[A: Json](
+    def getJsonResponse[A: Schema](
         url: String | HttpUrl,
         headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
         query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
@@ -181,9 +181,9 @@ object HttpClient:
     // --- POST ---
 
     /** Fails with `HttpStatusException` on non-2xx status codes. */
-    def postJson[A: Json](using
+    def postJson[A: Schema](using
         Frame
-    )[B: Json](
+    )[B: Schema](
         url: String | HttpUrl,
         body: B,
         headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
@@ -196,9 +196,9 @@ object HttpClient:
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
       * handling.
       */
-    def postJsonResponse[A: Json](using
+    def postJsonResponse[A: Schema](using
         Frame
-    )[B: Json](
+    )[B: Schema](
         url: String | HttpUrl,
         body: B,
         headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
@@ -214,9 +214,9 @@ object HttpClient:
     // --- PUT ---
 
     /** Fails with `HttpStatusException` on non-2xx status codes. */
-    def putJson[A: Json](using
+    def putJson[A: Schema](using
         Frame
-    )[B: Json](
+    )[B: Schema](
         url: String | HttpUrl,
         body: B,
         headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
@@ -229,9 +229,9 @@ object HttpClient:
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
       * handling.
       */
-    def putJsonResponse[A: Json](using
+    def putJsonResponse[A: Schema](using
         Frame
-    )[B: Json](
+    )[B: Schema](
         url: String | HttpUrl,
         body: B,
         headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
@@ -247,9 +247,9 @@ object HttpClient:
     // --- PATCH ---
 
     /** Fails with `HttpStatusException` on non-2xx status codes. */
-    def patchJson[A: Json](using
+    def patchJson[A: Schema](using
         Frame
-    )[B: Json](
+    )[B: Schema](
         url: String | HttpUrl,
         body: B,
         headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
@@ -262,9 +262,9 @@ object HttpClient:
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
       * handling.
       */
-    def patchJsonResponse[A: Json](using
+    def patchJsonResponse[A: Schema](using
         Frame
-    )[B: Json](
+    )[B: Schema](
         url: String | HttpUrl,
         body: B,
         headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
@@ -280,7 +280,7 @@ object HttpClient:
     // --- DELETE ---
 
     /** Fails with `HttpStatusException` on non-2xx status codes. */
-    def deleteJson[A: Json](
+    def deleteJson[A: Schema](
         url: String | HttpUrl,
         headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
         query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
@@ -292,7 +292,7 @@ object HttpClient:
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
       * handling.
       */
-    def deleteJsonResponse[A: Json](
+    def deleteJsonResponse[A: Schema](
         url: String | HttpUrl,
         headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
         query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
@@ -619,7 +619,7 @@ object HttpClient:
 
     // --- SSE JSON ---
 
-    def getSseJson[V: Json: Tag](
+    def getSseJson[V: Schema: Tag](
         url: String | HttpUrl,
         headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
         query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
@@ -651,7 +651,7 @@ object HttpClient:
 
     // --- NDJSON ---
 
-    def getNdJson[V: Json: Tag](
+    def getNdJson[V: Schema: Tag](
         url: String | HttpUrl,
         headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
         query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty

@@ -9,7 +9,7 @@ import kyo.*
   */
 object LinkChecker extends KyoApp:
 
-    case class LinkResult(url: String, status: Int, ok: Boolean) derives Json
+    case class LinkResult(url: String, status: Int, ok: Boolean) derives Schema
 
     /** Extract href values from HTML using a simple regex. */
     def extractLinks(html: String, baseUrl: String): Seq[String] =

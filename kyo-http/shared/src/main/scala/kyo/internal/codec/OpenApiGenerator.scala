@@ -1,6 +1,7 @@
 package kyo.internal.codec
 
 import kyo.*
+import kyo.Json.JsonSchema
 import scala.collection.mutable
 
 /** Generates OpenAPI 3.0 specification from HttpHandler definitions. */
@@ -182,7 +183,7 @@ private[kyo] object OpenApiGenerator:
             mapping.status.code.toString -> HttpOpenApi.Response(
                 description = "Error",
                 content = Some(Map("application/json" -> HttpOpenApi.MediaType(
-                    json = jsonToHttpOpenApi(mapping.json)
+                    json = jsonSchemaToHttpOpenApi(mapping.jsonSchema)
                 )))
             )
         }
@@ -192,14 +193,14 @@ private[kyo] object OpenApiGenerator:
 
     private def contentToMediaType(content: HttpRoute.ContentType[?]): Option[(String, HttpOpenApi.SchemaObject)] =
         content match
-            case HttpRoute.ContentType.Json(json)      => Some("application/json" -> jsonToHttpOpenApi(json))
+            case j: HttpRoute.ContentType.Json[?]      => Some("application/json" -> jsonSchemaToHttpOpenApi(j.jsonSchema))
             case HttpRoute.ContentType.Text            => Some("text/plain" -> HttpOpenApi.SchemaObject.string)
             case HttpRoute.ContentType.Binary          => Some("application/octet-stream" -> HttpOpenApi.SchemaObject.string)
             case HttpRoute.ContentType.ByteStream      => Some("application/octet-stream" -> HttpOpenApi.SchemaObject.string)
             case HttpRoute.ContentType.Multipart       => Some("multipart/form-data" -> HttpOpenApi.SchemaObject.obj)
             case HttpRoute.ContentType.MultipartStream => Some("multipart/form-data" -> HttpOpenApi.SchemaObject.obj)
-            case HttpRoute.ContentType.Ndjson(json, _) => Some("application/x-ndjson" -> jsonToHttpOpenApi(json))
-            case HttpRoute.ContentType.Sse(json, _)    => Some("text/event-stream" -> jsonToHttpOpenApi(json))
+            case n: HttpRoute.ContentType.Ndjson[?]    => Some("application/x-ndjson" -> jsonSchemaToHttpOpenApi(n.jsonSchema))
+            case s: HttpRoute.ContentType.Sse[?]       => Some("text/event-stream" -> jsonSchemaToHttpOpenApi(s.jsonSchema))
             case HttpRoute.ContentType.SseText(_)      => Some("text/event-stream" -> HttpOpenApi.SchemaObject.string)
             case HttpRoute.ContentType.Form(_)         => Some("application/x-www-form-urlencoded" -> HttpOpenApi.SchemaObject.obj)
 
@@ -214,151 +215,118 @@ private[kyo] object OpenApiGenerator:
                 pathToHttpOpenApi(left) + pathToHttpOpenApi(right)
             case HttpPath.Rest(fieldName) => s"/{$fieldName}"
 
-    // ==================== Json introspection ====================
+    // ==================== JsonSchema introspection ====================
 
-    private def jsonToHttpOpenApi(json: kyo.Json[?]): HttpOpenApi.SchemaObject =
-        zioSchemaToHttpOpenApi(json.zioSchema)
-
-    private def zioSchemaToHttpOpenApi(json: zio.schema.Schema[?]): HttpOpenApi.SchemaObject =
-        import zio.schema.Schema as ZSchema
-        json match
-            case p @ ZSchema.Primitive(_, _) =>
-                primitiveToHttpOpenApi(p.standardType)
-            case ZSchema.Optional(innerJson, _) =>
-                zioSchemaToHttpOpenApi(innerJson)
-            case ZSchema.Sequence(elementJson, _, _, _, _) =>
-                HttpOpenApi.SchemaObject.array(zioSchemaToHttpOpenApi(elementJson))
-            case ZSchema.Map(_, valueJson, _) =>
+    /** Translates a kyo-schema JsonSchema ADT node into an OpenAPI SchemaObject.
+      *
+      * Mechanical translation:
+      *   - Obj(properties, required, additionalProperties) → type=object + properties + required + additionalProperties.
+      *   - Arr(items) → SchemaObject.array(items).
+      *   - Str/Num/Integer/Bool → primitive helpers.
+      *   - Nullable(inner) → recurse on inner (optionality is captured in the parent's required list).
+      *   - OneOf(variants) → if all variants map to an empty Obj, emit enum with variant names; otherwise emit oneOf.
+      */
+    private def jsonSchemaToHttpOpenApi(js: JsonSchema): HttpOpenApi.SchemaObject =
+        js match
+            case JsonSchema.Obj(properties, required, additionalProperties, _, _, _) =>
+                val propsMap =
+                    if properties.isEmpty then None
+                    else
+                        val buf = mutable.LinkedHashMap[String, HttpOpenApi.SchemaObject]()
+                        properties.foreach { case (name, sub) => buf(name) = jsonSchemaToHttpOpenApi(sub) }
+                        Some(buf.toMap)
+                val addProps = additionalProperties match
+                    case Present(inner) => Some(jsonSchemaToHttpOpenApi(inner))
+                    case Absent         => None
                 HttpOpenApi.SchemaObject(
                     `type` = Some("object"),
                     format = None,
                     items = None,
-                    properties = None,
-                    required = None,
-                    additionalProperties = Some(zioSchemaToHttpOpenApi(valueJson)),
+                    properties = propsMap,
+                    required = if required.isEmpty then None else Some(required),
+                    additionalProperties = addProps,
                     oneOf = None,
                     `enum` = None,
                     `$ref` = None
                 )
-            case ZSchema.Either(leftJson, rightJson, _) =>
+
+            case JsonSchema.Arr(items, _, _, _, _) =>
+                HttpOpenApi.SchemaObject.array(jsonSchemaToHttpOpenApi(items))
+
+            case JsonSchema.Str(_, _, _, format, _) =>
+                format match
+                    case Present(f) =>
+                        HttpOpenApi.SchemaObject(
+                            `type` = Some("string"),
+                            format = Some(f),
+                            items = None,
+                            properties = None,
+                            required = None,
+                            additionalProperties = None,
+                            oneOf = None,
+                            `enum` = None,
+                            `$ref` = None
+                        )
+                    case Absent => HttpOpenApi.SchemaObject.string
+
+            case JsonSchema.Num(_, _, _, _, _) =>
+                HttpOpenApi.SchemaObject.number
+
+            case JsonSchema.Integer(_, _, _, _, _) =>
+                HttpOpenApi.SchemaObject.integer
+
+            case JsonSchema.Bool =>
+                HttpOpenApi.SchemaObject.boolean
+
+            case JsonSchema.Null =>
                 HttpOpenApi.SchemaObject(
-                    `type` = None,
+                    `type` = Some("null"),
                     format = None,
                     items = None,
                     properties = None,
                     required = None,
                     additionalProperties = None,
-                    oneOf = Some(List(zioSchemaToHttpOpenApi(leftJson), zioSchemaToHttpOpenApi(rightJson))),
+                    oneOf = None,
                     `enum` = None,
                     `$ref` = None
                 )
-            case r: ZSchema.Record[?] =>
-                buildRecordJson(r)
-            case e: ZSchema.Enum[?] =>
-                buildEnumJson(e)
-            case ZSchema.Transform(json, _, _, _, _) =>
-                zioSchemaToHttpOpenApi(json)
-            case ZSchema.Lazy(json0) =>
-                zioSchemaToHttpOpenApi(json0())
-            case _ =>
-                HttpOpenApi.SchemaObject.obj
+
+            case JsonSchema.Nullable(inner) =>
+                jsonSchemaToHttpOpenApi(inner)
+
+            case JsonSchema.OneOf(variants) =>
+                if variants.isEmpty then HttpOpenApi.SchemaObject.string
+                else
+                    val allSimple = variants.forall {
+                        case (_, obj: JsonSchema.Obj) => obj.properties.isEmpty && obj.additionalProperties.isEmpty
+                        case _                        => false
+                    }
+                    if allSimple then
+                        HttpOpenApi.SchemaObject(
+                            `type` = Some("string"),
+                            format = None,
+                            items = None,
+                            properties = None,
+                            required = None,
+                            additionalProperties = None,
+                            oneOf = None,
+                            `enum` = Some(variants.map(_._1)),
+                            `$ref` = None
+                        )
+                    else
+                        HttpOpenApi.SchemaObject(
+                            `type` = None,
+                            format = None,
+                            items = None,
+                            properties = None,
+                            required = None,
+                            additionalProperties = None,
+                            oneOf = Some(variants.map { case (_, sub) => jsonSchemaToHttpOpenApi(sub) }),
+                            `enum` = None,
+                            `$ref` = None
+                        )
+                    end if
         end match
-    end zioSchemaToHttpOpenApi
-
-    private def primitiveToHttpOpenApi(standardType: zio.schema.StandardType[?]): HttpOpenApi.SchemaObject =
-        import zio.schema.StandardType
-        if standardType eq StandardType.StringType then HttpOpenApi.SchemaObject.string
-        else if standardType eq StandardType.IntType then HttpOpenApi.SchemaObject.integer
-        else if standardType eq StandardType.LongType then HttpOpenApi.SchemaObject.long
-        else if standardType eq StandardType.DoubleType then HttpOpenApi.SchemaObject.number
-        else if standardType eq StandardType.FloatType then HttpOpenApi.SchemaObject.number
-        else if standardType eq StandardType.BoolType then HttpOpenApi.SchemaObject.boolean
-        else if standardType eq StandardType.ShortType then HttpOpenApi.SchemaObject.integer
-        else if standardType eq StandardType.ByteType then HttpOpenApi.SchemaObject.integer
-        else if standardType eq StandardType.CharType then HttpOpenApi.SchemaObject.string
-        else if standardType eq StandardType.UUIDType then
-            HttpOpenApi.SchemaObject(
-                `type` = Some("string"),
-                format = Some("uuid"),
-                items = None,
-                properties = None,
-                required = None,
-                additionalProperties = None,
-                oneOf = None,
-                `enum` = None,
-                `$ref` = None
-            )
-        else HttpOpenApi.SchemaObject.string
-        end if
-    end primitiveToHttpOpenApi
-
-    private def buildRecordJson(record: zio.schema.Schema.Record[?]): HttpOpenApi.SchemaObject =
-        val fields = record.fields.toSeq
-        if fields.isEmpty then HttpOpenApi.SchemaObject.obj
-        else
-            val props     = mutable.LinkedHashMap[String, HttpOpenApi.SchemaObject]()
-            val reqFields = mutable.ArrayBuffer[String]()
-
-            def isOptionalJson(s: zio.schema.Schema[?]): Boolean = s match
-                case _: zio.schema.Schema.Optional[?]        => true
-                case l: zio.schema.Schema.Lazy[?]            => isOptionalJson(l.schema)
-                case t: zio.schema.Schema.Transform[?, ?, ?] => isOptionalJson(t.schema)
-                case _                                       => false
-
-            fields.foreach { field =>
-                props(field.name.toString) = zioSchemaToHttpOpenApi(field.schema)
-                if !field.optional && !isOptionalJson(field.schema) then reqFields += field.name.toString
-            }
-
-            HttpOpenApi.SchemaObject(
-                `type` = Some("object"),
-                format = None,
-                items = None,
-                properties = Some(props.toMap),
-                required = if reqFields.isEmpty then None else Some(reqFields.toList),
-                additionalProperties = None,
-                oneOf = None,
-                `enum` = None,
-                `$ref` = None
-            )
-        end if
-    end buildRecordJson
-
-    private def buildEnumJson(e: zio.schema.Schema.Enum[?]): HttpOpenApi.SchemaObject =
-        val cases = e.cases.toSeq
-        if cases.isEmpty then HttpOpenApi.SchemaObject.string
-        else
-            val allSimple = cases.forall { c =>
-                c.schema match
-                    case r: zio.schema.Schema.Record[?] => r.fields.isEmpty
-                    case _                              => false
-            }
-            if allSimple then
-                HttpOpenApi.SchemaObject(
-                    `type` = Some("string"),
-                    format = None,
-                    items = None,
-                    properties = None,
-                    required = None,
-                    additionalProperties = None,
-                    oneOf = None,
-                    `enum` = Some(cases.map(_.id).toList),
-                    `$ref` = None
-                )
-            else
-                HttpOpenApi.SchemaObject(
-                    `type` = None,
-                    format = None,
-                    items = None,
-                    properties = None,
-                    required = None,
-                    additionalProperties = None,
-                    oneOf = Some(cases.map(c => zioSchemaToHttpOpenApi(c.schema)).toList),
-                    `enum` = None,
-                    `$ref` = None
-                )
-            end if
-        end if
-    end buildEnumJson
+    end jsonSchemaToHttpOpenApi
 
 end OpenApiGenerator

@@ -12,10 +12,10 @@ object BookmarkStore extends KyoApp:
     val AUTH_TOKEN = "demo-token-2026"
 
     // --- Models ---
-    case class Bookmark(id: Int, url: String, title: String, tags: List[String]) derives Json
-    case class CreateBookmark(url: String, title: String, tags: List[String]) derives Json
-    case class UpdateBookmark(url: Option[String], title: Option[String], tags: Option[List[String]]) derives Json
-    case class ApiError(error: String) derives Json
+    case class Bookmark(id: Int, url: String, title: String, tags: List[String]) derives Schema
+    case class CreateBookmark(url: String, title: String, tags: List[String]) derives Schema
+    case class UpdateBookmark(url: Option[String], title: Option[String], tags: Option[List[String]]) derives Schema
+    case class ApiError(error: String) derives Schema
 
     // --- In-memory store ---
     case class Store(bookmarks: Map[Int, Bookmark], nextId: Int)

@@ -9,10 +9,10 @@ import kyo.*
   */
 object PasteBin extends KyoApp:
 
-    case class PasteInfo(slug: String, size: Int) derives Json
-    case class PasteList(pastes: List[PasteInfo]) derives Json
-    case class CreatePaste(slug: String, content: String) derives Json
-    case class ApiError(error: String) derives Json
+    case class PasteInfo(slug: String, size: Int) derives Schema
+    case class PasteList(pastes: List[PasteInfo]) derives Schema
+    case class CreatePaste(slug: String, content: String) derives Schema
+    case class ApiError(error: String) derives Schema
 
     case class Paste(content: String, etag: String)
 

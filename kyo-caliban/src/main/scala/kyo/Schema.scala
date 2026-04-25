@@ -3,7 +3,7 @@ package kyo
 import caliban.introspection.adt.__Type
 import caliban.schema.*
 import caliban.schema.Step.QueryStep
-import kyo.*
+import kyo.{Schema as _, *}
 import zio.ZIO
 import zio.query.ZQuery
 

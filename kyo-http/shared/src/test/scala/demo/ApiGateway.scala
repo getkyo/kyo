@@ -15,17 +15,17 @@ object ApiGateway extends KyoApp:
     // --- External API models ---
 
     // Open-Meteo
-    case class MeteoResponse(current: MeteoCurrentData) derives Json
-    case class MeteoCurrentData(temperature_2m: Double, wind_speed_10m: Double) derives Json
+    case class MeteoResponse(current: MeteoCurrentData) derives Schema
+    case class MeteoCurrentData(temperature_2m: Double, wind_speed_10m: Double) derives Schema
 
     // Frankfurter
-    case class FrankfurterResponse(base: String, date: String, rates: Map[String, Double]) derives Json
+    case class FrankfurterResponse(base: String, date: String, rates: Map[String, Double]) derives Schema
 
     // --- Our API models ---
-    case class WeatherInfo(city: String, temperature: Double, windSpeed: Double, unit: String) derives Json
-    case class RateInfo(base: String, date: String, rates: Map[String, Double]) derives Json
-    case class TravelInfo(weather: WeatherInfo, localCurrency: String, exchangeRate: Double, budgetInLocal: Double) derives Json
-    case class ApiError(error: String, detail: String) derives Json
+    case class WeatherInfo(city: String, temperature: Double, windSpeed: Double, unit: String) derives Schema
+    case class RateInfo(base: String, date: String, rates: Map[String, Double]) derives Schema
+    case class TravelInfo(weather: WeatherInfo, localCurrency: String, exchangeRate: Double, budgetInLocal: Double) derives Schema
+    case class ApiError(error: String, detail: String) derives Schema
 
     // --- City coordinates ---
     val cities: Map[String, (Double, Double)] = Map(

@@ -432,7 +432,7 @@ class HttpClientBackendTest extends kyo.Test:
     // 20. decodeAndComplete calls RouteUtil.decodeBufferedResponse — decoder invoked
     // ---------------------------------------------------------------------------
     "decodeAndComplete invokes response decoder (JSON body)" in run {
-        case class Msg(value: String) derives Json, CanEqual
+        case class Msg(value: String) derives Schema, CanEqual
         val route = HttpRoute.getRaw("json").response(_.bodyJson[Msg])
         val ep    = route.handler(_ => HttpResponse.ok.addField("body", Msg("hello")))
         Scope.run {

@@ -6,8 +6,8 @@ class HttpClientUnixTest extends Test with internal.UnixSocketTestHelperImpl:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
-    case class UserInput(name: String) derives Json, CanEqual
-    case class UserOutput(id: Int, name: String) derives Json, CanEqual
+    case class UserInput(name: String) derives Schema, CanEqual
+    case class UserOutput(id: Int, name: String) derives Schema, CanEqual
 
     private def withUnixServer[A, S](handlers: HttpHandler[?, ?, ?]*)(
         test: (HttpServer, String) => A < (S & Async & Abort[HttpException])
@@ -809,7 +809,7 @@ class HttpClientUnixTest extends Test with internal.UnixSocketTestHelperImpl:
     "error recovery" - {
 
         "server handles client disconnect" in run {
-            case class Payload(value: String) derives Json
+            case class Payload(value: String) derives Schema
             val route   = HttpRoute.getRaw("resilient").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("alive"))
             withUnixServer(handler) { (server, sockPath) =>

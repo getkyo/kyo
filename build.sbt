@@ -54,18 +54,20 @@ Global / commands += TestKyo.command
 // CI concurrency controls:
 // - SBT_TASK_LIMIT: serialize ALL tasks (for OOM prevention on memory-constrained runners)
 // - SBT_UPDATE_LIMIT: serialize only dependency resolution (for Windows file lock avoidance)
-// - Test limit: cap concurrent test projects to cores/2 in CI to reduce resource
-//   contention between forked test JVMs on slow runners. Local dev uses full
-//   parallelism (detected by absence of the `CI` env var, which GitHub Actions,
-//   Travis, CircleCI, Jenkins, and most CI systems set).
+// - Test limit: cap concurrent test projects. On CI (detected via the `CI` env
+//   var set by GitHub Actions, Travis, CircleCI, etc.) use 50% of cores to
+//   reduce contention on slow runners. On local dev use 80% of cores — fewer
+//   than the full count, to leave headroom for sbt's scalatest reporter sockets
+//   and other background work, but higher than CI for faster iteration.
 Global / concurrentRestrictions ++= {
     val taskLimit   = sys.env.getOrElse("SBT_TASK_LIMIT", "0")
     val updateLimit = sys.env.getOrElse("SBT_UPDATE_LIMIT", "0")
+    val cores       = java.lang.Runtime.getRuntime.availableProcessors()
     val isCI        = sys.env.contains("CI")
-    val testLimit   = 1 max (java.lang.Runtime.getRuntime.availableProcessors() / 2)
+    val testLimit   = 1 max (if (isCI) cores / 2 else math.ceil(cores * 0.8).toInt)
     (if (taskLimit != "0") Seq(Tags.limitAll(taskLimit.toInt)) else Nil) ++
         (if (updateLimit != "0") Seq(Tags.limit(Tags.Update, updateLimit.toInt)) else Nil) ++
-        (if (isCI) Seq(Tags.limit(Tags.Test, testLimit)) else Nil)
+        Seq(Tags.limit(Tags.Test, testLimit))
 }
 
 lazy val `kyo-settings` = Seq(
@@ -368,6 +370,17 @@ lazy val `kyo-parse` =
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
+lazy val `kyo-schema` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-data` % "test->test;compile->compile")
+        .in(file("kyo-schema"))
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+
 lazy val `kyo-core` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -579,12 +592,9 @@ lazy val `kyo-http` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
-        .dependsOn(`kyo-core`, `kyo-config`)
+        .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema`)
         .settings(
-            `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio-schema"            % "1.6.4",
-            libraryDependencies += "dev.zio" %%% "zio-schema-json"       % "1.6.4",
-            libraryDependencies += "dev.zio" %%% "zio-schema-derivation" % "1.6.4"
+            `kyo-settings`
         )
         .jvmSettings(
             mimaCheck(false)
@@ -741,6 +751,7 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-sttp`)
         .dependsOn(`kyo-tapir`)
         .dependsOn(`kyo-http`)
+        .dependsOn(`kyo-schema`)
         .dependsOn(`kyo-stm`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-scheduler-zio`)
@@ -791,7 +802,15 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "1.0.0-M44",
             libraryDependencies += "dev.zio"              %% "zio-http"            % "3.8.0",
             libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.7",
-            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.7"
+            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.7",
+            // JSON serialization benchmarks
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core"   % "2.28.2",
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.28.2" % "provided",
+            libraryDependencies += "dev.zio"                               %% "zio-json"              % "0.7.45",
+            libraryDependencies += "io.circe"                              %% "circe-core"            % "0.14.15",
+            libraryDependencies += "io.circe"                              %% "circe-generic"         % "0.14.15",
+            libraryDependencies += "io.circe"                              %% "circe-parser"          % "0.14.15",
+            libraryDependencies += "dev.zio"                               %% "zio-blocks-schema"     % "0.017"
         )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")

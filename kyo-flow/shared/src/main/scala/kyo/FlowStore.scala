@@ -95,21 +95,21 @@ abstract class FlowStore:
     // --- Fields ---
 
     /** Write a typed field. Overwrites if exists. */
-    def putField[V: Tag: Json](
+    def putField[V: Tag: Schema](
         executionId: Flow.Id.Execution,
         name: String,
         value: V
     )(using Frame): Unit < Async
 
     /** Atomic check-and-write. Returns true if written (was absent), false if already existed. */
-    def putFieldIfAbsent[V: Tag: Json](
+    def putFieldIfAbsent[V: Tag: Schema](
         executionId: Flow.Id.Execution,
         name: String,
         value: V
     )(using Frame): Boolean < Async
 
     /** Read a typed field. Returns Absent if missing or type tag mismatch. */
-    def getField[V: Tag: Json](
+    def getField[V: Tag: Schema](
         executionId: Flow.Id.Execution,
         name: String
     )(using Frame): Maybe[V] < Async
@@ -161,7 +161,7 @@ object FlowStore:
     // --- Types ---
 
     /** A context field entry: serialized value + runtime type tag. */
-    case class FieldData(value: String, tag: Tag[Any]) derives Json
+    case class FieldData(value: String, tag: Tag[Any]) derives Schema
 
     /** Execution state row. */
     case class ExecutionState(
@@ -173,7 +173,7 @@ object FlowStore:
         hash: String,
         created: Instant,
         updated: Instant
-    ) derives CanEqual, Json
+    ) derives CanEqual, Schema
 
     /** Paginated event history. */
     case class HistoryPage(events: Chunk[Flow.Event], hasMore: Boolean) derives CanEqual

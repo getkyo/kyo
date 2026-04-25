@@ -8,7 +8,7 @@ class HttpServerUnixTest extends Test with internal.UnixSocketTestHelperImpl:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
-    case class Item(id: Int, name: String) derives Json, CanEqual
+    case class Item(id: Int, name: String) derives Schema, CanEqual
 
     private def withUnixServer[A, S](handlers: HttpHandler[?, ?, ?]*)(
         test: (HttpServer, String) => A < (S & Async & Abort[HttpException])
@@ -91,7 +91,7 @@ class HttpServerUnixTest extends Test with internal.UnixSocketTestHelperImpl:
                 Sync.ensure(Sync.defer(cleanupSocket(sockPath))) {
                     HttpServer.init(config)(handler).map { server =>
                         val url = mkUrl(sockPath, "/missing")
-                        case class Dummy(x: Int) derives Json
+                        case class Dummy(x: Int) derives Schema
                         Abort.run[HttpException] {
                             HttpClient.getJson[Dummy](url)
                         }.map { result =>

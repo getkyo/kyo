@@ -29,9 +29,11 @@ private[kyo] object OpenApiMacro:
 
     private def parseSpec(jsonStr: String, context: String)(using Quotes): HttpOpenApi =
         import quotes.reflect.*
-        Json[HttpOpenApi].decode(jsonStr) match
+        // Macro runs at compile time; there is no user Frame in scope.
+        given Frame = Frame.internal
+        Json.decode[HttpOpenApi](jsonStr) match
             case Result.Success(v) => v
-            case Result.Failure(e) => report.errorAndAbort(s"Failed to parse OpenAPI spec$context: $e")
+            case Result.Failure(e) => report.errorAndAbort(s"Failed to parse OpenAPI spec$context: ${e.getMessage}")
             case Result.Panic(ex)  => report.errorAndAbort(s"Failed to parse OpenAPI spec$context: ${ex.getMessage}")
         end match
     end parseSpec
@@ -242,18 +244,18 @@ private[kyo] object OpenApiMacro:
                 val codecType = resolveCodecType(json)
                 codecType.asType match
                     case '[a] =>
-                        val s = Expr.summon[kyo.Json[a]] match
+                        val s = Expr.summon[kyo.Schema[a]] match
                             case Some(s) => s
                             case None =>
                                 report.errorAndAbort(
-                                    s"No Json[${codecType.show}] found for response body$context. " +
-                                        s"Hint: add `given Json[${codecType.show}] = Json.derived` in scope."
+                                    s"No Schema[${codecType.show}] found for response body$context. " +
+                                        s"Hint: add `derives Schema` on ${codecType.show}, or provide a `given Schema[${codecType.show}]` in scope."
                                 )
 
                         val bodyField = '{
                             kyo.HttpRoute.Field.Body[String, a](
                                 "body",
-                                kyo.HttpRoute.ContentType.Json($s),
+                                kyo.HttpRoute.ContentType.Json($s, kyo.Json.jsonSchema[a](using $s)),
                                 ""
                             )
                         }

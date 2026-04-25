@@ -205,35 +205,35 @@ object HttpHandler:
 
     // ==================== JSON methods ====================
 
-    def getJson[A: Json](path: String)(using
+    def getJson[A: Schema](path: String)(using
         Frame
     )(
         f: HttpRequest[Any] => A < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler[Any, "body" ~ A, Nothing] =
         HttpRoute.getJson[A](path).handler(req => f(req).map(HttpResponse.ok(_)))
 
-    def postJson[A: Json](path: String)(using
+    def postJson[A: Schema](path: String)(using
         Frame
-    )[B: Json](
+    )[B: Schema](
         f: (HttpRequest["body" ~ A], A) => B < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler["body" ~ A, "body" ~ B, Nothing] =
         HttpRoute.postJson[B, A](path).handler(req => f(req, req.fields.body).map(HttpResponse.ok(_)))
 
-    def putJson[A: Json](path: String)(using
+    def putJson[A: Schema](path: String)(using
         Frame
-    )[B: Json](
+    )[B: Schema](
         f: (HttpRequest["body" ~ A], A) => B < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler["body" ~ A, "body" ~ B, Nothing] =
         HttpRoute.putJson[B, A](path).handler(req => f(req, req.fields.body).map(HttpResponse.ok(_)))
 
-    def patchJson[A: Json](path: String)(using
+    def patchJson[A: Schema](path: String)(using
         Frame
-    )[B: Json](
+    )[B: Schema](
         f: (HttpRequest["body" ~ A], A) => B < (Async & Abort[HttpResponse.Halt])
     ): HttpHandler["body" ~ A, "body" ~ B, Nothing] =
         HttpRoute.patchJson[B, A](path).handler(req => f(req, req.fields.body).map(HttpResponse.ok(_)))
 
-    def deleteJson[A: Json](path: String)(using
+    def deleteJson[A: Schema](path: String)(using
         Frame
     )(
         f: HttpRequest[Any] => A < (Async & Abort[HttpResponse.Halt])
@@ -316,7 +316,7 @@ object HttpHandler:
 
     // ==================== Streaming methods ====================
 
-    def getSseJson[V: Json: Tag](path: String)(using
+    def getSseJson[V: Schema: Tag](path: String)(using
         Frame,
         Tag[Emit[Chunk[HttpSseEvent[V]]]]
     )(
@@ -336,7 +336,7 @@ object HttpHandler:
         route.handler(req => f(req).map(stream => HttpResponse.ok.addField("body", stream)))
     end getSseText
 
-    def getNdJson[V: Json: Tag](path: String)(using
+    def getNdJson[V: Schema: Tag](path: String)(using
         Frame,
         Tag[Emit[Chunk[V]]]
     )(

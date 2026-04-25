@@ -14,10 +14,10 @@ object CryptoTicker extends KyoApp:
 
     // CoinGecko response: Map of coin id -> Map of currency -> price
     // e.g. {"bitcoin":{"usd":67000},"ethereum":{"usd":3500}}
-    case class PriceData(bitcoin: CurrencyPrice, ethereum: CurrencyPrice, solana: CurrencyPrice) derives Json
-    case class CurrencyPrice(usd: Double, eur: Double, gbp: Double) derives Json
+    case class PriceData(bitcoin: CurrencyPrice, ethereum: CurrencyPrice, solana: CurrencyPrice) derives Schema
+    case class CurrencyPrice(usd: Double, eur: Double, gbp: Double) derives Schema
 
-    case class Tick(coin: String, usd: Double, eur: Double, gbp: Double, timestamp: String) derives Json
+    case class Tick(coin: String, usd: Double, eur: Double, gbp: Double, timestamp: String) derives Schema
 
     def fetchPrices: Seq[Tick] < (Async & Abort[HttpException]) =
         HttpClient.withConfig(

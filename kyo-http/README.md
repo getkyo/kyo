@@ -32,10 +32,10 @@ val html = HttpClient.getText("https://example.com")
 
 Text and binary methods (`getText`, `postText`, `putText`, `patchText`, `getBinary`, `postBinary`, `putBinary`, `patchBinary`, etc.) work with `String` and `Span[Byte]` directly, no setup needed.
 
-For JSON, the library needs to know how to serialize and deserialize your types. This is provided by a `Json` instance, which can be derived automatically for case classes and sealed types:
+For JSON, the library needs to know how to serialize and deserialize your types. This is provided by a `Schema` instance, which can be derived automatically for case classes and sealed types:
 
 ```scala
-case class User(id: Int, name: String) derives Json
+case class User(id: Int, name: String) derives Schema
 
 val user = HttpClient.getJson[User]("https://api.example.com/users/1")
 ```
@@ -43,7 +43,7 @@ val user = HttpClient.getJson[User]("https://api.example.com/users/1")
 For requests with a body, you specify the response type and the body type is inferred:
 
 ```scala
-case class CreateUser(name: String, email: String) derives Json
+case class CreateUser(name: String, email: String) derives Schema
 
 // User is the response type, CreateUser is inferred from the body argument
 val created =
@@ -93,7 +93,7 @@ By default, `*Response` methods also fail on non-2xx. Pass `failOnError = false`
 SSE and NDJSON responses are returned as a `Stream` that emits values as they arrive from the server:
 
 ```scala
-case class StockPrice(symbol: String, price: Double) derives Json
+case class StockPrice(symbol: String, price: Double) derives Schema
 
 // Consumes an SSE endpoint, parsing each event's data as StockPrice
 val events = HttpClient.getSseJson[StockPrice]("https://api.example.com/prices")
@@ -212,8 +212,8 @@ For GET/DELETE, both the path and response type are inferred from the handler fu
 ```scala
 import kyo.*
 
-case class User(id: Int, name: String) derives Json
-case class CreateUser(name: String) derives Json
+case class User(id: Int, name: String) derives Schema
+case class CreateUser(name: String) derives Schema
 
 val getUsers =
   HttpHandler.getJson("users") { req =>
@@ -252,7 +252,7 @@ Streaming handlers return a `Stream` that the server writes to the response as v
 #### Server-Sent Events
 
 ```scala
-case class Tick(count: Int, timestamp: Long) derives Json
+case class Tick(count: Int, timestamp: Long) derives Schema
 
 val handler =
   HttpHandler.getSseJson[Tick]("ticks") { req =>
@@ -379,8 +379,8 @@ def handle(req: HttpRequest["id" ~ Int & "name" ~ String]) =
 An `HttpRoute` defines the full contract of an endpoint: the HTTP method, path, which fields to extract from the request, what the response looks like, and how errors map to status codes. You build a route by chaining `.request(...)` and `.response(...)` calls that each add typed fields:
 
 ```scala
-case class User(id: Int, name: String, email: String) derives Json
-case class NotFound(message: String) derives Json
+case class User(id: Int, name: String, email: String) derives Schema
+case class NotFound(message: String) derives Schema
 
 val route = HttpRoute
   .getRaw("users" / Capture[Int]("id"))
@@ -494,8 +494,8 @@ Accessing a field not declared in the route is a compilation error.
 Routes can map custom error types to HTTP status codes. When a handler aborts with one of these types, the framework serializes it and uses the declared status:
 
 ```scala
-case class NotFound(message: String) derives Json
-case class Forbidden(reason: String) derives Json
+case class NotFound(message: String) derives Schema
+case class Forbidden(reason: String) derives Schema
 
 val route = HttpRoute
   .getRaw("resources" / Capture[Int]("id"))

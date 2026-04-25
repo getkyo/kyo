@@ -540,6 +540,28 @@ object Dict:
                     Span.fromUnsafe(arr)
             )
 
+        /** Build a `Chunk[(K, V)]` of all entries. Order is insertion order for small dicts; unspecified for hashmap-backed dicts. */
+        def toChunk: Chunk[(K, V)] =
+            reduce(
+                span =>
+                    val n = Span.size(span) / 2
+                    if n == 0 then Chunk.empty
+                    else
+                        val b = Chunk.newBuilder[(K, V)]
+                        @tailrec def loop(i: Int): Unit =
+                            if i < n then
+                                b += ((Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]))
+                                loop(i + 1)
+                        loop(0)
+                        b.result()
+                    end if
+                ,
+                map =>
+                    val b = Chunk.newBuilder[(K, V)]
+                    map.foreachEntry((k, v) => b += ((k, v)))
+                    b.result()
+            )
+
         /** Converts this Dict to an immutable `Map`. */
         def toMap: Map[K, V] =
             reduce(

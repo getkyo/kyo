@@ -79,7 +79,7 @@ case class HttpRoute[In, Out, +E](
     /** Maps a domain error type to an HTTP status code. When a handler aborts with `Abort.fail(e: E2)`, the framework serializes the error
       * as JSON and responds with the declared status. Multiple error types can be registered by chaining `.error` calls.
       */
-    def error[E2](using json: Json[E2], tag: ConcreteTag[E2])(s: HttpStatus): HttpRoute[In, Out, E | E2] =
+    inline def error[E2](using schema: Schema[E2], tag: ConcreteTag[E2])(s: HttpStatus): HttpRoute[In, Out, E | E2] =
         copy(response = response.error[E2](s))
 
     def metadata(f: Metadata => Metadata): HttpRoute[In, Out, E] =
@@ -116,19 +116,19 @@ object HttpRoute:
 
     // ==================== JSON methods ====================
 
-    def getJson[A: Json](path: HttpPath[Any]): HttpRoute[Any, "body" ~ A, Nothing] =
+    def getJson[A: Schema](path: HttpPath[Any]): HttpRoute[Any, "body" ~ A, Nothing] =
         getRaw(path).response(_.bodyJson[A])
 
-    def postJson[A: Json, B: Json](path: HttpPath[Any]): HttpRoute["body" ~ B, "body" ~ A, Nothing] =
+    def postJson[A: Schema, B: Schema](path: HttpPath[Any]): HttpRoute["body" ~ B, "body" ~ A, Nothing] =
         postRaw(path).request(_.bodyJson[B]).response(_.bodyJson[A])
 
-    def putJson[A: Json, B: Json](path: HttpPath[Any]): HttpRoute["body" ~ B, "body" ~ A, Nothing] =
+    def putJson[A: Schema, B: Schema](path: HttpPath[Any]): HttpRoute["body" ~ B, "body" ~ A, Nothing] =
         putRaw(path).request(_.bodyJson[B]).response(_.bodyJson[A])
 
-    def patchJson[A: Json, B: Json](path: HttpPath[Any]): HttpRoute["body" ~ B, "body" ~ A, Nothing] =
+    def patchJson[A: Schema, B: Schema](path: HttpPath[Any]): HttpRoute["body" ~ B, "body" ~ A, Nothing] =
         patchRaw(path).request(_.bodyJson[B]).response(_.bodyJson[A])
 
-    def deleteJson[A: Json](path: HttpPath[Any]): HttpRoute[Any, "body" ~ A, Nothing] =
+    def deleteJson[A: Schema](path: HttpPath[Any]): HttpRoute[Any, "body" ~ A, Nothing] =
         deleteRaw(path).response(_.bodyJson[A])
 
     // ==================== Text methods ====================
@@ -174,14 +174,15 @@ object HttpRoute:
       * that keeps the connection open until the stream completes.
       */
     enum ContentType[A]:
-        case Text                                                       extends ContentType[String]
-        case Binary                                                     extends ContentType[Span[Byte]]
-        case ByteStream                                                 extends ContentType[Stream[Span[Byte], Async]]
-        case Multipart                                                  extends ContentType[Seq[HttpRequest.Part]]
-        case MultipartStream                                            extends ContentType[Stream[HttpRequest.Part, Async]]
-        case Json[A](json: kyo.Json[A])                                 extends ContentType[A]
-        case Ndjson[V](json: kyo.Json[V], emitTag: Tag[Emit[Chunk[V]]]) extends ContentType[Stream[V, Async]]
-        case Sse[V](json: kyo.Json[V], emitTag: Tag[Emit[Chunk[HttpSseEvent[V]]]])
+        case Text                                                            extends ContentType[String]
+        case Binary                                                          extends ContentType[Span[Byte]]
+        case ByteStream                                                      extends ContentType[Stream[Span[Byte], Async]]
+        case Multipart                                                       extends ContentType[Seq[HttpRequest.Part]]
+        case MultipartStream                                                 extends ContentType[Stream[HttpRequest.Part, Async]]
+        case Json[A](schema: kyo.Schema[A], jsonSchema: kyo.Json.JsonSchema) extends ContentType[A]
+        case Ndjson[V](schema: kyo.Schema[V], jsonSchema: kyo.Json.JsonSchema, emitTag: Tag[Emit[Chunk[V]]])
+            extends ContentType[Stream[V, Async]]
+        case Sse[V](schema: kyo.Schema[V], jsonSchema: kyo.Json.JsonSchema, emitTag: Tag[Emit[Chunk[HttpSseEvent[V]]]])
             extends ContentType[Stream[HttpSseEvent[V], Async]]
         case SseText(emitTag: Tag[Emit[Chunk[HttpSseEvent[String]]]]) extends ContentType[Stream[HttpSseEvent[String], Async]]
         case Form[A](codec: HttpFormCodec[A])                         extends ContentType[A]
@@ -304,13 +305,13 @@ object HttpRoute:
         )(using Fields.Pin[N]): RequestDef[In & N ~ Maybe[A]] =
             add(Field.Param(Field.Param.Location.Cookie, fieldName, wireName, codec, default, true, description))
 
-        def bodyJson[A](using json: Json[A]): RequestDef[In & "body" ~ A] =
-            add(Field.Body("body", ContentType.Json(json), ""))
+        inline def bodyJson[A](using schema: Schema[A]): RequestDef[In & "body" ~ A] =
+            add(Field.Body("body", ContentType.Json(schema, kyo.Json.jsonSchema[A]), ""))
 
-        def bodyJson[A](using
-            json: Json[A]
+        inline def bodyJson[A](using
+            schema: Schema[A]
         )[N <: String & Singleton](fieldName: N, description: String = "")(using Fields.Pin[N]): RequestDef[In & N ~ A] =
-            add(Field.Body(fieldName, ContentType.Json(json), description))
+            add(Field.Body(fieldName, ContentType.Json(schema, kyo.Json.jsonSchema[A]), description))
 
         def bodyText: RequestDef[In & "body" ~ String] =
             add(Field.Body("body", ContentType.Text, ""))
@@ -335,17 +336,17 @@ object HttpRoute:
         )(using Fields.Pin[N]): RequestDef[In & N ~ Stream[Span[Byte], Async]] =
             add(Field.Body(fieldName, ContentType.ByteStream, description))
 
-        def bodyNdjson[V](using
-            json: Json[V],
+        inline def bodyNdjson[V](using
+            schema: Schema[V],
             emitTag: Tag[Emit[Chunk[V]]]
         ): RequestDef[In & "body" ~ Stream[V, Async]] =
-            add(Field.Body("body", ContentType.Ndjson(json, emitTag), ""))
+            add(Field.Body("body", ContentType.Ndjson(schema, kyo.Json.jsonSchema[V], emitTag), ""))
 
-        def bodyNdjson[V](using
-            json: Json[V],
+        inline def bodyNdjson[V](using
+            schema: Schema[V],
             emitTag: Tag[Emit[Chunk[V]]]
         )[N <: String & Singleton](fieldName: N, description: String = "")(using Fields.Pin[N]): RequestDef[In & N ~ Stream[V, Async]] =
-            add(Field.Body(fieldName, ContentType.Ndjson(json, emitTag), description))
+            add(Field.Body(fieldName, ContentType.Ndjson(schema, kyo.Json.jsonSchema[V], emitTag), description))
 
         def bodyForm[A](using codec: HttpFormCodec[A]): RequestDef[In & "body" ~ A] =
             add(Field.Body("body", ContentType.Form(codec), ""))
@@ -430,13 +431,13 @@ object HttpRoute:
         )(using Fields.Pin[N]): ResponseDef[Out & N ~ Maybe[HttpCookie[A]]] =
             addField(Field.Param(Field.Param.Location.Cookie, fieldName, wireName, codec, Absent, true, description))
 
-        def bodyJson[A](using json: Json[A]): ResponseDef[Out & "body" ~ A] =
-            addField(Field.Body("body", ContentType.Json(json), ""))
+        inline def bodyJson[A](using schema: Schema[A]): ResponseDef[Out & "body" ~ A] =
+            addField(Field.Body("body", ContentType.Json(schema, kyo.Json.jsonSchema[A]), ""))
 
-        def bodyJson[A](using
-            json: Json[A]
+        inline def bodyJson[A](using
+            schema: Schema[A]
         )[N <: String & Singleton](fieldName: N, description: String = "")(using Fields.Pin[N]): ResponseDef[Out & N ~ A] =
-            addField(Field.Body(fieldName, ContentType.Json(json), description))
+            addField(Field.Body(fieldName, ContentType.Json(schema, kyo.Json.jsonSchema[A]), description))
 
         def bodyText: ResponseDef[Out & "body" ~ String] =
             addField(Field.Body("body", ContentType.Text, ""))
@@ -463,34 +464,34 @@ object HttpRoute:
         )(using Fields.Pin[N]): ResponseDef[Out & N ~ Stream[Span[Byte], Async]] =
             addField(Field.Body(fieldName, ContentType.ByteStream, description))
 
-        def bodyNdjson[V](using
-            json: Json[V],
+        inline def bodyNdjson[V](using
+            schema: Schema[V],
             emitTag: Tag[Emit[Chunk[V]]]
         ): ResponseDef[Out & "body" ~ Stream[V, Async]] =
-            addField(Field.Body("body", ContentType.Ndjson(json, emitTag), ""))
+            addField(Field.Body("body", ContentType.Ndjson(schema, kyo.Json.jsonSchema[V], emitTag), ""))
 
-        def bodyNdjson[V](using
-            json: Json[V],
+        inline def bodyNdjson[V](using
+            schema: Schema[V],
             emitTag: Tag[Emit[Chunk[V]]]
         )[N <: String & Singleton](fieldName: N, description: String = "")(using
             Fields.Pin[N]
         ): ResponseDef[Out & N ~ Stream[V, Async]] =
-            addField(Field.Body(fieldName, ContentType.Ndjson(json, emitTag), description))
+            addField(Field.Body(fieldName, ContentType.Ndjson(schema, kyo.Json.jsonSchema[V], emitTag), description))
 
-        def bodySseJson[V](using
-            json: Json[V],
+        inline def bodySseJson[V](using
+            schema: Schema[V],
             emitTag: Tag[Emit[Chunk[HttpSseEvent[V]]]]
         ): ResponseDef[Out & "body" ~ Stream[HttpSseEvent[V], Async]] =
-            addField(Field.Body("body", ContentType.Sse(json, emitTag), ""))
+            addField(Field.Body("body", ContentType.Sse(schema, kyo.Json.jsonSchema[V], emitTag), ""))
 
-        def bodySseJson[V](using
-            json: Json[V],
+        inline def bodySseJson[V](using
+            schema: Schema[V],
             emitTag: Tag[Emit[Chunk[HttpSseEvent[V]]]]
         )[N <: String & Singleton](
             fieldName: N,
             description: String = ""
         )(using Fields.Pin[N]): ResponseDef[Out & N ~ Stream[HttpSseEvent[V], Async]] =
-            addField(Field.Body(fieldName, ContentType.Sse(json, emitTag), description))
+            addField(Field.Body(fieldName, ContentType.Sse(schema, kyo.Json.jsonSchema[V], emitTag), description))
 
         def bodySseText(using
             emitTag: Tag[Emit[Chunk[HttpSseEvent[String]]]]
@@ -505,8 +506,12 @@ object HttpRoute:
         )(using Fields.Pin[N]): ResponseDef[Out & N ~ Stream[HttpSseEvent[String], Async]] =
             addField(Field.Body(fieldName, ContentType.SseText(emitTag), description))
 
-        def error[E](using json: Json[E], tag: ConcreteTag[E])(s: HttpStatus): ResponseDef[Out] =
-            ResponseDef(this.status, this.fields, this.errors.append(ErrorMapping(s, json, tag.asInstanceOf[ConcreteTag[Any]])))
+        inline def error[E](using schema: Schema[E], tag: ConcreteTag[E])(s: HttpStatus): ResponseDef[Out] =
+            ResponseDef(
+                this.status,
+                this.fields,
+                this.errors.append(ErrorMapping(s, schema, kyo.Json.jsonSchema[E], tag.asInstanceOf[ConcreteTag[Any]]))
+            )
 
         def status(s: HttpStatus): ResponseDef[Out] =
             ResponseDef(s, this.fields, this.errors)
@@ -518,7 +523,7 @@ object HttpRoute:
 
     // ==================== Error mappings ====================
 
-    case class ErrorMapping(status: HttpStatus, json: Json[?], tag: ConcreteTag[Any]) derives CanEqual
+    case class ErrorMapping(status: HttpStatus, schema: Schema[?], jsonSchema: kyo.Json.JsonSchema, tag: ConcreteTag[Any]) derives CanEqual
 
     // ==================== Metadata ====================
 

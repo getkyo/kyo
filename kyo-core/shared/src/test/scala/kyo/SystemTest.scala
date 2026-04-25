@@ -82,6 +82,32 @@ class SystemTest extends Test:
         yield assert(OS.values.contains(os))
     }
 
+    "availableProcessors returns positive" in run {
+        System.availableProcessors.map(n => assert(n >= 1))
+    }
+
+    "availableProcessors is stable across calls" in run {
+        for
+            a <- System.availableProcessors
+            b <- System.availableProcessors
+        yield assert(a == b)
+    }
+
+    "let overrides availableProcessors" in run {
+        import AllowUnsafe.embrace.danger
+        val custom = System(new TestUnsafeSystem(processors = 42))
+        System.let(custom)(System.availableProcessors).map(n => assert(n == 42))
+    }
+
+    "Unsafe.availableProcessors matches safe" in run {
+        import AllowUnsafe.embrace.danger
+        for
+            safe <- System.availableProcessors
+            unsafe = System.live.unsafe.availableProcessors()
+        yield assert(safe == unsafe)
+        end for
+    }
+
     "custom System implementation" in run {
         val customSystem = new System:
             def unsafe: Unsafe = ???
@@ -89,10 +115,11 @@ class SystemTest extends Test:
                 Sync.defer(Maybe("custom_env").asInstanceOf[Maybe[A]])
             def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & Sync) =
                 Sync.defer(Maybe("custom_property").asInstanceOf[Maybe[A]])
-            def lineSeparator(using Frame): String < Sync = Sync.defer("custom_separator")
-            def userName(using Frame): String < Sync      = Sync.defer("custom_user")
-            def userHome(using Frame): String < Sync      = Sync.defer("custom_home")
-            def operatingSystem(using Frame): OS < Sync   = Sync.defer(OS.AIX)
+            def lineSeparator(using Frame): String < Sync    = Sync.defer("custom_separator")
+            def userName(using Frame): String < Sync         = Sync.defer("custom_user")
+            def userHome(using Frame): String < Sync         = Sync.defer("custom_home")
+            def operatingSystem(using Frame): OS < Sync      = Sync.defer(OS.AIX)
+            def availableProcessors(using Frame): Int < Sync = Sync.defer(4)
 
         for
             env       <- System.let(customSystem)(System.env[String]("ANY"))
@@ -351,7 +378,8 @@ class SystemTest extends Test:
         properties: Map[String, String] = Map.empty,
         lineSeparator: String = "\n",
         userName: String = "test_user",
-        os: OS = OS.Unknown
+        os: OS = OS.Unknown,
+        processors: Int = 1
     ) extends System.Unsafe:
         def env(name: String)(using AllowUnsafe): Maybe[String] =
             Maybe.fromOption(envVars.get(name))
@@ -364,6 +392,8 @@ class SystemTest extends Test:
         def userName()(using AllowUnsafe): String = userName
 
         def operatingSystem()(using AllowUnsafe): OS = os
+
+        def availableProcessors()(using AllowUnsafe): Int = processors
     end TestUnsafeSystem
 
 end SystemTest

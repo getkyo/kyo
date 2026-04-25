@@ -554,7 +554,7 @@ private[kyo] object UnsafeServerDispatch:
     private def writeErrorResponse(
         streamCtx: Http1StreamContext,
         error: HttpRouter.FindError
-    )(using AllowUnsafe): Unit =
+    )(using AllowUnsafe, Frame): Unit =
         error match
             case HttpRouter.FindError.NotFound =>
                 val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(404))
@@ -589,7 +589,7 @@ private[kyo] object UnsafeServerDispatch:
     /** Write a 404 Not Found response. */
     private def writeNotFound(
         streamCtx: Http1StreamContext
-    )(using AllowUnsafe): Unit =
+    )(using AllowUnsafe, Frame): Unit =
         val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(404))
         val writer = streamCtx.respond(
             HttpStatus(404),
@@ -603,7 +603,7 @@ private[kyo] object UnsafeServerDispatch:
     /** Write a 400 Bad Request response (e.g. missing or invalid Host header per RFC 9110 section 7.2). */
     private def writeBadRequest(
         streamCtx: Http1StreamContext
-    )(using AllowUnsafe): Unit =
+    )(using AllowUnsafe, Frame): Unit =
         val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(400))
         val writer = streamCtx.respond(
             HttpStatus(400),
@@ -617,7 +617,7 @@ private[kyo] object UnsafeServerDispatch:
     /** Write a 500 Internal Server Error. */
     private def writeInternalError(
         streamCtx: Http1StreamContext
-    )(using AllowUnsafe): Unit =
+    )(using AllowUnsafe, Frame): Unit =
         val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(500))
         val writer = streamCtx.respond(
             HttpStatus(500),
@@ -653,7 +653,7 @@ private[kyo] object UnsafeServerDispatch:
     /** Write a 413 Payload Too Large response. */
     private def writePayloadTooLarge(
         streamCtx: Http1StreamContext
-    )(using AllowUnsafe): Unit =
+    )(using AllowUnsafe, Frame): Unit =
         val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(413))
         val writer = streamCtx.respond(
             HttpStatus(413),
@@ -667,7 +667,7 @@ private[kyo] object UnsafeServerDispatch:
     /** Write a 417 Expectation Failed response. */
     private def writeExpectationFailed(
         streamCtx: Http1StreamContext
-    )(using AllowUnsafe): Unit =
+    )(using AllowUnsafe, Frame): Unit =
         val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(417))
         val writer = streamCtx.respond(
             HttpStatus(417),
