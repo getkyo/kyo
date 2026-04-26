@@ -83,7 +83,7 @@ final private[kyo] class ShellBackend(
                             aliases.flatMap(a => Chunk("--network-alias", a))
                         case _ => Chunk.empty
                     Chunk("--network", modeStr) ++ aliasArgs
-                }.getOrElse(Chunk.empty) ++
+                }.getOrElse(Chunk("--network", "bridge")) ++
                 // DNS
                 config.dns.flatMap(d => Chunk("--dns", d)) ++
                 // Extra hosts
@@ -313,12 +313,26 @@ final private[kyo] class ShellBackend(
             restartCount = dto.RestartCount,
             driver = dto.Driver,
             platform = platform,
-            networkSettings = Info.NetworkSettings(
-                ipAddress = if dto.NetworkSettings.IPAddress.nonEmpty then Present(dto.NetworkSettings.IPAddress) else Absent,
-                gateway = if dto.NetworkSettings.Gateway.nonEmpty then Present(dto.NetworkSettings.Gateway) else Absent,
-                macAddress = if dto.NetworkSettings.MacAddress.nonEmpty then Present(dto.NetworkSettings.MacAddress) else Absent,
-                networks = networks
-            )
+            networkSettings =
+                // Podman's container inspect leaves the top-level NetworkSettings.{IPAddress,Gateway,MacAddress}
+                // empty and only populates per-network entries under Networks. Fall back to the first non-empty
+                // entry so the top-level Maybe fields are populated for both daemons.
+                val firstNetEntry: Maybe[NetworkEndpointEntryJson] =
+                    Maybe.fromOption(dto.NetworkSettings.Networks.flatMap(_.values.find(ep =>
+                        ep.IPAddress.nonEmpty || ep.Gateway.nonEmpty || ep.MacAddress.nonEmpty
+                    )))
+                Info.NetworkSettings(
+                    ipAddress =
+                        if dto.NetworkSettings.IPAddress.nonEmpty then Present(dto.NetworkSettings.IPAddress)
+                        else firstNetEntry.flatMap(ep => if ep.IPAddress.nonEmpty then Present(ep.IPAddress) else Absent),
+                    gateway =
+                        if dto.NetworkSettings.Gateway.nonEmpty then Present(dto.NetworkSettings.Gateway)
+                        else firstNetEntry.flatMap(ep => if ep.Gateway.nonEmpty then Present(ep.Gateway) else Absent),
+                    macAddress =
+                        if dto.NetworkSettings.MacAddress.nonEmpty then Present(dto.NetworkSettings.MacAddress)
+                        else firstNetEntry.flatMap(ep => if ep.MacAddress.nonEmpty then Present(ep.MacAddress) else Absent),
+                    networks = networks
+                )
         )
     end mapInspectToInfo
 
@@ -550,7 +564,10 @@ final private[kyo] class ShellBackend(
                         val stdoutStr = new String(outBytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
                         val stderrStr = new String(errBytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
                         // Parse exit code and classify result
-                        if (rawExit == ExitCode.Failure(125) || isDockerDaemonError(stderrStr)) && stderrStr.nonEmpty then
+                        if rawExit == ExitCode.Failure(125) then
+                            val msg = if stderrStr.nonEmpty then stderrStr.trim else "podman exec failed with exit code 125"
+                            Abort.fail[ContainerException](mapError(msg, ResourceContext.Container(id), Seq("exec", id.value)))
+                        else if isDockerDaemonError(stderrStr) && stderrStr.nonEmpty then
                             Abort.fail[ContainerException](mapError(stderrStr.trim, ResourceContext.Container(id), Seq("exec", id.value)))
                         // Exit code 126: command exists but cannot be invoked (permissions, not executable)
                         else if rawExit == ExitCode.Failure(126) then
@@ -1547,18 +1564,20 @@ final private[kyo] class ShellBackend(
             Chunk("--format", "{{json .}}") ++
             Chunk(term)
         run(ResourceContext.Op("imageSearch"), args.toSeq*).map { output =>
-            if output.trim.isEmpty then Chunk.empty[ContainerImage.SearchResult]
-            else
-                Kyo.foreach(Chunk.from(output.trim.split("\n"))) { line =>
-                    val trimmed = line.trim
-                    // Docker: IsOfficial/IsAutomated are strings ("OK"/""), StarCount is a string
-                    // Podman: IsOfficial/IsAutomated are booleans, StarCount is an int
-                    Json.decode[ImageSearchJsonPodman](trimmed) match
-                        case Result.Success(dto) if dto.Name.nonEmpty => mapPodmanImageSearchToResult(dto)
-                        case _ =>
-                            decodeJson[ImageSearchJsonDocker](trimmed).map(mapDockerImageSearchToResult)
-                    end match
-                }
+            val parsed: Chunk[ContainerImage.SearchResult] < (Async & Abort[ContainerException]) =
+                if output.trim.isEmpty then Chunk.empty[ContainerImage.SearchResult]
+                else
+                    Kyo.foreach(Chunk.from(output.trim.split("\n"))) { line =>
+                        val trimmed = line.trim
+                        // Docker: IsOfficial/IsAutomated are strings ("OK"/""), StarCount is a string
+                        // Podman: IsOfficial/IsAutomated are booleans, StarCount is an int
+                        Json.decode[ImageSearchJsonPodman](trimmed) match
+                            case Result.Success(dto) if dto.Name.nonEmpty => mapPodmanImageSearchToResult(dto)
+                            case _ =>
+                                decodeJson[ImageSearchJsonDocker](trimmed).map(mapDockerImageSearchToResult)
+                        end match
+                    }
+            parsed.map(results => if limit != Int.MaxValue then results.take(limit) else results)
         }
     end imageSearch
 
@@ -2192,7 +2211,9 @@ final private[kyo] class ShellBackend(
             stderr.contains("No such container") ||
             stderr.contains("no such container") ||
             stderr.contains("is not running") ||
-            stderr.contains("is paused")
+            stderr.contains("is paused") ||
+            stderr.contains("container state improper") ||
+            stderr.contains("exec sessions on running")
 
 end ShellBackend
 

@@ -48,6 +48,13 @@ final private[kyo] class HttpContainerBackend(
         s"http+unix://$encoded/$apiVersion$path$query"
     end url
 
+    /** Builds an `http+unix://` URL for the libpod-native API endpoints (used when docker-compat doesn't expose a feature). */
+    private[internal] def libpodUrl(path: String, params: (String, String)*): String =
+        val encoded = socketPath.replace("/", "%2F")
+        val query = if params.isEmpty then "" else "?" + params.map((k, v) => s"$k=${java.net.URLEncoder.encode(v, "UTF-8")}").mkString("&")
+        s"http+unix://$encoded/v5.0.0/libpod$path$query"
+    end libpodUrl
+
     // --- Error mapping ---
 
     /** Maps an HttpException to the appropriate ContainerException subtype using the resource context and the daemon's structured error
@@ -189,13 +196,13 @@ final private[kyo] class HttpContainerBackend(
                 target.toString -> sizeBytes.map(s => s"size=$s").getOrElse("")
         }.toMap
 
-        val networkModeStr: Maybe[String] = config.networkMode.map {
-            case Config.NetworkMode.Bridge          => "bridge"
-            case Config.NetworkMode.Host            => "host"
-            case Config.NetworkMode.None            => "none"
-            case Config.NetworkMode.Shared(cid)     => s"container:${cid.value}"
-            case Config.NetworkMode.Custom(name, _) => name
-        }
+        val networkModeStr: String = config.networkMode match
+            case Present(Config.NetworkMode.Bridge)          => "bridge"
+            case Present(Config.NetworkMode.Host)            => "host"
+            case Present(Config.NetworkMode.None)            => "none"
+            case Present(Config.NetworkMode.Shared(cid))     => s"container:${cid.value}"
+            case Present(Config.NetworkMode.Custom(name, _)) => name
+            case Absent                                      => "bridge"
 
         val networkingConfig: Option[NetworkingConfig] = config.networkMode.toOption.flatMap {
             case Config.NetworkMode.Custom(name, aliases) if aliases.nonEmpty =>
@@ -212,7 +219,7 @@ final private[kyo] class HttpContainerBackend(
         val hostConfig = HostConfig(
             Binds = if binds.nonEmpty then binds else Seq.empty,
             PortBindings = if portBindings.nonEmpty then portBindings else Map.empty,
-            NetworkMode = networkModeStr.getOrElse(""),
+            NetworkMode = networkModeStr,
             Dns = config.dns.toSeq,
             ExtraHosts = config.extraHosts.toSeq.map(eh => s"${eh.hostname}:${eh.ip}"),
             Memory = config.memory.getOrElse(0L),
@@ -411,9 +418,18 @@ final private[kyo] class HttpContainerBackend(
         withErrorMapping(ctxContainer(id)) {
             HttpClient.getJson[TopResponse](url(s"/containers/${id.value}/top", "ps_args" -> psArgs))
         }.map { resp =>
+            val titlesCount = resp.Titles.size
+            val processes = resp.Processes.map { row =>
+                if row.size == 1 && titlesCount > 1 then
+                    // Podman's libpod compat may return the whole row as a single concatenated string;
+                    // split it on whitespace to recover the column-per-element shape Docker uses.
+                    Chunk.from(row.head.split("\\s+", titlesCount).toSeq)
+                else
+                    Chunk.from(row)
+            }
             TopResult(
                 titles = Chunk.from(resp.Titles),
-                processes = Chunk.from(resp.Processes.map(p => Chunk.from(p)))
+                processes = Chunk.from(processes)
             )
         }
 
@@ -550,8 +566,9 @@ final private[kyo] class HttpContainerBackend(
                     )
                 )
             ) {
-                case Result.Success(conn) => buildAttachSession(conn, isTty = false)
-                case Result.Failure(e)    => mapHttpError(e, ctxContainer(id))
+                case Result.Success(conn) =>
+                    buildAttachSession(conn, isTty = false, includeStdout = true, includeStderr = true)
+                case Result.Failure(e) => mapHttpError(e, ctxContainer(id))
                 case Result.Panic(e) =>
                     Abort.fail(ContainerBackendException(s"Unexpected error for ${id.value}", e))
             }
@@ -581,7 +598,7 @@ final private[kyo] class HttpContainerBackend(
                     )
                 )
             ) {
-                case Result.Success(conn) => buildAttachSession(conn, isTty)
+                case Result.Success(conn) => buildAttachSession(conn, isTty, stdout, stderr)
                 case Result.Failure(e)    => mapHttpError(e, ctxContainer(id))
                 case Result.Panic(e) =>
                     Abort.fail(ContainerBackendException(s"Unexpected error for ${id.value}", e))
@@ -594,7 +611,12 @@ final private[kyo] class HttpContainerBackend(
       * Wraps the bidirectional raw byte connection as an AttachSession with proper demultiplexing. In TTY mode, raw bytes are treated as
       * stdout text. In non-TTY mode, Docker's 8-byte multiplexed stream headers are parsed to separate stdout/stderr.
       */
-    private def buildAttachSession(conn: HttpRawConnection, isTty: Boolean): AttachSession =
+    private def buildAttachSession(
+        conn: HttpRawConnection,
+        isTty: Boolean,
+        includeStdout: Boolean,
+        includeStderr: Boolean
+    ): AttachSession =
         new AttachSession:
             def write(data: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
                 conn.write(Span.from(data.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
@@ -603,18 +625,23 @@ final private[kyo] class HttpContainerBackend(
                 conn.write(Span.from(data.toArray))
 
             def read(using Frame): Stream[LogEntry, Async & Abort[ContainerException]] =
-                if isTty then
-                    conn.read.mapChunk { spans =>
-                        spans.flatMap { bytes =>
-                            val text  = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                            val lines = text.split("\n").filter(_.nonEmpty)
-                            Chunk.from(lines.map(line => LogEntry(LogEntry.Source.Stdout, line)))
+                val rawStream =
+                    if isTty then
+                        conn.read.mapChunk { spans =>
+                            spans.flatMap { bytes =>
+                                val text  = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
+                                val lines = text.split("\n").filter(_.nonEmpty)
+                                Chunk.from(lines.map(line => LogEntry(LogEntry.Source.Stdout, line)))
+                            }
                         }
-                    }
-                else
-                    conn.read.mapChunk { spans =>
-                        spans.flatMap(demuxStream(_))
-                    }
+                    else
+                        conn.read.mapChunk { spans => spans.flatMap(demuxStream(_)) }
+                rawStream.filter { entry =>
+                    entry.source match
+                        case LogEntry.Source.Stdout => includeStdout
+                        case LogEntry.Source.Stderr => includeStderr
+                }
+            end read
 
             def resize(width: Int, height: Int)(using Frame): Unit < (Async & Abort[ContainerException]) =
                 () // Resize can be added later via POST to resize endpoint
@@ -705,56 +732,26 @@ final private[kyo] class HttpContainerBackend(
     def copyTo(id: Container.Id, source: Path, containerPath: Path)(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
-        // Create tar archive of the source file, then PUT to /containers/{id}/archive
-        // Docker API extracts the tar at `path`, so we use the parent directory of containerPath
-        // and rename the file in the tar to match the desired container filename.
-        val sourceDir     = source.parent.map(_.toString).getOrElse(".")
-        val sourceFile    = source.name.getOrElse(source.toString)
         val containerDir  = containerPath.parent.map(_.toString).getOrElse("/")
         val containerFile = containerPath.name.getOrElse(containerPath.toString)
-        // BSD tar -s for portable rename when filenames differ
-        val tarCmd =
-            if sourceFile == containerFile then
-                Command("tar", "-c", "-f", "-", "-C", sourceDir, sourceFile)
-            else
-                Command(
-                    "tar",
-                    "-c",
-                    "-f",
-                    "-",
-                    "-s",
-                    s"/$sourceFile/$containerFile/",
-                    "-C",
-                    sourceDir,
-                    sourceFile
-                )
-        Scope.run {
-            Abort.runWith[CommandException](tarCmd.spawn) {
-                case Result.Success(proc) =>
-                    proc.stdout.run.map { tarBytes =>
-                        val tarSpan = Span.from(tarBytes.toArray)
-                        withErrorMapping(ctxContainer(id)) {
-                            HttpClient.putBinary(
-                                url(
-                                    s"/containers/${id.value}/archive",
-                                    "path" -> containerDir
-                                ),
-                                tarSpan,
-                                headers = Seq("Content-Type" -> "application/x-tar")
-                            )
-                        }.map(_ => ())
-                    }
-                case Result.Failure(cmdEx) =>
-                    Abort.fail(ContainerOperationException(
-                        s"Copy operation failed for ${id.value}: failed to create tar for copyTo",
-                        cmdEx
-                    ))
-                case Result.Panic(ex) =>
-                    Abort.fail(ContainerBackendException(
-                        s"Unexpected error creating tar for copyTo on ${id.value}",
-                        ex
-                    ))
-            }
+        Abort.runWith[FileReadException](source.readBytes) {
+            case Result.Success(bytes) =>
+                Sync.defer {
+                    val tarBytes = HttpContainerBackend.buildTarSingleFile(containerFile, bytes.toArray)
+                    Span.from(tarBytes)
+                }.map { tarSpan =>
+                    withErrorMapping(ctxContainer(id)) {
+                        HttpClient.putBinary(
+                            url(s"/containers/${id.value}/archive", "path" -> containerDir),
+                            tarSpan,
+                            headers = Seq("Content-Type" -> "application/x-tar")
+                        )
+                    }.unit
+                }
+            case Result.Failure(e) =>
+                Abort.fail(ContainerOperationException(s"Copy operation failed for ${id.value}: failed to read source ${source}", e))
+            case Result.Panic(t) =>
+                Abort.fail(ContainerBackendException(s"Unexpected error reading source for copyTo on ${id.value}", t))
         }
     end copyTo
 
@@ -881,9 +878,13 @@ final private[kyo] class HttpContainerBackend(
             RestartPolicy = restartPol.getOrElse(RestartPolicyEntry("", 0))
         )
         val jsonBody = Json.encode(body)
+        // Podman's docker-compat shim returns 404 for /containers/{id}/update — route to libpod-native endpoint instead.
+        val updateUrl =
+            if runtimeName == "podman" then libpodUrl(s"/containers/${id.value}/update")
+            else url(s"/containers/${id.value}/update")
         withErrorMapping(ctxContainer(id)) {
             HttpClient.postText(
-                url(s"/containers/${id.value}/update"),
+                updateUrl,
                 jsonBody,
                 headers = Seq("Content-Type" -> "application/json")
             )
@@ -1367,7 +1368,7 @@ final private[kyo] class HttpContainerBackend(
         withErrorMapping(ResourceContext.Op("imageSearch")) {
             HttpClient.getJson[Seq[ImageSearchEntryDto]](url("/images/search", params*))
         }.map { entries =>
-            Chunk.from(entries.map { e =>
+            val mapped = Chunk.from(entries.map { e =>
                 ContainerImage.SearchResult(
                     name = e.name,
                     description = e.description,
@@ -1376,6 +1377,7 @@ final private[kyo] class HttpContainerBackend(
                     isAutomated = e.is_automated
                 )
             })
+            if limit != Int.MaxValue then mapped.take(limit) else mapped
         }
     end imageSearch
 
@@ -1471,7 +1473,10 @@ final private[kyo] class HttpContainerBackend(
         )
         withErrorMapping(ResourceContext.Op("networkCreate")) {
             HttpClient.postJson[NetworkCreateResponse](url("/networks/create"), body)
-        }.map(resp => Container.Network.Id(resp.Id))
+        }.map { resp =>
+            if config.name.nonEmpty then Container.Network.Id(config.name)
+            else Container.Network.Id(resp.Id)
+        }
     end networkCreate
 
     def networkList(filters: Dict[String, Chunk[String]])(
@@ -1491,9 +1496,18 @@ final private[kyo] class HttpContainerBackend(
         }.map(mapNetworkInfo)
 
     def networkRemove(id: Container.Network.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        withErrorMapping(ResourceContext.Network(id)) {
-            HttpClient.deleteText(url(s"/networks/${id.value}")).unit
+        networkInspect(id).map { info =>
+            if info.containers.nonEmpty then
+                Abort.fail[ContainerException](ContainerOperationException(
+                    s"Cannot remove network ${id.value}: still has ${info.containers.size} connected endpoint(s)",
+                    "active endpoints"
+                ))
+            else
+                withErrorMapping(ResourceContext.Network(id)) {
+                    HttpClient.deleteText(url(s"/networks/${id.value}")).unit
+                }
         }
+    end networkRemove
 
     def networkConnect(network: Container.Network.Id, container: Container.Id, aliases: Chunk[String])(
         using Frame
@@ -1878,10 +1892,10 @@ final private[kyo] class HttpContainerBackend(
         }
 
         val networks = Dict.from(dto.NetworkSettings.Networks.getOrElse(Map.empty).map { case (name, ep) =>
-            // Use the actual network ID as key (not the name) so lookups by Network.Id work
-            val key = if ep.NetworkID.nonEmpty then Network.Id(ep.NetworkID) else Network.Id(name)
-            key -> Info.NetworkEndpoint(
-                networkId = Network.Id(ep.NetworkID),
+            // Key by the outer map key (network name) so lookups by Network.Id work across
+            // both Docker (where NetworkID is a hash) and Podman (where NetworkID is the name).
+            Network.Id(name) -> Info.NetworkEndpoint(
+                networkId = Network.Id(name),
                 endpointId = ep.EndpointID,
                 gateway = ep.Gateway,
                 ipAddress = ep.IPAddress,
@@ -1943,9 +1957,10 @@ final private[kyo] class HttpContainerBackend(
     // --- Network mapping ---
 
     private def mapNetworkInfo(dto: NetworkInfoDto): Container.Network.Info =
+        val canonicalId = if dto.Name.nonEmpty then dto.Name else dto.Id
         val containers = Dict.from(dto.Containers.getOrElse(Map.empty).map { case (cid, ep) =>
             Container.Id(cid) -> Info.NetworkEndpoint(
-                networkId = Network.Id(dto.Id),
+                networkId = Network.Id(canonicalId),
                 endpointId = ep.EndpointID,
                 gateway = "",
                 ipAddress = ep.IPv4Address,
@@ -1954,7 +1969,7 @@ final private[kyo] class HttpContainerBackend(
             )
         })
         Container.Network.Info(
-            id = Network.Id(dto.Id),
+            id = Network.Id(canonicalId),
             name = dto.Name,
             driver = Container.NetworkDriver.parse(dto.Driver),
             scope = dto.Scope,
@@ -2455,6 +2470,60 @@ private[kyo] object HttpContainerBackend:
       * `BackendConfig.UnixSocket(path, apiVersion = ...)` if you need to pin a different revision.
       */
     val defaultApiVersion: String = "v1.43"
+
+    /** Build a single-file USTAR (POSIX 1003.1) tar archive in memory. The archive contains exactly one regular file named `name` with the
+      * given byte content; mode 644, uid/gid 0, mtime = current epoch seconds. Two trailing zero-blocks mark end-of-archive. Avoids
+      * invoking the platform `tar` binary, whose `-s` substitution flag is BSD-only (GNU tar uses `--transform`).
+      */
+    private[kyo] def buildTarSingleFile(name: String, content: Array[Byte]): Array[Byte] =
+        val nameBytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        if nameBytes.length > 100 then
+            throw new IllegalArgumentException(s"tar entry name too long for USTAR (max 100 UTF-8 bytes): ${nameBytes.length}")
+        val size  = content.length
+        val mtime = java.lang.System.currentTimeMillis / 1000
+
+        val header = new Array[Byte](512)
+
+        def writeOctal(value: Long, offset: Int, fieldWidth: Int): Unit =
+            // USTAR fields are octal ASCII followed by NUL or space. We write (fieldWidth - 1) digits + NUL.
+            val s     = String.format(s"%0${fieldWidth - 1}o", java.lang.Long.valueOf(value))
+            val bytes = s.getBytes(java.nio.charset.StandardCharsets.US_ASCII)
+            java.lang.System.arraycopy(bytes, 0, header, offset, bytes.length)
+            // Trailing NUL is already 0 in the freshly allocated array.
+        end writeOctal
+
+        java.lang.System.arraycopy(nameBytes, 0, header, 0, nameBytes.length) // name      [0..100)
+        writeOctal(0x1a4L, 100, 8)                                            // mode 0644 [100..108)
+        writeOctal(0L, 108, 8)                                                // uid       [108..116)
+        writeOctal(0L, 116, 8)                                                // gid       [116..124)
+        writeOctal(size.toLong, 124, 12)                                      // size      [124..136)
+        writeOctal(mtime, 136, 12)                                            // mtime     [136..148)
+        java.util.Arrays.fill(header, 148, 156, ' '.toByte)                   // checksum placeholder (spaces)
+        header(156) = '0'.toByte                                              // typeflag '0' = regular file
+        val magic = "ustar".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
+        java.lang.System.arraycopy(magic, 0, header, 257, magic.length) // magic "ustar\0" [257..263)
+        header(263) = '0'.toByte                                        // version "00"     [263..265)
+        header(264) = '0'.toByte
+
+        // Compute checksum: unsigned-byte sum of all 512 header bytes (with checksum field = spaces).
+        var sum = 0
+        var i   = 0
+        while i < 512 do
+            sum += header(i) & 0xff
+            i += 1
+        val sumStr   = String.format("%06o", java.lang.Long.valueOf(sum.toLong))
+        val sumBytes = sumStr.getBytes(java.nio.charset.StandardCharsets.US_ASCII)
+        java.lang.System.arraycopy(sumBytes, 0, header, 148, sumBytes.length)
+        header(148 + 6) = 0          // NUL terminator
+        header(148 + 7) = ' '.toByte // trailing space (per spec)
+
+        val contentBlocks = (size + 511) / 512
+        val paddedSize    = contentBlocks * 512
+        val tar           = new Array[Byte](512 + paddedSize + 1024) // header + content (padded) + 2 zero blocks
+        java.lang.System.arraycopy(header, 0, tar, 0, 512)
+        java.lang.System.arraycopy(content, 0, tar, 512, size)
+        tar
+    end buildTarSingleFile
 
     /** Common error envelope returned by both Docker and Podman daemons. Podman's docker-compat shim additionally populates `response` with
       * the canonical status code it *intended* to return, which is the strongest classification signal when the actual wire status differs
