@@ -132,7 +132,7 @@ class ContainerItTest extends Test:
 
         "networkMode with function DSL" in {
             val config = Container.Config("alpine").networkMode(_.Host)
-            assert(config.networkMode == Present(Container.Config.NetworkMode.Host))
+            assert(config.networkMode == Container.Config.NetworkMode.Host)
         }
 
         "restartPolicy with function DSL" in {
@@ -2225,12 +2225,12 @@ class ContainerItTest extends Test:
                     val serverCfg = Container.Config.default.copy(
                         image = ContainerImage("alpine:latest"),
                         command = Present(Container.sleepForever),
-                        networkMode = Present(Container.Config.NetworkMode.Custom(netName, Chunk("server-alias")))
+                        networkMode = Container.Config.NetworkMode.Custom(netName, Chunk("server-alias"))
                     ).stopTimeout(0.seconds)
                     val clientCfg = Container.Config.default.copy(
                         image = ContainerImage("alpine:latest"),
                         command = Present(Container.sleepForever),
-                        networkMode = Present(Container.Config.NetworkMode.Custom(netName))
+                        networkMode = Container.Config.NetworkMode.Custom(netName)
                     ).stopTimeout(0.seconds)
                     Container.initWith(serverCfg) { _ =>
                         Container.initWith(clientCfg) { client =>

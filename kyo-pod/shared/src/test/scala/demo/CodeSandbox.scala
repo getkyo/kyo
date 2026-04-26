@@ -38,7 +38,7 @@ object CodeSandbox extends KyoApp:
             maxProcesses = Present(pids),
             readOnlyFilesystem = true,
             mounts = Chunk(Container.Config.Mount.Tmpfs(Path("/tmp"))),
-            networkMode = Present(Container.Config.NetworkMode.None),
+            networkMode = Container.Config.NetworkMode.None,
             privileged = false,
             dropCapabilities = Chunk(Container.Capability.Custom("ALL")),
             healthCheck = Container.HealthCheck.noop

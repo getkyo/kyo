@@ -78,7 +78,7 @@ object ServiceMesh extends KyoApp:
             val cacheConfig = Container.Config.default.copy(
                 image = ContainerImage("redis:7-alpine"),
                 name = Present(cacheName),
-                networkMode = Present(Container.Config.NetworkMode.Custom(netName, Chunk("cache"))),
+                networkMode = Container.Config.NetworkMode.Custom(netName, Chunk("cache")),
                 // Log-based health check — redis-cli ping via exec works too, but log-grep avoids
                 // an extra subprocess per probe.
                 healthCheck = Container.HealthCheck.log(
@@ -90,14 +90,14 @@ object ServiceMesh extends KyoApp:
             val apiConfig = Container.Config.default.copy(
                 image = ContainerImage("python:3.12-alpine"),
                 name = Present(apiName),
-                networkMode = Present(Container.Config.NetworkMode.Custom(netName, Chunk("api"))),
+                networkMode = Container.Config.NetworkMode.Custom(netName, Chunk("api")),
                 healthCheck = Container.HealthCheck.log("api starting on", Schedule.fixed(200.millis).take(30))
             ).command("python3", "-u", "-c", apiPythonScript)
             // edge — only tier with a host-published port
             val edgeConfig = Container.Config.default.copy(
                 image = ContainerImage("nginx:alpine"),
                 name = Present(edgeName),
-                networkMode = Present(Container.Config.NetworkMode.Custom(netName, Chunk("edge"))),
+                networkMode = Container.Config.NetworkMode.Custom(netName, Chunk("edge")),
                 // TCP port probe via /dev/tcp (bash) or nc -z (busybox) — works on nginx:alpine.
                 healthCheck = Container.HealthCheck.port(80, Schedule.fixed(200.millis).take(30))
             ).command("sh", "-c", nginxConfigScript).port(80, edgeHostPort)

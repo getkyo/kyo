@@ -516,7 +516,7 @@ object Container:
         env: Dict[String, String] = Dict.empty,
         memory: Maybe[Long] = Absent,
         cpuLimit: Maybe[Double] = Absent,
-        networkMode: Maybe[Config.NetworkMode] = Absent
+        networkMode: Config.NetworkMode = Config.NetworkMode.Bridge
     )(using Frame): ExecResult < (Async & Abort[ContainerException]) =
         Scope.run {
             init(Container.Config.default.copy(
@@ -663,7 +663,7 @@ object Container:
         env: Dict[String, String],
         ports: Chunk[Config.PortBinding],
         mounts: Chunk[Config.Mount],
-        networkMode: Maybe[Config.NetworkMode],
+        networkMode: Config.NetworkMode,
         dns: Chunk[String],
         extraHosts: Chunk[Config.ExtraHost],
         // Resource limits
@@ -734,10 +734,10 @@ object Container:
 
         // Network
 
-        def networkMode(mode: Config.NetworkMode): Config = copy(networkMode = Present(mode))
+        def networkMode(mode: Config.NetworkMode): Config = copy(networkMode = mode)
 
         def networkMode(f: Config.NetworkMode.type => Config.NetworkMode): Config =
-            copy(networkMode = Present(f(Config.NetworkMode)))
+            copy(networkMode = f(Config.NetworkMode))
 
         def dns(servers: String*): Config = copy(dns = dns.concat(Chunk.from(servers)))
 
@@ -806,7 +806,7 @@ object Container:
             env = Dict.empty,
             ports = Chunk.empty,
             mounts = Chunk.empty,
-            networkMode = Absent,
+            networkMode = Config.NetworkMode.Bridge,
             dns = Chunk.empty,
             extraHosts = Chunk.empty,
             memory = Absent,
