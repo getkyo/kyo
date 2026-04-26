@@ -947,8 +947,11 @@ final private[kyo] class HttpContainerBackend(
         if runtimeName == "podman" then
             // Podman's docker-compat shim returns 404 for /containers/{id}/update — route to the libpod-native endpoint
             // and send the OCI-shaped body it expects (flat docker fields are silently ignored).
-            val mem    = memory.toOption.filter(_ > 0)
-            val swp    = memorySwap.toOption.filter(_ > 0)
+            val mem = memory.toOption.filter(_ > 0)
+            // Default swap to 2× memory when only `memory` is provided. Mirrors what
+            // `podman container update --memory=...` sends: the libpod endpoint
+            // silently no-ops a `{"memory":{"limit":N}}` body that omits `swap`.
+            val swp    = memorySwap.toOption.filter(_ > 0).orElse(mem.map(_ * 2L))
             val cpu    = cpuLimit.toOption.filter(_ > 0).map(c => (c * 1024).toLong) // approximate cpu shares
             val cpuset = cpuAffinity.toOption.filter(_.nonEmpty)
             val pids   = maxProcesses.toOption.filter(_ > 0)
