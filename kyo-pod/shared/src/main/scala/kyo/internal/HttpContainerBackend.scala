@@ -435,6 +435,23 @@ final private[kyo] class HttpContainerBackend(
             state(id).map { s =>
                 if s == Container.State.Stopped || s == Container.State.Dead then
                     Abort.fail[ContainerException](ContainerAlreadyStoppedException(id))
+                else if runtimeName == "podman" then
+                    // Podman's docker-compat /stats returns the original spec memory limit, not the live
+                    // cgroup memory.max — after `c.update(memory=...)` the limit doesn't reflect the new
+                    // value. The libpod multi-stats endpoint reports MemLimit from the runtime (correct).
+                    withErrorMapping(ctxContainer(id)) {
+                        HttpClient.getJson[LibpodStatsResponse](
+                            libpodUrl("/containers/stats", "containers" -> id.value, "stream" -> "false")
+                        )
+                    }.map { resp =>
+                        resp.Stats.headOption match
+                            case Some(entry) => mapLibpodStats(entry, now)
+                            case None =>
+                                Abort.fail[ContainerException](ContainerBackendException(
+                                    s"libpod stats returned no entries for ${id.value}",
+                                    resp.Error.getOrElse("empty Stats array")
+                                ))
+                    }
                 else
                     withErrorMapping(ctxContainer(id)) {
                         HttpClient.getJson[StatsResponse](url(s"/containers/${id.value}/stats", "stream" -> "false"))
@@ -1955,6 +1972,42 @@ final private[kyo] class HttpContainerBackend(
         )
     end mapStatsResponse
 
+    private def mapLibpodStats(entry: LibpodStatsEntry, now: Instant): Container.Stats =
+        val networkMap = Dict.from(entry.Network.getOrElse(Map.empty).map { case (ifName, net) =>
+            ifName -> Stats.Net(
+                rxBytes = net.RxBytes,
+                rxPackets = Present(net.RxPackets),
+                rxErrors = Present(net.RxErrors),
+                rxDropped = Present(net.RxDropped),
+                txBytes = net.TxBytes,
+                txPackets = Present(net.TxPackets),
+                txErrors = Present(net.TxErrors),
+                txDropped = Present(net.TxDropped)
+            )
+        })
+        Stats(
+            readAt = now,
+            cpu = Stats.Cpu(
+                totalUsage = if entry.CPUNano > 0 then Present(entry.CPUNano) else Absent,
+                systemUsage = if entry.SystemNano > 0 then Present(entry.SystemNano) else Absent,
+                onlineCpus = entry.PerCPU.map(_.size).getOrElse(1),
+                usagePercent = entry.CPU
+            ),
+            memory = Stats.Memory(
+                usage = entry.MemUsage,
+                maxUsage = Absent, // libpod doesn't expose
+                limit = if entry.MemLimit > 0 then Present(entry.MemLimit) else Absent,
+                usagePercent = entry.MemPerc
+            ),
+            network = networkMap,
+            blockIo = Stats.BlockIo(readBytes = entry.BlockInput, writeBytes = entry.BlockOutput),
+            pids = Stats.Pids(
+                current = entry.PIDs,
+                limit = Absent // libpod doesn't expose
+            )
+        )
+    end mapLibpodStats
+
     // --- Inspect mapping ---
 
     private def mapInspectToInfo(dto: InspectResponse): Container.Info =
@@ -2353,6 +2406,42 @@ final private[kyo] class HttpContainerBackend(
     private case class PidsStatsDto(
         current: Long = 0,
         limit: Option[Double] = None
+    ) derives Schema
+
+    private case class LibpodStatsResponse(
+        Error: Option[String] = None,
+        Stats: Seq[LibpodStatsEntry] = Seq.empty
+    ) derives Schema
+
+    private case class LibpodStatsEntry(
+        ContainerID: String = "",
+        Name: String = "",
+        CPU: Double = 0.0,
+        CPUNano: Long = 0L,
+        CPUSystemNano: Long = 0L,
+        SystemNano: Long = 0L,
+        AvgCPU: Double = 0.0,
+        PerCPU: Option[Seq[Long]] = None,
+        MemUsage: Long = 0L,
+        MemLimit: Long = 0L,
+        MemPerc: Double = 0.0,
+        Network: Option[Map[String, LibpodNetStats]] = None,
+        BlockInput: Long = 0L,
+        BlockOutput: Long = 0L,
+        PIDs: Long = 0L,
+        UpTime: Long = 0L,
+        Duration: Long = 0L
+    ) derives Schema
+
+    private case class LibpodNetStats(
+        RxBytes: Long = 0L,
+        RxPackets: Long = 0L,
+        RxErrors: Long = 0L,
+        RxDropped: Long = 0L,
+        TxBytes: Long = 0L,
+        TxPackets: Long = 0L,
+        TxErrors: Long = 0L,
+        TxDropped: Long = 0L
     ) derives Schema
 
     // --- DTOs for top, changes, exec ---
