@@ -454,6 +454,65 @@ class ContainerTest extends Test:
     }
 
     // =========================================================================
+    // HttpContainerBackend.canonicalStatus — picks the daemon's *intended*
+    // status from the JSON error body's `response` field, which is the
+    // strongest classification signal when podman's docker-compat shim
+    // returns a wire-level status that disagrees with the real condition.
+    // =========================================================================
+
+    "HttpContainerBackend.canonicalStatus" - {
+        import kyo.internal.HttpContainerBackend.canonicalStatus
+
+        "returns wire status when body is Absent" in {
+            assert(canonicalStatus(500, Absent) == 500)
+            assert(canonicalStatus(404, Absent) == 404)
+            succeed
+        }
+
+        "returns wire status when body is empty" in {
+            assert(canonicalStatus(500, Present("")) == 500)
+            succeed
+        }
+
+        "returns wire status when body is not JSON" in {
+            assert(canonicalStatus(500, Present("not json at all")) == 500)
+            succeed
+        }
+
+        "returns wire status when body has no response field (docker)" in {
+            assert(canonicalStatus(404, Present("""{"message":"No such image: foo"}""")) == 404)
+            succeed
+        }
+
+        // Podman's docker-compat shim case — the wire status disagrees with the real condition.
+
+        "podman name conflict: HTTP 500 with response 409 in body returns 409" in {
+            val body = """{"cause":"...","message":"container name X is already in use","response":409}"""
+            assert(canonicalStatus(500, Present(body)) == 409)
+            succeed
+        }
+
+        "podman missing image: HTTP 403 with response 404 in body returns 404" in {
+            val body = """{"cause":"...","message":"no such image","response":404}"""
+            assert(canonicalStatus(403, Present(body)) == 404)
+            succeed
+        }
+
+        "out-of-range response field falls back to wire status" in {
+            assert(canonicalStatus(500, Present("""{"response":99}""")) == 500)
+            assert(canonicalStatus(500, Present("""{"response":700}""")) == 500)
+            assert(canonicalStatus(500, Present("""{"response":-1}""")) == 500)
+            succeed
+        }
+
+        "valid response field at boundaries is honoured" in {
+            assert(canonicalStatus(500, Present("""{"response":100}""")) == 100)
+            assert(canonicalStatus(500, Present("""{"response":599}""")) == 599)
+            succeed
+        }
+    }
+
+    // =========================================================================
     // parseState — covers docker + podman state vocabularies.
     // =========================================================================
 

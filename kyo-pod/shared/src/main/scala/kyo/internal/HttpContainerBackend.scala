@@ -50,11 +50,14 @@ final private[kyo] class HttpContainerBackend(
 
     // --- Error mapping ---
 
-    /** Maps an HttpException to the appropriate ContainerException subtype based on HTTP status code, resource context, and (when
-      * available) the response body. The body covers cases where the daemon returns a non-standard status code (e.g. rootless podman
-      * returns HTTP 500 for name conflicts and HTTP 403 for missing images) but the body still names the underlying condition. When the
-      * status code has no canonical mapping AND the body is empty, we log a warning before falling through — that combination prevents
-      * accurate classification.
+    /** Maps an HttpException to the appropriate ContainerException subtype using the resource context and the daemon's structured error
+      * body. Both Docker and Podman return JSON errors of the shape `{"message": "...", "cause": "...", "response": <intended status>}`.
+      * Podman's docker-compat shim sometimes returns an HTTP status that disagrees with the underlying condition (e.g. HTTP 500 for what
+      * should be 409 Conflict, HTTP 403 for what should be 404 ImageNotFound) — the body's `response` field carries the canonical code. We
+      * use that when present and fall back to the wire-level status otherwise.
+      *
+      * When neither the canonical status nor the wire status has a known mapping AND the body is empty, we log a warning — that combination
+      * prevents accurate classification and is the user's signal to investigate.
       */
     private def mapHttpError(
         httpEx: HttpException,
@@ -62,8 +65,7 @@ final private[kyo] class HttpContainerBackend(
     )(using Frame): Nothing < (Sync & Abort[ContainerException]) =
         httpEx match
             case e: HttpStatusException =>
-                val bodyLower = e.body.getOrElse("").toLowerCase
-                e.status.code match
+                canonicalStatus(e) match
                     case 304 =>
                         ctx match
                             case ResourceContext.Container(id) => Abort.fail(ContainerAlreadyStoppedException(id))
@@ -72,15 +74,6 @@ final private[kyo] class HttpContainerBackend(
                         Abort.fail(missingExceptionFor(ctx, e))
                     case 409 =>
                         Abort.fail(conflictExceptionFor(ctx))
-                    case _ if bodyContainsConflict(bodyLower) =>
-                        Abort.fail(conflictExceptionFor(ctx))
-                    case _ if bodyContainsImageMissing(bodyLower) =>
-                        ctx match
-                            case ResourceContext.Image(ref) =>
-                                Abort.fail(ContainerImageMissingException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref))))
-                            case _ => Abort.fail(missingExceptionFor(ctx, e))
-                    case _ if bodyContainsResourceMissing(bodyLower) =>
-                        Abort.fail(missingExceptionFor(ctx, e))
                     case _ =>
                         warnIfMissingBody(e, ctx).andThen(Abort.fail(ContainerOperationException(
                             s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} for ${ctx.describe}",
@@ -91,6 +84,10 @@ final private[kyo] class HttpContainerBackend(
                 Abort.fail(ContainerBackendException(s"HTTP transport failed for ${ctx.describe}", other))
         end match
     end mapHttpError
+
+    /** Instance-side shim around [[HttpContainerBackend.canonicalStatus]]; see that method for the rationale. */
+    private def canonicalStatus(e: HttpStatusException)(using Frame): Int =
+        HttpContainerBackend.canonicalStatus(e.status.code, e.body)
 
     private def missingExceptionFor(ctx: ResourceContext, e: HttpStatusException)(using Frame): ContainerException =
         ctx match
@@ -107,29 +104,8 @@ final private[kyo] class HttpContainerBackend(
             case ResourceContext.Op(name)      => ContainerAlreadyExistsException(name)
             case other                         => ContainerAlreadyExistsException(other.describe)
 
-    /** Body says the resource (or its name) is already taken. */
-    private[kyo] def bodyContainsConflict(bodyLower: String): Boolean =
-        bodyLower.contains("already in use") ||
-            bodyLower.contains("is in use") ||
-            bodyLower.contains("name is reserved") ||
-            (bodyLower.contains("name") && bodyLower.contains("already") && bodyLower.contains("use"))
-
-    /** Body says the requested image was not found locally or in the registry. */
-    private[kyo] def bodyContainsImageMissing(bodyLower: String): Boolean =
-        bodyLower.contains("no such image") ||
-            bodyLower.contains("image not known") ||
-            bodyLower.contains("manifest unknown") ||
-            (bodyLower.contains("image") && bodyLower.contains("not found"))
-
-    /** Body says some non-image resource (container, network, volume) is missing. */
-    private[kyo] def bodyContainsResourceMissing(bodyLower: String): Boolean =
-        bodyLower.contains("no such container") ||
-            bodyLower.contains("no such network") ||
-            bodyLower.contains("no such volume") ||
-            bodyLower.contains("not found") && !bodyLower.contains("image")
-
-    /** Warn when a non-2xx error has no body and the status code lacks a canonical mapping. The combination prevents the classifier from
-      * doing better than `ContainerOperationException`, which obscures the real condition.
+    /** Warn when a non-2xx error has no body and no canonical mapping. The combination prevents the classifier from doing better than
+      * `ContainerOperationException`, which obscures the real condition.
       */
     private def warnIfMissingBody(e: HttpStatusException, ctx: ResourceContext)(using Frame): Unit < Sync =
         if e.body.getOrElse("").isEmpty then
@@ -282,12 +258,9 @@ final private[kyo] class HttpContainerBackend(
         ) {
             case Result.Success(resp) => Container.Id(resp.Id)
             case Result.Failure(e: HttpStatusException) =>
-                val bodyLower = e.body.getOrElse("").toLowerCase
-                e.status.code match
-                    case 404                                      => Abort.fail(ContainerImageMissingException(config.image))
-                    case 409                                      => Abort.fail(ContainerAlreadyExistsException(nameForErrors))
-                    case _ if bodyContainsConflict(bodyLower)     => Abort.fail(ContainerAlreadyExistsException(nameForErrors))
-                    case _ if bodyContainsImageMissing(bodyLower) => Abort.fail(ContainerImageMissingException(config.image))
+                canonicalStatus(e) match
+                    case 404 => Abort.fail(ContainerImageMissingException(config.image))
+                    case 409 => Abort.fail(ContainerAlreadyExistsException(nameForErrors))
                     case _ =>
                         warnIfMissingBody(e, ResourceContext.Op(s"create:$nameForErrors")).andThen(
                             Abort.fail(ContainerOperationException(
@@ -2455,6 +2428,34 @@ private[kyo] object HttpContainerBackend:
       * `BackendConfig.UnixSocket(path, apiVersion = ...)` if you need to pin a different revision.
       */
     val defaultApiVersion: String = "v1.43"
+
+    /** Common error envelope returned by both Docker and Podman daemons. Podman's docker-compat shim additionally populates `response` with
+      * the canonical status code it *intended* to return, which is the strongest classification signal when the actual wire status differs
+      * (e.g. shim returns HTTP 500 but `response` is 409 Conflict for a name collision, or HTTP 403 with `response` 404 for a missing
+      * image). Docker leaves `response` absent — the wire status is canonical there.
+      */
+    private[kyo] case class ApiError(
+        message: Option[String] = None,
+        cause: Option[String] = None,
+        response: Option[Int] = None
+    ) derives Schema
+
+    /** Resolve the daemon's intended status code: prefer the body's `response` field (podman includes it; docker doesn't) and fall back to
+      * the wire-level HTTP status. Decode failures and out-of-range values fall back to the wire status — we never let a malformed or
+      * non-error response field override a real failure.
+      *
+      * Exposed at `private[kyo]` for unit testing of the pure parsing logic.
+      */
+    private[kyo] def canonicalStatus(httpStatus: Int, body: Maybe[String])(using Frame): Int =
+        body match
+            case Present(b) =>
+                Json.decode[ApiError](b) match
+                    case Result.Success(api) =>
+                        api.response match
+                            case Some(c) if c >= 100 && c < 600 => c
+                            case _                              => httpStatus
+                    case _ => httpStatus
+            case Absent => httpStatus
 
     /** Minimum length of a Docker-formatted timestamp prefix (`2024-01-01T00:00:00Z` = 20 chars). A space index below this means the line
       * has no timestamp prefix.
