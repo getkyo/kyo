@@ -18,7 +18,7 @@ USER root
 # (rootless-podman behaviour) doesn't depend on the JDK version.
 RUN dnf install -y --setopt=install_weak_deps=False \
         java-25-openjdk-headless \
-        git tar gzip findutils which procps-ng \
+        git tar gzip findutils which procps-ng rsync \
     && curl -fLsS https://github.com/sbt/sbt/releases/download/v1.10.0/sbt-1.10.0.tgz \
        | tar xz -C /opt \
     && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt \

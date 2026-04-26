@@ -79,6 +79,14 @@ object KyoPodDevRunner extends KyoApp:
             s"""set -e
                |# Allow git to operate on bind-mounted paths owned by a different host UID
                |git config --global --add safe.directory '*'
+               |# Rsync the workspace to a container-local writable path. /work is bind-mounted
+               |# from the host and its target/ trees contain artifacts compiled by the host's
+               |# JDK; sharing those breaks the inner sbt's incremental compiler. /tmp/kyo-work
+               |# is ephemeral to the container so the inner build stays clean.
+               |rsync -a --delete \\
+               |  --exclude '.bloop' --exclude '.metals' --exclude '.idea' --exclude '.vscode' \\
+               |  --exclude 'target' --exclude '.bsp' --exclude '*.log' \\
+               |  /work/ /tmp/kyo-work/
                |export XDG_RUNTIME_DIR=/tmp/runtime-$$(id -u)
                |mkdir -p $$XDG_RUNTIME_DIR/podman
                |podman system service --time=0 unix://$$XDG_RUNTIME_DIR/podman/podman.sock &
@@ -88,7 +96,7 @@ object KyoPodDevRunner extends KyoApp:
                |done
                |podman info | grep -iE 'cgroup|rootless' || true
                |podman version
-               |cd /work
+               |cd /tmp/kyo-work
                |$testCmd""".stripMargin
 
         // Build the dev image if it doesn't already exist (or if rebuild was forced).
