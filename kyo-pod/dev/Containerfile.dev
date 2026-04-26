@@ -19,6 +19,7 @@ USER root
 RUN dnf install -y --setopt=install_weak_deps=False \
         java-25-openjdk-headless \
         git tar gzip findutils which procps-ng rsync \
+        iptables iptables-nft \
     && curl -fLsS https://github.com/sbt/sbt/releases/download/v1.10.0/sbt-1.10.0.tgz \
        | tar xz -C /opt \
     && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt \
@@ -32,6 +33,13 @@ RUN dnf install -y --setopt=install_weak_deps=False \
 RUN mkdir -p /tmp/runtime-1000 \
     && chown podman:podman /tmp/runtime-1000 \
     && chmod 0700 /tmp/runtime-1000
+
+# Force netavark to use iptables instead of nftables. nftables can't apply rules
+# from a nested unprivileged user namespace (`netavark: nftables error: "nft" did not
+# return successfully while applying ruleset`); iptables-nft passes through
+# br_netfilter without needing direct nftables socket access.
+RUN mkdir -p /etc/containers \
+    && printf '[network]\nfirewall_driver = "iptables"\n' >> /etc/containers/containers.conf
 
 USER podman
 WORKDIR /work
