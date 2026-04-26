@@ -183,7 +183,7 @@ object ContainerPredef:
           * and column-header-free — convenient for parsing single scalar results.
           */
         def mysql(sql: String)(using Frame): Container.ExecResult < (Async & Abort[ContainerException]) =
-            val args = Chunk("mysql", "-u", config.username) ++
+            val args = Chunk("mysql", "-h", "127.0.0.1", "-u", config.username) ++
                 (if config.password.nonEmpty then Chunk(s"-p${config.password}") else Chunk.empty) ++
                 Chunk(config.database, "-N", "-e", sql)
             container.exec(Command(args*))
