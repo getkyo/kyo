@@ -127,23 +127,34 @@ final private[kyo] class HttpClientBackend[Handle] private (
                     parseResult match
                         case Result.Success(parsed) =>
                             try
-                                val lastBodySpan = conn.http1.lastBodySpan
-                                val bodyStream   = buildBodyStream(conn, parsed, lastBodySpan)
-                                RouteUtil.decodeStreamingResponse(
-                                    route,
-                                    HttpStatus(parsed.statusCode),
-                                    parsed.headers,
-                                    bodyStream,
-                                    route.method.name,
-                                    request.url
-                                ) match
-                                    case Result.Success(response) =>
-                                        resultPromise.completeDiscard(Result.succeed(response))
-                                    case Result.Failure(e: HttpException) =>
-                                        resultPromise.completeDiscard(Result.fail(e))
-                                    case Result.Panic(t) =>
-                                        resultPromise.completeDiscard(Result.panic(t))
-                                end match
+                                // For error responses on streaming routes, fall back to buffered reading.
+                                // Daemons return small JSON error bodies even for stream-typed endpoints
+                                // (e.g. podman's `/images/create` returns a JSON error on auth failure
+                                // rather than progress events). Streaming the response would trap that
+                                // body inside an unconsumed Stream that callers never drain, throwing
+                                // away the only diagnostic. Going through the buffered path lets
+                                // RouteUtil.decodeBufferedResponse populate HttpStatusException.body.
+                                if parsed.statusCode >= 400 then
+                                    readBufferedBody(conn, parsed, request.method, resultPromise, route, request)
+                                else
+                                    val lastBodySpan = conn.http1.lastBodySpan
+                                    val bodyStream   = buildBodyStream(conn, parsed, lastBodySpan)
+                                    RouteUtil.decodeStreamingResponse(
+                                        route,
+                                        HttpStatus(parsed.statusCode),
+                                        parsed.headers,
+                                        bodyStream,
+                                        route.method.name,
+                                        request.url
+                                    ) match
+                                        case Result.Success(response) =>
+                                            resultPromise.completeDiscard(Result.succeed(response))
+                                        case Result.Failure(e: HttpException) =>
+                                            resultPromise.completeDiscard(Result.fail(e))
+                                        case Result.Panic(t) =>
+                                            resultPromise.completeDiscard(Result.panic(t))
+                                    end match
+                                end if
                             catch
                                 case t: Throwable =>
                                     resultPromise.completeDiscard(Result.panic(t))

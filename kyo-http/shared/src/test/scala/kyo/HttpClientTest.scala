@@ -3292,6 +3292,32 @@ class HttpClientTest extends Test:
                 }
             }
         }
+
+        // Streaming-route 4xx/5xx — daemons sometimes respond with a small JSON error body
+        // even though the route declares streaming (docker/podman's /images/create returns
+        // JSON errors instead of pull-progress events when auth fails). The body must be
+        // captured for error classifiers to read it.
+
+        "body is captured for streaming routes on non-2xx" - {
+            val route = HttpRoute.postRaw("body-cap-stream").request(_.bodyBinary).response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse(HttpStatus.InternalServerError).addField("body", "stream-error-body"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.postStreamBytes(
+                            s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/body-cap-stream",
+                            kyo.Span.empty[Byte]
+                        ).run
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.body.isDefined, s"expected body to be present, got Absent")
+                            assert(e.body.get.contains("stream-error-body"), s"expected 'stream-error-body' in body, got: ${e.body.get}")
+                        case other =>
+                            fail(s"Expected HttpStatusException, got $other")
+                    }
+                }
+            }
+        }
     }
 
     "unit methods" - {
