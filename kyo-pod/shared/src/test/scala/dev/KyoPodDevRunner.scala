@@ -68,7 +68,7 @@ object KyoPodDevRunner extends KyoApp:
             prop("KYO_REPRO_WORKSPACE", "repro.workspace", findBuildRoot(java.nio.file.Path.of(sys.props("user.dir"))).toString)
         val workspace = Path(workspaceStr)
         val testCmd   = prop("KYO_REPRO_CMD", "repro.cmd", "sbt 'kyo-pod / testOnly kyo.ContainerItTest'")
-        val imageRef  = prop("KYO_REPRO_IMAGE", "repro.image", "kyo-pod-dev:latest")
+        val imageRef  = prop("KYO_REPRO_IMAGE", "repro.image", "localhost/kyo-pod-dev:latest")
         val rebuild   = prop("KYO_REPRO_REBUILD", "repro.rebuild", "false") == "true"
         val image     = ContainerImage(imageRef)
 
