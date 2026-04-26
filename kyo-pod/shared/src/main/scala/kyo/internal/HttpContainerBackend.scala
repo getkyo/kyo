@@ -2440,9 +2440,18 @@ private[kyo] object HttpContainerBackend:
         response: Option[Int] = None
     ) derives Schema
 
-    /** Resolve the daemon's intended status code: prefer the body's `response` field (podman includes it; docker doesn't) and fall back to
-      * the wire-level HTTP status. Decode failures and out-of-range values fall back to the wire status — we never let a malformed or
-      * non-error response field override a real failure.
+    /** Resolve the daemon's intended status code from the wire-level HTTP status and the structured error body.
+      *
+      * Priority order:
+      *   1. The `cause`/`message` fields of [[ApiError]] are matched against a small set of high-specificity libpod / docker error phrases
+      *      (e.g. "already in use" → 409). These are the most reliable signal because they reflect the underlying error type, independent
+      *      of what the docker-compat shim picked for the wire response. Without this layer podman's shim returns HTTP 500 with
+      *      `response: 500` for name conflicts that should be 409, and the `response` field would silently agree.
+      *   2. If the body's `response` field carries a usable error code (100–599), use it. Podman populates this; docker leaves it absent.
+      *      This catches cases where the shim picked a non-standard wire status but the body's response code is correct.
+      *   3. Fall back to the wire status.
+      *
+      * Decode failures, missing body, and out-of-range values fall through cleanly.
       *
       * Exposed at `private[kyo]` for unit testing of the pure parsing logic.
       */
@@ -2451,11 +2460,27 @@ private[kyo] object HttpContainerBackend:
             case Present(b) =>
                 Json.decode[ApiError](b) match
                     case Result.Success(api) =>
-                        api.response match
-                            case Some(c) if c >= 100 && c < 600 => c
-                            case _                              => httpStatus
+                        inferStatusFromMessage(api).orElse(api.response.filter(c => c >= 100 && c < 600)).getOrElse(httpStatus)
                     case _ => httpStatus
             case Absent => httpStatus
+
+    /** Pattern-match the cause/message fields against the daemon error vocabulary. Both libpod and docker emit a small, stable set of
+      * English phrases for the conditions kyo-pod cares about — matching them is the only way to recover the canonical status when the
+      * shim's wire status and `response` field both disagree with reality.
+      *
+      * Patterns are picked for high specificity to avoid false positives — e.g. "already in use" is unambiguous, but "in use" alone could
+      * match unrelated state. We restrict matching to the structured `cause` and `message` fields rather than the entire body to keep the
+      * matching surface narrow.
+      */
+    private[kyo] def inferStatusFromMessage(api: ApiError): Option[Int] =
+        val text = (api.cause.toSeq ++ api.message.toSeq).mkString(" ").toLowerCase
+        if text.isEmpty then None
+        else if text.contains("already in use") || text.contains("name is reserved") then Some(409)
+        else if text.contains("no such image") || text.contains("manifest unknown") || text.contains("image not known") then Some(404)
+        else if text.contains("no such container") || text.contains("no such network") || text.contains("no such volume") then Some(404)
+        else None
+        end if
+    end inferStatusFromMessage
 
     /** Minimum length of a Docker-formatted timestamp prefix (`2024-01-01T00:00:00Z` = 20 chars). A space index below this means the line
       * has no timestamp prefix.

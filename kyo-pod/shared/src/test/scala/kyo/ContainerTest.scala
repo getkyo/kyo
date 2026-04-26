@@ -510,6 +510,42 @@ class ContainerTest extends Test:
             assert(canonicalStatus(500, Present("""{"response":599}""")) == 599)
             succeed
         }
+
+        // Real CI capture from rootless podman: the shim returns wire 500 AND
+        // sets response: 500, but the cause/message clearly say "already in use".
+        // Without cause/message inference, this would fall through to a generic
+        // operation error. With it, we recover 409 (Conflict).
+
+        "cause field 'already in use' overrides wire+response 500 to 409" in {
+            val body = """{"cause":"that name is already in use","message":"container name X is already in use","response":500}"""
+            assert(canonicalStatus(500, Present(body)) == 409)
+            succeed
+        }
+
+        "message field 'no such image' on docker (no response field) returns 404" in {
+            val body = """{"message":"No such image: foo:latest"}"""
+            assert(canonicalStatus(404, Present(body)) == 404)
+            succeed
+        }
+
+        "manifest unknown phrase returns 404" in {
+            val body = """{"message":"manifest unknown for image foo"}"""
+            assert(canonicalStatus(500, Present(body)) == 404)
+            succeed
+        }
+
+        "no such container in cause returns 404" in {
+            val body = """{"cause":"no such container","message":"some wrapper"}"""
+            assert(canonicalStatus(500, Present(body)) == 404)
+            succeed
+        }
+
+        "cause/message takes precedence over response field" in {
+            // response says 500 but cause says conflict — cause wins
+            val body = """{"cause":"that name is already in use","response":500}"""
+            assert(canonicalStatus(500, Present(body)) == 409)
+            succeed
+        }
     }
 
     // =========================================================================
