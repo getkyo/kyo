@@ -14,6 +14,7 @@ object ContainerRuntime extends ContainerRuntimeBase:
             proc.getInputStream.readAllBytes()
             proc.waitFor() == 0
         }.getOrElse(false)
+    end cliExists
 
     protected def getEnv(name: String): String | Null = java.lang.System.getenv(name)
 

@@ -22,6 +22,7 @@ object ContainerRuntime extends ContainerRuntimeBase:
         val v = js.Dynamic.global.process.env.selectDynamic(name)
         if js.isUndefined(v) || v == null then null
         else v.asInstanceOf[String]
+    end getEnv
 
     protected def getHome: String = os.homedir().asInstanceOf[String]
 

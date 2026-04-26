@@ -71,7 +71,8 @@ final private[kyo] class ShellBackend(
                 // Mounts (pre-resolved)
                 mountArgs.flatten ++
                 // Network mode
-                config.networkMode.map { mode =>
+                {
+                    val mode = config.networkMode
                     val modeStr = mode match
                         case Config.NetworkMode.Bridge          => "bridge"
                         case Config.NetworkMode.Host            => "host"
@@ -83,7 +84,7 @@ final private[kyo] class ShellBackend(
                             aliases.flatMap(a => Chunk("--network-alias", a))
                         case _ => Chunk.empty
                     Chunk("--network", modeStr) ++ aliasArgs
-                }.getOrElse(Chunk("--network", "bridge")) ++
+                } ++
                 // DNS
                 config.dns.flatMap(d => Chunk("--dns", d)) ++
                 // Extra hosts

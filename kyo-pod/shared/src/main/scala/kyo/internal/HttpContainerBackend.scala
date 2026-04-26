@@ -197,20 +197,18 @@ final private[kyo] class HttpContainerBackend(
         }.toMap
 
         val networkModeStr: String = config.networkMode match
-            case Present(Config.NetworkMode.Bridge)          => "bridge"
-            case Present(Config.NetworkMode.Host)            => "host"
-            case Present(Config.NetworkMode.None)            => "none"
-            case Present(Config.NetworkMode.Shared(cid))     => s"container:${cid.value}"
-            case Present(Config.NetworkMode.Custom(name, _)) => name
-            case Absent                                      => "bridge"
+            case Config.NetworkMode.Bridge          => "bridge"
+            case Config.NetworkMode.Host            => "host"
+            case Config.NetworkMode.None            => "none"
+            case Config.NetworkMode.Shared(cid)     => s"container:${cid.value}"
+            case Config.NetworkMode.Custom(name, _) => name
 
-        val networkingConfig: Option[NetworkingConfig] = config.networkMode.toOption.flatMap {
+        val networkingConfig: Option[NetworkingConfig] = config.networkMode match
             case Config.NetworkMode.Custom(name, aliases) if aliases.nonEmpty =>
                 Some(NetworkingConfig(
                     EndpointsConfig = Map(name -> EndpointConfig(Aliases = aliases.toSeq))
                 ))
             case _ => None
-        }
 
         val restartPol = config.restartPolicy match
             case Config.RestartPolicy.OnFailure(retries) => RestartPolicyEntry(config.restartPolicy.cliName, retries)
@@ -311,11 +309,16 @@ final private[kyo] class HttpContainerBackend(
         postUnit(s"/containers/${id.value}/unpause", ctxContainer(id))
 
     def remove(id: Container.Id, force: Boolean, removeVolumes: Boolean)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        withErrorMapping(ctxContainer(id)) {
-            HttpClient.deleteText(
-                url(s"/containers/${id.value}", "force" -> force.toString, "v" -> removeVolumes.toString)
-            ).unit
-        }
+        // Force-remove on rootless podman frequently exceeds the default kyo-http timeout (5s).
+        // Bump it for the force=true case to absorb the slower SIGKILL+cleanup path.
+        val call =
+            withErrorMapping(ctxContainer(id)) {
+                HttpClient.deleteText(
+                    url(s"/containers/${id.value}", "force" -> force.toString, "v" -> removeVolumes.toString)
+                ).unit
+            }
+        if force then HttpClient.withConfig(_.timeout(30.seconds))(call) else call
+    end remove
 
     def rename(id: Container.Id, newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         postUnit(s"/containers/${id.value}/rename?name=${java.net.URLEncoder.encode(newName, "UTF-8")}", ctxContainer(id))
@@ -339,17 +342,57 @@ final private[kyo] class HttpContainerBackend(
     def checkpoint(id: Container.Id, name: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         val body     = CheckpointCreateRequest(CheckpointID = name)
         val jsonBody = Json.encode(body)
-        withErrorMapping(ctxContainer(id)) {
-            HttpClient.postText(
-                url(s"/containers/${id.value}/checkpoints"),
-                jsonBody,
-                headers = Seq("Content-Type" -> "application/json")
-            )
-        }.unit
+        // Podman's docker-compat shim returns 404 for /checkpoints — surface as NotSupported rather than Missing,
+        // since the container itself exists and the resource that's missing is the endpoint.
+        Abort.runWith[Closed](meter.run {
+            Abort.run[HttpException](
+                HttpClient.postText(
+                    url(s"/containers/${id.value}/checkpoints"),
+                    jsonBody,
+                    headers = Seq("Content-Type" -> "application/json")
+                )
+            ).map {
+                case Result.Success(_) => ()
+                case Result.Failure(e: HttpStatusException) if e.status.code == 404 || e.status.code == 501 =>
+                    Abort.fail(ContainerNotSupportedException(
+                        "checkpoint",
+                        s"checkpoint endpoint not supported by this runtime (HTTP ${e.status.code})"
+                    ))
+                case Result.Failure(e) => mapHttpError(e, ctxContainer(id))
+                case Result.Panic(e)   => Abort.fail(ContainerBackendException(s"Unexpected error during checkpoint", e))
+            }
+        }) {
+            case Result.Success(a) => a
+            case Result.Failure(_) =>
+                Abort.fail(ContainerBackendException(s"Concurrency meter closed during checkpoint", "meter was closed"))
+            case Result.Panic(ex) => Abort.fail(ContainerBackendException(s"Concurrency meter panicked during checkpoint", ex))
+        }
     end checkpoint
 
     def restore(id: Container.Id, checkpoint: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        postUnit(s"/containers/${id.value}/start?checkpoint=${java.net.URLEncoder.encode(checkpoint, "UTF-8")}", ctxContainer(id))
+        Abort.runWith[Closed](meter.run {
+            Abort.run[HttpException](
+                HttpClient.postText(
+                    url(s"/containers/${id.value}/start?checkpoint=${java.net.URLEncoder.encode(checkpoint, "UTF-8")}"),
+                    ""
+                )
+            ).map {
+                case Result.Success(_) => ()
+                case Result.Failure(e: HttpStatusException) if e.status.code == 404 || e.status.code == 501 =>
+                    Abort.fail(ContainerNotSupportedException(
+                        "restore",
+                        s"restore endpoint not supported by this runtime (HTTP ${e.status.code})"
+                    ))
+                case Result.Failure(e) => mapHttpError(e, ctxContainer(id))
+                case Result.Panic(e)   => Abort.fail(ContainerBackendException(s"Unexpected error during restore", e))
+            }
+        }) {
+            case Result.Success(a) => a
+            case Result.Failure(_) =>
+                Abort.fail(ContainerBackendException(s"Concurrency meter closed during restore", "meter was closed"))
+            case Result.Panic(ex) => Abort.fail(ContainerBackendException(s"Concurrency meter panicked during restore", ex))
+        }
+    end restore
 
     // --- Health ---
 
@@ -734,24 +777,61 @@ final private[kyo] class HttpContainerBackend(
     ): Unit < (Async & Abort[ContainerException]) =
         val containerDir  = containerPath.parent.map(_.toString).getOrElse("/")
         val containerFile = containerPath.name.getOrElse(containerPath.toString)
-        Abort.runWith[FileReadException](source.readBytes) {
-            case Result.Success(bytes) =>
-                Sync.defer {
-                    val tarBytes = HttpContainerBackend.buildTarSingleFile(containerFile, bytes.toArray)
-                    Span.from(tarBytes)
-                }.map { tarSpan =>
-                    withErrorMapping(ctxContainer(id)) {
-                        HttpClient.putBinary(
-                            url(s"/containers/${id.value}/archive", "path" -> containerDir),
-                            tarSpan,
-                            headers = Seq("Content-Type" -> "application/x-tar")
-                        )
-                    }.unit
-                }
+        val uniqueSuffix  = java.util.UUID.randomUUID().toString
+        val tempDir       = Path("/tmp") / s"kyo-copyto-$uniqueSuffix"
+        val target        = tempDir / containerFile
+
+        Abort.run[FileFsException](tempDir.mkDir).map {
             case Result.Failure(e) =>
-                Abort.fail(ContainerOperationException(s"Copy operation failed for ${id.value}: failed to read source ${source}", e))
+                Abort.fail(ContainerOperationException(s"copyTo: failed to create temp dir for ${id.value}", e))
             case Result.Panic(t) =>
-                Abort.fail(ContainerBackendException(s"Unexpected error reading source for copyTo on ${id.value}", t))
+                Abort.fail(ContainerBackendException(s"copyTo: panic creating temp dir for ${id.value}", t))
+            case Result.Success(_) =>
+                Sync.ensure(tempDir.removeAll.unit) {
+                    Abort.run[FileFsException](
+                        source.copy(target, replaceExisting = true)
+                    ).map {
+                        case Result.Failure(e) =>
+                            Abort.fail(ContainerOperationException(
+                                s"copyTo: failed to copy source ${source} to temp staging for ${id.value}",
+                                e
+                            ))
+                        case Result.Panic(t) =>
+                            Abort.fail(ContainerBackendException(
+                                s"copyTo: panic copying source for ${id.value}",
+                                t
+                            ))
+                        case Result.Success(_) =>
+                            // Source filename now matches container filename inside tempDir, so no rename flag needed.
+                            // -cf - emits a portable USTAR archive on every standard tar (BSD and GNU).
+                            val tarCmd = Command("tar", "-cf", "-", "-C", tempDir.toString, containerFile)
+                            Scope.run {
+                                Abort.runWith[CommandException](tarCmd.spawn) {
+                                    case Result.Success(proc) =>
+                                        proc.stdout.run.map { tarBytes =>
+                                            val tarSpan = Span.from(tarBytes.toArray)
+                                            withErrorMapping(ctxContainer(id)) {
+                                                HttpClient.putBinary(
+                                                    url(s"/containers/${id.value}/archive", "path" -> containerDir),
+                                                    tarSpan,
+                                                    headers = Seq("Content-Type" -> "application/x-tar")
+                                                )
+                                            }.unit
+                                        }
+                                    case Result.Failure(e) =>
+                                        Abort.fail(ContainerOperationException(
+                                            s"copyTo: failed to spawn tar for ${id.value}",
+                                            e
+                                        ))
+                                    case Result.Panic(t) =>
+                                        Abort.fail(ContainerBackendException(
+                                            s"copyTo: panic spawning tar for ${id.value}",
+                                            t
+                                        ))
+                                }
+                            }
+                    }
+                }
         }
     end copyTo
 
@@ -864,31 +944,52 @@ final private[kyo] class HttpContainerBackend(
         maxProcesses: Maybe[Long],
         restartPolicy: Maybe[Container.Config.RestartPolicy]
     )(using Frame): Unit < (Async & Abort[ContainerException]) =
-        val restartPol = restartPolicy.map { rp =>
-            rp match
-                case Config.RestartPolicy.OnFailure(retries) => RestartPolicyEntry(rp.cliName, retries)
-                case _                                       => RestartPolicyEntry(rp.cliName, 0)
-        }
-        val body = UpdateRequest(
-            Memory = memory.getOrElse(0L),
-            MemorySwap = memorySwap.getOrElse(0L),
-            NanoCPUs = cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
-            CpusetCpus = cpuAffinity.getOrElse(""),
-            PidsLimit = maxProcesses.getOrElse(0L),
-            RestartPolicy = restartPol.getOrElse(RestartPolicyEntry("", 0))
-        )
-        val jsonBody = Json.encode(body)
-        // Podman's docker-compat shim returns 404 for /containers/{id}/update — route to libpod-native endpoint instead.
-        val updateUrl =
-            if runtimeName == "podman" then libpodUrl(s"/containers/${id.value}/update")
-            else url(s"/containers/${id.value}/update")
-        withErrorMapping(ctxContainer(id)) {
-            HttpClient.postText(
-                updateUrl,
-                jsonBody,
-                headers = Seq("Content-Type" -> "application/json")
+        if runtimeName == "podman" then
+            // Podman's docker-compat shim returns 404 for /containers/{id}/update — route to the libpod-native endpoint
+            // and send the OCI-shaped body it expects (flat docker fields are silently ignored).
+            val mem    = memory.toOption.filter(_ > 0)
+            val swp    = memorySwap.toOption.filter(_ > 0)
+            val cpu    = cpuLimit.toOption.filter(_ > 0).map(c => (c * 1024).toLong) // approximate cpu shares
+            val cpuset = cpuAffinity.toOption.filter(_.nonEmpty)
+            val pids   = maxProcesses.toOption.filter(_ > 0)
+            val libpodBody = LibpodUpdateRequest(
+                Resources = LibpodResources(
+                    memory = if mem.isDefined || swp.isDefined then Some(LibpodMemory(limit = mem, swap = swp)) else None,
+                    cpu = if cpu.isDefined || cpuset.isDefined then Some(LibpodCpu(shares = cpu, cpus = cpuset)) else None,
+                    pids = pids.map(p => LibpodPids(limit = Some(p)))
+                )
             )
-        }.unit
+            val jsonBody = Json.encode(libpodBody)
+            withErrorMapping(ctxContainer(id)) {
+                HttpClient.postText(
+                    libpodUrl(s"/containers/${id.value}/update"),
+                    jsonBody,
+                    headers = Seq("Content-Type" -> "application/json")
+                )
+            }.unit
+        else
+            val restartPol = restartPolicy.map { rp =>
+                rp match
+                    case Config.RestartPolicy.OnFailure(retries) => RestartPolicyEntry(rp.cliName, retries)
+                    case _                                       => RestartPolicyEntry(rp.cliName, 0)
+            }
+            val body = UpdateRequest(
+                Memory = memory.getOrElse(0L),
+                MemorySwap = memorySwap.getOrElse(0L),
+                NanoCPUs = cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
+                CpusetCpus = cpuAffinity.getOrElse(""),
+                PidsLimit = maxProcesses.getOrElse(0L),
+                RestartPolicy = restartPol.getOrElse(RestartPolicyEntry("", 0))
+            )
+            val jsonBody = Json.encode(body)
+            withErrorMapping(ctxContainer(id)) {
+                HttpClient.postText(
+                    url(s"/containers/${id.value}/update"),
+                    jsonBody,
+                    headers = Seq("Content-Type" -> "application/json")
+                )
+            }.unit
+        end if
     end update
 
     // --- Network on container ---
@@ -1370,11 +1471,11 @@ final private[kyo] class HttpContainerBackend(
         }.map { entries =>
             val mapped = Chunk.from(entries.map { e =>
                 ContainerImage.SearchResult(
-                    name = e.name,
-                    description = e.description,
-                    stars = e.star_count,
-                    isOfficial = e.is_official,
-                    isAutomated = e.is_automated
+                    name = if e.Name.nonEmpty then e.Name else e.name,
+                    description = if e.Description.nonEmpty then e.Description else e.description,
+                    stars = if e.Stars > 0 then e.Stars else e.star_count,
+                    isOfficial = e.is_official || e.Official.nonEmpty,
+                    isAutomated = e.is_automated || e.Automated.nonEmpty
                 )
             })
             if limit != Int.MaxValue then mapped.take(limit) else mapped
@@ -2077,6 +2178,31 @@ final private[kyo] class HttpContainerBackend(
         RestartPolicy: RestartPolicyEntry = RestartPolicyEntry()
     ) derives Schema
 
+    // Libpod-native /update accepts an OCI-shaped wrapper rather than docker's flat fields.
+    private case class LibpodUpdateRequest(
+        Resources: LibpodResources = LibpodResources()
+    ) derives Schema
+
+    private case class LibpodResources(
+        memory: Option[LibpodMemory] = None,
+        cpu: Option[LibpodCpu] = None,
+        pids: Option[LibpodPids] = None
+    ) derives Schema
+
+    private case class LibpodMemory(
+        limit: Option[Long] = None,
+        swap: Option[Long] = None
+    ) derives Schema
+
+    private case class LibpodCpu(
+        shares: Option[Long] = None,
+        cpus: Option[String] = None
+    ) derives Schema
+
+    private case class LibpodPids(
+        limit: Option[Long] = None
+    ) derives Schema
+
     private case class ListContainerEntry(
         Id: String = "",
         Names: Seq[String] = Seq.empty,
@@ -2310,7 +2436,14 @@ final private[kyo] class HttpContainerBackend(
         description: String = "",
         star_count: Int = 0,
         is_official: Boolean = false,
-        is_automated: Boolean = false
+        is_automated: Boolean = false,
+        // Podman returns CapitalCase fields for both docker-compat and libpod search endpoints.
+        // Default to "" / 0 / false so absence is harmless and we just pick the non-empty side.
+        Name: String = "",
+        Description: String = "",
+        Stars: Int = 0,
+        Official: String = "",
+        Automated: String = ""
     ) derives Schema
 
     private case class ImageHistoryEntryDto(
@@ -2470,60 +2603,6 @@ private[kyo] object HttpContainerBackend:
       * `BackendConfig.UnixSocket(path, apiVersion = ...)` if you need to pin a different revision.
       */
     val defaultApiVersion: String = "v1.43"
-
-    /** Build a single-file USTAR (POSIX 1003.1) tar archive in memory. The archive contains exactly one regular file named `name` with the
-      * given byte content; mode 644, uid/gid 0, mtime = current epoch seconds. Two trailing zero-blocks mark end-of-archive. Avoids
-      * invoking the platform `tar` binary, whose `-s` substitution flag is BSD-only (GNU tar uses `--transform`).
-      */
-    private[kyo] def buildTarSingleFile(name: String, content: Array[Byte]): Array[Byte] =
-        val nameBytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        if nameBytes.length > 100 then
-            throw new IllegalArgumentException(s"tar entry name too long for USTAR (max 100 UTF-8 bytes): ${nameBytes.length}")
-        val size  = content.length
-        val mtime = java.lang.System.currentTimeMillis / 1000
-
-        val header = new Array[Byte](512)
-
-        def writeOctal(value: Long, offset: Int, fieldWidth: Int): Unit =
-            // USTAR fields are octal ASCII followed by NUL or space. We write (fieldWidth - 1) digits + NUL.
-            val s     = String.format(s"%0${fieldWidth - 1}o", java.lang.Long.valueOf(value))
-            val bytes = s.getBytes(java.nio.charset.StandardCharsets.US_ASCII)
-            java.lang.System.arraycopy(bytes, 0, header, offset, bytes.length)
-            // Trailing NUL is already 0 in the freshly allocated array.
-        end writeOctal
-
-        java.lang.System.arraycopy(nameBytes, 0, header, 0, nameBytes.length) // name      [0..100)
-        writeOctal(0x1a4L, 100, 8)                                            // mode 0644 [100..108)
-        writeOctal(0L, 108, 8)                                                // uid       [108..116)
-        writeOctal(0L, 116, 8)                                                // gid       [116..124)
-        writeOctal(size.toLong, 124, 12)                                      // size      [124..136)
-        writeOctal(mtime, 136, 12)                                            // mtime     [136..148)
-        java.util.Arrays.fill(header, 148, 156, ' '.toByte)                   // checksum placeholder (spaces)
-        header(156) = '0'.toByte                                              // typeflag '0' = regular file
-        val magic = "ustar".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
-        java.lang.System.arraycopy(magic, 0, header, 257, magic.length) // magic "ustar\0" [257..263)
-        header(263) = '0'.toByte                                        // version "00"     [263..265)
-        header(264) = '0'.toByte
-
-        // Compute checksum: unsigned-byte sum of all 512 header bytes (with checksum field = spaces).
-        var sum = 0
-        var i   = 0
-        while i < 512 do
-            sum += header(i) & 0xff
-            i += 1
-        val sumStr   = String.format("%06o", java.lang.Long.valueOf(sum.toLong))
-        val sumBytes = sumStr.getBytes(java.nio.charset.StandardCharsets.US_ASCII)
-        java.lang.System.arraycopy(sumBytes, 0, header, 148, sumBytes.length)
-        header(148 + 6) = 0          // NUL terminator
-        header(148 + 7) = ' '.toByte // trailing space (per spec)
-
-        val contentBlocks = (size + 511) / 512
-        val paddedSize    = contentBlocks * 512
-        val tar           = new Array[Byte](512 + paddedSize + 1024) // header + content (padded) + 2 zero blocks
-        java.lang.System.arraycopy(header, 0, tar, 0, 512)
-        java.lang.System.arraycopy(content, 0, tar, 512, size)
-        tar
-    end buildTarSingleFile
 
     /** Common error envelope returned by both Docker and Podman daemons. Podman's docker-compat shim additionally populates `response` with
       * the canonical status code it *intended* to return, which is the strongest classification signal when the actual wire status differs
