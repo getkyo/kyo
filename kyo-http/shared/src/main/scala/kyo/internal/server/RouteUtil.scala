@@ -150,11 +150,14 @@ private[kyo] object RouteUtil:
         end decodeBody
 
         val result = decodeBody()
-        // When the body decoding fails on a non-2xx response, return an HttpStatusException
-        // with the original status code instead of a confusing decode error. Capture the raw
-        // body as text so callers can classify errors (e.g. "container name in use") even
-        // though the body didn't fit the route's success type.
+        // For non-success responses, attach the raw body as text on the response (or on the
+        // exception when decode failed). Schema decoding is permissive and silently accepts
+        // arbitrary JSON shapes — without raw body, callers can't distinguish "200 with empty
+        // fields" from "500 with name-conflict message". The rawBody field is Absent for 2xx,
+        // so success-path memory cost is one reference.
         result match
+            case Result.Success(resp) if !status.isSuccess =>
+                Result.succeed(resp.copy(rawBody = if body.isEmpty then Absent else Present(spanToString(body))))
             case Result.Error(_: HttpDecodeException) if !status.isSuccess =>
                 if body.isEmpty then Result.fail(HttpStatusException(status, method, url.toString))
                 else Result.fail(HttpStatusException(status, method, url.toString, spanToString(body)))
