@@ -953,11 +953,9 @@ final private[kyo] class HttpContainerBackend(
             val cpuset = cpuAffinity.toOption.filter(_.nonEmpty)
             val pids   = maxProcesses.toOption.filter(_ > 0)
             val libpodBody = LibpodUpdateRequest(
-                Resources = LibpodResources(
-                    memory = if mem.isDefined || swp.isDefined then Some(LibpodMemory(limit = mem, swap = swp)) else None,
-                    cpu = if cpu.isDefined || cpuset.isDefined then Some(LibpodCpu(shares = cpu, cpus = cpuset)) else None,
-                    pids = pids.map(p => LibpodPids(limit = Some(p)))
-                )
+                memory = if mem.isDefined || swp.isDefined then Some(LibpodMemory(limit = mem, swap = swp)) else None,
+                cpu = if cpu.isDefined || cpuset.isDefined then Some(LibpodCpu(shares = cpu, cpus = cpuset)) else None,
+                pids = pids.map(p => LibpodPids(limit = Some(p)))
             )
             val jsonBody = Json.encode(libpodBody)
             withErrorMapping(ctxContainer(id)) {
@@ -2178,12 +2176,9 @@ final private[kyo] class HttpContainerBackend(
         RestartPolicy: RestartPolicyEntry = RestartPolicyEntry()
     ) derives Schema
 
-    // Libpod-native /update accepts an OCI-shaped wrapper rather than docker's flat fields.
+    // Libpod-native /update embeds runtime-spec.LinuxResources fields directly at the top level
+    // (no Resources wrapper). Unknown top-level fields are silently ignored by Go's decoder.
     private case class LibpodUpdateRequest(
-        Resources: LibpodResources = LibpodResources()
-    ) derives Schema
-
-    private case class LibpodResources(
         memory: Option[LibpodMemory] = None,
         cpu: Option[LibpodCpu] = None,
         pids: Option[LibpodPids] = None
