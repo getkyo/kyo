@@ -1070,11 +1070,38 @@ final private[kyo] class HttpContainerBackend(
                 }
             ) {
                 case Result.Success(_) => ()
-                case Result.Failure(e) => mapHttpError(e, ResourceContext.Image(image.reference)).unit
+                case Result.Failure(e) => normalizePullError(e, image, auth).unit
                 case Result.Panic(e) =>
                     Abort.fail(ContainerBackendException(s"Unexpected error pulling ${image.reference}", e))
             }
         }
+
+    /** Translate a pull-time HTTP failure into a [[ContainerException]], with auth-aware semantics for registry-level denials.
+      *
+      * Docker Hub conflates "image does not exist" and "auth required" — both surface as HTTP 403 with a body like
+      * `{"message":"denied: requested access to the resource is denied"}`. Without registry credentials the user can't disambiguate, and
+      * from the kyo-pod caller's perspective the image is effectively missing. So when no [[ContainerImage.RegistryAuth]] was supplied, ANY
+      * pull-status failure is treated as [[ContainerImageMissingException]] — the user couldn't have provided creds and isn't going to
+      * recover by classifying the failure as "auth required".
+      *
+      * When auth IS supplied, we defer to the daemon's signal via `mapHttpError`. A 401/403 there genuinely means the supplied credentials
+      * were rejected; a 404 still means missing. (Specific Auth classification is left as a future refinement once we have real
+      * auth-failure samples to pin patterns against.)
+      *
+      * Transport-level failures (no `HttpStatusException`) still go through `mapHttpError` regardless — they aren't registry denials,
+      * they're connection / protocol errors and shouldn't be silently relabelled as missing image.
+      */
+    private def normalizePullError(
+        httpEx: HttpException,
+        image: ContainerImage,
+        auth: Maybe[ContainerImage.RegistryAuth]
+    )(using Frame): Unit < (Sync & Abort[ContainerException]) =
+        httpEx match
+            case _: HttpStatusException if auth.isEmpty =>
+                Abort.fail(ContainerImageMissingException(image))
+            case _ =>
+                mapHttpError(httpEx, ResourceContext.Image(image.reference)).unit
+    end normalizePullError
 
     private def processPullLine(
         line: String,
