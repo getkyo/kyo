@@ -16,8 +16,13 @@ jobs:
       fail-fast: false
       max-parallel: 3
       matrix:
-        os: ${{ fromJSON(inputs.os-matrix) }}
+        # `target` is the outer dimension so the matrix expands target-first,
+        # interleaving os values; with max-parallel: 3 the first batch lands as
+        # (JVM, os[0]), (JVM, os[1]), (JS, os[0]) — different os/arch land on
+        # different runner pools, reducing the chance of multiple jobs sharing
+        # the same physical runner.
         target: [JVM, JS, Native]
+        os: ${{ fromJSON(inputs.os-matrix) }}
     runs-on: >-
       ${{ matrix.os == 'linux-x64'     && 'ubuntu-latest'
        || matrix.os == 'linux-arm64'   && 'ubuntu-24.04-arm'
