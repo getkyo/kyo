@@ -10,14 +10,14 @@
 ## rootless containers — newuidmap/newgidmap, subuid/subgid, fuse-overlayfs.
 ## We add the JVM toolchain on top.
 
-FROM quay.io/podman/stable:latest
+FROM quay.io/podman/stable:v4.9.4
 
 USER root
 
 # JDK + sbt + utilities. JDK 21 is fine for Scala 3 builds; what we're reproducing
 # (rootless-podman behaviour) doesn't depend on the JDK version.
 RUN dnf install -y --setopt=install_weak_deps=False \
-        java-25-openjdk-headless \
+        java-21-openjdk-headless \
         git tar gzip findutils which procps-ng rsync \
         iptables iptables-nft \
     && curl -fLsS https://github.com/sbt/sbt/releases/download/v1.10.0/sbt-1.10.0.tgz \
