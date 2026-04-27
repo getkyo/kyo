@@ -14,14 +14,14 @@ jobs:
     timeout-minutes: ${{ matrix.target == 'Native' && 70 || 50 }}
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 2
       matrix:
         # `target` is the outer dimension so the matrix expands target-first,
         # interleaving os values. With 2 archs × 3 targets = 6 jobs and
-        # max-parallel: 4 the first batch is (JVM, os[0]), (JVM, os[1]),
-        # (JS, os[0]), (JS, os[1]) — 2 jobs per arch, so per-arch contention
-        # is the same as max-parallel: 3 but wall time is shorter (the
-        # remaining 2 Native jobs run as a smaller second batch).
+        # max-parallel: 2 the first batch is (JVM, os[0]), (JVM, os[1]) —
+        # one job per arch, so concurrent jobs always land on different
+        # runner pools. Higher max-parallel values left arm64 jobs starving
+        # each other (50-min timeout hits) when 2+ arm64 jobs ran concurrently.
         target: [JVM, JS, Native]
         os: ${{ fromJSON(inputs.os-matrix) }}
     runs-on: >-
