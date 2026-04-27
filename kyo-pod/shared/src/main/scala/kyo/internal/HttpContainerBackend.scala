@@ -435,27 +435,33 @@ final private[kyo] class HttpContainerBackend(
             state(id).map { s =>
                 if s == Container.State.Stopped || s == Container.State.Dead then
                     Abort.fail[ContainerException](ContainerAlreadyStoppedException(id))
-                else if runtimeName == "podman" then
-                    // Podman's docker-compat /stats returns the original spec memory limit, not the live
-                    // cgroup memory.max — after `c.update(memory=...)` the limit doesn't reflect the new
-                    // value. The libpod multi-stats endpoint reports MemLimit from the runtime (correct).
-                    withErrorMapping(ctxContainer(id)) {
-                        HttpClient.getJson[LibpodStatsResponse](
-                            libpodUrl("/containers/stats", "containers" -> id.value, "stream" -> "false")
-                        )
-                    }.map { resp =>
-                        resp.Stats.headOption match
-                            case Some(entry) => mapLibpodStats(entry, now)
-                            case None =>
-                                Abort.fail[ContainerException](ContainerBackendException(
-                                    s"libpod stats returned no entries for ${id.value}",
-                                    resp.Error.getOrElse("empty Stats array")
-                                ))
-                    }
                 else
-                    withErrorMapping(ctxContainer(id)) {
+                    // Use docker-compat /stats as the baseline for all fields. CPU, memory.usage,
+                    // network, blockio, pids all derive from cgroup files and are correct on docker
+                    // and on podman (4 and 5). On podman, only memory_stats.limit lies — it returns
+                    // the original spec memory rather than the live cgroup memory.max after
+                    // `c.update(memory=...)`. We make a second call to libpod's multi-stats endpoint
+                    // and override just `memory.limit` from that. The libpod call is best-effort
+                    // (Abort.run): any failure leaves the docker-compat baseline intact.
+                    val baseline = withErrorMapping(ctxContainer(id)) {
                         HttpClient.getJson[StatsResponse](url(s"/containers/${id.value}/stats", "stream" -> "false"))
                     }.map(dto => mapStatsResponse(dto, now))
+                    if runtimeName == "podman" then
+                        baseline.map { base =>
+                            Abort.run[HttpException](
+                                HttpClient.getJson[LibpodStatsResponse](
+                                    libpodUrl("/containers/stats", "containers" -> id.value, "stream" -> "false")
+                                )
+                            ).map {
+                                case Result.Success(resp) =>
+                                    resp.Stats.headOption.filter(_.MemLimit > 0) match
+                                        case Some(entry) => base.copy(memory = base.memory.copy(limit = Present(entry.MemLimit)))
+                                        case None        => base
+                                case _ => base
+                            }
+                        }
+                    else baseline
+                    end if
             }
         }
 
