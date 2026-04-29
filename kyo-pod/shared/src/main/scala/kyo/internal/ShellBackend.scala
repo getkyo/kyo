@@ -927,18 +927,11 @@ final private[kyo] class ShellBackend(
       *
       * Uses kyo Command to run readlink, falling back to the original path on failure.
       */
-    private def resolveHostPath(path: Path)(using Frame): String < (Async & Abort[ContainerException]) =
+    private def resolveHostPath(path: Path)(using Frame): String < Async =
         val pathStr = path.toString
-        Abort.recover[ContainerException](
-            (_: ContainerException) => pathStr,
-            (_: Throwable) => pathStr
-        ) {
-            Abort.runWith[CommandException](Command("readlink", "-f", pathStr).textWithExitCode) {
-                case Result.Success((output, exitCode)) if exitCode == ExitCode.Success =>
-                    val resolved = output.trim
-                    if resolved.nonEmpty then resolved else pathStr
-                case _ => pathStr
-            }
+        Abort.run[CommandException](Command("readlink", "-f", pathStr).textWithExitCode).map {
+            case Result.Success((output, ExitCode.Success)) if output.trim.nonEmpty => output.trim
+            case _                                                                  => pathStr
         }
     end resolveHostPath
 

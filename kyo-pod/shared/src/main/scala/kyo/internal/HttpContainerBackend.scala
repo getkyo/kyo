@@ -161,6 +161,18 @@ final private[kyo] class HttpContainerBackend(
             case Result.Panic(ex) => Abort.fail(ContainerBackendException(s"Concurrency meter panicked during ${ctx.describe}", ex))
         }
 
+    /** Resolve a host path through `readlink -f` so symlinked roots — most importantly macOS's `/tmp -> /private/tmp` — are passed to the
+      * daemon as the path it actually sees in its mount namespace. Falls back to the unresolved path on any failure; on Linux this is
+      * typically a no-op. Mirrors `ShellBackend.resolveHostPath`.
+      */
+    private def resolveHostPath(path: Path)(using Frame): String < Async =
+        val pathStr = path.toString
+        Abort.run[CommandException](Command("readlink", "-f", pathStr).textWithExitCode).map {
+            case Result.Success((output, ExitCode.Success)) if output.trim.nonEmpty => output.trim
+            case _                                                                  => pathStr
+        }
+    end resolveHostPath
+
     /** Build auth headers for registry operations. */
     private def authHeaders(auth: Maybe[ContainerImage.RegistryAuth]): Chunk[(String, String)] =
         auth match
@@ -182,14 +194,23 @@ final private[kyo] class HttpContainerBackend(
             key -> bindings.map(pb => PortBindingEntry(pb.hostIp, if pb.hostPort != 0 then pb.hostPort.toString else ""))
         }
 
-        val binds = config.mounts.toSeq.collect {
-            case Config.Mount.Bind(source, target, readOnly) =>
-                val ro = if readOnly then ":ro" else ""
-                s"$source:$target$ro"
-            case Config.Mount.Volume(name, target, readOnly) =>
-                val ro = if readOnly then ":ro" else ""
-                s"${name.value}:$target$ro"
-        }
+        // Resolve host paths through `readlink -f` so symlinked roots — most importantly macOS's
+        // `/tmp -> /private/tmp` — are handed to the daemon as the path it actually sees in its own
+        // mount namespace. Mirrors what ShellBackend does; without it bind mounts from `/tmp` are
+        // invisible inside the container on macOS-podman-machine. On Linux the resolution is a no-op.
+        val bindsKyo: Chunk[String] < (Async & Abort[ContainerException]) =
+            Kyo.foreach(Chunk.from(config.mounts)) {
+                case Config.Mount.Bind(source, target, readOnly) =>
+                    resolveHostPath(source).map { resolved =>
+                        val ro = if readOnly then ":ro" else ""
+                        Maybe(s"$resolved:$target$ro")
+                    }
+                case Config.Mount.Volume(name, target, readOnly) =>
+                    val ro = if readOnly then ":ro" else ""
+                    Maybe(s"${name.value}:$target$ro"): Maybe[String] < (Async & Abort[ContainerException])
+                case _: Config.Mount.Tmpfs =>
+                    (Absent: Maybe[String]): Maybe[String] < (Async & Abort[ContainerException])
+            }.map(_.collect { case Present(s) => s })
 
         val tmpfs: Map[String, String] = config.mounts.toSeq.collect {
             case Config.Mount.Tmpfs(target, sizeBytes) =>
@@ -214,70 +235,72 @@ final private[kyo] class HttpContainerBackend(
             case Config.RestartPolicy.OnFailure(retries) => RestartPolicyEntry(config.restartPolicy.cliName, retries)
             case _                                       => RestartPolicyEntry(config.restartPolicy.cliName, 0)
 
-        val hostConfig = HostConfig(
-            Binds = if binds.nonEmpty then binds else Seq.empty,
-            PortBindings = if portBindings.nonEmpty then portBindings else Map.empty,
-            NetworkMode = networkModeStr,
-            Dns = config.dns.toSeq,
-            ExtraHosts = config.extraHosts.toSeq.map(eh => s"${eh.hostname}:${eh.ip}"),
-            Memory = config.memory.getOrElse(0L),
-            MemorySwap = config.memorySwap.getOrElse(0L),
-            NanoCPUs = config.cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
-            CpusetCpus = config.cpuAffinity.getOrElse(""),
-            PidsLimit = config.maxProcesses.getOrElse(0L),
-            Privileged = config.privileged,
-            CapAdd = config.addCapabilities.toSeq.map(_.cliName),
-            CapDrop = config.dropCapabilities.toSeq.map(_.cliName),
-            ReadonlyRootfs = config.readOnlyFilesystem,
-            AutoRemove = config.autoRemove,
-            RestartPolicy = restartPol,
-            Mounts = Seq.empty,
-            Tmpfs = tmpfs
-        )
-
         val exposedPorts: Option[Map[String, Map[String, String]]] =
             if portBindings.isEmpty then None
             else Some(portBindings.keys.map(_ -> Map.empty[String, String]).toMap)
 
-        val body = CreateContainerRequest(
-            Image = config.image.reference,
-            Cmd = config.command.map(_.args.toSeq).toOption,
-            Env = if envVars.nonEmpty then envVars else Seq.empty,
-            Hostname = config.hostname.getOrElse(""),
-            User = config.user.getOrElse(""),
-            Labels = config.labels.toMap,
-            Tty = config.allocateTty,
-            OpenStdin = config.interactive,
-            StopSignal = config.stopSignal.map(_.name).getOrElse(""),
-            WorkingDir = config.command.flatMap(_.workDir).map(_.toString).getOrElse(""),
-            ExposedPorts = exposedPorts,
-            HostConfig = hostConfig,
-            NetworkingConfig = networkingConfig
-        )
-
         val params        = config.name.map(n => Seq("name" -> n)).getOrElse(Seq.empty)
         val nameForErrors = config.name.getOrElse("new-container")
 
-        Abort.runWith[HttpException](
-            HttpClient.postJson[CreateContainerResponse](url("/containers/create", params*), body)
-        ) {
-            case Result.Success(resp) => Container.Id(resp.Id)
-            case Result.Failure(e: HttpStatusException) =>
-                canonicalStatus(e) match
-                    case 404 => Abort.fail(ContainerImageMissingException(config.image))
-                    case 409 => Abort.fail(ContainerAlreadyExistsException(nameForErrors))
-                    case _ =>
-                        warnIfMissingBody(e, ResourceContext.Op(s"create:$nameForErrors")).andThen(
-                            Abort.fail(ContainerOperationException(
-                                s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} creating container $nameForErrors",
-                                e
-                            ))
-                        )
-                end match
-            case Result.Failure(e) =>
-                Abort.fail(ContainerOperationException(s"Failed to create container $nameForErrors", e))
-            case Result.Panic(e) =>
-                Abort.fail(ContainerBackendException(s"Unexpected error creating container $nameForErrors", e))
+        bindsKyo.map { binds =>
+            val hostConfig = HostConfig(
+                Binds = if binds.nonEmpty then binds.toSeq else Seq.empty,
+                PortBindings = if portBindings.nonEmpty then portBindings else Map.empty,
+                NetworkMode = networkModeStr,
+                Dns = config.dns.toSeq,
+                ExtraHosts = config.extraHosts.toSeq.map(eh => s"${eh.hostname}:${eh.ip}"),
+                Memory = config.memory.getOrElse(0L),
+                MemorySwap = config.memorySwap.getOrElse(0L),
+                NanoCPUs = config.cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
+                CpusetCpus = config.cpuAffinity.getOrElse(""),
+                PidsLimit = config.maxProcesses.getOrElse(0L),
+                Privileged = config.privileged,
+                CapAdd = config.addCapabilities.toSeq.map(_.cliName),
+                CapDrop = config.dropCapabilities.toSeq.map(_.cliName),
+                ReadonlyRootfs = config.readOnlyFilesystem,
+                AutoRemove = config.autoRemove,
+                RestartPolicy = restartPol,
+                Mounts = Seq.empty,
+                Tmpfs = tmpfs
+            )
+
+            val body = CreateContainerRequest(
+                Image = config.image.reference,
+                Cmd = config.command.map(_.args.toSeq).toOption,
+                Env = if envVars.nonEmpty then envVars else Seq.empty,
+                Hostname = config.hostname.getOrElse(""),
+                User = config.user.getOrElse(""),
+                Labels = config.labels.toMap,
+                Tty = config.allocateTty,
+                OpenStdin = config.interactive,
+                StopSignal = config.stopSignal.map(_.name).getOrElse(""),
+                WorkingDir = config.command.flatMap(_.workDir).map(_.toString).getOrElse(""),
+                ExposedPorts = exposedPorts,
+                HostConfig = hostConfig,
+                NetworkingConfig = networkingConfig
+            )
+
+            Abort.runWith[HttpException](
+                HttpClient.postJson[CreateContainerResponse](url("/containers/create", params*), body)
+            ) {
+                case Result.Success(resp) => Container.Id(resp.Id)
+                case Result.Failure(e: HttpStatusException) =>
+                    canonicalStatus(e) match
+                        case 404 => Abort.fail(ContainerImageMissingException(config.image))
+                        case 409 => Abort.fail(ContainerAlreadyExistsException(nameForErrors))
+                        case _ =>
+                            warnIfMissingBody(e, ResourceContext.Op(s"create:$nameForErrors")).andThen(
+                                Abort.fail(ContainerOperationException(
+                                    s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} creating container $nameForErrors",
+                                    e
+                                ))
+                            )
+                    end match
+                case Result.Failure(e) =>
+                    Abort.fail(ContainerOperationException(s"Failed to create container $nameForErrors", e))
+                case Result.Panic(e) =>
+                    Abort.fail(ContainerBackendException(s"Unexpected error creating container $nameForErrors", e))
+            }
         }
     end create
 
