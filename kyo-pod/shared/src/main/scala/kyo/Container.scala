@@ -427,7 +427,7 @@ object Container:
         command: Maybe[Command] = Absent,
         name: Maybe[String] = Absent,
         ports: Chunk[(Int, Int)] = Chunk.empty,
-        healthCheck: HealthCheck = HealthCheck.noop
+        healthCheck: HealthCheck = HealthCheck.running
     )(using Frame): Container < (Async & Abort[ContainerException] & Scope) =
         val portBindings = Chunk.from(ports.map { case (container, host) => Config.PortBinding(container, host) })
         val config = Config.default.copy(
@@ -824,7 +824,7 @@ object Container:
             restartPolicy = Config.RestartPolicy.No,
             stopSignal = Absent,
             stopTimeout = 3.seconds,
-            healthCheck = HealthCheck.noop
+            healthCheck = HealthCheck.running
         )
 
         def apply(image: ContainerImage): Config = default.copy(image = image)
@@ -973,9 +973,28 @@ object Container:
             end new
         end init
 
-        lazy val default: HealthCheck = exec(Command("echo", "ok"))
+        /** Health check that succeeds once the container reaches `State.Running`. Lightweight — issues a single `inspect` rather than
+          * running a command inside the container — and is the default for [[Container.Config]]. Use [[exec]], [[port]], or [[httpGet]] for
+          * application-level readiness on top of basic state, or [[noop]] for one-shot containers that exit immediately.
+          */
+        val running: HealthCheck =
+            new HealthCheck:
+                def check(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
+                    container.backend.state(container.id).map {
+                        case State.Running => ()
+                        case other =>
+                            Abort.fail(ContainerHealthCheckException(
+                                container.id,
+                                s"container is in state $other, expected Running",
+                                attempts = 1,
+                                lastError = s"state: $other"
+                            ))
+                    }
+                def schedule: Schedule = defaultRetrySchedule
 
-        /** No-op health check — `awaitHealthy` returns immediately. Use for short-lived one-shot containers. */
+        /** No-op health check — `awaitHealthy` returns immediately. Use for short-lived one-shot containers that exit before any readiness
+          * check could meaningfully run.
+          */
         val noop: HealthCheck = init(_ => Kyo.unit)
 
         /** Health check that runs a command inside the container. Passes if exit code is 0 and output matches `expected` (when provided).
