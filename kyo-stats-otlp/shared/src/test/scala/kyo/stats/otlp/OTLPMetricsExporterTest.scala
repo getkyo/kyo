@@ -76,10 +76,9 @@ class OTLPMetricsExporterTest extends Test:
                     _ <- histogram.observe(42.0)
                     _ <- histogram.observe(7.0)
                     _ <- OTLPMetricsExporter.run(config)
-                    // The first export may not include the histogram if it fires
-                    // before the metric is fully registered. Take up to 10 exports —
-                    // arm64 CI runners are noticeably slower (~1.5× JVM warmup) and
-                    // 3 attempts (3 s) was sometimes too tight there.
+                    // The first export may not include the histogram if it fires before the metric is
+                    // fully registered. Take up to 10 exports — arm64 runners are noticeably slower
+                    // and 3 attempts was sometimes too tight there.
                     found <- Loop.indexed { i =>
                         metricCh.take.map { received =>
                             val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
@@ -93,6 +92,13 @@ class OTLPMetricsExporterTest extends Test:
                         }
                     }
                 yield
+                    // The registry holds a WeakReference to the underlying UnsafeHistogram so live
+                    // metrics get reclaimed when the user drops their handle. Without this fence the
+                    // JVM is free to GC `histogram` once the for-comprehension stops referencing it
+                    // — observed on JVM-arm64 in CI: the histogram disappears from every exported
+                    // batch because the registry's WeakReference goes null. The fence keeps it
+                    // strongly reachable through the Loop above.
+                    java.lang.ref.Reference.reachabilityFence(histogram)
                     assert(found.histogram.isDefined)
                     assert(found.histogram.get.dataPoints.head.count == "2")
                 end for
