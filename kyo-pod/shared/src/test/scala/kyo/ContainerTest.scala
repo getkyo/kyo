@@ -302,9 +302,9 @@ class ContainerTest extends Test:
             val cfg = Container.Config(ContainerImage("alpine:3.19")).copy(healthCheck = Container.HealthCheck.noop)
             assert(cfg.healthCheck eq Container.HealthCheck.noop, "healthCheck should be the noop singleton")
         }
-        "default config uses HealthCheck.noop" in {
+        "default config uses HealthCheck.running" in {
             val cfg = Container.Config(image = ContainerImage("alpine:3.19"))
-            assert(cfg.healthCheck eq Container.HealthCheck.noop, "default healthCheck should be HealthCheck.noop")
+            assert(cfg.healthCheck eq Container.HealthCheck.running, "default healthCheck should be HealthCheck.running")
         }
     }
 
