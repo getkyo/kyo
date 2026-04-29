@@ -77,13 +77,15 @@ class OTLPMetricsExporterTest extends Test:
                     _ <- histogram.observe(7.0)
                     _ <- OTLPMetricsExporter.run(config)
                     // The first export may not include the histogram if it fires
-                    // before the metric is fully registered. Take up to 3 exports.
+                    // before the metric is fully registered. Take up to 10 exports —
+                    // arm64 CI runners are noticeably slower (~1.5× JVM warmup) and
+                    // 3 attempts (3 s) was sometimes too tight there.
                     found <- Loop.indexed { i =>
                         metricCh.take.map { received =>
                             val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
                             allMetrics.find(_.name == s"test.export.$uniqueName") match
                                 case Some(m)       => Loop.done(m)
-                                case None if i < 2 => Loop.continue
+                                case None if i < 9 => Loop.continue
                                 case None => throw new AssertionError(
                                         s"Histogram test.export.$uniqueName not found after ${i + 1} exports"
                                     )
