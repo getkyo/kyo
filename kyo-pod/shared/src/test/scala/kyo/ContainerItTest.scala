@@ -493,6 +493,74 @@ class ContainerItTest extends Test:
             }
         }
 
+        // mappedPort error must distinguish "port not declared in config" from "port simply missing
+        // from inspect" — same behaviour across backends. (When the container has actually crashed
+        // we surface ContainerStartFailedException at init time, so mappedPort never sees a dead
+        // container handle in the normal flow.)
+        "mappedPort for an undeclared port produces a clear configuration error" - runBackends {
+            Container.init(alpine.port(80)).map { c =>
+                Abort.run[ContainerException](c.mappedPort(9999)).map {
+                    case Result.Failure(e: ContainerOperationException) =>
+                        assert(
+                            e.getMessage.contains("not declared") || e.getMessage.contains("Configured ports"),
+                            s"expected config-aware error mentioning declared/configured ports, got: ${e.getMessage}"
+                        )
+                    case other => fail(s"expected ContainerOperationException, got $other")
+                }
+            }
+        }
+
+        // Port-mapping wait: init must not return until every configured port has a positive
+        // hostPort observable via inspect. Same contract on http and shell — neither should
+        // race the host-side port-forwarding hook.
+        "init — mappedPort succeeds immediately for every configured port" - runBackends {
+            val cfg = Container.Config(ContainerImage("nginx", "alpine"))
+                .port(80)
+                .stopTimeout(0.seconds)
+                .healthCheck(Container.HealthCheck.running)
+            Container.init(cfg).map { c =>
+                c.mappedPort(80).map { hp =>
+                    assert(hp > 0, s"hostPort should be positive immediately after init, got $hp")
+                }
+            }
+        }
+
+        // Reproducer for an arm64-only CI failure where docker/http reported "Image not found"
+        // for images that succeeded under docker/shell, podman/http, podman/shell. The arm64
+        // GitHub runner had no images pre-cached in the docker daemon, exposing a path where
+        // the http backend's auto-pull during `Container.init` didn't actually leave the
+        // image present before the create call. busybox is chosen because no other test uses
+        // it, so each backend gets a clean "image absent" state regardless of test ordering.
+        "init — auto-pulls when image is absent locally" - runBackends {
+            val img = ContainerImage("busybox", "1.36")
+            for
+                // Force-remove to guarantee a "not present" precondition. Tolerate "missing"
+                // (image was already absent) and "in use" (a leftover container references it).
+                _ <- Abort.run[ContainerException](ContainerImage.remove(img, force = true))
+                // Verify precondition: image is genuinely not local.
+                inspectBefore <- Abort.run[ContainerException](ContainerImage.inspect(img))
+                _ = assert(
+                    inspectBefore.failure.exists(_.isInstanceOf[ContainerImageMissingException]),
+                    s"precondition failed: expected $img absent, inspect returned $inspectBefore"
+                )
+                // Now `Container.init` MUST auto-pull. Failing here with ImageNotFound means
+                // imageEnsure didn't actually populate the daemon before create ran.
+                result <- Abort.run[ContainerException](
+                    Container.init(Container.Config.default.copy(
+                        image = img,
+                        command = Maybe(Command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")),
+                        stopTimeout = 0.seconds,
+                        healthCheck = Container.HealthCheck.running
+                    )).map(_ => ())
+                )
+            yield result match
+                case Result.Success(_) => succeed
+                case Result.Failure(e: ContainerImageMissingException) =>
+                    fail(s"auto-pull failed — Container.init should pull missing images, got $e")
+                case other => fail(s"unexpected result: $other")
+            end for
+        }
+
         "fails with AlreadyExists when name is taken" - runBackends {
             val name = uniqueName("kyo-dup")
             Container.init(alpine.name(name)).map { _ =>
@@ -3293,13 +3361,27 @@ class ContainerItTest extends Test:
     "stats edge cases" - {
         "stats on paused container returns valid data" - runBackends {
             Container.init(alpine).map { c =>
-                c.pause.andThen {
+                // Poll until pre-pause stats populate. On slow runners (notably linux
+                // CI under load) cgroup memory accounting lags behind container start
+                // — the container is in State.Running but the kernel hasn't yet
+                // surfaced a non-zero `memory.current` to userspace. Without this,
+                // the paused-stats assertion below would fail for a reason unrelated
+                // to pause: the cgroup never reported anything.
+                Loop.indexed { i =>
                     c.stats.map { s =>
-                        c.unpause.andThen {
-                            assert(
-                                s.memory.usage > 0,
-                                s"Expected non-zero memory usage for paused container, got: ${s.memory.usage}"
-                            )
+                        if s.memory.usage > 0 then Loop.done(())
+                        else if i < 50 then Async.sleep(100.millis).andThen(Loop.continue)
+                        else Loop.done(()) // give up; let the paused assertion fail cleanly
+                    }
+                }.andThen {
+                    c.pause.andThen {
+                        c.stats.map { s =>
+                            c.unpause.andThen {
+                                assert(
+                                    s.memory.usage > 0,
+                                    s"Expected non-zero memory usage for paused container, got: ${s.memory.usage}"
+                                )
+                            }
                         }
                     }
                 }

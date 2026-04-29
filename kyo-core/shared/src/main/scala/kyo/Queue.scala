@@ -549,11 +549,23 @@ object Queue:
 
         sealed abstract private class Closeable[A](initFrame: Frame) extends Unsafe[A]:
             import AllowUnsafe.embrace.danger
-            final private val state = AtomicRef.Unsafe.init[State](State.Open)
+            final private val state        = AtomicRef.Unsafe.init[State](State.Open)
+            final private val activeOffers = AtomicInt.Unsafe.init(0)
 
             final def close()(using frame: Frame, allow: AllowUnsafe) =
                 val fail = Result.Failure(Closed("Queue", initFrame))
-                Maybe.when(state.compareAndSet(State.Open, State.FullyClosed(fail)))(_drain())
+                Maybe.when(state.compareAndSet(State.Open, State.FullyClosed(fail))) {
+                    // Race: an in-flight offer that read state=Open before our CAS may still
+                    // commit and run race-repair, which can re-insert via q.offer (when the
+                    // polled item is not its own). If that re-insert lands AFTER _drain() exits,
+                    // the item is stranded in the closed queue. Wait for active offers to drain
+                    // out, then re-drain to capture any late re-inserts. The increment in
+                    // offerOp happens BEFORE the state read, so any offer that could possibly
+                    // commit is observable here as activeOffers > 0.
+                    val initial = _drain()
+                    while activeOffers.get() > 0 do ()
+                    initial ++ _drain()
+                }
             end close
 
             final def closeAwaitEmpty()(using frame: Frame, allow: AllowUnsafe): Fiber.Unsafe[Boolean, Any] =
@@ -605,14 +617,24 @@ object Queue:
                     case State.FullyClosed(r) => Present(r)
 
             protected inline def offerOp(inline f: => Boolean, inline raceRepair: => Boolean): Result[Closed, Boolean] =
-                offerClosed.getOrElse {
-                    val result = f
-                    if result && closed() then
-                        Result(raceRepair)
-                    else
-                        Result(result)
-                    end if
-                }
+                // Increment BEFORE reading state. Pairs with close()'s wait-for-zero: any offer
+                // that could still commit (already past offerClosed) is observable as in-flight.
+                // try/finally ensures the decrement runs even if `f` throws — leaking the counter
+                // would deadlock close()'s spin.
+                discard(activeOffers.incrementAndGet())
+                try
+                    offerClosed.getOrElse {
+                        val result = f
+                        if result && closed() then
+                            Result(raceRepair)
+                        else
+                            Result(result)
+                        end if
+                    }
+                finally
+                    discard(activeOffers.decrementAndGet())
+                end try
+            end offerOp
 
             private def handleHalfOpen(): Unit =
                 state.get() match

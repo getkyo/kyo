@@ -1,11 +1,27 @@
 name: build
+# Reusable workflow: builds + tests one arch with the target axis serialized.
+#
+# Sequential within arch: `max-parallel: 1` on the `target` matrix means JVM → JS →
+# Native run one at a time inside this workflow invocation. Two same-arch jobs never
+# compete for the same runner pool, which previously caused container-stop timeouts
+# and resource starvation on arm64 under contention.
+#
+# Parallel across archs: the parent workflow (build-pr.yml / build-main.yml) calls
+# this workflow once per arch. Those calls have no `needs:` between them so they run
+# in parallel as independent CI jobs.
 on:
   workflow_call:
     inputs:
-      os-matrix:
+      os:
+        description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64).'
+        type: string
+        required: true
+      runner-image:
+        description: 'GitHub-hosted runner label for `runs-on` (e.g. ubuntu-latest).'
         type: string
         required: true
       test-command:
+        description: 'sbt task to run via testKyo (e.g. test, testDiff).'
         type: string
         required: true
 
@@ -14,30 +30,17 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 1
       matrix:
-        # `target` is the outer dimension so the matrix expands target-first,
-        # interleaving os values. With 2 archs × 3 targets = 6 jobs and
-        # max-parallel: 2 the first batch is (JVM, os[0]), (JVM, os[1]) —
-        # one job per arch, so concurrent jobs always land on different
-        # runner pools. Higher max-parallel values left arm64 jobs starving
-        # each other (50-min timeout hits) when 2+ arm64 jobs ran concurrently.
         target: [JVM, JS, Native]
-        os: ${{ fromJSON(inputs.os-matrix) }}
-    runs-on: >-
-      ${{ matrix.os == 'linux-x64'     && 'ubuntu-latest'
-       || matrix.os == 'linux-arm64'   && 'ubuntu-24.04-arm'
-       || matrix.os == 'macos-x64'     && 'macos-latest-large'
-       || matrix.os == 'macos-arm64'   && 'macos-latest-xlarge'
-       || matrix.os == 'windows-x64'   && 'build-windows-x64'
-       || matrix.os == 'windows-arm64' && 'build-windows-arm' }}
+    runs-on: ${{ inputs.runner-image }}
     env:
       JAVA_OPTS: >-
-        ${{ contains(matrix.os, 'macos-arm64')
+        ${{ inputs.os == 'macos-arm64'
         && '-Xmx6G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
         || '-Xms8G -Xmx8G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8' }}
       JVM_OPTS: >-
-        ${{ contains(matrix.os, 'macos-arm64')
+        ${{ inputs.os == 'macos-arm64'
         && '-Xmx6G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
         || '-Xms8G -Xmx8G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8' }}
 
@@ -61,21 +64,21 @@ jobs:
             ~/AppData/Local/Coursier/Cache
             ~/.sbt
             ~/.ivy2/cache
-          key: deps-${{ matrix.os }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-${{ matrix.os }}-
+          key: deps-${{ inputs.os }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-${{ inputs.os }}-
 
       - name: Install Dependencies (Linux)
-        if: contains(matrix.os, 'linux') && matrix.target == 'Native'
+        if: contains(inputs.os, 'linux') && matrix.target == 'Native'
         run: |
           sudo apt-get update
           sudo apt-get install -y libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
 
       - name: Install Dependencies (macOS)
-        if: contains(matrix.os, 'macos') && matrix.target == 'Native'
+        if: contains(inputs.os, 'macos') && matrix.target == 'Native'
         run: brew install h2o libidn2
 
       - name: Install + start Podman (Linux)
-        if: contains(matrix.os, 'linux')
+        if: contains(inputs.os, 'linux')
         run: |
           sudo apt-get update
           sudo apt-get install -y podman uidmap
@@ -110,7 +113,7 @@ jobs:
           docker version
 
       - uses: coursier/setup-action@v3.0.0
-        if: matrix.os != 'windows-arm64'
+        if: inputs.os != 'windows-arm64'
         with:
           jvm: temurin:25
           apps: sbt
@@ -118,21 +121,21 @@ jobs:
       # Windows ARM64: coursier/setup-action doesn't support this platform yet.
       # JDK 25 and sbt are pre-installed on the runner image.
       - name: Setup JDK (Windows ARM64)
-        if: matrix.os == 'windows-arm64'
+        if: inputs.os == 'windows-arm64'
         shell: bash
         run: echo "JAVA_HOME=$JAVA_HOME_25_AARCH64" >> "$GITHUB_ENV"
 
-      - name: Test ${{ matrix.target }} (${{ matrix.os }})
+      - name: Test ${{ matrix.target }} (${{ inputs.os }})
         shell: bash
         run: |
           # macOS arm64 (14GB): serialize JS/Native to avoid Scala.js linker OOM
-          if [ "${{ matrix.os }}" = "macos-arm64" ] && [ "${{ matrix.target }}" != "JVM" ]; then
+          if [ "${{ inputs.os }}" = "macos-arm64" ] && [ "${{ matrix.target }}" != "JVM" ]; then
             export SBT_TASK_LIMIT=1
           fi
 
           # Windows: serialize all sbt tasks to avoid OverlappingFileLockException
           # during coursier dependency resolution (mandatory file locks).
-          case "${{ matrix.os }}" in
+          case "${{ inputs.os }}" in
             windows-*) export SBT_TASK_LIMIT=1;;
           esac
 

@@ -6,6 +6,12 @@ import kyo.ContainerPredef.Postgres
 
 class ContainerPredefItTest extends Test:
 
+    // Real database containers (postgres/mysql/mongo) include heavy image pulls (~600MB for
+    // mysql:8.0) plus init scripts that can take 30-60s on a cold cache. The default 60s
+    // per-test timeout is too tight for the first podman/shell run of each DB; raising to
+    // 3 minutes leaves headroom while still catching genuine hangs.
+    override def timeout: Duration = 3.minutes
+
     "Postgres" - {
         "psql SELECT 1 returns 1" - runBackends {
             Postgres.initWith(Postgres.Config.default) { pg =>

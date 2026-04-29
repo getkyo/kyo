@@ -150,8 +150,29 @@ final class Container private[kyo] (
         inspect.map { info =>
             info.ports.find(b => b.containerPort == containerPort && b.protocol == Config.Protocol.TCP) match
                 case Some(binding) if binding.hostPort > 0 => binding.hostPort
-                case _ =>
-                    Abort.fail(ContainerOperationException(s"Port $containerPort is not bound on container ${id.value}"))
+                case _                                     =>
+                    // Distinguish "container not running" from "port wasn't requested in config" so the
+                    // next dev sees the actual cause. A stopped container raising "Port X not bound" is
+                    // misleading — it crashed; the missing port binding is a downstream symptom.
+                    val reason =
+                        if info.state != State.Running then
+                            val exitStr = info.exitCode match
+                                case ExitCode.Success     => "0"
+                                case ExitCode.Failure(c)  => c.toString
+                                case ExitCode.Signaled(s) => s"signaled($s)"
+                            s"Port $containerPort lookup failed: container ${id.value} is in state ${info.state} (exit=$exitStr). " +
+                                s"Use `container.logsText` to see the cause."
+                        else
+                            val configured = config.ports.map(p => p.containerPort).distinct
+                            if configured.contains(containerPort) then
+                                s"Port $containerPort is not bound on container ${id.value}: configured but not yet observable via inspect. " +
+                                    s"This shouldn't happen — `init` waits for port mappings before returning. Please report."
+                            else
+                                s"Port $containerPort was not declared in the container config. Configured ports: ${
+                                        if configured.isEmpty then "none" else configured.mkString(", ")
+                                    }."
+                            end if
+                    Abort.fail(ContainerOperationException(reason))
         }
 
     /** Full container metadata snapshot (state, ports, mounts, network, etc.). */
@@ -414,7 +435,9 @@ object Container:
                     b.start(cid).andThen {
                         AtomicRef.init(ContainerHealthState(false, Absent)).map { healthRef =>
                             val container = new Container(cid, config, b, healthRef)
-                            runHealthCheck(container, config.healthCheck).andThen(container)
+                            runHealthCheck(container, config.healthCheck)
+                                .andThen(waitForPortMappings(container))
+                                .andThen(container)
                         }
                     }
                 }
@@ -460,7 +483,9 @@ object Container:
                 b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config)).map { cid =>
                     val container = new Container(cid, config, b, healthRef)
                     Abort.run[ContainerException] {
-                        b.start(cid).andThen(runHealthCheck(container, config.healthCheck))
+                        b.start(cid)
+                            .andThen(runHealthCheck(container, config.healthCheck))
+                            .andThen(waitForPortMappings(container))
                     }.map {
                         case Result.Success(_)   => container
                         case Result.Failure(err) =>
@@ -1898,6 +1923,13 @@ object Container:
     /** Threshold (milliseconds) above which elapsed-time strings switch from "Nms" to "Ns" formatting. */
     private val elapsedMillisFormatThreshold: Long = 1000L
 
+    /** Poll interval and timeout for `waitForPortMappings`. The host-side port forwarding hook on rootless podman (slirp4netns/pasta) and
+      * Docker Desktop's VM completes asynchronously after `start` — typically <100ms but can stretch under load. 50 attempts × 100ms = 5s
+      * window before we surface a clear timeout.
+      */
+    private val portMappingPollInterval: Duration = 100.millis
+    private val portMappingMaxAttempts: Int       = 50
+
     /** Default upper bound on lines returned by the buffered log APIs (`logs`, `logsText`, `logStream`). Prevents accidental OOM when
       * called on long-running containers with megabytes of history. Pass an explicit `tail` to override; pass `Int.MaxValue` for unbounded.
       */
@@ -1923,7 +1955,8 @@ object Container:
                 backend.detect().andThen(backend)
 
     private def runHealthCheck(container: Container, hc: HealthCheck)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        // If the container already exited (e.g. command("true")), skip health check
+        // If the container already exited (e.g. command("true")), skip health check — `init` is
+        // also used for fast one-shots that exit before any check could run.
         Abort.runWith[ContainerException](container.backend.state(container.id)) {
             case Result.Success(st) if st != State.Running && st != State.Created =>
                 () // Container not running, skip health check
@@ -1978,5 +2011,32 @@ object Container:
                     loop(hc.schedule, 0, Seq.empty)
                 }
         }
+
+    /** After health check passes, wait until every configured host port binding is observable via `inspect`. Backends report container
+      * state Running before the port-forwarding hook completes (rootless podman uses slirp4netns/pasta async; Docker Desktop's VM has a
+      * similar gap). Without this wait, callers who ask for `mappedPort` immediately after `init` race intermittently.
+      *
+      * Skipped when no port bindings are configured (no race to worry about).
+      */
+    private def waitForPortMappings(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        if container.config.ports.isEmpty then ()
+        else
+            Loop.indexed { i =>
+                container.backend.inspect(container.id).map { info =>
+                    val allBound = container.config.ports.forall { pb =>
+                        info.ports.exists(b => b.containerPort == pb.containerPort && b.protocol == pb.protocol && b.hostPort > 0)
+                    }
+                    if allBound then Loop.done(())
+                    else if i < portMappingMaxAttempts then Async.sleep(portMappingPollInterval).andThen(Loop.continue)
+                    else
+                        val configured = container.config.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}").mkString(", ")
+                        val observed   = info.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}->${p.hostPort}").mkString(", ")
+                        Abort.fail[ContainerException](ContainerOperationException(
+                            s"Container ${container.id.value} ports not bound on host after ${portMappingMaxAttempts * portMappingPollInterval.toMillis}ms. " +
+                                s"Configured: [$configured]. Observed via inspect: [$observed]."
+                        ))
+                    end if
+                }
+            }
 
 end Container
