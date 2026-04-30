@@ -583,7 +583,7 @@ Use sparingly — only for types that users reference frequently enough that qua
 - Use opaque types — never wrap when you can alias. See [Zero-Cost Type Design](#zero-cost-type-design)
 - Use `inline` strategically — inline creation paths, not handling paths. See [Inline Guidelines](#inline-guidelines)
 - Prefer `@tailrec` loops — allocate continuations only when effects force suspension
-- **Never block a thread** — use `Async`-based suspension (`Channel.put`, `Fiber.get`, `Clock.sleep`) instead of blocking primitives (`Thread.sleep`, `CountDownLatch.await`, `synchronized`, `Future.await`). 
+- **Never block a thread** — use `Async`-based suspension (`Channel.put`, `Fiber.get`, `Clock.sleep`) instead of blocking primitives (`Thread.sleep`, `CountDownLatch.await`, `synchronized`, `Future.await`).
 - Prefer lock-free algorithms (CAS + `@tailrec`) over blocking synchronization
 - Bit-pack atomically-updated composite state to avoid wrapper allocations. Always include a layout comment:
   ```scala
