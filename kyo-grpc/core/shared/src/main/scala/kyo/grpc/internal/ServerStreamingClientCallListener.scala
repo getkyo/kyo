@@ -1,7 +1,8 @@
 package kyo.grpc.internal
 
 import io.grpc.ClientCall.Listener
-import io.grpc.{Metadata, Status}
+import io.grpc.Metadata
+import io.grpc.Status
 import kyo.*
 import kyo.grpc.CallClosed
 

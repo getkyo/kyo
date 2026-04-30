@@ -1,6 +1,6 @@
 package kyo
 
-import org.jctools.queues.MpmcUnboundedXaddArrayQueue
+import kyo.internal.*
 import scala.annotation.tailrec
 
 /** A synchronization primitive that controls concurrency and rate limiting with configurable admission policies.
@@ -190,7 +190,7 @@ object Meter:
       *   A Meter effect that represents a semaphore.
       */
     def initSemaphoreUnscoped(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < Sync =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             new Base(concurrency, reentrant):
                 def dispatch[A, S](v: => A < S) =
                     // Release the permit right after the computation
@@ -241,7 +241,7 @@ object Meter:
       *   A Meter effect that represents a rate limiter.
       */
     def initRateLimiterUnscoped(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < Sync =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             new Base(rate, reentrant):
                 val timerTask =
                     // Schedule periodic task to replenish permits
@@ -366,7 +366,7 @@ object Meter:
         // >= 0     => # of permits
         // < 0      => # of waiters
         val state   = AtomicInt.Unsafe.init(permits)
-        val waiters = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Unit, Abort[Closed]]](8)
+        val waiters = new MpmcUnboundedUnsafeQueue[Promise.Unsafe[Unit, Abort[Closed]]](8)
         val closed  = Promise.Unsafe.init[Nothing, Abort[Closed]]()
 
         protected def dispatch[A, S](v: => A < S): A < (S & Sync)
@@ -401,7 +401,7 @@ object Meter:
                         else
                             // No permit available, add to waiters queue
                             val p = Promise.Unsafe.init[Unit, Abort[Closed]]()
-                            waiters.add(p)
+                            discard(waiters.offer(p))
                             dispatch(p.safe.use(_ => withAcquiredMeter(v)))
                     else
                         // CAS failed, retry
@@ -435,21 +435,21 @@ object Meter:
         end tryRun
 
         final def availablePermits(using Frame) =
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 state.get() match
                     case Int.MinValue => closed.safe.get
                     case st           => Math.max(0, st)
             }
 
         final def pendingWaiters(using Frame) =
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 state.get() match
                     case Int.MinValue => closed.safe.get
                     case st           => Math.min(0, st).abs
             }
 
         final def close(using frame: Frame): Boolean < Sync =
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 val st = state.getAndSet(Int.MinValue)
                 val ok = st != Int.MinValue // The meter wasn't already closed
                 if ok then
@@ -490,13 +490,12 @@ object Meter:
         end release
 
         @tailrec final private def pollWaiter(): Promise.Unsafe[Unit, Abort[Closed]] =
-            val waiter = waiters.poll()
-            if !isNull(waiter) then waiter
-            else
-                // If no waiter is found, retry the poll operation
-                // This handles the race condition between state change and waiter queuing
-                pollWaiter()
-            end if
+            waiters.poll() match
+                case Maybe.Present(waiter) => waiter
+                case _                     =>
+                    // If no waiter is found, retry the poll operation
+                    // This handles the race condition between state change and waiter queuing
+                    pollWaiter()
         end pollWaiter
     end Base
 

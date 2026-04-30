@@ -639,4 +639,9 @@ object Text:
         end Reverse
     end internal
 
+    /** Wraps a string as Text (identity conversion). */
+    given Flag.Reader.Scalar[Text] with
+        def apply(s: String): Either[Throwable, Text] = Right(Text(s))
+        def typeName: String                          = "Text"
+
 end Text

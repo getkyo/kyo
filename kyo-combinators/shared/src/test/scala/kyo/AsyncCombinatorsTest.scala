@@ -35,7 +35,7 @@ class AsyncCombinatorsTest extends Test:
             }
 
             "should construct from Promise" in run {
-                val promise = scala.concurrent.Promise[Int]
+                val promise = scala.concurrent.Promise[Int]()
                 val effect  = Kyo.fromPromiseScala(promise)
                 scala.concurrent.Future {
                     promise.complete(scala.util.Success(100))

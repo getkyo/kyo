@@ -98,7 +98,7 @@ object StreamSubscription:
         Tag[Poll[Chunk[V]]]
     ): StreamSubscription[V, S] < (Sync & S & Scope) =
         for
-            subscription <- Sync.Unsafe(new StreamSubscription[V, S](stream, subscriber))
+            subscription <- Sync.Unsafe.defer(new StreamSubscription[V, S](stream, subscriber))
             _            <- subscription.subscribe
             _            <- Scope.acquireRelease(subscription.consume)(_.interrupt.unit)
         yield subscription

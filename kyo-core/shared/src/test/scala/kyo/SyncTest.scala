@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.Result.Error
+import kyo.Result.Panic
 import org.scalatest.compatible.Assertion
 import scala.util.Try
 
@@ -139,6 +141,70 @@ class SyncTest extends Test:
             io.andThen(io).map: _ =>
                 assert(count == 2)
                 assert(countEnsure == 2)
+        }
+
+        "resource safety" - {
+            "runs finalizer on Abort.fail" in pending
+
+            "runs finalizer exactly once under multiple evaluations" in run {
+                var count = 0
+                Sync.ensure { count += 1 }(1).map(_ + 1).map { result =>
+                    assert(count == 1)
+                    assert(result == 2)
+                }
+            }
+
+            "nested ensures execute in LIFO order" in run {
+                var order = List.empty[Int]
+                Sync.ensure { order = 1 :: order } {
+                    Sync.ensure { order = 2 :: order } {
+                        Sync.ensure { order = 3 :: order } {
+                            42
+                        }
+                    }
+                }.map { _ =>
+                    assert(order == List(1, 2, 3))
+                }
+            }
+
+            "error-aware ensure passes Absent on success" in run {
+                var received: Maybe[Error[Any]] = Present(Panic(new Exception("sentinel")))
+                Sync.ensure((ex: Maybe[Error[Any]]) => received = ex)(42).map { result =>
+                    assert(received == Absent)
+                    assert(result == 42)
+                }
+            }
+
+            "error-aware ensure passes Present(Panic) on exception" in run {
+                var received: Maybe[Error[Any]] = Absent
+                val ex                          = new RuntimeException("boom")
+                Abort.run[Any](Sync.ensure((e: Maybe[Error[Any]]) => received = e) {
+                    throw ex
+                }).map { result =>
+                    assert(received.isDefined)
+                    assert(received.get == Panic(ex))
+                }
+            }
+
+            "error-aware ensure passes error on Abort.fail" in pending
+
+            "works without fiber context" in run {
+                import AllowUnsafe.embrace.danger
+                var called = false
+                val result = Sync.Unsafe.evalOrThrow(Sync.ensure { called = true }(42))
+                assert(called)
+                assert(result == 42)
+            }
+
+            "call-by-name regression (#1228)" in run {
+                var sideEffect = false
+                val io         = Sync.ensure { sideEffect = true }(42)
+                assert(!sideEffect)
+                io.map { result =>
+                    assert(sideEffect)
+                    assert(result == 42)
+                }
+            }
         }
     }
 
@@ -292,7 +358,7 @@ class SyncTest extends Test:
                         steps = unsafeOperation(value) :: steps
                         value * 2
                     }
-                    v2 <- Sync.Unsafe {
+                    v2 <- Sync.Unsafe.defer {
                         steps = v1 :: steps
                         v1 + 1
                     }

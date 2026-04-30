@@ -10,6 +10,9 @@ import scalapb.options.Scalapb.ScalaPbOptions
 
 class CodeGeneratorTest extends AnyFreeSpec {
 
+    private def normalize(str: String): String =
+        str.replace("\r\n", "\n").replace("\r", "\n")
+
     "CodeGenerator" - {
         "process a request with default options" in {
             val protoFile = createTestProtoDescriptor()
@@ -24,13 +27,13 @@ class CodeGeneratorTest extends AnyFreeSpec {
             assert(file1.getUnknownFields.asMap().isEmpty)
             assert(file1.getName === "kgrpc/test/TestService.scala")
             val expected1 = scala.io.Source.fromResource("output/multiple-files-1").mkString
-            assert(file1.getContent === expected1)
+            assert(normalize(file1.getContent) === normalize(expected1))
 
             val file2 = response.getFile(1)
             assert(file2.getUnknownFields.asMap().isEmpty)
             assert(file2.getName === "kgrpc/test/UtilityService.scala")
             val expected2 = scala.io.Source.fromResource("output/multiple-files-2").mkString
-            assert(file2.getContent === expected2)
+            assert(normalize(file2.getContent) === normalize(expected2))
         }
         "process a request with single file" in {
             val options =
@@ -51,7 +54,7 @@ class CodeGeneratorTest extends AnyFreeSpec {
             assert(file.getUnknownFields.asMap().isEmpty)
             assert(file.getName === "kgrpc/test/TestProto.scala")
             val expected = scala.io.Source.fromResource("output/single-file").mkString
-            assert(file.getContent === expected)
+            assert(normalize(file.getContent) === normalize(expected))
         }
     }
 

@@ -291,6 +291,50 @@ object Abort:
             case Panic(thr)                      => throw thr
             case other: Partial[E, A] @unchecked => other
 
+    /** Ignores failures of type E, discarding both the success value and the failure value.
+      *
+      * Only failures of the specified type E are discarded. Panics are re-raised through Abort[Nothing]. This is useful when you want to
+      * run a computation purely for its side effects while suppressing expected failures.
+      *
+      * @param v
+      *   The computation to run and ignore failures from
+      * @return
+      *   A unit computation that discards both success and failure values, re-raising panics
+      */
+    def ignore[E](using
+        Frame
+    )[A, S, ER](
+        v: => A < (Abort[E | ER] & S)
+    )(
+        using
+        ct: ConcreteTag[E],
+        reduce: Reducible[Abort[ER]]
+    ): Unit < (S & reduce.SReduced & Abort[Nothing]) =
+        runWith[E](v):
+            case Success(_)   => ()
+            case Failure(_)   => ()
+            case panic: Panic => Abort.error(panic)
+
+    /** Loops forever until the body produces an Abort failure of type E.
+      *
+      * The loop runs until an Abort[E] short-circuits execution. The failure is discarded and Unit is returned. Panics are propagated.
+      *
+      * @param v
+      *   The loop body that may abort with E
+      * @return
+      *   Unit after the abort occurs
+      */
+    def loopUntil[E](using
+        Frame
+    )[S, ER](
+        v: => Unit < (Abort[E | ER] & S)
+    )(
+        using
+        ct: ConcreteTag[E],
+        reduce: Reducible[Abort[ER]]
+    ): Unit < (S & reduce.SReduced & Abort[Nothing]) =
+        ignore[E](kernel.Loop.forever(v))
+
     /** Recovers from an Abort failure by applying the provided function.
       *
       * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only

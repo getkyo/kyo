@@ -163,14 +163,35 @@ object Async extends AsyncPlatformSpecific:
     def timeout[E, A, S](
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(after: Duration)(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E | Timeout] & Async & S) =
+        _timeout(after, Result.Failure(Timeout(Present(after))))(v)
+
+    /** Runs a computation with a timeout, aborting with a custom error on expiry.
+      *
+      * @param after
+      *   The timeout duration
+      * @param error
+      *   The error to use on timeout
+      * @param v
+      *   The computation to run
+      * @return
+      *   The result of the computation, or the custom error on timeout
+      */
+    inline def timeoutWithError[E, A, S](
+        using isolate: Isolate[S, Abort[E] & Async, S]
+    )(after: Duration, inline error: => Result.Error[E])(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E] & Async & S) =
+        _timeout(after, error)(v)
+
+    private inline def _timeout[E, A, S](
+        using isolate: Isolate[S, Abort[E] & Async, S]
+    )(after: Duration, inline error: => Result.Error[E])(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E] & Async & S) =
         if !after.isFinite then v
         else
             isolate.capture { state =>
                 Fiber.initUnscoped(isolate.isolate(state, v)).map { task =>
                     Clock.use { clock =>
-                        Sync.Unsafe {
+                        Sync.Unsafe.defer {
                             val sleepFiber = clock.unsafe.sleep(after)
-                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout(Present(after))))))
+                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(error)))
                             task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
                             isolate.restore(task.get)
                         }
@@ -178,7 +199,7 @@ object Async extends AsyncPlatformSpecific:
                 }
             }
         end if
-    end timeout
+    end _timeout
 
     def tapFiber[E, A, S, S2](using isolate: Isolate[S, Abort[E] & Async, S])
                              (v: => A < (Abort[E] & Async & S))
@@ -398,17 +419,12 @@ object Async extends AsyncPlatformSpecific:
             iterable.size match
                 case 0 => Chunk.empty
                 case 1 => f(0, iterable.head).map(Chunk(_))
-                case size if size <= concurrency =>
-                    isolate.capture { state =>
-                        Fiber.internal.foreachIndexed(iterable)((idx, v) => isolate.isolate(state, f(idx, v)))
-                            .map(_.use(r => Kyo.foreach(r)(isolate.restore)))
-                    }
                 case size =>
                     isolate.capture { state =>
-                        val groupSize = Math.ceil(size.toDouble / Math.max(1, concurrency)).toInt
-                        Fiber.internal.foreachIndexed(Chunk.from(iterable.grouped(groupSize)))((idx, group) =>
-                            Kyo.foreachIndexed(Chunk.from(group))((idx2, v) => isolate.isolate(state, f(idx + idx2, v)))
-                        ).map(_.use(r => Kyo.foreach(r.flattenChunk)(isolate.restore)))
+                        val items = Chunk.Indexed.from(iterable)
+                        Fiber.internal.foreachIndexed(items, concurrency) { (idx, v) =>
+                            isolate.isolate(state, f(idx, v))
+                        }.map(_.use(r => Kyo.foreach(r)(isolate.restore)))
                     }
 
     /** Executes a sequence of computations using bounded concurrency.
@@ -756,7 +772,7 @@ object Async extends AsyncPlatformSpecific:
       *   A nested computation that returns the memoized result
       */
     def memoize[A, S](v: A < S)(using Frame): A < (S & Async) < Sync =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             val ref = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[A, Any]])
             @tailrec def loop(): A < (S & Async) =
                 ref.get() match
@@ -765,14 +781,14 @@ object Async extends AsyncPlatformSpecific:
                         val promise = Promise.Unsafe.init[A, Any]()
                         if ref.compareAndSet(Absent, Present(promise)) then
                             Abort.run(v).map { r =>
-                                Sync.Unsafe {
+                                Sync.Unsafe.defer {
                                     if !r.isSuccess then
                                         ref.set(Absent)
                                     promise.completeDiscard(r.map(Kyo.lift))
                                     Abort.get(r)
                                 }
                             }.handle(Sync.ensure {
-                                Sync.Unsafe {
+                                Sync.Unsafe.defer {
                                     if !promise.done() then
                                         ref.set(Absent)
                                 }
@@ -786,14 +802,14 @@ object Async extends AsyncPlatformSpecific:
     /** Converts a Future to an asynchronous computation.
       *
       * This method allows integration of existing Future-based code with Kyo's asynchronous system. It handles successful completion and
-      * failures, wrapping any exceptions in an Abort effect.
+      * failures. Failed futures result in a panic.
       *
       * @param f
       *   The Future to convert into an asynchronous computation
       * @return
-      *   An asynchronous computation that completes with the result of the Future or aborts with Throwable
+      *   An asynchronous computation that completes with the result of the Future
       */
-    def fromFuture[A](f: Future[A])(using frame: Frame): A < (Async & Abort[Throwable]) =
+    def fromFuture[A](f: Future[A])(using frame: Frame): A < Async =
         Fiber.fromFuture(f).map(_.get)
 
     private[kyo] inline def get[E, A](v: IOPromise[? <: E, ? <: A])(using Frame): A < (Abort[E] & Async) =

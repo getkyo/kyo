@@ -12,6 +12,9 @@ package object internal {
     private[compiler] val WIDTH  = 100
     private[compiler] val INDENT = 2
 
+    private[compiler] def normalizeLineEndings(str: String): String =
+        str.replace("\r\n", "\n").replace("\r", "\n")
+
     private[compiler] def mods(chooses: Mod.Choose*): Vector[String] =
         chooses.map(_.choice).toVector
 
@@ -159,7 +162,7 @@ package object internal {
         }
 
         def addDoc(doc: Doc): FunctionalPrinter =
-            fp.add(doc.render(WIDTH))
+            fp.add(normalizeLineEndings(doc.render(WIDTH)))
     }
 
     implicit private[compiler] class StringParameterOps(val parameterName: String) extends AnyVal {
@@ -204,5 +207,5 @@ package object internal {
         }
 
     private[compiler] def printToDoc(f: PrinterEndo): Doc =
-        Docx.literal(f(new FunctionalPrinter()).result())
+        Docx.literal(normalizeLineEndings(f(new FunctionalPrinter()).result()))
 }

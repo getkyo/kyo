@@ -161,13 +161,13 @@ class ActorTest extends Test:
 
             for
                 messageReceived <- Latch.init(1)
-                childCleaned    <- AtomicBoolean.init(false)
+                childCleaned    <- Latch.init(1)
                 parentActorFiber <-
                     Actor.run {
                         for
                             childActor <- Actor.run {
                                 for
-                                    _ <- Scope.ensure(childCleaned.set(true))
+                                    _ <- Scope.ensure(childCleaned.release)
                                 yield Actor.receiveAll[Int] { _ =>
                                     messageReceived.release
                                 }
@@ -177,8 +177,8 @@ class ActorTest extends Test:
                             _ <- Abort.fail(ParentError)
                         yield "never reached"
                     }
+                _      <- childCleaned.await
                 result <- Abort.run(parentActorFiber.await)
-                _      <- untilTrue(childCleaned.get)
             yield assert(result.isFailure)
             end for
         }
@@ -255,7 +255,7 @@ class ActorTest extends Test:
     }
 
     "backpressure and capacity" - {
-        "handles mailbox at capacity" in run {
+        "handles mailbox at capacity" in runJVM {
             for
                 counter <- AtomicInt.init(0)
                 actor   <- Actor.run(100)(Actor.receiveMax[Int](150)(counter.addAndGet(_)))
@@ -265,7 +265,7 @@ class ActorTest extends Test:
             yield assert(sum == (1 to 150).sum)
         }
 
-        "under concurrency" in run {
+        "under concurrency" in runJVM {
             for
                 results  <- Queue.Unbounded.init[Int]()
                 actor    <- Actor.run(50)(Actor.receiveMax[Int](1000)(results.add(_)))
@@ -337,7 +337,7 @@ class ActorTest extends Test:
     }
 
     "concurrency" - {
-        "handles multiple senders" in run {
+        "handles multiple senders" in runJVM {
             for
                 sum    <- AtomicInt.init(0)
                 actor  <- Actor.run(Actor.receiveMax[Int](100)(sum.addAndGet(_).unit))
@@ -347,7 +347,7 @@ class ActorTest extends Test:
             yield assert(result == 5050)
         }
 
-        "maintains message order" in run {
+        "maintains message order" in runJVM {
             for
                 queue  <- Queue.Unbounded.init[Int]()
                 actor  <- Actor.run(Actor.receiveMax[Int](100)(queue.add(_)))
@@ -639,6 +639,8 @@ class ActorTest extends Test:
                 v3     <- actor.ask(TestMessage(2, _))
                 _      <- actor.ask(TestMessage(42, _))
                 _      <- actor.ask(TestMessage(42, _))
+                _      <- Async.sleep(100.millis)
+                _      <- actor.fiber.getResult // wait for actor to terminate (retries exhausted)
                 result <- Abort.run(actor.ask(TestMessage(3, _)))
                 count  <- attempts.get
             yield assert(

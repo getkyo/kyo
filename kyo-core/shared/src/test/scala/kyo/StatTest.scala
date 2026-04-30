@@ -12,7 +12,7 @@ class StatTest extends Test:
         Sync.Unsafe.evalOrThrow(counter.add(1))
         Sync.Unsafe.evalOrThrow(histogram.observe(1))
         assert(Sync.Unsafe.evalOrThrow(counter.get) == 1)
-        assert(Sync.Unsafe.evalOrThrow(histogram.count) == 1)
+        assert(histogram.unsafe.summary().count == 1)
         assert(Sync.Unsafe.evalOrThrow(gauge.collect) == 1)
         assert(Sync.Unsafe.evalOrThrow(counterGauge.collect) == 1)
         val v = new Object

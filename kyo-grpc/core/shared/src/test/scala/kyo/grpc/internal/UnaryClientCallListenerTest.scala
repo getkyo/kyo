@@ -69,7 +69,7 @@ class UnaryClientCallListenerTest extends Test with Eventually:
 
                     exception <- Abort.run[Throwable]:
                         Abort.catching[StatusException]:
-                            IO.Unsafe(listener.onMessage(response2))
+                            IO.Unsafe.defer(listener.onMessage(response2))
                 yield
                     exception.fold(
                         _ => fail("Expected exception but got success"),

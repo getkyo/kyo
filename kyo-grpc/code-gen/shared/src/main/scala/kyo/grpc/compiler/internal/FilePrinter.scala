@@ -31,6 +31,6 @@ private[compiler] case class FilePrinter(
     def result: File =
         builder
             .pipe { b => if (b.getName.isEmpty) b.setName(file.scalaFileName) else b }
-            .setContent(fp.result())
+            .setContent(normalizeLineEndings(fp.result()))
             .build()
 }

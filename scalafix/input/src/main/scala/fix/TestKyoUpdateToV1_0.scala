@@ -12,11 +12,13 @@ object TestKyoUpdateToV1_0:
         init.now
         Console.printLine("hello").now
 
-    val async: Fiber[Nothing, Unit] < Async = Async.run(Async.apply(Async(Kyo.unit)))
+    val pureAsync: Unit < Async = Async(())
 
-    val forked: Fiber[Nothing, Unit] < Async = Kyo.unit.fork
+    val async = Async.run(Async.apply(pureAsync))
+
+    val forked = pureAsync.fork
 
     val resource: Any < (Resource & IO) = Resource.acquireRelease(prg)(Unit => Kyo.unit)
 
-    val forkedResource: Fiber[Nothing, Unit] < (Async & Resource) = Kyo.unit.forkScoped
+    val forkedResource = pureAsync.forkScoped
 end TestKyoUpdateToV1_0

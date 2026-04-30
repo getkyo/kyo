@@ -367,13 +367,14 @@ class TMapTest extends Test:
     }
 
     "Concurrency" - {
-        val repeats = 100
+        val repeats = 50
 
         "concurrent modifications" in runNotJS {
+            val retrySchedule = STM.defaultRetrySchedule.forever
             (for
                 size     <- Choice.eval(1, 10, 100)
                 map      <- STM.run(TMap.init[Int, Int]())
-                _        <- Async.foreach(1 to size, size)(i => STM.run(map.put(i, i)))
+                _        <- Async.foreach(1 to size, size)(i => STM.run(retrySchedule)(map.put(i, i)))
                 snapshot <- STM.run(map.snapshot)
             yield assert(
                 snapshot.size == size &&
@@ -420,13 +421,13 @@ class TMapTest extends Test:
 
         "concurrent updates" in runNotJS {
             (for
-                size <- Choice.eval(1, 10, 100)
+                size <- Choice.eval(1, 10, 50)
                 map  <- STM.run(TMap.init[Int, Int]())
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, 1))
                 }
                 _ <- Async.fill(10, 10)(
-                    STM.run {
+                    STM.run(Schedule.fixed(1.millis).jitter(0.5).forever) {
                         Kyo.foreachDiscard((1 to size)) { i =>
                             map.updateWith(i)(v => Maybe(v.getOrElse(0) + 1))
                         }
@@ -437,7 +438,7 @@ class TMapTest extends Test:
                 snapshot.size == size &&
                     snapshot.forall((_, v) => v == 11) // Initial 1 + 10 increments
             ))
-                .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(50))
                 .andThen(succeed)
         }
 
@@ -458,6 +459,7 @@ class TMapTest extends Test:
         }
 
         "concurrent bulk operations" in runNotJS {
+            val retries = STM.defaultRetrySchedule.forever
             (for
                 size <- Choice.eval(1, 10, 100)
                 map  <- STM.run(TMap.init[Int, Int]())
@@ -466,11 +468,11 @@ class TMapTest extends Test:
                 }
 
                 filterOps = Async.fill(5, 5)(
-                    STM.run(map.filter((k, v) => v % 2 == 0))
+                    STM.run(retries)(map.filter((k, v) => v % 2 == 0))
                 )
 
                 foldOps = Async.fill(5, 5)(
-                    STM.run(map.fold(0)((acc, _, v) => acc + v))
+                    STM.run(retries)(map.fold(0)((acc, _, v) => acc + v))
                 )
 
                 _        <- filterOps

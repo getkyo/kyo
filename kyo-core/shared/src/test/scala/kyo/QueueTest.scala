@@ -9,7 +9,7 @@ class QueueTest extends Test:
     "bounded" - {
         access.foreach { access =>
             access.toString() - {
-                "initWith" in runNotNative {
+                "initWith" in run {
                     val effect = Queue.initWith[Int](2, access) { q =>
                         for
                             b <- q.offer(1)
@@ -24,7 +24,7 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "use" in runNotNative {
+                "use" in run {
                     val effect = Queue.use[Int](2, access) { q =>
                         for
                             b <- q.offer(1)
@@ -39,27 +39,27 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "isEmpty" in runNotNative {
+                "isEmpty" in run {
                     for
                         q <- Queue.init[Int](2, access)
                         b <- q.empty
                     yield assert(b && q.capacity == 2)
                 }
-                "offer and poll" in runNotNative {
+                "offer and poll" in run {
                     for
                         q <- Queue.init[Int](2, access)
                         b <- q.offer(1)
                         v <- q.poll
                     yield assert(b && v == Maybe(1))
                 }
-                "peek" in runNotNative {
+                "peek" in run {
                     for
                         q <- Queue.init[Int](2, access)
                         _ <- q.offer(1)
                         v <- q.peek
                     yield assert(v == Maybe(1))
                 }
-                "full" in runNotNative {
+                "full" in run {
                     for
                         q <- Queue.init[Int](2, access)
                         _ <- q.offer(1)
@@ -67,7 +67,7 @@ class QueueTest extends Test:
                         b <- q.offer(3)
                     yield assert(!b)
                 }
-                "full 4" in runNotNative {
+                "full 4" in run {
                     for
                         q <- Queue.init[Int](4, access)
                         _ <- q.offer(1)
@@ -77,7 +77,7 @@ class QueueTest extends Test:
                         b <- q.offer(5)
                     yield assert(!b)
                 }
-                "zero capacity" in runNotNative {
+                "zero capacity" in run {
                     for
                         q <- Queue.init[Int](0, access)
                         b <- q.offer(1)
@@ -89,7 +89,7 @@ class QueueTest extends Test:
     }
 
     "close" - {
-        "allowed following ops" in runNotNative {
+        "allowed following ops" in run {
             for
                 q  <- Queue.init[Int](2)
                 b  <- q.offer(1)
@@ -114,7 +114,7 @@ class QueueTest extends Test:
                     c2.isEmpty
             )
         }
-        "states" in runNotNative {
+        "states" in run {
             for
                 q       <- Queue.init[Int](2)
                 closed1 <- q.closed
@@ -127,7 +127,7 @@ class QueueTest extends Test:
         }
     }
 
-    "drain" in runNotNative {
+    "drain" in run {
         for
             q <- Queue.init[Int](2)
             _ <- q.offer(1)
@@ -136,7 +136,7 @@ class QueueTest extends Test:
         yield assert(v == Seq(1, 2))
     }
 
-    "drainUpTo" in runNotNative {
+    "drainUpTo" in run {
         for
             q <- Queue.init[Int](4)
             _ <- Kyo.foreach(1 to 4)(q.offer)
@@ -147,7 +147,7 @@ class QueueTest extends Test:
     "unbounded" - {
         access.foreach { access =>
             access.toString() - {
-                "initWith" in runNotNative {
+                "initWith" in run {
                     val effect = Queue.Unbounded.initWith[Int](access) { q =>
                         for
                             b <- q.offer(1)
@@ -162,7 +162,7 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "use" in runNotNative {
+                "use" in run {
                     val effect = Queue.Unbounded.use[Int](access) { q =>
                         for
                             b <- q.offer(1)
@@ -177,27 +177,27 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "isEmpty" in runNotNative {
+                "isEmpty" in run {
                     for
                         q <- Queue.Unbounded.init[Int](access)
                         b <- q.empty
                     yield assert(b)
                 }
-                "offer and poll" in runNotNative {
+                "offer and poll" in run {
                     for
                         q <- Queue.Unbounded.init[Int](access)
                         b <- q.offer(1)
                         v <- q.poll
                     yield assert(b && v == Maybe(1))
                 }
-                "peek" in runNotNative {
+                "peek" in run {
                     for
                         q <- Queue.Unbounded.init[Int](access)
                         _ <- q.offer(1)
                         v <- q.peek
                     yield assert(v == Maybe(1))
                 }
-                "add and poll" in runNotNative {
+                "add and poll" in run {
                     for
                         q <- Queue.Unbounded.init[Int](access)
                         _ <- q.add(1)
@@ -211,7 +211,7 @@ class QueueTest extends Test:
     "dropping" - {
         access.foreach { access =>
             access.toString() - {
-                "initWith" in runNotNative {
+                "initWith" in run {
                     val effect = Queue.Unbounded.initDropping[Int](2, access).map { q =>
                         for
                             b <- q.offer(1)
@@ -226,7 +226,7 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "use" in runNotNative {
+                "use" in run {
                     val effect = Queue.Unbounded.useDropping[Int](2, access) { q =>
                         for
                             b <- q.offer(1)
@@ -241,7 +241,7 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "add/poll" in runNotNative {
+                "add/poll" in run {
                     for
                         q <- Queue.Unbounded.initDropping[Int](2)
                         _ <- q.add(1)
@@ -260,7 +260,7 @@ class QueueTest extends Test:
     "sliding" - {
         access.foreach { access =>
             access.toString() - {
-                "initWith" in runNotNative {
+                "initWith" in run {
                     val effect = Queue.Unbounded.initSliding[Int](2, access).map { q =>
                         for
                             b <- q.offer(1)
@@ -275,7 +275,7 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "use" in runNotNative {
+                "use" in run {
                     val effect = Queue.Unbounded.useSliding[Int](2, access) { q =>
                         for
                             b <- q.offer(1)
@@ -290,7 +290,7 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "add/poll" in runNotNative {
+                "add/poll" in run {
                     for
                         q <- Queue.Unbounded.initSliding[Int](2, access)
                         _ <- q.add(1)
@@ -362,7 +362,7 @@ class QueueTest extends Test:
 
         val repeats = 100
 
-        "offer and close" in runNotNative {
+        "offer and close" in run {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -388,7 +388,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "offer and poll" in runNotNative {
+        "offer and poll" in run {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -408,7 +408,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "offer to full queue during close" in runNotNative {
+        "offer to full queue during close" in run {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -431,7 +431,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent close attempts" in runNotNative {
+        "concurrent close attempts" in run {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -455,7 +455,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "offer, poll and close" in runNotNative {
+        "offer, poll and close" in run {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -512,14 +512,14 @@ class QueueTest extends Test:
     end if
 
     "Kyo computations" - {
-        "Sync" in runNotNative {
+        "Sync" in run {
             for
                 queue  <- Queue.init[Int < Sync](2)
                 _      <- queue.offer(Sync.defer(42))
                 result <- queue.poll.map(_.get)
             yield assert(result == 42)
         }
-        "AtomicBoolean" in runNotNative {
+        "AtomicBoolean" in run {
             for
                 flag   <- AtomicBoolean.init(false)
                 queue  <- Queue.init[Int < Sync](2)
@@ -529,7 +529,7 @@ class QueueTest extends Test:
                 after  <- flag.get
             yield assert(!before && result == 42 && after)
         }
-        "Env" in runNotNative {
+        "Env" in run {
             for
                 queue  <- Queue.init[Int < Env[Int]](2)
                 _      <- queue.offer(Env.use[Int](_ + 22))
@@ -539,7 +539,7 @@ class QueueTest extends Test:
     }
 
     "closeAwaitEmpty" - {
-        "allowed following ops when empty" in runNotNative {
+        "allowed following ops when empty" in run {
             for
                 q  <- Queue.init[Int](2)
                 c1 <- q.closeAwaitEmpty
@@ -564,27 +564,29 @@ class QueueTest extends Test:
             )
         }
 
-        "allowed following ops when not empty" in runNotNative {
+        "allowed following ops when not empty" in run {
             for
-                q  <- Queue.init[Int](2)
-                _  <- q.offer(1)
-                _  <- q.offer(1)
-                f1 <- Fiber.initUnscoped(q.closeAwaitEmpty)
-                v1 <- Abort.run(q.size)
-                v2 <- Abort.run(q.empty)
-                v3 <- Abort.run(q.full)
-                v4 <- Abort.run(q.offer(2))
-                v5 <- Abort.run(q.poll)
-                v6 <- Abort.run(q.peek)
-                v7 <- Abort.run(q.drain)
-                c2 <- Abort.run(q.closeAwaitEmpty)
-                c1 <- f1.get
+                gate <- Promise.init[Unit, Any]
+                q    <- Queue.init[Int](2)
+                _    <- q.offer(1)
+                _    <- q.offer(1)
+                f1   <- Fiber.initUnscoped(gate.get.andThen(q.closeAwaitEmpty))
+                v1   <- Abort.run(q.size)
+                v2   <- Abort.run(q.empty)
+                v3   <- Abort.run(q.full)
+                v4   <- Abort.run(q.offer(2))
+                v5   <- Abort.run(q.poll)
+                v6   <- Abort.run(q.peek)
+                v7   <- Abort.run(q.drain)
+                _    <- gate.completeUnit // let closeAwaitEmpty proceed
+                c1   <- f1.get            // wait for fiber's close to complete
+                c2   <- Abort.run(q.closeAwaitEmpty)
             yield assert(
                 c1 &&
                     v1.isSuccess &&
                     v2.isSuccess &&
                     v3.isSuccess &&
-                    v4.isFailure &&
+                    v4.isSuccess &&
                     v5.isSuccess &&
                     v6.isSuccess &&
                     v7.isSuccess &&
@@ -592,7 +594,7 @@ class QueueTest extends Test:
             )
         }
 
-        "returns true when queue is already empty" in runNotNative {
+        "returns true when queue is already empty" in run {
             for
                 queue  <- Queue.init[Int](10)
                 result <- queue.closeAwaitEmpty
@@ -600,7 +602,7 @@ class QueueTest extends Test:
             yield assert(result && closed)
         }
 
-        "returns true when queue becomes empty after closing" in runNotNative {
+        "returns true when queue becomes empty after closing" in run {
             for
                 queue   <- Queue.init[Int](10)
                 _       <- queue.offer(1)
@@ -614,7 +616,7 @@ class QueueTest extends Test:
             yield assert(!closed1 && result && closed2)
         }
 
-        "returns false if queue is already closed" in runNotNative {
+        "returns false if queue is already closed" in run {
             for
                 queue  <- Queue.init[Int](10)
                 _      <- queue.close
@@ -623,14 +625,14 @@ class QueueTest extends Test:
         }
 
         "unbounded queue" - {
-            "returns true when queue is already empty" in runNotNative {
+            "returns true when queue is already empty" in run {
                 for
                     queue  <- Queue.Unbounded.init[Int]()
                     result <- queue.closeAwaitEmpty
                 yield assert(result)
             }
 
-            "returns true when queue becomes empty after closing" in runNotNative {
+            "returns true when queue becomes empty after closing" in run {
                 for
                     queue  <- Queue.Unbounded.init[Int]()
                     _      <- queue.add(1)
@@ -643,7 +645,7 @@ class QueueTest extends Test:
             }
         }
 
-        "concurrent polling and waiting" in runNotNative {
+        "concurrent polling and waiting" in run {
             for
                 queue  <- Queue.init[Int](10)
                 _      <- Kyo.foreach(1 to 5)(i => queue.offer(i))
@@ -653,7 +655,7 @@ class QueueTest extends Test:
             yield assert(result)
         }
 
-        "sliding queue" in runNotNative {
+        "sliding queue" in run {
             for
                 queue  <- Queue.Unbounded.initSliding[Int](2)
                 _      <- queue.add(1)
@@ -665,7 +667,7 @@ class QueueTest extends Test:
             yield assert(result)
         }
 
-        "dropping queue" in runNotNative {
+        "dropping queue" in run {
             for
                 queue  <- Queue.Unbounded.initDropping[Int](2)
                 _      <- queue.add(1)
@@ -677,14 +679,14 @@ class QueueTest extends Test:
             yield assert(result)
         }
 
-        "zero capacity queue" in runNotNative {
+        "zero capacity queue" in run {
             for
                 queue  <- Queue.init[Int](0)
                 result <- queue.closeAwaitEmpty
             yield assert(result)
         }
 
-        "race between closeAwaitEmpty and close" in runNotNative {
+        "race between closeAwaitEmpty and close" in run {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -709,7 +711,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "two producers calling closeAwaitEmpty" in runNotNative {
+        "two producers calling closeAwaitEmpty" in run {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -748,7 +750,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "producer calling closeAwaitEmpty and another calling close" in runNotNative {
+        "producer calling closeAwaitEmpty and another calling close" in run {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
