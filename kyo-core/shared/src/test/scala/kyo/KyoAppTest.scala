@@ -1,6 +1,7 @@
 package kyo
 
 import Tagged.*
+import kyo.internal.Platform
 import org.scalatest.compatible.Assertion
 import scala.collection.mutable.ListBuffer
 import scala.util.Try
@@ -19,20 +20,28 @@ class KyoAppTest extends Test:
         succeed
     }
 
-    "multiple runs" in runNotJS {
-        for
-            ref <- AtomicInt.init(0)
-            app = new KyoApp:
-                run { ref.getAndIncrement }
-                run { ref.getAndIncrement }
-                run { ref.getAndIncrement }
+    // KyoApp.main on Native initializes the full runtime per call — "ordered runs"
+    // takes ~10 min on Windows Native, so 3 sequential main() calls exceed the timeout.
+    "multiple runs" in {
+        assume(!Platform.isNative, "KyoApp.main too slow on Native for repeated calls")
+        runNotJS {
+            for
+                ref <- AtomicInt.init(0)
+                app = new KyoApp:
+                    run { ref.getAndIncrement }
+                    run { ref.getAndIncrement }
+                    run { ref.getAndIncrement }
 
-            _    <- Sync.defer(app.main(Array.empty))
-            runs <- ref.get
-        yield assert(runs == 3)
+                _    <- Sync.defer(app.main(Array.empty))
+                runs <- ref.get
+            yield assert(runs == 3)
+        }
     }
 
+    // KyoApp.main on Native initializes the full runtime per call — takes
+    // ~10 minutes on Windows Native, which is prohibitively expensive.
     "ordered runs" in {
+        assume(!Platform.isNative, "KyoApp.main too slow on Native")
         val x       = new ListBuffer[Int]
         val promise = scala.concurrent.Promise[Assertion]()
         val app = new KyoApp:

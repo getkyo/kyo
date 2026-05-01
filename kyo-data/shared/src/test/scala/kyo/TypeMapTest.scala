@@ -63,8 +63,13 @@ class TypeMapTest extends Test:
             assert(e.get[Char] == 'c')
             assert(e.size == 4)
         }
+        "get rejects intersection types" in {
+            typeCheckFailure("TypeMap(42, \"foo\").get[Int & String]")(
+                "Intersection types are not supported here"
+            )
+        }
         "distinct" in pendingUntilFixed {
-            typeCheckFailure("TypeMap(0, 0)")("should fail")
+            discard(typeCheckFailure("TypeMap(0, 0)")("should fail"))
         }
     }
     "fatal" - {
@@ -97,8 +102,24 @@ class TypeMapTest extends Test:
             val e: TypeMap[A & B] = TypeMap(b)
 
             assert(e.get[A] eq b)
-            assert(e.get[A & B] eq b)
             assert(e.get[A | B] eq b)
+        }
+        "class extending two traits" in {
+            given [A, B]: CanEqual[A, B] = CanEqual.derived
+            trait X
+            trait Y
+            class Z extends X with Y
+            val z = new Z
+
+            val e = TypeMap(z)
+            assert(e.get[Z] eq z)
+            assert(e.get[X] eq z)
+            assert(e.get[Y] eq z)
+        }
+        "opaque type" in {
+            val d = Duration.fromNanos(42L)
+            val e = TypeMap(d)
+            assert(e.get[Duration] == d)
         }
         "deterministic" in {
             trait A
@@ -201,7 +222,6 @@ class TypeMapTest extends Test:
             assert(e2.get[Int] == 42)
             assert(e2.get[A] == c)
             assert(e2.get[B] == c)
-            assert(e2.get[A & B] == c)
             assert(e2.get[A | B] == c)
             assert(e2.get[A | Thread] == c)
         }
@@ -305,4 +325,49 @@ class TypeMapTest extends Test:
             assert(t.show == expected)
         }
     }
+    "opaque types over intersections" - {
+        import TypeMapTestOpaques.*
+        given [A, B]: CanEqual[A, B] = CanEqual.derived
+        val f                        = new FileImpl
+
+        "opaque type = A & B" in {
+            val o = OpaqueIntersection(f)
+            val e = TypeMap(o)
+            assert(e.get[OpaqueIntersection] == o)
+        }
+        "opaque type >: Sub = A & B" in {
+            val o = OpaqueWithLowerBound(f)
+            val e = TypeMap(o)
+            assert(e.get[OpaqueWithLowerBound] == o)
+        }
+        "opaque type <: Super = A & B" in {
+            val o = OpaqueWithUpperBound(f)
+            val e = TypeMap(o)
+            assert(e.get[OpaqueWithUpperBound] == o)
+        }
+        "type alias over intersection is rejected" in {
+            typeCheckFailure("TypeMap(new TypeMapTestOpaques.FileImpl).get[TypeMapTestOpaques.RW]")(
+                "Intersection types are not supported here"
+            )
+        }
+    }
 end TypeMapTest
+
+object TypeMapTestOpaques:
+    trait Readable
+    trait Writable
+    class FileImpl extends Readable with Writable
+
+    type RW = Readable & Writable
+
+    opaque type OpaqueIntersection               = RW
+    opaque type OpaqueWithLowerBound >: FileImpl = RW
+    opaque type OpaqueWithUpperBound <: RW       = RW
+
+    object OpaqueIntersection:
+        def apply(v: Readable & Writable): OpaqueIntersection = v
+    object OpaqueWithLowerBound:
+        def apply(v: Readable & Writable): OpaqueWithLowerBound = v
+    object OpaqueWithUpperBound:
+        def apply(v: Readable & Writable): OpaqueWithUpperBound = v
+end TypeMapTestOpaques

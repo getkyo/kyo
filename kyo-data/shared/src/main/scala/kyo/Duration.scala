@@ -36,7 +36,7 @@ object Duration:
                         Result.catching[NumberFormatException](value.toLong)
                             .mapFailure(_ => InvalidDuration(s"Invalid number: $value"))
                     unitEnum <-
-                        Units.values.find(_.names.exists(_.startsWith(unit)))
+                        Units.all.find(_.names.exists(_.startsWith(unit)))
                             .map(Result.succeed)
                             .getOrElse(Result.fail(InvalidDuration(s"Invalid unit: $unit")))
                 yield fromUnits(longValue, unitEnum)
@@ -116,7 +116,10 @@ object Duration:
     end Units
 
     object Units:
-        private val byChronoUnit: Map[ChronoUnit, Units] = Units.values.map(u => (u.chronoUnit, u)).toMap
+
+        val all = Units.values
+
+        private val byChronoUnit: Map[ChronoUnit, Units] = Units.all.map(u => (u.chronoUnit, u)).toMap
 
         def fromJava(chronoUnit: ChronoUnit): Units =
             byChronoUnit.get(chronoUnit)
@@ -212,7 +215,7 @@ object Duration:
             else if self == Infinity then "Duration.Infinity"
             else
                 val nanos = self.toNanos
-                Units.values.reverse.find(unit => nanos % unit.factor.toLong == 0) match
+                Units.all.reverse.find(unit => nanos % unit.factor.toLong == 0) match
                     case Some(unit) =>
                         val value = (nanos / unit.factor).toLong
                         val name  = unit.toString.toLowerCase
@@ -229,6 +232,32 @@ object Duration:
         // TODO Is this Robust enough?
         private[kyo] def isFinite: Boolean = self < Duration.Infinity
     end extension
+
+    /** Parses a Duration from a string like "5s", "100ms", "2 hours", "infinity".
+      *
+      * This reimplements Duration's parsing logic directly to avoid the Frame requirement of Duration.parse.
+      */
+    given Flag.Reader.Scalar[Duration] with
+        private val pattern = """(\d+)\s*([a-zA-Z]+)""".r
+
+        def apply(s: String): Either[Throwable, Duration] =
+            s.trim.toLowerCase match
+                case "infinity" | "inf" => Right(Duration.Infinity)
+                case pattern(value, unit) =>
+                    val parsedLong: Either[Throwable, Long] =
+                        try Right(value.toLong)
+                        catch case _: NumberFormatException => Left(new IllegalArgumentException(s"Invalid duration number: $value"))
+                    parsedLong.flatMap { longValue =>
+                        Duration.Units.values.find(_.names.exists(_ == unit))
+                            .orElse(Duration.Units.values.find(_.names.exists(_.startsWith(unit)))) match
+                            case None           => Left(new IllegalArgumentException(s"Invalid duration unit: $unit"))
+                            case Some(unitEnum) => Right(Duration.fromUnits(longValue, unitEnum))
+                    }
+                case _ => Left(new IllegalArgumentException(s"Invalid duration format: $s"))
+        end apply
+
+        def typeName: String = "Duration"
+    end given
 
 end Duration
 

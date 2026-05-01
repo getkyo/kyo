@@ -485,12 +485,12 @@ object Span:
             val size = self.length
             if size == 0 then Span.empty[B]
             else
-                val spans     = new Array[Span[B]](size)
+                val spans     = new Array[Array[B]](size)
                 var totalSize = 0
                 @tailrec def collectLoop(idx: Int): Unit =
                     if idx < size then
                         val span = f(self(idx))
-                        spans(idx) = span
+                        spans(idx) = span.toArrayUnsafe
                         totalSize += span.length
                         collectLoop(idx + 1)
                 collectLoop(0)
@@ -1206,12 +1206,12 @@ object Span:
             val size = self.length
             if size == 0 then Span.empty[B]
             else
-                val spans     = new Array[Span[B]](size)
+                val spans     = new Array[Array[B]](size)
                 var totalSize = 0
                 @tailrec def collectLoop(idx: Int): Unit =
                     if idx < size then
                         val span = asSpan(self(idx))
-                        spans(idx) = span
+                        spans(idx) = span.toArrayUnsafe
                         totalSize += span.size
                         collectLoop(idx + 1)
                 collectLoop(0)
@@ -1492,5 +1492,24 @@ object Span:
             )
 
     end internal
+
+    /** Parses a comma-separated string into a Span, delegating element parsing to the inner reader. */
+    given [A](using r: Flag.Reader.Scalar[A], ct: ClassTag[A]): Flag.Reader[Span[A]] with
+        def apply(s: String): Either[Throwable, Span[A]] =
+            if s.trim.isEmpty then Right(Span.empty[A])
+            else
+                val elements         = s.split(",").iterator.map(_.trim)
+                val buffer           = scala.collection.mutable.ArrayBuffer.empty[A]
+                var error: Throwable = null
+                while elements.hasNext && (error eq null) do
+                    r(elements.next()) match
+                        case Left(e)  => error = e
+                        case Right(a) => discard(buffer += a)
+                end while
+                if error ne null then Left(error)
+                else Right(Span.from(buffer))
+
+        def typeName: String = s"Span[${r.typeName}]"
+    end given
 
 end Span

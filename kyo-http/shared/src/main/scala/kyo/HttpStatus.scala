@@ -1,0 +1,153 @@
+package kyo
+
+import kyo.*
+import scala.annotation.tailrec
+
+/** HTTP response status code with category classification.
+  *
+  * A sealed hierarchy covering all standard HTTP status codes, organized into five enums — `Informational` (1xx), `Success` (2xx),
+  * `Redirect` (3xx), `ClientError` (4xx), and `ServerError` (5xx) — plus a `Custom` case for non-standard codes. All standard cases are
+  * exported to the companion object so they can be referenced directly as `HttpStatus.OK`, `HttpStatus.NotFound`, etc.
+  *
+  * Use `HttpStatus(code)` to resolve an integer to its known enum case, or wrap it in `Custom` when no standard case matches. Use
+  * `HttpStatus.resolve(code)` when you want to express absence rather than fall back to `Custom`.
+  *
+  * The classification predicates (`isSuccess`, `isClientError`, etc.) are useful for writing retry policies and filter conditions without
+  * matching on concrete cases.
+  *
+  * @see
+  *   [[kyo.HttpResponse]] Carries a status code
+  * @see
+  *   [[kyo.HttpRoute]] Maps error types to status codes via `.error[E](status)`
+  * @see
+  *   [[kyo.HttpClientConfig.retryOn]] Retry predicate that receives an `HttpStatus`
+  */
+sealed abstract class HttpStatus(val code: Int) derives CanEqual:
+    def isInformational: Boolean = code >= 100 && code < 200
+    def isSuccess: Boolean       = code >= 200 && code < 300
+    def isRedirect: Boolean      = code >= 300 && code < 400
+    def isClientError: Boolean   = code >= 400 && code < 500
+    def isServerError: Boolean   = code >= 500 && code < 600
+    def isError: Boolean         = code >= 400
+
+    /** Human-readable name (e.g. "Not Found", "Internal Server Error"). */
+    def name: String = this match
+        case HttpStatus.Custom(c) => c.toString
+        case other =>
+            val raw = other.toString
+            // Insert space before each uppercase letter (except the first)
+            val sb = new StringBuilder(raw.length + 4)
+            @tailrec def loop(i: Int): Unit =
+                if i < raw.length then
+                    val c = raw.charAt(i)
+                    if i > 0 && c.isUpper then sb.append(' ')
+                    sb.append(c)
+                    loop(i + 1)
+            loop(0)
+            sb.toString
+end HttpStatus
+
+object HttpStatus:
+
+    private val byCode: Dict[Int, HttpStatus] =
+        val b = DictBuilder.init[Int, HttpStatus]
+        Informational.values.foreach(s => discard(b.add(s.code, s)))
+        Success.values.foreach(s => discard(b.add(s.code, s)))
+        Redirect.values.foreach(s => discard(b.add(s.code, s)))
+        ClientError.values.foreach(s => discard(b.add(s.code, s)))
+        ServerError.values.foreach(s => discard(b.add(s.code, s)))
+        b.result()
+    end byCode
+
+    /** Resolve an HTTP status code. Returns the known enum case if one exists, otherwise wraps in `Custom`. */
+    def apply(code: Int): HttpStatus =
+        require(code >= 100 && code <= 599, s"Invalid HTTP status code: $code")
+        byCode.getOrElse(code, Custom(code))
+
+    def resolve(code: Int): Maybe[HttpStatus] =
+        byCode.get(code)
+
+    /** Status code not covered by the standard enums. */
+    final case class Custom(override val code: Int) extends HttpStatus(code)
+
+    export ClientError.*
+    export Informational.*
+    export Redirect.*
+    export ServerError.*
+    export Success.*
+
+    enum Informational(code: Int) extends HttpStatus(code):
+        case Continue           extends Informational(100)
+        case SwitchingProtocols extends Informational(101)
+        case Processing         extends Informational(102)
+        case EarlyHints         extends Informational(103)
+    end Informational
+
+    enum Success(code: Int) extends HttpStatus(code):
+        case OK                   extends Success(200)
+        case Created              extends Success(201)
+        case Accepted             extends Success(202)
+        case NonAuthoritativeInfo extends Success(203)
+        case NoContent            extends Success(204)
+        case ResetContent         extends Success(205)
+        case PartialContent       extends Success(206)
+    end Success
+
+    enum Redirect(code: Int) extends HttpStatus(code):
+        case MultipleChoices   extends Redirect(300)
+        case MovedPermanently  extends Redirect(301)
+        case Found             extends Redirect(302)
+        case SeeOther          extends Redirect(303)
+        case NotModified       extends Redirect(304)
+        case UseProxy          extends Redirect(305)
+        case TemporaryRedirect extends Redirect(307)
+        case PermanentRedirect extends Redirect(308)
+    end Redirect
+
+    enum ClientError(code: Int) extends HttpStatus(code):
+        case BadRequest                  extends ClientError(400)
+        case Unauthorized                extends ClientError(401)
+        case PaymentRequired             extends ClientError(402)
+        case Forbidden                   extends ClientError(403)
+        case NotFound                    extends ClientError(404)
+        case MethodNotAllowed            extends ClientError(405)
+        case NotAcceptable               extends ClientError(406)
+        case ProxyAuthRequired           extends ClientError(407)
+        case RequestTimeout              extends ClientError(408)
+        case Conflict                    extends ClientError(409)
+        case Gone                        extends ClientError(410)
+        case LengthRequired              extends ClientError(411)
+        case PreconditionFailed          extends ClientError(412)
+        case PayloadTooLarge             extends ClientError(413)
+        case URITooLong                  extends ClientError(414)
+        case UnsupportedMediaType        extends ClientError(415)
+        case RangeNotSatisfiable         extends ClientError(416)
+        case ExpectationFailed           extends ClientError(417)
+        case ImATeapot                   extends ClientError(418)
+        case MisdirectedRequest          extends ClientError(421)
+        case UnprocessableEntity         extends ClientError(422)
+        case Locked                      extends ClientError(423)
+        case FailedDependency            extends ClientError(424)
+        case TooEarly                    extends ClientError(425)
+        case UpgradeRequired             extends ClientError(426)
+        case PreconditionRequired        extends ClientError(428)
+        case TooManyRequests             extends ClientError(429)
+        case RequestHeaderFieldsTooLarge extends ClientError(431)
+        case UnavailableForLegalReasons  extends ClientError(451)
+    end ClientError
+
+    enum ServerError(code: Int) extends HttpStatus(code):
+        case InternalServerError     extends ServerError(500)
+        case NotImplemented          extends ServerError(501)
+        case BadGateway              extends ServerError(502)
+        case ServiceUnavailable      extends ServerError(503)
+        case GatewayTimeout          extends ServerError(504)
+        case HTTPVersionNotSupported extends ServerError(505)
+        case VariantAlsoNegotiates   extends ServerError(506)
+        case InsufficientStorage     extends ServerError(507)
+        case LoopDetected            extends ServerError(508)
+        case NotExtended             extends ServerError(510)
+        case NetworkAuthRequired     extends ServerError(511)
+    end ServerError
+
+end HttpStatus

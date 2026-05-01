@@ -26,34 +26,34 @@ private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
     def runNative(v: => Assertion < S)(using Frame): Future[Assertion] = runNative(v.map(Future.successful(_)))
 
     @targetName("runNotNativeAssertion")
-    def runNotNative(v: => Assertion < S)(using Frame): Future[Assertion] = runNative(v.map(Future.successful(_)))
+    def runNotNative(v: => Assertion < S)(using Frame): Future[Assertion] = runNotNative(v.map(Future.successful(_)))
 
-    def runJVM(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
-        if Platform.isJVM then
+    inline def runJVM(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
+        inline if Platform.isJVM then
             run(v)
         else
             Future.successful(assertionSuccess)
 
-    def runJS(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
-        if Platform.isJS then
+    inline def runJS(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
+        inline if Platform.isJS then
             run(v)
         else
             Future.successful(assertionSuccess)
 
-    def runNotJS(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
-        if !Platform.isJS then
+    inline def runNotJS(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
+        inline if !Platform.isJS then
             run(v)
         else
             Future.successful(assertionSuccess)
 
-    def runNative(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
-        if Platform.isNative then
+    inline def runNative(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
+        inline if Platform.isNative then
             run(v)
         else
             Future.successful(assertionSuccess)
 
-    def runNotNative(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
-        if !Platform.isNative then
+    inline def runNotNative(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
+        inline if !Platform.isNative then
             run(v)
         else
             Future.successful(assertionSuccess)
@@ -62,5 +62,7 @@ private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
         if Platform.isDebugEnabled then
             Duration.Infinity
         else
-            15.seconds
+            // Slowest legitimate test is ~45s under CI load.
+            // 60s gives headroom without burning CI credits on stuck tests.
+            Duration.fromJava(java.time.Duration.ofSeconds(60))
 end BaseKyoKernelTest

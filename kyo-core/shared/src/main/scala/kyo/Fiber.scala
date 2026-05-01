@@ -113,7 +113,7 @@ object Fiber:
       *   A Fiber that completes with the result of the Future
       */
     def fromFuture[A](future: => Future[A])(using Frame): Fiber[A, Any] < Sync =
-        Sync.Unsafe(Unsafe.fromFuture(future))
+        Sync.Unsafe.defer(Unsafe.fromFuture(future))
 
     /** Runs an asynchronous computation in a new Fiber guaranteeing eventual interruption via the [[Scope]] effect.
       *
@@ -176,7 +176,7 @@ object Fiber:
           *   Whether the Fiber is done
           */
         def done(using Frame): Boolean < Sync =
-            Sync.Unsafe(Unsafe.done(self)())
+            Sync.Unsafe.defer(Unsafe.done(self)())
 
         /** Maps the result of the Fiber.
           *
@@ -186,7 +186,7 @@ object Fiber:
           *   A new Fiber with the mapped result
           */
         def map[B](f: A => B < Sync)(using Frame): Fiber[B, S] < Sync =
-            Sync.Unsafe(Unsafe.map(self)((r => Sync.Unsafe.evalOrThrow(f(r)))))
+            Sync.Unsafe.defer(Unsafe.map(self)((r => Sync.Unsafe.evalOrThrow(f(r)))))
 
         /** Flat maps the result of the Fiber.
           *
@@ -196,7 +196,7 @@ object Fiber:
           *   A new Fiber with the flat mapped result
           */
         def flatMap[B, S2](f: A < S => Fiber[B, S2] < Sync)(using Frame): Fiber[B, S & S2] < Sync =
-            Sync.Unsafe(Unsafe.flatMap(self)(r => Sync.Unsafe.evalOrThrow(f(r))))
+            Sync.Unsafe.defer(Unsafe.flatMap(self)(r => Sync.Unsafe.evalOrThrow(f(r))))
 
         /** Creates a new Fiber that runs with interrupt masking.
           *
@@ -208,7 +208,7 @@ object Fiber:
           *   A new Fiber that runs with interrupt masking
           */
         def mask(using Frame): Fiber[A, S] < Sync =
-            Sync.Unsafe(Unsafe.mask(self)())
+            Sync.Unsafe.defer(Unsafe.mask(self)())
 
         /** Gets the number of waiters on this Fiber.
           *
@@ -219,7 +219,7 @@ object Fiber:
           *   The number of waiters on this Fiber
           */
         def waiters(using Frame): Int < Sync =
-            Sync.Unsafe(Unsafe.waiters(self)())
+            Sync.Unsafe.defer(Unsafe.waiters(self)())
 
         /** Reduce the Fiber's effect type. Useful especially to convert `Fiber[A, Abort[Nothing]]` to `Fiber[A, Any]`
           */
@@ -275,7 +275,7 @@ object Fiber:
           *   The callback function
           */
         def onComplete(f: Result[E, A < S] => Any < Sync)(using Frame): Unit < Sync =
-            Sync.Unsafe(Unsafe.onComplete(self)(r => Sync.Unsafe.evalOrThrow(f(r).unit)))
+            Sync.Unsafe.defer(Unsafe.onComplete(self)(r => Sync.Unsafe.evalOrThrow(f(r).unit)))
 
         /** Registers a callback to be called when the Fiber is interrupted.
           *
@@ -288,7 +288,7 @@ object Fiber:
           *   A unit value wrapped in Sync, representing the registration of the callback
           */
         def onInterrupt(f: Result.Error[E] => Any < Sync)(using Frame): Unit < Sync =
-            Sync.Unsafe(Unsafe.onInterrupt(self)(r => Sync.Unsafe.evalOrThrow(f(r).unit)))
+            Sync.Unsafe.defer(Unsafe.onInterrupt(self)(r => Sync.Unsafe.evalOrThrow(f(r).unit)))
 
         /** Blocks until the Fiber completes or the timeout is reached.
           *
@@ -311,7 +311,7 @@ object Fiber:
           *   A new Fiber with the mapped Result
           */
         def mapResult[E2, B, S2](f: Result[E, A < S] => Result[E2, B < S2] < Sync)(using Frame): Fiber[B, Abort[E2] & S & S2] < Sync =
-            Sync.Unsafe(Unsafe.mapResult(self)(r => Sync.Unsafe.evalOrThrow(f(r))))
+            Sync.Unsafe.defer(Unsafe.mapResult(self)(r => Sync.Unsafe.evalOrThrow(f(r))))
 
         /** Interrupts the Fiber.
           *
@@ -328,16 +328,16 @@ object Fiber:
           * @return
           *   Whether the Fiber was successfully interrupted
           */
-        def interrupt(error: Result.Error[E])(using Frame): Boolean < Sync =
-            Sync.Unsafe(Unsafe.interrupt(self)(error))
+        inline def interrupt(inline error: => Result.Error[E])(using Frame): Boolean < Sync =
+            Sync.Unsafe.defer(Unsafe.interrupt(self)(error))
 
         /** Interrupts the Fiber with a specific error, discarding the return value.
           *
           * @param error
           *   The error to interrupt the Fiber with
           */
-        def interruptDiscard(error: Result.Error[E])(using Frame): Unit < Sync =
-            Sync.Unsafe(Unsafe.interruptDiscard(self)(error))
+        inline def interruptDiscard(inline error: => Result.Error[E])(using Frame): Unit < Sync =
+            Sync.Unsafe.defer(Unsafe.interruptDiscard(self)(error))
 
         /** Polls the Fiber for a result without blocking.
           *
@@ -345,7 +345,7 @@ object Fiber:
           *   Maybe containing the Result if the Fiber is done, or Absent if still pending
           */
         def poll(using Frame): Maybe[Result[E, A < S]] < Sync =
-            Sync.Unsafe(Unsafe.poll(self)())
+            Sync.Unsafe.defer(Unsafe.poll(self)())
 
         /** Converts the Fiber to a Future.
           *
@@ -353,14 +353,17 @@ object Fiber:
           *   A Future that completes with the result of the Fiber
           */
         def toFuture(using E <:< Throwable, S =:= Any, Frame): Future[A] < Sync =
-            Sync.Unsafe(Unsafe.toFuture(self)())
+            Sync.Unsafe.defer(Unsafe.toFuture(self)())
     end extension
 
     opaque type Unsafe[+A, -S] = IOPromiseBase[Any, A < (Async & S)]
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
-        def init[E, A, S](result: Result[E, A < S])(using allow: AllowUnsafe): Unsafe[A, Abort[E] & S] =
+        def fromResult[E, A, S](result: Result[E, A < S])(using
+            allow: AllowUnsafe,
+            reduce: Reducible[Abort[E]]
+        ): Unsafe[A, reduce.SReduced & S] =
             IOPromise(result)
 
         def fromFuture[A](f: => Future[A])(using AllowUnsafe): Unsafe[A, Any] =
@@ -404,13 +407,14 @@ object Fiber:
         end extension
 
         extension [E, A, S](self: Unsafe[A, Abort[E] & S])
+            private[kyo] def lower: IOPromise[E, A < S] = self.asInstanceOf[IOPromise[E, A < S]]
 
             def onComplete(f: Result[E, A < S] => Unit)(using AllowUnsafe): Unit = self.lower.onComplete(f)
+            def onInterrupt(f: Result.Error[E] => Unit)(using Frame): Unit       = self.lower.onInterrupt(f)
 
-            def onInterrupt(f: Result.Error[E] => Unit)(using Frame): Unit        = self.lower.onInterrupt(f)
-            def interrupt()(using frame: Frame, allow: AllowUnsafe): Boolean      = self.lower.interrupt(Panic(Interrupted(frame)))
-            def interrupt(error: Result.Error[E])(using AllowUnsafe): Boolean     = self.lower.interrupt(error)
-            def interruptDiscard(error: Result.Error[E])(using AllowUnsafe): Unit = discard(self.lower.interrupt(error))
+            def interrupt()(using frame: Frame, allow: AllowUnsafe): Boolean = self.lower.interrupt(Panic(Interrupted(frame)))
+            inline def interrupt(inline error: => Result.Error[E])(using AllowUnsafe): Boolean     = self.lower.interrupt(error)
+            inline def interruptDiscard(inline error: => Result.Error[E])(using AllowUnsafe): Unit = discard(self.lower.interrupt(error))
 
             def block(deadline: Clock.Deadline.Unsafe)(using AllowUnsafe, Frame): Result[E | Timeout, A < S] =
                 self.lower.block(deadline)
@@ -465,7 +469,7 @@ object Fiber:
               *   Whether the Promise was successfully completed
               */
             def complete(v: Result[Nothing, A < S])(using Frame): Boolean < Sync =
-                Sync.Unsafe(Unsafe.complete(self)(v))
+                Sync.Unsafe.defer(Unsafe.complete(self)(v))
 
             /** Completes the Promise with a result, discarding the return value.
               *
@@ -473,13 +477,13 @@ object Fiber:
               *   The result to complete the Promise with
               */
             def completeDiscard(v: Result[Nothing, A < S])(using Frame): Unit < Sync =
-                Sync.Unsafe(Unsafe.completeDiscard(self)(v))
+                Sync.Unsafe.defer(Unsafe.completeDiscard(self)(v))
 
             def completeUnit(using frame: Frame, ev: Unit =:= A): Boolean < Sync =
-                Sync.Unsafe(Unsafe.complete(self)(Result.succeed(ev(()))))
+                Sync.Unsafe.defer(Unsafe.complete(self)(Result.succeed(ev(()))))
 
             def completeUnitDiscard(using frame: Frame, ev: Unit =:= A): Unit < Sync =
-                Sync.Unsafe(Unsafe.completeDiscard(self)(Result.succeed(ev(()))))
+                Sync.Unsafe.defer(Unsafe.completeDiscard(self)(Result.succeed(ev(()))))
 
             /** Makes this Promise become another Fiber.
               *
@@ -489,7 +493,7 @@ object Fiber:
               *   Whether the Promise successfully became the other Fiber
               */
             def become(other: Fiber[A, S])(using Frame): Boolean < Sync =
-                Sync.Unsafe(Unsafe.become(self)(other))
+                Sync.Unsafe.defer(Unsafe.become(self)(other))
 
             /** Makes this Promise become another Fiber, discarding the return value.
               *
@@ -497,7 +501,7 @@ object Fiber:
               *   The Fiber to become
               */
             def becomeDiscard(other: Fiber[A, S])(using Frame): Unit < Sync =
-                Sync.Unsafe(Unsafe.becomeDiscard(self)(other))
+                Sync.Unsafe.defer(Unsafe.becomeDiscard(self)(other))
 
             /** Polls the Promise for a result without blocking.
               *
@@ -505,7 +509,7 @@ object Fiber:
               *   Maybe containing the Result if the Promise is done, or Absent if still pending
               */
             def poll(using Frame): Maybe[Result[Nothing, A < S]] < Sync =
-                Sync.Unsafe(Unsafe.poll(self)())
+                Sync.Unsafe.defer(Unsafe.poll(self)())
 
             /** Gets the number of waiters on this Promise.
               *
@@ -516,7 +520,7 @@ object Fiber:
               *   The number of waiters on this Promise
               */
             def waiters(using Frame): Int < Sync =
-                Sync.Unsafe(Unsafe.waiters(self)())
+                Sync.Unsafe.defer(Unsafe.waiters(self)())
 
             def unsafe: Unsafe[A, S] = self
         end extension
@@ -531,7 +535,7 @@ object Fiber:
               *   Whether the Promise was successfully completed
               */
             def complete(v: Result[E, A < S])(using Frame): Boolean < Sync =
-                Sync.Unsafe(Unsafe.complete(self)(v))
+                Sync.Unsafe.defer(Unsafe.complete(self)(v))
 
             /** Completes the Promise with a result, discarding the return value.
               *
@@ -539,13 +543,13 @@ object Fiber:
               *   The result to complete the Promise with
               */
             def completeDiscard(v: Result[E, A < S])(using Frame): Unit < Sync =
-                Sync.Unsafe(Unsafe.completeDiscard(self)(v))
+                Sync.Unsafe.defer(Unsafe.completeDiscard(self)(v))
 
             def completeUnit(using frame: Frame, ev: Unit =:= A): Boolean < Sync =
-                Sync.Unsafe(Unsafe.complete(self)(Result.succeed(ev(()))))
+                Sync.Unsafe.defer(Unsafe.complete(self)(Result.succeed(ev(()))))
 
             def completeUnitDiscard(using frame: Frame, ev: Unit =:= A): Unit < Sync =
-                Sync.Unsafe(Unsafe.completeDiscard(self)(Result.succeed(ev(()))))
+                Sync.Unsafe.defer(Unsafe.completeDiscard(self)(Result.succeed(ev(()))))
 
             /** Makes this Promise become another Fiber.
               *
@@ -555,7 +559,7 @@ object Fiber:
               *   Whether the Promise successfully became the other Fiber
               */
             def become(other: Fiber[A, Abort[E] & S])(using Frame): Boolean < Sync =
-                Sync.Unsafe(Unsafe.become(self)(other))
+                Sync.Unsafe.defer(Unsafe.become(self)(other))
 
             /** Makes this Promise become another Fiber, discarding the return value.
               *
@@ -563,7 +567,7 @@ object Fiber:
               *   The Fiber to become
               */
             def becomeDiscard(other: Fiber[A, Abort[E] & S])(using Frame): Unit < Sync =
-                Sync.Unsafe(Unsafe.becomeDiscard(self)(other))
+                Sync.Unsafe.defer(Unsafe.becomeDiscard(self)(other))
 
             /** Polls the Promise for a result without blocking.
               *
@@ -571,7 +575,7 @@ object Fiber:
               *   Maybe containing the Result if the Promise is done, or Absent if still pending
               */
             def poll(using Frame): Maybe[Result[E, A < S]] < Sync =
-                Sync.Unsafe(Unsafe.poll(self)())
+                Sync.Unsafe.defer(Unsafe.poll(self)())
 
             /** Gets the number of waiters on this Promise.
               *
@@ -582,7 +586,7 @@ object Fiber:
               *   The number of waiters on this Promise
               */
             def waiters(using Frame): Int < Sync =
-                Sync.Unsafe(Unsafe.waiters(self)())
+                Sync.Unsafe.defer(Unsafe.waiters(self)())
 
             def unsafe: Unsafe[A, Abort[E] & S] = self
 
@@ -596,7 +600,7 @@ object Fiber:
 
             def initMasked[A, S]()(using AllowUnsafe): Unsafe[A, S] =
                 new IOPromise[Any, A < S]:
-                    override def interrupt(error: Result.Error[Any]): Boolean = false
+                    override def preInterrupt() = false
 
             private[kyo] def fromIOPromise[A, S](p: IOPromise[?, A < S]): Unsafe[A, S] = p.asInstanceOf[Unsafe[A, S]]
 
@@ -680,45 +684,58 @@ object Fiber:
     ): Fiber[Chunk[A], Abort[E]] < Sync =
         internal.gather(max)(iterable)
 
-    private[kyo] def foreachIndexed[E, A, B](iterable: Iterable[A])(f: (Int, A) => B < (Abort[E] & Async))(
-        using frame: Frame
-    ): Fiber[Chunk[B], Abort[E]] < Sync =
-        internal.foreachIndexed(iterable)(f)
-
     private[kyo] object internal:
 
-        def foreachIndexed[E, A, B](iterable: Iterable[A])(f: (Int, A) => B < (Abort[E] & Async))(
-            using frame: Frame
-        ): Fiber[Chunk[B], Abort[E]] < Sync =
-            iterable.size match
-                case 0 => Fiber.succeed(Chunk.empty)
-                case size =>
-                    Sync.Unsafe {
+        def foreachIndexed[E, A, B](items: Chunk.Indexed[A], concurrency: Int)(
+            f: (Int, A) => B < (Abort[E] & Async)
+        )(using frame: Frame): Fiber[Chunk[B], Abort[E]] < Sync =
+            val size = items.size
+            if size == 0 then Fiber.succeed(Chunk.empty)
+            else
+                val numWorkers = Math.min(size, concurrency)
+                if numWorkers == 1 then
+                    Fiber.initUnscoped[E, Chunk[B], Any, Any](Kyo.foreachIndexed(items)(f))
+                else
+                    Sync.Unsafe.defer {
                         class State extends IOPromise[Any, Chunk[B] < Abort[E]]
-                            with ((Int, Result[E, B]) => Unit):
+                            with (Result[E, Unit] => Unit):
                             val results = (new Array[Any](size)).asInstanceOf[Array[B]]
                             val pending = AtomicInt.Unsafe.init(size)
-                            def apply(idx: Int, result: Result[E, B]): Unit =
-                                result.foldError(
-                                    { value =>
-                                        results(idx) = value
-                                        if pending.decrementAndGet() == 0 then
-                                            this.completeDiscard(Result.succeed(Chunk.fromNoCopy(results)))
-                                    },
-                                    this.interruptDiscard
-                                )
+                            val counter = AtomicInt.Unsafe.init(0)
+                            def complete(idx: Int, value: B): Unit =
+                                results(idx) = value
+                                if pending.decrementAndGet() == 0 then
+                                    this.completeDiscard(Result.succeed(Chunk.fromNoCopy(results)))
+                            end complete
+                            def apply(result: Result[E, Unit]): Unit =
+                                result.foldError(_ => (), e => this.interruptDiscard(e))
                         end State
                         val state = new State
                         Isolate.internal.runDetached { (trace, context) =>
                             val safepoint = Safepoint.get
-                            foreach(iterable) { (idx, v) =>
-                                val fiber = IOTask(f(idx, v), safepoint.copyTrace(trace), context)
-                                state.interrupts(fiber)
-                                fiber.onComplete(state(idx, _))
-                            }
+                            @tailrec def loop(i: Int): Unit =
+                                if i < numWorkers then
+                                    def workerLoop(): Unit < (Abort[E] & Async) =
+                                        val idx = state.counter.getAndIncrement()
+                                        if idx >= size then ()
+                                        else
+                                            f(idx, items(idx)).map { value =>
+                                                state.complete(idx, value)
+                                                workerLoop()
+                                            }
+                                        end if
+                                    end workerLoop
+                                    val fiber = IOTask(workerLoop(), safepoint.copyTrace(trace), context)
+                                    state.interrupts(fiber)
+                                    fiber.onComplete(state)
+                                    loop(i + 1)
+                            loop(0)
                             state
                         }
                     }
+                end if
+            end if
+        end foreachIndexed
 
         def race[E, A](iterable: Iterable[A < (Abort[E] & Async)])(using Frame): Fiber[A, Abort[E]] < Sync =
             Race.success(iterable)
@@ -774,7 +791,7 @@ object Fiber:
             val total = iterable.size
             if total == 0 || max <= 0 then Fiber.succeed(Chunk.empty)
             else
-                Sync.Unsafe {
+                Sync.Unsafe.defer {
                     class State extends IOPromise[Any, Chunk[A] < Abort[E]]
                         with Function2[Int, Result[E, A], Unit]:
                         val results = new Array[AnyRef](max)

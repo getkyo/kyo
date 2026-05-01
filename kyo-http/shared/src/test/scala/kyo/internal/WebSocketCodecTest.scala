@@ -1,0 +1,329 @@
+package kyo.internal
+
+import java.nio.charset.StandardCharsets
+import kyo.*
+import kyo.internal.transport.*
+import kyo.internal.util.*
+import kyo.internal.websocket.*
+
+class WebSocketCodecTest extends kyo.Test:
+
+    given CanEqual[Any, Any] = CanEqual.derived
+
+    private val Utf8 = StandardCharsets.UTF_8
+
+    /** Mock TransportStream backed by byte arrays for testing WebSocketCodec.
+      *
+      * Each call to read() returns the entire remaining input as a single-span stream. Writes are captured in an output buffer.
+      */
+    class MockConn(input: Array[Byte]) extends TransportStream:
+        private val output = new java.io.ByteArrayOutputStream()
+
+        def read(using Frame): Stream[Span[Byte], Async] =
+            if input.isEmpty then Stream.empty[Span[Byte]]
+            else Stream.init(Seq(Span.fromUnsafe(input)))
+
+        def write(data: Span[Byte])(using Frame): Unit < Async =
+            Sync.defer(output.write(data.toArrayUnsafe))
+
+        def written: Array[Byte]  = output.toByteArray
+        def writtenString: String = new String(output.toByteArray, Utf8)
+    end MockConn
+
+    // ── Accept key ──────────────────────────────────────────────
+
+    "computeAcceptKey" - {
+        "known vector (RFC 6455 §4.2.2)" in {
+            val key = WebSocketCodec.computeAcceptKey("dGhlIHNhbXBsZSBub25jZQ==")
+            assert(key == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")
+        }
+
+        "produces valid base64" in {
+            val key = WebSocketCodec.computeAcceptKey("testkey1234567890123=")
+            assert(key.length == 28)
+            assert(key.matches("[A-Za-z0-9+/]+=*"))
+        }
+    }
+
+    // ── Frame header parsing ────────────────────────────────────
+
+    "parseFrameHeader" - {
+        "text frame, no mask, len 5" in {
+            val fh = WebSocketCodec.parseFrameHeader(0x81.toByte, 0x05.toByte) // FIN + text, len 5
+            assert(fh.fin == true)
+            assert(fh.opcode == 0x1)
+            assert(fh.masked == false)
+            assert(fh.payloadLen == 5)
+        }
+
+        "binary frame, masked, len 100" in {
+            val fh = WebSocketCodec.parseFrameHeader(0x82.toByte, (0x80 | 100).toByte)
+            assert(fh.opcode == 0x2)
+            assert(fh.masked == true)
+            assert(fh.payloadLen == 100)
+        }
+
+        "16-bit length marker" in {
+            val fh = WebSocketCodec.parseFrameHeader(0x81.toByte, 126.toByte) // 126 = extended 16-bit
+            assert(fh.payloadLen == 126)
+        }
+
+        "64-bit length marker" in {
+            val fh = WebSocketCodec.parseFrameHeader(0x81.toByte, 127.toByte) // 127 = extended 64-bit
+            assert(fh.payloadLen == 127)
+        }
+
+        "FIN unset" in {
+            val fh = WebSocketCodec.parseFrameHeader(0x01.toByte, 0x05.toByte) // no FIN
+            assert(fh.fin == false)
+        }
+
+        "control frames" in {
+            assert(WebSocketCodec.parseFrameHeader(0x89.toByte, 0x00.toByte).opcode == 0x9) // Ping
+            assert(WebSocketCodec.parseFrameHeader(0x8a.toByte, 0x00.toByte).opcode == 0xa) // Pong
+            assert(WebSocketCodec.parseFrameHeader(0x88.toByte, 0x00.toByte).opcode == 0x8) // Close
+        }
+    }
+
+    // ── Masking ─────────────────────────────────────────────────
+
+    "unmask" - {
+        "known key" in {
+            val mask     = Span.fromUnsafe(Array[Byte](0x37, 0xfa.toByte, 0x21, 0x3d))
+            val masked   = Span.fromUnsafe(Array[Byte](0x7f, 0x9f.toByte, 0x4d, 0x51, 0x58))
+            val result   = WebSocketCodec.unmask(masked, mask)
+            val expected = Array[Byte]('H', 'e', 'l', 'l', 'o')
+            assert(result.toArrayUnsafe.sameElements(expected))
+        }
+
+        "self-inverse" in {
+            val data     = Span.fromUnsafe("hello world".getBytes(Utf8))
+            val key      = Span.fromUnsafe(Array[Byte](1, 2, 3, 4))
+            val masked   = WebSocketCodec.unmask(data, key)
+            val unmasked = WebSocketCodec.unmask(masked, key)
+            assert(unmasked.toArrayUnsafe.sameElements(data.toArrayUnsafe))
+        }
+
+        "zero key unchanged" in {
+            val data = Span.fromUnsafe("test".getBytes(Utf8))
+            val key  = Span.fromUnsafe(Array[Byte](0, 0, 0, 0))
+            assert(WebSocketCodec.unmask(data, key).toArrayUnsafe.sameElements(data.toArrayUnsafe))
+        }
+
+        "empty payload" in {
+            val result = WebSocketCodec.unmask(Span.empty[Byte], Span.fromUnsafe(Array[Byte](1, 2, 3, 4)))
+            assert(result.isEmpty)
+        }
+    }
+
+    // ── Frame encoding ──────────────────────────────────────────
+
+    "encodeFrameHeader" - {
+        "small payload (< 126)" in {
+            val h = WebSocketCodec.encodeFrameHeader(0x1, 5, mask = false)
+            assert(h.size == 2)
+            assert((h(0) & 0xff) == 0x81) // FIN + text
+            assert((h(1) & 0xff) == 5)
+        }
+
+        "medium payload (126-65535)" in {
+            val h = WebSocketCodec.encodeFrameHeader(0x1, 300, mask = false)
+            assert(h.size == 4)
+            assert((h(1) & 0x7f) == 126)
+        }
+
+        "large payload (> 65535)" in {
+            val h = WebSocketCodec.encodeFrameHeader(0x1, 70000, mask = false)
+            assert(h.size == 10)
+            assert((h(1) & 0x7f) == 127)
+        }
+
+        "mask adds 4 bytes" in {
+            val h = WebSocketCodec.encodeFrameHeader(0x1, 5, mask = true)
+            assert(h.size == 2 + 4) // header + mask key
+        }
+    }
+
+    // ── Close payload ───────────────────────────────────────────
+
+    "encodeClosePayload" - {
+        "code + reason" in {
+            val payload = WebSocketCodec.encodeClosePayload(1000, "normal")
+            assert(payload.size == 2 + "normal".length)
+            assert(((payload(0) & 0xff) << 8 | (payload(1) & 0xff)) == 1000)
+            assert(new String(payload.toArrayUnsafe, 2, payload.size - 2, Utf8) == "normal")
+        }
+
+        "code only" in {
+            val payload = WebSocketCodec.encodeClosePayload(1000, "")
+            assert(payload.size == 2)
+        }
+
+        "truncates long reason" in {
+            val longReason = "x" * 200
+            val payload    = WebSocketCodec.encodeClosePayload(1000, longReason)
+            assert(payload.size == 2 + 123) // 125 max total, minus 2 for code
+        }
+    }
+
+    // ── Roundtrip ───────────────────────────────────────────────
+
+    "writeFrame → readFrame roundtrip" - {
+        "text unmasked" in run {
+            val writeConn = new MockConn(Array.empty[Byte])
+            WebSocketCodec.writeFrame(writeConn, HttpWebSocket.Payload.Text("hello"), mask = false).andThen {
+                val readConn = new MockConn(writeConn.written)
+                Abort.run[Closed](WebSocketCodec.readFrameWith(readConn.read, readConn)((frame, _) => frame)).map { result =>
+                    result match
+                        case Result.Success(HttpWebSocket.Payload.Text(text)) =>
+                            assert(text == "hello")
+                        case other =>
+                            fail(s"Expected Text(hello), got $other")
+                }
+            }
+        }
+
+        "binary masked" in run {
+            val data      = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
+            val writeConn = new MockConn(Array.empty[Byte])
+            WebSocketCodec.writeFrame(writeConn, HttpWebSocket.Payload.Binary(data), mask = true).andThen {
+                val readConn = new MockConn(writeConn.written)
+                Abort.run[Closed](WebSocketCodec.readFrameWith(readConn.read, readConn)((frame, _) => frame)).map { result =>
+                    result match
+                        case Result.Success(HttpWebSocket.Payload.Binary(received)) =>
+                            assert(received.toArrayUnsafe.sameElements(data.toArrayUnsafe))
+                        case other =>
+                            fail(s"Expected Binary, got $other")
+                }
+            }
+        }
+
+        "close frame aborts" in run {
+            val writeConn = new MockConn(Array.empty[Byte])
+            WebSocketCodec.writeClose(writeConn, 1000, "bye", mask = false).andThen {
+                val readConn = new MockConn(writeConn.written)
+                Abort.run[Closed](WebSocketCodec.readFrameWith(readConn.read, readConn)((frame, _) => frame)).map { result =>
+                    assert(result.isFailure)
+                }
+            }
+        }
+    }
+
+    // ── Upgrade handshake ───────────────────────────────────────
+
+    "acceptUpgrade" - {
+        "writes 101 with correct accept key" in run {
+            val conn    = new MockConn(Array.empty[Byte])
+            val headers = HttpHeaders.empty.add("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+            WebSocketCodec.acceptUpgrade(conn, headers, HttpWebSocket.Config()).andThen {
+                val response = conn.writtenString
+                assert(response.contains("101 Switching Protocols"))
+                assert(response.contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="))
+                assert(response.contains("Upgrade: websocket"))
+            }
+        }
+
+        "fails on missing key" in run {
+            val conn = new MockConn(Array.empty[Byte])
+            Abort.run[HttpException] {
+                WebSocketCodec.acceptUpgrade(conn, HttpHeaders.empty, HttpWebSocket.Config())
+            }.map { result =>
+                assert(result.isFailure)
+            }
+        }
+    }
+
+    "requestUpgrade" - {
+        "writes correct upgrade request" in run {
+            // Create a mock that returns a 101 response when read.
+            // We can't predict the exact accept key since requestUpgradeWith generates a random client key,
+            // so we test the write side only by examining what was written before the read fails.
+            val conn = new MockConn(Array.empty[Byte])
+            Abort.run[HttpException] {
+                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws", HttpHeaders.empty, HttpWebSocket.Config()) { _ => () }
+            }.map { _ =>
+                val written = conn.writtenString
+                assert(written.contains("GET /ws HTTP/1.1"))
+                assert(written.contains("Upgrade: websocket"))
+                assert(written.contains("Sec-WebSocket-Key:"))
+                assert(written.contains("Sec-WebSocket-Version: 13"))
+            }
+        }
+
+        "fails on non-101 response" in run {
+            val response = "HTTP/1.1 400 Bad Request\r\n\r\n"
+            // A conn that discards writes and serves a 400 response on read
+            val conn = new MockConn(response.getBytes(Utf8)):
+                override def write(data: Span[Byte])(using Frame): Unit < Async = Kyo.unit
+            Abort.run[HttpException] {
+                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws", HttpHeaders.empty, HttpWebSocket.Config()) { _ => () }
+            }.map { result =>
+                assert(result.isFailure)
+            }
+        }
+    }
+
+    // ── Ping/Pong handling ────────────────────────────────────
+
+    "ping auto-sends pong and returns next data frame" in run {
+        val textPayload = "after-ping".getBytes(Utf8)
+        val pingPayload = "pingdata".getBytes(Utf8)
+
+        // Ping frame: FIN=1, opcode=9, no mask
+        val pingFrame = Array[Byte](
+            (0x80 | 0x09).toByte, // FIN + Ping
+            pingPayload.length.toByte
+        ) ++ pingPayload
+
+        // Text frame: FIN=1, opcode=1, no mask
+        val textFrame = Array[Byte](
+            (0x80 | 0x01).toByte, // FIN + Text
+            textPayload.length.toByte
+        ) ++ textPayload
+
+        val conn = new MockConn(pingFrame ++ textFrame)
+        Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn)((frame, _) => frame)).map {
+            case Result.Success(HttpWebSocket.Payload.Text(text)) =>
+                assert(text == "after-ping")
+                val written = conn.written
+                assert(written.nonEmpty) // Pong frame was auto-sent
+            case other =>
+                fail(s"Expected Text after Ping, got $other")
+        }
+    }
+
+    "pong is ignored, returns next data frame" in run {
+        val textPayload = "afterpong".getBytes(Utf8)
+        val pongPayload = "pongdata".getBytes(Utf8)
+
+        val pongFrame = Array[Byte](
+            (0x80 | 0x0a).toByte, // FIN + Pong
+            pongPayload.length.toByte
+        ) ++ pongPayload
+
+        val textFrame = Array[Byte](
+            (0x80 | 0x01).toByte, // FIN + Text
+            textPayload.length.toByte
+        ) ++ textPayload
+
+        val conn = new MockConn(pongFrame ++ textFrame)
+        Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn)((frame, _) => frame)).map {
+            case Result.Success(HttpWebSocket.Payload.Text(text)) =>
+                assert(text == "afterpong")
+            case other =>
+                fail(s"Expected Text after Pong, got $other")
+        }
+    }
+
+    "unknown opcode causes Abort[Closed]" in run {
+        val unknownFrame = Array[Byte](
+            (0x80 | 0x0f).toByte, // FIN + opcode 15 (unknown)
+            0x00.toByte           // no payload
+        )
+        val conn = new MockConn(unknownFrame)
+        Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn)((frame, _) => frame)).map { result =>
+            assert(result.isFailure)
+        }
+    }
+
+end WebSocketCodecTest

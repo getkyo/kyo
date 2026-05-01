@@ -12,7 +12,7 @@ class XSRandomTest extends AnyFreeSpec with Matchers {
         val numSamples = 1000000
         val numBuckets = 10
 
-        val executor = Executors.newFixedThreadPool(numThreads)
+        val executor = kyo.scheduler.TestExecutors.cached
         val latch    = new CountDownLatch(numThreads)
 
         val buckets = Array.fill(numBuckets)(0)
@@ -34,7 +34,6 @@ class XSRandomTest extends AnyFreeSpec with Matchers {
         }
 
         latch.await()
-        executor.shutdown()
 
         val expectedCount = numSamples * numThreads / numBuckets
         val tolerance     = expectedCount * 0.01

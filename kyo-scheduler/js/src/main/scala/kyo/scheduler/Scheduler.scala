@@ -1,7 +1,7 @@
 package kyo.scheduler
 
-import kyo.scheduler.util.Flag
 import org.scalajs.macrotaskexecutor.MacrotaskExecutor
+import scala.concurrent.ExecutionContext
 
 object Scheduler {
     val get = new Scheduler
@@ -9,7 +9,7 @@ object Scheduler {
 
 class Scheduler {
 
-    private val timeSlice = Flag("timeSliceMs", 10)
+    private val timeSlice = timeSliceMs()
     private val clock     = new InternalClock()
 
     def schedule(t: Task): Unit =
@@ -19,6 +19,8 @@ class Scheduler {
                 schedule(t)
         }
 
+    def asExecutionContext: ExecutionContext = MacrotaskExecutor
+
     def flush(): Unit = {}
 
     def reject(): Boolean = false
@@ -26,5 +28,7 @@ class Scheduler {
     def reject(key: String): Boolean = false
 
     def reject(key: Int): Boolean = false
+
+    def notifyInterrupt(): Unit = {}
 
 }

@@ -157,7 +157,7 @@ final class Hub[A] private[kyo] (
         closed.map {
             case true => fail
             case false =>
-                Sync.Unsafe {
+                Sync.Unsafe.defer {
                     val child    = Channel.Unsafe.init[A](bufferSize, Access.SingleProducerMultiConsumer).safe
                     val listener = new Listener[A](this, child, filter)
                     discard(listeners.add(listener))
@@ -234,7 +234,7 @@ object Hub:
         initUnscopedWith[A](capacity)(identity)
 
     def initUnscopedWith[A](capacity: Int)[B, S](f: Hub[A] => B < S)(using Frame): B < (S & Sync) =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             val channel          = Channel.Unsafe.init[A](capacity, Access.MultiProducerSingleConsumer).safe
             val listeners        = new CopyOnWriteArraySet[Listener[A]]
             def currentListeners = Chunk.fromNoCopy(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]

@@ -29,7 +29,7 @@ final class CancellationTest extends Test:
             end if
         }
 
-    "after subscription is canceled request must be NOOPs" in runJVM {
+    "after subscription is canceled request must be NOOPs" in run {
         testStreamSubscription(clue = "onNext was called after the subscription was canceled") { sub =>
             sub.cancel()
             sub.request(1)
@@ -38,7 +38,7 @@ final class CancellationTest extends Test:
         }.map(_ => assert(true))
     }
 
-    "after subscription is canceled additional cancellations must be NOOPs" in runJVM {
+    "after subscription is canceled additional cancellations must be NOOPs" in run {
         testStreamSubscription(clue = "onComplete was called after the subscription was canceled") {
             sub =>
                 sub.cancel()

@@ -473,4 +473,32 @@ class InstantTest extends Test:
         }
     }
 
+    "Flag.Reader" - {
+        val reader = summon[Flag.Reader[Instant]]
+
+        "typeName" in {
+            assert(reader.typeName == "Instant")
+        }
+
+        "parses ISO-8601 format" in {
+            val result = reader("2024-01-15T10:30:00Z")
+            assert(result == Right(Instant.fromJava(java.time.Instant.parse("2024-01-15T10:30:00Z"))))
+        }
+
+        "parses epoch" in {
+            val result = reader("1970-01-01T00:00:00Z")
+            assert(result == Right(Instant.Epoch))
+        }
+
+        "invalid format" in {
+            assert(reader("not-an-instant").isLeft)
+        }
+
+        "parses ISO-8601 with timezone offset" in {
+            val result   = reader("2024-01-15T10:30:00+05:30")
+            val expected = Instant.fromJava(java.time.Instant.parse("2024-01-15T05:00:00Z"))
+            assert(result == Right(expected))
+        }
+    }
+
 end InstantTest

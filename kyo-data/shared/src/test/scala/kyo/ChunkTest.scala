@@ -707,6 +707,11 @@ class ChunkTest extends Test:
             val array2 = chunk.toArray
             assert(array1 ne array2)
         }
+
+        "handles primitive types properly" in {
+            val chunk = Chunk.from(Array(1, 2))
+            assert(chunk.toArray.toList == List(1, 2))
+        }
     }
 
     "copyTo" - {
@@ -1192,6 +1197,69 @@ class ChunkTest extends Test:
         "prints the elements of a Chunk.Append" in {
             val chunk = Chunk(1, 2, 3).append(4)
             assert(chunk.toString == "Chunk(1, 2, 3, 4)")
+        }
+    }
+
+    "Flag.Reader" - {
+        "Chunk[Int]" - {
+            val reader = summon[Flag.Reader[Chunk[Int]]]
+
+            "typeName" in {
+                assert(reader.typeName == "Chunk[Int]")
+            }
+
+            "parses comma-separated ints" in {
+                assert(reader("1,2,3") == Right(Chunk(1, 2, 3)))
+            }
+
+            "handles whitespace" in {
+                assert(reader(" 1 , 2 , 3 ") == Right(Chunk(1, 2, 3)))
+            }
+
+            "single element" in {
+                assert(reader("42") == Right(Chunk(42)))
+            }
+
+            "empty string" in {
+                assert(reader("") == Right(Chunk.empty[Int]))
+            }
+
+            "embedded empty element fails for Int" in {
+                assert(reader("1,,2").isLeft)
+            }
+
+            "leading comma fails for Int" in {
+                assert(reader(",1,2").isLeft)
+            }
+
+            "trailing comma is ignored by split (Java behavior)" in {
+                // Java's String.split drops trailing empty strings
+                assert(reader("1,2,") == Right(Chunk(1, 2)))
+            }
+        }
+
+        "Chunk[String]" - {
+            val reader = summon[Flag.Reader[Chunk[String]]]
+
+            "typeName" in {
+                assert(reader.typeName == "Chunk[String]")
+            }
+
+            "parses comma-separated strings" in {
+                assert(reader("a,b,c") == Right(Chunk("a", "b", "c")))
+            }
+
+            "trims whitespace from elements" in {
+                assert(reader(" a , b , c ") == Right(Chunk("a", "b", "c")))
+            }
+
+            "Chunk[Chunk[Int]] rejected at compile time" in {
+                typeCheckFailure("""summon[Flag.Reader[Chunk[Chunk[Int]]]]""")("Scalar")
+            }
+
+            "Chunk[Record[...]] rejected at compile time" in {
+                typeCheckFailure("""summon[Flag.Reader[Chunk[Record["x" ~ Int]]]]""")("Scalar")
+            }
         }
     }
 

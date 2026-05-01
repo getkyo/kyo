@@ -2,7 +2,7 @@ package kyo.bench.arena
 
 class LoggingBench extends ArenaBench.SyncAndFork(()):
 
-    val depth = 10000
+    val depth = 1000
 
     def kyoBench() =
         import kyo.*

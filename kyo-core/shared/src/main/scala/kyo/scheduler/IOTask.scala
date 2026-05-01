@@ -31,6 +31,16 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     final override def removeFinalizer(f: Maybe[Error[Any]] => Unit) =
         finalizers = finalizers.remove(f)
 
+    // Bridges fiber-level interruption to thread-level interruption. When the promise is
+    // successfully interrupted (CAS from Pending to Error), sets the needsInterrupt flag
+    // and wakes the BlockingMonitor for immediate scan. If the worker thread is blocked
+    // (flat CPU time), Thread.interrupt() is dispatched within ~100μs.
+    final override def preInterrupt(): Boolean =
+        requestInterrupt()
+        Scheduler.get.notifyInterrupt()
+        true
+    end preInterrupt
+
     private inline def erasedAbortTag = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
     private inline def locally[A](inline f: A): A = f
@@ -89,6 +99,8 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         val safepoint = Safepoint.get
         val next      = eval(startMillis, clock, deadline)(using safepoint)
         if !isPending() then
+            if !isNull(curr) && curr.evalNow.isEmpty then
+                ensureInterrupt()(using safepoint)
             if !finalizers.isEmpty then
                 finalizers.run(pollError())
                 finalizers = Finalizers.empty
@@ -104,6 +116,15 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
             Task.Done
         end if
     end run
+
+    // Handle race when interrupted before processing Async.Join and linking interrupts
+    private def ensureInterrupt()(using Safepoint): Unit =
+        discard {
+            ArrowEffect.handleFirst(Tag[Async.Join], curr.asInstanceOf[Any < Async.Join])(
+                [C] => (input, _) => this.interrupts(input),
+                _ => ()
+            )
+        }
 
     private inline def nullResult = null.asInstanceOf[A < Ctx & Async & Abort[E]]
 
