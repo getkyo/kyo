@@ -5,15 +5,15 @@ package kyo
   */
 private[kyo] trait ContainerRuntimeBase:
 
-    protected def socketExists(path: String): Boolean
-    protected def cliExists(command: String): Boolean
-    protected def getEnv(name: String): String | Null
-    protected def getHome: String
+    private[kyo] def socketExists(path: String): Boolean
+    private[kyo] def cliExists(command: String): Boolean
+    private[kyo] def getEnv(name: String): String | Null
+    private[kyo] def getHome: String
 
     /** Run `podman machine inspect --format json` and parse the resulting socket path(s). Returns Seq.empty on any failure (parse, spawn,
       * podman-not-installed, no machine configured).
       */
-    protected def queryPodmanMachineSockets: Seq[String]
+    private[kyo] def queryPodmanMachineSockets: Seq[String]
 
     lazy val hasPodman: Boolean =
         val xdg  = getEnv("XDG_RUNTIME_DIR")

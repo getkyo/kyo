@@ -86,4 +86,90 @@ class ShellBackendTest extends kyo.Test:
             succeed
         }
     }
+    // =========================================================================
+    // tar exit code primitive
+    // =========================================================================
+
+    "tar exit code primitive" - {
+        "tar with missing source path produces non-zero exit code" in run {
+            // Reproduce the primitive: spawn `tar -cf - /nonexistent`, drain stdout, observe exitValue.
+            // Production code at HttpContainerBackend.scala (copyTo and imageBuildFromPath)
+            // calls proc.stdout.run WITHOUT proc.waitFor — this test pins the primitive that must be checked.
+            Scope.run {
+                Command("tar", "-cf", "-", "/tmp/kyo-no-such-dir-" + java.util.UUID.randomUUID).spawn.map { proc =>
+                    for
+                        _    <- proc.stdout.run
+                        exit <- proc.waitFor
+                    yield assert(
+                        exit != ExitCode.Success,
+                        s"tar with missing path must exit non-zero so production code can detect; got $exit"
+                    )
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // parseLogTimestamp boundary cases
+    // =========================================================================
+
+    "parseLogTimestamp" - {
+        import kyo.internal.ShellBackend.parseLogLines
+
+        "Docker zulu format" in {
+            val raw   = "2024-04-29T12:00:00.000Z hello world"
+            val lines = parseLogLines(raw, kyo.Container.LogEntry.Source.Stdout, hasTimestamps = true)
+            assert(lines.head.content == "hello world")
+            assert(lines.head.timestamp.nonEmpty)
+        }
+
+        "Podman offset format" in {
+            val raw   = "2024-04-29T05:00:00-07:00 line content"
+            val lines = parseLogLines(raw, kyo.Container.LogEntry.Source.Stdout, hasTimestamps = true)
+            assert(lines.head.content == "line content")
+            assert(lines.head.timestamp.nonEmpty)
+        }
+
+        "first space < index 20 falls through to no-timestamp form" in {
+            val raw   = "short bla"
+            val lines = parseLogLines(raw, kyo.Container.LogEntry.Source.Stdout, hasTimestamps = true)
+            assert(lines.size == 1)
+        }
+
+        "no-space line returns LogEntry with raw content" in {
+            val raw   = "noseparators"
+            val lines = parseLogLines(raw, kyo.Container.LogEntry.Source.Stdout, hasTimestamps = true)
+            assert(lines.head.content == "noseparators")
+            assert(lines.head.timestamp == Absent)
+        }
+    }
+
+    // =========================================================================
+    // parseTopOutput
+    // =========================================================================
+
+    "top output parsing" - {
+
+        "empty output yields empty TopResult (titles, processes both empty)" in {
+            import kyo.internal.ShellBackend.parseTopOutput
+            val r = parseTopOutput("")
+            assert(r.titles.isEmpty, s"empty output produced titles=${r.titles}; expected empty")
+            assert(r.processes.isEmpty)
+        }
+
+        "blank-only output yields empty TopResult" in {
+            import kyo.internal.ShellBackend.parseTopOutput
+            val r = parseTopOutput("   \n  \n")
+            assert(r.titles.isEmpty)
+            assert(r.processes.isEmpty)
+        }
+
+        "single header line yields titles only, no processes" in {
+            import kyo.internal.ShellBackend.parseTopOutput
+            val r = parseTopOutput("UID PID PPID")
+            assert(r.titles.length == 3)
+            assert(r.processes.isEmpty)
+        }
+    }
+
 end ShellBackendTest

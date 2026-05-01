@@ -6,10 +6,10 @@ class ContainerItTest extends Test:
         .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")
         .stopTimeout(0.seconds)
 
-    private var nameCounter = 0L
+    private val nameCounter = new java.util.concurrent.atomic.AtomicLong(0L)
 
     def uniqueName(prefix: String) =
-        nameCounter += 1; s"$prefix-$nameCounter"
+        s"$prefix-${nameCounter.incrementAndGet()}"
 
     // =========================================================================
     // Config Builder
@@ -238,18 +238,14 @@ class ContainerItTest extends Test:
 
     "Backend" - {
         "auto-detect creates a working backend" - runBackends {
-            Container.init(alpine).map { c =>
-                c.state.map(s => assert(s == Container.State.Running))
-            }
+            assertRuns(alpine)
         }
 
         "withBackendConfig(_.UnixSocket) uses http backend" - runRuntimes { runtime =>
             ContainerRuntime.findSocket(runtime) match
                 case Some(socketPath) =>
                     Container.withBackendConfig(_.UnixSocket(Path(socketPath))) {
-                        Container.init(alpine).map { c =>
-                            c.state.map(s => assert(s == Container.State.Running))
-                        }
+                        assertRuns(alpine)
                     }
                 case None =>
                     Container.init(alpine).map { c =>
@@ -260,9 +256,7 @@ class ContainerItTest extends Test:
 
         "withBackendConfig(_.Shell) uses shell backend" - runRuntimes { runtime =>
             Container.withBackendConfig(_.Shell(runtime)) {
-                Container.init(alpine).map { c =>
-                    c.state.map(s => assert(s == Container.State.Running))
-                }
+                assertRuns(alpine)
             }
         }
 
@@ -283,9 +277,7 @@ class ContainerItTest extends Test:
         "auto-detect selects a working backend via BackendConfig" - runBackends {
             // AutoDetect resolves the same way as the implicit detection — verify it works
             // Uses run (which provides both HTTP and Shell backends) to exercise each
-            Container.init(alpine).map { c =>
-                c.state.map(s => assert(s == Container.State.Running))
-            }
+            assertRuns(alpine)
         }
 
         "auto-detect passes meter to backend" - runRuntimes { runtime =>
@@ -307,9 +299,7 @@ class ContainerItTest extends Test:
         "Shell with explicit command path" - runRuntimes { runtime =>
             val cmd = if runtime == "docker" then "docker" else "podman"
             Container.withBackendConfig(_.Shell(cmd)) {
-                Container.init(alpine).map { c =>
-                    c.state.map(s => assert(s == Container.State.Running))
-                }
+                assertRuns(alpine)
             }
         }
 
@@ -330,9 +320,7 @@ class ContainerItTest extends Test:
             else
                 val path = ContainerRuntime.findSocket(runtime).get
                 Container.withBackendConfig(_.UnixSocket(Path(path))) {
-                    Container.init(alpine).map { c =>
-                        c.state.map(s => assert(s == Container.State.Running))
-                    }
+                    assertRuns(alpine)
                 }
         }
 
@@ -377,9 +365,7 @@ class ContainerItTest extends Test:
                 if socketOpt.isEmpty then succeed
                 else
                     Container.withBackendConfig(_.UnixSocket(Path(socketOpt.get))) {
-                        Container.init(alpine).map { c =>
-                            c.state.map(s => assert(s == Container.State.Running))
-                        }
+                        assertRuns(alpine)
                     }
                 end if
             }
@@ -430,9 +416,7 @@ class ContainerItTest extends Test:
 
     "init" - {
         "creates, starts, and waits for health check" - runBackends {
-            Container.init(alpine).map { c =>
-                c.state.map(s => assert(s == Container.State.Running))
-            }
+            assertRuns(alpine)
         }
 
         "returns container with valid non-empty id" - runBackends {
@@ -581,7 +565,10 @@ class ContainerItTest extends Test:
             )
             Abort.run[ContainerException] {
                 Container.init(alpine.healthCheck(failingCheck))
-            }.map(result => assert(result.isFailure))
+            }.map {
+                case Result.Failure(_: ContainerException) => succeed
+                case other                                 => fail(s"expected typed Failure, got: $other")
+            }
         }
     }
 
@@ -599,7 +586,9 @@ class ContainerItTest extends Test:
                 r  <- Abort.run[ContainerException](Container.attach(id))
             yield
                 assert(result == 42)
-                assert(r.isFailure) // container should be cleaned up
+                r match
+                    case Result.Failure(_: ContainerException) => succeed // container should be cleaned up
+                    case other                                 => fail(s"expected typed Failure, got: $other")
             end for
         }
 
@@ -608,7 +597,7 @@ class ContainerItTest extends Test:
                 idRef <- AtomicRef.init[Container.Id](Container.Id(""))
                 _ <- Abort.run[ContainerException] {
                     Scope.run {
-                        Container.initWith(alpine.autoRemove(false)) { c =>
+                        Container.initWith(alpinePersistent(alpine)) { c =>
                             idRef.set(c.id).andThen {
                                 Abort.fail(ContainerOperationException("test failure", "intentional"))
                             }
@@ -617,7 +606,9 @@ class ContainerItTest extends Test:
                 }
                 id <- idRef.get
                 r  <- Abort.run[ContainerException](Container.attach(id))
-            yield assert(r.isFailure) // container should be cleaned up
+            yield r match
+                case Result.Failure(_: ContainerException) => succeed // container should be cleaned up
+                case other                                 => fail(s"expected typed Failure, got: $other")
 
         }
 
@@ -649,11 +640,27 @@ class ContainerItTest extends Test:
                     case other                                        => fail(s"Expected NotFound, got $other")
             }
         }
+
+        // attachById preserves env vars set in Container.Config
+        "attachById preserves env vars from container config" - runBackends {
+            val config = Container.Config(ContainerImage("alpine", "latest"))
+                .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")
+                .env("MY_KEY", "my-value")
+                .stopTimeout(0.seconds)
+            Container.init(config).map { c =>
+                Container.attach(c.id).map { attached =>
+                    assert(
+                        attached.config.env.toMap.get("MY_KEY") == Some("my-value"),
+                        s"expected MY_KEY=my-value in attached config env, got: ${attached.config.env.toMap}"
+                    )
+                }
+            }
+        }
     }
 
     "stop" - {
         "stops a running container" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _ <- c.stop
                     s <- c.state
@@ -662,7 +669,7 @@ class ContainerItTest extends Test:
         }
 
         "container state is Stopped after stop with short timeout" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _ <- c.stop(timeout = 1.seconds)
                     s <- c.state
@@ -673,7 +680,7 @@ class ContainerItTest extends Test:
 
     "kill" - {
         "kills a running container with SIGKILL" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _ <- c.kill(Container.Signal.SIGKILL)
                     _ <- c.waitForExit
@@ -695,6 +702,26 @@ class ContainerItTest extends Test:
                 yield assert(s == Container.State.Stopped)
             }
         }
+
+        // kill+waitForExit on autoRemove container preserves real exit code
+        // — stop() must start /wait fiber before sending stop signal so the auto-remove cleanup
+        // race does not clobber the exit code observed by the caller.
+        "kill+waitForExit on autoRemove container preserves real exit code" - runBackends {
+            val cfg = Container.Config("alpine")
+                .command("sh", "-c", "trap 'exit 137' TERM; sleep infinity")
+                .autoRemove(true)
+            Container.init(cfg).map { c =>
+                for
+                    _ <- c.kill(Container.Signal.SIGTERM)
+                    // Capture exit code BEFORE auto-remove cleanup races to clobber it.
+                    exit <- c.waitForExit
+                yield exit match
+                    case ExitCode.Failure(137) => succeed
+                    case ExitCode.Signaled(9)  => succeed // ExitCode.apply(137) maps to Signaled(9)
+                    case other =>
+                        fail(s"expected exit 137 (Failure(137) or Signaled(9)), got $other")
+            }
+        }
     }
 
     "restart" - {
@@ -712,7 +739,7 @@ class ContainerItTest extends Test:
         }
 
         "restarts a stopped container" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _  <- c.stop
                     s1 <- c.state
@@ -754,7 +781,7 @@ class ContainerItTest extends Test:
 
     "remove" - {
         "removes a stopped container" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _ <- c.stop
                     _ <- c.remove
@@ -766,7 +793,7 @@ class ContainerItTest extends Test:
         }
 
         "force removes a running container" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     s <- c.state
                     _ = assert(s == Container.State.Running)
@@ -779,9 +806,10 @@ class ContainerItTest extends Test:
         }
 
         "fails without force on running container" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
-                Abort.run[ContainerException](c.remove).map { r =>
-                    assert(r.isFailure)
+            Container.init(alpinePersistent(alpine)).map { c =>
+                Abort.run[ContainerException](c.remove).map {
+                    case Result.Failure(_: ContainerException) => succeed
+                    case other                                 => fail(s"expected typed Failure, got: $other")
                 }
             }
         }
@@ -814,7 +842,7 @@ class ContainerItTest extends Test:
         }
 
         "returns Signaled for signal-killed container" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _    <- c.kill(Container.Signal.SIGKILL)
                     code <- c.waitForExit
@@ -933,6 +961,133 @@ class ContainerItTest extends Test:
                 yield assert(!h2)
             }
         }
+
+        // retry-exhaustion error message structure
+        "retry-exhausted health check accumulates errors and reports attempts" - runBackends {
+            val cfg = alpine.healthCheck(Container.HealthCheck.exec(
+                command = Command("sh", "-c", "echo failure-msg-$RANDOM; exit 1"),
+                expected = Absent,
+                retrySchedule = Schedule.fixed(50.millis).take(3)
+            ))
+            Abort.run[ContainerException](Container.init(cfg)).map {
+                case Result.Failure(e: ContainerHealthCheckException) =>
+                    assert(e.attempts >= 3, s"expected attempts >= 3, got ${e.attempts}")
+                    assert(
+                        e.reason.contains("retry schedule exhausted"),
+                        s"expected exhaustion message, got: ${e.reason}"
+                    )
+                    val parts = e.lastError.split("\\] \\[").toSeq
+                    // Bound: cannot exceed the recent-errors capacity.
+                    assert(
+                        parts.size <= kyo.Container.healthCheckRecentErrorsCapacity,
+                        s"expected ≤${kyo.Container.healthCheckRecentErrorsCapacity} recent entries, got ${parts.size}"
+                    )
+                    // Each entry must carry the actual failure-msg payload (not just bracket noise).
+                    assert(
+                        parts.exists(_.contains("failure-msg-")),
+                        s"expected entries to include the failure-msg payload, got: $parts"
+                    )
+                    succeed
+                case Result.Panic(t) => fail(s"panic: $t")
+                case other           => fail(s"expected ContainerHealthCheckException, got $other")
+            }
+        }
+
+        // HealthCheck.httpGet must verify the HTTP status code, not merely that the request returns.
+        "HealthCheck.httpGet on nginx — wrong path leads to retry exhaustion" - runBackends {
+            val cfg = Container.Config(ContainerImage("nginx:alpine"))
+                .port(80, 0)
+                .healthCheck(Container.HealthCheck.httpGet(
+                    port = 80,
+                    path = "/no-such-path",
+                    expectedStatus = 200,
+                    retrySchedule = Schedule.fixed(200.millis).take(3)
+                ))
+            Abort.run[ContainerException](Container.init(cfg)).map {
+                case Result.Failure(_: ContainerHealthCheckException) => succeed
+                case Result.Failure(other)                            => fail(s"unexpected failure type: $other")
+                case Result.Panic(t)                                  => fail(s"panic: $t")
+                case Result.Success(_) =>
+                    fail("httpGet to /no-such-path should fail (404 != 200): expectedStatus was ignored")
+            }
+        }
+
+        "HealthCheck.exec recovers after transient failures" - runBackends {
+            // Container creates the sentinel file after 500ms; healthcheck fails before that, succeeds after.
+            val cfg = Container.Config("alpine")
+                .command("sh", "-c", "trap 'exit 0' TERM; sleep 0.5; touch /tmp/up; sleep infinity")
+                .healthCheck(Container.HealthCheck.exec(
+                    command = Command("test", "-f", "/tmp/up"),
+                    expected = Absent,
+                    retrySchedule = Schedule.fixed(300.millis).take(10)
+                ))
+            // If init returns without abort, the retry loop hit a green check — that is the property under test.
+            Container.init(cfg).map(_ => succeed)
+        }
+
+        // short error reason (getMessage < 500 chars) survives truncation unchanged
+        "HealthCheck error message ≤500 chars is preserved in lastError without truncation" - runBackends {
+            val shortReason = "check-failed-short"
+            val hc = Container.HealthCheck.init(Schedule.fixed(100.millis).take(2)) { c =>
+                Abort.fail(ContainerHealthCheckException(c.id, shortReason, 1))
+            }
+            val config = Container.Config(ContainerImage("alpine", "latest"))
+                .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")
+                .stopTimeout(0.seconds)
+                .healthCheck(hc)
+            Abort.run[ContainerException](Container.init(config)).map {
+                case Result.Failure(e: ContainerHealthCheckException) =>
+                    assert(e.lastError.nonEmpty, "lastError must be non-empty")
+                    // A short reason produces a getMessage well under 500 chars — entry length < 502
+                    assert(
+                        e.lastError.length < 502,
+                        s"expected lastError.length < 502 for short reason, got: ${e.lastError.length}"
+                    )
+                    assert(
+                        e.lastError.contains(shortReason),
+                        s"expected lastError to contain '$shortReason', got: ${e.lastError}"
+                    )
+                    succeed
+                case Result.Panic(t) => fail(s"panic: $t")
+                case other           => fail(s"expected ContainerHealthCheckException, got $other")
+            }
+        }
+
+        // long error reason (getMessage > 500 chars) gets truncated to at most 502 chars per entry
+        "HealthCheck error message >500 chars is truncated to healthCheckErrorMessageMaxLength in lastError" - runBackends {
+            // reason of "x"*450 → getMessage is ~"Health check failed for <64-char-id> after 1 attempt(s): " + "x"*450 ≈ 514 chars > 500
+            val longReason = "x" * 450
+            val hc = Container.HealthCheck.init(Schedule.fixed(100.millis).take(2)) { c =>
+                Abort.fail(ContainerHealthCheckException(c.id, longReason, 1))
+            }
+            val config = Container.Config(ContainerImage("alpine", "latest"))
+                .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")
+                .stopTimeout(0.seconds)
+                .healthCheck(hc)
+            Abort.run[ContainerException](Container.init(config)).map {
+                case Result.Failure(e: ContainerHealthCheckException) =>
+                    assert(e.lastError.nonEmpty, "lastError must be non-empty")
+                    // Each entry is "[" + getMessage.take(500) + "]" = at most 502 chars
+                    // With up to healthCheckRecentErrorsCapacity entries joined by " ", bound = 502 * cap + sep
+                    val maxEntryLen = 502
+                    val cap         = kyo.Container.healthCheckRecentErrorsCapacity
+                    val maxTotal    = maxEntryLen * cap + (cap - 1) // separating spaces
+                    assert(
+                        e.lastError.length <= maxTotal,
+                        s"expected lastError.length <= $maxTotal, got: ${e.lastError.length}"
+                    )
+                    // The most recent entry must be exactly truncated to 500 chars content (502 with brackets)
+                    val entries   = e.lastError.split("\\] \\[").toSeq
+                    val lastEntry = entries.last.stripPrefix("[").stripSuffix("]")
+                    assert(
+                        lastEntry.length <= 500,
+                        s"expected per-entry content <= 500 chars, got: ${lastEntry.length}"
+                    )
+                    succeed
+                case Result.Panic(t) => fail(s"panic: $t")
+                case other           => fail(s"expected ContainerHealthCheckException, got $other")
+            }
+        }
     }
 
     // =========================================================================
@@ -990,8 +1145,20 @@ class ContainerItTest extends Test:
             }
         }
 
+        "running container exitCode is Absent" - runBackends {
+            Container.init(alpine).map { c =>
+                c.inspect.map { info =>
+                    assert(info.state == Container.State.Running)
+                    assert(
+                        info.exitCode == Absent,
+                        s"running container should have exitCode=Absent, got ${info.exitCode}"
+                    )
+                }
+            }
+        }
+
         "fails with NotFound for removed container" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _ <- c.stop
                     _ <- c.remove
@@ -1048,7 +1215,7 @@ class ContainerItTest extends Test:
         }
 
         "returns Stopped for stopped container" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _ <- c.stop
                     s <- c.state
@@ -1499,7 +1666,10 @@ class ContainerItTest extends Test:
             Container.init(alpine).map { c =>
                 Abort.run[ContainerException] {
                     c.copyFrom(Path("/nonexistent/path/xyz"), Path("/tmp/dest"))
-                }.map(r => assert(r.isFailure))
+                }.map {
+                    case Result.Failure(_: ContainerException) => succeed
+                    case other                                 => fail(s"expected typed Failure, got: $other")
+                }
             }
         }
     }
@@ -1532,7 +1702,10 @@ class ContainerItTest extends Test:
             Container.init(alpine).map { c =>
                 Abort.run[ContainerException] {
                     c.stat(Path("/nonexistent/path/xyz"))
-                }.map(r => assert(r.isFailure))
+                }.map {
+                    case Result.Failure(_: ContainerException) => succeed
+                    case other                                 => fail(s"expected typed Failure, got: $other")
+                }
             }
         }
     }
@@ -1707,7 +1880,7 @@ class ContainerItTest extends Test:
         }
 
         "all=true includes stopped containers" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _ <- c.stop
                     s <- Container.list(all = true)
@@ -1773,7 +1946,7 @@ class ContainerItTest extends Test:
     "prune" - {
         "removes stopped containers and returns their ids" - runBackends {
             val labelVal = uniqueName("kyo-prune")
-            Container.init(alpine.autoRemove(false).label("kyo-prune", labelVal)).map { c =>
+            Container.init(alpinePersistent(alpine).label("kyo-prune", labelVal)).map { c =>
                 val cid = c.id
                 for
                     _ <- c.stop
@@ -1787,7 +1960,7 @@ class ContainerItTest extends Test:
 
         "returns only valid container IDs — no headers or summary lines" - runBackends {
             val labelVal = uniqueName("kyo-prune-ids")
-            Container.init(alpine.autoRemove(false).label("kyo-prune-ids", labelVal)).map { c =>
+            Container.init(alpinePersistent(alpine).label("kyo-prune-ids", labelVal)).map { c =>
                 for
                     _ <- c.stop
                     r <- Container.prune(filters = Dict("label" -> Chunk(s"kyo-prune-ids=$labelVal")))
@@ -1887,6 +2060,33 @@ class ContainerItTest extends Test:
                     fail(s"panic: $t")
             end for
         }
+
+        "pull with wrong RegistryAuth produces non-Missing typed error" - runBackends {
+            val auth = ContainerImage.RegistryAuth("user", "definitely-wrong-pwd", "ghcr.io")
+            val img  = ContainerImage("ghcr.io/kyo-test/private-99999:v1")
+            Abort.run[ContainerException](ContainerImage.pull(img, auth = Present(auth))).map {
+                case Result.Failure(e) =>
+                    val msg = Option(e.getMessage).getOrElse("").toLowerCase
+                    val isNetworkError = msg.contains("ssl") || msg.contains("tls") ||
+                        msg.contains("network") || msg.contains("timeout") || msg.contains("connect")
+                    if isNetworkError then
+                        info(s"registry unreachable — skipping auth assertion: $e"); succeed
+                    else
+                        // With auth supplied the backend must NOT silently classify as ImageMissing
+                        // (that is the auth.isEmpty 404 branch). It must surface an auth/operation error.
+                        assert(
+                            !e.isInstanceOf[ContainerImageMissingException],
+                            s"expected non-Missing classification when auth is supplied, got: $e"
+                        )
+                        assert(
+                            e.isInstanceOf[ContainerAuthException] ||
+                                (e.isInstanceOf[ContainerOperationException] && msg.contains("auth")),
+                            s"expected ContainerAuthException or ContainerOperationException(auth), got: $e"
+                        )
+                    end if
+                case other => fail(s"expected failure, got $other")
+            }
+        }
     }
 
     "ContainerImage.pullWithProgress" - {
@@ -1943,7 +2143,10 @@ class ContainerItTest extends Test:
         "fails for nonexistent image" - runBackends {
             Abort.run[ContainerException] {
                 ContainerImage.inspect(ContainerImage("nonexistent-image-xyz", "latest"))
-            }.map(r => assert(r.isFailure))
+            }.map {
+                case Result.Failure(_: ContainerImageMissingException) => succeed
+                case other                                             => fail(s"expected ContainerImageMissingException, got: $other")
+            }
         }
     }
 
@@ -1958,7 +2161,9 @@ class ContainerItTest extends Test:
                 check <- Abort.run[ContainerException](ContainerImage.inspect(ContainerImage(tagName, "v1")))
             yield
                 assert(r.nonEmpty)
-                assert(check.isFailure)
+                check match
+                    case Result.Failure(_: ContainerImageMissingException) => succeed
+                    case other                                             => fail(s"expected ContainerImageMissingException, got: $other")
             end for
         }
     }
@@ -1974,6 +2179,64 @@ class ContainerItTest extends Test:
                 _ <- ContainerImage.remove(ContainerImage(tagName, "v1"))
             yield assert(i.repoTags.exists(_.reference.contains(tagName)))
             end for
+        }
+
+        // tag overwrite: re-tagging with same repo:tag points to the updated source image
+        "tag overwrite — second tag replaces first tag reference" - runBackends {
+            val repoName = uniqueName("kyo-tag-overwrite")
+            val alpine   = ContainerImage("alpine", "latest")
+            val busybox  = ContainerImage("busybox", "latest")
+            for
+                _ <- ContainerImage.ensure(alpine)
+                _ <- ContainerImage.ensure(busybox)
+                // Tag alpine as repoName:v1 — first assignment
+                _  <- ContainerImage.tag(alpine, repoName, "v1")
+                i1 <- ContainerImage.inspect(ContainerImage(repoName, "v1"))
+                // Overwrite: re-tag busybox with same repoName:v1
+                _  <- ContainerImage.tag(busybox, repoName, "v1")
+                i2 <- ContainerImage.inspect(ContainerImage(repoName, "v1"))
+                // Cleanup
+                _ <- ContainerImage.remove(ContainerImage(repoName, "v1"), force = true)
+            yield
+                // Both inspects should report the tag as present
+                assert(i1.repoTags.exists(_.reference.contains(repoName)))
+                assert(i2.repoTags.exists(_.reference.contains(repoName)))
+                // After overwrite the image id changes (busybox != alpine)
+                assert(i1.id != i2.id, s"expected image id to change after tag overwrite, but both are ${i1.id}")
+            end for
+        }
+    }
+
+    "ContainerImage.push" - {
+        "push without auth to non-existent registry fails with typed error" - runBackends {
+            if java.lang.System.getenv("KYO_POD_REGISTRY_TEST") != "1" then
+                info("set KYO_POD_REGISTRY_TEST=1 to exercise registry interactions"); succeed
+            else
+                val img = ContainerImage("ghcr.io/kyo-test/nope-99999:v1")
+                Abort.run[ContainerException](ContainerImage.push(img)).map {
+                    case Result.Failure(_: ContainerAuthException)         => succeed
+                    case Result.Failure(_: ContainerImageMissingException) => succeed
+                    case Result.Failure(_: ContainerOperationException)    => succeed
+                    case other                                             => fail(s"expected typed failure, got $other")
+                }
+            end if
+        }
+
+        "push with explicit RegistryAuth threads X-Registry-Auth header" - runBackends {
+            if java.lang.System.getenv("KYO_POD_REGISTRY_TEST") != "1" then
+                info("set KYO_POD_REGISTRY_TEST=1 to exercise registry interactions"); succeed
+            else
+                val auth = ContainerImage.RegistryAuth("user", "wrongpass", "ghcr.io")
+                val img  = ContainerImage("ghcr.io/kyo-test/nope-99999:v1")
+                Abort.run[ContainerException](ContainerImage.push(img, Present(auth))).map { r =>
+                    // Assert specifically: with bad creds the response must surface as Auth/Operation,
+                    // NOT generic backend-unavailable (which would mean the request never reached the registry).
+                    r match
+                        case Result.Failure(_: ContainerAuthException)      => succeed
+                        case Result.Failure(_: ContainerOperationException) => succeed
+                        case other => fail(s"expected Auth/Operation when creds reach registry, got $other")
+                }
+            end if
         }
     }
 
@@ -2091,6 +2354,25 @@ class ContainerItTest extends Test:
                 case Result.Panic(e)                       => fail(s"expected typed ContainerException, got panic: $e")
             end for
         }
+
+        "buildFromPath with non-existent --target stage fails with ContainerBuildFailedException" - runBackends {
+            val dir = Path("/tmp/" + uniqueName("kyo-build-fail"))
+            val tag = uniqueName("kyo-built-fail") + ":latest"
+            for
+                _ <- dir.mkDir
+                _ <- (dir / "Dockerfile").write("FROM alpine:latest as base\n")
+                r <- Abort.run[ContainerException](
+                    Scope.run {
+                        ContainerImage.buildFromPath(dir, tags = Chunk(tag), target = Present("nonexistent-stage")).discard
+                    }
+                )
+                _ <- dir.removeAll
+            yield r match
+                case Result.Failure(_: ContainerBuildFailedException) => succeed
+                case Result.Failure(_: ContainerOperationException)   => succeed
+                case other => fail(s"expected ContainerBuildFailedException or ContainerOperationException, got $other")
+            end for
+        }
     }
 
     "ContainerImage.search" - {
@@ -2144,6 +2426,34 @@ class ContainerItTest extends Test:
                 yield
                     assert(id.nonEmpty)
                     assert(i.repoTags.exists(_.reference.contains(imgName)))
+            }
+        }
+
+        // commit with author and comment metadata persisted in image history
+        "commit with author and comment metadata is reflected in repoTags and history" - runBackends {
+            val imgName = uniqueName("kyo-commit-meta")
+            Container.init(alpine).map { c =>
+                for
+                    _ <- c.exec("touch", "/meta-marker")
+                    id <- ContainerImage.commit(
+                        c.id,
+                        repo = imgName,
+                        tag = "v1",
+                        comment = "add meta-marker",
+                        author = "kyo-test"
+                    )
+                    i <- ContainerImage.inspect(ContainerImage(imgName, "v1"))
+                    h <- ContainerImage.history(ContainerImage(imgName, "v1"))
+                    _ <- ContainerImage.remove(ContainerImage(imgName, "v1"), force = true)
+                yield
+                    assert(id.nonEmpty, "committed image id must be non-empty")
+                    assert(i.repoTags.exists(_.reference.contains(imgName)), s"expected imgName in repoTags, got: ${i.repoTags}")
+                    // comment persistence: Docker /commit stores comment in history entry
+                    // Concern B: Podman shell backend may not persist comment — assert strictly first
+                    assert(
+                        h.headOption.exists(e => e.comment.contains("add meta-marker")),
+                        s"expected history head to contain 'add meta-marker', got: ${h.headOption}"
+                    )
             }
         }
     }
@@ -2202,6 +2512,31 @@ class ContainerItTest extends Test:
                     info <- Container.Network.inspect(id)
                 yield assert(info.labels("env") == "test")
                 end for
+            }
+        }
+
+        // empty network name: daemon should reject or assign a non-empty server-assigned Id
+        "Network.init with empty config.name surfaces a clear error or returns a usable Id" - runBackends {
+            Scope.run {
+                val r = Abort.run[ContainerException](
+                    Container.Network.init(Container.Network.Config.default.copy(name = ""))
+                )
+                r.map {
+                    case Result.Failure(_: ContainerException) => succeed // preferred: rejected at API layer
+                    case Result.Success(id)                    =>
+                        // If accepted, the returned Id MUST be non-empty (server-assigned)
+                        // and must not be a sentinel placeholder.
+                        assert(
+                            id.value.nonEmpty,
+                            "empty name returned an empty Id, which is unusable"
+                        )
+                        assert(
+                            !id.value.contains("undefined") && !id.value.contains("default"),
+                            s"id contains a sentinel string: ${id.value}"
+                        )
+                        succeed
+                    case Result.Panic(t) => fail(s"panic: $t")
+                }
             }
         }
     }
@@ -2668,7 +3003,7 @@ class ContainerItTest extends Test:
                 idRef <- AtomicRef.init[Container.Id](Container.Id(""))
                 _ <- Abort.run[ContainerException] {
                     Scope.run {
-                        Container.init(alpine.autoRemove(false)).map { c =>
+                        Container.init(alpinePersistent(alpine)).map { c =>
                             idRef.set(c.id).andThen {
                                 Abort.fail(ContainerOperationException("test", "intentional"))
                             }
@@ -2687,7 +3022,7 @@ class ContainerItTest extends Test:
         }
 
         "operations on removed container fail with NotFound" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _  <- c.stop
                     _  <- c.remove
@@ -2695,9 +3030,15 @@ class ContainerItTest extends Test:
                     r2 <- Abort.run[ContainerException](c.inspect)
                     r3 <- Abort.run[ContainerException](c.state)
                 yield
-                    assert(r1.isFailure)
-                    assert(r2.isFailure)
-                    assert(r3.isFailure)
+                    r1 match
+                        case Result.Failure(_: ContainerMissingException) => succeed
+                        case other => fail(s"expected ContainerMissingException for exec, got: $other")
+                    r2 match
+                        case Result.Failure(_: ContainerMissingException) => succeed
+                        case other => fail(s"expected ContainerMissingException for inspect, got: $other")
+                    r3 match
+                        case Result.Failure(_: ContainerMissingException) => succeed
+                        case other => fail(s"expected ContainerMissingException for state, got: $other")
             }
         }
 
@@ -2773,7 +3114,7 @@ class ContainerItTest extends Test:
         }
 
         "stop on already-stopped container is idempotent" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _  <- c.stop
                     s1 <- c.state
@@ -2799,7 +3140,7 @@ class ContainerItTest extends Test:
 
         // moby/moby#35933 — concurrent stop+rm can leave stuck state
         "concurrent stop and remove does not leave zombie" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 val cid = c.id
                 for
                     f1 <- Fiber.init(Abort.run[ContainerException](c.stop))
@@ -2807,13 +3148,15 @@ class ContainerItTest extends Test:
                     _  <- f1.get
                     _  <- f2.get
                     r  <- Abort.run[ContainerException](Container.attach(cid))
-                yield assert(r.isFailure) // container should be fully gone
+                yield r match
+                    case Result.Failure(_: ContainerMissingException) => succeed // container should be fully gone
+                    case other                                        => fail(s"expected ContainerMissingException, got: $other")
                 end for
             }
         }
 
         "kill on paused container" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _  <- c.pause
                     s1 <- c.state
@@ -2841,22 +3184,59 @@ class ContainerItTest extends Test:
                         }
                     }
                     r <- Abort.run[ContainerException](c.remove)
-                yield assert(r.isFailure)
+                yield r match
+                    case Result.Failure(_: ContainerMissingException) => succeed
+                    case other                                        => fail(s"expected ContainerMissingException, got: $other")
                 end for
+            }
+        }
+
+        "concurrent mappedPort while stop is in flight returns either bound port or typed error" - runBackends {
+            val cfg = Container.Config(ContainerImage("nginx:alpine"))
+                .port(80, 0)
+                .healthCheck(Container.HealthCheck.port(80))
+            // Both arms carry Abort[ContainerException]; Async.race returns the winner's value.
+            // Wrap in Abort.run so the result is a typed Result regardless of which arm wins.
+            def trial: (Boolean, Boolean) < (Async & Abort[ContainerException] & Scope) =
+                Container.init(cfg.autoRemove(false)).map { c =>
+                    Abort.run[ContainerException](
+                        Async.race(
+                            c.stop(2.seconds).map(_ => false), // stop wins → false = "not a mappedPort success"
+                            c.mappedPort(80).map(_ => true)    // mappedPort wins → true = "bound port observed"
+                        )
+                    ).map { outcome =>
+                        outcome match
+                            case Result.Success(portObserved)                   => (portObserved, !portObserved)
+                            case Result.Failure(_: ContainerMissingException)   => (false, true)
+                            case Result.Failure(_: ContainerOperationException) => (false, true)
+                            case Result.Failure(_: ContainerConflictException)  => (false, true)
+                            case _                                              => (false, false) // panic / unexpected
+                    }
+                }
+            Kyo.foreach(0 until 10)(_ => trial).map { results =>
+                val anySuccess = results.exists(_._1)
+                val allTyped   = results.forall(r => r._1 || r._2)
+                assert(allTyped, s"expected every iteration to produce typed Success or typed Failure, got $results")
+                // Document race-window reachability; non-failing test if window is closed by higher-level guard:
+                if !anySuccess then
+                    info("race window already closed by higher-level guard — only typed Failure observed")
+                succeed
             }
         }
     }
 
     "exec edge cases" - {
         "exec on stopped container fails without unnecessary retries" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _  <- c.stop
                     t0 <- Clock.now
                     r  <- Abort.run[ContainerException](c.exec("echo", "hello"))
                     t1 <- Clock.now
                 yield
-                    assert(r.isFailure, "Expected exec on stopped container to fail")
+                    r match
+                        case Result.Failure(_: ContainerException) => ()
+                        case other                                 => fail(s"Expected exec on stopped container to fail, got: $other")
                     val elapsedMs = t1.toJava.toEpochMilli - t0.toJava.toEpochMilli
                     // The Retry wraps exec with Schedule.fixed(100.millis).take(2), meaning
                     // 3 total attempts with 100ms between each. For a deterministic failure
@@ -2872,11 +3252,13 @@ class ContainerItTest extends Test:
         }
 
         "exec on stopped container fails clearly" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _ <- c.stop
                     r <- Abort.run[ContainerException](c.exec("echo", "hello"))
-                yield assert(r.isFailure)
+                yield r match
+                    case Result.Failure(_: ContainerException) => succeed
+                    case other                                 => fail(s"expected typed Failure, got: $other")
             }
         }
 
@@ -2886,7 +3268,9 @@ class ContainerItTest extends Test:
                 for
                     _ <- c.pause
                     r <- Abort.run[ContainerException](c.exec("echo", "hello"))
-                yield assert(r.isFailure)
+                yield r match
+                    case Result.Failure(_: ContainerException) => succeed
+                    case other                                 => fail(s"expected typed Failure, got: $other")
             }
         }
 
@@ -2972,15 +3356,94 @@ class ContainerItTest extends Test:
                 }
             }
         }
+
+        "logsText with tail=Int.MaxValue on a 1MB log returns the full content" - runBackends {
+            val cfg = Container.Config("alpine")
+                .command(
+                    "sh",
+                    "-c",
+                    "i=0; while [ $i -lt 50000 ]; do echo xxxxxxxxxxxxxxxxxxxx; i=$((i+1)); done; echo END-MARKER; sleep 5"
+                )
+            Container.init(cfg).map { c =>
+                Scope.run {
+                    for
+                        // Block until the marker line is observed — deterministic, no sleep.
+                        _       <- c.logStream.takeWhile(e => !e.content.contains("END-MARKER")).run
+                        entries <- c.logs(stdout = true, stderr = false, tail = Int.MaxValue)
+                    yield assert(entries.size >= 49000, s"expected ~50000 entries, got ${entries.size}")
+                }
+            }
+        }
+
+        "logs(stdout=false, stderr=false) returns empty Chunk (paired control proves output existed)" - runBackends {
+            val cfg = Container.Config("alpine")
+                .command("sh", "-c", "echo a; echo b 1>&2; sleep 5")
+            Container.init(cfg).map { c =>
+                for
+                    // Wait until output is observable on the positive-control path.
+                    both <- c.logs(stdout = true, stderr = true)
+                    _ = assert(both.nonEmpty, "positive control: container did emit output before flag-test")
+                    suppressed <- c.logs(stdout = false, stderr = false)
+                yield assert(suppressed.isEmpty, s"expected empty when both flags false, got: $suppressed")
+            }
+        }
+
+        // attach to Tty=true container preserves raw 8-byte-header-shaped output (no demux)
+        "attach to Tty=true container preserves raw 8-byte-header-shaped output (no demux)" - runBackends {
+            // 13 bytes: 8 that look like a Docker multiplex header + 5-byte "hello" payload.
+            // For Tty=true these are RAW; demux must be skipped — expect all 13 bytes preserved.
+            val cfg = Container.Config("alpine")
+                .command("sh", "-c", "printf '\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x05hello'; exit 0")
+                .allocateTty(true)
+                .autoRemove(false)
+            Container.initWith(cfg) { c =>
+                for
+                    _   <- c.waitForExit
+                    raw <- c.logs(stdout = true, stderr = false)
+                yield
+                    val bytes = raw.flatMap(_.content.getBytes("ISO-8859-1")).toArray
+                    // First byte must be 0x01 (raw); a multiplex parser would have consumed the header.
+                    assert(
+                        bytes.headOption.contains(0x01.toByte),
+                        s"expected first byte 0x01 (raw TTY); got bytes=${bytes.take(20).toList.map("0x%02x".format(_))}"
+                    )
+                    assert(
+                        bytes.length >= 13,
+                        s"expected ≥13 bytes preserved; got ${bytes.length}"
+                    )
+            }
+        }
+
+        // final log line without trailing newline must not be dropped by the multiplex framing layer
+        "final log line without trailing newline is not dropped" - runBackends {
+            // printf writes bytes with no trailing '\n'. The multiplex framing layer is
+            // newline-agnostic; logsText should preserve the content regardless.
+            // autoRemove(false): with autoRemove(true) the container is removed on exit,
+            // so the log-read following waitForExit may return "container not found".
+            val cfg = alpine
+                .command("sh", "-c", "printf 'no-trailing-newline'; exit 0")
+                .autoRemove(false)
+            Container.init(cfg).map { c =>
+                for
+                    _    <- c.waitForExit
+                    text <- c.logsText
+                yield assert(
+                    text.contains("no-trailing-newline"),
+                    s"BUG: final log line dropped when no \\n; got: '$text'"
+                )
+            }
+        }
     }
 
     "stats edge cases" - {
         "stats on stopped container fails cleanly" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _ <- c.stop
                     r <- Abort.run[ContainerException](c.stats)
-                yield assert(r.isFailure)
+                yield r match
+                    case Result.Failure(_: ContainerException) => succeed
+                    case other                                 => fail(s"expected typed Failure, got: $other")
             }
         }
 
@@ -2993,6 +3456,29 @@ class ContainerItTest extends Test:
                 }
                     // After scope closes, verify container is still healthy
                     .andThen(c.state.map(s => assert(s == Container.State.Running)))
+            }
+        }
+
+        // Stats.Cpu and Stats.Memory use nested field paths; cgroup v2 may omit totalUsage
+        "stats fields handle cgroup v2 nullable values" - runBackends {
+            // Drive non-trivial CPU + memory load so stats values are populated.
+            // c.exec binds its result; c.stats is called after the burst completes.
+            Container.init(alpine).map { c =>
+                for
+                    _ <- c.exec("sh", "-c", "yes > /dev/null & sleep 0.5; kill $!")
+                    s <- c.stats
+                yield
+                    // s.memory.usage: Long — always present, non-zero for a live container
+                    assert(
+                        s.memory.usage > 0L && s.memory.usage < 1L * 1024 * 1024 * 1024,
+                        s"sane memory usage expected; got ${s.memory.usage}"
+                    )
+                    // s.cpu.usagePercent: Double — derived by backend; cgroup-v2 robust;
+                    // negative value would indicate a backend calculation bug.
+                    assert(
+                        s.cpu.usagePercent >= 0.0,
+                        s"cpu usagePercent must be non-negative; got ${s.cpu.usagePercent}"
+                    )
             }
         }
     }
@@ -3020,7 +3506,10 @@ class ContainerItTest extends Test:
                     localPath.write("data").andThen {
                         c.copyTo(localPath, Path("/usr/test"))
                     }
-                }.map(r => assert(r.isFailure))
+                }.map {
+                    case Result.Failure(_: ContainerException) => succeed
+                    case other                                 => fail(s"expected typed Failure, got: $other")
+                }
             }
         }
 
@@ -3047,9 +3536,7 @@ class ContainerItTest extends Test:
                 .command("sh", "-c", "sleep 1; while true; do echo ok | nc -l -p 9090; done")
                 .port(9090, 19090)
                 .healthCheck(Container.HealthCheck.port(9090, retrySchedule = Schedule.fixed(200.millis).take(30)))
-            Container.init(config).map { c =>
-                c.state.map(s => assert(s == Container.State.Running))
-            }
+            assertRuns(config)
         }
 
         "exposed port without host binding has Absent hostPort in inspect" - runBackends {
@@ -3059,6 +3546,70 @@ class ContainerItTest extends Test:
                     assert(binding.isDefined)
                 }
             }
+        }
+
+        // mappedPort filters by TCP; UDP-bound port cannot be looked up via mappedPort
+        // Correction C: no 4-arg PortBinding.apply exists; use .default.copy(...)
+        "mappedPort filters by TCP — UDP-bound port cannot be looked up" - runBackends {
+            val udpBinding = Container.Config.PortBinding.default.copy(
+                containerPort = 9999,
+                hostPort = 0,
+                hostIp = "",
+                protocol = Container.Config.Protocol.UDP
+            )
+            val cfg = Container.Config("alpine")
+                .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")
+                .port(udpBinding)
+            Container.init(cfg).map { c =>
+                Abort.run[ContainerException](c.mappedPort(9999)).map {
+                    case Result.Failure(_: ContainerOperationException) => succeed
+                    case Result.Failure(other)                          => fail(s"unexpected error type: $other")
+                    case Result.Panic(t)                                => fail(s"panic: $t")
+                    case Result.Success(_) => fail("BUG: mappedPort returned a port for UDP-only — TCP filter not applied")
+                }
+            }
+        }
+
+        "two containers on the same host port — second fails with PortConflict carrying port" - runBackends {
+            // Keep the ServerSocket OPEN so the port is definitely still held when the container
+            // tries to bind it (avoids TIME_WAIT races on Linux/macOS). Close after both inits.
+            val sock = new java.net.ServerSocket(0)
+            val port = sock.getLocalPort
+            val cfg1 = alpine.command("sleep", "10").port(80, port).autoRemove(true)
+            try
+                Scope.run {
+                    Abort.run[ContainerException](Container.init(cfg1)).flatMap {
+                        case Result.Failure(e: ContainerPortConflictException) =>
+                            // First container also failed — port still held by ServerSocket
+                            assert(
+                                e.port == port,
+                                s"expected port=$port, got port=${e.port} (regex extracted wrong number)"
+                            )
+                        case Result.Failure(other) =>
+                            fail(s"expected ContainerPortConflictException on first init, got: $other")
+                        case Result.Panic(t) =>
+                            fail(s"panic on first init: $t")
+                        case Result.Success(c1) =>
+                            val cfg2 = alpine.command("sleep", "10").port(80, port).autoRemove(true)
+                            Abort.run[ContainerException](Container.init(cfg2)).map { r =>
+                                r match
+                                    case Result.Failure(e: ContainerPortConflictException) =>
+                                        assert(
+                                            e.port == port,
+                                            s"expected port=$port, got port=${e.port} (regex extracted wrong number)"
+                                        )
+                                    case Result.Failure(other) =>
+                                        fail(s"expected ContainerPortConflictException, got: $other")
+                                    case Result.Success(_) =>
+                                        fail("expected port conflict — second container bound same host port as first")
+                                    case Result.Panic(t) =>
+                                        fail(s"panic: $t")
+                                end match
+                            }
+                    }
+                }
+            finally sock.close()
+            end try
         }
     }
 
@@ -3073,9 +3624,11 @@ class ContainerItTest extends Test:
                         for
                             _ <- Container.Network.connect(netId, c.id)
                             r <- Abort.run[ContainerException](Container.Network.remove(netId))
-                        yield r.isFailure
+                        yield r match
+                            case Result.Failure(_: ContainerException) => true
+                            case other                                 => false
                     }
-                yield assert(result)
+                yield assert(result, "Expected typed Failure when removing network with connected container")
                 end for
             }
         }
@@ -3091,7 +3644,9 @@ class ContainerItTest extends Test:
                     c <- Container.init(alpine.volume(volName, Path("/data")).autoRemove(false))
                     _ <- c.stop
                     r <- Abort.run[ContainerException](Container.Volume.remove(volName))
-                yield assert(r.isFailure)
+                yield r match
+                    case Result.Failure(_: ContainerException) => succeed
+                    case other                                 => fail(s"expected typed Failure when removing volume in use, got: $other")
                 end for
             }
         }
@@ -3117,6 +3672,67 @@ class ContainerItTest extends Test:
                     }
                 yield succeed
                 end for
+            }
+        }
+
+        "removing a volume mounted by two stopped containers fails until both are removed" - runBackends {
+            val volName = Container.Volume.Id(uniqueName("kyo-vol-multi"))
+            Abort.run[Timeout] {
+                Async.timeout(30.seconds) {
+                    Scope.run {
+                        for
+                            _  <- Container.Volume.init(Container.Volume.Config.default.copy(name = Present(volName)))
+                            c1 <- Container.init(alpine.volume(volName, Path("/data")).autoRemove(false))
+                            c2 <- Container.init(alpine.volume(volName, Path("/data")).autoRemove(false))
+                            _  <- c1.stop
+                            i1 <- c1.inspect
+                            _ = assert(i1.state == Container.State.Stopped, s"c1 not Stopped: ${i1.state}")
+                            _  <- c2.stop
+                            i2 <- c2.inspect
+                            _ = assert(i2.state == Container.State.Stopped, s"c2 not Stopped: ${i2.state}")
+                            r1 <- Abort.run[ContainerException](Container.Volume.remove(volName))
+                            _ = r1 match
+                                case Result.Failure(_: ContainerException) => ()
+                                case other                                 => fail(s"expected typed Failure, got: $other")
+                            _  <- c1.remove(force = true)
+                            r2 <- Abort.run[ContainerException](Container.Volume.remove(volName))
+                            _ = r2 match
+                                case Result.Failure(_: ContainerException) => ()
+                                case other                                 => fail(s"expected typed Failure, got: $other")
+                            _  <- c2.remove(force = true)
+                            r3 <- Abort.run[ContainerException](Container.Volume.remove(volName))
+                        yield r3 match
+                            case Result.Success(_) => succeed
+                            case other             => fail(s"volume remove must succeed once all referencers gone, got $other")
+                        end for
+                    }
+                }
+            }.map {
+                case Result.Success(_) => succeed
+                case Result.Failure(_) => fail("volume multi-attach test timed out after 30 seconds")
+                case Result.Panic(t)   => fail(s"panic: $t")
+            }
+        }
+
+        // Volume.remove(force=true) with attached stopped container — Shell-only (consistent behavior)
+        // — Shell backend must skip the pre-check and pass --force when force=true.
+        "Volume.remove(force=true) with attached stopped container — Shell backend honors force flag" - runRuntimes { runtime =>
+            Container.withBackendConfig(_.Shell(runtime)) {
+                val volName = Container.Volume.Id(uniqueName("kyo-vol-force"))
+                Scope.run {
+                    for
+                        _ <- Container.Volume.init(Container.Volume.Config.default.copy(name = Present(volName)))
+                        c <- Container.init(alpine.volume(volName, Path("/data")).autoRemove(false))
+                        _ <- c.stop
+                        r <- Abort.run[ContainerException](Container.Volume.remove(volName, force = true))
+                    yield r match
+                        case Result.Success(_) => succeed
+                        case Result.Failure(_: ContainerVolumeInUseException) =>
+                            fail("Shell backend ignores force=true; rejects with VolumeInUse")
+                        case Result.Failure(other) => fail(s"unexpected failure: $other")
+                        case Result.Panic(t)       => fail(s"panic: $t")
+                    end for
+                }
             }
         }
     }
@@ -3154,7 +3770,7 @@ class ContainerItTest extends Test:
     "checkpoint" - {
         "checkpoint/restore preserves a working container ID" - runBackends {
             // CRIU may not be available — wrap in Abort.run to handle gracefully
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 Abort.run[ContainerException] {
                     for
                         _     <- c.checkpoint("test-snap")
@@ -3191,18 +3807,21 @@ class ContainerItTest extends Test:
         }
 
         "checkpoint on non-running container fails with clear error" - runBackends {
-            Container.init(alpine.autoRemove(false)).map { c =>
+            Container.init(alpinePersistent(alpine)).map { c =>
                 for
                     _ <- c.stop
                     r <- Abort.run[ContainerException](c.checkpoint("snap1"))
-                yield assert(r.isFailure)
+                yield r match
+                    case Result.Failure(_: ContainerException) => succeed
+                    case other                                 => fail(s"expected typed Failure, got: $other")
             }
         }
 
         "restore from non-existent checkpoint fails with clear error" - runBackends {
             Container.init(alpine).map { c =>
-                Abort.run[ContainerException](c.restore("nonexistent-checkpoint-xyz")).map { r =>
-                    assert(r.isFailure)
+                Abort.run[ContainerException](c.restore("nonexistent-checkpoint-xyz")).map {
+                    case Result.Failure(_: ContainerException) => succeed
+                    case other                                 => fail(s"expected typed Failure, got: $other")
                 }
             }
         }
@@ -3248,7 +3867,7 @@ class ContainerItTest extends Test:
             // asserts; the ensure is belt-and-suspenders so a mid-test failure doesn't leak the container.
             Scope.run {
                 Container.initUnscoped(config).map { c =>
-                    Scope.ensure(Abort.run[ContainerException](c.remove(force = true)).unit).andThen {
+                    ensureCleanup(c).andThen {
                         c.state.map { s =>
                             c.stop(0.seconds).andThen {
                                 c.remove(force = true).andThen {
@@ -3289,6 +3908,15 @@ class ContainerItTest extends Test:
                 c.exec("echo", "hi from exec").map { r =>
                     assert(r.exitCode.isSuccess, s"exit code ${r.exitCode.toInt}")
                     assert(r.stdout.trim == "hi from exec", s"stdout was '${r.stdout}'")
+                }
+            }
+        }
+
+        "exec immediately after init succeeds (no race with healthcheck)" - runBackends {
+            Container.init(alpine.healthCheck(Container.HealthCheck.exec("true"))).map { c =>
+                c.exec("echo", "hi").map { r =>
+                    assert(r.isSuccess, s"exec failed right after init: $r")
+                    assert(r.stdout.trim == "hi")
                 }
             }
         }
@@ -3338,7 +3966,7 @@ class ContainerItTest extends Test:
             // remove below is what the test asserts, the ensure covers mid-test failure paths.
             Scope.run {
                 Container.initUnscoped(config).map { c =>
-                    Scope.ensure(Abort.run[ContainerException](c.remove(force = true)).unit).andThen {
+                    ensureCleanup(c).andThen {
                         Async.sleep(2.seconds).andThen {
                             Scope.run {
                                 c.logStream.take(1).run.map { entries =>
@@ -3450,8 +4078,9 @@ class ContainerItTest extends Test:
                 // Trying to inspect it should fail.
                 Abort.run[ContainerException] {
                     Container.attach(Container.Id(name)).map(_.inspect)
-                }.map { r =>
-                    assert(r.isFailure, "Expected container to be removed after scope cleanup")
+                }.map {
+                    case Result.Failure(_: ContainerMissingException) => succeed
+                    case other => fail(s"Expected container to be removed after scope cleanup, got: $other")
                 }
             }
         }
@@ -3465,11 +4094,9 @@ class ContainerItTest extends Test:
         )
         Abort.run[ContainerException] {
             Container.init(alpine.healthCheck(hc))
-        }.map { result =>
-            assert(
-                result.isFailure,
-                "Expected HealthCheck.exec to fail when output is 'not ok' (substring match is a bug)"
-            )
+        }.map {
+            case Result.Failure(_: ContainerHealthCheckException) => succeed
+            case other => fail(s"Expected ContainerHealthCheckException (substring match is a bug), got: $other")
         }
     }
 
@@ -3532,7 +4159,7 @@ class ContainerItTest extends Test:
         // only the shell backend uses args.lastOption in mapError.
         Container.withBackendConfig(_.Shell(runtime)) {
             Scope.run {
-                Container.initWith(alpine.autoRemove(false)) { c =>
+                Container.initWith(alpinePersistent(alpine)) { c =>
                     for
                         _ <- c.stop(0.seconds)
                         _ <- c.remove(force = true)
@@ -3757,6 +4384,45 @@ class ContainerItTest extends Test:
             ).map { r =>
                 assert(r.exitCode.isSuccess, s"exit=${r.exitCode.toInt}")
                 assert(r.stdout.trim == "hello-from-runOnce", s"stdout='${r.stdout}'")
+            }
+        }
+
+        "runOnce with sleeping command past timeout returns Signaled(15) and timeout marker" - runBackends {
+            // Do NOT use Container.sleepForever — it traps SIGTERM and exits cleanly.
+            // Plain "sleep 60" ensures SIGTERM produces Signaled(15).
+            Container.runOnce(
+                image = ContainerImage("alpine", "latest"),
+                command = Command("sleep", "60"),
+                timeout = 2.seconds
+            ).map { result =>
+                assert(
+                    result.exitCode == ExitCode.Signaled(15),
+                    s"expected Signaled(15), got ${result.exitCode}"
+                )
+                assert(
+                    result.stderr.contains("[kyo-pod] runOnce timed out"),
+                    s"expected timeout marker in stderr, got stderr='${result.stderr}'"
+                )
+            }
+        }
+
+        "runOnce with command that exits cleanly under timeout returns its exitCode" - runBackends {
+            // Pre-pull alpine so cold-pull doesn't eat the timeout budget.
+            ContainerImage.ensure(ContainerImage("alpine", "latest")).andThen {
+                Container.runOnce(
+                    image = ContainerImage("alpine", "latest"),
+                    command = Command("sh", "-c", "exit 42"),
+                    timeout = 60.seconds
+                ).map { r =>
+                    assert(
+                        r.exitCode == ExitCode.Failure(42),
+                        s"expected Failure(42), got ${r.exitCode}"
+                    )
+                    assert(
+                        !r.stderr.contains("timed out"),
+                        s"stderr should not contain 'timed out', got stderr='${r.stderr}'"
+                    )
+                }
             }
         }
     }

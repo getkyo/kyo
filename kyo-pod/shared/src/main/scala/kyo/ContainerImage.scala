@@ -15,7 +15,7 @@ package kyo
   * @see
   *   [[Container.Config]] Container configuration referencing an image
   */
-case class ContainerImage(
+final case class ContainerImage(
     name: String,
     namespace: Maybe[String],
     registry: Maybe[ContainerImage.Registry],
@@ -81,6 +81,12 @@ object ContainerImage:
       *   - "ghcr.io/owner/repo:v1.2.3" -> registry=ghcr.io, namespace=owner, name=repo, tag=v1.2.3
       *   - "myapp@sha256:abc123" -> name=myapp, digest=sha256:abc123
       */
+    /** Returns true when a path segment looks like a registry hostname: must contain a dot (fully-qualified domain) or a colon
+      * (port-qualified host, e.g. "localhost:5000"). The tag colon cannot reach this helper because tag-stripping runs before the path is
+      * split on "/".
+      */
+    private def isRegistryHost(s: String): Boolean = s.contains('.') || s.contains(':')
+
     def parse(ref: String): Result[String, ContainerImage] =
         if ref.isEmpty then Result.fail("Empty image reference")
         else
@@ -110,8 +116,8 @@ object ContainerImage:
             // Parse the path components: registry/namespace/name or namespace/name or name
             val parts = beforeTag.split("/").toSeq
             val (registryVal, namespaceVal, nameVal) = parts match
-                case Seq(single) => (Absent: Maybe[Registry], Absent: Maybe[String], single)
-                case Seq(first, rest*) if first.contains('.') || first.contains(':') =>
+                case Seq(single)                                => (Absent: Maybe[Registry], Absent: Maybe[String], single)
+                case Seq(first, rest*) if isRegistryHost(first) =>
                     // First segment looks like a registry (has dots or port)
                     rest match
                         case Seq(name)      => (Present(Registry(first)), Absent: Maybe[String], name)
@@ -121,7 +127,7 @@ object ContainerImage:
                 case Seq(first, name)            => (Absent: Maybe[Registry], Present(first), name)
                 case Seq(first, ns, name, rest*) =>
                     // If first segment looks like a registry
-                    if first.contains('.') || first.contains(':') then
+                    if isRegistryHost(first) then
                         (Present(Registry(first)), Present(ns), (Seq(name) ++ rest).mkString("/"))
                     else
                         (Absent: Maybe[Registry], Present(first), (Seq(ns, name) ++ rest).mkString("/"))
@@ -140,12 +146,10 @@ object ContainerImage:
 
     // --- Predefined images ---
 
-    val Alpine   = new ContainerImage("alpine", Present("library"), Present(Registry.DockerHub), Present("latest"), Absent)
-    val Ubuntu   = new ContainerImage("ubuntu", Present("library"), Present(Registry.DockerHub), Present("latest"), Absent)
-    val BusyBox  = new ContainerImage("busybox", Present("library"), Present(Registry.DockerHub), Present("latest"), Absent)
-    val Nginx    = new ContainerImage("nginx", Present("library"), Present(Registry.DockerHub), Present("latest"), Absent)
-    val Postgres = new ContainerImage("postgres", Present("library"), Present(Registry.DockerHub), Present("latest"), Absent)
-    val Redis    = new ContainerImage("redis", Present("library"), Present(Registry.DockerHub), Present("latest"), Absent)
+    val Alpine  = new ContainerImage("alpine", Present("library"), Present(Registry.DockerHub), Present("latest"), Absent)
+    val Ubuntu  = new ContainerImage("ubuntu", Present("library"), Present(Registry.DockerHub), Present("latest"), Absent)
+    val BusyBox = new ContainerImage("busybox", Present("library"), Present(Registry.DockerHub), Present("latest"), Absent)
+    val Nginx   = new ContainerImage("nginx", Present("library"), Present(Registry.DockerHub), Present("latest"), Absent)
 
     // --- Reads ---
 
@@ -326,7 +330,7 @@ object ContainerImage:
     // --- Data Types ---
 
     /** Detailed image inspection result. */
-    case class Info(
+    final case class Info(
         id: ContainerImage.Id,
         repoTags: Chunk[ContainerImage],
         repoDigests: Chunk[ContainerImage],
@@ -338,7 +342,7 @@ object ContainerImage:
     ) derives CanEqual
 
     /** Lightweight image listing entry. */
-    case class Summary(
+    final case class Summary(
         id: ContainerImage.Id,
         repoTags: Chunk[ContainerImage],
         repoDigests: Chunk[ContainerImage],
@@ -348,7 +352,7 @@ object ContainerImage:
     ) derives CanEqual
 
     /** Progress event during an image pull operation. */
-    case class PullProgress(
+    final case class PullProgress(
         id: Maybe[String],
         status: String,
         progress: Maybe[String],
@@ -356,10 +360,10 @@ object ContainerImage:
     ) derives CanEqual
 
     /** Result of deleting an image layer. */
-    case class DeleteResponse(untagged: Maybe[String], deleted: Maybe[String]) derives CanEqual
+    final case class DeleteResponse(untagged: Maybe[String], deleted: Maybe[String]) derives CanEqual
 
     /** Image layer history entry. */
-    case class HistoryEntry(
+    final case class HistoryEntry(
         id: String,
         createdAt: Instant,
         createdBy: String,
@@ -369,7 +373,7 @@ object ContainerImage:
     ) derives CanEqual
 
     /** Registry search result entry. */
-    case class SearchResult(
+    final case class SearchResult(
         name: String,
         description: String,
         stars: Int,
@@ -378,7 +382,7 @@ object ContainerImage:
     ) derives CanEqual
 
     /** Progress event during an image build operation. */
-    case class BuildProgress(
+    final case class BuildProgress(
         stream: Maybe[String],
         status: Maybe[String],
         progress: Maybe[String],
@@ -406,7 +410,7 @@ object ContainerImage:
       * @see
       *   [[ContainerImage.push]] pass `auth = Present(...)` to authenticate a push
       */
-    case class RegistryAuth(auths: Dict[ContainerImage.Registry, String]) derives CanEqual:
+    final case class RegistryAuth(auths: Dict[ContainerImage.Registry, String]) derives CanEqual:
         override def toString: String =
             s"RegistryAuth(registries=${auths.toMap.keys.toSeq.map(_.value).mkString(",")}, credentials=<redacted>)"
 

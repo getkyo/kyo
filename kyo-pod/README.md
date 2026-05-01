@@ -390,10 +390,11 @@ val img2 = ContainerImage("alpine", "3.19")            // name + tag
 val img3 = ContainerImage.parse("ghcr.io/owner/repo:v1.0")
             .getOrElse(ContainerImage("fallback"))
 
-// Predefined for common images
+// Predefined for common base images
 val img4 = ContainerImage.Alpine
 val img5 = ContainerImage.Nginx
-val img6 = ContainerImage.Postgres
+// For service images (Postgres, Redis, etc.) use ContainerPredef — it provides
+// healthchecks, versioned defaults, and connection helpers.
 ```
 
 Tag and digest are mutually exclusive — `withDigest` clears the tag, and `withTag` clears the digest. `.reference` produces the canonical string form (for example `"docker.io/library/alpine:latest"`).

@@ -45,6 +45,29 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
             }
         }
 
+    /** Like [[runBackends]] but raises the HTTP client's per-request timeout to 5 minutes for the http arm. Use for integration tests that
+      * pull or build large images (e.g. mongo:7, mysql:8, postgres) where the default 5-second `HttpClientConfig` timeout is too short for
+      * streaming `/images/create` responses on a cold cache.
+      *
+      * The shell arm is unaffected — it delegates to the container CLI which uses its own process timeout.
+      */
+    def runBackendsLong(v: => Assertion < (Async & Abort[Any] & Scope))(using Frame): Unit =
+        Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
+            runtime - {
+                ContainerRuntime.findSocket(runtime).foreach { path =>
+                    "http" in run {
+                        Container.withBackendConfig(_.UnixSocket(Path(path))) {
+                            HttpClient.withConfig(_.timeout(5.minutes))(v)
+                        }
+                    }
+                }
+
+                "shell" in run {
+                    Container.withBackendConfig(_.Shell(runtime))(v)
+                }
+            }
+        }
+
     /** Register one leaf test per available container runtime (docker, podman). The test body receives the runtime name as a parameter —
       * use this when the test logic needs to construct a backend config explicitly or branch on runtime identity. The body picks its own
       * backend (HTTP or Shell); no outer `withBackendConfig` is applied.
@@ -57,4 +80,35 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
                 f(runtime)
             }
         }
+
+    /** Returns `config` with `autoRemove = false` so tests can inspect container state after stopping.
+      *
+      * Use in place of `config.autoRemove(false)` to reduce boilerplate at integration-test call sites. For example:
+      * {{{
+      * Container.init(alpinePersistent(alpine)).map { c => ... }
+      * }}}
+      */
+    private[kyo] def alpinePersistent(config: Container.Config): Container.Config =
+        config.autoRemove(false)
+
+    /** Asserts that `config` produces a container in the `Running` state.
+      *
+      * Equivalent to:
+      * {{{
+      * Container.init(config).map { c => c.state.map(s => assert(s == Container.State.Running)) }
+      * }}}
+      *
+      * Use in tests that only need to verify the container starts up successfully.
+      */
+    private[kyo] def assertRuns(config: Container.Config)(using Frame): Assertion < (Async & Abort[Any] & Scope) =
+        Container.init(config).map(c => c.state.map(s => assert(s == Container.State.Running)))
+
+    /** Registers a `Scope.ensure` that removes `c` (force = true) on scope exit regardless of test outcome.
+      *
+      * Use inside `Scope.run { Container.initUnscoped(...).map { c => ... } }` blocks as a belt-and-suspenders cleanup for containers
+      * created with `initUnscoped`. The explicit `remove` in the test body is what the test asserts; this ensure covers mid-test failure
+      * paths.
+      */
+    private[kyo] def ensureCleanup(c: Container)(using Frame): Unit < (Async & Abort[Any] & Scope) =
+        Scope.ensure(Abort.run[ContainerException](c.remove(force = true)).unit)
 end Test

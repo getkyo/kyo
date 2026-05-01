@@ -15,7 +15,7 @@ import kyo.*
   */
 object CodeSandbox extends KyoApp:
 
-    case class SandboxResult(exitCode: Int, stdout: String, stderr: String, timedOut: Boolean)
+    final case class SandboxResult(exitCode: Int, stdout: String, stderr: String, timedOut: Boolean)
 
     val defaultTimeout: Duration = 5.seconds
 

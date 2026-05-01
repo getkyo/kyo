@@ -107,10 +107,10 @@ final class Container private[kyo] (
                     backend.isHealthy(id)
                 case Present(hc) =>
                     Abort.recover[ContainerException] { (_: ContainerException) =>
-                        healthState.set(ContainerHealthState(false, Present(hc))).andThen(false)
+                        healthState.set(ContainerHealthState(Present(hc))).andThen(false)
                     } {
                         hc.check(this).andThen {
-                            healthState.set(ContainerHealthState(true, Present(hc))).andThen(true)
+                            healthState.set(ContainerHealthState(Present(hc))).andThen(true)
                         }
                     }
             end match
@@ -127,7 +127,7 @@ final class Container private[kyo] (
                 case Absent => ()
                 case Present(hc) =>
                     Retry[ContainerException](hc.schedule)(hc.check(this)).andThen {
-                        healthState.set(ContainerHealthState(true, Present(hc))).unit
+                        healthState.set(ContainerHealthState(Present(hc))).unit
                     }
             end match
         }
@@ -146,33 +146,34 @@ final class Container private[kyo] (
       * Fails with `ContainerOperationException` if no binding exists for `containerPort` (common cause: the port wasn't included in the
       * `Container.Config.ports` list).
       */
+    /** Build the error message for a failed mappedPort lookup, distinguishing three causes: (1) container not running, (2) port configured
+      * but not yet visible via inspect (bug), (3) port not declared in config.
+      */
+    private def explainPortMissing(info: Info, containerPort: Int): String =
+        if info.state != State.Running then
+            val exitStr = info.exitCode match
+                case Absent                        => "none"
+                case Present(ExitCode.Success)     => "0"
+                case Present(ExitCode.Failure(c))  => c.toString
+                case Present(ExitCode.Signaled(s)) => s"signaled($s)"
+            s"Port $containerPort lookup failed: container ${id.value} is in state ${info.state} (exit=$exitStr). " +
+                s"Use `container.logsText` to see the cause."
+        else
+            val configured = config.ports.map(p => p.containerPort).distinct
+            if configured.contains(containerPort) then
+                s"Port $containerPort is not bound on container ${id.value}: configured but not yet observable via inspect. " +
+                    s"This shouldn't happen — `init` waits for port mappings before returning. Please report."
+            else
+                s"Port $containerPort was not declared in the container config. Configured ports: ${
+                        if configured.isEmpty then "none" else configured.mkString(", ")
+                    }."
+            end if
+
     def mappedPort(containerPort: Int)(using Frame): Int < (Async & Abort[ContainerException]) =
         inspect.map { info =>
             info.ports.find(b => b.containerPort == containerPort && b.protocol == Config.Protocol.TCP) match
                 case Some(binding) if binding.hostPort > 0 => binding.hostPort
-                case _                                     =>
-                    // Distinguish "container not running" from "port wasn't requested in config" so the
-                    // next dev sees the actual cause. A stopped container raising "Port X not bound" is
-                    // misleading — it crashed; the missing port binding is a downstream symptom.
-                    val reason =
-                        if info.state != State.Running then
-                            val exitStr = info.exitCode match
-                                case ExitCode.Success     => "0"
-                                case ExitCode.Failure(c)  => c.toString
-                                case ExitCode.Signaled(s) => s"signaled($s)"
-                            s"Port $containerPort lookup failed: container ${id.value} is in state ${info.state} (exit=$exitStr). " +
-                                s"Use `container.logsText` to see the cause."
-                        else
-                            val configured = config.ports.map(p => p.containerPort).distinct
-                            if configured.contains(containerPort) then
-                                s"Port $containerPort is not bound on container ${id.value}: configured but not yet observable via inspect. " +
-                                    s"This shouldn't happen — `init` waits for port mappings before returning. Please report."
-                            else
-                                s"Port $containerPort was not declared in the container config. Configured ports: ${
-                                        if configured.isEmpty then "none" else configured.mkString(", ")
-                                    }."
-                            end if
-                    Abort.fail(ContainerOperationException(reason))
+                case _ => Abort.fail(ContainerOperationException(explainPortMissing(info, containerPort)))
         }
 
     /** Full container metadata snapshot (state, ports, mounts, network, etc.). */
@@ -433,7 +434,7 @@ object Container:
                     )
                 }.andThen {
                     b.start(cid).andThen {
-                        AtomicRef.init(ContainerHealthState(false, Absent)).map { healthRef =>
+                        AtomicRef.init(ContainerHealthState(Absent)).map { healthRef =>
                             val container = new Container(cid, config, b, healthRef)
                             runHealthCheck(container, config.healthCheck)
                                 .andThen(waitForPortMappings(container))
@@ -479,7 +480,7 @@ object Container:
       */
     def initUnscoped(config: Config)(using Frame): Container < (Async & Abort[ContainerException]) =
         currentBackend.map { b =>
-            AtomicRef.init(ContainerHealthState(false, Absent)).map { healthRef =>
+            AtomicRef.init(ContainerHealthState(Absent)).map { healthRef =>
                 b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config)).map { cid =>
                     val container = new Container(cid, config, b, healthRef)
                     Abort.run[ContainerException] {
@@ -578,7 +579,7 @@ object Container:
     def attach(idOrName: Id)(using Frame): Container < (Async & Abort[ContainerException]) =
         currentBackend.map { b =>
             b.attachById(idOrName).map { case (resolvedId, config) =>
-                AtomicRef.init(ContainerHealthState(false, Absent)).map { healthRef =>
+                AtomicRef.init(ContainerHealthState(Absent)).map { healthRef =>
                     new Container(resolvedId, config, b, healthRef)
                 }
             }
@@ -678,7 +679,7 @@ object Container:
       * @see
       *   [[BackendConfig]] select Docker/Podman/socket backend per enclosing block
       */
-    case class Config(
+    final case class Config(
         image: ContainerImage,
         command: Maybe[Command],
         name: Maybe[String],
@@ -764,12 +765,20 @@ object Container:
         def networkMode(f: Config.NetworkMode.type => Config.NetworkMode): Config =
             copy(networkMode = f(Config.NetworkMode))
 
-        def dns(servers: String*): Config = copy(dns = dns.concat(Chunk.from(servers)))
+        def dns(servers: String*): Config = copy(dns = dns ++ servers)
 
         def extraHost(hostname: String, ip: String): Config =
             copy(extraHosts = extraHosts.append(Config.ExtraHost(hostname, ip)))
 
+        def extraHosts(entries: Config.ExtraHost*): Config =
+            copy(extraHosts = extraHosts ++ entries)
+
         // Resource limits
+        //
+        // NOTE: Numeric resource-limit builders accept any value without range validation.
+        // Out-of-range values (e.g. negative bytes, zero CPUs) are forwarded as-is to the
+        // container daemon, which rejects them at container-creation time. Callers are
+        // responsible for supplying valid values; the builder is "garbage in, garbage out".
 
         def memory(bytes: Long): Config = copy(memory = Present(bytes))
 
@@ -785,9 +794,9 @@ object Container:
 
         def privileged(value: Boolean): Config = copy(privileged = value)
 
-        def addCapabilities(caps: Capability*): Config = copy(addCapabilities = addCapabilities.concat(Chunk.from(caps)))
+        def addCapabilities(caps: Capability*): Config = copy(addCapabilities = addCapabilities ++ caps)
 
-        def dropCapabilities(caps: Capability*): Config = copy(dropCapabilities = dropCapabilities.concat(Chunk.from(caps)))
+        def dropCapabilities(caps: Capability*): Config = copy(dropCapabilities = dropCapabilities ++ caps)
 
         def readOnlyFilesystem(value: Boolean): Config = copy(readOnlyFilesystem = value)
 
@@ -856,7 +865,7 @@ object Container:
 
         def apply(image: String): Config = default.copy(image = ContainerImage.parse(image).getOrElse(ContainerImage(image)))
 
-        case class PortBinding(
+        final case class PortBinding(
             containerPort: Int,
             hostPort: Int,
             hostIp: String,
@@ -881,9 +890,9 @@ object Container:
 
         sealed trait Mount
         object Mount:
-            case class Bind(source: Path, target: Path, readOnly: Boolean)                extends Mount derives CanEqual
-            case class Volume(name: Container.Volume.Id, target: Path, readOnly: Boolean) extends Mount derives CanEqual
-            case class Tmpfs(target: Path, sizeBytes: Maybe[Long])                        extends Mount derives CanEqual
+            final case class Bind(source: Path, target: Path, readOnly: Boolean)                extends Mount derives CanEqual
+            final case class Volume(name: Container.Volume.Id, target: Path, readOnly: Boolean) extends Mount derives CanEqual
+            final case class Tmpfs(target: Path, sizeBytes: Maybe[Long])                        extends Mount derives CanEqual
 
             object Bind:
                 /** Default Bind — arbitrary placeholder paths. */
@@ -938,7 +947,7 @@ object Container:
                 case OnFailure(_)  => "on-failure"
         end RestartPolicy
 
-        case class ExtraHost(hostname: String, ip: String) derives CanEqual
+        final case class ExtraHost(hostname: String, ip: String) derives CanEqual
 
     end Config
 
@@ -1130,16 +1139,21 @@ object Container:
             expectedStatus: Int = 200,
             retrySchedule: Schedule = defaultRetrySchedule
         ): HealthCheck =
-            val p   = port
-            val pth = path
-            val sch = retrySchedule
+            val p          = port
+            val pth        = path
+            val sch        = retrySchedule
+            val expectedSt = expectedStatus
             new HealthCheck:
                 def check(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
-                    container.exec("wget", "-q", "-O", "/dev/null", "-S", s"http://localhost:$p$pth").map { result =>
+                    container.exec(
+                        "sh",
+                        "-c",
+                        s"""code=$$(wget -q -O /dev/null --server-response http://localhost:$p$pth 2>&1 | awk '/HTTP\\//' | awk '{print $$2}' | tail -1) && [ "$$code" = "$expectedSt" ]"""
+                    ).map { result =>
                         if !result.isSuccess then
                             Abort.fail(ContainerHealthCheckException(
                                 container.id,
-                                s"HTTP GET http://localhost:$p$pth failed",
+                                s"HTTP GET http://localhost:$p$pth returned unexpected status (expected $expectedSt)",
                                 attempts = 1
                             ))
                         else ()
@@ -1176,24 +1190,24 @@ object Container:
     // --- TopResult ---
 
     /** Process listing inside a running container. */
-    case class TopResult(titles: Chunk[String], processes: Chunk[Chunk[String]]) derives CanEqual
+    final case class TopResult(titles: Chunk[String], processes: Chunk[Chunk[String]]) derives CanEqual
 
     // --- PruneResult ---
 
     /** Result of pruning stopped containers or unused resources. */
-    case class PruneResult(deleted: Chunk[String], spaceReclaimed: Long) derives CanEqual
+    final case class PruneResult(deleted: Chunk[String], spaceReclaimed: Long) derives CanEqual
 
     // --- ExecResult ---
 
     /** Result of executing a command inside a container. */
-    case class ExecResult(exitCode: ExitCode, stdout: String, stderr: String) derives CanEqual:
+    final case class ExecResult(exitCode: ExitCode, stdout: String, stderr: String) derives CanEqual:
         def isSuccess: Boolean = exitCode.isSuccess
     end ExecResult
 
     // --- LogEntry ---
 
     /** A single log line with source (stdout/stderr) and optional timestamp. */
-    case class LogEntry(source: LogEntry.Source, content: String, timestamp: Maybe[Instant]) derives CanEqual
+    final case class LogEntry(source: LogEntry.Source, content: String, timestamp: Maybe[Instant]) derives CanEqual
 
     object LogEntry:
         enum Source derives CanEqual:
@@ -1223,13 +1237,13 @@ object Container:
     // --- Info ---
 
     /** Detailed inspection result for a running or stopped container. */
-    case class Info(
+    final case class Info(
         id: Id,
         name: String,
         image: ContainerImage,
         imageId: ContainerImage.Id,
         state: State,
-        exitCode: ExitCode,
+        exitCode: Maybe[ExitCode],
         pid: Int,
         startedAt: Maybe[Instant],
         finishedAt: Maybe[Instant],
@@ -1247,14 +1261,14 @@ object Container:
     ) derives CanEqual
 
     object Info:
-        case class NetworkSettings(
+        final case class NetworkSettings(
             ipAddress: Maybe[String],
             gateway: Maybe[String],
             macAddress: Maybe[String],
             networks: Dict[Network.Id, NetworkEndpoint]
         ) derives CanEqual
 
-        case class NetworkEndpoint(
+        final case class NetworkEndpoint(
             networkId: Network.Id,
             endpointId: String,
             gateway: String,
@@ -1267,7 +1281,7 @@ object Container:
     // --- Stats ---
 
     /** Point-in-time resource usage snapshot. */
-    case class Stats(
+    final case class Stats(
         readAt: Instant,
         cpu: Stats.Cpu,
         memory: Stats.Memory,
@@ -1277,9 +1291,9 @@ object Container:
     ) derives CanEqual
 
     object Stats:
-        case class Cpu(totalUsage: Maybe[Long], systemUsage: Maybe[Long], onlineCpus: Int, usagePercent: Double) derives CanEqual
-        case class Memory(usage: Long, maxUsage: Maybe[Long], limit: Maybe[Long], usagePercent: Double) derives CanEqual
-        case class Net(
+        final case class Cpu(totalUsage: Maybe[Long], systemUsage: Maybe[Long], onlineCpus: Int, usagePercent: Double) derives CanEqual
+        final case class Memory(usage: Long, maxUsage: Maybe[Long], limit: Maybe[Long], usagePercent: Double) derives CanEqual
+        final case class Net(
             rxBytes: Long,
             rxPackets: Maybe[Long],
             rxErrors: Maybe[Long],
@@ -1289,14 +1303,14 @@ object Container:
             txErrors: Maybe[Long],
             txDropped: Maybe[Long]
         ) derives CanEqual
-        case class BlockIo(readBytes: Long, writeBytes: Long) derives CanEqual
-        case class Pids(current: Long, limit: Maybe[Long]) derives CanEqual
+        final case class BlockIo(readBytes: Long, writeBytes: Long) derives CanEqual
+        final case class Pids(current: Long, limit: Maybe[Long]) derives CanEqual
     end Stats
 
     // --- FilesystemChange ---
 
     /** Filesystem diff entry showing what changed in the container layer. */
-    case class FilesystemChange(path: String, kind: FilesystemChange.Kind) derives CanEqual
+    final case class FilesystemChange(path: String, kind: FilesystemChange.Kind) derives CanEqual
 
     object FilesystemChange:
         enum Kind derives CanEqual:
@@ -1306,7 +1320,7 @@ object Container:
     // --- FileStat ---
 
     /** Filesystem metadata for a file inside a container. */
-    case class FileStat(
+    final case class FileStat(
         name: String,
         size: Long,
         mode: Int,
@@ -1317,7 +1331,7 @@ object Container:
     // --- Summary ---
 
     /** Lightweight container listing entry. */
-    case class Summary(
+    final case class Summary(
         id: Id,
         names: Chunk[String],
         image: ContainerImage,
@@ -1387,7 +1401,7 @@ object Container:
         end Id
 
         /** Network creation configuration. */
-        case class Config(
+        final case class Config(
             name: String,
             driver: NetworkDriver,
             internal: Boolean,
@@ -1430,7 +1444,7 @@ object Container:
             )
         end Config
 
-        case class IpamConfig(
+        final case class IpamConfig(
             driver: String,
             config: Chunk[IpamPool]
         ) derives CanEqual
@@ -1440,7 +1454,7 @@ object Container:
             val default: IpamConfig = new IpamConfig(driver = "default", config = Chunk.empty)
         end IpamConfig
 
-        case class IpamPool(
+        final case class IpamPool(
             subnet: Maybe[String],
             gateway: Maybe[String],
             ipRange: Maybe[String]
@@ -1452,7 +1466,7 @@ object Container:
         end IpamPool
 
         /** Network inspection result. */
-        case class Info(
+        final case class Info(
             id: Id,
             name: String,
             driver: NetworkDriver,
@@ -1557,12 +1571,24 @@ object Container:
         end Id
 
         /** Volume creation configuration. */
-        case class Config(
+        final case class Config(
             name: Maybe[Volume.Id],
             driver: String,
             driverOpts: Dict[String, String],
             labels: Dict[String, String]
-        ) derives CanEqual
+        ) derives CanEqual:
+            def name(n: Volume.Id): Config = copy(name = Present(n))
+
+            def driver(d: String): Config = copy(driver = d)
+
+            def driverOpt(key: String, value: String): Config = copy(driverOpts = driverOpts.update(key, value))
+
+            def driverOpts(o: Dict[String, String]): Config = copy(driverOpts = driverOpts ++ o)
+
+            def label(key: String, value: String): Config = copy(labels = labels.update(key, value))
+
+            def labels(l: Dict[String, String]): Config = copy(labels = labels ++ l)
+        end Config
 
         object Config:
             /** Default Volume Config — no name, driver `local`. */
@@ -1575,7 +1601,7 @@ object Container:
         end Config
 
         /** Volume inspection result. */
-        case class Info(
+        final case class Info(
             name: Volume.Id,
             driver: String,
             mountpoint: String,
@@ -1656,8 +1682,11 @@ object Container:
         extension (self: Signal)
 
             def name: String = self match
-                case Custom(n) => n
-                case other     => other.toString
+                case Custom(n) =>
+                    val u = n.toUpperCase
+                    if u.startsWith("SIG") || n.forall(_.isDigit) then u
+                    else "SIG" + u
+                case other => other.toString
         end extension
     end Signal
 
@@ -1824,7 +1853,7 @@ object Container:
     // --- Platform type ---
 
     /** Target platform for container images (OS/architecture/variant). */
-    case class Platform(os: String, arch: String, variant: Maybe[String]) derives CanEqual:
+    final case class Platform(os: String, arch: String, variant: Maybe[String]) derives CanEqual:
         def reference: String = variant.map(v => s"$os/$arch/$v").getOrElse(s"$os/$arch")
     end Platform
 
@@ -1913,7 +1942,7 @@ object Container:
     // --- Private internals ---
 
     /** Cap on retained per-health-check error messages — keeps the diagnostic buffer bounded under long retry loops. */
-    private val healthCheckRecentErrorsCapacity: Int = 5
+    private[kyo] val healthCheckRecentErrorsCapacity: Int = 5
 
     /** Cap on each health-check error message length before it enters the diagnostic buffer. Prevents a single huge exception from
       * dominating the final failure report.
@@ -1954,15 +1983,23 @@ object Container:
                 val backend = new ShellBackend(cmd, meter, streamBufferSize)
                 backend.detect().andThen(backend)
 
+    /** Returns true if the container is still running or created; false if it has stopped, died, or been removed. A false result means the
+      * caller should abandon the current health-check attempt without raising an error.
+      */
+    private def isContainerAlive(container: Container)(using Frame): Boolean < (Async & Abort[ContainerException]) =
+        Abort.runWith[ContainerException](container.backend.state(container.id)) {
+            case Result.Success(st)                           => st == State.Running || st == State.Created
+            case Result.Failure(_: ContainerMissingException) => false
+            case Result.Failure(e)                            => Abort.fail(e)
+            case Result.Panic(ex)                             => Abort.panic(ex)
+        }
+
     private def runHealthCheck(container: Container, hc: HealthCheck)(using Frame): Unit < (Async & Abort[ContainerException]) =
         // If the container already exited (e.g. command("true")), skip health check — `init` is
         // also used for fast one-shots that exit before any check could run.
-        Abort.runWith[ContainerException](container.backend.state(container.id)) {
-            case Result.Success(st) if st != State.Running && st != State.Created =>
-                () // Container not running, skip health check
-            case Result.Failure(_: ContainerMissingException) =>
-                () // Container was auto-removed
-            case _ =>
+        isContainerAlive(container).map { alive =>
+            if !alive then ()
+            else
                 // Container is running, run health check with retry.
                 // Accumulate errors for diagnostic reporting on final failure.
                 Clock.now.map { startTime =>
@@ -1973,7 +2010,7 @@ object Container:
                     ): Unit < (Async & Abort[ContainerException]) =
                         Abort.runWith[ContainerException](hc.check(container)) {
                             case Result.Success(_) =>
-                                container.healthState.set(ContainerHealthState(true, Present(hc)))
+                                container.healthState.set(ContainerHealthState(Present(hc)))
                             case failure =>
                                 val errorMsg = failure match
                                     case Result.Failure(e) => e.getMessage.take(healthCheckErrorMessageMaxLength)
@@ -1983,12 +2020,9 @@ object Container:
                                     else recentErrors :+ errorMsg
                                 val nextAttempts = attempts + 1
                                 // Check if container is still running before retrying
-                                Abort.runWith[ContainerException](container.backend.state(container.id)) {
-                                    case Result.Success(st) if st != State.Running && st != State.Created =>
-                                        () // Container exited during health check, not a failure
-                                    case Result.Failure(_: ContainerMissingException) =>
-                                        () // Container was auto-removed during health check, not a failure
-                                    case _ =>
+                                isContainerAlive(container).map { stillAlive =>
+                                    if !stillAlive then ()
+                                    else
                                         Clock.now.map { now =>
                                             retrySchedule.next(now) match
                                                 case Present((delay, nextSchedule)) =>

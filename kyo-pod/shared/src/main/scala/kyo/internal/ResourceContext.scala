@@ -12,19 +12,19 @@ sealed private[kyo] trait ResourceContext:
 
 private[kyo] object ResourceContext:
 
-    case class Container(id: kyo.Container.Id) extends ResourceContext:
+    final case class Container(id: kyo.Container.Id) extends ResourceContext:
         def describe: String = s"container ${id.value}"
 
-    case class Image(ref: String) extends ResourceContext:
+    final case class Image(ref: String) extends ResourceContext:
         def describe: String = s"image $ref"
 
-    case class Network(id: kyo.Container.Network.Id) extends ResourceContext:
+    final case class Network(id: kyo.Container.Network.Id) extends ResourceContext:
         def describe: String = s"network ${id.value}"
 
-    case class Volume(id: kyo.Container.Volume.Id) extends ResourceContext:
+    final case class Volume(id: kyo.Container.Volume.Id) extends ResourceContext:
         def describe: String = s"volume ${id.value}"
 
-    case class Op(name: String) extends ResourceContext:
+    final case class Op(name: String) extends ResourceContext:
         def describe: String = s"operation $name"
 
 end ResourceContext

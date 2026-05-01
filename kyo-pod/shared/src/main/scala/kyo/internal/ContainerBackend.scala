@@ -44,7 +44,8 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
 
     // --- Health ---
 
-    def isHealthy(id: Container.Id)(using Frame): Boolean < (Async & Abort[ContainerException])
+    final def isHealthy(id: Container.Id)(using Frame): Boolean < (Async & Abort[ContainerException]) =
+        state(id).map(_ == Container.State.Running)
 
     // --- Inspection ---
 
@@ -54,9 +55,19 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
 
     def stats(id: Container.Id)(using Frame): Container.Stats < (Async & Abort[ContainerException])
 
-    def statsStream(id: Container.Id)(using Frame): Stream[Container.Stats, Async & Abort[ContainerException]]
+    final def statsStream(id: Container.Id)(using Frame): Stream[Container.Stats, Async & Abort[ContainerException]] =
+        statsStream(id, 200.millis)
 
-    def statsStream(id: Container.Id, interval: Duration)(using Frame): Stream[Container.Stats, Async & Abort[ContainerException]]
+    final def statsStream(id: Container.Id, interval: Duration)(using Frame): Stream[Container.Stats, Async & Abort[ContainerException]] =
+        Stream {
+            Loop(()) { _ =>
+                stats(id).map { s =>
+                    Emit.value(Chunk(s)).andThen {
+                        Async.sleep(interval).andThen(Loop.continue(()))
+                    }
+                }
+            }
+        }
 
     def top(id: Container.Id, psArgs: String)(using Frame): Container.TopResult < (Async & Abort[ContainerException])
 
@@ -129,13 +140,15 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
 
     // --- Network on container ---
 
-    def connectToNetwork(id: Container.Id, networkId: Container.Network.Id, aliases: Chunk[String])(
+    final def connectToNetwork(id: Container.Id, networkId: Container.Network.Id, aliases: Chunk[String])(
         using Frame
-    ): Unit < (Async & Abort[ContainerException])
+    ): Unit < (Async & Abort[ContainerException]) =
+        networkConnect(networkId, id, aliases)
 
-    def disconnectFromNetwork(id: Container.Id, networkId: Container.Network.Id, force: Boolean)(
+    final def disconnectFromNetwork(id: Container.Id, networkId: Container.Network.Id, force: Boolean)(
         using Frame
-    ): Unit < (Async & Abort[ContainerException])
+    ): Unit < (Async & Abort[ContainerException]) =
+        networkDisconnect(networkId, id, force)
 
     // --- Container listing ---
 
@@ -145,7 +158,23 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
 
     def prune(filters: Dict[String, Chunk[String]])(using Frame): Container.PruneResult < (Async & Abort[ContainerException])
 
-    def attachById(idOrName: Container.Id)(using Frame): (Container.Id, Container.Config) < (Async & Abort[ContainerException])
+    final def attachById(idOrName: Container.Id)(using Frame): (Container.Id, Container.Config) < (Async & Abort[ContainerException]) =
+        inspect(idOrName).map { info =>
+            val config0 = Container.Config.default.copy(
+                image = info.image,
+                name = if info.name.nonEmpty then Present(info.name) else Absent,
+                labels = info.labels,
+                ports = info.ports,
+                mounts = info.mounts
+            )
+            val config =
+                if info.command.isEmpty then config0
+                else
+                    val args = Chunk.from(info.command.split(" ").iterator.filter(_.nonEmpty).toSeq)
+                    val cmd  = if info.env.isEmpty then Command(args*) else Command(args*).envAppend(info.env.toMap)
+                    config0.command(cmd)
+            (info.id, config)
+        }
 
     // --- Image operations ---
 
@@ -153,9 +182,15 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
         using Frame
     ): Unit < (Async & Abort[ContainerException])
 
-    def imageEnsure(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
+    final def imageEnsure(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
-    ): Unit < (Async & Abort[ContainerException])
+    ): Unit < (Async & Abort[ContainerException]) =
+        Abort.recover[ContainerException](
+            (_: ContainerException) => imagePull(image, platform, auth),
+            (_: Throwable) => imagePull(image, platform, auth)
+        ) {
+            imageInspect(image).unit
+        }
 
     def imagePullWithProgress(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
@@ -173,7 +208,7 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
 
     def imageTag(source: ContainerImage, repo: String, tag: String)(using Frame): Unit < (Async & Abort[ContainerException])
 
-    def imageBuild(
+    final def imageBuild(
         context: Stream[Byte, Sync],
         dockerfile: String,
         tags: Chunk[String],
@@ -184,7 +219,34 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
         target: Maybe[String],
         platform: Maybe[Container.Platform],
         auth: Maybe[ContainerImage.RegistryAuth]
-    )(using Frame): Stream[ContainerImage.BuildProgress, Async & Abort[ContainerException]]
+    )(using Frame): Stream[ContainerImage.BuildProgress, Async & Abort[ContainerException]] =
+        Stream {
+            Abort.fail[ContainerException](
+                ContainerNotSupportedException("imageBuild with stream context", "Use imageBuildFromPath instead")
+            ).unit
+        }
+
+    /** After a build stream completes, confirm the daemon produced an image for the first tag.
+      *
+      * Inspecting the tagged image post-build gives an API-level ground truth that works uniformly across builder variants. When no tag was
+      * requested, nothing is verified — the caller implicitly opted into trusting the event stream.
+      */
+    final private[kyo] def verifyBuildProduced(tags: Chunk[String])(using Frame): Unit < (Async & Abort[ContainerException]) =
+        tags.headOption match
+            case None => Kyo.unit
+            case Some(tag) =>
+                Abort.run[ContainerException](imageInspect(ContainerImage(tag))).map {
+                    case Result.Success(_) => ()
+                    case Result.Failure(_: ContainerImageMissingException) =>
+                        Abort.fail(ContainerBuildFailedException(
+                            tag,
+                            "image tag not found after build — possibly silent failure",
+                            new RuntimeException(s"tagged image '$tag' absent after build")
+                        ))
+                    case Result.Failure(e) => Abort.fail(e)
+                    case Result.Panic(e) =>
+                        Abort.fail(ContainerBuildFailedException(tag, "unexpected error verifying build", e))
+                }
 
     def imageBuildFromPath(
         path: Path,
@@ -261,46 +323,7 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
     // --- RegistryAuth ---
 
     final def registryAuthFromConfig(using Frame): ContainerImage.RegistryAuth < (Async & Abort[ContainerException]) =
-        // Try docker config first, then podman
-        System.property[String]("user.home").map { userHome =>
-            System.env[String]("XDG_RUNTIME_DIR").map { xdg =>
-                System.env[String]("DOCKER_CONFIG").map { dockerCfg =>
-                    val configPaths = Seq(
-                        userHome.map(_ + "/.docker/config.json"),
-                        xdg.map(_ + "/containers/auth.json"),
-                        dockerCfg.map(_ + "/config.json")
-                    ).flatMap(m => m.fold(Seq.empty[String])(Seq(_)))
-
-                    def findExisting(paths: Seq[String]): Maybe[String] < Sync =
-                        if paths.isEmpty then Absent
-                        else
-                            val head = paths.head
-                            Path(head).exists.map { exists =>
-                                if exists then Present(head)
-                                else findExisting(paths.tail)
-                            }
-
-                    findExisting(configPaths).map {
-                        case Present(configPath) =>
-                            Abort.run[FileReadException](Path(configPath).read).map {
-                                case Result.Success(content) =>
-                                    Json.decode[ContainerBackend.AuthConfigJson](content) match
-                                        case Result.Success(dto) =>
-                                            ContainerImage.RegistryAuth(Dict.from(dto.auths.getOrElse(Map.empty).map { case (k, v) =>
-                                                ContainerImage.Registry(k) -> v
-                                            }))
-                                        case _ => ContainerImage.RegistryAuth(Dict.empty)
-                                    end match
-                                case _ =>
-                                    ContainerImage.RegistryAuth(Dict.empty)
-                            }
-                        case Absent =>
-                            ContainerImage.RegistryAuth(Dict.empty)
-                    }
-                }
-            }
-        }
-    end registryAuthFromConfig
+        ContainerBackend.registryAuthFromConfig
 
     // --- Backend detection ---
 
@@ -329,6 +352,19 @@ private[kyo] object ContainerBackend:
             case "dead"                       => Container.State.Dead
             case _                            => Container.State.Stopped
 
+    /** Returns `Absent` for states where the container hasn't exited yet (Created, Running, Paused, Restarting, Removing), and
+      * `Present(ExitCode)` for terminal states (Stopped, Dead). This makes the type truthful — a running container doesn't have an exit
+      * code.
+      */
+    def exitCodeForState(state: Container.State, rawCode: Int): Maybe[ExitCode] =
+        state match
+            case Container.State.Created | Container.State.Running |
+                Container.State.Paused | Container.State.Restarting |
+                Container.State.Removing =>
+                Absent
+            case Container.State.Stopped | Container.State.Dead =>
+                Present(ExitCode(rawCode))
+
     /** Parse an ISO-8601 timestamp string to an Instant. Returns Absent for None, empty, or zero-value timestamps. Handles both Docker
       * format (Z suffix) and Podman format (timezone offset like -07:00).
       */
@@ -341,6 +377,103 @@ private[kyo] object ContainerBackend:
                         Instant.fromJava(java.time.OffsetDateTime.parse(v).toInstant)
                     ).toMaybe
                 }
+
+    /** Parse an ISO-8601 timestamp string to an Instant, returning Instant.Epoch for empty or unparseable strings.
+      *
+      * Convenience wrapper around [[parseInstant]] that unwraps the Maybe with Epoch as the fallback.
+      */
+    def parseInstantOrEpoch(s: String): Instant =
+        parseInstant(Option(s).filter(_.nonEmpty)).getOrElse(Instant.Epoch)
+
+    /** Convert a Unix epoch-second Long to an Instant, returning Instant.Epoch for non-positive values.
+      *
+      * Applies a `> 0` guard so that zero (unset) and negative (invalid) timestamps are treated as Epoch rather than mapping them to the
+      * literal 1970 epoch or before. Instant.Epoch == Instant.fromJava(java.time.Instant.EPOCH) — confirmed by definition in kyo-data.
+      */
+    def fromEpochSecond(s: Long): Instant =
+        if s > 0 then Instant.fromJava(java.time.Instant.ofEpochSecond(s)) else Instant.Epoch
+
+    /** Load registry credentials from the local Docker/Podman config.
+      *
+      * Checks (in order) `~/.docker/config.json`, `$XDG_RUNTIME_DIR/containers/auth.json`, and `$DOCKER_CONFIG/config.json`. Returns an
+      * empty [[ContainerImage.RegistryAuth]] if none of the paths exist or if parsing fails.
+      */
+    private[kyo] def registryAuthFromConfig(using Frame): ContainerImage.RegistryAuth < (Async & Abort[ContainerException]) =
+        // Try docker config first, then podman
+        System.property[String]("user.home").map { userHome =>
+            System.env[String]("XDG_RUNTIME_DIR").map { xdg =>
+                System.env[String]("DOCKER_CONFIG").map { dockerCfg =>
+                    val configPaths = Seq(
+                        userHome.map(_ + "/.docker/config.json"),
+                        xdg.map(_ + "/containers/auth.json"),
+                        dockerCfg.map(_ + "/config.json")
+                    ).flatMap(m => m.fold(Seq.empty[String])(Seq(_)))
+
+                    def findExisting(paths: Seq[String]): Maybe[String] < Sync =
+                        if paths.isEmpty then Absent
+                        else
+                            val head = paths.head
+                            Path(head).exists.map { exists =>
+                                if exists then Present(head)
+                                else findExisting(paths.tail)
+                            }
+
+                    findExisting(configPaths).map {
+                        case Present(configPath) =>
+                            Abort.run[FileReadException](Path(configPath).read).map {
+                                case Result.Success(content) =>
+                                    Json.decode[ContainerBackend.AuthConfigJson](content) match
+                                        case Result.Success(dto) =>
+                                            ContainerImage.RegistryAuth(Dict.from(dto.auths.getOrElse(Map.empty).map { case (k, v) =>
+                                                ContainerImage.Registry(k) -> v
+                                            }))
+                                        case Result.Failure(_) =>
+                                            ContainerImage.RegistryAuth(Dict.empty)
+                                        case Result.Panic(t) =>
+                                            Log.warn(s"unexpected panic decoding auth config JSON: $t").andThen(
+                                                ContainerImage.RegistryAuth(Dict.empty)
+                                            )
+                                    end match
+                                case Result.Failure(_) =>
+                                    ContainerImage.RegistryAuth(Dict.empty)
+                                case Result.Panic(t) =>
+                                    Log.warn(s"unexpected error reading auth config: $t").andThen(
+                                        ContainerImage.RegistryAuth(Dict.empty)
+                                    )
+                            }
+                        case Absent =>
+                            ContainerImage.RegistryAuth(Dict.empty)
+                    }
+                }
+            }
+        }
+    end registryAuthFromConfig
+
+    /** Run a CLI command, apply a transform to its stdout, and return the result.
+      *
+      * Redirects stderr to stdout so that error noise does not contaminate the output captured for parsing. Returns `Absent` when:
+      *   - the command exits with a non-zero code, or
+      *   - the command throws a `CommandException` (binary not found, permission denied, …), or
+      *   - the `transform` returns `Absent`.
+      *
+      * `Result.Panic` (unexpected JVM-level errors) is logged at DEBUG level and also returns `Absent` so callers never see raw exceptions.
+      *
+      * @param cmd
+      *   Command to run; stderr is merged into stdout via `redirectErrorStream(true)`.
+      * @param transform
+      *   Function applied to `stdout.trim` on exit-code-success; returns the parsed value or `Absent` if the output is not usable.
+      */
+    private[kyo] def runCliQuery[A](cmd: Command, transform: String => Maybe[A])(using Frame): Maybe[A] < Async =
+        Abort.run[CommandException](cmd.redirectErrorStream(true).textWithExitCode).map {
+            case Result.Success((output, ExitCode.Success)) => transform(output.trim)
+            case Result.Success((_, _))                     => Absent
+            case Result.Failure(_: CommandException)        => Absent
+            case Result.Panic(ex) =>
+                Log.debug(s"CLI command failed unexpectedly: ${ex.getMessage}").andThen(
+                    Absent: Maybe[A]
+                )
+        }
+    end runCliQuery
 
     /** Auto-detect an available container runtime.
       *
@@ -363,10 +496,10 @@ private[kyo] object ContainerBackend:
     private def detectShell(meter: Meter, streamBufferSize: Int)(using Frame): ContainerBackend < (Async & Abort[ContainerException]) =
         ShellBackend.detect(meter, streamBufferSize).map(b => b: ContainerBackend)
 
-    private[internal] case class AuthConfigJson(
+    final private[internal] case class AuthConfigJson(
         auths: Option[Map[String, String]] = None
     ) derives Schema
 
 end ContainerBackend
 
-private[kyo] case class ContainerHealthState(healthy: Boolean, check: Maybe[Container.HealthCheck]) derives CanEqual
+final private[kyo] case class ContainerHealthState(check: Maybe[Container.HealthCheck]) derives CanEqual

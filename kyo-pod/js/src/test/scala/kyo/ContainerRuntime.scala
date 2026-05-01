@@ -8,25 +8,25 @@ object ContainerRuntime extends ContainerRuntimeBase:
     private val childProcess = js.Dynamic.global.require("node:child_process")
     private val os           = js.Dynamic.global.require("node:os")
 
-    protected def socketExists(path: String): Boolean =
+    private[kyo] def socketExists(path: String): Boolean =
         try fs.existsSync(path).asInstanceOf[Boolean]
         catch case _: Throwable => false
 
-    protected def cliExists(command: String): Boolean =
+    private[kyo] def cliExists(command: String): Boolean =
         try
             childProcess.execSync(s"$command version", js.Dynamic.literal(stdio = "pipe"))
             true
         catch case _: Throwable => false
 
-    protected def getEnv(name: String): String | Null =
+    private[kyo] def getEnv(name: String): String | Null =
         val v = js.Dynamic.global.process.env.selectDynamic(name)
         if js.isUndefined(v) || v == null then null
         else v.asInstanceOf[String]
     end getEnv
 
-    protected def getHome: String = os.homedir().asInstanceOf[String]
+    private[kyo] def getHome: String = os.homedir().asInstanceOf[String]
 
-    protected def queryPodmanMachineSockets: Seq[String] =
+    private[kyo] def queryPodmanMachineSockets: Seq[String] =
         try
             val output = childProcess.execSync(
                 "podman machine inspect --format json",

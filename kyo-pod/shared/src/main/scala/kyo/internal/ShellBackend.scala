@@ -1,7 +1,10 @@
 package kyo.internal
 
 import kyo.*
+import kyo.internal.ContainerBackend.exitCodeForState
+import kyo.internal.ContainerBackend.fromEpochSecond
 import kyo.internal.ContainerBackend.parseInstant
+import kyo.internal.ContainerBackend.parseInstantOrEpoch
 import kyo.internal.ContainerBackend.parseState
 
 /** Container backend that delegates to Docker or Podman CLI commands.
@@ -28,11 +31,10 @@ final private[kyo] class ShellBackend(
     // --- Container Lifecycle ---
 
     def create(config: Config)(using Frame): Container.Id < (Async & Abort[ContainerException]) =
-        val restartStr = config.restartPolicy match
-            case p @ Config.RestartPolicy.OnFailure(retries) => s"${p.cliName}:$retries"
-            case p                                           => p.cliName
+        val restartStr = restartPolicyStr(config.restartPolicy)
 
-        // Pre-resolve bind mount paths (effectful due to symlink resolution)
+        // Pre-resolve bind mount paths (effectful due to symlink resolution).
+        // The pure helper segments below receive the already-resolved paths.
         Kyo.foreach(config.mounts) {
             case Config.Mount.Bind(source, target, readOnly) =>
                 resolveHostPath(source).map { resolvedSrc =>
@@ -47,8 +49,8 @@ final private[kyo] class ShellBackend(
                     "--tmpfs",
                     sizeBytes.map(s => s"${target}:size=$s").getOrElse(target.toString)
                 ): Seq[String] < (Async & Abort[ContainerException])
-        }.map { mountArgs =>
-            // Build base args
+        }.map { resolvedMounts =>
+            // Build base args from pure helpers (all resolve-free)
             val args = Chunk("create") ++
                 // Config flags
                 config.name.map(n => Chunk("--name", n)).getOrElse(Chunk.empty) ++
@@ -59,32 +61,11 @@ final private[kyo] class ShellBackend(
                 // Labels
                 Chunk.from(config.labels.toMap.toSeq.flatMap { case (k, v) => Seq("--label", s"$k=$v") }) ++
                 // Ports
-                config.ports.flatMap { pb =>
-                    val proto = pb.protocol.cliName
-                    val binding = (pb.hostIp, pb.hostPort) match
-                        case (ip, hp) if ip.nonEmpty && hp != 0 => s"$ip:$hp:${pb.containerPort}/$proto"
-                        case ("", hp) if hp != 0                => s"$hp:${pb.containerPort}/$proto"
-                        case (ip, _) if ip.nonEmpty             => s"$ip::${pb.containerPort}/$proto"
-                        case _                                  => s"${pb.containerPort}/$proto"
-                    Chunk("-p", binding)
-                } ++
+                portArgs(config.ports) ++
                 // Mounts (pre-resolved)
-                mountArgs.flatten ++
-                // Network mode
-                {
-                    val mode = config.networkMode
-                    val modeStr = mode match
-                        case Config.NetworkMode.Bridge          => "bridge"
-                        case Config.NetworkMode.Host            => "host"
-                        case Config.NetworkMode.None            => "none"
-                        case Config.NetworkMode.Shared(cid)     => s"container:${cid.value}"
-                        case Config.NetworkMode.Custom(name, _) => name
-                    val aliasArgs = mode match
-                        case Config.NetworkMode.Custom(_, aliases) if aliases.nonEmpty =>
-                            aliases.flatMap(a => Chunk("--network-alias", a))
-                        case _ => Chunk.empty
-                    Chunk("--network", modeStr) ++ aliasArgs
-                } ++
+                resolvedMounts.flatten ++
+                // Network mode + alias flags
+                networkArgs(config.networkMode) ++
                 // DNS
                 config.dns.flatMap(d => Chunk("--dns", d)) ++
                 // Extra hosts
@@ -95,17 +76,10 @@ final private[kyo] class ShellBackend(
                 config.cpuLimit.map(c => Chunk("--cpus", c.toString)).getOrElse(Chunk.empty) ++
                 config.cpuAffinity.map(a => Chunk("--cpuset-cpus", a)).getOrElse(Chunk.empty) ++
                 config.maxProcesses.map(p => Chunk("--pids-limit", p.toString)).getOrElse(Chunk.empty) ++
-                // Security
-                (if config.privileged then Chunk("--privileged") else Chunk.empty) ++
-                config.addCapabilities.flatMap(c => Chunk("--cap-add", c.cliName)) ++
-                config.dropCapabilities.flatMap(c => Chunk("--cap-drop", c.cliName)) ++
-                (if config.readOnlyFilesystem then Chunk("--read-only") else Chunk.empty) ++
-                // Behavior
-                (if config.interactive then Chunk("-i") else Chunk.empty) ++
-                (if config.allocateTty then Chunk("-t") else Chunk.empty) ++
-                (if config.autoRemove then Chunk("--rm") else Chunk.empty) ++
-                Chunk("--restart", restartStr) ++
-                config.stopSignal.map(s => Chunk("--stop-signal", s.name)).getOrElse(Chunk.empty) ++
+                // Security: --privileged, --cap-add, --cap-drop, --read-only
+                securityArgs(config) ++
+                // Behavior: -i, -t, --rm, --restart, --stop-signal
+                behaviorArgs(config, restartStr) ++
                 // Environment variables from Config.env merged with Command.env (command overrides on conflict)
                 (config.env.toMap ++ config.command.map(_.env).getOrElse(Map.empty)).flatMap { case (k, v) => Chunk("-e", s"$k=$v") } ++
                 // Working directory from Command
@@ -122,6 +96,55 @@ final private[kyo] class ShellBackend(
             run(ResourceContext.Image(config.image.reference), args.toSeq*).map(output => Container.Id(lastLine(output)))
         }
     end create
+
+    /** Builds `-p` flag pairs for each port binding. Pure — no effects. */
+    private def portArgs(ports: Chunk[Config.PortBinding]): Chunk[String] =
+        ports.flatMap { pb =>
+            val proto = pb.protocol.cliName
+            val binding = (pb.hostIp, pb.hostPort) match
+                case (ip, hp) if ip.nonEmpty && hp != 0 => s"$ip:$hp:${pb.containerPort}/$proto"
+                case ("", hp) if hp != 0                => s"$hp:${pb.containerPort}/$proto"
+                case (ip, _) if ip.nonEmpty             => s"$ip::${pb.containerPort}/$proto"
+                case _                                  => s"${pb.containerPort}/$proto"
+            Chunk("-p", binding)
+        }
+
+    /** Builds `--network` and optional `--network-alias` flags. Pure — no effects. */
+    private def networkArgs(mode: Config.NetworkMode): Chunk[String] =
+        val modeStr = mode match
+            case Config.NetworkMode.Bridge          => "bridge"
+            case Config.NetworkMode.Host            => "host"
+            case Config.NetworkMode.None            => "none"
+            case Config.NetworkMode.Shared(cid)     => s"container:${cid.value}"
+            case Config.NetworkMode.Custom(name, _) => name
+        val aliasArgs = mode match
+            case Config.NetworkMode.Custom(_, aliases) if aliases.nonEmpty =>
+                aliases.flatMap(a => Chunk("--network-alias", a))
+            case _ => Chunk.empty
+        Chunk("--network", modeStr) ++ aliasArgs
+    end networkArgs
+
+    /** Builds security-related flags: `--privileged`, `--cap-add`, `--cap-drop`, `--read-only`. Pure — no effects. */
+    private def securityArgs(config: Config): Chunk[String] =
+        (if config.privileged then Chunk("--privileged") else Chunk.empty) ++
+            config.addCapabilities.flatMap(c => Chunk("--cap-add", c.cliName)) ++
+            config.dropCapabilities.flatMap(c => Chunk("--cap-drop", c.cliName)) ++
+            (if config.readOnlyFilesystem then Chunk("--read-only") else Chunk.empty)
+
+    /** Converts a [[Config.RestartPolicy]] to its CLI string representation (`"no"`, `"always"`, `"unless-stopped"`, or `"on-failure:N"`).
+      * Used in both `create` and `update` to avoid duplicating the policy-to-string mapping.
+      */
+    private def restartPolicyStr(rp: Config.RestartPolicy): String = rp match
+        case Config.RestartPolicy.OnFailure(retries) => s"${rp.cliName}:$retries"
+        case _                                       => rp.cliName
+
+    /** Builds behavior-related flags: `-i`, `-t`, `--rm`, `--restart`, `--stop-signal`. Pure — no effects. */
+    private def behaviorArgs(config: Config, restartStr: String): Chunk[String] =
+        (if config.interactive then Chunk("-i") else Chunk.empty) ++
+            (if config.allocateTty then Chunk("-t") else Chunk.empty) ++
+            (if config.autoRemove then Chunk("--rm") else Chunk.empty) ++
+            Chunk("--restart", restartStr) ++
+            config.stopSignal.map(s => Chunk("--stop-signal", s.name)).getOrElse(Chunk.empty)
 
     def start(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
         runUnit(ResourceContext.Container(id), "start", id.value)
@@ -186,9 +209,11 @@ final private[kyo] class ShellBackend(
                 parseExitCode(output.trim) match
                     case Result.Success(code) => code
                     case _                    => ExitCode.Success
-            case _ =>
+            case Result.Failure(_) =>
                 // Both wait and inspect failed — container is gone
                 ExitCode.Success
+            case Result.Panic(t) =>
+                Log.warn(s"unexpected error in inspectExitCode for ${id.value}: $t").andThen(ExitCode.Success)
         }
 
     // --- Checkpoint/Restore ---
@@ -204,11 +229,6 @@ final private[kyo] class ShellBackend(
             runUnit(ResourceContext.Container(id), "container", "restore", "--import", s"/tmp/$checkpoint.tar")
         else
             runUnit(ResourceContext.Container(id), "start", "--checkpoint", checkpoint, id.value)
-
-    // --- Health ---
-
-    def isHealthy(id: Container.Id)(using Frame): Boolean < (Async & Abort[ContainerException]) =
-        state(id).map(_ == State.Running)
 
     // --- Inspection ---
 
@@ -288,7 +308,7 @@ final private[kyo] class ShellBackend(
         }.toMap)
 
         // Parse image reference
-        val imageRef = ContainerImage.parse(imageName).getOrElse(ContainerImage(imageName))
+        val imageRef = ContainerImage(imageName)
 
         // Parse platform
         val platform = Container.Platform.parse(dto.Platform).getOrElse(Container.Platform("", ""))
@@ -300,7 +320,7 @@ final private[kyo] class ShellBackend(
             image = imageRef,
             imageId = ContainerImage.Id(dto.Image),
             state = parseState(dto.State.Status),
-            exitCode = if dto.State.ExitCode == 0 then ExitCode.Success else ExitCode.Failure(dto.State.ExitCode),
+            exitCode = exitCodeForState(parseState(dto.State.Status), dto.State.ExitCode),
             pid = dto.State.Pid,
             startedAt = parseInstant(Option(dto.State.StartedAt).filter(_.nonEmpty)),
             finishedAt = parseInstant(Option(dto.State.FinishedAt).filter(_.nonEmpty)),
@@ -310,32 +330,42 @@ final private[kyo] class ShellBackend(
             labels = Dict.from(dto.Config.Labels.getOrElse(Map.empty)),
             env = envMap,
             command = dto.Config.Cmd.getOrElse(Seq.empty).mkString(" "),
-            createdAt = parseInstant(Option(dto.Created).filter(_.nonEmpty)).getOrElse(Instant.Epoch),
+            createdAt = parseInstantOrEpoch(dto.Created),
             restartCount = dto.RestartCount,
             driver = dto.Driver,
             platform = platform,
-            networkSettings =
-                // Podman's container inspect leaves the top-level NetworkSettings.{IPAddress,Gateway,MacAddress}
-                // empty and only populates per-network entries under Networks. Fall back to the first non-empty
-                // entry so the top-level Maybe fields are populated for both daemons.
-                val firstNetEntry: Maybe[NetworkEndpointEntryJson] =
-                    Maybe.fromOption(dto.NetworkSettings.Networks.flatMap(_.values.find(ep =>
-                        ep.IPAddress.nonEmpty || ep.Gateway.nonEmpty || ep.MacAddress.nonEmpty
-                    )))
-                Info.NetworkSettings(
-                    ipAddress =
-                        if dto.NetworkSettings.IPAddress.nonEmpty then Present(dto.NetworkSettings.IPAddress)
-                        else firstNetEntry.flatMap(ep => if ep.IPAddress.nonEmpty then Present(ep.IPAddress) else Absent),
-                    gateway =
-                        if dto.NetworkSettings.Gateway.nonEmpty then Present(dto.NetworkSettings.Gateway)
-                        else firstNetEntry.flatMap(ep => if ep.Gateway.nonEmpty then Present(ep.Gateway) else Absent),
-                    macAddress =
-                        if dto.NetworkSettings.MacAddress.nonEmpty then Present(dto.NetworkSettings.MacAddress)
-                        else firstNetEntry.flatMap(ep => if ep.MacAddress.nonEmpty then Present(ep.MacAddress) else Absent),
-                    networks = networks
-                )
+            networkSettings = buildNetworkSettings(dto.NetworkSettings, networks)
         )
     end mapInspectToInfo
+
+    /** Build the Info.NetworkSettings from the inspect DTO, performing the Docker/Podman fallback: top-level
+      * NetworkSettings.{IPAddress,Gateway,MacAddress} are populated for Docker but empty for rootless Podman, which only fills per-network
+      * endpoint entries. `firstNetEntry` is computed once and referenced three times.
+      */
+    private def buildNetworkSettings(
+        settings: InspectNetworkSettingsJson,
+        networks: Dict[Network.Id, Info.NetworkEndpoint]
+    ): Info.NetworkSettings =
+        // Podman's container inspect leaves the top-level NetworkSettings.{IPAddress,Gateway,MacAddress}
+        // empty and only populates per-network entries under Networks. Fall back to the first non-empty
+        // entry so the top-level Maybe fields are populated for both daemons.
+        val firstNetEntry: Maybe[NetworkEndpointEntryJson] =
+            Maybe.fromOption(settings.Networks.flatMap(_.values.find(ep =>
+                ep.IPAddress.nonEmpty || ep.Gateway.nonEmpty || ep.MacAddress.nonEmpty
+            )))
+        Info.NetworkSettings(
+            ipAddress =
+                if settings.IPAddress.nonEmpty then Present(settings.IPAddress)
+                else firstNetEntry.flatMap(ep => if ep.IPAddress.nonEmpty then Present(ep.IPAddress) else Absent),
+            gateway =
+                if settings.Gateway.nonEmpty then Present(settings.Gateway)
+                else firstNetEntry.flatMap(ep => if ep.Gateway.nonEmpty then Present(ep.Gateway) else Absent),
+            macAddress =
+                if settings.MacAddress.nonEmpty then Present(settings.MacAddress)
+                else firstNetEntry.flatMap(ep => if ep.MacAddress.nonEmpty then Present(ep.MacAddress) else Absent),
+            networks = networks
+        )
+    end buildNetworkSettings
 
     def state(id: Container.Id)(using Frame): State < (Async & Abort[ContainerException]) =
         run(ResourceContext.Container(id), "inspect", "--format", "{{.State.Status}}", id.value).map(parseState)
@@ -357,12 +387,23 @@ final private[kyo] class ShellBackend(
                             // Try Docker format (string fields) first, then Podman format (numeric fields)
                             Json.decode[DockerStatsJson](trimmed) match
                                 case Result.Success(dto) if dto.CPUPerc.nonEmpty => mapDockerStats(dto, now, cpuCount)
+                                case Result.Panic(t)                             =>
+                                    // Unexpected panic decoding Docker stats; fall through to Podman
+                                    Log.warn(s"unexpected panic decoding Docker stats DTO: $t").andThen(
+                                        Json.decode[PodmanStatsJson](trimmed) match
+                                            case Result.Success(dto) => mapPodmanStats(dto, now, cpuCount)
+                                            case Result.Failure(err) =>
+                                                Abort.fail(ContainerDecodeException("Parse error in stats JSON", err))
+                                            case Result.Panic(t2) => Abort.panic(t2)
+                                    )
                                 case _ =>
+                                    // Docker guard failed or Failure — fall through to Podman
                                     Json.decode[PodmanStatsJson](trimmed) match
                                         case Result.Success(dto) => mapPodmanStats(dto, now, cpuCount)
                                         case Result.Failure(err) =>
                                             Abort.fail(ContainerDecodeException("Parse error in stats JSON", err))
                                         case Result.Panic(t) => Abort.panic(t)
+                                    end match
                             end match
                         }
                     end if
@@ -474,31 +515,8 @@ final private[kyo] class ShellBackend(
         }.getOrElse(0L)
     end parseSizeString
 
-    def statsStream(id: Container.Id)(using Frame): Stream[Stats, Async & Abort[ContainerException]] =
-        statsStream(id, 200.millis)
-
-    def statsStream(id: Container.Id, interval: Duration)(using Frame): Stream[Stats, Async & Abort[ContainerException]] =
-        // Poll stats repeatedly since true streaming requires Scope
-        Stream {
-            Loop(()) { _ =>
-                stats(id).map { s =>
-                    Emit.value(Chunk(s)).andThen {
-                        Async.sleep(interval).andThen(Loop.continue(()))
-                    }
-                }
-            }
-        }
-
     def top(id: Container.Id, psArgs: String)(using Frame): TopResult < (Async & Abort[ContainerException]) =
-        run(ResourceContext.Container(id), "top", id.value, psArgs).map { output =>
-            val lines = output.split("\n")
-            if lines.isEmpty then TopResult(Chunk.empty, Chunk.empty)
-            else
-                val titles    = Chunk.from(lines.head.split("\\s+"))
-                val processes = Chunk.from(lines.tail.map(l => Chunk.from(l.split("\\s+", titles.length))))
-                TopResult(titles, processes)
-            end if
-        }
+        run(ResourceContext.Container(id), "top", id.value, psArgs).map(ShellBackend.parseTopOutput)
 
     def changes(id: Container.Id)(using Frame): Chunk[FilesystemChange] < (Async & Abort[ContainerException]) =
         run(ResourceContext.Container(id), "diff", id.value).map { output =>
@@ -544,8 +562,8 @@ final private[kyo] class ShellBackend(
     private def execOnce(id: Container.Id, command: Command)(using Frame): ExecResult < (Async & Abort[ContainerException]) =
         // Build command
         val baseArgs = Chunk("exec") ++
-            command.env.flatMap { case (k, v) => Chunk("-e", s"$k=$v") } ++
-            command.workDir.map(w => Chunk("-w", w.toString)).getOrElse(Chunk.empty) ++
+            envFlags(command.env) ++
+            workDirFlags(command.workDir) ++
             Chunk(id.value) ++
             Chunk.from(command.args)
 
@@ -614,8 +632,8 @@ final private[kyo] class ShellBackend(
     ): Stream[LogEntry, Async & Abort[ContainerException]] =
         Stream {
             val baseArgs = Chunk("exec") ++
-                command.env.flatMap { case (k, v) => Chunk("-e", s"$k=$v") } ++
-                command.workDir.map(w => Chunk("-w", w.toString)).getOrElse(Chunk.empty) ++
+                envFlags(command.env) ++
+                workDirFlags(command.workDir) ++
                 Chunk(id.value) ++
                 Chunk.from(command.args)
 
@@ -667,8 +685,8 @@ final private[kyo] class ShellBackend(
         using Frame
     ): AttachSession < (Async & Abort[ContainerException] & Scope) =
         val baseArgs = Chunk("exec", "-i") ++
-            command.env.flatMap { case (k, v) => Chunk("-e", s"$k=$v") } ++
-            command.workDir.map(w => Chunk("-w", w.toString)).getOrElse(Chunk.empty) ++
+            envFlags(command.env) ++
+            workDirFlags(command.workDir) ++
             Chunk(id.value) ++
             Chunk.from(command.args)
 
@@ -796,44 +814,11 @@ final private[kyo] class ShellBackend(
 
     /** Parse log output lines into LogEntry, handling optional timestamps. */
 
-    /** Parse a timestamp string from log output. Docker uses "2024-01-01T00:00:00.000000000Z" (Instant format). Podman uses
-      * "2024-01-01T00:00:00-07:00" (OffsetDateTime format).
-      */
-    private def parseLogTimestamp(tsStr: String): Maybe[Instant] =
-        Instant.parse(tsStr).toMaybe.orElse {
-            Result.catching[java.time.format.DateTimeParseException](
-                Instant.fromJava(java.time.OffsetDateTime.parse(tsStr).toInstant)
-            ).toMaybe
-        }
-
     private def parseLogLines(raw: String, source: LogEntry.Source, hasTimestamps: Boolean): Chunk[LogEntry] =
-        if raw.trim.isEmpty then Chunk.empty
-        else
-            Chunk.from(raw.split("\n").filter(_.nonEmpty).map { line =>
-                if hasTimestamps then
-                    val spaceIdx = line.indexOf(' ')
-                    if spaceIdx > 0 then
-                        val tsStr   = line.substring(0, spaceIdx)
-                        val content = line.substring(spaceIdx + 1)
-                        val ts      = parseLogTimestamp(tsStr)
-                        LogEntry(source, content, ts)
-                    else LogEntry(source, line)
-                    end if
-                else LogEntry(source, line)
-            })
-    end parseLogLines
+        ShellBackend.parseLogLines(raw, source, hasTimestamps)
 
     private def parseLogLine(line: String, source: LogEntry.Source, hasTimestamps: Boolean): LogEntry =
-        if hasTimestamps then
-            val spaceIdx = line.indexOf(' ')
-            if spaceIdx > 0 then
-                val tsStr   = line.substring(0, spaceIdx)
-                val content = line.substring(spaceIdx + 1)
-                val ts      = parseLogTimestamp(tsStr)
-                LogEntry(source, content, ts)
-            else LogEntry(source, line)
-            end if
-        else LogEntry(source, line)
+        ShellBackend.parseLogLine(line, source, hasTimestamps)
 
     /** Merge two per-source log sequences into a single emission-order sequence.
       *
@@ -929,10 +914,11 @@ final private[kyo] class ShellBackend(
       */
     private def resolveHostPath(path: Path)(using Frame): String < Async =
         val pathStr = path.toString
-        Abort.run[CommandException](Command("readlink", "-f", pathStr).textWithExitCode).map {
-            case Result.Success((output, ExitCode.Success)) if output.trim.nonEmpty => output.trim
-            case _                                                                  => pathStr
-        }
+        ContainerBackend.runCliQuery(
+            Command("readlink", "-f", pathStr),
+            trimmed =>
+                if trimmed.nonEmpty then Present(trimmed) else Absent
+        ).map(_.getOrElse(pathStr))
     end resolveHostPath
 
     def copyTo(id: Container.Id, source: Path, containerPath: Path)(
@@ -980,7 +966,9 @@ final private[kyo] class ShellBackend(
                 end val
                 // Extract just the filename from the full path
                 val baseName = Maybe.fromOption(name.split("/").lastOption).getOrElse(name)
-                Result.catching[NumberFormatException] {
+                // Result.catching[NumberFormatException] can technically surface a Panic for non-NFE throws;
+                // the three arms are logically exhaustive — @nowarn suppresses a false-positive compiler warning.
+                (Result.catching[NumberFormatException] {
                     FileStat(
                         name = baseName,
                         size = parts(1).toLong,
@@ -990,12 +978,19 @@ final private[kyo] class ShellBackend(
                     )
                 } match
                     case Result.Success(fs) => fs
-                    case _ =>
+                    case Result.Failure(_) =>
                         Abort.fail(ContainerDecodeException(
                             "Parse error in stat",
                             s"Invalid stat output for container ${id.value}: ${output.trim}"
                         ))
-                end match
+                    case Result.Panic(t) =>
+                        Log.warn(s"unexpected panic parsing stat output for container ${id.value}: $t").andThen(
+                            Abort.fail(ContainerDecodeException(
+                                "Parse error in stat",
+                                s"Invalid stat output for container ${id.value}: ${output.trim}"
+                            ))
+                        )
+                ): @scala.annotation.nowarn("msg=match may not be exhaustive")
             else
                 FileStat(
                     name = Maybe.fromOption(containerPath.toString.split("/").lastOption).getOrElse(containerPath.toString),
@@ -1044,12 +1039,7 @@ final private[kyo] class ShellBackend(
             cpuAffinity.map(a => Chunk("--cpuset-cpus", a)).getOrElse(Chunk.empty) ++
             maxProcesses.map(p => Chunk("--pids-limit", p.toString)).getOrElse(Chunk.empty) ++
             restartPolicy.map { rp =>
-                val rpStr = rp match
-                    case Config.RestartPolicy.No                 => "no"
-                    case Config.RestartPolicy.Always             => "always"
-                    case Config.RestartPolicy.UnlessStopped      => "unless-stopped"
-                    case Config.RestartPolicy.OnFailure(retries) => s"on-failure:$retries"
-                Chunk("--restart", rpStr)
+                Chunk("--restart", restartPolicyStr(rp))
             }.getOrElse(Chunk.empty)
         // Docker requires at least one flag; skip the command for no-op updates
         if args.length > 1 then
@@ -1058,36 +1048,6 @@ final private[kyo] class ShellBackend(
         end if
     end update
 
-    // --- Network on Container ---
-
-    def connectToNetwork(id: Container.Id, networkId: Network.Id, aliases: Chunk[String])(
-        using Frame
-    ): Unit < (Async & Abort[ContainerException]) =
-        val args = Chunk("network", "connect") ++
-            aliases.flatMap(a => Chunk("--alias", a)) ++
-            Chunk(networkId.value) ++
-            Chunk(id.value)
-        // Use Network context so network-not-found classifies as NetworkNotFound.
-        Abort.run[ContainerException] {
-            runUnit(ResourceContext.Network(networkId), args.toSeq*)
-        }.map {
-            case Result.Success(_)                             => ()
-            case Result.Failure(_: ContainerConflictException) => ()
-            case Result.Failure(e)                             => Abort.fail(e)
-            case Result.Panic(e)                               => Abort.panic(e)
-        }
-    end connectToNetwork
-
-    def disconnectFromNetwork(id: Container.Id, networkId: Network.Id, force: Boolean)(
-        using Frame
-    ): Unit < (Async & Abort[ContainerException]) =
-        val args = Chunk("network", "disconnect") ++
-            (if force then Chunk("-f") else Chunk.empty) ++
-            Chunk(networkId.value) ++
-            Chunk(id.value)
-        runUnit(ResourceContext.Network(networkId), args.toSeq*)
-    end disconnectFromNetwork
-
     // --- Container Listing ---
 
     def list(all: Boolean, filters: Dict[String, Chunk[String]])(
@@ -1095,9 +1055,7 @@ final private[kyo] class ShellBackend(
     ): Chunk[Summary] < (Async & Abort[ContainerException]) =
         val args = Chunk("ps") ++
             (if all then Chunk("--all") else Chunk.empty) ++
-            Chunk.from(filters.toMap.toSeq.flatMap { case (k, vs) =>
-                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
-            }) ++
+            filterFlags(filters) ++
             Chunk("--no-trunc", "--format", "{{json .}}")
         run(ResourceContext.Op("list"), args.toSeq*).map { output =>
             if output.trim.isEmpty then Chunk.empty[Summary]
@@ -1109,11 +1067,18 @@ final private[kyo] class ShellBackend(
                     Json.decode[PsJsonDocker](trimmed) match
                         case Result.Success(dto) if dto.ID.nonEmpty =>
                             Chunk(mapDockerPsToSummary(dto))
-                        case _ =>
+                        case Result.Failure(_) | Result.Success(_) =>
+                            // Docker guard failed or decode error — fall through to Podman
                             Json.decode[PsJsonPodman](trimmed) match
                                 case Result.Success(dto) if dto.Id.nonEmpty =>
                                     Chunk(mapPodmanPsToSummary(dto))
-                                case _ => Chunk.empty
+                                case Result.Failure(_) | Result.Success(_) =>
+                                    Chunk.empty
+                                case Result.Panic(_) =>
+                                    Chunk.empty
+                            end match
+                        case Result.Panic(_) =>
+                            Chunk.empty
                     end match
                 }
         }
@@ -1184,7 +1149,7 @@ final private[kyo] class ShellBackend(
         Summary(
             id = Container.Id(dto.ID),
             names = names,
-            image = ContainerImage.parse(dto.Image).getOrElse(ContainerImage(dto.Image)),
+            image = ContainerImage(dto.Image),
             imageId = ContainerImage.Id(dto.ImageID),
             command = dto.Command,
             state = parseState(dto.State),
@@ -1223,7 +1188,7 @@ final private[kyo] class ShellBackend(
         Summary(
             id = Container.Id(dto.Id),
             names = names,
-            image = ContainerImage.parse(dto.Image).getOrElse(ContainerImage(dto.Image)),
+            image = ContainerImage(dto.Image),
             imageId = ContainerImage.Id(dto.ImageID),
             command = command,
             state = parseState(dto.State),
@@ -1236,41 +1201,12 @@ final private[kyo] class ShellBackend(
     end mapPodmanPsToSummary
 
     def prune(filters: Dict[String, Chunk[String]])(using Frame): PruneResult < (Async & Abort[ContainerException]) =
-        val args = Chunk("container", "prune", "-f") ++
-            Chunk.from(filters.toMap.toSeq.flatMap { case (k, vs) =>
-                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
-            })
+        val args = Chunk("container", "prune", "-f") ++ filterFlags(filters)
         run(ResourceContext.Op("prune"), args.toSeq*).map { output =>
-            // Parse prune output: lists deleted container IDs, then space reclaimed
-            val lines   = output.split("\n")
-            val deleted = Chunk.from(lines.map(_.trim).filter(_.matches("^[a-f0-9]{12,64}$")))
-            val spaceReclaimed = lines.find(_.contains("reclaimed")).flatMap { line =>
-                val pattern = """(\d+(?:\.\d+)?)\s*(B|kB|MB|GB|TB)""".r
-                pattern.findFirstMatchIn(line).map { m =>
-                    parseSizeString(m.group(0))
-                }
-            }.getOrElse(0L)
+            val (deleted, spaceReclaimed) = parsePruneOutput(output, _.matches("^[a-f0-9]{12,64}$"))
             PruneResult(deleted, spaceReclaimed)
         }
     end prune
-
-    def attachById(idOrName: Container.Id)(using Frame): (Container.Id, Config) < (Async & Abort[ContainerException]) =
-        inspect(idOrName).map { info =>
-            val config0 = Config.default.copy(
-                image = info.image,
-                name = if info.name.nonEmpty then Present(info.name) else Absent,
-                labels = info.labels,
-                ports = info.ports,
-                mounts = info.mounts
-            )
-            val config =
-                if info.command.isEmpty then config0
-                else
-                    val args = Chunk.from(info.command.split(" ").iterator.filter(_.nonEmpty).toSeq)
-                    val cmd  = if info.env.isEmpty then Command(args*) else Command(args*).envAppend(info.env.toMap)
-                    config0.command(cmd)
-            (info.id, config)
-        }
 
     // --- Image Operations ---
 
@@ -1283,23 +1219,6 @@ final private[kyo] class ShellBackend(
             Chunk(ref)
         runUnit(ResourceContext.Image(ref), args.toSeq*)
     end imagePull
-
-    def imageEnsure(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
-        using Frame
-    ): Unit < (Async & Abort[ContainerException]) =
-        val ref = image.reference
-        val ctx = ResourceContext.Image(ref)
-        Abort.runWith[ContainerException](
-            run(ctx, "image", "inspect", "--format", "{{.Id}}", ref)
-        ) {
-            case Result.Success(_) => () // Image exists locally, skip pull
-            case _ =>
-                val args = Chunk("pull") ++
-                    platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
-                    Chunk(ref)
-                runUnit(ctx, args.toSeq*)
-        }
-    end imageEnsure
 
     def imagePullWithProgress(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
@@ -1319,7 +1238,10 @@ final private[kyo] class ShellBackend(
                         progress = Absent,
                         error = Absent
                     )))
-                case _ =>
+                case Result.Panic(t) =>
+                    // Unexpected panic during local image check — log and re-panic
+                    Log.warn(s"unexpected panic checking local image $ref: $t").andThen(Abort.panic(t))
+                case Result.Failure(_) =>
                     // Image not found locally — pull from registry
                     val args = Chunk("pull") ++
                         platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
@@ -1352,9 +1274,7 @@ final private[kyo] class ShellBackend(
     ): Chunk[ContainerImage.Summary] < (Async & Abort[ContainerException]) =
         val args = Chunk("images") ++
             (if all then Chunk("--all") else Chunk.empty) ++
-            Chunk.from(filters.toMap.toSeq.flatMap { case (k, vs) =>
-                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
-            }) ++
+            filterFlags(filters) ++
             Chunk("--format", "{{json .}}")
         run(ResourceContext.Op("imageList"), args.toSeq*).map { output =>
             if output.trim.isEmpty then Chunk.empty[ContainerImage.Summary]
@@ -1363,8 +1283,12 @@ final private[kyo] class ShellBackend(
                     val trimmed = line.trim
                     Json.decode[ImageListJsonDocker](trimmed) match
                         case Result.Success(dto) if dto.ID.nonEmpty => mapDockerImageListToSummary(dto)
-                        case _ =>
+                        case Result.Failure(_) | Result.Success(_) =>
                             decodeJson[ImageListJsonPodman](trimmed).map(mapPodmanImageListToSummary)
+                        case Result.Panic(t) =>
+                            Log.warn(s"unexpected panic decoding Docker image list DTO: $t").andThen(
+                                decodeJson[ImageListJsonPodman](trimmed).map(mapPodmanImageListToSummary)
+                            )
                     end match
                 }
         }
@@ -1392,14 +1316,14 @@ final private[kyo] class ShellBackend(
             if dto.repository.nonEmpty && dto.tag.nonEmpty then Seq(s"${dto.repository}:${dto.tag}")
             else Seq.empty
         }
-        val repoTags    = Chunk.from(repoTagStrs.map(s => ContainerImage.parse(s).getOrElse(ContainerImage(s))))
-        val repoDigests = Chunk.from(dto.RepoDigests.getOrElse(Seq.empty).map(s => ContainerImage.parse(s).getOrElse(ContainerImage(s))))
+        val repoTags    = Chunk.from(repoTagStrs.map(ContainerImage(_)))
+        val repoDigests = Chunk.from(dto.RepoDigests.getOrElse(Seq.empty).map(ContainerImage(_)))
 
         ContainerImage.Summary(
             id = ContainerImage.Id(id),
             repoTags = repoTags,
             repoDigests = repoDigests,
-            createdAt = if dto.Created > 0 then Instant.fromJava(java.time.Instant.ofEpochSecond(dto.Created)) else Instant.Epoch,
+            createdAt = fromEpochSecond(dto.Created),
             size = dto.Size,
             labels = Dict.from(dto.Labels.getOrElse(Map.empty))
         )
@@ -1410,13 +1334,9 @@ final private[kyo] class ShellBackend(
             decodeJson[ImageInspectJson](raw).map { dto =>
                 ContainerImage.Info(
                     id = ContainerImage.Id(dto.Id),
-                    repoTags = Chunk.from(dto.RepoTags.getOrElse(Seq.empty).map(s =>
-                        ContainerImage.parse(s).getOrElse(ContainerImage(s))
-                    )),
-                    repoDigests = Chunk.from(dto.RepoDigests.getOrElse(Seq.empty).map(s =>
-                        ContainerImage.parse(s).getOrElse(ContainerImage(s))
-                    )),
-                    createdAt = parseInstant(Option(dto.Created).filter(_.nonEmpty)).getOrElse(Instant.Epoch),
+                    repoTags = Chunk.from(dto.RepoTags.getOrElse(Seq.empty).map(ContainerImage(_))),
+                    repoDigests = Chunk.from(dto.RepoDigests.getOrElse(Seq.empty).map(ContainerImage(_))),
+                    createdAt = parseInstantOrEpoch(dto.Created),
                     size = dto.Size,
                     labels = Dict.from(dto.Config.Labels.getOrElse(Map.empty)),
                     architecture = dto.Architecture,
@@ -1447,25 +1367,6 @@ final private[kyo] class ShellBackend(
 
     def imageTag(source: ContainerImage, repo: String, tag: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         runUnit(ResourceContext.Image(source.reference), "tag", source.reference, s"$repo:$tag")
-
-    def imageBuild(
-        context: Stream[Byte, Sync],
-        dockerfile: String,
-        tags: Chunk[String],
-        buildArgs: Dict[String, String],
-        labels: Dict[String, String],
-        noCache: Boolean,
-        pull: Boolean,
-        target: Maybe[String],
-        platform: Maybe[Container.Platform],
-        auth: Maybe[ContainerImage.RegistryAuth]
-    )(using Frame): Stream[ContainerImage.BuildProgress, Async & Abort[ContainerException]] =
-        // Stream-based context not supported via CLI, use imageBuildFromPath instead
-        Stream {
-            Abort.fail[ContainerException](
-                ContainerNotSupportedException("imageBuild with stream context", "Use imageBuildFromPath instead")
-            ).unit
-        }
 
     def imageBuildFromPath(
         path: Path,
@@ -1519,29 +1420,6 @@ final private[kyo] class ShellBackend(
             }
         }
 
-    /** After a build stream completes, confirm the daemon produced an image for the first tag.
-      *
-      * `docker build` / `podman build` write their progress to stdout/stderr and only signal failure via the process exit code, which this
-      * backend's `.emit` streaming pipeline does not check. Inspecting the tagged image post-build gives an API-level ground truth that
-      * works uniformly across builder variants.
-      */
-    private def verifyBuildProduced(tags: Chunk[String])(using Frame): Unit < (Async & Abort[ContainerException]) =
-        tags.headOption match
-            case None => Kyo.unit
-            case Some(tag) =>
-                Abort.run[ContainerException](imageInspect(ContainerImage.parse(tag).getOrElse(ContainerImage(tag)))).map {
-                    case Result.Success(_) => ()
-                    case Result.Failure(_: ContainerImageMissingException) =>
-                        Abort.fail(ContainerBuildFailedException(
-                            tag,
-                            "image tag not found after build — possibly silent failure",
-                            new RuntimeException(s"tagged image '$tag' absent after build")
-                        ))
-                    case Result.Failure(e) => Abort.fail(e)
-                    case Result.Panic(e) =>
-                        Abort.fail(ContainerBuildFailedException(tag, "unexpected error verifying build", e))
-                }
-
     def imagePush(image: ContainerImage, auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
@@ -1552,9 +1430,7 @@ final private[kyo] class ShellBackend(
     ): Chunk[ContainerImage.SearchResult] < (Async & Abort[ContainerException]) =
         val args = Chunk("search") ++
             (if limit != Int.MaxValue then Chunk("--limit", limit.toString) else Chunk.empty) ++
-            Chunk.from(filters.toMap.toSeq.flatMap { case (k, vs) =>
-                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
-            }) ++
+            filterFlags(filters) ++
             Chunk("--format", "{{json .}}") ++
             Chunk(term)
         run(ResourceContext.Op("imageSearch"), args.toSeq*).map { output =>
@@ -1567,8 +1443,12 @@ final private[kyo] class ShellBackend(
                         // Podman: IsOfficial/IsAutomated are booleans, StarCount is an int
                         Json.decode[ImageSearchJsonPodman](trimmed) match
                             case Result.Success(dto) if dto.Name.nonEmpty => mapPodmanImageSearchToResult(dto)
-                            case _ =>
+                            case Result.Failure(_) | Result.Success(_) =>
                                 decodeJson[ImageSearchJsonDocker](trimmed).map(mapDockerImageSearchToResult)
+                            case Result.Panic(t) =>
+                                Log.warn(s"unexpected panic decoding Podman image search DTO: $t").andThen(
+                                    decodeJson[ImageSearchJsonDocker](trimmed).map(mapDockerImageSearchToResult)
+                                )
                         end match
                     }
             parsed.map(results => if limit != Int.MaxValue then results.take(limit) else results)
@@ -1621,18 +1501,13 @@ final private[kyo] class ShellBackend(
         }
 
     def imagePrune(filters: Dict[String, Chunk[String]])(using Frame): PruneResult < (Async & Abort[ContainerException]) =
-        val args = Chunk("image", "prune", "-f") ++
-            Chunk.from(filters.toMap.toSeq.flatMap { case (k, vs) =>
-                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
-            })
+        val args = Chunk("image", "prune", "-f") ++ filterFlags(filters)
         run(ResourceContext.Op("imagePrune"), args.toSeq*).map { output =>
-            val lines = output.split("\n")
-            val deleted = Chunk.from(lines.filter(l => l.startsWith("deleted:") || l.startsWith("untagged:"))
-                .map(_.split(":").last.trim))
-            val spaceReclaimed = lines.find(_.contains("reclaimed")).flatMap { line =>
-                val pattern = """(\d+(?:\.\d+)?)\s*(B|kB|MB|GB|TB)""".r
-                pattern.findFirstMatchIn(line).map(m => parseSizeString(m.group(0)))
-            }.getOrElse(0L)
+            val (rawDeleted, spaceReclaimed) = parsePruneOutput(
+                output,
+                l => l.startsWith("deleted:") || l.startsWith("untagged:")
+            )
+            val deleted = rawDeleted.map(_.split(":").last.trim)
             PruneResult(deleted, spaceReclaimed)
         }
     end imagePrune
@@ -1659,38 +1534,39 @@ final private[kyo] class ShellBackend(
     // --- Network Operations ---
 
     def networkCreate(config: Network.Config)(using Frame): Network.Id < (Async & Abort[ContainerException]) =
-        val args = Chunk("network", "create") ++
-            (if config.driver != Container.NetworkDriver.Bridge then Chunk("--driver", config.driver.cliName) else Chunk.empty) ++
-            (if config.internal then Chunk("--internal") else Chunk.empty) ++
-            // Note: podman doesn't support --attachable flag; skip it
-            (if config.enableIPv6 then Chunk("--ipv6") else Chunk.empty) ++
-            Chunk.from(config.labels.toMap.toSeq.flatMap { case (k, v) => Seq("--label", s"$k=$v") }) ++
-            Chunk.from(config.options.toMap.toSeq.flatMap { case (k, v) => Seq("--opt", s"$k=$v") }) ++
-            config.ipam.map { ipam =>
-                (if ipam.driver != "default" then Chunk("--ipam-driver", ipam.driver) else Chunk.empty) ++
-                    ipam.config.flatMap { pool =>
-                        pool.subnet.map(s => Chunk("--subnet", s)).getOrElse(Chunk.empty) ++
-                            pool.gateway.map(g => Chunk("--gateway", g)).getOrElse(Chunk.empty) ++
-                            pool.ipRange.map(r => Chunk("--ip-range", r)).getOrElse(Chunk.empty)
-                    }
-            }.getOrElse(Chunk.empty) ++
-            Chunk(config.name)
-        run(ResourceContext.Op("networkCreate"), args.toSeq*).map { _ =>
-            // Always return the network name as the ID.
-            // Docker returns a hash but uses names as keys in inspect/connect;
-            // Podman already returns the name. Using the name consistently
-            // ensures Network.Id works with all subsequent operations.
-            Network.Id(config.name)
-        }
+        if config.name.isEmpty then Abort.fail(ContainerOperationException("Network name cannot be empty"))
+        else
+            val args = Chunk("network", "create") ++
+                (if config.driver != Container.NetworkDriver.Bridge then Chunk("--driver", config.driver.cliName) else Chunk.empty) ++
+                (if config.internal then Chunk("--internal") else Chunk.empty) ++
+                // Note: podman doesn't support --attachable flag; skip it
+                (if config.enableIPv6 then Chunk("--ipv6") else Chunk.empty) ++
+                Chunk.from(config.labels.toMap.toSeq.flatMap { case (k, v) => Seq("--label", s"$k=$v") }) ++
+                Chunk.from(config.options.toMap.toSeq.flatMap { case (k, v) => Seq("--opt", s"$k=$v") }) ++
+                config.ipam.map { ipam =>
+                    (if ipam.driver != "default" then Chunk("--ipam-driver", ipam.driver) else Chunk.empty) ++
+                        ipam.config.flatMap { pool =>
+                            pool.subnet.map(s => Chunk("--subnet", s)).getOrElse(Chunk.empty) ++
+                                pool.gateway.map(g => Chunk("--gateway", g)).getOrElse(Chunk.empty) ++
+                                pool.ipRange.map(r => Chunk("--ip-range", r)).getOrElse(Chunk.empty)
+                        }
+                }.getOrElse(Chunk.empty) ++
+                Chunk(config.name)
+            run(ResourceContext.Op("networkCreate"), args.toSeq*).map { _ =>
+                // Always return the network name as the ID.
+                // Docker returns a hash but uses names as keys in inspect/connect;
+                // Podman already returns the name. Using the name consistently
+                // ensures Network.Id works with all subsequent operations.
+                Network.Id(config.name)
+            }
+        end if
     end networkCreate
 
     def networkList(filters: Dict[String, Chunk[String]])(
         using Frame
     ): Chunk[Network.Info] < (Async & Abort[ContainerException]) =
         val args = Chunk("network", "ls") ++
-            Chunk.from(filters.toMap.toSeq.flatMap { case (k, vs) =>
-                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
-            }) ++
+            filterFlags(filters) ++
             Chunk("--format", "{{json .}}")
         run(ResourceContext.Op("networkList"), args.toSeq*).map { output =>
             if output.trim.isEmpty then Chunk.empty[Network.Info]
@@ -1701,8 +1577,12 @@ final private[kyo] class ShellBackend(
                     // Podman: native types (booleans, labels as object)
                     Json.decode[NetworkListJsonPodman](trimmed) match
                         case Result.Success(dto) if dto.name.nonEmpty || dto.id.nonEmpty => mapPodmanNetworkListToInfo(dto)
-                        case _ =>
+                        case Result.Failure(_) | Result.Success(_) =>
                             decodeJson[NetworkListJsonDocker](trimmed).map(mapDockerNetworkListToInfo)
+                        case Result.Panic(t) =>
+                            Log.warn(s"unexpected panic decoding Podman network list DTO: $t").andThen(
+                                decodeJson[NetworkListJsonDocker](trimmed).map(mapDockerNetworkListToInfo)
+                            )
                     end match
                 }
         }
@@ -1728,7 +1608,7 @@ final private[kyo] class ShellBackend(
             labels = labelsMap,
             options = Dict.empty,
             containers = Dict.empty,
-            createdAt = parseInstant(Option(dto.CreatedAt).filter(_.nonEmpty)).getOrElse(Instant.Epoch)
+            createdAt = parseInstantOrEpoch(dto.CreatedAt)
         )
     end mapDockerNetworkListToInfo
 
@@ -1744,7 +1624,7 @@ final private[kyo] class ShellBackend(
             labels = Dict.from(dto.labels.getOrElse(Map.empty)),
             options = Dict.empty,
             containers = Dict.empty,
-            createdAt = parseInstant(Option(dto.created).filter(_.nonEmpty)).getOrElse(Instant.Epoch)
+            createdAt = parseInstantOrEpoch(dto.created)
         )
     end mapPodmanNetworkListToInfo
 
@@ -1783,7 +1663,7 @@ final private[kyo] class ShellBackend(
                     labels = Dict.from(dto.Labels.orElse(dto.labels).getOrElse(Map.empty)),
                     options = Dict.from(dto.Options.orElse(dto.options).getOrElse(Map.empty)),
                     containers = containers,
-                    createdAt = parseInstant(Option(createdStr).filter(_.nonEmpty)).getOrElse(Instant.Epoch)
+                    createdAt = parseInstantOrEpoch(createdStr)
                 )
             }
         }
@@ -1821,10 +1701,7 @@ final private[kyo] class ShellBackend(
     def networkPrune(filters: Dict[String, Chunk[String]])(
         using Frame
     ): Chunk[Network.Id] < (Async & Abort[ContainerException]) =
-        val args = Chunk("network", "prune", "-f") ++
-            Chunk.from(filters.toMap.toSeq.flatMap { case (k, vs) =>
-                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
-            })
+        val args = Chunk("network", "prune", "-f") ++ filterFlags(filters)
         run(ResourceContext.Op("networkPrune"), args.toSeq*).map { output =>
             Chunk.from(output.split("\n")
                 .filter(_.trim.nonEmpty)
@@ -1852,9 +1729,7 @@ final private[kyo] class ShellBackend(
         using Frame
     ): Chunk[Volume.Info] < (Async & Abort[ContainerException]) =
         val args = Chunk("volume", "ls") ++
-            Chunk.from(filters.toMap.toSeq.flatMap { case (k, vs) =>
-                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
-            }) ++
+            filterFlags(filters) ++
             Chunk("--format", "{{json .}}")
         run(ResourceContext.Op("volumeList"), args.toSeq*).map { output =>
             if output.trim.isEmpty then Chunk.empty[Volume.Info]
@@ -1879,7 +1754,7 @@ final private[kyo] class ShellBackend(
                                 createdAt = Instant.Epoch,
                                 scope = dto.Scope
                             ))
-                        case _ =>
+                        case Result.Failure(_) =>
                             Json.decode[VolumeListJsonPodman](trimmed) match
                                 case Result.Success(dto) =>
                                     Chunk(Volume.Info(
@@ -1891,7 +1766,13 @@ final private[kyo] class ShellBackend(
                                         createdAt = Instant.Epoch,
                                         scope = dto.Scope
                                     ))
-                                case _ => Chunk.empty
+                                case Result.Failure(_) | Result.Success(_) =>
+                                    Chunk.empty
+                                case Result.Panic(_) =>
+                                    Chunk.empty
+                            end match
+                        case Result.Panic(_) =>
+                            Chunk.empty
                     end match
                 }
         }
@@ -1906,7 +1787,7 @@ final private[kyo] class ShellBackend(
                     mountpoint = dto.Mountpoint,
                     labels = Dict.from(dto.Labels.getOrElse(Map.empty)),
                     options = Dict.from(dto.Options.getOrElse(Map.empty)),
-                    createdAt = parseInstant(Option(dto.CreatedAt).filter(_.nonEmpty)).getOrElse(Instant.Epoch),
+                    createdAt = parseInstantOrEpoch(dto.CreatedAt),
                     scope = if dto.Scope.nonEmpty then dto.Scope else "local"
                 )
             }
@@ -1914,34 +1795,32 @@ final private[kyo] class ShellBackend(
 
     def volumeRemove(id: Volume.Id, force: Boolean)(using Frame): Unit < (Async & Abort[ContainerException]) =
         val ctx = ResourceContext.Volume(id)
-        // Check if any containers (including stopped) reference this volume
-        run(ctx, "ps", "-a", "--filter", s"volume=${id.value}", "--format", "{{.ID}}").map { output =>
-            val ids = output.trim
-            if ids.nonEmpty then
-                Abort.fail[ContainerException](
-                    ContainerVolumeInUseException(id, ids)
-                )
-            else
-                val args = Chunk("volume", "rm") ++
-                    (if force then Chunk("-f") else Chunk.empty) ++
-                    Chunk(id.value)
-                runUnit(ctx, args.toSeq*)
-            end if
-        }
+        if force then
+            // When force=true, pass --force to CLI and skip the pre-check; the CLI will handle
+            // removal even if containers reference the volume.
+            runUnit(ctx, "volume", "rm", "-f", id.value)
+        else
+            // Check if any containers (including stopped) reference this volume before removing
+            run(ctx, "ps", "-a", "--filter", s"volume=${id.value}", "--format", "{{.ID}}").map { output =>
+                val ids = output.trim
+                if ids.nonEmpty then
+                    Abort.fail[ContainerException](
+                        ContainerVolumeInUseException(id, ids)
+                    )
+                else
+                    runUnit(ctx, "volume", "rm", id.value)
+                end if
+            }
+        end if
     end volumeRemove
 
     def volumePrune(filters: Dict[String, Chunk[String]])(using Frame): PruneResult < (Async & Abort[ContainerException]) =
-        val args = Chunk("volume", "prune", "-f") ++
-            Chunk.from(filters.toMap.toSeq.flatMap { case (k, vs) =>
-                vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
-            })
+        val args = Chunk("volume", "prune", "-f") ++ filterFlags(filters)
         run(ResourceContext.Op("volumePrune"), args.toSeq*).map { output =>
-            val lines   = output.split("\n")
-            val deleted = Chunk.from(lines.filter(_.trim.nonEmpty).filterNot(_.toLowerCase.contains("reclaimed")))
-            val spaceReclaimed = lines.find(_.contains("reclaimed")).flatMap { line =>
-                val pattern = """(\d+(?:\.\d+)?)\s*(B|kB|MB|GB|TB)""".r
-                pattern.findFirstMatchIn(line).map(m => parseSizeString(m.group(0)))
-            }.getOrElse(0L)
+            val (deleted, spaceReclaimed) = parsePruneOutput(
+                output,
+                l => l.nonEmpty && !l.toLowerCase.contains("reclaimed")
+            )
             PruneResult(deleted, spaceReclaimed)
         }
     end volumePrune
@@ -1964,6 +1843,39 @@ final private[kyo] class ShellBackend(
         }
 
     // --- Private Helpers ---
+
+    /** Regex for size strings emitted by prune commands (e.g. "1.5 kB", "200 MB"). */
+    private val sizePattern = """(\d+(?:\.\d+)?)\s*(B|kB|MB|GB|TB)""".r
+
+    /** Encode a filters dict as repeated `--filter k=v` CLI flags. */
+    private def filterFlags(filters: Dict[String, Chunk[String]]): Chunk[String] =
+        Chunk.from(filters.toMap.toSeq.flatMap { case (k, vs) =>
+            vs.toSeq.flatMap(v => Seq("--filter", s"$k=$v"))
+        })
+
+    /** Encode a command's env map as repeated `-e k=v` CLI flags. */
+    private def envFlags(env: Map[String, String]): Chunk[String] =
+        Chunk.from(env.flatMap { case (k, v) => Seq("-e", s"$k=$v") })
+
+    /** Encode an optional working directory as a `-w path` CLI flag pair, or empty if absent. */
+    private def workDirFlags(workDir: Maybe[Path]): Chunk[String] =
+        workDir.map(w => Chunk("-w", w.toString)).getOrElse(Chunk.empty)
+
+    /** Parse the text output of a prune command into (deletedIds, spaceReclaimedBytes).
+      *
+      * @param output
+      *   Raw stdout from the prune command
+      * @param deletedFilter
+      *   Returns true for lines that represent a deleted item (backend-specific format)
+      */
+    private def parsePruneOutput(output: String, deletedFilter: String => Boolean): (Chunk[String], Long) =
+        val lines   = output.split("\n")
+        val deleted = Chunk.from(lines.filter(l => deletedFilter(l.trim)).map(_.trim))
+        val spaceReclaimed = lines.find(_.contains("reclaimed")).flatMap { line =>
+            sizePattern.findFirstMatchIn(line).map(m => parseSizeString(m.group(0)))
+        }.getOrElse(0L)
+        (deleted, spaceReclaimed)
+    end parsePruneOutput
 
     /** Run a container CLI command, returning stdout on success or mapping errors via [[mapError]].
       *
@@ -2027,77 +1939,119 @@ final private[kyo] class ShellBackend(
       * String matching is needed because Docker always uses exit code 1 for daemon errors, while Podman uses 125. Both engines emit
       * descriptive error messages on stderr that we match against known patterns to produce specific exception types.
       */
+    /** Table of (patterns, builder) pairs for simple error cases in [[mapError]]. First-match-wins: the ordering below is the CONTRACT — do
+      * NOT reorder entries.
+      *
+      * Ordering rationale (preserved from the original if/else ladder): [1] NoSuchContainer — before Conflict: a "no such container"
+      * message must not fall into conflict. [2] ImageNotFound — before Conflict: image-not-found phrases must not match conflict handler.
+      * [3] Conflict — general name/ID conflict; comes after the specific not-found checks. [4] AlreadyRunning — before AlreadyStopped:
+      * disjoint in practice but ordered for robustness. [5] AlreadyStopped — after AlreadyRunning. [6] VolumeNotFound — specific
+      * volume-missing check before generic backend-unavailable. [7] BackendUnavailable — broad "cannot connect" patterns; after
+      * resource-missing checks. [8] VolumeInUse — before AuthFailed: "volume in use" must not be caught by "denied" in AuthFailed. [9]
+      * NetworkEndpointExists — before AuthFailed for the same reason. [10] AuthFailed — last simple entry; "denied" is broad, must come
+      * after all specific checks.
+      *
+      * Two entries are kept as explicit else-if branches AFTER the table lookup because they require logic (AND-conditions or regex) that
+      * cannot be expressed as a plain Seq[String] with exists:
+      *   - network-not-found: two-phrase AND condition (lower.contains("network") && lower.contains("not found")).
+      *   - PortConflict: regex extraction of the port number from output.
+      *   - initializing source: multi-step string surgery to extract the image ref.
+      */
+    private type ErrorEntry = (Seq[String], (ResourceContext, String) => ContainerException)
+
+    private def errorTable(using Frame): Seq[ErrorEntry] = Seq(
+        // [1] NoSuchContainer — before Conflict
+        ErrorPatterns.NoSuchContainer -> { (ctx, out) =>
+            ErrorClassification.missingFor(ctx, out)
+        },
+        // [2] ImageNotFound — before Conflict
+        ErrorPatterns.ImageNotFound -> { (ctx, out) =>
+            ctx match
+                case ResourceContext.Image(ref) =>
+                    ContainerImageMissingException(ContainerImage(ref))
+                case _ => ContainerOperationException(s"Image not found during ${ctx.describe}", out)
+        },
+        // [3] Conflict — general name/ID conflict
+        ErrorPatterns.Conflict -> { (ctx, _) =>
+            ErrorClassification.conflictFor(ctx)
+        },
+        // [4] AlreadyRunning — before AlreadyStopped
+        ErrorPatterns.AlreadyRunning -> { (ctx, out) =>
+            ctx match
+                case ResourceContext.Container(id) => ContainerAlreadyRunningException(id)
+                case _                             => ContainerConflictException(s"Already running: ${ctx.describe}", out)
+        },
+        // [5] AlreadyStopped — after AlreadyRunning
+        ErrorPatterns.AlreadyStopped -> { (ctx, out) =>
+            ctx match
+                case ResourceContext.Container(id) => ContainerAlreadyStoppedException(id)
+                case _                             => ContainerConflictException(s"Already stopped: ${ctx.describe}", out)
+        },
+        // [6] VolumeNotFound — before BackendUnavailable
+        ErrorPatterns.VolumeNotFound -> { (ctx, out) =>
+            ctx match
+                case ResourceContext.Volume(id) => ContainerVolumeMissingException(id)
+                case _                          => ContainerOperationException(s"Volume not found during ${ctx.describe}", out)
+        },
+        // [7] BackendUnavailable — after resource-missing checks
+        ErrorPatterns.BackendUnavailable -> { (_, out) =>
+            ContainerBackendUnavailableException(cmd, s"Backend unavailable: $out")
+        },
+        // [8] VolumeInUse — before AuthFailed ("denied" in AuthFailed is broad)
+        ErrorPatterns.VolumeInUse -> { (ctx, out) =>
+            ctx match
+                case ResourceContext.Volume(id) => ContainerVolumeInUseException(id, out)
+                case _                          => ContainerConflictException(s"Volume in use during ${ctx.describe}", out)
+        },
+        // [9] NetworkEndpointExists — before AuthFailed
+        ErrorPatterns.NetworkEndpointExists -> { (ctx, out) =>
+            ContainerConflictException(s"Network endpoint already attached: ${ctx.describe}", out)
+        },
+        // [10] AuthFailed — last simple entry; "denied" is broad so it comes last
+        ErrorPatterns.AuthFailed -> { (ctx, out) =>
+            ContainerAuthException(ctx.describe, out)
+        }
+    )
+
     private def mapError(output: String, ctx: ResourceContext, args: Seq[String])(using Frame): ContainerException =
         val lower = output.toLowerCase
 
         def matchesAny(patterns: Seq[String]): Boolean = patterns.exists(lower.contains)
 
-        if matchesAny(ErrorPatterns.NoSuchContainer) then
-            ctx match
-                case ResourceContext.Container(id) => ContainerMissingException(id)
-                case ResourceContext.Image(ref) =>
-                    ContainerImageMissingException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)))
-                case ResourceContext.Network(id) => ContainerNetworkMissingException(id)
-                case ResourceContext.Volume(id)  => ContainerVolumeMissingException(id)
-                case ResourceContext.Op(name)    => ContainerOperationException(s"Resource not found during $name", output)
-        else if matchesAny(ErrorPatterns.ImageNotFound) then
-            ctx match
-                case ResourceContext.Image(ref) =>
-                    ContainerImageMissingException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)))
-                case _ => ContainerOperationException(s"Image not found during ${ctx.describe}", output)
-        else if matchesAny(ErrorPatterns.Conflict) then
-            ctx match
-                case ResourceContext.Container(id) => ContainerAlreadyExistsException(id.value)
-                case ResourceContext.Op(name)      => ContainerAlreadyExistsException(name)
-                case other                         => ContainerAlreadyExistsException(other.describe)
-        else if matchesAny(ErrorPatterns.AlreadyRunning) then
-            ctx match
-                case ResourceContext.Container(id) => ContainerAlreadyRunningException(id)
-                case _                             => ContainerConflictException(s"Already running: ${ctx.describe}", output)
-        else if matchesAny(ErrorPatterns.AlreadyStopped) then
-            ctx match
-                case ResourceContext.Container(id) => ContainerAlreadyStoppedException(id)
-                case _                             => ContainerConflictException(s"Already stopped: ${ctx.describe}", output)
-        else if lower.contains("network") && lower.contains("not found") then
-            ctx match
-                case ResourceContext.Network(id) => ContainerNetworkMissingException(id)
-                case _                           => ContainerOperationException(s"Network not found during ${ctx.describe}", output)
-        else if matchesAny(ErrorPatterns.VolumeNotFound) then
-            ctx match
-                case ResourceContext.Volume(id) => ContainerVolumeMissingException(id)
-                case _                          => ContainerOperationException(s"Volume not found during ${ctx.describe}", output)
-        else if matchesAny(ErrorPatterns.BackendUnavailable) then
-            ContainerBackendUnavailableException(cmd, s"Backend unavailable: $output")
-        else if matchesAny(ErrorPatterns.PortConflict) then
-            val portPattern = """(\d+)""".r
-            val port = portPattern.findFirstIn(
-                Maybe.fromOption(output.split("port").lastOption).getOrElse("")
-            ).flatMap(_.toIntOption).getOrElse(0)
-            ContainerPortConflictException(port, output)
-        else if matchesAny(ErrorPatterns.AuthFailed) then
-            ContainerAuthException(ctx.describe, output)
-        else if matchesAny(ErrorPatterns.VolumeInUse) then
-            ctx match
-                case ResourceContext.Volume(id) => ContainerVolumeInUseException(id, output)
-                case _                          => ContainerConflictException(s"Volume in use during ${ctx.describe}", output)
-        else if matchesAny(ErrorPatterns.NetworkEndpointExists) then
-            ContainerConflictException(s"Network endpoint already attached: ${ctx.describe}", output)
-        else if lower.contains("initializing source") then
-            val dockerIdx = output.indexOf("docker://")
-            val imageRef =
-                if dockerIdx >= 0 then
-                    val afterPrefix = output.substring(dockerIdx + "docker://".length)
-                    val colonSpace  = afterPrefix.indexOf(": ")
-                    if colonSpace >= 0 then afterPrefix.substring(0, colonSpace)
-                    else afterPrefix.takeWhile(!_.isWhitespace)
-                else
+        errorTable
+            .find { case (patterns, _) => matchesAny(patterns) }
+            .map { case (_, builder) => builder(ctx, output) }
+            .getOrElse {
+                // network-not-found: two-phrase AND condition — not expressible as plain Seq[String] with exists
+                if lower.contains("network") && lower.contains("not found") then
                     ctx match
-                        case ResourceContext.Image(ref) => ref
-                        case other                      => other.describe
-            ContainerImageMissingException(ContainerImage.parse(imageRef).getOrElse(ContainerImage(imageRef)))
-        else
-            ContainerOperationException(s"${cmd} ${args.mkString(" ")} failed", output)
-        end if
+                        case ResourceContext.Network(id) => ContainerNetworkMissingException(id)
+                        case _                           => ContainerOperationException(s"Network not found during ${ctx.describe}", output)
+                // PortConflict: needs regex extraction of the port number from output
+                else if matchesAny(ErrorPatterns.PortConflict) then
+                    val portPattern = """(\d+)""".r
+                    val port = portPattern.findFirstIn(
+                        Maybe.fromOption(output.split("port").lastOption).getOrElse("")
+                    ).flatMap(_.toIntOption).getOrElse(0)
+                    ContainerPortConflictException(port, output)
+                // initializing source: multi-step string surgery to extract the image ref
+                else if lower.contains("initializing source") then
+                    val dockerIdx = output.indexOf("docker://")
+                    val imageRef =
+                        if dockerIdx >= 0 then
+                            val afterPrefix = output.substring(dockerIdx + "docker://".length)
+                            val colonSpace  = afterPrefix.indexOf(": ")
+                            if colonSpace >= 0 then afterPrefix.substring(0, colonSpace)
+                            else afterPrefix.takeWhile(!_.isWhitespace)
+                        else
+                            ctx match
+                                case ResourceContext.Image(ref) => ref
+                                case other                      => other.describe
+                    ContainerImageMissingException(ContainerImage(imageRef))
+                else
+                    ContainerOperationException(s"${cmd} ${args.mkString(" ")} failed", output)
+                end if
+            }
     end mapError
 
     /** Named constants for error message patterns used in [[mapError]].
@@ -2106,25 +2060,31 @@ final private[kyo] class ShellBackend(
       * code 1. Podman uses direct error messages with exit code 125 for infrastructure errors.
       */
     private object ErrorPatterns:
-        /** Container not found — Docker: "No such container", Podman: "no such container", "no such object" */
+        /** Container not found — Docker: "No such container", Podman: "no such container", "no such object".
+          *
+          * Extends [[DaemonErrorPhrases.NoSuchContainer]] with Shell-only phrases ("no such object", "no container with name or id").
+          */
         val NoSuchContainer: Seq[String] =
-            Seq("no such container", "no such object", "no container with name or id")
+            DaemonErrorPhrases.NoSuchContainer ++ Seq("no such object", "no container with name or id")
 
-        /** Image not found — Docker: "manifest unknown", Podman: "image not found" */
+        /** Image not found — Docker: "manifest unknown", Podman: "image not found".
+          *
+          * Extends [[DaemonErrorPhrases.NoSuchImage]] with Shell-only phrases.
+          */
         val ImageNotFound: Seq[String] =
-            Seq(
-                "no such image",
+            DaemonErrorPhrases.NoSuchImage ++ Seq(
                 "image not found",
-                "manifest unknown",
                 "requested access to the resource is denied",
-                "image not known",
                 "repository does not exist",
                 "name unknown"
             )
 
-        /** Name/ID conflict — Docker & Podman both use "conflict" or "already in use" */
+        /** Name/ID conflict — Docker & Podman both use "conflict" or "already in use".
+          *
+          * Extends [[DaemonErrorPhrases.AlreadyInUse]] with Shell-only phrases ("conflict", "name is already in use").
+          */
         val Conflict: Seq[String] =
-            Seq("conflict", "already in use", "name is already in use")
+            DaemonErrorPhrases.AlreadyInUse ++ Seq("conflict", "name is already in use")
 
         /** Container already running — Docker: "is already running", Podman: "container already started" */
         val AlreadyRunning: Seq[String] =
@@ -2226,6 +2186,42 @@ private[kyo] object ShellBackend:
     def lastLine(output: String): String =
         output.linesIterator.map(_.trim).filter(_.nonEmpty).toSeq.lastOption.getOrElse("")
 
+    /** Parse a single log line into a [[Container.LogEntry]], splitting off the timestamp prefix when `hasTimestamps` is true.
+      *
+      * Reuses [[ContainerBackend.parseInstant]] for the timestamp parse so Docker Zulu format and Podman offset format are both handled.
+      */
+    private[kyo] def parseLogLine(line: String, source: Container.LogEntry.Source, hasTimestamps: Boolean): Container.LogEntry =
+        if hasTimestamps then
+            val spaceIdx = line.indexOf(' ')
+            if spaceIdx > 0 then
+                val tsStr   = line.substring(0, spaceIdx)
+                val content = line.substring(spaceIdx + 1)
+                val ts      = ContainerBackend.parseInstant(Some(tsStr))
+                Container.LogEntry(source, content, ts)
+            else Container.LogEntry(source, line)
+            end if
+        else Container.LogEntry(source, line)
+
+    private[kyo] def parseLogLines(raw: String, source: Container.LogEntry.Source, hasTimestamps: Boolean): Chunk[Container.LogEntry] =
+        if raw.trim.isEmpty then Chunk.empty
+        else Chunk.from(raw.split("\n").iterator.filter(_.nonEmpty).map(parseLogLine(_, source, hasTimestamps)).toSeq)
+    end parseLogLines
+
+    /** Parse the output of the `top` command into a [[Container.TopResult]].
+      *
+      * Preserves current behavior: empty output returns empty titles and processes; single-line output (headers only) returns titles with
+      * no processes.
+      */
+    private[kyo] def parseTopOutput(output: String): Container.TopResult =
+        if output.trim.isEmpty then Container.TopResult(Chunk.empty, Chunk.empty)
+        else
+            val lines     = output.split("\n").iterator.filter(_.trim.nonEmpty).toArray
+            val titles    = Chunk.from(lines.head.split("\\s+"))
+            val processes = Chunk.from(lines.tail.map(l => Chunk.from(l.split("\\s+", titles.length))))
+            Container.TopResult(titles, processes)
+        end if
+    end parseTopOutput
+
     /** Auto-detect an available container runtime. Tries podman first, then docker. */
     def detect(
         meter: Meter = Meter.Noop,
@@ -2235,22 +2231,49 @@ private[kyo] object ShellBackend:
             case Result.Success((_, exitCode)) if exitCode == ExitCode.Success =>
                 val backend = new ShellBackend("podman", meter, streamBufferSize)
                 Log.info(s"kyo-pod: using shell backend (CLI=podman)").andThen(backend)
-            case _ =>
+            case Result.Failure(_) =>
                 Abort.runWith[CommandException](Command("docker", "version").textWithExitCode) {
                     case Result.Success((_, exitCode)) if exitCode == ExitCode.Success =>
                         val backend = new ShellBackend("docker", meter, streamBufferSize)
                         Log.info(s"kyo-pod: using shell backend (CLI=docker)").andThen(backend)
-                    case _ =>
+                    case Result.Failure(_) =>
                         Abort.fail(ContainerBackendUnavailableException(
                             "auto-detect",
                             "Neither podman nor docker is available. Install one of them."
                         ))
+                    case Result.Panic(t) =>
+                        Log.warn(s"unexpected error in detect (docker probe): $t").andThen(
+                            Abort.fail(ContainerBackendUnavailableException(
+                                "auto-detect",
+                                "Neither podman nor docker is available. Install one of them."
+                            ))
+                        )
                 }
+            case Result.Panic(t) =>
+                Log.warn(s"unexpected error in detect (podman probe): $t").andThen(
+                    Abort.runWith[CommandException](Command("docker", "version").textWithExitCode) {
+                        case Result.Success((_, exitCode)) if exitCode == ExitCode.Success =>
+                            val backend = new ShellBackend("docker", meter, streamBufferSize)
+                            Log.info(s"kyo-pod: using shell backend (CLI=docker)").andThen(backend)
+                        case Result.Failure(_) =>
+                            Abort.fail(ContainerBackendUnavailableException(
+                                "auto-detect",
+                                "Neither podman nor docker is available. Install one of them."
+                            ))
+                        case Result.Panic(t2) =>
+                            Log.warn(s"unexpected error in detect (docker probe after podman panic): $t2").andThen(
+                                Abort.fail(ContainerBackendUnavailableException(
+                                    "auto-detect",
+                                    "Neither podman nor docker is available. Install one of them."
+                                ))
+                            )
+                    }
+                )
         }
 
     // --- JSON DTOs for container inspect ---
 
-    private[internal] case class InspectJson(
+    final private[internal] case class InspectJson(
         Id: String = "",
         Name: String = "",
         Image: String = "",
@@ -2261,28 +2284,20 @@ private[kyo] object ShellBackend:
         NetworkSettings: InspectNetworkSettingsJson = InspectNetworkSettingsJson(),
         RestartCount: Int = 0,
         Driver: String = "",
-        Mounts: Option[Seq[InspectMountJson]] = None,
+        Mounts: Option[Seq[InspectMountDto]] = None,
         Platform: String = ""
     ) derives Schema
 
-    private[internal] case class InspectStateJson(
+    final private[internal] case class InspectStateJson(
         Status: String = "",
-        Running: Boolean = false,
-        Paused: Boolean = false,
-        Restarting: Boolean = false,
-        Dead: Boolean = false,
         Pid: Int = 0,
         ExitCode: Int = 0,
         StartedAt: String = "",
         FinishedAt: String = "",
-        Health: Option[InspectHealthJson] = None
+        Health: Option[InspectHealthDto] = None
     ) derives Schema
 
-    private[internal] case class InspectHealthJson(
-        Status: String = ""
-    ) derives Schema
-
-    private[internal] case class InspectConfigJson(
+    final private[internal] case class InspectConfigJson(
         Image: String = "",
         Hostname: String = "",
         Cmd: Option[Seq[String]] = None,
@@ -2291,7 +2306,7 @@ private[kyo] object ShellBackend:
         Tty: Boolean = false
     ) derives Schema
 
-    private[internal] case class InspectNetworkSettingsJson(
+    final private[internal] case class InspectNetworkSettingsJson(
         IPAddress: String = "",
         Gateway: String = "",
         MacAddress: String = "",
@@ -2299,13 +2314,13 @@ private[kyo] object ShellBackend:
         Networks: Option[Map[String, NetworkEndpointEntryJson]] = None
     ) derives Schema
 
-    private[internal] case class PortMappingJson(
+    final private[internal] case class PortMappingJson(
         HostIp: String = "",
         HostPort: String = ""
     ) derives Schema
 
     /** Podman `ps --format '{{json .}}'` serializes Ports as a flat array of objects. */
-    private[internal] case class PodmanPsPortJson(
+    final private[internal] case class PodmanPsPortJson(
         host_ip: String = "",
         host_port: Int = 0,
         container_port: Int = 0,
@@ -2313,7 +2328,7 @@ private[kyo] object ShellBackend:
         range: Int = 1
     ) derives Schema
 
-    private[internal] case class NetworkEndpointEntryJson(
+    final private[internal] case class NetworkEndpointEntryJson(
         NetworkID: String = "",
         EndpointID: String = "",
         Gateway: String = "",
@@ -2322,21 +2337,13 @@ private[kyo] object ShellBackend:
         MacAddress: String = ""
     ) derives Schema
 
-    private[internal] case class InspectMountJson(
-        Type: String = "",
-        Name: String = "",
-        Source: String = "",
-        Destination: String = "",
-        RW: Boolean = true
-    ) derives Schema
-
     // --- JSON DTOs for container stats ---
     // Stats JSON differs significantly between docker and podman.
     // Docker uses formatted strings (CPUPerc: "0.50%", MemUsage: "100MiB / 1GiB").
     // Podman uses numeric fields (CPU: 0.5, MemUsage: 104857600).
     // We use two separate DTOs and try Docker format first.
 
-    private[internal] case class DockerStatsJson(
+    final private[internal] case class DockerStatsJson(
         CPUPerc: String = "",
         MemPerc: String = "",
         MemUsage: String = "",
@@ -2345,7 +2352,7 @@ private[kyo] object ShellBackend:
         PIDs: String = "0"
     ) derives Schema
 
-    private[internal] case class PodmanStatsJson(
+    final private[internal] case class PodmanStatsJson(
         CPU: Double = 0.0,
         CPUNano: Long = 0,
         CPUSystemNano: Long = 0,
@@ -2359,7 +2366,7 @@ private[kyo] object ShellBackend:
         Network: Option[Map[String, NetStatsJson]] = None
     ) derives Schema
 
-    private[internal] case class NetStatsJson(
+    final private[internal] case class NetStatsJson(
         RxBytes: Long = 0,
         RxPackets: Long = 0,
         RxErrors: Long = 0,
@@ -2374,7 +2381,7 @@ private[kyo] object ShellBackend:
     // Docker uses PascalCase strings; podman uses PascalCase but some fields are arrays/objects.
 
     // Docker ps: all fields are strings
-    private[internal] case class PsJsonDocker(
+    final private[internal] case class PsJsonDocker(
         ID: String = "",
         Names: String = "",
         Image: String = "",
@@ -2390,7 +2397,7 @@ private[kyo] object ShellBackend:
     ) derives Schema
 
     // Podman ps: some fields are arrays/objects/different casing
-    private[internal] case class PsJsonPodman(
+    final private[internal] case class PsJsonPodman(
         Id: String = "",
         Names: Option[Seq[String]] = None,
         Image: String = "",
@@ -2408,7 +2415,7 @@ private[kyo] object ShellBackend:
 
     // --- JSON DTOs for image list ---
     // Docker: all strings, ID uppercase, CreatedAt as string, Size as string
-    private[internal] case class ImageListJsonDocker(
+    final private[internal] case class ImageListJsonDocker(
         ID: String = "",
         Repository: String = "",
         Tag: String = "",
@@ -2417,7 +2424,7 @@ private[kyo] object ShellBackend:
     ) derives Schema
 
     // Podman: Id lowercase, Created as epoch number, Size as number, Labels as object
-    private[internal] case class ImageListJsonPodman(
+    final private[internal] case class ImageListJsonPodman(
         Id: String = "",
         repository: String = "",
         tag: String = "",
@@ -2430,7 +2437,7 @@ private[kyo] object ShellBackend:
 
     // --- JSON DTOs for image inspect ---
 
-    private[internal] case class ImageInspectJson(
+    final private[internal] case class ImageInspectJson(
         Id: String = "",
         RepoTags: Option[Seq[String]] = None,
         RepoDigests: Option[Seq[String]] = None,
@@ -2441,13 +2448,13 @@ private[kyo] object ShellBackend:
         Config: ImageInspectConfigJson = ImageInspectConfigJson()
     ) derives Schema
 
-    private[internal] case class ImageInspectConfigJson(
+    final private[internal] case class ImageInspectConfigJson(
         Labels: Option[Map[String, String]] = None
     ) derives Schema
 
     // --- JSON DTOs for image search ---
     // Docker: IsOfficial/IsAutomated are strings ("OK" or ""), StarCount is a string
-    private[internal] case class ImageSearchJsonDocker(
+    final private[internal] case class ImageSearchJsonDocker(
         Name: String = "",
         Description: String = "",
         StarCount: String = "0",
@@ -2456,7 +2463,7 @@ private[kyo] object ShellBackend:
     ) derives Schema
 
     // Podman: IsOfficial/IsAutomated are booleans, StarCount is an int
-    private[internal] case class ImageSearchJsonPodman(
+    final private[internal] case class ImageSearchJsonPodman(
         Name: String = "",
         Description: String = "",
         StarCount: Int = 0,
@@ -2466,7 +2473,7 @@ private[kyo] object ShellBackend:
 
     // --- JSON DTOs for image history ---
 
-    private[internal] case class ImageHistoryJson(
+    final private[internal] case class ImageHistoryJson(
         ID: String = "",
         id: String = "",
         CreatedAt: String = "",
@@ -2480,7 +2487,7 @@ private[kyo] object ShellBackend:
 
     // --- JSON DTOs for network list ---
     // Docker: all strings (booleans as "true"/"false", labels as comma-separated string)
-    private[internal] case class NetworkListJsonDocker(
+    final private[internal] case class NetworkListJsonDocker(
         ID: String = "",
         Name: String = "",
         Driver: String = "",
@@ -2492,7 +2499,7 @@ private[kyo] object ShellBackend:
     ) derives Schema
 
     // Podman: native types (booleans, labels as object)
-    private[internal] case class NetworkListJsonPodman(
+    final private[internal] case class NetworkListJsonPodman(
         id: String = "",
         name: String = "",
         driver: String = "",
@@ -2505,7 +2512,7 @@ private[kyo] object ShellBackend:
 
     // --- JSON DTOs for network inspect ---
 
-    private[internal] case class NetworkInspectJson(
+    final private[internal] case class NetworkInspectJson(
         Id: String = "",
         id: String = "",
         Name: String = "",
@@ -2530,7 +2537,7 @@ private[kyo] object ShellBackend:
         containers: Option[Map[String, NetworkContainerJson]] = None
     ) derives Schema
 
-    private[internal] case class NetworkContainerJson(
+    final private[internal] case class NetworkContainerJson(
         EndpointID: String = "",
         IPv4Address: String = "",
         MacAddress: String = ""
@@ -2541,7 +2548,7 @@ private[kyo] object ShellBackend:
     // Podman serializes Labels as a JSON object ({"key":"val"}).
     // We use two separate DTOs and try Docker format first.
 
-    private[internal] case class VolumeListJsonDocker(
+    final private[internal] case class VolumeListJsonDocker(
         Name: String = "",
         Driver: String = "",
         Mountpoint: String = "",
@@ -2549,7 +2556,7 @@ private[kyo] object ShellBackend:
         Labels: String = ""
     ) derives Schema
 
-    private[internal] case class VolumeListJsonPodman(
+    final private[internal] case class VolumeListJsonPodman(
         Name: String = "",
         Driver: String = "",
         Mountpoint: String = "",
@@ -2559,7 +2566,7 @@ private[kyo] object ShellBackend:
 
     // --- JSON DTOs for volume inspect ---
 
-    private[internal] case class VolumeInspectJson(
+    final private[internal] case class VolumeInspectJson(
         Name: String = "",
         Driver: String = "",
         Mountpoint: String = "",

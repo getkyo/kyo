@@ -151,6 +151,16 @@ class ContainerTest extends Test:
             val r = Container.Platform.parse("invalid")
             assert(r.isFailure)
         }
+
+        // boundary cases
+        "too many parts fails" in {
+            val r = Container.Platform.parse("linux/amd64/v8/extra")
+            assert(r.isFailure)
+            assert(r.failure.get.contains("Invalid"))
+        }
+        "empty string fails" in {
+            assert(Container.Platform.parse("").isFailure)
+        }
     }
 
     // =========================================================================
@@ -223,6 +233,27 @@ class ContainerTest extends Test:
             val hc = Container.HealthCheck.all()
             assert(hc.schedule == Container.HealthCheck.defaultRetrySchedule)
         }
+
+        // empty composite semantics and head-schedule selection
+        "empty composite passes trivially" in run {
+            val hc = Container.HealthCheck.all()
+            // NOTE: null.asInstanceOf[Container] is intentional — the empty composite never dereferences the container argument.
+            // Keep this comment so a future reader understands the intent if the impl gains short-circuit logic.
+            Abort.run[ContainerException](hc.check(null.asInstanceOf[Container]))
+                .map(r => assert(r.isSuccess, s"expected trivial success, got $r"))
+        }
+        "non-empty composite picks head's schedule" in {
+            val s1 = Schedule.fixed(123.millis).take(1)
+            val s2 = Schedule.fixed(456.millis).take(2)
+            val a = new Container.HealthCheck:
+                def check(c: Container)(using Frame) = ()
+                def schedule: Schedule               = s1
+            val b = new Container.HealthCheck:
+                def check(c: Container)(using Frame) = ()
+                def schedule: Schedule               = s2
+            // `eq` is correct — implementation returns chs.head.schedule (Container.scala:1155).
+            assert(Container.HealthCheck.all(a, b).schedule eq s1)
+        }
     }
 
     "ContainerImage.parse — empty tag" - {
@@ -238,6 +269,14 @@ class ContainerTest extends Test:
                 case err =>
                     fail(s"Expected parse to succeed with default tag, got failure: $err")
             end match
+        }
+
+        // namespaced variant
+        "'library/alpine:' (with namespace) defaults tag to 'latest'" in {
+            val img = assertSuccess(ContainerImage.parse("library/alpine:"))
+            assert(img.namespace == Present("library"))
+            assert(img.name == "alpine")
+            assert(img.tag == Present("latest"), s"got tag=${img.tag}")
         }
     }
 
@@ -290,6 +329,41 @@ class ContainerTest extends Test:
             val msg = ex.getMessage
             assert(msg.contains("pull image"), s"expected operation in '$msg'")
             assert(msg.contains("30"), s"expected duration in '$msg'")
+        }
+
+        // leaf exception coverage
+        "all conflict and operation leaves carry their constructor fields" in {
+            val cid = Container.Id("c-123")
+            val vid = Container.Volume.Id("v-1")
+            assert(ContainerAlreadyRunningException(cid).getMessage.contains("c-123"))
+            assert(ContainerAlreadyStoppedException(cid).getMessage.contains("c-123"))
+            assert(ContainerPortConflictException(8080, "bind: address already in use").port == 8080)
+            assert(ContainerPortConflictException(8080, "x").getMessage.contains("8080"))
+            assert(ContainerAuthException("ghcr.io", "denied").registry == "ghcr.io")
+            assert(ContainerAuthException("ghcr.io", "denied").getMessage.contains("ghcr.io"))
+            // 2-arg call uses default cause = ""; ContainerException.scala:194
+            assert(ContainerBuildFailedException("/ctx", "tar failed").getMessage.contains("tar failed"))
+            // 3-arg call with cause: confirm Throwable cause is reflected
+            val ex = ContainerBuildFailedException("/ctx", "tar failed", new RuntimeException("inner"))
+            assert(ex.getMessage.contains("tar failed"))
+            assert(ContainerStartFailedException(cid, "OCI error").getMessage.contains("c-123"))
+            assert(ContainerVolumeInUseException(vid, "c-1,c-2").containers == "c-1,c-2")
+        }
+
+        // ContainerDecodeException construction
+        "ContainerDecodeException carries context message and cause" in {
+            val ex = new ContainerDecodeException("decode failed at /containers/json", "bad token at index 5")
+            assert(ex.getMessage.contains("decode failed"))
+            assert(ex.getMessage.contains("bad token"))
+        }
+
+        // ContainerHealthCheckException field preservation
+        "ContainerHealthCheckException preserves attempts and lastError" in {
+            val ex = ContainerHealthCheckException(Container.Id("c1"), "exec failed", attempts = 3, lastError = "x" * 600)
+            assert(ex.attempts == 3)
+            // Field is not truncated; only the accumulator truncates each entry.
+            assert(ex.lastError.length == 600)
+            assert(ex.getMessage.contains("3 attempt"))
         }
     }
 
@@ -582,6 +656,221 @@ class ContainerTest extends Test:
             assert(parseState("unknown-state-xyz") == Container.State.Stopped)
             assert(parseState("") == Container.State.Stopped)
             succeed
+        }
+    }
+
+    // =========================================================================
+    // NetworkDriver.parse
+    // =========================================================================
+
+    "NetworkDriver.parse" - {
+        "known driver" in {
+            assert(Container.NetworkDriver.parse("bridge") == Container.NetworkDriver.Bridge)
+            assert(Container.NetworkDriver.parse("HOST") == Container.NetworkDriver.Host)
+        }
+        "Custom branch for unknown driver" in {
+            val d = Container.NetworkDriver.parse("calico")
+            assert(d == Container.NetworkDriver.Custom("calico"))
+        }
+        "round-trip through cliName" in {
+            import Container.NetworkDriver.*
+            assert(parse(Bridge.cliName) == Bridge)
+            assert(parse(Custom("weave").cliName) == Custom("weave"))
+            assert(None.cliName == "none")
+        }
+    }
+
+    // =========================================================================
+    // HealthStatus.parse
+    // =========================================================================
+
+    "HealthStatus.parse" - {
+        "Healthy" in { assert(Container.HealthStatus.parse("healthy") == Container.HealthStatus.Healthy) }
+        "Unhealthy is case-insensitive" in {
+            assert(Container.HealthStatus.parse("UNHEALTHY") == Container.HealthStatus.Unhealthy)
+        }
+        "Starting" in { assert(Container.HealthStatus.parse("starting") == Container.HealthStatus.Starting) }
+        "fallback to NoHealthcheck" in {
+            assert(Container.HealthStatus.parse("") == Container.HealthStatus.NoHealthcheck)
+            assert(Container.HealthStatus.parse("none") == Container.HealthStatus.NoHealthcheck)
+            assert(Container.HealthStatus.parse("garbage") == Container.HealthStatus.NoHealthcheck)
+        }
+    }
+
+    // =========================================================================
+    // BackendConfig.AutoDetect
+    // =========================================================================
+
+    "BackendConfig.AutoDetect" - {
+        "default constructor uses Meter.Noop" in {
+            val cfg: Container.BackendConfig.AutoDetect = Container.BackendConfig.AutoDetect()
+            assert(cfg.meter eq Meter.Noop)
+            assert(cfg.apiVersion == kyo.internal.HttpContainerBackend.defaultApiVersion)
+            assert(cfg.streamBufferSize == kyo.internal.ShellBackend.defaultStreamBufferSize)
+        }
+        "explicit overrides round-trip" in {
+            val cfg: Container.BackendConfig.AutoDetect = Container.BackendConfig.AutoDetect(apiVersion = "v1.50")
+            assert(cfg.apiVersion == "v1.50")
+        }
+    }
+
+    // =========================================================================
+    // parseInstant
+    // =========================================================================
+
+    "parseInstant" - {
+        import kyo.internal.ContainerBackend.parseInstant
+        "Docker zulu format" in {
+            val r = parseInstant(Some("2024-04-29T12:00:00Z"))
+            // Maybe API: nonEmpty / isDefined; there is NO `isPresent`.
+            assert(r.nonEmpty)
+        }
+        "Podman offset format" in {
+            val r = parseInstant(Some("2024-04-29T05:00:00-07:00"))
+            assert(r.nonEmpty)
+            val instant = r.get
+            // 05:00 -07:00 == 12:00 UTC
+            assert(instant.toJava.toString.startsWith("2024-04-29T12:00:00"))
+        }
+        "garbage returns Absent (not panic)" in {
+            assert(parseInstant(Some("not-a-date")) == Absent)
+        }
+        "zero placeholder returns Absent" in {
+            assert(parseInstant(Some("0001-01-01T00:00:00Z")) == Absent)
+            assert(parseInstant(Some("")) == Absent)
+            assert(parseInstant(None) == Absent)
+        }
+    }
+
+    // =========================================================================
+    // Container.Signal.name
+    // =========================================================================
+
+    "Container.Signal.name" - {
+        "enum cases stringify with SIG prefix" in {
+            assert(Container.Signal.SIGTERM.name == "SIGTERM")
+            assert(Container.Signal.SIGKILL.name == "SIGKILL")
+        }
+        "Custom non-prefixed name auto-prefixes to SIG" in {
+            assert(Container.Signal.Custom("USR1").name == "SIGUSR1")
+            assert(Container.Signal.Custom("usr1").name == "SIGUSR1")
+        }
+        "Custom already-prefixed name stays canonical-case" in {
+            assert(Container.Signal.Custom("SIGUSR1").name == "SIGUSR1")
+        }
+        "Custom numeric name passes through verbatim (kill -9 must still work)" in {
+            assert(Container.Signal.Custom("9").name == "9")
+        }
+    }
+
+    // =========================================================================
+    // registryAuthFromConfig path resolution
+    // =========================================================================
+
+    "registryAuthFromConfig path resolution" - {
+
+        def systemWith(envOverrides: Map[String, String], propsOverrides: Map[String, String]): kyo.System =
+            kyo.System(new kyo.System.Unsafe:
+                def env(name: String)(using AllowUnsafe): Maybe[String] =
+                    envOverrides.get(name) match
+                        case Some(v)    => Present(v)
+                        case scala.None => Maybe(java.lang.System.getenv(name))
+                def property(name: String)(using AllowUnsafe): Maybe[String] =
+                    propsOverrides.get(name) match
+                        case Some(v)    => Present(v)
+                        case scala.None => Maybe(java.lang.System.getProperty(name))
+                def lineSeparator()(using AllowUnsafe): String          = java.lang.System.lineSeparator()
+                def userName()(using AllowUnsafe): String               = java.lang.System.getProperty("user.name")
+                def operatingSystem()(using AllowUnsafe): kyo.System.OS = kyo.System.OS.Linux
+                def availableProcessors()(using AllowUnsafe): Int       = 1)
+
+        "XDG_RUNTIME_DIR/containers/auth.json is consulted when present" in run {
+            val tmpRoot    = Path("/tmp/kyo-xdg-" + java.util.UUID.randomUUID)
+            val containers = tmpRoot / "containers"
+            for
+                _ <- containers.mkDir
+                _ <- (containers / "auth.json").write("""{"auths":{"ghcr.io":"dGVzdA=="}}""")
+                auth <- kyo.System.let(systemWith(
+                    envOverrides = Map("XDG_RUNTIME_DIR" -> tmpRoot.toString, "DOCKER_CONFIG" -> ""),
+                    propsOverrides = Map("user.home" -> "/nonexistent")
+                )) {
+                    kyo.internal.ContainerBackend.registryAuthFromConfig
+                }
+                _ <- tmpRoot.removeAll
+            yield assert(
+                auth.auths.toMap.nonEmpty,
+                s"expected XDG path to be consulted, got empty auth: $auth"
+            )
+            end for
+        }
+
+        "malformed JSON yields empty auth Dict (no panic)" in run {
+            val tmpRoot    = Path("/tmp/kyo-xdg-bad-" + java.util.UUID.randomUUID)
+            val containers = tmpRoot / "containers"
+            for
+                _ <- containers.mkDir
+                _ <- (containers / "auth.json").write("not json")
+                auth <- kyo.System.let(systemWith(
+                    envOverrides = Map("XDG_RUNTIME_DIR" -> tmpRoot.toString, "DOCKER_CONFIG" -> ""),
+                    propsOverrides = Map("user.home" -> "/nonexistent")
+                )) { kyo.internal.ContainerBackend.registryAuthFromConfig }
+                _ <- tmpRoot.removeAll
+            yield assert(
+                auth.auths.toMap.isEmpty,
+                s"expected empty Dict on malformed JSON, got: $auth"
+            )
+            end for
+        }
+
+        "missing file yields empty auth Dict (no panic)" in run {
+            val auth = kyo.System.let(systemWith(
+                envOverrides = Map("XDG_RUNTIME_DIR" -> "/tmp/kyo-no-such-xdg-dir", "DOCKER_CONFIG" -> ""),
+                propsOverrides = Map("user.home" -> "/nonexistent")
+            )) { kyo.internal.ContainerBackend.registryAuthFromConfig }
+            auth.map(a => assert(a.auths.toMap.isEmpty))
+        }
+    }
+
+    // =========================================================================
+    // registryAuthHeader
+    // =========================================================================
+
+    "registryAuthHeader" - {
+        "selects entry whose registry key matches image.registry" in {
+            val multi = ContainerImage.RegistryAuth(Dict(
+                ContainerImage.Registry("docker.io") -> "ZG9ja2VyOmRvY2tlcg==",
+                ContainerImage.Registry("ghcr.io")   -> "Z2hjcjp3cm9uZw==",
+                ContainerImage.Registry("quay.io")   -> "cXVheTp4eHg="
+            ))
+            val img    = assertSuccess(ContainerImage.parse("ghcr.io/kyo-test/nope:v1"))
+            val header = kyo.internal.HttpContainerBackend.registryAuthHeader(img, multi)
+            assert(header.nonEmpty, "expected a header for ghcr.io")
+            val raw = new String(java.util.Base64.getDecoder.decode(header.get))
+            assert(
+                raw.contains("Z2hjcjp3cm9uZw=="),
+                s"expected ghcr.io entry to be selected; header decoded to: $raw"
+            )
+        }
+
+        // RegistryAuth.apply stores the implicit registry under "https://index.docker.io/v1/"
+        // while HttpContainerBackend.registryAuthHeader falls back to Registry.DockerHub == "docker.io".
+        // registryAuthHeader must check the "https://index.docker.io/v1/" key as a fallback.
+        "Docker Hub default when image has no explicit registry" in {
+            val auth = ContainerImage.RegistryAuth(Dict(
+                ContainerImage.Registry("https://index.docker.io/v1/") -> "ZG9ja2VyOmRvY2tlcg==",
+                ContainerImage.Registry("ghcr.io")                     -> "Z2hjcjp3cm9uZw=="
+            ))
+            val img    = ContainerImage("alpine") // no explicit registry → DockerHub default
+            val header = kyo.internal.HttpContainerBackend.registryAuthHeader(img, auth)
+            assert(header.nonEmpty, "expected DockerHub default header")
+        }
+
+        "Absent when no entry matches the image registry" in {
+            val auth = ContainerImage.RegistryAuth(Dict(
+                ContainerImage.Registry("ghcr.io") -> "Z2hjcjp3cm9uZw=="
+            ))
+            val img = assertSuccess(ContainerImage.parse("quay.io/kyo-test/nope:v1"))
+            assert(kyo.internal.HttpContainerBackend.registryAuthHeader(img, auth) == Absent)
         }
     }
 

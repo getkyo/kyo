@@ -1,7 +1,10 @@
 package kyo.internal
 
 import kyo.*
+import kyo.internal.ContainerBackend.exitCodeForState
+import kyo.internal.ContainerBackend.fromEpochSecond
 import kyo.internal.ContainerBackend.parseInstant
+import kyo.internal.ContainerBackend.parseInstantOrEpoch
 import kyo.internal.ContainerBackend.parseState
 import kyo.internal.ResourceContext
 
@@ -41,19 +44,19 @@ final private[kyo] class HttpContainerBackend(
       * @return
       *   Full URL string like `http+unix://%2Fvar%2Frun%2Fdocker.sock/v1.43/containers/json?all=true`
       */
-    private[internal] def url(path: String, params: (String, String)*): String =
+    private def buildUrl(prefix: String, path: String, params: Seq[(String, String)]): String =
         val encoded = socketPath.replace("/", "%2F")
         // Java interop boundary: URL-encoding query parameters for Docker API
         val query = if params.isEmpty then "" else "?" + params.map((k, v) => s"$k=${java.net.URLEncoder.encode(v, "UTF-8")}").mkString("&")
-        s"http+unix://$encoded/$apiVersion$path$query"
-    end url
+        s"http+unix://$encoded$prefix$path$query"
+    end buildUrl
+
+    private[internal] def url(path: String, params: (String, String)*): String =
+        buildUrl(s"/$apiVersion", path, params)
 
     /** Builds an `http+unix://` URL for the libpod-native API endpoints (used when docker-compat doesn't expose a feature). */
     private[internal] def libpodUrl(path: String, params: (String, String)*): String =
-        val encoded = socketPath.replace("/", "%2F")
-        val query = if params.isEmpty then "" else "?" + params.map((k, v) => s"$k=${java.net.URLEncoder.encode(v, "UTF-8")}").mkString("&")
-        s"http+unix://$encoded/v5.0.0/libpod$path$query"
-    end libpodUrl
+        buildUrl("/v5.0.0/libpod", path, params)
 
     // --- Error mapping ---
 
@@ -97,19 +100,10 @@ final private[kyo] class HttpContainerBackend(
         HttpContainerBackend.canonicalStatus(e.status.code, e.body)
 
     private def missingExceptionFor(ctx: ResourceContext, e: HttpStatusException)(using Frame): ContainerException =
-        ctx match
-            case ResourceContext.Container(id) => ContainerMissingException(id)
-            case ResourceContext.Image(ref) =>
-                ContainerImageMissingException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)))
-            case ResourceContext.Network(id) => ContainerNetworkMissingException(id)
-            case ResourceContext.Volume(id)  => ContainerVolumeMissingException(id)
-            case ResourceContext.Op(name)    => ContainerOperationException(s"Resource not found during $name", e)
+        ErrorClassification.missingFor(ctx, e)
 
     private def conflictExceptionFor(ctx: ResourceContext)(using Frame): ContainerException =
-        ctx match
-            case ResourceContext.Container(id) => ContainerAlreadyExistsException(id.value)
-            case ResourceContext.Op(name)      => ContainerAlreadyExistsException(name)
-            case other                         => ContainerAlreadyExistsException(other.describe)
+        ErrorClassification.conflictFor(ctx)
 
     /** Warn when a non-2xx error has no body and no canonical mapping. The combination prevents the classifier from doing better than
       * `ContainerOperationException`, which obscures the real condition.
@@ -120,6 +114,35 @@ final private[kyo] class HttpContainerBackend(
                 s"Daemon returned HTTP ${e.status.code} (${e.status.name}) for ${ctx.describe} with empty body — classification falls back to ContainerOperationException"
             )
         else Kyo.unit
+
+    /** Runs an HTTP call through meter, intercepting 404/501 as NotSupported before falling back to mapHttpError.
+      *
+      * Used by operations (e.g. checkpoint, restore) that should surface [[ContainerNotSupportedException]] when the runtime does not
+      * implement the endpoint, rather than the generic missing-resource exception that [[withErrorMapping]] would produce.
+      *
+      * @param opName
+      *   Short operation name used verbatim in error messages (e.g. "checkpoint", "restore").
+      */
+    private def withNotSupportedMapping[A](opName: String, ctx: ResourceContext)(
+        v: A < (Async & Abort[HttpException])
+    )(using Frame): A < (Async & Abort[ContainerException]) =
+        Abort.runWith[Closed](meter.run {
+            Abort.runWith[HttpException](v) {
+                case Result.Success(a) => a
+                case Result.Failure(e: HttpStatusException) if e.status.code == 404 || e.status.code == 501 =>
+                    Abort.fail(ContainerNotSupportedException(
+                        opName,
+                        s"$opName endpoint not supported by this runtime (HTTP ${e.status.code})"
+                    ))
+                case Result.Failure(e) => mapHttpError(e, ctx)
+                case Result.Panic(e)   => Abort.fail(ContainerBackendException(s"Unexpected error during $opName", e))
+            }
+        }) {
+            case Result.Success(a) => a
+            case Result.Failure(_) =>
+                Abort.fail(ContainerBackendException(s"Concurrency meter closed during $opName", "meter was closed"))
+            case Result.Panic(ex) => Abort.fail(ContainerBackendException(s"Concurrency meter panicked during $opName", ex))
+        }
 
     /** Runs an HTTP call, catching HttpException and mapping to ContainerException. */
     private def withErrorMapping[A](ctx: ResourceContext)(
@@ -167,11 +190,17 @@ final private[kyo] class HttpContainerBackend(
       */
     private def resolveHostPath(path: Path)(using Frame): String < Async =
         val pathStr = path.toString
-        Abort.run[CommandException](Command("readlink", "-f", pathStr).textWithExitCode).map {
-            case Result.Success((output, ExitCode.Success)) if output.trim.nonEmpty => output.trim
-            case _                                                                  => pathStr
-        }
+        ContainerBackend.runCliQuery(
+            Command("readlink", "-f", pathStr),
+            trimmed =>
+                if trimmed.nonEmpty then Present(trimmed) else Absent
+        ).map(_.getOrElse(pathStr))
     end resolveHostPath
+
+    /** Encode a filters dict as a single `filters` query parameter for Docker's JSON-encoded filter format. */
+    private def encodeFilters(filters: Dict[String, Chunk[String]])(using Frame): Seq[(String, String)] =
+        if filters.nonEmpty then Seq("filters" -> Json.encode(filters.toMap.view.mapValues(_.toSeq).toMap))
+        else Seq.empty
 
     /** Build auth headers for registry operations. */
     private def authHeaders(auth: Maybe[ContainerImage.RegistryAuth]): Chunk[(String, String)] =
@@ -243,66 +272,100 @@ final private[kyo] class HttpContainerBackend(
         val nameForErrors = config.name.getOrElse("new-container")
 
         bindsKyo.map { binds =>
-            val hostConfig = HostConfig(
-                Binds = if binds.nonEmpty then binds.toSeq else Seq.empty,
-                PortBindings = if portBindings.nonEmpty then portBindings else Map.empty,
-                NetworkMode = networkModeStr,
-                Dns = config.dns.toSeq,
-                ExtraHosts = config.extraHosts.toSeq.map(eh => s"${eh.hostname}:${eh.ip}"),
-                Memory = config.memory.getOrElse(0L),
-                MemorySwap = config.memorySwap.getOrElse(0L),
-                NanoCPUs = config.cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
-                CpusetCpus = config.cpuAffinity.getOrElse(""),
-                PidsLimit = config.maxProcesses.getOrElse(0L),
-                Privileged = config.privileged,
-                CapAdd = config.addCapabilities.toSeq.map(_.cliName),
-                CapDrop = config.dropCapabilities.toSeq.map(_.cliName),
-                ReadonlyRootfs = config.readOnlyFilesystem,
-                AutoRemove = config.autoRemove,
-                RestartPolicy = restartPol,
-                Mounts = Seq.empty,
-                Tmpfs = tmpfs
-            )
+            val hostConfig = buildHostConfig(config, binds, portBindings, networkModeStr, tmpfs, restartPol)
+            val body       = buildCreateBody(config, hostConfig, envVars, networkingConfig, exposedPorts)
 
-            val body = CreateContainerRequest(
-                Image = config.image.reference,
-                Cmd = config.command.map(_.args.toSeq).toOption,
-                Env = if envVars.nonEmpty then envVars else Seq.empty,
-                Hostname = config.hostname.getOrElse(""),
-                User = config.user.getOrElse(""),
-                Labels = config.labels.toMap,
-                Tty = config.allocateTty,
-                OpenStdin = config.interactive,
-                StopSignal = config.stopSignal.map(_.name).getOrElse(""),
-                WorkingDir = config.command.flatMap(_.workDir).map(_.toString).getOrElse(""),
-                ExposedPorts = exposedPorts,
-                HostConfig = hostConfig,
-                NetworkingConfig = networkingConfig
-            )
-
-            Abort.runWith[HttpException](
-                HttpClient.postJson[CreateContainerResponse](url("/containers/create", params*), body)
-            ) {
-                case Result.Success(resp) => Container.Id(resp.Id)
-                case Result.Failure(e: HttpStatusException) =>
-                    canonicalStatus(e) match
-                        case 404 => Abort.fail(ContainerImageMissingException(config.image))
-                        case 409 => Abort.fail(ContainerAlreadyExistsException(nameForErrors))
-                        case _ =>
-                            warnIfMissingBody(e, ResourceContext.Op(s"create:$nameForErrors")).andThen(
-                                Abort.fail(ContainerOperationException(
-                                    s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} creating container $nameForErrors",
-                                    e
-                                ))
-                            )
-                    end match
-                case Result.Failure(e) =>
-                    Abort.fail(ContainerOperationException(s"Failed to create container $nameForErrors", e))
-                case Result.Panic(e) =>
-                    Abort.fail(ContainerBackendException(s"Unexpected error creating container $nameForErrors", e))
+            // Note: this block does NOT route through withErrorMapping because the create endpoint's
+            // 404 must produce ContainerImageMissingException(config.image), not a generic
+            // ContainerMissingException, and 409 must produce ContainerAlreadyExistsException.
+            // withErrorMapping's missingExceptionFor/conflictExceptionFor don't produce these types.
+            Abort.runWith[Closed](meter.run {
+                Abort.runWith[HttpException](
+                    HttpClient.postJson[CreateContainerResponse](url("/containers/create", params*), body)
+                ) {
+                    case Result.Success(resp) => Container.Id(resp.Id)
+                    case Result.Failure(e: HttpStatusException) =>
+                        canonicalStatus(e) match
+                            case 404 => Abort.fail(ContainerImageMissingException(config.image))
+                            case 409 => Abort.fail(ContainerAlreadyExistsException(nameForErrors))
+                            case _ =>
+                                warnIfMissingBody(e, ResourceContext.Op(s"create:$nameForErrors")).andThen(
+                                    Abort.fail(ContainerOperationException(
+                                        s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} creating container $nameForErrors",
+                                        e
+                                    ))
+                                )
+                        end match
+                    case Result.Failure(e) =>
+                        Abort.fail(ContainerOperationException(s"Failed to create container $nameForErrors", e))
+                    case Result.Panic(e) =>
+                        Abort.fail(ContainerBackendException(s"Unexpected error creating container $nameForErrors", e))
+                }
+            }) {
+                case Result.Success(a) => a
+                case Result.Failure(_) =>
+                    Abort.fail(ContainerBackendException(s"Concurrency meter closed during create:$nameForErrors", "meter was closed"))
+                case Result.Panic(ex) =>
+                    Abort.fail(ContainerBackendException(s"Concurrency meter panicked during create:$nameForErrors", ex))
             }
         }
     end create
+
+    /** Build the HostConfig portion of a create request from configuration values resolved by the caller. */
+    private def buildHostConfig(
+        config: Config,
+        binds: Chunk[String],
+        portBindings: Map[String, Seq[PortBindingEntry]],
+        networkModeStr: String,
+        tmpfs: Map[String, String],
+        restartPol: RestartPolicyEntry
+    ): HostConfig =
+        HostConfig(
+            Binds = if binds.nonEmpty then binds.toSeq else Seq.empty,
+            PortBindings = if portBindings.nonEmpty then portBindings else Map.empty,
+            NetworkMode = networkModeStr,
+            Dns = config.dns.toSeq,
+            ExtraHosts = config.extraHosts.toSeq.map(eh => s"${eh.hostname}:${eh.ip}"),
+            Memory = config.memory.getOrElse(0L),
+            MemorySwap = config.memorySwap.getOrElse(0L),
+            NanoCPUs = config.cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
+            CpusetCpus = config.cpuAffinity.getOrElse(""),
+            PidsLimit = config.maxProcesses.getOrElse(0L),
+            Privileged = config.privileged,
+            CapAdd = config.addCapabilities.toSeq.map(_.cliName),
+            CapDrop = config.dropCapabilities.toSeq.map(_.cliName),
+            ReadonlyRootfs = config.readOnlyFilesystem,
+            AutoRemove = config.autoRemove,
+            RestartPolicy = restartPol,
+            Mounts = Seq.empty,
+            Tmpfs = tmpfs
+        )
+    end buildHostConfig
+
+    /** Build the CreateContainerRequest body from resolved configuration values. */
+    private def buildCreateBody(
+        config: Config,
+        hostConfig: HostConfig,
+        envVars: Seq[String],
+        networkingConfig: Option[NetworkingConfig],
+        exposedPorts: Option[Map[String, Map[String, String]]]
+    ): CreateContainerRequest =
+        CreateContainerRequest(
+            Image = config.image.reference,
+            Cmd = config.command.map(_.args.toSeq).toOption,
+            Env = if envVars.nonEmpty then envVars else Seq.empty,
+            Hostname = config.hostname.getOrElse(""),
+            User = config.user.getOrElse(""),
+            Labels = config.labels.toMap,
+            Tty = config.allocateTty,
+            OpenStdin = config.interactive,
+            StopSignal = config.stopSignal.map(_.name).getOrElse(""),
+            WorkingDir = config.command.flatMap(_.workDir).map(_.toString).getOrElse(""),
+            ExposedPorts = exposedPorts,
+            HostConfig = hostConfig,
+            NetworkingConfig = networkingConfig
+        )
+    end buildCreateBody
 
     private def ctxContainer(id: Container.Id): ResourceContext = ResourceContext.Container(id)
 
@@ -311,10 +374,14 @@ final private[kyo] class HttpContainerBackend(
 
     def stop(id: Container.Id, timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException]) =
         val seconds = timeout.toMillis / 1000
-        postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id)).andThen {
-            // Docker HTTP API returns before the container fully transitions to "exited".
-            // Wait for the container to complete (consistent with ShellBackend's blocking `docker stop`).
-            Abort.run[ContainerException](waitForExit(id)).unit
+        // Start the /wait call as a background fiber BEFORE sending stop, so the exit code is
+        // captured before auto-remove cleanup can race and remove the container from the daemon.
+        Fiber.initUnscoped(waitForExit(id)).map { waitFiber =>
+            postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id)).andThen {
+                // Docker HTTP API returns before the container fully transitions to "exited".
+                // Join the pre-started /wait fiber to confirm exit and preserve the exit code.
+                waitFiber.get.unit
+            }
         }
     end stop
 
@@ -367,60 +434,23 @@ final private[kyo] class HttpContainerBackend(
         val jsonBody = Json.encode(body)
         // Podman's docker-compat shim returns 404 for /checkpoints — surface as NotSupported rather than Missing,
         // since the container itself exists and the resource that's missing is the endpoint.
-        Abort.runWith[Closed](meter.run {
-            Abort.run[HttpException](
-                HttpClient.postText(
-                    url(s"/containers/${id.value}/checkpoints"),
-                    jsonBody,
-                    headers = Seq("Content-Type" -> "application/json")
-                )
-            ).map {
-                case Result.Success(_) => ()
-                case Result.Failure(e: HttpStatusException) if e.status.code == 404 || e.status.code == 501 =>
-                    Abort.fail(ContainerNotSupportedException(
-                        "checkpoint",
-                        s"checkpoint endpoint not supported by this runtime (HTTP ${e.status.code})"
-                    ))
-                case Result.Failure(e) => mapHttpError(e, ctxContainer(id))
-                case Result.Panic(e)   => Abort.fail(ContainerBackendException(s"Unexpected error during checkpoint", e))
-            }
-        }) {
-            case Result.Success(a) => a
-            case Result.Failure(_) =>
-                Abort.fail(ContainerBackendException(s"Concurrency meter closed during checkpoint", "meter was closed"))
-            case Result.Panic(ex) => Abort.fail(ContainerBackendException(s"Concurrency meter panicked during checkpoint", ex))
+        withNotSupportedMapping("checkpoint", ctxContainer(id)) {
+            HttpClient.postText(
+                url(s"/containers/${id.value}/checkpoints"),
+                jsonBody,
+                headers = Seq("Content-Type" -> "application/json")
+            ).unit
         }
     end checkpoint
 
     def restore(id: Container.Id, checkpoint: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        Abort.runWith[Closed](meter.run {
-            Abort.run[HttpException](
-                HttpClient.postText(
-                    url(s"/containers/${id.value}/start?checkpoint=${java.net.URLEncoder.encode(checkpoint, "UTF-8")}"),
-                    ""
-                )
-            ).map {
-                case Result.Success(_) => ()
-                case Result.Failure(e: HttpStatusException) if e.status.code == 404 || e.status.code == 501 =>
-                    Abort.fail(ContainerNotSupportedException(
-                        "restore",
-                        s"restore endpoint not supported by this runtime (HTTP ${e.status.code})"
-                    ))
-                case Result.Failure(e) => mapHttpError(e, ctxContainer(id))
-                case Result.Panic(e)   => Abort.fail(ContainerBackendException(s"Unexpected error during restore", e))
-            }
-        }) {
-            case Result.Success(a) => a
-            case Result.Failure(_) =>
-                Abort.fail(ContainerBackendException(s"Concurrency meter closed during restore", "meter was closed"))
-            case Result.Panic(ex) => Abort.fail(ContainerBackendException(s"Concurrency meter panicked during restore", ex))
+        withNotSupportedMapping("restore", ctxContainer(id)) {
+            HttpClient.postText(
+                url(s"/containers/${id.value}/start?checkpoint=${java.net.URLEncoder.encode(checkpoint, "UTF-8")}"),
+                ""
+            ).unit
         }
     end restore
-
-    // --- Health ---
-
-    def isHealthy(id: Container.Id)(using Frame): Boolean < (Async & Abort[ContainerException]) =
-        state(id).map(_ == Container.State.Running)
 
     // --- Inspection ---
 
@@ -485,21 +515,6 @@ final private[kyo] class HttpContainerBackend(
                         }
                     else baseline
                     end if
-            }
-        }
-
-    def statsStream(id: Container.Id)(using Frame): Stream[Container.Stats, Async & Abort[ContainerException]] =
-        statsStream(id, 200.millis)
-
-    def statsStream(id: Container.Id, interval: Duration)(using Frame): Stream[Container.Stats, Async & Abort[ContainerException]] =
-        // Docker stats streaming ignores interval, so we poll instead for consistent behavior
-        Stream {
-            Loop(()) { _ =>
-                stats(id).map { s =>
-                    Emit.value(Chunk(s)).andThen {
-                        Async.sleep(interval).andThen(Loop.continue(()))
-                    }
-                }
             }
         }
 
@@ -855,14 +870,21 @@ final private[kyo] class HttpContainerBackend(
                                 Abort.runWith[CommandException](tarCmd.spawn) {
                                     case Result.Success(proc) =>
                                         proc.stdout.run.map { tarBytes =>
-                                            val tarSpan = Span.from(tarBytes.toArray)
-                                            withErrorMapping(ctxContainer(id)) {
-                                                HttpClient.putBinary(
-                                                    url(s"/containers/${id.value}/archive", "path" -> containerDir),
-                                                    tarSpan,
-                                                    headers = Seq("Content-Type" -> "application/x-tar")
-                                                )
-                                            }.unit
+                                            proc.waitFor.map { tarExit =>
+                                                if !tarExit.isSuccess then
+                                                    Abort.fail(ContainerOperationException(
+                                                        s"copyTo: tar failed with ${tarExit} for ${id.value}"
+                                                    ))
+                                                else
+                                                    val tarSpan = Span.from(tarBytes.toArray)
+                                                    withErrorMapping(ctxContainer(id)) {
+                                                        HttpClient.putBinary(
+                                                            url(s"/containers/${id.value}/archive", "path" -> containerDir),
+                                                            tarSpan,
+                                                            headers = Seq("Content-Type" -> "application/x-tar")
+                                                        )
+                                                    }.unit
+                                            }
                                         }
                                     case Result.Failure(e) =>
                                         Abort.fail(ContainerOperationException(
@@ -934,7 +956,7 @@ final private[kyo] class HttpContainerBackend(
                         val decoded = new String(java.util.Base64.getDecoder.decode(encoded), java.nio.charset.StandardCharsets.UTF_8)
                         Json.decode[FileStatDto](decoded) match
                             case Result.Success(dto) =>
-                                val modifiedAt = parseInstant(Option(dto.mtime).filter(_.nonEmpty)).getOrElse(Instant.Epoch)
+                                val modifiedAt = parseInstantOrEpoch(dto.mtime)
                                 FileStat(
                                     name = dto.name,
                                     size = dto.size,
@@ -990,75 +1012,86 @@ final private[kyo] class HttpContainerBackend(
         maxProcesses: Maybe[Long],
         restartPolicy: Maybe[Container.Config.RestartPolicy]
     )(using Frame): Unit < (Async & Abort[ContainerException]) =
-        if runtimeName == "podman" then
-            // Podman's docker-compat shim returns 404 for /containers/{id}/update — route to the libpod-native endpoint
-            // and send the OCI-shaped body it expects (flat docker fields are silently ignored).
-            val mem = memory.toOption.filter(_ > 0)
-            // Default swap to 2× memory when only `memory` is provided. Mirrors what
-            // `podman container update --memory=...` sends: the libpod endpoint
-            // silently no-ops a `{"memory":{"limit":N}}` body that omits `swap`.
-            val swp    = memorySwap.toOption.filter(_ > 0).orElse(mem.map(_ * 2L))
-            val cpu    = cpuLimit.toOption.filter(_ > 0).map(c => (c * 1024).toLong) // approximate cpu shares
-            val cpuset = cpuAffinity.toOption.filter(_.nonEmpty)
-            val pids   = maxProcesses.toOption.filter(_ > 0)
-            val libpodBody = LibpodUpdateRequest(
-                memory = if mem.isDefined || swp.isDefined then Some(LibpodMemory(limit = mem, swap = swp)) else None,
-                cpu = if cpu.isDefined || cpuset.isDefined then Some(LibpodCpu(shares = cpu, cpus = cpuset)) else None,
-                pids = pids.map(p => LibpodPids(limit = Some(p)))
-            )
-            val jsonBody = Json.encode(libpodBody)
-            withErrorMapping(ctxContainer(id)) {
-                HttpClient.postText(
-                    libpodUrl(s"/containers/${id.value}/update"),
-                    jsonBody,
-                    headers = Seq("Content-Type" -> "application/json")
-                )
-            }.unit
-        else
-            val restartPol = restartPolicy.map { rp =>
-                rp match
-                    case Config.RestartPolicy.OnFailure(retries) => RestartPolicyEntry(rp.cliName, retries)
-                    case _                                       => RestartPolicyEntry(rp.cliName, 0)
-            }
-            val body = UpdateRequest(
-                Memory = memory.getOrElse(0L),
-                MemorySwap = memorySwap.getOrElse(0L),
-                NanoCPUs = cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
-                CpusetCpus = cpuAffinity.getOrElse(""),
-                PidsLimit = maxProcesses.getOrElse(0L),
-                RestartPolicy = restartPol.getOrElse(RestartPolicyEntry("", 0))
-            )
-            val jsonBody = Json.encode(body)
-            withErrorMapping(ctxContainer(id)) {
-                HttpClient.postText(
-                    url(s"/containers/${id.value}/update"),
-                    jsonBody,
-                    headers = Seq("Content-Type" -> "application/json")
-                )
-            }.unit
-        end if
+        if runtimeName == "podman" then updateLibpod(id, memory, memorySwap, cpuLimit, cpuAffinity, maxProcesses)
+        else updateDockerCompat(id, memory, memorySwap, cpuLimit, cpuAffinity, maxProcesses, restartPolicy)
     end update
 
-    // --- Network on container ---
+    /** Update container resource limits via Podman's native libpod endpoint.
+      *
+      * Podman's docker-compat shim returns 404 for /containers/{id}/update — we route to the libpod-native endpoint and send the OCI-shaped
+      * body it expects (flat docker fields are silently ignored). Note: `restartPolicy` is absent — the libpod update endpoint handles
+      * restart policy separately and is not included in this call.
+      */
+    private def updateLibpod(
+        id: Container.Id,
+        memory: Maybe[Long],
+        memorySwap: Maybe[Long],
+        cpuLimit: Maybe[Double],
+        cpuAffinity: Maybe[String],
+        maxProcesses: Maybe[Long]
+    )(using Frame): Unit < (Async & Abort[ContainerException]) =
+        val mem = memory.toOption.filter(_ > 0)
+        // Default swap to 2× memory when only `memory` is provided. Mirrors what
+        // `podman container update --memory=...` sends: the libpod endpoint
+        // silently no-ops a `{"memory":{"limit":N}}` body that omits `swap`.
+        val swp    = memorySwap.toOption.filter(_ > 0).orElse(mem.map(_ * 2L))
+        val cpu    = cpuLimit.toOption.filter(_ > 0).map(c => (c * 1024).toLong) // approximate cpu shares
+        val cpuset = cpuAffinity.toOption.filter(_.nonEmpty)
+        val pids   = maxProcesses.toOption.filter(_ > 0)
+        val libpodBody = LibpodUpdateRequest(
+            memory = if mem.isDefined || swp.isDefined then Some(LibpodMemory(limit = mem, swap = swp)) else None,
+            cpu = if cpu.isDefined || cpuset.isDefined then Some(LibpodCpu(shares = cpu, cpus = cpuset)) else None,
+            pids = pids.map(p => LibpodPids(limit = Some(p)))
+        )
+        val jsonBody = Json.encode(libpodBody)
+        withErrorMapping(ctxContainer(id)) {
+            HttpClient.postText(
+                libpodUrl(s"/containers/${id.value}/update"),
+                jsonBody,
+                headers = Seq("Content-Type" -> "application/json")
+            )
+        }.unit
+    end updateLibpod
 
-    def connectToNetwork(id: Container.Id, networkId: Container.Network.Id, aliases: Chunk[String])(
-        using Frame
-    ): Unit < (Async & Abort[ContainerException]) =
-        networkConnect(networkId, id, aliases)
-
-    def disconnectFromNetwork(id: Container.Id, networkId: Container.Network.Id, force: Boolean)(
-        using Frame
-    ): Unit < (Async & Abort[ContainerException]) =
-        networkDisconnect(networkId, id, force)
+    /** Update container resource limits via the Docker-compatible endpoint. */
+    private def updateDockerCompat(
+        id: Container.Id,
+        memory: Maybe[Long],
+        memorySwap: Maybe[Long],
+        cpuLimit: Maybe[Double],
+        cpuAffinity: Maybe[String],
+        maxProcesses: Maybe[Long],
+        restartPolicy: Maybe[Container.Config.RestartPolicy]
+    )(using Frame): Unit < (Async & Abort[ContainerException]) =
+        val restartPol = restartPolicy.map { rp =>
+            rp match
+                case Config.RestartPolicy.OnFailure(retries) => RestartPolicyEntry(rp.cliName, retries)
+                case _                                       => RestartPolicyEntry(rp.cliName, 0)
+        }
+        val body = UpdateRequest(
+            Memory = memory.getOrElse(0L),
+            MemorySwap = memorySwap.getOrElse(0L),
+            NanoCPUs = cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
+            CpusetCpus = cpuAffinity.getOrElse(""),
+            PidsLimit = maxProcesses.getOrElse(0L),
+            RestartPolicy = restartPol.getOrElse(RestartPolicyEntry("", 0))
+        )
+        val jsonBody = Json.encode(body)
+        withErrorMapping(ctxContainer(id)) {
+            HttpClient.postText(
+                url(s"/containers/${id.value}/update"),
+                jsonBody,
+                headers = Seq("Content-Type" -> "application/json")
+            )
+        }.unit
+    end updateDockerCompat
 
     // --- Container listing ---
 
     def list(all: Boolean, filters: Dict[String, Chunk[String]])(
         using Frame
     ): Chunk[Container.Summary] < (Async & Abort[ContainerException]) =
-        val params = Seq("all" -> all.toString) ++
-            (if filters.nonEmpty then Seq("filters" -> Json.encode(filters.toMap.view.mapValues(_.toSeq).toMap))
-             else Seq.empty)
+        val params = Seq("all" -> all.toString) ++ encodeFilters(filters)
         withErrorMapping(ResourceContext.Op("list")) {
             HttpClient.getJson[Seq[ListContainerEntry]](url("/containers/json", params*))
         }.map { entries =>
@@ -1066,7 +1099,7 @@ final private[kyo] class HttpContainerBackend(
                 Container.Summary(
                     id = Container.Id(e.Id),
                     names = Chunk.from(e.Names.map(_.stripPrefix("/"))),
-                    image = ContainerImage.parse(e.Image).getOrElse(ContainerImage(e.Image)),
+                    image = ContainerImage(e.Image),
                     imageId = ContainerImage.Id(e.ImageID),
                     command = e.Command,
                     state = parseState(e.State),
@@ -1085,16 +1118,14 @@ final private[kyo] class HttpContainerBackend(
                     }),
                     labels = Dict.from(e.Labels),
                     mounts = Chunk.from(e.Mounts.map(_.Name)),
-                    createdAt = Instant.fromJava(java.time.Instant.ofEpochSecond(e.Created))
+                    createdAt = fromEpochSecond(e.Created)
                 )
             })
         }
     end list
 
     def prune(filters: Dict[String, Chunk[String]])(using Frame): Container.PruneResult < (Async & Abort[ContainerException]) =
-        val params =
-            if filters.nonEmpty then Seq("filters" -> Json.encode(filters.toMap.view.mapValues(_.toSeq).toMap))
-            else Seq.empty
+        val params = encodeFilters(filters)
         withErrorMapping(ResourceContext.Op("prune")) {
             HttpClient.postJson[PruneContainersResponse](url("/containers/prune", params*), "")
         }.map { resp =>
@@ -1105,44 +1136,12 @@ final private[kyo] class HttpContainerBackend(
         }
     end prune
 
-    def attachById(idOrName: Container.Id)(using Frame): (Container.Id, Container.Config) < (Async & Abort[ContainerException]) =
-        inspect(idOrName).map { info =>
-            val config0 = Config.default.copy(
-                image = info.image,
-                name = if info.name.nonEmpty then Present(info.name) else Absent,
-                labels = info.labels,
-                ports = info.ports,
-                mounts = info.mounts
-            )
-            val config =
-                if info.command.isEmpty then config0
-                else
-                    val args = Chunk.from(info.command.split(" ").iterator.filter(_.nonEmpty).toSeq)
-                    val cmd  = if info.env.isEmpty then Command(args*) else Command(args*).envAppend(info.env.toMap)
-                    config0.command(cmd)
-            (info.id, config)
-        }
-
     // --- Image operations ---
 
     def imagePull(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
         nativePull(image, platform, auth).foreach(_ => Kyo.unit)
-
-    def imageEnsure(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
-        using Frame
-    ): Unit < (Async & Abort[ContainerException]) =
-        val ref = image.reference
-        Abort.recover[ContainerException](
-            (_: ContainerException) => imagePull(image, platform, auth),
-            (_: Throwable) => imagePull(image, platform, auth)
-        ) {
-            withErrorMapping(ResourceContext.Image(ref)) {
-                HttpClient.getJson[ImageInspectDto](url(s"/images/$ref/json"))
-            }.unit
-        }
-    end imageEnsure
 
     def imagePullWithProgress(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
@@ -1180,13 +1179,50 @@ final private[kyo] class HttpContainerBackend(
       * Looks up the image's registry in `auth.auths` (falls back to Docker Hub). The stored credential is assumed to be a Base64-encoded
       * `username:password`, which is wrapped in a JSON object and re-encoded per the Docker engine's `X-Registry-Auth` contract.
       */
-    private def registryAuthHeader(image: ContainerImage, auth: ContainerImage.RegistryAuth): Maybe[String] =
-        val key = image.registry.getOrElse(ContainerImage.Registry.DockerHub)
-        auth.auths.get(key).map { encodedCreds =>
-            val json = s"""{"auth":"$encodedCreds"}"""
-            java.util.Base64.getEncoder.encodeToString(json.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    private def registryAuthHeader(image: ContainerImage, auth: ContainerImage.RegistryAuth)(using Frame): Maybe[String] =
+        HttpContainerBackend.registryAuthHeader(image, auth)
+
+    /** Consume an NDJSON byte-stream, feeding each non-empty line into `processLine`.
+      *
+      * Abstracts the LineAssembler creation + foreachChunk loop shared by [[nativePull]] and [[imageBuildFromPath]]. Both callers differ
+      * only in how they handle each decoded line and how they map HTTP failures; those differences are passed as callbacks.
+      *
+      * The `processLine` callback may carry arbitrary extra effects `S` (e.g. `Emit[Chunk[PullProgress]]` or `Emit[Chunk[BuildProgress]]`).
+      * The caller is responsible for providing a context that absorbs those effects (e.g. the outer `Stream {}` block).
+      * `consumeNdjsonStream` itself does NOT mention `Emit` in its effect row — it is transparent to the callback's extra effects.
+      *
+      * @param byteStream
+      *   Raw byte chunks from the HTTP response.
+      * @param processLine
+      *   Per-line handler; called for every non-blank, non-whitespace-only NDJSON line.
+      * @param onHttpFailure
+      *   Maps a `Result.Failure(HttpException)` to a `ContainerException` abort.
+      * @param onPanic
+      *   Maps a `Result.Panic(Throwable)` from the HTTP layer to a `ContainerException` abort. Callers provide domain-appropriate messages
+      *   (e.g. [[ContainerBuildFailedException]] vs [[ContainerBackendException]]).
+      */
+    private def consumeNdjsonStream[S](
+        byteStream: Stream[Span[Byte], Async & Abort[HttpException]],
+        processLine: String => Unit < (Abort[ContainerException] & S)
+    )(
+        onHttpFailure: HttpException => Unit < (Sync & Abort[ContainerException]),
+        onPanic: Throwable => Unit < (Sync & Abort[ContainerException])
+    )(using Frame): Unit < (Async & Abort[ContainerException] & S) =
+        val asm = new LineAssembler
+        Abort.runWith[HttpException](
+            byteStream.foreachChunk { chunk =>
+                Kyo.foreachDiscard(chunk) { span =>
+                    val text  = new String(span.toArray, java.nio.charset.StandardCharsets.UTF_8)
+                    val lines = asm.feed(text)
+                    Kyo.foreachDiscard(lines.toSeq.filter(_.trim.nonEmpty))(processLine)
+                }
+            }
+        ) {
+            case Result.Success(_) => ()
+            case Result.Failure(e) => onHttpFailure(e).unit
+            case Result.Panic(e)   => onPanic(e).unit
         }
-    end registryAuthHeader
+    end consumeNdjsonStream
 
     /** Native streaming pull via `POST /images/create` with NDJSON progress events.
       *
@@ -1208,21 +1244,10 @@ final private[kyo] class HttpContainerBackend(
                 auth.flatMap(a => registryAuthHeader(image, a)).fold(Seq.empty[(String, String)])(h => Seq("X-Registry-Auth" -> h))
             val headers    = Seq("Content-Type" -> "application/json") ++ authHeader
             val byteStream = HttpClient.postStreamBytes(url("/images/create", params*), Span.empty[Byte], headers)
-            val asm        = new LineAssembler
-            Abort.runWith[HttpException](
-                byteStream.foreachChunk { chunk =>
-                    Kyo.foreachDiscard(chunk) { span =>
-                        val text  = new String(span.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                        val lines = asm.feed(text)
-                        Kyo.foreachDiscard(lines.toSeq.filter(_.trim.nonEmpty))(processPullLine(_, image))
-                    }
-                }
-            ) {
-                case Result.Success(_) => ()
-                case Result.Failure(e) => normalizePullError(e, image, auth).unit
-                case Result.Panic(e) =>
-                    Abort.fail(ContainerBackendException(s"Unexpected error pulling ${image.reference}", e))
-            }
+            consumeNdjsonStream(byteStream, processPullLine(_, image))(
+                onHttpFailure = e => normalizePullError(e, image, auth),
+                onPanic = e => Abort.fail(ContainerBackendException(s"Unexpected error pulling ${image.reference}", e))
+            )
         }
 
     /** Translate a pull-time HTTP failure into a [[ContainerException]], with auth-aware semantics for registry-level denials.
@@ -1281,27 +1306,24 @@ final private[kyo] class HttpContainerBackend(
     def imageList(all: Boolean, filters: Dict[String, Chunk[String]])(
         using Frame
     ): Chunk[ContainerImage.Summary] < (Async & Abort[ContainerException]) =
-        val params = Seq("all" -> all.toString) ++
-            (if filters.nonEmpty then Seq("filters" -> Json.encode(filters.toMap.view.mapValues(_.toSeq).toMap))
-             else Seq.empty)
+        val params = Seq("all" -> all.toString) ++ encodeFilters(filters)
         withErrorMapping(ResourceContext.Op("imageList")) {
             HttpClient.getJson[Seq[ImageListEntryDto]](url("/images/json", params*))
         }.map { entries =>
             Chunk.from(entries.map { e =>
                 val repoTags = Chunk.from(
                     e.RepoTags.getOrElse(Seq.empty).filter(_ != "<none>:<none>")
-                        .map(s => ContainerImage.parse(s).getOrElse(ContainerImage(s)))
+                        .map(ContainerImage(_))
                 )
                 val repoDigests = Chunk.from(
                     e.RepoDigests.getOrElse(Seq.empty).filter(_ != "<none>@<none>")
-                        .map(s => ContainerImage.parse(s).getOrElse(ContainerImage(s)))
+                        .map(ContainerImage(_))
                 )
                 ContainerImage.Summary(
                     id = ContainerImage.Id(e.Id),
                     repoTags = repoTags,
                     repoDigests = repoDigests,
-                    createdAt = if e.Created > 0 then Instant.fromJava(java.time.Instant.ofEpochSecond(e.Created))
-                    else Instant.Epoch,
+                    createdAt = fromEpochSecond(e.Created),
                     size = e.Size,
                     labels = Dict.from(e.Labels.getOrElse(Map.empty))
                 )
@@ -1316,11 +1338,9 @@ final private[kyo] class HttpContainerBackend(
         }.map { dto =>
             ContainerImage.Info(
                 id = ContainerImage.Id(dto.Id),
-                repoTags = Chunk.from(dto.RepoTags.getOrElse(Seq.empty)
-                    .map(s => ContainerImage.parse(s).getOrElse(ContainerImage(s)))),
-                repoDigests = Chunk.from(dto.RepoDigests.getOrElse(Seq.empty)
-                    .map(s => ContainerImage.parse(s).getOrElse(ContainerImage(s)))),
-                createdAt = parseInstant(Option(dto.Created).filter(_.nonEmpty)).getOrElse(Instant.Epoch),
+                repoTags = Chunk.from(dto.RepoTags.getOrElse(Seq.empty).map(ContainerImage(_))),
+                repoDigests = Chunk.from(dto.RepoDigests.getOrElse(Seq.empty).map(ContainerImage(_))),
+                createdAt = parseInstantOrEpoch(dto.Created),
                 size = dto.Size,
                 labels = Dict.from(dto.Config.Labels.getOrElse(Map.empty)),
                 architecture = dto.Architecture,
@@ -1354,25 +1374,6 @@ final private[kyo] class HttpContainerBackend(
         }
     end imageTag
 
-    def imageBuild(
-        context: Stream[Byte, Sync],
-        dockerfile: String,
-        tags: Chunk[String],
-        buildArgs: Dict[String, String],
-        labels: Dict[String, String],
-        noCache: Boolean,
-        pull: Boolean,
-        target: Maybe[String],
-        platform: Maybe[Container.Platform],
-        auth: Maybe[ContainerImage.RegistryAuth]
-    )(using Frame): Stream[ContainerImage.BuildProgress, Async & Abort[ContainerException]] =
-        // Stream-based context not supported, use imageBuildFromPath instead
-        Stream {
-            Abort.fail[ContainerException](
-                ContainerNotSupportedException("imageBuild with stream context", "Use imageBuildFromPath instead")
-            ).unit
-        }
-
     def imageBuildFromPath(
         path: Path,
         dockerfile: String,
@@ -1405,10 +1406,8 @@ final private[kyo] class HttpContainerBackend(
                      else Seq.empty)
             val authHeader = auth.fold(Seq.empty[(String, String)]) { a =>
                 // Docker's /build takes X-Registry-Config, a base64-encoded JSON of {registry: {auth: ...}} pairs.
-                val entries = a.auths.toMap.map { case (reg, encoded) =>
-                    s""""${reg.value}":{"auth":"$encoded"}"""
-                }.mkString(",")
-                val json = s"{$entries}"
+                val payload = a.auths.toMap.map { case (reg, encoded) => reg.value -> RegistryAuthEntry(encoded) }
+                val json    = Json.encode(payload)
                 Seq("X-Registry-Config" -> java.util.Base64.getEncoder.encodeToString(json.getBytes(
                     java.nio.charset.StandardCharsets.UTF_8
                 )))
@@ -1419,25 +1418,22 @@ final private[kyo] class HttpContainerBackend(
                 Abort.runWith[CommandException](tarCmd.spawn) {
                     case Result.Success(proc) =>
                         proc.stdout.run.map { tarBytes =>
-                            val byteStream = HttpClient.postStreamBytes(
-                                url("/build", params*),
-                                Span.from(tarBytes.toArray),
-                                headers
-                            )
-                            val asm = new LineAssembler
-                            Abort.runWith[HttpException](
-                                byteStream.foreachChunk { chunk =>
-                                    Kyo.foreachDiscard(chunk) { span =>
-                                        val text  = new String(span.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                        val lines = asm.feed(text)
-                                        Kyo.foreachDiscard(lines.toSeq.filter(_.trim.nonEmpty))(processBuildLine(_, path.toString))
-                                    }
-                                }
-                            ) {
-                                case Result.Success(_) => verifyBuildProduced(tags)
-                                case Result.Failure(e) => mapHttpError(e, ResourceContext.Op("imageBuildFromPath")).unit
-                                case Result.Panic(e) =>
-                                    Abort.fail(ContainerBuildFailedException(path.toString, "unexpected error", e))
+                            proc.waitFor.map { tarExit =>
+                                if !tarExit.isSuccess then
+                                    Abort.fail(ContainerBuildFailedException(
+                                        path.toString,
+                                        s"tar failed during imageBuildFromPath with ${tarExit}"
+                                    )).unit
+                                else
+                                    val byteStream = HttpClient.postStreamBytes(
+                                        url("/build", params*),
+                                        Span.from(tarBytes.toArray),
+                                        headers
+                                    )
+                                    consumeNdjsonStream(byteStream, processBuildLine(_, path.toString))(
+                                        onHttpFailure = e => mapHttpError(e, ResourceContext.Op("imageBuildFromPath")),
+                                        onPanic = e => Abort.fail(ContainerBuildFailedException(path.toString, "unexpected error", e))
+                                    ).andThen(verifyBuildProduced(tags))
                             }
                         }
                     case Result.Failure(e) =>
@@ -1470,32 +1466,6 @@ final private[kyo] class HttpContainerBackend(
             case Result.Failure(_) => Kyo.unit
             case Result.Panic(t)   => Abort.panic(t)
 
-    /** After a build stream completes without raising, confirm the daemon actually produced an image for the first tag.
-      *
-      * Docker's documented contract is that JSONMessage.Error is populated on build failure, which [[processBuildLine]] checks. Some
-      * builder pipelines (notably Docker Desktop's buildx → BuildKit path) deviate and emit error text only in stream events, leaving the
-      * structured error field absent. A 404 on `GET /images/{tag}/json` is then the authoritative API-level signal that the build didn't
-      * succeed.
-      *
-      * When no tag was requested, nothing is verified — the caller implicitly opted into trusting the event stream.
-      */
-    private def verifyBuildProduced(tags: Chunk[String])(using Frame): Unit < (Async & Abort[ContainerException]) =
-        tags.headOption match
-            case None => Kyo.unit
-            case Some(tag) =>
-                Abort.runWith[HttpException](HttpClient.getJson[ImageInspectDto](url(s"/images/$tag/json"))) {
-                    case Result.Success(_) => ()
-                    case Result.Failure(e: HttpStatusException) if e.status.code == 404 =>
-                        Abort.fail(ContainerBuildFailedException(
-                            tag,
-                            "image tag not found after build — possibly silent failure",
-                            new RuntimeException(s"tagged image '$tag' absent after build")
-                        ))
-                    case Result.Failure(e) => mapHttpError(e, ResourceContext.Image(tag)).unit
-                    case Result.Panic(e) =>
-                        Abort.fail(ContainerBuildFailedException(tag, "unexpected error during verification", e))
-                }
-
     def imagePush(image: ContainerImage, auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
@@ -1511,8 +1481,7 @@ final private[kyo] class HttpContainerBackend(
     ): Chunk[ContainerImage.SearchResult] < (Async & Abort[ContainerException]) =
         val params = Seq("term" -> term) ++
             (if limit != Int.MaxValue then Seq("limit" -> limit.toString) else Seq.empty) ++
-            (if filters.nonEmpty then Seq("filters" -> Json.encode(filters.toMap.view.mapValues(_.toSeq).toMap))
-             else Seq.empty)
+            encodeFilters(filters)
         withErrorMapping(ResourceContext.Op("imageSearch")) {
             HttpClient.getJson[Seq[ImageSearchEntryDto]](url("/images/search", params*))
         }.map { entries =>
@@ -1537,8 +1506,7 @@ final private[kyo] class HttpContainerBackend(
             Chunk.from(entries.map { e =>
                 ContainerImage.HistoryEntry(
                     id = e.Id,
-                    createdAt = if e.Created > 0 then Instant.fromJava(java.time.Instant.ofEpochSecond(e.Created))
-                    else Instant.Epoch,
+                    createdAt = fromEpochSecond(e.Created),
                     createdBy = e.CreatedBy,
                     size = e.Size,
                     tags = Chunk.from(e.Tags.getOrElse(Seq.empty)),
@@ -1549,9 +1517,7 @@ final private[kyo] class HttpContainerBackend(
     end imageHistory
 
     def imagePrune(filters: Dict[String, Chunk[String]])(using Frame): Container.PruneResult < (Async & Abort[ContainerException]) =
-        val params =
-            if filters.nonEmpty then Seq("filters" -> Json.encode(filters.toMap.view.mapValues(_.toSeq).toMap))
-            else Seq.empty
+        val params = encodeFilters(filters)
         withErrorMapping(ResourceContext.Op("imagePrune")) {
             HttpClient.postJson[ImagePruneResponseDto](url("/images/prune", params*), "")
         }.map { resp =>
@@ -1597,42 +1563,43 @@ final private[kyo] class HttpContainerBackend(
     // --- Network operations ---
 
     def networkCreate(config: Container.Network.Config)(using Frame): Container.Network.Id < (Async & Abort[ContainerException]) =
-        val ipamConfig = config.ipam.map { ipam =>
-            IpamDto(
-                Driver = ipam.driver,
-                Config = ipam.config.toSeq.map { pool =>
-                    IpamPoolDto(
-                        Subnet = pool.subnet.getOrElse(""),
-                        Gateway = pool.gateway.getOrElse(""),
-                        IPRange = pool.ipRange.getOrElse("")
-                    )
-                }
+        if config.name.isEmpty then Abort.fail(ContainerOperationException("Network name cannot be empty"))
+        else
+            val ipamConfig = config.ipam.map { ipam =>
+                IpamDto(
+                    Driver = ipam.driver,
+                    Config = ipam.config.toSeq.map { pool =>
+                        IpamPoolDto(
+                            Subnet = pool.subnet.getOrElse(""),
+                            Gateway = pool.gateway.getOrElse(""),
+                            IPRange = pool.ipRange.getOrElse("")
+                        )
+                    }
+                )
+            }.getOrElse(IpamDto())
+            val body = NetworkCreateRequest(
+                Name = config.name,
+                Driver = config.driver.cliName,
+                Internal = config.internal,
+                Attachable = config.attachable,
+                EnableIPv6 = config.enableIPv6,
+                Labels = config.labels.toMap,
+                Options = config.options.toMap,
+                IPAM = ipamConfig
             )
-        }.getOrElse(IpamDto())
-        val body = NetworkCreateRequest(
-            Name = config.name,
-            Driver = config.driver.cliName,
-            Internal = config.internal,
-            Attachable = config.attachable,
-            EnableIPv6 = config.enableIPv6,
-            Labels = config.labels.toMap,
-            Options = config.options.toMap,
-            IPAM = ipamConfig
-        )
-        withErrorMapping(ResourceContext.Op("networkCreate")) {
-            HttpClient.postJson[NetworkCreateResponse](url("/networks/create"), body)
-        }.map { resp =>
-            if config.name.nonEmpty then Container.Network.Id(config.name)
-            else Container.Network.Id(resp.Id)
-        }
+            withErrorMapping(ResourceContext.Op("networkCreate")) {
+                HttpClient.postJson[NetworkCreateResponse](url("/networks/create"), body)
+            }.map { resp =>
+                if config.name.nonEmpty then Container.Network.Id(config.name)
+                else Container.Network.Id(resp.Id)
+            }
+        end if
     end networkCreate
 
     def networkList(filters: Dict[String, Chunk[String]])(
         using Frame
     ): Chunk[Container.Network.Info] < (Async & Abort[ContainerException]) =
-        val params =
-            if filters.nonEmpty then Seq("filters" -> Json.encode(filters.toMap.view.mapValues(_.toSeq).toMap))
-            else Seq.empty
+        val params = encodeFilters(filters)
         withErrorMapping(ResourceContext.Op("networkList")) {
             HttpClient.getJson[Seq[NetworkInfoDto]](url("/networks", params*))
         }.map(entries => Chunk.from(entries.map(mapNetworkInfo)))
@@ -1709,9 +1676,7 @@ final private[kyo] class HttpContainerBackend(
     def networkPrune(filters: Dict[String, Chunk[String]])(
         using Frame
     ): Chunk[Container.Network.Id] < (Async & Abort[ContainerException]) =
-        val params =
-            if filters.nonEmpty then Seq("filters" -> Json.encode(filters.toMap.view.mapValues(_.toSeq).toMap))
-            else Seq.empty
+        val params = encodeFilters(filters)
         withErrorMapping(ResourceContext.Op("networkPrune")) {
             HttpClient.postJson[NetworkPruneResponse](url("/networks/prune", params*), "")
         }.map { resp =>
@@ -1736,9 +1701,7 @@ final private[kyo] class HttpContainerBackend(
     def volumeList(filters: Dict[String, Chunk[String]])(
         using Frame
     ): Chunk[Container.Volume.Info] < (Async & Abort[ContainerException]) =
-        val params =
-            if filters.nonEmpty then Seq("filters" -> Json.encode(filters.toMap.view.mapValues(_.toSeq).toMap))
-            else Seq.empty
+        val params = encodeFilters(filters)
         withErrorMapping(ResourceContext.Op("volumeList")) {
             HttpClient.getJson[VolumeListResponse](url("/volumes", params*))
         }.map { resp =>
@@ -1757,9 +1720,7 @@ final private[kyo] class HttpContainerBackend(
         }
 
     def volumePrune(filters: Dict[String, Chunk[String]])(using Frame): Container.PruneResult < (Async & Abort[ContainerException]) =
-        val params =
-            if filters.nonEmpty then Seq("filters" -> Json.encode(filters.toMap.view.mapValues(_.toSeq).toMap))
-            else Seq.empty
+        val params = encodeFilters(filters)
         withErrorMapping(ResourceContext.Op("volumePrune")) {
             HttpClient.postJson[VolumePruneResponse](url("/volumes/prune", params*), "")
         }.map { resp =>
@@ -1809,105 +1770,25 @@ final private[kyo] class HttpContainerBackend(
         val text   = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
         val result = Chunk.newBuilder[LogEntry]
         text.split("\n").filter(_.nonEmpty).foreach { line =>
-            if timestamps then
-                val (maybeTs, rest) = parseTimestampLine(line)
-                result.addOne(LogEntry(LogEntry.Source.Stdout, rest, maybeTs))
-            else
-                result.addOne(LogEntry(LogEntry.Source.Stdout, line))
+            result.addOne(makeLogEntry(line, LogEntry.Source.Stdout, timestamps))
         }
         result.result()
     end parseRawLogStream
 
     // --- Multiplexed stream demuxing ---
 
-    /** Demultiplex Docker's multiplexed stdout/stderr stream format.
+    /** Iterate the Docker multiplexed frame stream, calling `f(content, source)` for each valid frame.
       *
-      * Each frame: byte[0]=stream type (1=stdout,2=stderr), bytes[1-3]=padding, bytes[4-7]=uint32 big-endian size, then `size` bytes
-      * payload.
+      * Frame format: byte[0]=stream type (1=stdout,2=stderr), bytes[1-3]=padding, bytes[4-7]=uint32 big-endian payload size, then `size`
+      * bytes payload. Incomplete frames (header or payload) are silently skipped — this is correct streaming behaviour since the assembler
+      * caller will deliver the remainder in the next chunk.
       *
-      * @param timestamps
-      *   When true, attempt to parse Docker timestamp prefix from each line (format: `2024-01-01T00:00:00.000000000Z content`)
+      * Both [[demuxStream]] and [[demuxStreamAssembled]] delegate to this helper; they differ only in how they process each `(content,
+      * source)` pair.
       */
-    private def demuxStream(bytes: Span[Byte], timestamps: Boolean = false): Chunk[LogEntry] =
+    private def foreachDemuxFrame(bytes: Span[Byte])(f: (String, LogEntry.Source) => Unit): Unit =
         val arr = bytes.toArray
         val len = arr.length
-
-        def parseLines(content: String, source: LogEntry.Source): Chunk[LogEntry] =
-            Chunk.from(content.split("\n").iterator.filter(_.nonEmpty).map { line =>
-                if timestamps then
-                    val (maybeTs, rest) = parseTimestampLine(line)
-                    LogEntry(source, rest, maybeTs)
-                else
-                    LogEntry(source, line)
-            }.toSeq)
-
-        @scala.annotation.tailrec
-        def parse(offset: Int, acc: Chunk[LogEntry]): Chunk[LogEntry] =
-            if offset + 8 > len then acc
-            else
-                val streamType = arr(offset) & 0xff
-                val size = ((arr(offset + 4) & 0xff) << 24) |
-                    ((arr(offset + 5) & 0xff) << 16) |
-                    ((arr(offset + 6) & 0xff) << 8) |
-                    (arr(offset + 7) & 0xff)
-                if offset + 8 + size > len then acc
-                else
-                    val content = new String(arr, offset + 8, size, java.nio.charset.StandardCharsets.UTF_8)
-                    val source  = if streamType == 2 then LogEntry.Source.Stderr else LogEntry.Source.Stdout
-                    parse(offset + 8 + size, acc ++ parseLines(content, source))
-                end if
-        end parse
-
-        parse(0, Chunk.empty)
-    end demuxStream
-
-    /** Streaming variant of [[parseRawLogStream]] that threads a [[LineAssembler]] across byte spans so lines straddling chunk boundaries
-      * are emitted as a single entry.
-      */
-    private def parseRawLogStreamAssembled(
-        bytes: Span[Byte],
-        assembler: LineAssembler,
-        timestamps: Boolean
-    ): Chunk[LogEntry] =
-        val text   = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-        val lines  = assembler.feed(text)
-        val result = Chunk.newBuilder[LogEntry]
-        lines.foreach { line =>
-            if line.nonEmpty then
-                if timestamps then
-                    val (maybeTs, rest) = parseTimestampLine(line)
-                    result.addOne(LogEntry(LogEntry.Source.Stdout, rest, maybeTs))
-                else
-                    result.addOne(LogEntry(LogEntry.Source.Stdout, line))
-        }
-        result.result()
-    end parseRawLogStreamAssembled
-
-    /** Streaming variant of [[demuxStream]] that maintains per-source [[LineAssembler]]s. Frame payloads are demultiplexed as in the
-      * non-streaming version, but each payload is fed into its source's assembler so multi-frame / multi-chunk lines remain intact.
-      */
-    private def demuxStreamAssembled(
-        bytes: Span[Byte],
-        stdoutAsm: LineAssembler,
-        stderrAsm: LineAssembler,
-        timestamps: Boolean
-    ): Chunk[LogEntry] =
-        val arr    = bytes.toArray
-        val len    = arr.length
-        val result = Chunk.newBuilder[LogEntry]
-
-        def emitFromPayload(content: String, source: LogEntry.Source): Unit =
-            val asm   = if source == LogEntry.Source.Stderr then stderrAsm else stdoutAsm
-            val lines = asm.feed(content)
-            lines.foreach { line =>
-                if line.nonEmpty then
-                    if timestamps then
-                        val (maybeTs, rest) = parseTimestampLine(line)
-                        result.addOne(LogEntry(source, rest, maybeTs))
-                    else
-                        result.addOne(LogEntry(source, line))
-            }
-        end emitFromPayload
 
         @scala.annotation.tailrec
         def parse(offset: Int): Unit =
@@ -1922,14 +1803,81 @@ final private[kyo] class HttpContainerBackend(
                 else
                     val content = new String(arr, offset + 8, size, java.nio.charset.StandardCharsets.UTF_8)
                     val source  = if streamType == 2 then LogEntry.Source.Stderr else LogEntry.Source.Stdout
-                    emitFromPayload(content, source)
+                    f(content, source)
                     parse(offset + 8 + size)
                 end if
         end parse
 
         parse(0)
+    end foreachDemuxFrame
+
+    /** Demultiplex Docker's multiplexed stdout/stderr stream format.
+      *
+      * Each frame: byte[0]=stream type (1=stdout,2=stderr), bytes[1-3]=padding, bytes[4-7]=uint32 big-endian size, then `size` bytes
+      * payload.
+      *
+      * @param timestamps
+      *   When true, attempt to parse Docker timestamp prefix from each line (format: `2024-01-01T00:00:00.000000000Z content`)
+      */
+    private def demuxStream(bytes: Span[Byte], timestamps: Boolean = false): Chunk[LogEntry] =
+        val result = Chunk.newBuilder[LogEntry]
+        foreachDemuxFrame(bytes) { (content, source) =>
+            content.split("\n").iterator.filter(_.nonEmpty).foreach { line =>
+                result.addOne(makeLogEntry(line, source, timestamps))
+            }
+        }
+        result.result()
+    end demuxStream
+
+    /** Streaming variant of [[parseRawLogStream]] that threads a [[LineAssembler]] across byte spans so lines straddling chunk boundaries
+      * are emitted as a single entry.
+      */
+    private def parseRawLogStreamAssembled(
+        bytes: Span[Byte],
+        assembler: LineAssembler,
+        timestamps: Boolean
+    ): Chunk[LogEntry] =
+        val text   = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
+        val lines  = assembler.feed(text)
+        val result = Chunk.newBuilder[LogEntry]
+        lines.foreach { line =>
+            if line.nonEmpty then result.addOne(makeLogEntry(line, LogEntry.Source.Stdout, timestamps))
+        }
+        result.result()
+    end parseRawLogStreamAssembled
+
+    /** Streaming variant of [[demuxStream]] that maintains per-source [[LineAssembler]]s. Frame payloads are demultiplexed as in the
+      * non-streaming version, but each payload is fed into its source's assembler so multi-frame / multi-chunk lines remain intact.
+      */
+    private def demuxStreamAssembled(
+        bytes: Span[Byte],
+        stdoutAsm: LineAssembler,
+        stderrAsm: LineAssembler,
+        timestamps: Boolean
+    ): Chunk[LogEntry] =
+        val result = Chunk.newBuilder[LogEntry]
+        foreachDemuxFrame(bytes) { (content, source) =>
+            val asm   = if source == LogEntry.Source.Stderr then stderrAsm else stdoutAsm
+            val lines = asm.feed(content)
+            lines.foreach { line =>
+                if line.nonEmpty then result.addOne(makeLogEntry(line, source, timestamps))
+            }
+        }
         result.result()
     end demuxStreamAssembled
+
+    /** Construct a [[LogEntry]] for a single non-empty log line, optionally parsing a Docker timestamp prefix.
+      *
+      * Centralises the timestamp-conditional branching shared by [[parseRawLogStream]], [[parseRawLogStreamAssembled]], [[demuxStream]] and
+      * [[demuxStreamAssembled]].
+      */
+    private def makeLogEntry(line: String, source: LogEntry.Source, timestamps: Boolean): LogEntry =
+        if timestamps then
+            val (maybeTs, rest) = parseTimestampLine(line)
+            LogEntry(source, rest, maybeTs)
+        else
+            LogEntry(source, line)
+    end makeLogEntry
 
     /** Parse a Docker timestamp prefix from a log line.
       *
@@ -2001,50 +1949,16 @@ final private[kyo] class HttpContainerBackend(
         )
     end mapStatsResponse
 
-    private def mapLibpodStats(entry: LibpodStatsEntry, now: Instant): Container.Stats =
-        val networkMap = Dict.from(entry.Network.getOrElse(Map.empty).map { case (ifName, net) =>
-            ifName -> Stats.Net(
-                rxBytes = net.RxBytes,
-                rxPackets = Present(net.RxPackets),
-                rxErrors = Present(net.RxErrors),
-                rxDropped = Present(net.RxDropped),
-                txBytes = net.TxBytes,
-                txPackets = Present(net.TxPackets),
-                txErrors = Present(net.TxErrors),
-                txDropped = Present(net.TxDropped)
-            )
-        })
-        Stats(
-            readAt = now,
-            cpu = Stats.Cpu(
-                totalUsage = if entry.CPUNano > 0 then Present(entry.CPUNano) else Absent,
-                systemUsage = if entry.SystemNano > 0 then Present(entry.SystemNano) else Absent,
-                onlineCpus = entry.PerCPU.map(_.size).getOrElse(1),
-                usagePercent = entry.CPU
-            ),
-            memory = Stats.Memory(
-                usage = entry.MemUsage,
-                maxUsage = Absent, // libpod doesn't expose
-                limit = if entry.MemLimit > 0 then Present(entry.MemLimit) else Absent,
-                usagePercent = entry.MemPerc
-            ),
-            network = networkMap,
-            blockIo = Stats.BlockIo(readBytes = entry.BlockInput, writeBytes = entry.BlockOutput),
-            pids = Stats.Pids(
-                current = entry.PIDs,
-                limit = Absent // libpod doesn't expose
-            )
-        )
-    end mapLibpodStats
-
     // --- Inspect mapping ---
 
-    private def mapInspectToInfo(dto: InspectResponse): Container.Info =
+    private def extractHealthStatus(dto: InspectResponse): HealthStatus =
         val healthStatusStr = Maybe.fromOption(dto.State.Health)
             .flatMap(h => if h.Status.nonEmpty then Present(h.Status) else Absent)
-        val healthStatus = healthStatusStr.map(HealthStatus.parse).getOrElse(HealthStatus.NoHealthcheck)
+        healthStatusStr.map(HealthStatus.parse).getOrElse(HealthStatus.NoHealthcheck)
+    end extractHealthStatus
 
-        val portsSeq = dto.NetworkSettings.Ports.getOrElse(Map.empty).flatMap { case (portProto, maybeMappings) =>
+    private def extractPorts(dto: InspectResponse): Iterable[Config.PortBinding] =
+        dto.NetworkSettings.Ports.getOrElse(Map.empty).flatMap { case (portProto, maybeMappings) =>
             val parts         = portProto.split("/")
             val containerPort = parts(0).toIntOption.getOrElse(0)
             val protocol = if parts.length > 1 then
@@ -2074,8 +1988,10 @@ final private[kyo] class HttpContainerBackend(
                 ))
             end if
         }
+    end extractPorts
 
-        val networks = Dict.from(dto.NetworkSettings.Networks.getOrElse(Map.empty).map { case (name, ep) =>
+    private def extractNetworks(dto: InspectResponse): Dict[Network.Id, Info.NetworkEndpoint] =
+        Dict.from(dto.NetworkSettings.Networks.getOrElse(Map.empty).map { case (name, ep) =>
             // Key by the outer map key (network name) so lookups by Network.Id work across
             // both Docker (where NetworkID is a hash) and Podman (where NetworkID is the name).
             Network.Id(name) -> Info.NetworkEndpoint(
@@ -2087,8 +2003,10 @@ final private[kyo] class HttpContainerBackend(
                 macAddress = ep.MacAddress
             )
         })
+    end extractNetworks
 
-        val mounts = Chunk.from(dto.Mounts.getOrElse(Seq.empty).map { m =>
+    private def extractMounts(dto: InspectResponse): Chunk[Config.Mount] =
+        Chunk.from(dto.Mounts.getOrElse(Seq.empty).map { m =>
             m.Type.toLowerCase match
                 case "volume" =>
                     val volName = if m.Name.nonEmpty then m.Name else m.Source
@@ -2098,16 +2016,22 @@ final private[kyo] class HttpContainerBackend(
                 case _ =>
                     Config.Mount.Bind(Path(m.Source), Path(m.Destination), !m.RW): Config.Mount
         })
+    end extractMounts
 
-        val envMap: Dict[String, String] = Dict.from(dto.Config.Env.getOrElse(Seq.empty).flatMap { entry =>
+    private def extractEnv(dto: InspectResponse): Dict[String, String] =
+        Dict.from(dto.Config.Env.getOrElse(Seq.empty).flatMap { entry =>
             val idx = entry.indexOf('=')
             if idx >= 0 then Seq(entry.substring(0, idx) -> entry.substring(idx + 1))
             else Seq.empty
         }.toMap)
+    end extractEnv
 
-        val imageName = if dto.Config.Image.nonEmpty then dto.Config.Image else dto.Image
-        val imageRef  = ContainerImage.parse(imageName).getOrElse(ContainerImage(imageName))
-        val platform  = Container.Platform.parse(dto.Platform).getOrElse(Container.Platform("", ""))
+    private def mapInspectToInfo(dto: InspectResponse): Container.Info =
+        val healthStatus = extractHealthStatus(dto)
+        val networks     = extractNetworks(dto)
+        val imageName    = if dto.Config.Image.nonEmpty then dto.Config.Image else dto.Image
+        val imageRef     = ContainerImage(imageName)
+        val platform     = Container.Platform.parse(dto.Platform).getOrElse(Container.Platform("", ""))
 
         Info(
             id = Container.Id(dto.Id),
@@ -2115,17 +2039,17 @@ final private[kyo] class HttpContainerBackend(
             image = imageRef,
             imageId = ContainerImage.Id(dto.Image),
             state = parseState(dto.State.Status),
-            exitCode = if dto.State.ExitCode == 0 then ExitCode.Success else ExitCode.Failure(dto.State.ExitCode),
+            exitCode = exitCodeForState(parseState(dto.State.Status), dto.State.ExitCode),
             pid = dto.State.Pid,
             startedAt = parseInstant(Option(dto.State.StartedAt).filter(_.nonEmpty)),
             finishedAt = parseInstant(Option(dto.State.FinishedAt).filter(_.nonEmpty)),
             healthStatus = healthStatus,
-            ports = Chunk.from(portsSeq),
-            mounts = mounts,
+            ports = Chunk.from(extractPorts(dto)),
+            mounts = extractMounts(dto),
             labels = Dict.from(dto.Config.Labels.getOrElse(Map.empty)),
-            env = envMap,
+            env = extractEnv(dto),
             command = dto.Config.Cmd.getOrElse(Seq.empty).mkString(" "),
-            createdAt = parseInstant(Option(dto.Created).filter(_.nonEmpty)).getOrElse(Instant.Epoch),
+            createdAt = parseInstantOrEpoch(dto.Created),
             restartCount = dto.RestartCount,
             driver = dto.Driver,
             platform = platform,
@@ -2163,7 +2087,7 @@ final private[kyo] class HttpContainerBackend(
             labels = Dict.from(dto.Labels.getOrElse(Map.empty)),
             options = Dict.from(dto.Options.getOrElse(Map.empty)),
             containers = containers,
-            createdAt = parseInstant(Option(dto.Created).filter(_.nonEmpty)).getOrElse(Instant.Epoch)
+            createdAt = parseInstantOrEpoch(dto.Created)
         )
     end mapNetworkInfo
 
@@ -2176,13 +2100,16 @@ final private[kyo] class HttpContainerBackend(
             mountpoint = dto.Mountpoint,
             labels = Dict.from(dto.Labels.getOrElse(Map.empty)),
             options = Dict.from(dto.Options.getOrElse(Map.empty)),
-            createdAt = parseInstant(Option(dto.CreatedAt).filter(_.nonEmpty)).getOrElse(Instant.Epoch),
+            createdAt = parseInstantOrEpoch(dto.CreatedAt),
             scope = dto.Scope
         )
 
     // --- DTO case classes for Docker API ---
 
-    private case class CreateContainerRequest(
+    /** X-Registry-Config entry: a per-registry auth token used in /build requests. */
+    final private case class RegistryAuthEntry(auth: String) derives Schema
+
+    final private case class CreateContainerRequest(
         Image: String,
         Cmd: Option[Seq[String]] = None,
         Env: Seq[String] = Seq.empty,
@@ -2198,15 +2125,15 @@ final private[kyo] class HttpContainerBackend(
         NetworkingConfig: Option[NetworkingConfig] = None
     ) derives Schema
 
-    private case class NetworkingConfig(
+    final private case class NetworkingConfig(
         EndpointsConfig: Map[String, EndpointConfig] = Map.empty
     ) derives Schema
 
-    private case class EndpointConfig(
+    final private case class EndpointConfig(
         Aliases: Seq[String] = Seq.empty
     ) derives Schema
 
-    private case class HostConfig(
+    final private case class HostConfig(
         Binds: Seq[String] = Seq.empty,
         PortBindings: Map[String, Seq[PortBindingEntry]] = Map.empty,
         NetworkMode: String = "",
@@ -2227,32 +2154,32 @@ final private[kyo] class HttpContainerBackend(
         Tmpfs: Map[String, String] = Map.empty
     ) derives Schema
 
-    private case class PortBindingEntry(
+    final private case class PortBindingEntry(
         HostIp: String = "",
         HostPort: String = ""
     ) derives Schema
 
-    private case class RestartPolicyEntry(
+    final private case class RestartPolicyEntry(
         Name: String = "",
         MaximumRetryCount: Int = 0
     ) derives Schema
 
-    private case class MountEntry(
+    final private case class MountEntry(
         Type: String = "",
         Source: String = "",
         Target: String = ""
     ) derives Schema
 
-    private case class CreateContainerResponse(
+    final private case class CreateContainerResponse(
         Id: String = "",
         Warnings: Seq[String] = Seq.empty
     ) derives Schema
 
-    private case class WaitResponse(
+    final private case class WaitResponse(
         StatusCode: Int = 0
     ) derives Schema
 
-    private case class UpdateRequest(
+    final private case class UpdateRequest(
         Memory: Long = 0,
         MemorySwap: Long = 0,
         NanoCPUs: Long = 0,
@@ -2263,27 +2190,27 @@ final private[kyo] class HttpContainerBackend(
 
     // Libpod-native /update embeds runtime-spec.LinuxResources fields directly at the top level
     // (no Resources wrapper). Unknown top-level fields are silently ignored by Go's decoder.
-    private case class LibpodUpdateRequest(
+    final private case class LibpodUpdateRequest(
         memory: Option[LibpodMemory] = None,
         cpu: Option[LibpodCpu] = None,
         pids: Option[LibpodPids] = None
     ) derives Schema
 
-    private case class LibpodMemory(
+    final private case class LibpodMemory(
         limit: Option[Long] = None,
         swap: Option[Long] = None
     ) derives Schema
 
-    private case class LibpodCpu(
+    final private case class LibpodCpu(
         shares: Option[Long] = None,
         cpus: Option[String] = None
     ) derives Schema
 
-    private case class LibpodPids(
+    final private case class LibpodPids(
         limit: Option[Long] = None
     ) derives Schema
 
-    private case class ListContainerEntry(
+    final private case class ListContainerEntry(
         Id: String = "",
         Names: Seq[String] = Seq.empty,
         Image: String = "",
@@ -2297,28 +2224,28 @@ final private[kyo] class HttpContainerBackend(
         Mounts: Seq[ListMountEntry] = Seq.empty
     ) derives Schema
 
-    private case class ListPortEntry(
+    final private case class ListPortEntry(
         IP: String = "",
         PrivatePort: Int = 0,
         PublicPort: Int = 0,
         Type: String = "tcp"
     ) derives Schema
 
-    private case class ListMountEntry(
+    final private case class ListMountEntry(
         Type: String = "",
         Name: String = "",
         Source: String = "",
         Destination: String = ""
     ) derives Schema
 
-    private case class PruneContainersResponse(
+    final private case class PruneContainersResponse(
         ContainersDeleted: Option[Seq[String]] = None,
         SpaceReclaimed: Long = 0
     ) derives Schema
 
     // --- DTOs for container inspect ---
 
-    private case class InspectResponse(
+    final private case class InspectResponse(
         Id: String = "",
         Name: String = "",
         Image: String = "",
@@ -2332,9 +2259,8 @@ final private[kyo] class HttpContainerBackend(
         Platform: String = ""
     ) derives Schema
 
-    private case class InspectStateDto(
+    final private case class InspectStateDto(
         Status: String = "",
-        Running: Boolean = false,
         Pid: Int = 0,
         ExitCode: Int = 0,
         StartedAt: String = "",
@@ -2342,11 +2268,7 @@ final private[kyo] class HttpContainerBackend(
         Health: Option[InspectHealthDto] = None
     ) derives Schema
 
-    private case class InspectHealthDto(
-        Status: String = ""
-    ) derives Schema
-
-    private case class InspectConfigDto(
+    final private case class InspectConfigDto(
         Image: String = "",
         Cmd: Option[Seq[String]] = None,
         Env: Option[Seq[String]] = None,
@@ -2354,12 +2276,12 @@ final private[kyo] class HttpContainerBackend(
         Tty: Boolean = false
     ) derives Schema
 
-    private case class InspectPortMappingDto(
+    final private case class InspectPortMappingDto(
         HostIp: String = "",
         HostPort: String = ""
     ) derives Schema
 
-    private case class InspectNetworkSettingsDto(
+    final private case class InspectNetworkSettingsDto(
         IPAddress: String = "",
         Gateway: String = "",
         MacAddress: String = "",
@@ -2367,7 +2289,7 @@ final private[kyo] class HttpContainerBackend(
         Networks: Option[Map[String, InspectNetworkEndpointDto]] = None
     ) derives Schema
 
-    private case class InspectNetworkEndpointDto(
+    final private case class InspectNetworkEndpointDto(
         NetworkID: String = "",
         EndpointID: String = "",
         Gateway: String = "",
@@ -2376,17 +2298,9 @@ final private[kyo] class HttpContainerBackend(
         MacAddress: String = ""
     ) derives Schema
 
-    private case class InspectMountDto(
-        Type: String = "",
-        Name: String = "",
-        Source: String = "",
-        Destination: String = "",
-        RW: Boolean = true
-    ) derives Schema
-
     // --- DTOs for container stats ---
 
-    private case class StatsResponse(
+    final private case class StatsResponse(
         read: String = "",
         cpu_stats: CpuStatsDto = CpuStatsDto(),
         precpu_stats: CpuStatsDto = CpuStatsDto(),
@@ -2396,23 +2310,23 @@ final private[kyo] class HttpContainerBackend(
         pids_stats: PidsStatsDto = PidsStatsDto()
     ) derives Schema
 
-    private case class CpuStatsDto(
+    final private case class CpuStatsDto(
         cpu_usage: CpuUsageDto = CpuUsageDto(),
         system_cpu_usage: Long = 0,
         online_cpus: Int = 0
     ) derives Schema
 
-    private case class CpuUsageDto(
+    final private case class CpuUsageDto(
         total_usage: Long = 0
     ) derives Schema
 
-    private case class MemoryStatsDto(
+    final private case class MemoryStatsDto(
         usage: Long = 0,
         max_usage: Long = 0,
         limit: Long = 0
     ) derives Schema
 
-    private case class NetworkStatsDto(
+    final private case class NetworkStatsDto(
         rx_bytes: Long = 0,
         rx_packets: Long = 0,
         rx_errors: Long = 0,
@@ -2423,26 +2337,26 @@ final private[kyo] class HttpContainerBackend(
         tx_dropped: Long = 0
     ) derives Schema
 
-    private case class BlkioStatsDto(
+    final private case class BlkioStatsDto(
         io_service_bytes_recursive: Option[Seq[BlkioEntryDto]] = None
     ) derives Schema
 
-    private case class BlkioEntryDto(
+    final private case class BlkioEntryDto(
         op: String = "",
         value: Long = 0
     ) derives Schema
 
-    private case class PidsStatsDto(
+    final private case class PidsStatsDto(
         current: Long = 0,
         limit: Option[Double] = None
     ) derives Schema
 
-    private case class LibpodStatsResponse(
+    final private case class LibpodStatsResponse(
         Error: Option[String] = None,
         Stats: Seq[LibpodStatsEntry] = Seq.empty
     ) derives Schema
 
-    private case class LibpodStatsEntry(
+    final private case class LibpodStatsEntry(
         ContainerID: String = "",
         Name: String = "",
         CPU: Double = 0.0,
@@ -2462,7 +2376,7 @@ final private[kyo] class HttpContainerBackend(
         Duration: Long = 0L
     ) derives Schema
 
-    private case class LibpodNetStats(
+    final private case class LibpodNetStats(
         RxBytes: Long = 0L,
         RxPackets: Long = 0L,
         RxErrors: Long = 0L,
@@ -2475,17 +2389,17 @@ final private[kyo] class HttpContainerBackend(
 
     // --- DTOs for top, changes, exec ---
 
-    private case class TopResponse(
+    final private case class TopResponse(
         Titles: Seq[String] = Seq.empty,
         Processes: Seq[Seq[String]] = Seq.empty
     ) derives Schema
 
-    private case class ChangeEntryDto(
+    final private case class ChangeEntryDto(
         Path: String = "",
         Kind: Int = 0
     ) derives Schema
 
-    private case class ExecCreateRequest(
+    final private case class ExecCreateRequest(
         Cmd: Seq[String] = Seq.empty,
         AttachStdin: Boolean = false,
         AttachStdout: Boolean = true,
@@ -2494,21 +2408,21 @@ final private[kyo] class HttpContainerBackend(
         WorkingDir: String = ""
     ) derives Schema
 
-    private case class ExecCreateResponse(
+    final private case class ExecCreateResponse(
         Id: String = ""
     ) derives Schema
 
-    private case class ExecStartRequest(
+    final private case class ExecStartRequest(
         Detach: Boolean = false
     ) derives Schema
 
-    private case class ExecInspectResponse(
+    final private case class ExecInspectResponse(
         ExitCode: Int = 0
     ) derives Schema
 
     // --- DTOs for file stat ---
 
-    private case class FileStatDto(
+    final private case class FileStatDto(
         name: String = "",
         size: Long = 0,
         mode: Int = 0,
@@ -2518,7 +2432,7 @@ final private[kyo] class HttpContainerBackend(
 
     // --- DTOs for image operations ---
 
-    private case class ImageInspectDto(
+    final private case class ImageInspectDto(
         Id: String = "",
         RepoTags: Option[Seq[String]] = None,
         RepoDigests: Option[Seq[String]] = None,
@@ -2529,11 +2443,11 @@ final private[kyo] class HttpContainerBackend(
         Config: ImageConfigDto = ImageConfigDto()
     ) derives Schema
 
-    private case class ImageConfigDto(
+    final private case class ImageConfigDto(
         Labels: Option[Map[String, String]] = None
     ) derives Schema
 
-    private case class ImageListEntryDto(
+    final private case class ImageListEntryDto(
         Id: String = "",
         RepoTags: Option[Seq[String]] = None,
         RepoDigests: Option[Seq[String]] = None,
@@ -2542,12 +2456,12 @@ final private[kyo] class HttpContainerBackend(
         Labels: Option[Map[String, String]] = None
     ) derives Schema
 
-    private case class ImageDeleteEntryDto(
+    final private case class ImageDeleteEntryDto(
         Untagged: Option[String] = None,
         Deleted: Option[String] = None
     ) derives Schema
 
-    private case class ImageSearchEntryDto(
+    final private case class ImageSearchEntryDto(
         name: String = "",
         description: String = "",
         star_count: Int = 0,
@@ -2562,7 +2476,7 @@ final private[kyo] class HttpContainerBackend(
         Automated: String = ""
     ) derives Schema
 
-    private case class ImageHistoryEntryDto(
+    final private case class ImageHistoryEntryDto(
         Id: String = "",
         Created: Long = 0,
         CreatedBy: String = "",
@@ -2571,20 +2485,20 @@ final private[kyo] class HttpContainerBackend(
         Comment: String = ""
     ) derives Schema
 
-    private case class ImagePruneResponseDto(
+    final private case class ImagePruneResponseDto(
         ImagesDeleted: Option[Seq[ImageDeleteEntryDto]] = None,
         SpaceReclaimed: Long = 0
     ) derives Schema
 
-    private case class ImageCommitResponseDto(
+    final private case class ImageCommitResponseDto(
         Id: String = ""
     ) derives Schema
 
-    private case class PullProgressErrorDto(
+    final private case class PullProgressErrorDto(
         message: String = ""
     ) derives Schema
 
-    private case class PullProgressDto(
+    final private case class PullProgressDto(
         status: Option[String] = None,
         id: Option[String] = None,
         progress: Option[String] = None,
@@ -2592,15 +2506,15 @@ final private[kyo] class HttpContainerBackend(
         errorDetail: Option[PullProgressErrorDto] = None
     ) derives Schema
 
-    private case class BuildProgressErrorDto(
+    final private case class BuildProgressErrorDto(
         message: String = ""
     ) derives Schema
 
-    private case class BuildAuxIdDto(
+    final private case class BuildAuxIdDto(
         ID: String = ""
     ) derives Schema
 
-    private case class BuildProgressDto(
+    final private case class BuildProgressDto(
         stream: Option[String] = None,
         status: Option[String] = None,
         progress: Option[String] = None,
@@ -2611,24 +2525,24 @@ final private[kyo] class HttpContainerBackend(
 
     // --- DTOs for checkpoint ---
 
-    private case class CheckpointCreateRequest(
+    final private case class CheckpointCreateRequest(
         CheckpointID: String = ""
     ) derives Schema
 
     // --- DTOs for network operations ---
 
-    private case class IpamPoolDto(
+    final private case class IpamPoolDto(
         Subnet: String = "",
         Gateway: String = "",
         IPRange: String = ""
     ) derives Schema
 
-    private case class IpamDto(
+    final private case class IpamDto(
         Driver: String = "default",
         Config: Seq[IpamPoolDto] = Seq.empty
     ) derives Schema
 
-    private case class NetworkCreateRequest(
+    final private case class NetworkCreateRequest(
         Name: String = "",
         Driver: String = "bridge",
         Internal: Boolean = false,
@@ -2639,18 +2553,18 @@ final private[kyo] class HttpContainerBackend(
         IPAM: IpamDto = IpamDto()
     ) derives Schema
 
-    private case class NetworkCreateResponse(
+    final private case class NetworkCreateResponse(
         Id: String = ""
     ) derives Schema
 
-    private case class NetworkContainerDto(
+    final private case class NetworkContainerDto(
         EndpointID: String = "",
         MacAddress: String = "",
         IPv4Address: String = "",
         IPv6Address: String = ""
     ) derives Schema
 
-    private case class NetworkInfoDto(
+    final private case class NetworkInfoDto(
         Id: String = "",
         Name: String = "",
         Driver: String = "",
@@ -2664,34 +2578,34 @@ final private[kyo] class HttpContainerBackend(
         Created: String = ""
     ) derives Schema
 
-    private case class EndpointConfigDto(
+    final private case class EndpointConfigDto(
         Aliases: Seq[String] = Seq.empty
     ) derives Schema
 
-    private case class NetworkConnectRequest(
+    final private case class NetworkConnectRequest(
         Container: String = "",
         EndpointConfig: EndpointConfigDto = EndpointConfigDto()
     ) derives Schema
 
-    private case class NetworkDisconnectRequest(
+    final private case class NetworkDisconnectRequest(
         Container: String = "",
         Force: Boolean = false
     ) derives Schema
 
-    private case class NetworkPruneResponse(
+    final private case class NetworkPruneResponse(
         NetworksDeleted: Option[Seq[String]] = None
     ) derives Schema
 
     // --- DTOs for volume operations ---
 
-    private case class VolumeCreateRequest(
+    final private case class VolumeCreateRequest(
         Name: String = "",
         Driver: String = "local",
         DriverOpts: Map[String, String] = Map.empty,
         Labels: Map[String, String] = Map.empty
     ) derives Schema
 
-    private case class VolumeInfoDto(
+    final private case class VolumeInfoDto(
         Name: String = "",
         Driver: String = "",
         Mountpoint: String = "",
@@ -2701,12 +2615,12 @@ final private[kyo] class HttpContainerBackend(
         Scope: String = ""
     ) derives Schema
 
-    private case class VolumeListResponse(
+    final private case class VolumeListResponse(
         Volumes: Option[Seq[VolumeInfoDto]] = None,
         Warnings: Option[Seq[String]] = None
     ) derives Schema
 
-    private case class VolumePruneResponse(
+    final private case class VolumePruneResponse(
         VolumesDeleted: Option[Seq[String]] = None,
         SpaceReclaimed: Long = 0
     ) derives Schema
@@ -2720,12 +2634,35 @@ private[kyo] object HttpContainerBackend:
       */
     val defaultApiVersion: String = "v1.43"
 
+    /** X-Registry-Auth wrapper: a single-registry auth token used in image pull/push requests. */
+    final private case class AuthHeader(auth: String) derives Schema
+
+    /** Encode a RegistryAuth entry as the `X-Registry-Auth` header value expected by Docker's API.
+      *
+      * Looks up the image's registry in `auth.auths` (falls back to Docker Hub). The stored credential is assumed to be a Base64-encoded
+      * `username:password`, which is wrapped in a JSON object and re-encoded per the Docker engine's `X-Registry-Auth` contract.
+      */
+    private[kyo] def registryAuthHeader(image: ContainerImage, auth: ContainerImage.RegistryAuth)(using Frame): Maybe[String] =
+        val key = image.registry.getOrElse(ContainerImage.Registry.DockerHub)
+        val creds = auth.auths.get(key).orElse {
+            // RegistryAuth.apply defaults to "https://index.docker.io/v1/" for Docker Hub;
+            // fall back to that legacy key when the canonical "docker.io" key is absent.
+            if key == ContainerImage.Registry.DockerHub then
+                auth.auths.get(ContainerImage.Registry("https://index.docker.io/v1/"))
+            else Absent
+        }
+        creds.map { encodedCreds =>
+            val json = Json.encode(AuthHeader(encodedCreds))
+            java.util.Base64.getEncoder.encodeToString(json.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        }
+    end registryAuthHeader
+
     /** Common error envelope returned by both Docker and Podman daemons. Podman's docker-compat shim additionally populates `response` with
       * the canonical status code it *intended* to return, which is the strongest classification signal when the actual wire status differs
       * (e.g. shim returns HTTP 500 but `response` is 409 Conflict for a name collision, or HTTP 403 with `response` 404 for a missing
       * image). Docker leaves `response` absent — the wire status is canonical there.
       */
-    private[kyo] case class ApiError(
+    final private[kyo] case class ApiError(
         message: Option[String] = None,
         cause: Option[String] = None,
         response: Option[Int] = None
@@ -2752,7 +2689,9 @@ private[kyo] object HttpContainerBackend:
                 Json.decode[ApiError](b) match
                     case Result.Success(api) =>
                         inferStatusFromMessage(api).orElse(api.response.filter(c => c >= 100 && c < 600)).getOrElse(httpStatus)
-                    case _ => httpStatus
+                    case Result.Failure(_) => httpStatus
+                    case Result.Panic(_)   =>
+                        httpStatus
             case Absent => httpStatus
 
     /** Pattern-match the cause/message fields against the daemon error vocabulary. Both libpod and docker emit a small, stable set of
@@ -2766,9 +2705,9 @@ private[kyo] object HttpContainerBackend:
     private[kyo] def inferStatusFromMessage(api: ApiError): Option[Int] =
         val text = (api.cause.toSeq ++ api.message.toSeq).mkString(" ").toLowerCase
         if text.isEmpty then None
-        else if text.contains("already in use") || text.contains("name is reserved") then Some(409)
-        else if text.contains("no such image") || text.contains("manifest unknown") || text.contains("image not known") then Some(404)
-        else if text.contains("no such container") || text.contains("no such network") || text.contains("no such volume") then Some(404)
+        else if DaemonErrorPhrases.AlreadyInUse.exists(text.contains) || text.contains("name is reserved") then Some(409)
+        else if DaemonErrorPhrases.NoSuchImage.exists(text.contains) then Some(404)
+        else if DaemonErrorPhrases.NoSuchContainer.exists(text.contains) then Some(404)
         else None
         end if
     end inferStatusFromMessage
@@ -2872,21 +2811,23 @@ private[kyo] object HttpContainerBackend:
         end if
     end parseHostUri
 
+    /** Read an environment variable and return `Present(trimmed value)` if it is set and non-blank, `Absent` otherwise. */
+    private def envNonEmpty(name: String)(using Frame): Maybe[String] < Sync =
+        kyo.System.env[String](name).map {
+            case Present(v) if v.trim.nonEmpty => Present(v.trim)
+            case _                             => Absent
+        }
+
     /** Resolve an explicit socket path from `CONTAINER_HOST` (preferred, Podman convention) or `DOCKER_HOST`.
       *
       * Returns `Present(path)` when either env var is set to a non-empty value (the value is parsed via [[parseHostUri]] and may fail with
       * [[ContainerBackendUnavailableException]] on unsupported transports). Returns `Absent` when both are unset or empty.
       */
     private def explicitSocketPath(using Frame): Maybe[String] < (Sync & Abort[ContainerException]) =
-        def nonEmpty(name: String): Maybe[String] < Sync =
-            kyo.System.env[String](name).map {
-                case Present(v) if v.trim.nonEmpty => Present(v.trim)
-                case _                             => Absent
-            }
-        nonEmpty("CONTAINER_HOST").map {
+        envNonEmpty("CONTAINER_HOST").map {
             case Present(v) => parseHostUri("CONTAINER_HOST", v).map(Present(_))
             case Absent =>
-                nonEmpty("DOCKER_HOST").map {
+                envNonEmpty("DOCKER_HOST").map {
                     case Present(v) => parseHostUri("DOCKER_HOST", v).map(Present(_))
                     case Absent     => Absent
                 }
@@ -2908,13 +2849,13 @@ private[kyo] object HttpContainerBackend:
     /** Default candidate probe — used only when neither `CONTAINER_HOST` nor `DOCKER_HOST` is set. */
     private def defaultCandidateSocketPaths(using Frame): Seq[String] < (Async & Abort[ContainerException]) =
         val xdgPodman: Maybe[String] < Sync =
-            kyo.System.env[String]("XDG_RUNTIME_DIR").map {
+            envNonEmpty("XDG_RUNTIME_DIR").map {
                 case Present(dir) => Present(s"$dir/podman/podman.sock")
                 case Absent       => Absent
             }
 
         val homeDocker: Maybe[String] < Sync =
-            kyo.System.env[String]("HOME").map {
+            envNonEmpty("HOME").map {
                 case Present(home) => Present(s"$home/.docker/run/docker.sock")
                 case Absent        => Absent
             }
@@ -2943,6 +2884,19 @@ private[kyo] object HttpContainerBackend:
         }
     end defaultCandidateSocketPaths
 
+    /** Exposes the default socket candidate list for cross-checking in integration tests.
+      *
+      * Returns the same paths that `defaultCandidateSocketPaths` would probe (based on `XDG_RUNTIME_DIR`, `HOME`, and OS), before filtering
+      * to existing paths and before CLI fallback. This lets tests verify that the HTTP backend's socket discovery logic agrees with
+      * `ContainerRuntimeBase.findSocket` on the same machine.
+      *
+      * The two code paths are intentionally NOT merged: `ContainerRuntimeBase.findSocket` is synchronous and may fall back to CLI process
+      * spawning, whereas this method returns a Kyo computation with full effect tracking. Duplication of the candidate list is acceptable
+      * here — it is a short, stable enumeration of well-known socket paths.
+      */
+    private[kyo] def candidatesForTesting(using Frame): Seq[String] < (Async & Abort[ContainerException]) =
+        defaultCandidateSocketPaths
+
     /** Try to discover socket paths by running CLI commands.
       *
       * Tries:
@@ -2965,23 +2919,16 @@ private[kyo] object HttpContainerBackend:
 
     /** Run a CLI command and extract a Unix socket path from its output. */
     private def discoverViaCli(command: Command)(using Frame): Maybe[String] < Async =
-        Abort.run[CommandException](command.redirectErrorStream(true).textWithExitCode).map {
-            case Result.Success((output, exitCode)) if exitCode == ExitCode.Success =>
-                val trimmed = output.trim
+        ContainerBackend.runCliQuery(
+            command,
+            trimmed =>
                 if trimmed.startsWith("unix://") then
                     val path = trimmed.stripPrefix("unix://")
                     if path.nonEmpty then Present(path) else Absent
                 else if trimmed.startsWith("/") then
                     Present(trimmed)
                 else Absent
-                end if
-            case Result.Success(_) => Absent
-            case Result.Failure(_) => Absent
-            case Result.Panic(ex) =>
-                Log.debug(s"CLI socket discovery failed: ${ex.getMessage}").andThen(
-                    Absent: Maybe[String]
-                )
-        }
+        )
     end discoverViaCli
 
 end HttpContainerBackend

@@ -60,15 +60,15 @@ sealed class ContainerBackendException(message: String, cause: String | Throwabl
     extends ContainerException(message, cause) derives CanEqual
 
 /** No Docker or Podman backend is reachable. */
-case class ContainerBackendUnavailableException(backend: String, reason: String)(using Frame)
+final case class ContainerBackendUnavailableException(backend: String, reason: String)(using Frame)
     extends ContainerBackendException(s"Backend unavailable: $backend", reason) derives CanEqual
 
 /** A daemon operation exceeded the configured timeout. */
-case class ContainerTimeoutException(operation: String, duration: Duration)(using Frame)
+final case class ContainerTimeoutException(operation: String, duration: Duration)(using Frame)
     extends ContainerBackendException(s"Operation timed out after ${duration}: $operation") derives CanEqual
 
 /** The selected backend does not implement the requested operation (e.g., CRIU checkpoint on the Shell backend). */
-case class ContainerNotSupportedException(operation: String, detail: String)(using Frame)
+final case class ContainerNotSupportedException(operation: String, detail: String)(using Frame)
     extends ContainerBackendException(s"$operation is not supported", detail) derives CanEqual
 
 // --- NotFound (resource doesn't exist) ---
@@ -88,19 +88,19 @@ sealed abstract class ContainerNotFoundException(message: String, cause: String 
     extends ContainerException(message, cause)
 
 /** The referenced container does not exist. */
-case class ContainerMissingException(id: Container.Id)(using Frame)
+final case class ContainerMissingException(id: Container.Id)(using Frame)
     extends ContainerNotFoundException(s"Container not found: ${id.value}") derives CanEqual
 
 /** The referenced image could not be pulled and is not local. */
-case class ContainerImageMissingException(image: ContainerImage)(using Frame)
+final case class ContainerImageMissingException(image: ContainerImage)(using Frame)
     extends ContainerNotFoundException(s"Image not found: ${image.reference}") derives CanEqual
 
 /** The referenced network does not exist. */
-case class ContainerNetworkMissingException(id: Container.Network.Id)(using Frame)
+final case class ContainerNetworkMissingException(id: Container.Network.Id)(using Frame)
     extends ContainerNotFoundException(s"Network not found: ${id.value}") derives CanEqual
 
 /** The referenced volume does not exist. */
-case class ContainerVolumeMissingException(id: Container.Volume.Id)(using Frame)
+final case class ContainerVolumeMissingException(id: Container.Volume.Id)(using Frame)
     extends ContainerNotFoundException(s"Volume not found: ${id.value}") derives CanEqual
 
 // --- Conflict (state conflict) ---
@@ -125,23 +125,23 @@ sealed class ContainerConflictException(message: String, cause: String | Throwab
     extends ContainerException(message, cause) derives CanEqual
 
 /** A container with the requested name already exists. */
-case class ContainerAlreadyExistsException(name: String)(using Frame)
+final case class ContainerAlreadyExistsException(name: String)(using Frame)
     extends ContainerConflictException(s"Container already exists: $name") derives CanEqual
 
 /** The container is already in the running state. */
-case class ContainerAlreadyRunningException(id: Container.Id)(using Frame)
+final case class ContainerAlreadyRunningException(id: Container.Id)(using Frame)
     extends ContainerConflictException(s"Container already running: ${id.value}") derives CanEqual
 
 /** The container is already in the stopped state. */
-case class ContainerAlreadyStoppedException(id: Container.Id)(using Frame)
+final case class ContainerAlreadyStoppedException(id: Container.Id)(using Frame)
     extends ContainerConflictException(s"Container already stopped: ${id.value}") derives CanEqual
 
 /** The requested port is already allocated on the host. */
-case class ContainerPortConflictException(port: Int, detail: String)(using Frame)
+final case class ContainerPortConflictException(port: Int, detail: String)(using Frame)
     extends ContainerConflictException(s"Port $port is already allocated", detail) derives CanEqual
 
 /** The volume is still attached to one or more containers. */
-case class ContainerVolumeInUseException(id: Container.Volume.Id, containers: String)(using Frame)
+final case class ContainerVolumeInUseException(id: Container.Volume.Id, containers: String)(using Frame)
     extends ContainerConflictException(s"Volume ${id.value} is in use", containers) derives CanEqual
 
 // --- Operation (daemon received the request and rejected it) ---
@@ -166,13 +166,14 @@ sealed class ContainerOperationException(message: String, cause: String | Throwa
     extends ContainerException(message, cause) derives CanEqual
 
 /** The container failed to start. `reason` carries the daemon-reported cause. */
-case class ContainerStartFailedException(id: Container.Id, reason: String)(using Frame)
+final case class ContainerStartFailedException(id: Container.Id, reason: String)(using Frame)
     extends ContainerOperationException(s"Container start failed for ${id.value}: $reason") derives CanEqual
 
 /** Exec returned a non-zero exit code. `stderr` is truncated to 500 characters in the message; the full value is preserved in the field.
   */
-case class ContainerExecFailedException private (id: Container.Id, cmd: Chunk[String], exitCode: ExitCode, stderr: String)(using Frame)
-    extends ContainerOperationException(
+final case class ContainerExecFailedException private (id: Container.Id, cmd: Chunk[String], exitCode: ExitCode, stderr: String)(using
+    Frame
+) extends ContainerOperationException(
         s"Exec failed in ${id.value} (exit=${exitCode.toInt}): ${cmd.mkString(" ")}",
         stderr
     ) derives CanEqual
@@ -185,19 +186,19 @@ object ContainerExecFailedException:
 end ContainerExecFailedException
 
 /** Registry authentication failed for a pull or push. `registry` is the target host; `detail` is the daemon-reported reason. */
-case class ContainerAuthException(registry: String, detail: String)(using Frame)
+final case class ContainerAuthException(registry: String, detail: String)(using Frame)
     extends ContainerOperationException(s"Authentication failed for $registry", detail) derives CanEqual
 
 /** Image build failed. `context` is the build source (path or URL); `detail` describes the failure stage (e.g., "tar failed", "build
   * command failed", "image tag verification failed after build"); `cause` carries the underlying error.
   */
-case class ContainerBuildFailedException(context: String, detail: String, cause: String | Throwable = "")(using Frame)
+final case class ContainerBuildFailedException(context: String, detail: String, cause: String | Throwable = "")(using Frame)
     extends ContainerOperationException(s"Build failed for $context: $detail", cause) derives CanEqual
 
 /** Container health check failed. `reason` explains why the check failed (e.g., "exec exited 1", "port 8080 not reachable"); `attempts` is
   * the number of attempts made against the retry schedule (1 for single-shot checks); `lastError` preserves raw output or cause.
   */
-case class ContainerHealthCheckException(id: Container.Id, reason: String, attempts: Int, lastError: String = "")(using Frame)
+final case class ContainerHealthCheckException(id: Container.Id, reason: String, attempts: Int, lastError: String = "")(using Frame)
     extends ContainerOperationException(
         s"Health check failed for ${id.value} after $attempts attempt(s): $reason",
         lastError

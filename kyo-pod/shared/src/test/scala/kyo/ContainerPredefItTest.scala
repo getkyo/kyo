@@ -13,7 +13,7 @@ class ContainerPredefItTest extends Test:
     override def timeout: Duration = 3.minutes
 
     "Postgres" - {
-        "psql SELECT 1 returns 1" - runBackends {
+        "psql SELECT 1 returns 1" - runBackendsLong {
             Postgres.initWith(Postgres.Config.default) { pg =>
                 pg.psql("SELECT 1").map { result =>
                     assert(result.exitCode.toInt == 0, s"psql exited ${result.exitCode}, stderr=${result.stderr}")
@@ -22,7 +22,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "custom credentials work" - runBackends {
+        "custom credentials work" - runBackendsLong {
             val cfg = Postgres.Config.default.username("admin").database("mydb")
             Postgres.initWith(cfg) { pg =>
                 pg.psql("SELECT current_user").map { result =>
@@ -32,7 +32,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "jdbcUrl format" - runBackends {
+        "jdbcUrl format" - runBackendsLong {
             Postgres.initWith(Postgres.Config.default) { pg =>
                 pg.jdbcUrl.map { url =>
                     val pattern = """^jdbc:postgresql://127\.0\.0\.1:\d+/test$""".r
@@ -41,7 +41,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "create + insert + select round-trip" - runBackends {
+        "create + insert + select round-trip" - runBackendsLong {
             Postgres.initWith(Postgres.Config.default) { pg =>
                 for
                     _    <- pg.psql("CREATE TABLE t (id int, name text)")
@@ -55,7 +55,7 @@ class ContainerPredefItTest extends Test:
     }
 
     "MySQL" - {
-        "mysql SELECT 1 returns 1" - runBackends {
+        "mysql SELECT 1 returns 1" - runBackendsLong {
             MySQL.initWith(MySQL.Config.default) { my =>
                 my.mysql("SELECT 1").map { result =>
                     assert(result.exitCode.toInt == 0, s"mysql exited ${result.exitCode}, stderr=${result.stderr}")
@@ -64,7 +64,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "custom credentials work" - runBackends {
+        "custom credentials work" - runBackendsLong {
             val cfg = MySQL.Config.default.username("admin").database("mydb")
             MySQL.initWith(cfg) { my =>
                 my.mysql("SELECT current_user()").map { result =>
@@ -77,7 +77,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "jdbcUrl format" - runBackends {
+        "jdbcUrl format" - runBackendsLong {
             MySQL.initWith(MySQL.Config.default) { my =>
                 my.jdbcUrl.map { url =>
                     val pattern = """^jdbc:mysql://127\.0\.0\.1:\d+/test$""".r
@@ -86,7 +86,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "create + insert + select round-trip" - runBackends {
+        "create + insert + select round-trip" - runBackendsLong {
             MySQL.initWith(MySQL.Config.default) { db =>
                 for
                     _    <- db.mysql("CREATE TABLE t (id INT, name VARCHAR(32))")
@@ -100,7 +100,7 @@ class ContainerPredefItTest extends Test:
     }
 
     "MongoDB" - {
-        "mongosh ping returns 1" - runBackends {
+        "mongosh ping returns 1" - runBackendsLong {
             MongoDB.initWith(MongoDB.Config.default) { mg =>
                 mg.mongosh("db.adminCommand('ping').ok").map { result =>
                     assert(result.exitCode.toInt == 0, s"mongosh exited ${result.exitCode}, stderr=${result.stderr}")
@@ -109,7 +109,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "insert + count round-trip" - runBackends {
+        "insert + count round-trip" - runBackendsLong {
             MongoDB.initWith(MongoDB.Config.default) { mg =>
                 mg.mongosh("db.kyo.insertOne({hello: 'world'}); db.kyo.countDocuments()").map { result =>
                     assert(result.exitCode.toInt == 0, s"mongosh exited ${result.exitCode}, stderr=${result.stderr}")
@@ -121,7 +121,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "url format" - runBackends {
+        "url format" - runBackendsLong {
             MongoDB.initWith(MongoDB.Config.default) { mg =>
                 mg.url.map { u =>
                     val pattern = """^mongodb://127\.0\.0\.1:\d+/test$""".r
@@ -130,7 +130,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "find returns the inserted document" - runBackends {
+        "find returns the inserted document" - runBackendsLong {
             MongoDB.initWith(MongoDB.Config.default) { mg =>
                 for
                     _     <- mg.mongosh("db.kyo.insertOne({name: 'kyo', id: 1})")

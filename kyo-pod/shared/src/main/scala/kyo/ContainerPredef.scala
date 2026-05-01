@@ -91,7 +91,7 @@ object ContainerPredef:
           * @param port
           *   the in-container port Postgres listens on (default `5432`); the host port is allocated dynamically
           */
-        case class Config(
+        final case class Config(
             image: ContainerImage = defaultImage,
             username: String = "test",
             password: String = "test",
@@ -214,7 +214,7 @@ object ContainerPredef:
           * @param port
           *   the in-container port MySQL listens on (default `3306`); the host port is allocated dynamically
           */
-        case class Config(
+        final case class Config(
             image: ContainerImage = defaultImage,
             username: String = "test",
             password: String = "test",
@@ -274,6 +274,18 @@ object ContainerPredef:
                 ))
             else ()
 
+        private def applyEnv(base: Container.Config, c: Config): Container.Config =
+            if c.username == rootUser then
+                if c.password.isEmpty then base.env("MYSQL_ALLOW_EMPTY_PASSWORD", "yes")
+                else base.env("MYSQL_ROOT_PASSWORD", c.rootPassword)
+            else
+                base
+                    .env("MYSQL_USER", c.username)
+                    .env("MYSQL_PASSWORD", c.password)
+                    .env("MYSQL_ROOT_PASSWORD", c.rootPassword)
+            end if
+        end applyEnv
+
         private[kyo] def buildContainerConfig(c: Config): Container.Config =
             val healthCmdBase = Chunk("mysql", "-h", "127.0.0.1", "-u", c.username) ++
                 (if c.password.nonEmpty then Chunk(s"-p${c.password}") else Chunk.empty) ++
@@ -286,16 +298,7 @@ object ContainerPredef:
                     Absent,
                     Schedule.fixed(1.second).take(60)
                 ))
-
-            if c.username == rootUser then
-                if c.password.isEmpty then base.env("MYSQL_ALLOW_EMPTY_PASSWORD", "yes")
-                else base.env("MYSQL_ROOT_PASSWORD", c.rootPassword)
-            else
-                base
-                    .env("MYSQL_USER", c.username)
-                    .env("MYSQL_PASSWORD", c.password)
-                    .env("MYSQL_ROOT_PASSWORD", c.rootPassword)
-            end if
+            applyEnv(base, c)
         end buildContainerConfig
     end MySQL
 
@@ -357,7 +360,7 @@ object ContainerPredef:
           * @param port
           *   the in-container port MongoDB listens on (default `27017`); the host port is allocated dynamically
           */
-        case class Config(
+        final case class Config(
             image: ContainerImage = defaultImage,
             database: String = "test",
             port: Int = defaultPort
