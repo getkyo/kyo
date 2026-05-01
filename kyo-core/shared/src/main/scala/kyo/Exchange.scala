@@ -175,7 +175,8 @@ object Exchange:
             val eventChannel = Channel.Unsafe.init[Event](eventCapacity, Access.MultiProducerMultiConsumer)
             val donePromise  = Promise.Unsafe.init[Unit, Abort[E | Closed]]()
             val pendingMap   = new ConcurrentHashMap[Id, Promise.Unsafe[Resp, Abort[E | Closed]]]()
-            Fiber.initUnscoped(readerLoop(pendingMap, eventChannel, donePromise, frame, receive, decode)).map { fiber =>
+            Fiber.initUnscoped(readerLoop(pendingMap, eventChannel, donePromise, frame, receive, decode)).map { fiber0 =>
+                val fiber = fiber0.reduced
                 new Unsafe[Id, Wire, Req, Resp, Event, E](
                     nextIdFn = bug("Called Unsafe.apply on safe-initialized Exchange"),
                     encodeFn = (_, _) => bug("Called Unsafe.apply on safe-initialized Exchange"),

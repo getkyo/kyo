@@ -433,10 +433,8 @@ object Clock:
     )(
         f: => Any < (Async & Abort[E] & S)
     )(
-        using
-        frame: Frame,
-        reduce: Reducible[Abort[E]]
-    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
+        using frame: Frame
+    ): Fiber[Unit, Abort[E]] < (Sync & S) =
         repeatWithDelay(Duration.Zero, delay)(f)
 
     /** Repeatedly executes a task with a fixed delay between completions, starting after an initial delay.
@@ -458,10 +456,8 @@ object Clock:
     )(
         f: => Any < (Async & Abort[E] & S)
     )(
-        using
-        frame: Frame,
-        reduce: Reducible[Abort[E]]
-    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
+        using frame: Frame
+    ): Fiber[Unit, Abort[E]] < (Sync & S) =
         repeatWithDelay(startAfter, delay, ())(_ => f.unit)
 
     /** Repeatedly executes a task with a fixed delay between completions, maintaining state between executions.
@@ -488,10 +484,8 @@ object Clock:
     )(
         f: A => A < (Async & Abort[E] & S)
     )(
-        using
-        frame: Frame,
-        reduce: Reducible[Abort[E]]
-    ): Fiber[A, reduce.SReduced] < (Sync & S) =
+        using frame: Frame
+    ): Fiber[A, Abort[E]] < (Sync & S) =
         repeatWithDelay(Schedule.delay(startAfter).andThen(Schedule.fixed(delay)), state)(f)
 
     /** Repeatedly executes a task with delays determined by a custom schedule.
@@ -510,10 +504,8 @@ object Clock:
     )(
         f: => Any < (Async & Abort[E] & S)
     )(
-        using
-        frame: Frame,
-        reduce: Reducible[Abort[E]]
-    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
+        using frame: Frame
+    ): Fiber[Unit, Abort[E]] < (Sync & S) =
         repeatWithDelay[E, Unit, S](delaySchedule, ())(_ => f.unit)
 
     /** Repeatedly executes a task with delays determined by a custom schedule, maintaining state between executions.
@@ -537,10 +529,8 @@ object Clock:
     )(
         f: A => A < (Async & Abort[E] & S)
     )(
-        using
-        frame: Frame,
-        reduce: Reducible[Abort[E]]
-    ): Fiber[A, reduce.SReduced] < (Sync & S) =
+        using frame: Frame
+    ): Fiber[A, Abort[E]] < (Sync & S) =
         Fiber.initUnscoped {
             Clock.use { clock =>
                 Loop(state, delaySchedule) { (state, schedule) =>
@@ -573,10 +563,8 @@ object Clock:
     )(
         f: => Any < (Async & Abort[E] & S)
     )(
-        using
-        frame: Frame,
-        reduce: Reducible[Abort[E]]
-    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
+        using frame: Frame
+    ): Fiber[Unit, Abort[E]] < (Sync & S) =
         repeatAtInterval(Duration.Zero, interval)(f)
 
     /** Repeatedly executes a task at fixed time intervals, starting after an initial delay.
@@ -598,10 +586,8 @@ object Clock:
     )(
         f: => Any < (Async & Abort[E] & S)
     )(
-        using
-        frame: Frame,
-        reduce: Reducible[Abort[E]]
-    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
+        using frame: Frame
+    ): Fiber[Unit, Abort[E]] < (Sync & S) =
         repeatAtInterval(startAfter, interval, ())(_ => f.unit)
 
     /** Repeatedly executes a task at fixed time intervals, maintaining state between executions.
@@ -628,10 +614,8 @@ object Clock:
     )(
         f: A => A < (Async & Abort[E] & S)
     )(
-        using
-        frame: Frame,
-        reduce: Reducible[Abort[E]]
-    ): Fiber[A, reduce.SReduced] < (Sync & S) =
+        using frame: Frame
+    ): Fiber[A, Abort[E]] < (Sync & S) =
         repeatAtInterval(Schedule.delay(startAfter).andThen(Schedule.fixed(interval)), state)(f)
 
     /** Repeatedly executes a task with intervals determined by a custom schedule.
@@ -650,10 +634,8 @@ object Clock:
     )(
         f: => Any < (Async & Abort[E] & S)
     )(
-        using
-        frame: Frame,
-        reduce: Reducible[Abort[E]]
-    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
+        using frame: Frame
+    ): Fiber[Unit, Abort[E]] < (Sync & S) =
         repeatAtInterval(intervalSchedule, ())(_ => f.unit)
 
     /** Repeatedly executes a task with intervals determined by a custom schedule, maintaining state between executions.
@@ -677,10 +659,8 @@ object Clock:
     )(
         f: A => A < (Async & Abort[E] & S)
     )(
-        using
-        frame: Frame,
-        reduce: Reducible[Abort[E]]
-    ): Fiber[A, reduce.SReduced] < (Sync & S) =
+        using frame: Frame
+    ): Fiber[A, Abort[E]] < (Sync & S) =
         Fiber.initUnscoped {
             Clock.use { clock =>
                 clock.now.map { now =>

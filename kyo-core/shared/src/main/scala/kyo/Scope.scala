@@ -193,8 +193,9 @@ object Scope:
                                                     ))
                                             }
                                                 .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
-                                                .map(promise.becomeDiscard)
+                                                .map(v => promise.becomeDiscard(v.reduced))
                             }
+                        end close
 
                         def await(using Frame): Unit < Async = promise.get
                 end init
