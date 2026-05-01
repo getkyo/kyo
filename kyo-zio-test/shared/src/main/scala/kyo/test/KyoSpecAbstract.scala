@@ -46,7 +46,16 @@ abstract class KyoSpecAbstract[S] extends ZIOSpecAbstract:
                 Spec.labeled(
                     label,
                     Spec
-                        .test(ZTest(label, run[A](assertion)), TestAnnotationMap.empty)
+                        .test(
+                            ZTest(
+                                label,
+                                run[A](assertion.map { result =>
+                                    val _ = result.result
+                                    result
+                                })
+                            ),
+                            TestAnnotationMap.empty
+                        )
                         .annotate(trace, sl :: Nil)
                 )
 
@@ -54,6 +63,10 @@ abstract class KyoSpecAbstract[S] extends ZIOSpecAbstract:
         new CheckConstructor[Any, A < S1]:
             type OutEnvironment = Any
             type OutError       = Throwable
-            def apply(input: => A < S1)(using Trace): ZIO[OutEnvironment, OutError, TestResult] = run(input)
+            def apply(input: => A < S1)(using Trace): ZIO[OutEnvironment, OutError, TestResult] =
+                run(input.map { result =>
+                    val _ = result.result
+                    result
+                })
 
 end KyoSpecAbstract
