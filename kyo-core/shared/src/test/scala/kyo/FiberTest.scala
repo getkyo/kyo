@@ -323,26 +323,21 @@ class FiberTest extends Test:
     }
 
     "fatal throwable from a fiber computation" - {
-        "LinkageError surfaces as Panic on the IOPromise instead of killing the worker" in run {
-            val fatal = new LinkageError("simulated NoClassDefFoundError")
-
+        "LinkageError completes the IOPromise with a Panic before the worker rethrows" in run {
+            val fatal                                 = new LinkageError("simulated NoClassDefFoundError")
             val body: Int < (Sync & Abort[Throwable]) = Sync.defer { throw fatal; 0 }
-            Fiber.initUnscoped(body).map { fiber =>
-                Sync.defer {
+            for
+                signal <- Promise.init[Int, Abort[Throwable]]
+                fiber  <- Fiber.initUnscoped(body)
+                _ <- Sync.defer {
                     import AllowUnsafe.embrace.danger
-                    val deadline = java.lang.System.nanoTime() + 2_000_000_000L
-                    while fiber.unsafe.poll().isEmpty && java.lang.System.nanoTime() < deadline do
-                        Thread.sleep(5)
-                    fiber.unsafe.poll() match
-                        case Present(Result.Panic(thr)) if thr eq fatal =>
-                            succeed
-                        case Absent =>
-                            fail("IOTask never completed — worker likely died on a fatal throwable")
-                        case Present(other) =>
-                            fail(s"unexpected outcome: $other")
-                    end match
+                    fiber.unsafe.onComplete(signal.unsafe.completeDiscard)
                 }
-            }
+                captured <- signal.getResult
+            yield captured match
+                case Result.Panic(thr) if thr eq fatal => succeed
+                case other                             => fail(s"unexpected outcome: $other")
+            end for
         }
     }
 
