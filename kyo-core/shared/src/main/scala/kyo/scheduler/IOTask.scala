@@ -90,7 +90,8 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
             end if
         catch
             case ex =>
-                completeDiscard(Result.panic(ex))
+                try completeDiscard(Result.panic(ex))
+                catch case _: Throwable => completeDiscard(new Result.Panic(ex))
                 nullResult
         end try
     end eval
