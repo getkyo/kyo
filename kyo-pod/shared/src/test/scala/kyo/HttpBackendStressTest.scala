@@ -36,7 +36,7 @@ class HttpBackendStressTest extends Test:
     // total wall-clock budget for that test must accommodate that work plus the per-container init overhead.
     override def timeout = 3.minutes
 
-    "MySQL stress — sequential churn (10 iterations)" - runBackends {
+    "MySQL stress — sequential churn (10 iterations)" - runBackend {
         MySQL.initWith(MySQL.Config.default) { m =>
             m.container.mappedPort(m.config.port).map(p => java.lang.System.err.println(s"[repro-seq] iter=0 port=$p"))
         }
@@ -72,7 +72,7 @@ class HttpBackendStressTest extends Test:
             })
     }
 
-    "MySQL stress — interleaved PG + MySQL (10 iterations)" - runBackends {
+    "MySQL stress — interleaved PG + MySQL (10 iterations)" - runBackend {
         Postgres.initWith(Postgres.Config.default) { pg =>
             pg.container.mappedPort(pg.config.port).map(p => java.lang.System.err.println(s"[repro-mix] iter=0 pg port=$p"))
         }
@@ -108,7 +108,7 @@ class HttpBackendStressTest extends Test:
             })
     }
 
-    "MySQL stress — exec-heavy churn (1 PG container × 24 execs)" - runBackends {
+    "MySQL stress — exec-heavy churn (1 PG container × 24 execs)" - runBackend {
         Postgres.initWith(Postgres.Config.default) { pg =>
             pg.psql("SELECT 1").andThen(pg.psql("SELECT 2")).andThen(pg.psql("SELECT 3")).andThen(pg.psql("SELECT 4"))
                 .andThen(pg.psql("SELECT 5")).andThen(pg.psql("SELECT 6")).andThen(pg.psql("SELECT 7")).andThen(pg.psql("SELECT 8"))

@@ -13,7 +13,7 @@ class ContainerPredefItTest extends Test:
     override def timeout: Duration = 3.minutes
 
     "Postgres" - {
-        "psql SELECT 1 returns 1" - runBackendsLong {
+        "psql SELECT 1 returns 1" - runBackendLong {
             Postgres.initWith(Postgres.Config.default) { pg =>
                 pg.psql("SELECT 1").map { result =>
                     assert(result.exitCode.toInt == 0, s"psql exited ${result.exitCode}, stderr=${result.stderr}")
@@ -22,7 +22,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "custom credentials work" - runBackendsLong {
+        "custom credentials work" - runBackendLong {
             val cfg = Postgres.Config.default.username("admin").database("mydb")
             Postgres.initWith(cfg) { pg =>
                 pg.psql("SELECT current_user").map { result =>
@@ -32,7 +32,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "create + insert + select round-trip" - runBackendsLong {
+        "create + insert + select round-trip" - runBackendLong {
             Postgres.initWith(Postgres.Config.default) { pg =>
                 for
                     _    <- pg.psql("CREATE TABLE t (id int, name text)")
@@ -46,7 +46,7 @@ class ContainerPredefItTest extends Test:
     }
 
     "MySQL" - {
-        "mysql SELECT 1 returns 1" - runBackendsLong {
+        "mysql SELECT 1 returns 1" - runBackendLong {
             MySQL.initWith(MySQL.Config.default) { my =>
                 my.mysql("SELECT 1").map { result =>
                     assert(result.exitCode.toInt == 0, s"mysql exited ${result.exitCode}, stderr=${result.stderr}")
@@ -55,7 +55,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "custom credentials work" - runBackendsLong {
+        "custom credentials work" - runBackendLong {
             val cfg = MySQL.Config.default.username("admin").database("mydb")
             MySQL.initWith(cfg) { my =>
                 my.mysql("SELECT current_user()").map { result =>
@@ -68,7 +68,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "create + insert + select round-trip" - runBackendsLong {
+        "create + insert + select round-trip" - runBackendLong {
             MySQL.initWith(MySQL.Config.default) { db =>
                 for
                     _    <- db.mysql("CREATE TABLE t (id INT, name VARCHAR(32))")
@@ -82,7 +82,7 @@ class ContainerPredefItTest extends Test:
     }
 
     "MongoDB" - {
-        "mongosh ping returns 1" - runBackendsLong {
+        "mongosh ping returns 1" - runBackendLong {
             MongoDB.initWith(MongoDB.Config.default) { mg =>
                 mg.mongosh("db.adminCommand('ping').ok").map { result =>
                     assert(result.exitCode.toInt == 0, s"mongosh exited ${result.exitCode}, stderr=${result.stderr}")
@@ -91,7 +91,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "insert + count round-trip" - runBackendsLong {
+        "insert + count round-trip" - runBackendLong {
             MongoDB.initWith(MongoDB.Config.default) { mg =>
                 mg.mongosh("db.kyo.insertOne({hello: 'world'}); db.kyo.countDocuments()").map { result =>
                     assert(result.exitCode.toInt == 0, s"mongosh exited ${result.exitCode}, stderr=${result.stderr}")
@@ -103,7 +103,7 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "find returns the inserted document" - runBackendsLong {
+        "find returns the inserted document" - runBackendLong {
             MongoDB.initWith(MongoDB.Config.default) { mg =>
                 for
                     _     <- mg.mongosh("db.kyo.insertOne({name: 'kyo', id: 1})")

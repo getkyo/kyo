@@ -44,7 +44,13 @@ private[kyo] trait ContainerRuntimeBase:
     end hasDocker
 
     lazy val available: Seq[String] =
-        Seq("podman" -> hasPodman, "docker" -> hasDocker).collect { case (name, true) => name }
+        import AllowUnsafe.embrace.danger
+        val all = Seq("podman" -> hasPodman, "docker" -> hasDocker).collect { case (name, true) => name }
+        getEnv("KYO_POD_RUNTIME") match
+            case Present(rt) => if all.contains(rt) then Seq(rt) else Seq.empty
+            case Absent      => all
+        end match
+    end available
 
     /** macOS Podman Machine sockets, lazily computed once. */
     private lazy val podmanMachineSockets: Seq[String] =
@@ -54,10 +60,7 @@ private[kyo] trait ContainerRuntimeBase:
     def isPodman: Boolean = available.headOption.contains("podman")
     def isDocker: Boolean = available.headOption.contains("docker")
 
-    def isAvailable(rt: String): Boolean = rt match
-        case "podman" => hasPodman
-        case "docker" => hasDocker
-        case _        => false
+    def isAvailable(rt: String): Boolean = available.contains(rt)
 
     def findSocket(rt: String)(using AllowUnsafe): Option[String] =
         val candidates = rt match

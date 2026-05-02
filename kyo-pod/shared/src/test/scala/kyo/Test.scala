@@ -35,10 +35,15 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     /** Register one leaf test per available `(runtime, backend)` combination. Each registered test runs `v` with the appropriate
       * `Container.withBackendConfig` wrapper. Use as the body of `String -` in test declarations:
       * {{{"my container test" - runBackends { Container.init(image).map(_ => ()) }}}}
+      *
+      * The runtime scope is rendered as `[podman]` / `[docker]` in test names — bracketed so the build's testGrouping can detect, by
+      * inspecting `Suite.testNames`, which suites need per-runtime forking (the bracketed form won't appear in unit-test descriptions that
+      * happen to mention "podman" or "docker" as words). Each forked JVM is pinned to a single runtime via `KYO_POD_RUNTIME`, so this
+      * method registers leaves only for the pinned runtime; combined with sequential leaves, ≤1 in-flight container op per daemon.
       */
     def runBackends(v: => Assertion < (Async & Abort[Any] & Scope))(using Frame): Unit =
         Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
-            runtime - {
+            s"[$runtime]" - {
                 ContainerRuntime.findSocket(runtime).foreach { path =>
                     "http" in run {
                         Container.withBackendConfig(_.UnixSocket(Path(path)))(v)
@@ -59,7 +64,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
       */
     def runBackendsLong(v: => Assertion < (Async & Abort[Any] & Scope))(using Frame): Unit =
         Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
-            runtime - {
+            s"[$runtime]" - {
                 ContainerRuntime.findSocket(runtime).foreach { path =>
                     "http" in run {
                         Container.withBackendConfig(_.UnixSocket(Path(path))) {
@@ -82,10 +87,47 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
       */
     def runRuntimes(f: String => Assertion < (Async & Abort[Any] & Scope))(using Frame): Unit =
         Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
-            runtime in run {
+            s"[$runtime]" in run {
                 f(runtime)
             }
         }
+
+    /** Register a single leaf using the HTTP backend over the auto-detected runtime socket. Use this when the test exercises kyo-pod's
+      * higher-level Container API (predefs, demos, parser-specific stress) and the choice of backend (HTTP vs Shell) or runtime (Podman vs
+      * Docker) does not add coverage. The test runs once: one leaf, one fork — no `[runtime]` marker is registered, so the build's
+      * testGrouping does not fork the suite per runtime. For tests that need runtime variation use [[runBackends]] (both backends per
+      * runtime) or [[runRuntimes]] (one leaf per runtime, body picks the backend).
+      */
+    def runBackend(v: => Assertion < (Async & Abort[Any] & Scope))(using Frame): Unit =
+        val socket = Seq("podman", "docker")
+            .filter(ContainerRuntime.isAvailable)
+            .iterator
+            .flatMap(rt => ContainerRuntime.findSocket(rt).iterator)
+            .nextOption()
+        socket.foreach { path =>
+            "http" in run {
+                Container.withBackendConfig(_.UnixSocket(Path(path)))(v)
+            }
+        }
+    end runBackend
+
+    /** Like [[runBackend]] but raises the HTTP client's per-request timeout to 5 minutes. Use for single-leaf integration tests that pull
+      * or build large images on a cold cache (e.g. predef DB tests).
+      */
+    def runBackendLong(v: => Assertion < (Async & Abort[Any] & Scope))(using Frame): Unit =
+        val socket = Seq("podman", "docker")
+            .filter(ContainerRuntime.isAvailable)
+            .iterator
+            .flatMap(rt => ContainerRuntime.findSocket(rt).iterator)
+            .nextOption()
+        socket.foreach { path =>
+            "http" in run {
+                Container.withBackendConfig(_.UnixSocket(Path(path))) {
+                    HttpClient.withConfig(_.timeout(5.minutes))(v)
+                }
+            }
+        }
+    end runBackendLong
 
     /** Returns `config` with `autoRemove = false` so tests can inspect container state after stopping.
       *

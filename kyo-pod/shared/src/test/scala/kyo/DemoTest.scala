@@ -9,7 +9,7 @@ class DemoTest extends Test:
 
     override def timeout = 5.minutes
 
-    "CodeSandbox: per-example outcomes match security guarantees" - runRuntimes { _ =>
+    "CodeSandbox: per-example outcomes match security guarantees" - runBackend {
         demo.CodeSandbox.demoMain.map { results =>
             val byName = results.toMap
             assert(
@@ -27,7 +27,7 @@ class DemoTest extends Test:
         }
     }
 
-    "IntegrationTestScaffold: probes succeed against PG + Redis + cross-DNS" - runRuntimes { _ =>
+    "IntegrationTestScaffold: probes succeed against PG + Redis + cross-DNS" - runBackend {
         demo.IntegrationTestScaffold.demoMain.map { probes =>
             assert(probes.postgres.exitCode.isSuccess, s"postgres SELECT 1 failed: ${probes.postgres}")
             assert(
@@ -38,7 +38,7 @@ class DemoTest extends Test:
         }
     }
 
-    "LogAggregator: enumerates workers and streams ERROR-grepped lines" - runRuntimes { _ =>
+    "LogAggregator: enumerates workers and streams ERROR-grepped lines" - runBackend {
         demo.LogAggregator.demoMain.map { outcome =>
             assert(outcome.workersFound > 0, s"expected ≥1 worker enumerated via label filter, got ${outcome.workersFound}")
             assert(
@@ -52,7 +52,7 @@ class DemoTest extends Test:
         }
     }
 
-    "PrometheusExporter: scrape returns valid Prometheus exposition" - runRuntimes { _ =>
+    "PrometheusExporter: scrape returns valid Prometheus exposition" - runBackend {
         demo.PrometheusExporter.demoMain.map { exposition =>
             assert(exposition.contains("# HELP"), s"missing HELP comment in exposition: ${exposition.take(200)}")
             assert(exposition.contains("# TYPE"), s"missing TYPE comment in exposition")
@@ -61,7 +61,7 @@ class DemoTest extends Test:
         }
     }
 
-    "ServiceMesh: end-to-end edge → api → cache request returns 'hi'" - runRuntimes { _ =>
+    "ServiceMesh: end-to-end edge → api → cache request returns 'hi'" - runBackend {
         demo.ServiceMesh.demoMain.map { body =>
             assert(body.trim.contains("hi"), s"expected mesh probe to return 'hi', got: '$body'")
         }
