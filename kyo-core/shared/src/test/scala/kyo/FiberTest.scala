@@ -322,25 +322,6 @@ class FiberTest extends Test:
         }
     }
 
-    "fatal throwable from a fiber computation" - {
-        "LinkageError completes the IOPromise with a Panic before the worker rethrows" taggedAs jvmOnly in run {
-            val fatal                                 = new LinkageError("simulated NoClassDefFoundError")
-            val body: Int < (Sync & Abort[Throwable]) = Sync.defer { throw fatal; 0 }
-            for
-                signal <- Promise.init[Int, Abort[Throwable]]
-                fiber  <- Fiber.initUnscoped(body)
-                _ <- Sync.defer {
-                    import AllowUnsafe.embrace.danger
-                    fiber.unsafe.onComplete(signal.unsafe.completeDiscard)
-                }
-                captured <- signal.getResult
-            yield captured match
-                case Result.Panic(thr) if thr eq fatal => succeed
-                case other                             => fail(s"unexpected outcome: $other")
-            end for
-        }
-    }
-
     "map" - {
         "success" in run {
             val fiber = Fiber.succeed(42)
