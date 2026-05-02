@@ -323,7 +323,7 @@ class FiberTest extends Test:
     }
 
     "fatal throwable from a fiber computation" - {
-        "LinkageError completes the IOPromise with a Panic before the worker rethrows" in run {
+        "LinkageError completes the IOPromise with a Panic before the worker rethrows" taggedAs jvmOnly in run {
             val fatal                                 = new LinkageError("simulated NoClassDefFoundError")
             val body: Int < (Sync & Abort[Throwable]) = Sync.defer { throw fatal; 0 }
             for
