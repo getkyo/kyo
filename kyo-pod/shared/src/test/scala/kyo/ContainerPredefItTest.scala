@@ -32,15 +32,6 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "jdbcUrl format" - runBackendsLong {
-            Postgres.initWith(Postgres.Config.default) { pg =>
-                pg.jdbcUrl.map { url =>
-                    val pattern = """^jdbc:postgresql://127\.0\.0\.1:\d+/test$""".r
-                    assert(pattern.matches(url), s"URL didn't match expected format: $url")
-                }
-            }
-        }
-
         "create + insert + select round-trip" - runBackendsLong {
             Postgres.initWith(Postgres.Config.default) { pg =>
                 for
@@ -77,15 +68,6 @@ class ContainerPredefItTest extends Test:
             }
         }
 
-        "jdbcUrl format" - runBackendsLong {
-            MySQL.initWith(MySQL.Config.default) { my =>
-                my.jdbcUrl.map { url =>
-                    val pattern = """^jdbc:mysql://127\.0\.0\.1:\d+/test$""".r
-                    assert(pattern.matches(url), s"URL didn't match expected format: $url")
-                }
-            }
-        }
-
         "create + insert + select round-trip" - runBackendsLong {
             MySQL.initWith(MySQL.Config.default) { db =>
                 for
@@ -117,15 +99,6 @@ class ContainerPredefItTest extends Test:
                         result.stdout.trim.endsWith("1"),
                         s"expected count ending in '1', got: ${result.stdout.trim}"
                     )
-                }
-            }
-        }
-
-        "url format" - runBackendsLong {
-            MongoDB.initWith(MongoDB.Config.default) { mg =>
-                mg.url.map { u =>
-                    val pattern = """^mongodb://127\.0\.0\.1:\d+/test$""".r
-                    assert(pattern.matches(u), s"URL didn't match: $u")
                 }
             }
         }

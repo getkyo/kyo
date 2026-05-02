@@ -38,13 +38,16 @@ object ContainerPredef:
       * @see
       *   [[https://hub.docker.com/_/postgres Docker postgres image]]
       */
-    final class Postgres private[kyo] (val container: Container, val config: Postgres.Config):
+    final class Postgres private[kyo] (
+        /** The underlying container handle for direct lifecycle and exec operations. */
+        val container: Container,
+        /** The configuration this fixture was started with. */
+        val config: Postgres.Config
+    ):
 
         /** JDBC connection URL: `jdbc:postgresql://host:port/database`. Looks up the dynamically-mapped host port for `config.port`. */
         def jdbcUrl(using Frame): String < (Async & Abort[ContainerException]) =
-            container.mappedPort(config.port).map { hp =>
-                s"jdbc:postgresql://${container.host}:$hp/${config.database}"
-            }
+            container.mappedPort(config.port).map(hp => Postgres.formatJdbcUrl(container.host, hp, config.database))
 
         /** Configured database username. */
         def username: String = config.username
@@ -78,6 +81,10 @@ object ContainerPredef:
         /** Default container port — `5432`. */
         val defaultPort: Int = 5432
 
+        /** Format a Postgres JDBC URL: `jdbc:postgresql://host:port/database`. */
+        private[kyo] def formatJdbcUrl(host: String, port: Int, database: String): String =
+            s"jdbc:postgresql://$host:$port/$database"
+
         /** Configuration for a [[Postgres]] container. Builder methods produce updated copies; the original instance is unchanged.
           *
           * @param image
@@ -98,17 +105,10 @@ object ContainerPredef:
             database: String = "test",
             port: Int = defaultPort
         ) derives CanEqual:
-            /** Returns a copy with `image` replaced. */
             def image(i: ContainerImage): Config = copy(image = i)
-
-            /** Returns a copy with `username` replaced. */
-            def username(u: String): Config = copy(username = u)
-
-            /** Returns a copy with `password` replaced. */
-            def password(p: String): Config = copy(password = p)
-
-            /** Returns a copy with `database` replaced. */
-            def database(d: String): Config = copy(database = d)
+            def username(u: String): Config      = copy(username = u)
+            def password(p: String): Config      = copy(password = p)
+            def database(d: String): Config      = copy(database = d)
         end Config
 
         object Config:
@@ -130,6 +130,7 @@ object ContainerPredef:
         ): A < (S & Async & Abort[ContainerException] & Scope) =
             init(config).map(f)
 
+        /** Build the [[Container.Config]] for a Postgres fixture from this config. */
         private[kyo] def buildContainerConfig(c: Config): Container.Config =
             Container.Config(c.image)
                 .env("POSTGRES_USER", c.username)
@@ -162,13 +163,16 @@ object ContainerPredef:
       * @see
       *   [[https://hub.docker.com/_/mysql Docker mysql image]]
       */
-    final class MySQL private[kyo] (val container: Container, val config: MySQL.Config):
+    final class MySQL private[kyo] (
+        /** The underlying container handle for direct lifecycle and exec operations. */
+        val container: Container,
+        /** The configuration this fixture was started with. */
+        val config: MySQL.Config
+    ):
 
         /** JDBC connection URL: `jdbc:mysql://host:port/database`. Looks up the dynamically-mapped host port for `config.port`. */
         def jdbcUrl(using Frame): String < (Async & Abort[ContainerException]) =
-            container.mappedPort(config.port).map { hp =>
-                s"jdbc:mysql://${container.host}:$hp/${config.database}"
-            }
+            container.mappedPort(config.port).map(hp => MySQL.formatJdbcUrl(container.host, hp, config.database))
 
         /** Configured database username. */
         def username: String = config.username
@@ -198,6 +202,10 @@ object ContainerPredef:
         /** Default container port — `3306`. */
         val defaultPort: Int = 3306
 
+        /** Format a MySQL JDBC URL: `jdbc:mysql://host:port/database`. */
+        private[kyo] def formatJdbcUrl(host: String, port: Int, database: String): String =
+            s"jdbc:mysql://$host:$port/$database"
+
         /** Configuration for a [[MySQL]] container. Builder methods produce updated copies; the original instance is unchanged.
           *
           * @param image
@@ -222,20 +230,11 @@ object ContainerPredef:
             rootPassword: String = "test",
             port: Int = defaultPort
         ) derives CanEqual:
-            /** Returns a copy with `image` replaced. */
             def image(i: ContainerImage): Config = copy(image = i)
-
-            /** Returns a copy with `username` replaced. */
-            def username(u: String): Config = copy(username = u)
-
-            /** Returns a copy with `password` replaced. */
-            def password(p: String): Config = copy(password = p)
-
-            /** Returns a copy with `database` replaced. */
-            def database(d: String): Config = copy(database = d)
-
-            /** Returns a copy with `rootPassword` replaced. */
-            def rootPassword(p: String): Config = copy(rootPassword = p)
+            def username(u: String): Config      = copy(username = u)
+            def password(p: String): Config      = copy(password = p)
+            def database(d: String): Config      = copy(database = d)
+            def rootPassword(p: String): Config  = copy(rootPassword = p)
         end Config
 
         object Config:
@@ -286,6 +285,7 @@ object ContainerPredef:
             end if
         end applyEnv
 
+        /** Build the [[Container.Config]] for a MySQL fixture from this config. */
         private[kyo] def buildContainerConfig(c: Config): Container.Config =
             val healthCmdBase = Chunk("mysql", "-h", "127.0.0.1", "-u", c.username) ++
                 (if c.password.nonEmpty then Chunk(s"-p${c.password}") else Chunk.empty) ++
@@ -318,19 +318,22 @@ object ContainerPredef:
       * @see
       *   [[https://hub.docker.com/_/mongo Docker mongo image]]
       */
-    final class MongoDB private[kyo] (val container: Container, val config: MongoDB.Config):
+    final class MongoDB private[kyo] (
+        /** The underlying container handle for direct lifecycle and exec operations. */
+        val container: Container,
+        /** The configuration this fixture was started with. */
+        val config: MongoDB.Config
+    ):
 
         /** The base connection URL without a database path: `mongodb://host:port`. Looks up the dynamically-mapped host port for
           * `config.port`.
           */
         def connectionString(using Frame): String < (Async & Abort[ContainerException]) =
-            container.mappedPort(config.port).map { hp =>
-                s"mongodb://${container.host}:$hp"
-            }
+            container.mappedPort(config.port).map(hp => MongoDB.formatConnectionString(container.host, hp))
 
         /** Connection URL for the configured database: `mongodb://host:port/<database>`. */
         def url(using Frame): String < (Async & Abort[ContainerException]) =
-            connectionString.map(cs => s"$cs/${config.database}")
+            container.mappedPort(config.port).map(hp => MongoDB.formatUrl(container.host, hp, config.database))
 
         /** The database name configured for the MongoDB instance. */
         def database: String = config.database
@@ -347,6 +350,14 @@ object ContainerPredef:
 
         /** Default container port — `27017`. */
         val defaultPort: Int = 27017
+
+        /** Format a MongoDB connection string (no database): `mongodb://host:port`. */
+        private[kyo] def formatConnectionString(host: String, port: Int): String =
+            s"mongodb://$host:$port"
+
+        /** Format a MongoDB URL with database: `mongodb://host:port/database`. */
+        private[kyo] def formatUrl(host: String, port: Int, database: String): String =
+            s"mongodb://$host:$port/$database"
 
         /** Configuration for a [[MongoDB]] container. Builder methods produce updated copies; the original instance is unchanged.
           *
@@ -365,11 +376,8 @@ object ContainerPredef:
             database: String = "test",
             port: Int = defaultPort
         ) derives CanEqual:
-            /** Returns a copy with `image` replaced. */
             def image(i: ContainerImage): Config = copy(image = i)
-
-            /** Returns a copy with `database` replaced. */
-            def database(d: String): Config = copy(database = d)
+            def database(d: String): Config      = copy(database = d)
         end Config
 
         object Config:
@@ -391,6 +399,7 @@ object ContainerPredef:
         ): A < (S & Async & Abort[ContainerException] & Scope) =
             init(config).map(f)
 
+        /** Build the [[Container.Config]] for a MongoDB fixture from this config. */
         private[kyo] def buildContainerConfig(c: Config): Container.Config =
             Container.Config(c.image)
                 .port(c.port, 0)

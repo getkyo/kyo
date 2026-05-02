@@ -10,6 +10,12 @@ import scala.concurrent.Future
 
 abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest:
 
+    /** Test infrastructure runs synchronously at ScalaTest discovery time (Tag init, `runBackends`/`runRuntimes` test-scope registration),
+      * so we provide a single given `AllowUnsafe` here and inherit it in subclasses. This lets `ContainerRuntime`'s file/env primitives
+      * delegate to kyo's portable sync `Unsafe` APIs without each call site repeating the import.
+      */
+    given AllowUnsafe = AllowUnsafe.embrace.danger
+
     override def timeout = 60.seconds
 
     private def runWhen(cond: => Boolean) = if cond then "" else "org.scalatest.Ignore"

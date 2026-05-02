@@ -44,19 +44,25 @@ final case class ContainerImage(
     /** Set the image digest. IMPORTANT: clears tag, since tag and digest are mutually exclusive. */
     def withDigest(d: ContainerImage.Digest): ContainerImage = copy(digest = Present(d), tag = Absent)
 
+    /** Set the image registry (e.g. `ghcr.io`, `quay.io`). */
     def withRegistry(r: ContainerImage.Registry): ContainerImage = copy(registry = Present(r))
 
+    /** Set the image namespace — the registry path segment between registry host and image name (e.g. `library` in
+      * `docker.io/library/alpine`).
+      */
     def withNamespace(n: String): ContainerImage = copy(namespace = Present(n))
 
+    /** Pin this image to Docker Hub (`docker.io`). */
     def onDockerHub: ContainerImage = withRegistry(ContainerImage.Registry.DockerHub)
 
+    /** Pin this image to GitHub Container Registry (`ghcr.io`). */
     def onGitHub: ContainerImage = withRegistry(ContainerImage.Registry.GitHub)
 
 end ContainerImage
 
 object ContainerImage:
 
-    /** Default ContainerImage value — arbitrary placeholder name, all other fields `Absent`. */
+    /** All-defaults instance. */
     val default: ContainerImage = new ContainerImage(
         name = "scratch",
         namespace = Absent,
@@ -81,12 +87,6 @@ object ContainerImage:
       *   - "ghcr.io/owner/repo:v1.2.3" -> registry=ghcr.io, namespace=owner, name=repo, tag=v1.2.3
       *   - "myapp@sha256:abc123" -> name=myapp, digest=sha256:abc123
       */
-    /** Returns true when a path segment looks like a registry hostname: must contain a dot (fully-qualified domain) or a colon
-      * (port-qualified host, e.g. "localhost:5000"). The tag colon cannot reach this helper because tag-stripping runs before the path is
-      * split on "/".
-      */
-    private def isRegistryHost(s: String): Boolean = s.contains('.') || s.contains(':')
-
     def parse(ref: String): Result[String, ContainerImage] =
         if ref.isEmpty then Result.fail("Empty image reference")
         else
@@ -143,6 +143,12 @@ object ContainerImage:
             else Result.succeed(new ContainerImage(nameVal, namespaceVal, registryVal, finalTag, finalDigest))
         end if
     end parse
+
+    /** Returns true when a path segment looks like a registry hostname: must contain a dot (fully-qualified domain) or a colon
+      * (port-qualified host, e.g. "localhost:5000"). The tag colon cannot reach this helper because tag-stripping runs before the path is
+      * split on "/".
+      */
+    private def isRegistryHost(s: String): Boolean = s.contains('.') || s.contains(':')
 
     // --- Predefined images ---
 
@@ -329,7 +335,15 @@ object ContainerImage:
 
     // --- Data Types ---
 
-    /** Detailed image inspection result. */
+    /** Detailed image inspection result.
+      *
+      * @param repoDigests
+      *   content-addressed references for this image: `name@sha256:...` per registry/repo it has been pushed to or pulled from.
+      * @param architecture
+      *   target CPU architecture (e.g. `amd64`, `arm64`, `arm`).
+      * @param os
+      *   target operating system (e.g. `linux`, `windows`).
+      */
     final case class Info(
         id: ContainerImage.Id,
         repoTags: Chunk[ContainerImage],
@@ -341,7 +355,11 @@ object ContainerImage:
         os: String
     ) derives CanEqual
 
-    /** Lightweight image listing entry. */
+    /** Lightweight image listing entry.
+      *
+      * @param repoDigests
+      *   content-addressed references for this image: `name@sha256:...` per registry/repo it has been pushed to or pulled from.
+      */
     final case class Summary(
         id: ContainerImage.Id,
         repoTags: Chunk[ContainerImage],
@@ -381,7 +399,11 @@ object ContainerImage:
         isAutomated: Boolean
     ) derives CanEqual
 
-    /** Progress event during an image build operation. */
+    /** Progress event during an image build operation.
+      *
+      * @param aux
+      *   the resulting image ID once the build emits one (NOT free-form auxiliary text). Empty until the final layer is committed.
+      */
     final case class BuildProgress(
         stream: Maybe[String],
         status: Maybe[String],
@@ -402,6 +424,9 @@ object ContainerImage:
       *
       * IMPORTANT: credentials are held in memory and passed through to the backend. Use a short-lived scope (e.g. `Scope.run`) around
       * operations requiring auth so the value isn't retained longer than needed. `toString` redacts credentials but not registry names.
+      *
+      * @param auths
+      *   per-registry credential map: registry hostname → encoded credential string (typically Base64-encoded `username:password`)
       *
       * @see
       *   [[RegistryAuth.fromConfig]] load credentials from the local Docker/Podman config

@@ -165,11 +165,26 @@ final case class ContainerVolumeInUseException(id: Container.Volume.Id, containe
 sealed class ContainerOperationException(message: String, cause: String | Throwable = "")(using Frame)
     extends ContainerException(message, cause) derives CanEqual
 
-/** The container failed to start. `reason` carries the daemon-reported cause. */
+/** The container failed to start.
+  *
+  * @param id
+  *   the container that failed to start
+  * @param reason
+  *   the daemon-reported cause
+  */
 final case class ContainerStartFailedException(id: Container.Id, reason: String)(using Frame)
     extends ContainerOperationException(s"Container start failed for ${id.value}: $reason") derives CanEqual
 
-/** Exec returned a non-zero exit code. `stderr` is truncated to 500 characters in the message; the full value is preserved in the field.
+/** Exec returned a non-zero exit code.
+  *
+  * @param id
+  *   the container the command ran in
+  * @param cmd
+  *   the executed command's argv
+  * @param exitCode
+  *   the non-zero exit code
+  * @param stderr
+  *   raw stderr captured from the exec; truncated to 500 chars in the formatted message but preserved in full on the field
   */
 final case class ContainerExecFailedException private (id: Container.Id, cmd: Chunk[String], exitCode: ExitCode, stderr: String)(using
     Frame
@@ -185,18 +200,38 @@ object ContainerExecFailedException:
         new ContainerExecFailedException(id, cmd, exitCode, truncated)
 end ContainerExecFailedException
 
-/** Registry authentication failed for a pull or push. `registry` is the target host; `detail` is the daemon-reported reason. */
+/** Registry authentication failed for a pull or push.
+  *
+  * @param registry
+  *   the target registry host
+  * @param detail
+  *   the daemon-reported reason
+  */
 final case class ContainerAuthException(registry: String, detail: String)(using Frame)
     extends ContainerOperationException(s"Authentication failed for $registry", detail) derives CanEqual
 
-/** Image build failed. `context` is the build source (path or URL); `detail` describes the failure stage (e.g., "tar failed", "build
-  * command failed", "image tag verification failed after build"); `cause` carries the underlying error.
+/** Image build failed.
+  *
+  * @param context
+  *   the build source (filesystem path or URL)
+  * @param detail
+  *   the failure stage (e.g. "tar failed", "build command failed", "image tag verification failed after build")
+  * @param cause
+  *   underlying error, if any
   */
 final case class ContainerBuildFailedException(context: String, detail: String, cause: String | Throwable = "")(using Frame)
     extends ContainerOperationException(s"Build failed for $context: $detail", cause) derives CanEqual
 
-/** Container health check failed. `reason` explains why the check failed (e.g., "exec exited 1", "port 8080 not reachable"); `attempts` is
-  * the number of attempts made against the retry schedule (1 for single-shot checks); `lastError` preserves raw output or cause.
+/** Container health check failed.
+  *
+  * @param id
+  *   the container whose check failed
+  * @param reason
+  *   why the check failed (e.g. "exec exited 1", "port 8080 not reachable")
+  * @param attempts
+  *   number of attempts made against the retry schedule (1 for single-shot checks)
+  * @param lastError
+  *   raw output or cause from the most recent attempts; truncated per entry by [[Container.healthCheckErrorMessageMaxLength]]
   */
 final case class ContainerHealthCheckException(id: Container.Id, reason: String, attempts: Int, lastError: String = "")(using Frame)
     extends ContainerOperationException(

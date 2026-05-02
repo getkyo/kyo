@@ -17,6 +17,8 @@ import kyo.internal.ResourceContext
   *   Absolute path to the Unix domain socket (e.g. `/var/run/docker.sock`)
   * @param apiVersion
   *   Docker Engine API version prefix (e.g. `v1.43`)
+  * @param meter
+  *   Concurrency limiter applied to backend operations; defaults to [[kyo.Meter.Noop]] (no limit).
   *
   * @see
   *   [[ContainerBackend]] the abstract contract this implements
@@ -75,25 +77,51 @@ final private[kyo] class HttpContainerBackend(
     )(using Frame): Nothing < (Sync & Abort[ContainerException]) =
         httpEx match
             case e: HttpStatusException =>
-                canonicalStatus(e) match
-                    case 304 =>
-                        ctx match
-                            case ResourceContext.Container(id) => Abort.fail(ContainerAlreadyStoppedException(id))
-                            case _ => Abort.fail(ContainerBackendException(s"Unexpected HTTP 304 for ${ctx.describe}", e))
-                    case 404 =>
-                        Abort.fail(missingExceptionFor(ctx, e))
-                    case 409 =>
-                        Abort.fail(conflictExceptionFor(ctx))
-                    case _ =>
-                        warnIfMissingBody(e, ctx).andThen(Abort.fail(ContainerOperationException(
-                            s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} for ${ctx.describe}",
-                            e
-                        )))
+                // Port conflict bubbles through with HTTP 500 ("Bind for 0.0.0.0:NNNN failed: port is already
+                // allocated") — neither the canonical status nor the wire status pin it down, so we recognise
+                // the bind expression in the body directly.
+                extractPortConflict(e.body) match
+                    case Some(port) => Abort.fail(ContainerPortConflictException(port, e.body.getOrElse("")))
+                    case None =>
+                        canonicalStatus(e) match
+                            case 304 =>
+                                ctx match
+                                    case ResourceContext.Container(id) => Abort.fail(ContainerAlreadyStoppedException(id))
+                                    case _ => Abort.fail(ContainerBackendException(s"Unexpected HTTP 304 for ${ctx.describe}", e))
+                            case 404 =>
+                                Abort.fail(missingExceptionFor(ctx, e))
+                            case 409 =>
+                                Abort.fail(conflictExceptionFor(ctx))
+                            case _ =>
+                                warnIfMissingBody(e, ctx).andThen(Abort.fail(ContainerOperationException(
+                                    s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} for ${ctx.describe}",
+                                    e
+                                )))
+                        end match
                 end match
             case other =>
                 Abort.fail(ContainerBackendException(s"HTTP transport failed for ${ctx.describe}", other))
         end match
     end mapHttpError
+
+    /** Detect docker/podman port-conflict messages in an HTTP error body and recover the host port.
+      *
+      * Matches `Bind for 0.0.0.0:NNNN failed: port is already allocated` (and the `[::]:NNNN` IPv6 variant) and also podman's
+      * `listen tcp :NNNN: bind: address already in use`. Returns `None` when the body is absent or does not match a port-conflict shape.
+      */
+    private def extractPortConflict(body: Maybe[String]): Option[Int] =
+        body.toOption.flatMap { b =>
+            val lower = b.toLowerCase
+            val isPortConflict =
+                lower.contains("port is already allocated") ||
+                    lower.contains("address already in use") ||
+                    lower.contains("bind: address already in use")
+            if !isPortConflict then None
+            else
+                val bindPattern = """(?:0\.0\.0\.0|\[::\]|::)?:(\d+)""".r
+                bindPattern.findFirstMatchIn(b).flatMap(m => m.group(1).toIntOption)
+            end if
+        }
 
     /** Instance-side shim around [[HttpContainerBackend.canonicalStatus]]; see that method for the rationale. */
     private def canonicalStatus(e: HttpStatusException)(using Frame): Int =
@@ -186,7 +214,7 @@ final private[kyo] class HttpContainerBackend(
 
     /** Resolve a host path through `readlink -f` so symlinked roots — most importantly macOS's `/tmp -> /private/tmp` — are passed to the
       * daemon as the path it actually sees in its mount namespace. Falls back to the unresolved path on any failure; on Linux this is
-      * typically a no-op. Mirrors `ShellBackend.resolveHostPath`.
+      * typically a no-op.
       */
     private def resolveHostPath(path: Path)(using Frame): String < Async =
         val pathStr = path.toString
@@ -380,10 +408,26 @@ final private[kyo] class HttpContainerBackend(
             postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id)).andThen {
                 // Docker HTTP API returns before the container fully transitions to "exited".
                 // Join the pre-started /wait fiber to confirm exit and preserve the exit code.
-                waitFiber.get.unit
+                waitFiber.get.andThen(awaitTerminalState(id))
             }
         }
     end stop
+
+    /** Poll `state(id)` until it reflects a terminal value (Stopped or Dead). On Docker Desktop the daemon answers `/wait` before the
+      * container's listing-side state is updated, so a subsequent `Container.list` race-reads the still-Running entry. A short bounded poll
+      * closes that gap.
+      */
+    private def awaitTerminalState(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        val maxAttempts = 20
+        val pollDelay   = 50.millis
+        def loop(attempt: Int): Unit < (Async & Abort[ContainerException]) =
+            state(id).map { s =>
+                if s == Container.State.Stopped || s == Container.State.Dead then ()
+                else if attempt >= maxAttempts then ()
+                else Async.sleep(pollDelay).andThen(loop(attempt + 1))
+            }
+        loop(0)
+    end awaitTerminalState
 
     def kill(id: Container.Id, signal: Container.Signal)(using Frame): Unit < (Async & Abort[ContainerException]) =
         postUnit(s"/containers/${id.value}/kill?signal=${signal.name}", ctxContainer(id))
@@ -633,14 +677,15 @@ final private[kyo] class HttpContainerBackend(
                         )
                     ) {
                         case Result.Success(conn) =>
-                            val stdoutAsm = new LineAssembler
-                            val stderrAsm = new LineAssembler
-                            conn.read.foreachChunk { chunk =>
-                                Kyo.foreachDiscard(chunk) { span =>
-                                    val entries = demuxStreamAssembled(span, stdoutAsm, stderrAsm, timestamps = false)
+                            conn.read
+                                .into(FrameAssembler.pipe)
+                                .into(LineAssembler.partitionedPipe[LogEntry.Source])
+                                .foreachChunk { lines =>
+                                    val entries = lines.collect {
+                                        case (line, source) if line.nonEmpty => makeLogEntry(line, source, timestamps = false)
+                                    }
                                     Emit.value(entries)
                                 }
-                            }
                         case Result.Failure(e) => mapHttpError(e, ctxContainer(id)).unit
                         case Result.Panic(e) =>
                             Abort.fail(ContainerBackendException(s"execStream panicked in ${id.value}", e))
@@ -739,7 +784,11 @@ final private[kyo] class HttpContainerBackend(
                             }
                         }
                     else
-                        conn.read.mapChunk { spans => spans.flatMap(demuxStream(_)) }
+                        conn.read.into(FrameAssembler.pipe).mapChunkPure { framePairs =>
+                            framePairs.flatMap { case (content, source) =>
+                                content.split("\n").iterator.filter(_.nonEmpty).map(line => LogEntry(source, line)).toSeq
+                            }
+                        }
                 rawStream.filter { entry =>
                     entry.source match
                         case LogEntry.Source.Stdout => includeStdout
@@ -763,26 +812,40 @@ final private[kyo] class HttpContainerBackend(
         timestamps: Boolean,
         tail: Int
     )(using Frame): Chunk[Container.LogEntry] < (Async & Abort[ContainerException]) =
-        val params = Seq(
-            "stdout"     -> stdout.toString,
-            "stderr"     -> stderr.toString,
-            "timestamps" -> timestamps.toString
-        ) ++
-            (if tail != Int.MaxValue then Seq("tail" -> tail.toString) else Seq.empty) ++
-            (if since != Instant.Min then Seq("since" -> since.toJava.getEpochSecond.toString) else Seq.empty) ++
-            (if until != Instant.Max then Seq("until" -> until.toJava.getEpochSecond.toString) else Seq.empty)
-        // Check if container uses TTY — TTY mode returns raw output without multiplexing headers
-        isContainerTty(id).map { isTty =>
-            withErrorMapping(ctxContainer(id)) {
-                HttpClient.getBinary(url(s"/containers/${id.value}/logs", params*))
-            }.map { bytes =>
-                if isTty then parseRawLogStream(bytes, timestamps)
-                else demuxStream(bytes, timestamps)
+        if !stdout && !stderr then Chunk.empty
+        else
+            val params = Seq(
+                "stdout"     -> stdout.toString,
+                "stderr"     -> stderr.toString,
+                "timestamps" -> timestamps.toString
+            ) ++
+                (if tail != Int.MaxValue then Seq("tail" -> tail.toString) else Seq.empty) ++
+                (if since != Instant.Min then Seq("since" -> since.toJava.getEpochSecond.toString) else Seq.empty) ++
+                (if until != Instant.Max then Seq("until" -> until.toJava.getEpochSecond.toString) else Seq.empty)
+            // Check if container uses TTY — TTY mode returns raw output without multiplexing headers
+            isContainerTty(id).map { isTty =>
+                withErrorMapping(ctxContainer(id)) {
+                    HttpClient.getBinary(url(s"/containers/${id.value}/logs", params*))
+                }.map { bytes =>
+                    if isTty then parseRawLogStream(bytes, timestamps)
+                    else demuxStream(bytes, timestamps)
+                }
             }
-        }
     end logs
 
     def logStream(
+        id: Container.Id,
+        stdout: Boolean,
+        stderr: Boolean,
+        since: Instant,
+        timestamps: Boolean,
+        tail: Int
+    )(using Frame): Stream[Container.LogEntry, Async & Abort[ContainerException]] =
+        if !stdout && !stderr then Stream.empty[Container.LogEntry]
+        else logStreamInternal(id, stdout, stderr, since, timestamps, tail)
+    end logStream
+
+    private def logStreamInternal(
         id: Container.Id,
         stdout: Boolean,
         stderr: Boolean,
@@ -810,18 +873,28 @@ final private[kyo] class HttpContainerBackend(
                 // Per-stream state: lines spanning chunk boundaries are re-assembled.
                 // Demux frames maintain separate assemblers per source since stdout/stderr
                 // frames interleave at arbitrary boundaries.
-                val stdoutAsm = new LineAssembler
-                val stderrAsm = new LineAssembler
-                Abort.runWith[HttpException](
-                    byteStream.foreachChunk { chunk =>
-                        Kyo.foreachDiscard(chunk) { span =>
-                            val entries =
-                                if isTty then parseRawLogStreamAssembled(span, stdoutAsm, timestamps)
-                                else demuxStreamAssembled(span, stdoutAsm, stderrAsm, timestamps)
-                            Emit.value(entries)
-                        }
-                    }
-                ) {
+                val drain =
+                    if isTty then
+                        byteStream
+                            .mapChunkPure { spans => spans.map(s => new String(s.toArray, java.nio.charset.StandardCharsets.UTF_8)) }
+                            .into(LineAssembler.pipe)
+                            .foreachChunk { lines =>
+                                val entries = lines.collect {
+                                    case line if line.nonEmpty => makeLogEntry(line, LogEntry.Source.Stdout, timestamps)
+                                }
+                                Emit.value(entries)
+                            }
+                    else
+                        byteStream
+                            .into(FrameAssembler.pipe)
+                            .into(LineAssembler.partitionedPipe[LogEntry.Source])
+                            .foreachChunk { lines =>
+                                val entries = lines.collect {
+                                    case (line, source) if line.nonEmpty => makeLogEntry(line, source, timestamps)
+                                }
+                                Emit.value(entries)
+                            }
+                Abort.runWith[HttpException](drain) {
                     case Result.Success(_) => ()
                     case Result.Failure(e) => mapHttpError(e, ctxContainer(id)).unit
                     case Result.Panic(e) =>
@@ -829,7 +902,7 @@ final private[kyo] class HttpContainerBackend(
                 }
             }
         }
-    end logStream
+    end logStreamInternal
 
     // --- File ops ---
 
@@ -1174,11 +1247,7 @@ final private[kyo] class HttpContainerBackend(
             case (_, Present(ns))          => s"$ns/${image.name}"
             case _                         => image.name
 
-    /** Encode a RegistryAuth entry as the `X-Registry-Auth` header value expected by Docker's API.
-      *
-      * Looks up the image's registry in `auth.auths` (falls back to Docker Hub). The stored credential is assumed to be a Base64-encoded
-      * `username:password`, which is wrapped in a JSON object and re-encoded per the Docker engine's `X-Registry-Auth` contract.
-      */
+    /** Instance-side shim around [[HttpContainerBackend.registryAuthHeader]]. */
     private def registryAuthHeader(image: ContainerImage, auth: ContainerImage.RegistryAuth)(using Frame): Maybe[String] =
         HttpContainerBackend.registryAuthHeader(image, auth)
 
@@ -1208,15 +1277,13 @@ final private[kyo] class HttpContainerBackend(
         onHttpFailure: HttpException => Unit < (Sync & Abort[ContainerException]),
         onPanic: Throwable => Unit < (Sync & Abort[ContainerException])
     )(using Frame): Unit < (Async & Abort[ContainerException] & S) =
-        val asm = new LineAssembler
         Abort.runWith[HttpException](
-            byteStream.foreachChunk { chunk =>
-                Kyo.foreachDiscard(chunk) { span =>
-                    val text  = new String(span.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                    val lines = asm.feed(text)
+            byteStream
+                .mapChunkPure { spans => spans.map(s => new String(s.toArray, java.nio.charset.StandardCharsets.UTF_8)) }
+                .into(LineAssembler.pipe)
+                .foreachChunk { lines =>
                     Kyo.foreachDiscard(lines.toSeq.filter(_.trim.nonEmpty))(processLine)
                 }
-            }
         ) {
             case Result.Success(_) => ()
             case Result.Failure(e) => onHttpFailure(e).unit
@@ -1259,8 +1326,7 @@ final private[kyo] class HttpContainerBackend(
       * recover by classifying the failure as "auth required".
       *
       * When auth IS supplied, we defer to the daemon's signal via `mapHttpError`. A 401/403 there genuinely means the supplied credentials
-      * were rejected; a 404 still means missing. (Specific Auth classification is left as a future refinement once we have real
-      * auth-failure samples to pin patterns against.)
+      * were rejected; a 404 still means missing.
       *
       * Transport-level failures (no `HttpStatusException`) still go through `mapHttpError` regardless — they aren't registry denials,
       * they're connection / protocol errors and shouldn't be silently relabelled as missing image.
@@ -1736,6 +1802,9 @@ final private[kyo] class HttpContainerBackend(
     def describe: String =
         s"HttpContainerBackend(socket=$socketPath, apiVersion=$apiVersion, runtime=$runtimeName)"
 
+    /** Probe THIS backend's configured socket via `_ping`. Used by [[HttpContainerBackend.detect]] (companion) during candidate
+      * enumeration.
+      */
     def detect()(using Frame): Unit < (Async & Abort[ContainerException]) =
         Abort.runWith[HttpException](HttpClient.getText(url("/_ping"))) {
             case Result.Success(response) if response.trim == "OK" => ()
@@ -1777,51 +1846,16 @@ final private[kyo] class HttpContainerBackend(
 
     // --- Multiplexed stream demuxing ---
 
-    /** Iterate the Docker multiplexed frame stream, calling `f(content, source)` for each valid frame.
-      *
-      * Frame format: byte[0]=stream type (1=stdout,2=stderr), bytes[1-3]=padding, bytes[4-7]=uint32 big-endian payload size, then `size`
-      * bytes payload. Incomplete frames (header or payload) are silently skipped — this is correct streaming behaviour since the assembler
-      * caller will deliver the remainder in the next chunk.
-      *
-      * Both [[demuxStream]] and [[demuxStreamAssembled]] delegate to this helper; they differ only in how they process each `(content,
-      * source)` pair.
-      */
-    private def foreachDemuxFrame(bytes: Span[Byte])(f: (String, LogEntry.Source) => Unit): Unit =
-        val arr = bytes.toArray
-        val len = arr.length
-
-        @scala.annotation.tailrec
-        def parse(offset: Int): Unit =
-            if offset + 8 > len then ()
-            else
-                val streamType = arr(offset) & 0xff
-                val size = ((arr(offset + 4) & 0xff) << 24) |
-                    ((arr(offset + 5) & 0xff) << 16) |
-                    ((arr(offset + 6) & 0xff) << 8) |
-                    (arr(offset + 7) & 0xff)
-                if offset + 8 + size > len then ()
-                else
-                    val content = new String(arr, offset + 8, size, java.nio.charset.StandardCharsets.UTF_8)
-                    val source  = if streamType == 2 then LogEntry.Source.Stderr else LogEntry.Source.Stdout
-                    f(content, source)
-                    parse(offset + 8 + size)
-                end if
-        end parse
-
-        parse(0)
-    end foreachDemuxFrame
-
-    /** Demultiplex Docker's multiplexed stdout/stderr stream format.
-      *
-      * Each frame: byte[0]=stream type (1=stdout,2=stderr), bytes[1-3]=padding, bytes[4-7]=uint32 big-endian size, then `size` bytes
-      * payload.
+    /** One-shot demux of a complete byte buffer into LogEntries. Used for non-streaming exec/logs paths where the entire response is
+      * already in memory.
       *
       * @param timestamps
-      *   When true, attempt to parse Docker timestamp prefix from each line (format: `2024-01-01T00:00:00.000000000Z content`)
+      *   When true, attempt to parse Docker timestamp prefix from each line (format: `2024-01-01T00:00:00.000000000Z content`).
       */
-    private def demuxStream(bytes: Span[Byte], timestamps: Boolean = false): Chunk[LogEntry] =
+    private def demuxStream(bytes: Span[Byte], timestamps: Boolean = false)(using Frame): Chunk[LogEntry] =
+        val frames = Stream.init(Seq(bytes)).into(FrameAssembler.pipe).run.eval
         val result = Chunk.newBuilder[LogEntry]
-        foreachDemuxFrame(bytes) { (content, source) =>
+        frames.foreach { case (content, source) =>
             content.split("\n").iterator.filter(_.nonEmpty).foreach { line =>
                 result.addOne(makeLogEntry(line, source, timestamps))
             }
@@ -1829,47 +1863,9 @@ final private[kyo] class HttpContainerBackend(
         result.result()
     end demuxStream
 
-    /** Streaming variant of [[parseRawLogStream]] that threads a [[LineAssembler]] across byte spans so lines straddling chunk boundaries
-      * are emitted as a single entry.
-      */
-    private def parseRawLogStreamAssembled(
-        bytes: Span[Byte],
-        assembler: LineAssembler,
-        timestamps: Boolean
-    ): Chunk[LogEntry] =
-        val text   = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-        val lines  = assembler.feed(text)
-        val result = Chunk.newBuilder[LogEntry]
-        lines.foreach { line =>
-            if line.nonEmpty then result.addOne(makeLogEntry(line, LogEntry.Source.Stdout, timestamps))
-        }
-        result.result()
-    end parseRawLogStreamAssembled
-
-    /** Streaming variant of [[demuxStream]] that maintains per-source [[LineAssembler]]s. Frame payloads are demultiplexed as in the
-      * non-streaming version, but each payload is fed into its source's assembler so multi-frame / multi-chunk lines remain intact.
-      */
-    private def demuxStreamAssembled(
-        bytes: Span[Byte],
-        stdoutAsm: LineAssembler,
-        stderrAsm: LineAssembler,
-        timestamps: Boolean
-    ): Chunk[LogEntry] =
-        val result = Chunk.newBuilder[LogEntry]
-        foreachDemuxFrame(bytes) { (content, source) =>
-            val asm   = if source == LogEntry.Source.Stderr then stderrAsm else stdoutAsm
-            val lines = asm.feed(content)
-            lines.foreach { line =>
-                if line.nonEmpty then result.addOne(makeLogEntry(line, source, timestamps))
-            }
-        }
-        result.result()
-    end demuxStreamAssembled
-
     /** Construct a [[LogEntry]] for a single non-empty log line, optionally parsing a Docker timestamp prefix.
       *
-      * Centralises the timestamp-conditional branching shared by [[parseRawLogStream]], [[parseRawLogStreamAssembled]], [[demuxStream]] and
-      * [[demuxStreamAssembled]].
+      * Centralises the timestamp-conditional branching shared by [[parseRawLogStream]] and [[demuxStream]].
       */
     private def makeLogEntry(line: String, source: LogEntry.Source, timestamps: Boolean): LogEntry =
         if timestamps then
@@ -2680,8 +2676,6 @@ private[kyo] object HttpContainerBackend:
       *   3. Fall back to the wire status.
       *
       * Decode failures, missing body, and out-of-range values fall through cleanly.
-      *
-      * Exposed at `private[kyo]` for unit testing of the pure parsing logic.
       */
     private[kyo] def canonicalStatus(httpStatus: Int, body: Maybe[String])(using Frame): Int =
         body match
@@ -2690,7 +2684,7 @@ private[kyo] object HttpContainerBackend:
                     case Result.Success(api) =>
                         inferStatusFromMessage(api).orElse(api.response.filter(c => c >= 100 && c < 600)).getOrElse(httpStatus)
                     case Result.Failure(_) => httpStatus
-                    case Result.Panic(_)   =>
+                    case Result.Panic(_) =>
                         httpStatus
             case Absent => httpStatus
 
@@ -2712,9 +2706,7 @@ private[kyo] object HttpContainerBackend:
         end if
     end inferStatusFromMessage
 
-    /** Minimum length of a Docker-formatted timestamp prefix (`2024-01-01T00:00:00Z` = 20 chars). A space index below this means the line
-      * has no timestamp prefix.
-      */
+    /** Minimum length of a Docker-formatted timestamp prefix (`2024-01-01T00:00:00Z` = 20 chars). */
     private val minDockerTimestampLength: Int = 20
 
     /** Detect available container runtime by checking Unix socket paths.
@@ -2772,8 +2764,6 @@ private[kyo] object HttpContainerBackend:
       *   - `npipe://...` — Windows named pipes not supported
       *   - `fd://N` — systemd file-descriptor handoff not supported
       *   - anything else — unrecognized URI format
-      *
-      * Exposed at `private[kyo]` for unit testing of pure parsing logic.
       */
     private[kyo] def parseHostUri(envName: String, value: String)(using Frame): String < Abort[ContainerException] =
         def fail(transport: String, suggestion: String): Nothing < Abort[ContainerException] =
@@ -2884,15 +2874,8 @@ private[kyo] object HttpContainerBackend:
         }
     end defaultCandidateSocketPaths
 
-    /** Exposes the default socket candidate list for cross-checking in integration tests.
-      *
-      * Returns the same paths that `defaultCandidateSocketPaths` would probe (based on `XDG_RUNTIME_DIR`, `HOME`, and OS), before filtering
-      * to existing paths and before CLI fallback. This lets tests verify that the HTTP backend's socket discovery logic agrees with
-      * `ContainerRuntimeBase.findSocket` on the same machine.
-      *
-      * The two code paths are intentionally NOT merged: `ContainerRuntimeBase.findSocket` is synchronous and may fall back to CLI process
-      * spawning, whereas this method returns a Kyo computation with full effect tracking. Duplication of the candidate list is acceptable
-      * here — it is a short, stable enumeration of well-known socket paths.
+    /** Default socket candidate list (based on `XDG_RUNTIME_DIR`, `HOME`, and OS), before filtering to existing paths and before CLI
+      * fallback.
       */
     private[kyo] def candidatesForTesting(using Frame): Seq[String] < (Async & Abort[ContainerException]) =
         defaultCandidateSocketPaths

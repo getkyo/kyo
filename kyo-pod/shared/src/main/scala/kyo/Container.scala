@@ -35,10 +35,19 @@ import kyo.internal.ShellBackend
   *   [[ContainerException]] Typed error hierarchy for container operations
   */
 final class Container private[kyo] (
+    /** The runtime container ID assigned by the backend (Docker/Podman). */
     val id: Container.Id,
+    /** The configuration this container was created with. Reflects creation-time values; runtime mutations (e.g. [[update]]) are not
+      * reflected here.
+      */
     val config: Container.Config,
     private[kyo] val backend: ContainerBackend,
-    private[kyo] val healthState: AtomicRef[ContainerHealthState]
+    private[kyo] val healthState: AtomicRef[ContainerHealthState],
+    /** Pre-attached `waitForExit` fiber for `autoRemove == true` containers. When `kill` or `stop` is invoked on such a container, we
+      * attach a `/wait` subscriber BEFORE sending the destructive signal so the exit code survives the daemon's auto-remove cleanup race. A
+      * subsequent `waitForExit` call reads the result from this fiber instead of issuing a new `/wait` (which would 404 or hang).
+      */
+    private[kyo] val pendingExit: AtomicRef[Maybe[Fiber[ExitCode, Abort[ContainerException]]]]
 ):
 
     import Container.*
@@ -55,7 +64,7 @@ final class Container private[kyo] (
 
     /** Send SIGTERM and wait up to `timeout` for graceful shutdown, then SIGKILL. */
     def stop(timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        backend.stop(id, timeout)
+        ensurePendingExit.andThen(backend.stop(id, timeout))
 
     /** Send SIGTERM to the container process. */
     def kill(using Frame): Unit < (Async & Abort[ContainerException]) =
@@ -63,7 +72,21 @@ final class Container private[kyo] (
 
     /** Send a signal to the container process immediately without waiting. */
     def kill(signal: Signal)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        backend.kill(id, signal)
+        ensurePendingExit.andThen(backend.kill(id, signal))
+
+    /** When `autoRemove == true`, attach a `waitForExit` fiber before any destructive signal so the exit code is captured before the daemon
+      * cleans the container up. Idempotent — subsequent calls are no-ops while a fiber is already attached.
+      */
+    private def ensurePendingExit(using Frame): Unit < (Async & Abort[ContainerException]) =
+        if !config.autoRemove then Kyo.unit
+        else
+            pendingExit.get.map {
+                case Present(_) => ()
+                case Absent =>
+                    Fiber.initUnscoped(backend.waitForExit(id)).map { fiber =>
+                        pendingExit.set(Present(fiber))
+                    }
+            }
 
     /** Restart with a 3-second stop timeout. */
     def restart(using Frame): Unit < (Async & Abort[ContainerException]) =
@@ -95,7 +118,10 @@ final class Container private[kyo] (
 
     /** Block until the container exits and return its exit code. */
     def waitForExit(using Frame): ExitCode < (Async & Abort[ContainerException]) =
-        backend.waitForExit(id)
+        pendingExit.get.map {
+            case Present(fiber) => fiber.get
+            case Absent         => backend.waitForExit(id)
+        }
 
     // --- Health ---
 
@@ -135,40 +161,18 @@ final class Container private[kyo] (
 
     // --- Inspection ---
 
-    /** The hostname clients use to reach a mapped port. Currently always `"127.0.0.1"` (local Docker); reserved for future remote-Docker
-      * support via `DOCKER_HOST`.
-      */
+    /** The hostname clients use to reach a mapped port. Always `"127.0.0.1"` for local Docker/Podman. */
     val host: String = "127.0.0.1"
 
-    /** Returns the host port that Docker bound to `containerPort`. Looks up the matching `containerPort/tcp` entry in this container's
+    private def explainPortMissing(info: Info, containerPort: Int): String =
+        Container.explainPortMissing(id, config.ports.map(_.containerPort).distinct, info, containerPort)
+
+    /** Returns the host port that the runtime bound to `containerPort`. Looks up the matching `containerPort/tcp` entry in this container's
       * inspect response and returns its bound host port. Useful when binding to host port 0 (auto-allocate).
       *
-      * Fails with `ContainerOperationException` if no binding exists for `containerPort` (common cause: the port wasn't included in the
-      * `Container.Config.ports` list).
+      * Fails with [[ContainerOperationException]] if no binding exists for `containerPort` (common cause: the port wasn't included in
+      * [[Container.Config.ports]]).
       */
-    /** Build the error message for a failed mappedPort lookup, distinguishing three causes: (1) container not running, (2) port configured
-      * but not yet visible via inspect (bug), (3) port not declared in config.
-      */
-    private def explainPortMissing(info: Info, containerPort: Int): String =
-        if info.state != State.Running then
-            val exitStr = info.exitCode match
-                case Absent                        => "none"
-                case Present(ExitCode.Success)     => "0"
-                case Present(ExitCode.Failure(c))  => c.toString
-                case Present(ExitCode.Signaled(s)) => s"signaled($s)"
-            s"Port $containerPort lookup failed: container ${id.value} is in state ${info.state} (exit=$exitStr). " +
-                s"Use `container.logsText` to see the cause."
-        else
-            val configured = config.ports.map(p => p.containerPort).distinct
-            if configured.contains(containerPort) then
-                s"Port $containerPort is not bound on container ${id.value}: configured but not yet observable via inspect. " +
-                    s"This shouldn't happen — `init` waits for port mappings before returning. Please report."
-            else
-                s"Port $containerPort was not declared in the container config. Configured ports: ${
-                        if configured.isEmpty then "none" else configured.mkString(", ")
-                    }."
-            end if
-
     def mappedPort(containerPort: Int)(using Frame): Int < (Async & Abort[ContainerException]) =
         inspect.map { info =>
             info.ports.find(b => b.containerPort == containerPort && b.protocol == Config.Protocol.TCP) match
@@ -192,7 +196,7 @@ final class Container private[kyo] (
     def statsStream(using Frame): Stream[Stats, Async & Abort[ContainerException]] =
         statsStream(200.millis)
 
-    /** Continuous resource usage polling at the given interval. */
+    /** @see [[statsStream]] */
     def statsStream(interval: Duration)(using Frame): Stream[Stats, Async & Abort[ContainerException]] =
         backend.statsStream(id, interval)
 
@@ -200,7 +204,7 @@ final class Container private[kyo] (
     def top(using Frame): TopResult < (Async & Abort[ContainerException]) =
         top("aux")
 
-    /** List running processes inside the container, like `ps`. Passes `psArgs` to ps. */
+    /** @see [[top]] */
     def top(psArgs: String)(using Frame): TopResult < (Async & Abort[ContainerException]) =
         backend.top(id, psArgs)
 
@@ -210,28 +214,32 @@ final class Container private[kyo] (
 
     // --- Exec ---
 
-    /** Run a command inside the container and wait for the result (exit code + stdout/stderr). */
-    def exec(command: String*)(using Frame): ExecResult < (Async & Abort[ContainerException]) =
-        backend.exec(id, Command(command*))
-
-    /** Run a command inside the container and wait for the result (exit code + stdout/stderr). */
+    /** Run a command inside the container and wait for the result (exit code + collected stdout/stderr). */
     def exec(command: Command)(using Frame): ExecResult < (Async & Abort[ContainerException]) =
         backend.exec(id, command)
+
+    /** @see [[exec(Command)]] */
+    def exec(command: String*)(using Frame): ExecResult < (Async & Abort[ContainerException]) =
+        backend.exec(id, Command(command*))
     end exec
 
-    /** Run a command and stream output as log entries as it arrives. */
+    /** Run a command and stream its output incrementally. Each emitted [[LogEntry]] carries a `source` flag distinguishing stdout from
+      * stderr. The stream completes when the exec process exits.
+      */
     def execStream(command: Command)(using Frame): Stream[LogEntry, Async & Abort[ContainerException]] =
         backend.execStream(id, command)
 
-    /** Run a command and stream output as log entries as it arrives. */
+    /** @see [[execStream(Command)]] */
     def execStream(command: String*)(using Frame): Stream[LogEntry, Async & Abort[ContainerException]] =
         backend.execStream(id, Command(command*))
 
-    /** Interactive exec with bidirectional stdin/stdout and terminal resize support. */
+    /** Interactive exec with bidirectional stdin/stdout and terminal resize support. The returned [[AttachSession]] is registered with the
+      * enclosing [[Scope]]; the underlying connection closes on scope exit.
+      */
     def execInteractive(command: Command)(using Frame): AttachSession < (Async & Abort[ContainerException] & Scope) =
         backend.execInteractive(id, command)
 
-    /** Interactive exec with bidirectional stdin/stdout and terminal resize support. */
+    /** @see [[execInteractive(Command)]] */
     def execInteractive(command: String*)(using Frame): AttachSession < (Async & Abort[ContainerException] & Scope) =
         backend.execInteractive(id, Command(command*))
 
@@ -241,7 +249,7 @@ final class Container private[kyo] (
     def attach(using Frame): AttachSession < (Async & Abort[ContainerException] & Scope) =
         attach(stdin = true, stdout = true, stderr = true)
 
-    /** Attach to the container's main process, selecting which streams to connect. */
+    /** @see [[attach]] */
     def attach(
         stdin: Boolean,
         stdout: Boolean,
@@ -356,13 +364,21 @@ final class Container private[kyo] (
 
     // --- Network ---
 
-    /** Attach this container to a network, optionally with DNS aliases. */
+    /** Attach this container to a network, optionally with DNS aliases.
+      *
+      * @see
+      *   [[Container.Network.connect]]
+      */
     def connectToNetwork(networkId: Network.Id, aliases: Chunk[String] = Chunk.empty)(using
         Frame
     ): Unit < (Async & Abort[ContainerException]) =
         backend.connectToNetwork(id, networkId, aliases)
 
-    /** Detach this container from a network. */
+    /** Detach this container from a network.
+      *
+      * @see
+      *   [[Container.Network.disconnect]]
+      */
     def disconnectFromNetwork(networkId: Network.Id, force: Boolean = false)(using Frame): Unit < (Async & Abort[ContainerException]) =
         backend.disconnectFromNetwork(id, networkId, force)
 
@@ -375,7 +391,11 @@ final class Container private[kyo] (
     def checkpoint(name: String)(using Frame): String < (Async & Abort[ContainerException]) =
         backend.checkpoint(id, name).andThen(name)
 
-    /** Restore a previously checkpointed container state. Requires CRIU installed on the host. */
+    /** Restore a previously checkpointed container state. Requires CRIU installed on the host.
+      *
+      * @param checkpoint
+      *   the checkpoint name returned by a prior [[checkpoint]] call.
+      */
     def restore(checkpoint: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         backend.restore(id, checkpoint)
 
@@ -435,10 +455,12 @@ object Container:
                 }.andThen {
                     b.start(cid).andThen {
                         AtomicRef.init(ContainerHealthState(Absent)).map { healthRef =>
-                            val container = new Container(cid, config, b, healthRef)
-                            runHealthCheck(container, config.healthCheck)
-                                .andThen(waitForPortMappings(container))
-                                .andThen(container)
+                            AtomicRef.init(Absent: Maybe[Fiber[ExitCode, Abort[ContainerException]]]).map { pendingRef =>
+                                val container = new Container(cid, config, b, healthRef, pendingRef)
+                                runHealthCheck(container, config.healthCheck)
+                                    .andThen(waitForPortMappings(container))
+                                    .andThen(container)
+                            }
                         }
                     }
                 }
@@ -481,22 +503,24 @@ object Container:
     def initUnscoped(config: Config)(using Frame): Container < (Async & Abort[ContainerException]) =
         currentBackend.map { b =>
             AtomicRef.init(ContainerHealthState(Absent)).map { healthRef =>
-                b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config)).map { cid =>
-                    val container = new Container(cid, config, b, healthRef)
-                    Abort.run[ContainerException] {
-                        b.start(cid)
-                            .andThen(runHealthCheck(container, config.healthCheck))
-                            .andThen(waitForPortMappings(container))
-                    }.map {
-                        case Result.Success(_)   => container
-                        case Result.Failure(err) =>
-                            // Cleanup on failure — best effort
-                            Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = false))
-                                .andThen(Abort.fail[ContainerException](err))
-                        case Result.Panic(ex) =>
-                            // Cleanup on panic — best effort
-                            Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = false))
-                                .andThen(Abort.panic[ContainerException](ex))
+                AtomicRef.init(Absent: Maybe[Fiber[ExitCode, Abort[ContainerException]]]).map { pendingRef =>
+                    b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config)).map { cid =>
+                        val container = new Container(cid, config, b, healthRef, pendingRef)
+                        Abort.run[ContainerException] {
+                            b.start(cid)
+                                .andThen(runHealthCheck(container, config.healthCheck))
+                                .andThen(waitForPortMappings(container))
+                        }.map {
+                            case Result.Success(_)   => container
+                            case Result.Failure(err) =>
+                                // Cleanup on failure — best effort
+                                Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = false))
+                                    .andThen(Abort.fail[ContainerException](err))
+                            case Result.Panic(ex) =>
+                                // Cleanup on panic — best effort
+                                Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = false))
+                                    .andThen(Abort.panic[ContainerException](ex))
+                        }
                     }
                 }
             }
@@ -580,7 +604,9 @@ object Container:
         currentBackend.map { b =>
             b.attachById(idOrName).map { case (resolvedId, config) =>
                 AtomicRef.init(ContainerHealthState(Absent)).map { healthRef =>
-                    new Container(resolvedId, config, b, healthRef)
+                    AtomicRef.init(Absent: Maybe[Fiber[ExitCode, Abort[ContainerException]]]).map { pendingRef =>
+                        new Container(resolvedId, config, b, healthRef, pendingRef)
+                    }
                 }
             }
         }
@@ -618,7 +644,7 @@ object Container:
     def withBackendConfig[A, S](config: BackendConfig)(v: => A < S)(using Frame): A < (Async & Abort[ContainerException] & S) =
         resolveBackend(config).map(b => backendLocal.let(Present(b))(v))
 
-    /** Override backend detection (Docker/Podman/socket) for all container operations in the enclosed block. */
+    /** @see [[withBackendConfig(BackendConfig)]] */
     def withBackendConfig[A, S](f: BackendConfig.type => BackendConfig)(v: => A < S)(using
         Frame
     ): A < (Async & Abort[ContainerException] & S) =
@@ -823,7 +849,7 @@ object Container:
 
     object Config:
 
-        /** Default Config value — arbitrary placeholder image (`scratch`), all other fields at their natural defaults. */
+        /** All-defaults instance. */
         val default: Config = new Config(
             image = ContainerImage(
                 name = "scratch",
@@ -873,7 +899,7 @@ object Container:
         ) derives CanEqual
 
         object PortBinding:
-            /** Default PortBinding — arbitrary placeholder `containerPort = 0`. */
+            /** All-defaults instance. */
             val default: PortBinding = new PortBinding(
                 containerPort = 0,
                 hostPort = 0,
@@ -895,7 +921,7 @@ object Container:
             final case class Tmpfs(target: Path, sizeBytes: Maybe[Long])                        extends Mount derives CanEqual
 
             object Bind:
-                /** Default Bind — arbitrary placeholder paths. */
+                /** All-defaults instance. */
                 val default: Bind = new Bind(source = Path(""), target = Path(""), readOnly = false)
 
                 def apply(source: Path, target: Path): Bind =
@@ -903,7 +929,7 @@ object Container:
             end Bind
 
             object Volume:
-                /** Default Volume mount — arbitrary placeholder name and target. */
+                /** All-defaults instance. */
                 val default: Volume = new Volume(name = Container.Volume.Id(""), target = Path(""), readOnly = false)
 
                 def apply(name: Container.Volume.Id, target: Path): Volume =
@@ -911,7 +937,7 @@ object Container:
             end Volume
 
             object Tmpfs:
-                /** Default Tmpfs — arbitrary placeholder target path. */
+                /** All-defaults instance. */
                 val default: Tmpfs = new Tmpfs(target = Path(""), sizeBytes = Absent)
 
                 def apply(target: Path): Tmpfs =
@@ -922,6 +948,7 @@ object Container:
         enum Protocol derives CanEqual:
             case TCP, UDP, SCTP
 
+            /** The lower-case name used by Docker/Podman CLI flags (e.g. `tcp`, `udp`, `sctp`). */
             def cliName: String = this match
                 case TCP  => "tcp"
                 case UDP  => "udp"
@@ -940,6 +967,7 @@ object Container:
             case UnlessStopped
             case OnFailure(maxRetries: Int)
 
+            /** The dashed name used by Docker/Podman CLI flags (e.g. `no`, `always`, `unless-stopped`, `on-failure`). */
             def cliName: String = this match
                 case No            => "no"
                 case Always        => "always"
@@ -982,8 +1010,14 @@ object Container:
       *   [[HealthCheck.noop]] no-op check for one-shot containers
       */
     abstract class HealthCheck private[kyo]:
+        /** Single-attempt readiness probe. Fails the effect with [[ContainerHealthCheckException]] (or any other [[ContainerException]])
+          * when the container is not yet ready; succeeds when it is.
+          */
         def check(container: Container)(using Frame): Unit < (Async & Abort[ContainerException])
 
+        /** Retry schedule applied between failed attempts. When the schedule is exhausted, [[Container.init]] surfaces a final
+          * [[ContainerHealthCheckException]] aggregating the most recent error messages.
+          */
         def schedule: Schedule
     end HealthCheck
 
@@ -1044,12 +1078,23 @@ object Container:
             new HealthCheck:
                 def check(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
                     container.exec(cmd).map { result =>
+                        // Compose the failure detail with whichever streams produced output, so the
+                        // recent-errors buffer captures the actual failure reason (not just the exit code).
+                        def detail(prefix: String): String =
+                            val out = result.stdout.trim
+                            val err = result.stderr.trim
+                            val parts =
+                                Seq(prefix) ++
+                                    (if out.nonEmpty then Seq(s"stdout: $out") else Seq.empty) ++
+                                    (if err.nonEmpty then Seq(s"stderr: $err") else Seq.empty)
+                            parts.mkString(" | ")
+                        end detail
                         if !result.isSuccess then
                             Abort.fail(ContainerHealthCheckException(
                                 container.id,
                                 s"exec exited ${result.exitCode}",
                                 attempts = 1,
-                                lastError = s"exit code: ${result.exitCode}"
+                                lastError = detail(s"exit code: ${result.exitCode}")
                             ))
                         else
                             exp match
@@ -1058,10 +1103,12 @@ object Container:
                                         Abort.fail(ContainerHealthCheckException(
                                             container.id,
                                             s"expected '$e' in exec output, got '${result.stdout.trim}'",
-                                            attempts = 1
+                                            attempts = 1,
+                                            lastError = detail(s"expected '$e'")
                                         ))
                                     else ()
                                 case Absent => ()
+                        end if
                     }
                 end check
 
@@ -1206,14 +1253,22 @@ object Container:
 
     // --- LogEntry ---
 
-    /** A single log line with source (stdout/stderr) and optional timestamp. */
+    /** A single log line emitted by a container.
+      *
+      * @param source
+      *   which stream emitted the line — [[LogEntry.Source.Stdout]] or [[LogEntry.Source.Stderr]]
+      * @param content
+      *   the line content with the trailing newline stripped
+      * @param timestamp
+      *   the daemon-attached timestamp; populated only when the caller requested timestamps (e.g. `Container.logs(..., timestamps = true)`)
+      */
     final case class LogEntry(source: LogEntry.Source, content: String, timestamp: Maybe[Instant]) derives CanEqual
 
     object LogEntry:
         enum Source derives CanEqual:
             case Stdout, Stderr
 
-        /** Default LogEntry — arbitrary placeholder source/content, no timestamp. */
+        /** All-defaults instance. */
         val default: LogEntry = new LogEntry(source = Source.Stdout, content = "", timestamp = Absent)
 
         def apply(source: Source, content: String): LogEntry =
@@ -1222,21 +1277,39 @@ object Container:
 
     // --- AttachSession ---
 
-    /** Bidirectional connection to a container's stdin/stdout/stderr. */
+    /** Bidirectional connection to a container's stdin/stdout/stderr. Obtained from [[Container.attach]] or [[Container.execInteractive]];
+      * the underlying connection is registered with the enclosing [[Scope]] and closes on scope exit.
+      */
     // CanEqual not derived — contains function-like methods (write, read, resize)
     abstract class AttachSession:
+        /** Send a UTF-8 encoded string to the container's stdin. */
         def write(data: String)(using Frame): Unit < (Async & Abort[ContainerException])
 
+        /** Send raw bytes to the container's stdin. */
         def write(data: Chunk[Byte])(using Frame): Unit < (Async & Abort[ContainerException])
 
+        /** Stream container output as [[LogEntry]] values; each entry's `source` distinguishes stdout from stderr. */
         def read(using Frame): Stream[LogEntry, Async & Abort[ContainerException]]
 
+        /** Resize the attached pseudo-terminal — only meaningful when the container was created with `allocateTty(true)`. */
         def resize(width: Int, height: Int)(using Frame): Unit < (Async & Abort[ContainerException])
     end AttachSession
 
     // --- Info ---
 
-    /** Detailed inspection result for a running or stopped container. */
+    /** Detailed inspection result for a running or stopped container.
+      *
+      * @param image
+      *   the image reference the container was created from
+      * @param imageId
+      *   the resolved image content-addressed ID at create time (stable even if `image` is later re-tagged)
+      * @param exitCode
+      *   the container's exit status; `Absent` while the container is still running
+      * @param pid
+      *   the host-side PID of the container's main process; meaningful only while running
+      * @param restartCount
+      *   number of times the runtime has restarted the container under its [[Config.RestartPolicy]]
+      */
     final case class Info(
         id: Id,
         name: String,
@@ -1261,6 +1334,7 @@ object Container:
     ) derives CanEqual
 
     object Info:
+        /** Top-level network attachment summary for a container — the "default" endpoint plus a per-network endpoint map. */
         final case class NetworkSettings(
             ipAddress: Maybe[String],
             gateway: Maybe[String],
@@ -1268,6 +1342,7 @@ object Container:
             networks: Dict[Network.Id, NetworkEndpoint]
         ) derives CanEqual
 
+        /** Per-network attachment details for a container. */
         final case class NetworkEndpoint(
             networkId: Network.Id,
             endpointId: String,
@@ -1291,8 +1366,13 @@ object Container:
     ) derives CanEqual
 
     object Stats:
+        /** CPU usage subset of a [[Stats]] snapshot. */
         final case class Cpu(totalUsage: Maybe[Long], systemUsage: Maybe[Long], onlineCpus: Int, usagePercent: Double) derives CanEqual
+
+        /** Memory usage subset of a [[Stats]] snapshot. */
         final case class Memory(usage: Long, maxUsage: Maybe[Long], limit: Maybe[Long], usagePercent: Double) derives CanEqual
+
+        /** Per-interface network counters subset of a [[Stats]] snapshot. */
         final case class Net(
             rxBytes: Long,
             rxPackets: Maybe[Long],
@@ -1303,7 +1383,11 @@ object Container:
             txErrors: Maybe[Long],
             txDropped: Maybe[Long]
         ) derives CanEqual
+
+        /** Block I/O counters subset of a [[Stats]] snapshot. */
         final case class BlockIo(readBytes: Long, writeBytes: Long) derives CanEqual
+
+        /** Process count subset of a [[Stats]] snapshot. */
         final case class Pids(current: Long, limit: Maybe[Long]) derives CanEqual
     end Stats
 
@@ -1319,7 +1403,11 @@ object Container:
 
     // --- FileStat ---
 
-    /** Filesystem metadata for a file inside a container. */
+    /** Filesystem metadata for a file inside a container.
+      *
+      * @param mode
+      *   POSIX-style mode bits (octal), e.g. `0755` for an executable directory. Includes file-type bits in the high nibble.
+      */
     final case class FileStat(
         name: String,
         size: Long,
@@ -1330,7 +1418,15 @@ object Container:
 
     // --- Summary ---
 
-    /** Lightweight container listing entry. */
+    /** Lightweight container listing entry.
+      *
+      * @param state
+      *   the structured lifecycle [[State]] (Running, Exited, etc.).
+      * @param status
+      *   the human-readable status string from the runtime (e.g. `"Up 2 minutes"`, `"Exited (0) 3 hours ago"`).
+      * @param mounts
+      *   mount source paths (host paths or volume names) — a flat string list, not the structured [[Config.Mount]] used at create time.
+      */
     final case class Summary(
         id: Id,
         names: Chunk[String],
@@ -1400,7 +1496,21 @@ object Container:
             extension (self: Id) def value: String = self
         end Id
 
-        /** Network creation configuration. */
+        /** Network creation configuration.
+          *
+          * @param name
+          *   the network name (must be unique per host).
+          * @param driver
+          *   the network driver — see [[NetworkDriver]] for built-in options.
+          * @param internal
+          *   when true, restricts external connectivity (the network has no default gateway).
+          * @param attachable
+          *   when true, standalone containers can attach to a swarm-scoped overlay network.
+          * @param enableIPv6
+          *   enables IPv6 networking for this network.
+          * @param ipam
+          *   optional explicit IP Address Management config; falls back to the driver default when `Absent`.
+          */
         final case class Config(
             name: String,
             driver: NetworkDriver,
@@ -1431,7 +1541,7 @@ object Container:
         end Config
 
         object Config:
-            /** Default Network Config — arbitrary placeholder name. */
+            /** All-defaults instance. */
             val default: Config = new Config(
                 name = "",
                 driver = NetworkDriver.Bridge,
@@ -1450,7 +1560,7 @@ object Container:
         ) derives CanEqual
 
         object IpamConfig:
-            /** Default IpamConfig. */
+            /** All-defaults instance. */
             val default: IpamConfig = new IpamConfig(driver = "default", config = Chunk.empty)
         end IpamConfig
 
@@ -1461,7 +1571,7 @@ object Container:
         ) derives CanEqual
 
         object IpamPool:
-            /** Default IpamPool — all fields `Absent`. */
+            /** All-defaults instance. */
             val default: IpamPool = new IpamPool(subnet = Absent, gateway = Absent, ipRange = Absent)
         end IpamPool
 
@@ -1570,7 +1680,13 @@ object Container:
             extension (self: Id) def value: String = self
         end Id
 
-        /** Volume creation configuration. */
+        /** Volume creation configuration.
+          *
+          * @param name
+          *   optional volume name; when `Absent`, the runtime assigns a random name.
+          * @param driver
+          *   the volume driver (defaults to `local` for the host filesystem driver).
+          */
         final case class Config(
             name: Maybe[Volume.Id],
             driver: String,
@@ -1591,7 +1707,7 @@ object Container:
         end Config
 
         object Config:
-            /** Default Volume Config — no name, driver `local`. */
+            /** All-defaults instance. */
             val default: Config = new Config(
                 name = Absent,
                 driver = "local",
@@ -1681,6 +1797,9 @@ object Container:
         given Render[Signal] = Render.from(_.name)
         extension (self: Signal)
 
+            /** The canonical signal name (e.g. `SIGTERM`, `SIGKILL`); for [[Signal.Custom]], normalizes to upper-case and prepends `SIG` if
+              * missing.
+              */
             def name: String = self match
                 case Custom(n) =>
                     val u = n.toUpperCase
@@ -1692,132 +1811,52 @@ object Container:
 
     // --- Capability enum ---
 
-    /** Linux capabilities for container security configuration. */
+    /** Linux capabilities for container security configuration. Case names are the standard POSIX capability names in CamelCase; the
+      * [[Capability.cliName]] extension converts them to the `CAP_*` form used on the wire. Use [[Capability.Custom]] for capabilities not
+      * enumerated here.
+      */
     enum Capability derives CanEqual:
-        /** Change file ownership */
         case Chown
-
-        /** Control kernel auditing */
         case AuditControl
-
-        /** Read audit log */
         case AuditRead
-
-        /** Write audit records */
         case AuditWrite
-
-        /** Block system suspend */
         case BlockSuspend
-
-        /** BPF operations */
         case Bpf
-
-        /** Checkpoint/restore operations */
         case CheckpointRestore
-
-        /** Bypass file permission checks */
         case DacOverride
-
-        /** Bypass read/search permission on files */
         case DacReadSearch
-
-        /** Bypass ownership checks on file operations */
         case Fowner
-
-        /** Don't clear set-user/group-ID bits on file modification */
         case Fsetid
-
-        /** Lock memory (mlock, mlockall) */
         case IpcLock
-
-        /** Bypass IPC permission checks */
         case IpcOwner
-
-        /** Send signals to any process */
         case Kill
-
-        /** Set file leases */
         case Lease
-
-        /** Set immutable and append-only file attributes */
         case LinuxImmutable
-
-        /** MAC configuration changes */
         case MacAdmin
-
-        /** Override MAC policy */
         case MacOverride
-
-        /** Create special files (mknod) */
         case Mknod
-
-        /** Network administration and configuration */
         case NetAdmin
-
-        /** Bind to privileged ports (below 1024) */
         case NetBindService
-
-        /** Network broadcasting */
         case NetBroadcast
-
-        /** Use raw and packet sockets */
         case NetRaw
-
-        /** Performance monitoring */
         case Perfmon
-
-        /** Set file capabilities */
         case Setfcap
-
-        /** Set group ID for process */
         case Setgid
-
-        /** Transfer capabilities between processes */
         case Setpcap
-
-        /** Set user ID for process */
         case Setuid
-
-        /** Broad system administration (mount, sethostname, etc.) */
         case SysAdmin
-
-        /** Reboot the system */
         case SysBoot
-
-        /** Use chroot */
         case SysChroot
-
-        /** Load and unload kernel modules */
         case SysModule
-
-        /** Set process scheduling priority (nice, setpriority) */
         case SysNice
-
-        /** Configure process accounting */
         case SysPacct
-
-        /** Trace and debug processes (ptrace) */
         case SysPtrace
-
-        /** Perform raw I/O port operations (iopl, ioperm) */
         case SysRawio
-
-        /** Override resource limits (ulimit) */
         case SysResource
-
-        /** Set the system clock */
         case SysTime
-
-        /** Configure TTY devices */
         case SysTtyConfig
-
-        /** Perform syslog operations */
         case Syslog
-
-        /** Set wake alarms */
         case WakeAlarm
-
-        /** Custom capability not in this enum */
         case Custom(capName: String)
     end Capability
 
@@ -1825,6 +1864,9 @@ object Container:
         given Render[Capability] = Render.from(_.cliName)
         extension (self: Capability)
 
+            /** The on-the-wire capability name in `UPPER_SNAKE` form (e.g. `NetAdmin` -> `NET_ADMIN`); [[Capability.Custom]] passes through
+              * unchanged.
+              */
             def cliName: String = self match
                 case Custom(n) => n
                 case other     =>
@@ -1854,13 +1896,14 @@ object Container:
 
     /** Target platform for container images (OS/architecture/variant). */
     final case class Platform(os: String, arch: String, variant: Maybe[String]) derives CanEqual:
+        /** The slash-separated platform reference Docker/Podman expects (e.g. `linux/amd64`, `linux/arm/v7`). */
         def reference: String = variant.map(v => s"$os/$arch/$v").getOrElse(s"$os/$arch")
     end Platform
 
     object Platform:
         given Render[Platform] = Render.from(_.reference)
 
-        /** Default Platform — arbitrary placeholder os/arch, no variant. */
+        /** All-defaults instance. */
         val default: Platform = new Platform(os = "", arch = "", variant = Absent)
 
         def parse(ref: String): Result[String, Platform] =
@@ -1930,6 +1973,9 @@ object Container:
             case other     => Custom(other)
         extension (self: NetworkDriver)
 
+            /** The lower-case driver name used by Docker/Podman CLI flags (e.g. `bridge`, `host`, `overlay`); [[NetworkDriver.Custom]]
+              * passes through unchanged.
+              */
             def cliName: String = self match
                 case Custom(n) => n
                 case None      => "none"
@@ -1941,13 +1987,52 @@ object Container:
 
     // --- Private internals ---
 
+    /** Build the error message for a failed mappedPort lookup, distinguishing three causes: (1) container not running, (2) port configured
+      * but not yet visible via inspect (bug), (3) port not declared in config.
+      */
+    private[kyo] def explainPortMissing(
+        id: Container.Id,
+        configuredPorts: Seq[Int],
+        info: Container.Info,
+        containerPort: Int
+    ): String =
+        if info.state != Container.State.Running then
+            val exitStr = info.exitCode match
+                case Absent                        => "none"
+                case Present(ExitCode.Success)     => "0"
+                case Present(ExitCode.Failure(c))  => c.toString
+                case Present(ExitCode.Signaled(s)) => s"signaled($s)"
+            s"Port $containerPort lookup failed: container ${id.value} is in state ${info.state} (exit=$exitStr). " +
+                s"Use `container.logsText` to see the cause."
+        else if configuredPorts.contains(containerPort) then
+            s"Port $containerPort is not bound on container ${id.value}: configured but not yet observable via inspect. " +
+                s"This shouldn't happen — `init` waits for port mappings before returning. Please report."
+        else
+            s"Port $containerPort was not declared in the container config. Configured ports: ${
+                    if configuredPorts.isEmpty then "none" else configuredPorts.mkString(", ")
+                }."
+    end explainPortMissing
+
     /** Cap on retained per-health-check error messages — keeps the diagnostic buffer bounded under long retry loops. */
     private[kyo] val healthCheckRecentErrorsCapacity: Int = 5
 
     /** Cap on each health-check error message length before it enters the diagnostic buffer. Prevents a single huge exception from
       * dominating the final failure report.
       */
-    private val healthCheckErrorMessageMaxLength: Int = 500
+    private[kyo] val healthCheckErrorMessageMaxLength: Int = 500
+
+    /** Truncate a single health-check error message to [[healthCheckErrorMessageMaxLength]] characters. */
+    private[kyo] def truncateHealthCheckError(message: String): String =
+        message.take(healthCheckErrorMessageMaxLength)
+
+    /** Append `errorMsg` to `recentErrors`, dropping the oldest when at [[healthCheckRecentErrorsCapacity]]. */
+    private[kyo] def appendRecentHealthCheckError(recentErrors: Seq[String], errorMsg: String): Seq[String] =
+        if recentErrors.length >= healthCheckRecentErrorsCapacity then recentErrors.tail :+ errorMsg
+        else recentErrors :+ errorMsg
+
+    /** Format `recentErrors` as space-separated `[...]`-wrapped messages for [[ContainerHealthCheckException.lastError]]. */
+    private[kyo] def formatRecentHealthCheckErrors(recentErrors: Seq[String]): String =
+        recentErrors.map(e => s"[$e]").mkString(" ")
 
     /** Threshold (milliseconds) above which elapsed-time strings switch from "Nms" to "Ns" formatting. */
     private val elapsedMillisFormatThreshold: Long = 1000L
@@ -2013,12 +2098,14 @@ object Container:
                                 container.healthState.set(ContainerHealthState(Present(hc)))
                             case failure =>
                                 val errorMsg = failure match
-                                    case Result.Failure(e) => e.getMessage.take(healthCheckErrorMessageMaxLength)
+                                    // Prefer the structured `lastError` for HealthCheckException — `getMessage` on
+                                    // a kyo exception returns Frame-banner text, which buries the actual cause.
+                                    case Result.Failure(e: ContainerHealthCheckException) if e.lastError.nonEmpty =>
+                                        truncateHealthCheckError(e.lastError)
+                                    case Result.Failure(e) => truncateHealthCheckError(e.getMessage)
                                     case _                 => "unknown error"
-                                val updatedErrors =
-                                    if recentErrors.length >= healthCheckRecentErrorsCapacity then recentErrors.tail :+ errorMsg
-                                    else recentErrors :+ errorMsg
-                                val nextAttempts = attempts + 1
+                                val updatedErrors = appendRecentHealthCheckError(recentErrors, errorMsg)
+                                val nextAttempts  = attempts + 1
                                 // Check if container is still running before retrying
                                 isContainerAlive(container).map { stillAlive =>
                                     if !stillAlive then ()
@@ -2032,12 +2119,11 @@ object Container:
                                                     val elapsedStr =
                                                         if elapsed >= elapsedMillisFormatThreshold then s"${elapsed / 1000}s"
                                                         else s"${elapsed}ms"
-                                                    val errorsStr = updatedErrors.map(e => s"[$e]").mkString(" ")
                                                     Abort.fail(ContainerHealthCheckException(
                                                         container.id,
                                                         s"retry schedule exhausted in $elapsedStr",
                                                         attempts = nextAttempts,
-                                                        lastError = errorsStr
+                                                        lastError = formatRecentHealthCheckErrors(updatedErrors)
                                                     ))
                                         }
                                 }

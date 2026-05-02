@@ -14,6 +14,13 @@ import kyo.internal.ContainerBackend.parseState
   *
   * IMPORTANT: Requires `docker` or `podman` CLI on PATH. Detection tries Podman first, then Docker.
   *
+  * @param cmd
+  *   The CLI binary to invoke (`"docker"` or `"podman"`).
+  * @param meter
+  *   Concurrency limiter applied to backend operations; defaults to [[kyo.Meter.Noop]] (no limit).
+  * @param streamBufferSize
+  *   Buffer size for [[execStream]] / [[logStream]] inter-fiber channels.
+  *
   * @see
   *   [[ContainerBackend]] the abstract contract this implements
   * @see
@@ -546,8 +553,30 @@ final private[kyo] class ShellBackend(
                 s"Concurrency meter closed during exec in ${id.value}",
                 "execution meter rejected the command"
             ))
-        }(meter.run(execOnce(id, command)))
+        }(meter.run(retryOnTransientUnavailable(execOnce(id, command))))
     end exec
+
+    /** Retry on transient `BackendUnavailable` (the SSH-bridge multiplex limit on macOS podman machines is the common cause when many shell
+      * invocations land at once). The backend itself is healthy — a short backoff lets the SSH server free a slot and the call succeeds.
+      */
+    private def retryOnTransientUnavailable[A](v: => A < (Async & Abort[ContainerException]))(
+        using Frame
+    ): A < (Async & Abort[ContainerException]) =
+        val schedule = Schedule.exponentialBackoff(initial = 50.millis, factor = 2, maxBackoff = 500.millis).take(3)
+        def attempt(remaining: Schedule): A < (Async & Abort[ContainerException]) =
+            Abort.runWith[ContainerException](v) {
+                case Result.Success(value) => value
+                case Result.Failure(e: ContainerBackendUnavailableException) =>
+                    Clock.now.map { now =>
+                        remaining.next(now) match
+                            case Present((delay, next)) => Async.sleep(delay).andThen(attempt(next))
+                            case Absent                 => Abort.fail[ContainerException](e)
+                    }
+                case Result.Failure(other) => Abort.fail[ContainerException](other)
+                case Result.Panic(t)       => Abort.panic[ContainerException](t)
+            }
+        attempt(schedule)
+    end retryOnTransientUnavailable
 
     /** Execute a command inside the container, mapping exit codes to typed errors.
       *
@@ -641,29 +670,29 @@ final private[kyo] class ShellBackend(
             // matching the HTTP backend's multiplexed-stream behavior. Drain both subprocess
             // pipes into a shared channel from a forked fiber; the main stream consumes the
             // channel and emits entries in arrival order.
-            val execCmd   = Command((cmd +: baseArgs.toSeq)*)
-            val stdoutAsm = new LineAssembler
-            val stderrAsm = new LineAssembler
+            val execCmd = Command((cmd +: baseArgs.toSeq)*)
             Scope.run {
                 Abort.runWith[CommandException](execCmd.spawn) {
                     case Result.Success(proc) =>
                         Channel.initUnscoped[LogEntry](streamBufferSize).map { channel =>
                             def drain(
                                 byteStream: Stream[Byte, Sync & Scope],
-                                asm: LineAssembler,
                                 source: LogEntry.Source
                             ): Unit < (Async & Abort[Closed]) =
-                                Scope.run(byteStream.foreachChunk { bytes =>
-                                    val text  = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                    val lines = asm.feed(text)
-                                    Kyo.foreachDiscard(lines.toSeq.filter(_.trim.nonEmpty)) { line =>
-                                        channel.put(LogEntry(source, line))
-                                    }
-                                })
+                                Scope.run(
+                                    byteStream
+                                        .mapChunkPure { bytes => Seq(new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)) }
+                                        .into(LineAssembler.pipe)
+                                        .foreachChunk { lines =>
+                                            Kyo.foreachDiscard(lines.toSeq.filter(_.trim.nonEmpty)) { line =>
+                                                channel.put(LogEntry(source, line))
+                                            }
+                                        }
+                                )
                             val drainBoth: Unit < (Async & Abort[Closed]) =
                                 Async.zip(
-                                    drain(proc.stdout, stdoutAsm, LogEntry.Source.Stdout),
-                                    drain(proc.stderr, stderrAsm, LogEntry.Source.Stderr)
+                                    drain(proc.stdout, LogEntry.Source.Stdout),
+                                    drain(proc.stderr, LogEntry.Source.Stderr)
                                 ).unit
                             Fiber.init(Abort.run[Closed](drainBoth).andThen(channel.close.unit)).andThen {
                                 channel.streamUntilClosed().emit
@@ -812,8 +841,7 @@ final private[kyo] class ShellBackend(
         }
     end logs
 
-    /** Parse log output lines into LogEntry, handling optional timestamps. */
-
+    /** @see [[ShellBackend.parseLogLines]] */
     private def parseLogLines(raw: String, source: LogEntry.Source, hasTimestamps: Boolean): Chunk[LogEntry] =
         ShellBackend.parseLogLines(raw, source, hasTimestamps)
 
@@ -882,18 +910,19 @@ final private[kyo] class ShellBackend(
                 if mergeStreams then Command((cmd +: args.toSeq)*).redirectErrorStream(true)
                 else Command((cmd +: args.toSeq)*)
 
-            // Per-stream state: lines spanning chunk boundaries are re-assembled. No flush on
-            // termination — matches prior behavior of dropping trailing partial lines.
-            val assembler = new LineAssembler
+            // Per-stream state: lines spanning chunk boundaries are re-assembled by `LineAssembler.pipe`.
+            // No flush on termination — matches prior behavior of dropping trailing partial lines.
             Scope.run {
                 Abort.runWith[CommandException](logsCmd.spawn) {
                     case Result.Success(proc) =>
                         val byteStream = if source == LogEntry.Source.Stderr then proc.stderr else proc.stdout
-                        byteStream.mapChunk { bytes =>
-                            val text  = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                            val lines = assembler.feed(text)
-                            Chunk.from(lines.toSeq.filter(_.nonEmpty).map(line => parseLogLine(line, source, timestamps)))
-                        }.emit
+                        byteStream
+                            .mapChunkPure { bytes => Seq(new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)) }
+                            .into(LineAssembler.pipe)
+                            .mapChunkPure { lines =>
+                                lines.collect { case line if line.nonEmpty => parseLogLine(line, source, timestamps) }
+                            }
+                            .emit
                     case Result.Failure(cmdEx) =>
                         Abort.fail[ContainerException](
                             ContainerOperationException(s"logStream failed for ${id.value}", cmdEx)
@@ -908,10 +937,7 @@ final private[kyo] class ShellBackend(
 
     // --- File Ops ---
 
-    /** Resolve a host path to its real/canonical path, following symlinks (e.g. /tmp -> /private/tmp on macOS).
-      *
-      * Uses kyo Command to run readlink, falling back to the original path on failure.
-      */
+    /** @see [[HttpContainerBackend.resolveHostPath]] for the rationale (the two backends use the same approach). */
     private def resolveHostPath(path: Path)(using Frame): String < Async =
         val pathStr = path.toString
         ContainerBackend.runCliQuery(
@@ -1214,11 +1240,81 @@ final private[kyo] class ShellBackend(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
         val ref = image.reference
-        val args = Chunk("pull") ++
+        val ctx = ResourceContext.Image(ref)
+        val baseArgs = Chunk("pull") ++
             platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
             Chunk(ref)
-        runUnit(ResourceContext.Image(ref), args.toSeq*)
+        withRegistryAuth(image, auth, ctx) { creds =>
+            // Podman accepts `--creds=user:password` directly on the pull. Docker does not — we have to
+            // `docker login` first (handled in withRegistryAuth) and pass an unflagged pull.
+            val args = creds match
+                case Present(c) if cmd.endsWith("podman") =>
+                    Chunk("pull", "--creds", c) ++
+                        platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
+                        Chunk(ref)
+                case _ => baseArgs
+            runUnit(ctx, args.toSeq*)
+        }
     end imagePull
+
+    /** Decode the Base64 `username:password` credential the API stored under [[ContainerImage.RegistryAuth.auths]] for the image's
+      * registry, and apply it to the surrounding pull/push action.
+      *
+      * On podman the decoded credential is forwarded by the caller as `--creds=user:pass`. On docker we run `docker login` against the
+      * registry first (with the same credential) so the subsequent pull/push picks the auth up from `~/.docker/config.json`, then run
+      * `docker logout` afterwards as a best-effort cleanup. When `auth` is `Absent` or no credential matches, the action runs without any
+      * login.
+      */
+    private def withRegistryAuth(image: ContainerImage, auth: Maybe[ContainerImage.RegistryAuth], ctx: ResourceContext)(
+        run: Maybe[String] => Unit < (Async & Abort[ContainerException])
+    )(using Frame): Unit < (Async & Abort[ContainerException]) =
+        val creds: Maybe[String] = auth.flatMap { a =>
+            val key = image.registry.getOrElse(ContainerImage.Registry.DockerHub)
+            a.auths.get(key).orElse {
+                if key == ContainerImage.Registry.DockerHub then
+                    a.auths.get(ContainerImage.Registry("https://index.docker.io/v1/"))
+                else Absent
+            }
+        }.map { encoded =>
+            new String(java.util.Base64.getDecoder.decode(encoded), java.nio.charset.StandardCharsets.UTF_8)
+        }
+        creds match
+            case Absent                               => run(Absent)
+            case Present(c) if cmd.endsWith("podman") =>
+                // Podman embeds the credential on the pull/push args; nothing to wire here.
+                run(Present(c))
+            case Present(c) =>
+                // Docker: login → action → logout (best-effort).
+                val server = image.registry.map(_.value).getOrElse("docker.io")
+                val (user, password) = c.split(":", 2) match
+                    case Array(u, p) => (u, p)
+                    case Array(u)    => (u, "")
+                    case _           => ("", "")
+                val loginCmd = Command(cmd, "login", "--username", user, "--password-stdin", server)
+                    .stdin(Process.Input.FromStream(
+                        new java.io.ByteArrayInputStream(password.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                    ))
+                Abort.runWith[CommandException](loginCmd.textWithExitCode) {
+                    case Result.Success((_, exit)) if exit.isSuccess =>
+                        // Manual try/finally — Sync.ensure can't take an Async finalizer (logout calls
+                        // through the daemon CLI which is Async). Logout is best-effort.
+                        Abort.run[ContainerException](run(Absent)).map { result =>
+                            Abort.run[ContainerException](runUnit(ctx, "logout", server)).map { _ =>
+                                result match
+                                    case Result.Success(_)   => ()
+                                    case Result.Failure(err) => Abort.fail[ContainerException](err)
+                                    case Result.Panic(ex)    => Abort.panic(ex)
+                            }
+                        }
+                    case Result.Success((out, _)) =>
+                        Abort.fail[ContainerException](mapError(out, ctx, Seq("login", server)))
+                    case Result.Failure(cmdEx) =>
+                        Abort.fail[ContainerException](ContainerOperationException(s"docker login failed for $server", cmdEx))
+                    case Result.Panic(ex) =>
+                        Abort.fail[ContainerException](ContainerBackendException(s"docker login panicked for $server", ex))
+                }
+        end match
+    end withRegistryAuth
 
     def imagePullWithProgress(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
@@ -1478,27 +1574,42 @@ final private[kyo] class ShellBackend(
     end mapPodmanImageSearchToResult
 
     def imageHistory(image: ContainerImage)(using Frame): Chunk[ContainerImage.HistoryEntry] < (Async & Abort[ContainerException]) =
-        run(ResourceContext.Image(image.reference), "history", "--format", "{{json .}}", image.reference).map { output =>
-            if output.trim.isEmpty then Chunk.empty[ContainerImage.HistoryEntry]
-            else
-                Kyo.foreach(Chunk.from(output.trim.split("\n"))) { line =>
-                    decodeJson[ImageHistoryJson](line.trim).map { dto =>
-                        val id         = if dto.ID.nonEmpty then dto.ID else dto.id
-                        val createdStr = if dto.CreatedAt.nonEmpty then dto.CreatedAt else dto.created
-                        val createdAt  = if createdStr.isEmpty then Instant.Epoch else parseTimestamp(createdStr)
-                        val size       = if dto.size > 0 then dto.size else parseSizeString(dto.Size)
-                        val comment    = if dto.Comment.nonEmpty then dto.Comment else dto.comment
-                        ContainerImage.HistoryEntry(
-                            id = id,
-                            createdAt = createdAt,
-                            createdBy = dto.CreatedBy,
-                            size = size,
-                            tags = Chunk.empty,
-                            comment = comment
-                        )
+        val ref = image.reference
+        run(ResourceContext.Image(ref), "history", "--format", "{{json .}}", ref).map { output =>
+            val parsed: Chunk[ContainerImage.HistoryEntry] < (Async & Abort[ContainerException]) =
+                if output.trim.isEmpty then Chunk.empty[ContainerImage.HistoryEntry]
+                else
+                    Kyo.foreach(Chunk.from(output.trim.split("\n"))) { line =>
+                        decodeJson[ImageHistoryJson](line.trim).map { dto =>
+                            val id         = if dto.ID.nonEmpty then dto.ID else dto.id
+                            val createdStr = if dto.CreatedAt.nonEmpty then dto.CreatedAt else dto.created
+                            val createdAt  = if createdStr.isEmpty then Instant.Epoch else parseTimestamp(createdStr)
+                            val size       = if dto.size > 0 then dto.size else parseSizeString(dto.Size)
+                            val comment    = if dto.Comment.nonEmpty then dto.Comment else dto.comment
+                            ContainerImage.HistoryEntry(
+                                id = id,
+                                createdAt = createdAt,
+                                createdBy = dto.CreatedBy,
+                                size = size,
+                                tags = Chunk.empty,
+                                comment = comment
+                            )
+                        }
                     }
-                }
+            parsed.map { es =>
+                // `podman history` reports each layer's source-comment (e.g. "FROM …:latest");
+                // the user's `commit -m` text lives on the image-level Comment instead.
+                // Overlay it on the head entry so callers see the same shape as docker.
+                if cmd.endsWith("podman") && es.nonEmpty then
+                    run(ResourceContext.Image(ref), "image", "inspect", "--format", "{{.Comment}}", ref).map { out =>
+                        val imgComment = out.trim
+                        if imgComment.isEmpty then es
+                        else es.updated(0, es(0).copy(comment = imgComment))
+                    }
+                else (es: Chunk[ContainerImage.HistoryEntry] < (Async & Abort[ContainerException]))
+            }
         }
+    end imageHistory
 
     def imagePrune(filters: Dict[String, Chunk[String]])(using Frame): PruneResult < (Async & Abort[ContainerException]) =
         val args = Chunk("image", "prune", "-f") ++ filterFlags(filters)
@@ -1520,7 +1631,11 @@ final private[kyo] class ShellBackend(
         author: String,
         pause: Boolean
     )(using Frame): String < (Async & Abort[ContainerException]) =
+        // Podman defaults to OCI image format which has no `Comment` field;
+        // `-m` is rejected unless we also pass `-f docker`.
+        val needsDockerFormat = comment.nonEmpty && cmd.endsWith("podman")
         val args = Chunk("commit") ++
+            (if needsDockerFormat then Chunk("-f", "docker") else Chunk.empty) ++
             (if comment.nonEmpty then Chunk("-m", comment) else Chunk.empty) ++
             (if author.nonEmpty then Chunk("-a", author) else Chunk.empty) ++
             (if !pause then Chunk("--pause=false") else Chunk.empty) ++
@@ -1796,9 +1911,15 @@ final private[kyo] class ShellBackend(
     def volumeRemove(id: Volume.Id, force: Boolean)(using Frame): Unit < (Async & Abort[ContainerException]) =
         val ctx = ResourceContext.Volume(id)
         if force then
-            // When force=true, pass --force to CLI and skip the pre-check; the CLI will handle
-            // removal even if containers reference the volume.
-            runUnit(ctx, "volume", "rm", "-f", id.value)
+            // `docker/podman volume rm -f` rejects removal when ANY container (including stopped) references the
+            // volume — `--force` only matters for "in use by running containers". To make `force=true` actually
+            // tear the volume down, force-remove every referencing container first, then drop the volume.
+            run(ctx, "ps", "-a", "--filter", s"volume=${id.value}", "--format", "{{.ID}}").map { output =>
+                val containerIds = output.trim.split("\n").iterator.map(_.trim).filter(_.nonEmpty).toSeq
+                Kyo.foreach(Chunk.from(containerIds)) { cid =>
+                    Abort.run[ContainerException](runUnit(ResourceContext.Container(Container.Id(cid)), "rm", "-f", cid)).unit
+                }.andThen(runUnit(ctx, "volume", "rm", "-f", id.value))
+            }
         else
             // Check if any containers (including stopped) reference this volume before removing
             run(ctx, "ps", "-a", "--filter", s"volume=${id.value}", "--format", "{{.ID}}").map { output =>
@@ -1927,38 +2048,12 @@ final private[kyo] class ShellBackend(
 
     private def lastLine(output: String): String = ShellBackend.lastLine(output)
 
-    /** Map shell command error output to a typed ContainerException.
-      *
-      * Classification uses a combination of exit codes and string matching on stderr/stdout:
-      *   - Exit code 125: Podman infrastructure error (container not found, not running, etc.)
-      *   - Exit code 126: Command cannot be invoked (permission denied or not executable)
-      *   - Exit code 127: Command not found in container
-      *   - Exit code 1: Generic error — must use string matching on output to classify
-      *   - All other codes: Fall through to string matching on the combined output
-      *
-      * String matching is needed because Docker always uses exit code 1 for daemon errors, while Podman uses 125. Both engines emit
-      * descriptive error messages on stderr that we match against known patterns to produce specific exception types.
-      */
-    /** Table of (patterns, builder) pairs for simple error cases in [[mapError]]. First-match-wins: the ordering below is the CONTRACT — do
-      * NOT reorder entries.
-      *
-      * Ordering rationale (preserved from the original if/else ladder): [1] NoSuchContainer — before Conflict: a "no such container"
-      * message must not fall into conflict. [2] ImageNotFound — before Conflict: image-not-found phrases must not match conflict handler.
-      * [3] Conflict — general name/ID conflict; comes after the specific not-found checks. [4] AlreadyRunning — before AlreadyStopped:
-      * disjoint in practice but ordered for robustness. [5] AlreadyStopped — after AlreadyRunning. [6] VolumeNotFound — specific
-      * volume-missing check before generic backend-unavailable. [7] BackendUnavailable — broad "cannot connect" patterns; after
-      * resource-missing checks. [8] VolumeInUse — before AuthFailed: "volume in use" must not be caught by "denied" in AuthFailed. [9]
-      * NetworkEndpointExists — before AuthFailed for the same reason. [10] AuthFailed — last simple entry; "denied" is broad, must come
-      * after all specific checks.
-      *
-      * Two entries are kept as explicit else-if branches AFTER the table lookup because they require logic (AND-conditions or regex) that
-      * cannot be expressed as a plain Seq[String] with exists:
-      *   - network-not-found: two-phrase AND condition (lower.contains("network") && lower.contains("not found")).
-      *   - PortConflict: regex extraction of the port number from output.
-      *   - initializing source: multi-step string surgery to extract the image ref.
-      */
     private type ErrorEntry = (Seq[String], (ResourceContext, String) => ContainerException)
 
+    /** Patterns-to-builder pairs for the common error classifications. First-match-wins; the per-entry `[N]` comments below pin the
+      * ordering contract — do not reorder. Two cases (network-not-found AND, PortConflict regex, "initializing source" surgery) live as
+      * explicit else-if branches in [[mapError]] because they need logic the table can't express.
+      */
     private def errorTable(using Frame): Seq[ErrorEntry] = Seq(
         // [1] NoSuchContainer — before Conflict
         ErrorPatterns.NoSuchContainer -> { (ctx, out) =>
@@ -2013,45 +2108,66 @@ final private[kyo] class ShellBackend(
         }
     )
 
+    /** Classify shell command error output into a typed [[ContainerException]].
+      *
+      * Docker uses exit code 1 for daemon errors; Podman uses 125. Both engines emit stable English phrases on stderr — those phrases are
+      * the primary classification signal. Looks up [[errorTable]] first for simple match-and-build cases; falls through to inline branches
+      * for the three patterns that need richer logic (network-not-found AND, PortConflict regex, initializing-source surgery).
+      */
     private def mapError(output: String, ctx: ResourceContext, args: Seq[String])(using Frame): ContainerException =
         val lower = output.toLowerCase
 
         def matchesAny(patterns: Seq[String]): Boolean = patterns.exists(lower.contains)
 
-        errorTable
-            .find { case (patterns, _) => matchesAny(patterns) }
-            .map { case (_, builder) => builder(ctx, output) }
-            .getOrElse {
-                // network-not-found: two-phrase AND condition — not expressible as plain Seq[String] with exists
-                if lower.contains("network") && lower.contains("not found") then
-                    ctx match
-                        case ResourceContext.Network(id) => ContainerNetworkMissingException(id)
-                        case _                           => ContainerOperationException(s"Network not found during ${ctx.describe}", output)
-                // PortConflict: needs regex extraction of the port number from output
-                else if matchesAny(ErrorPatterns.PortConflict) then
-                    val portPattern = """(\d+)""".r
-                    val port = portPattern.findFirstIn(
-                        Maybe.fromOption(output.split("port").lastOption).getOrElse("")
-                    ).flatMap(_.toIntOption).getOrElse(0)
-                    ContainerPortConflictException(port, output)
-                // initializing source: multi-step string surgery to extract the image ref
-                else if lower.contains("initializing source") then
-                    val dockerIdx = output.indexOf("docker://")
-                    val imageRef =
-                        if dockerIdx >= 0 then
-                            val afterPrefix = output.substring(dockerIdx + "docker://".length)
-                            val colonSpace  = afterPrefix.indexOf(": ")
-                            if colonSpace >= 0 then afterPrefix.substring(0, colonSpace)
-                            else afterPrefix.takeWhile(!_.isWhitespace)
-                        else
-                            ctx match
-                                case ResourceContext.Image(ref) => ref
-                                case other                      => other.describe
-                    ContainerImageMissingException(ContainerImage(imageRef))
-                else
-                    ContainerOperationException(s"${cmd} ${args.mkString(" ")} failed", output)
-                end if
-            }
+        // PortConflict is checked first because podman's port-conflict message contains
+        // "address already in use" which would otherwise match the broader Conflict pattern.
+        // Extract the host port from the bind expression:
+        //   docker: "Bind for 0.0.0.0:52915 failed: port 7136 is already allocated"
+        //   podman: "listen tcp :12346: bind: address already in use"
+        // The regex anchors on `<ip>?:NNNN` so it never picks up unrelated digits.
+        if matchesAny(ErrorPatterns.PortConflict) then
+            val bindPattern = """(?:0\.0\.0\.0|\[::\]|::)?:(\d+)""".r
+            val port = bindPattern.findFirstMatchIn(output)
+                .flatMap(m => m.group(1).toIntOption)
+                .getOrElse(0)
+            ContainerPortConflictException(port, output)
+        else
+            errorTable
+                .find { case (patterns, _) => matchesAny(patterns) }
+                .map { case (_, builder) => builder(ctx, output) }
+                .getOrElse {
+                    // network-not-found: two-phrase AND condition — not expressible as plain Seq[String] with exists
+                    if lower.contains("network") && lower.contains("not found") then
+                        ctx match
+                            case ResourceContext.Network(id) => ContainerNetworkMissingException(id)
+                            case _ => ContainerOperationException(s"Network not found during ${ctx.describe}", output)
+                    // initializing source with an auth signal — registry rejected the request, not the image
+                    // missing. Common shapes: `403 (Forbidden)`, `401 (Unauthorized)`, "bearer token", "denied".
+                    else if lower.contains("initializing source") &&
+                        (lower.contains("403") || lower.contains("401") ||
+                            lower.contains("forbidden") || lower.contains("unauthorized") ||
+                            lower.contains("bearer token") || lower.contains("denied"))
+                    then
+                        ContainerAuthException(ctx.describe, output)
+                    // initializing source: multi-step string surgery to extract the image ref
+                    else if lower.contains("initializing source") then
+                        val dockerIdx = output.indexOf("docker://")
+                        val imageRef =
+                            if dockerIdx >= 0 then
+                                val afterPrefix = output.substring(dockerIdx + "docker://".length)
+                                val colonSpace  = afterPrefix.indexOf(": ")
+                                if colonSpace >= 0 then afterPrefix.substring(0, colonSpace)
+                                else afterPrefix.takeWhile(!_.isWhitespace)
+                            else
+                                ctx match
+                                    case ResourceContext.Image(ref) => ref
+                                    case other                      => other.describe
+                        ContainerImageMissingException(ContainerImage(imageRef))
+                    else
+                        ContainerOperationException(s"${cmd} ${args.mkString(" ")} failed", output)
+                    end if
+                }
+        end if
     end mapError
 
     /** Named constants for error message patterns used in [[mapError]].
@@ -2222,7 +2338,18 @@ private[kyo] object ShellBackend:
         end if
     end parseTopOutput
 
-    /** Auto-detect an available container runtime. Tries podman first, then docker. */
+    /** Auto-detect an available container runtime by probing CLI binaries on `PATH`.
+      *
+      * Resolution order:
+      *   1. `podman version` — if it exits successfully, the resulting backend uses the `podman` CLI.
+      *   2. `docker version` — if it exits successfully, the resulting backend uses the `docker` CLI.
+      *
+      * Failures and panics from one probe never short-circuit the next: a panic on `podman` is logged and we fall through to `docker`.
+      * Fails with [[ContainerBackendUnavailableException]] only when neither binary is usable.
+      *
+      * @see
+      *   [[HttpContainerBackend.detect]] for the socket-based companion path used when no CLI is available.
+      */
     def detect(
         meter: Meter = Meter.Noop,
         streamBufferSize: Int = defaultStreamBufferSize

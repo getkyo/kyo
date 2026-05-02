@@ -423,20 +423,6 @@ class ContainerTest extends Test:
         assert(a == b, s"String and kyo.Path constructors should produce equal values: $a vs $b")
     }
 
-    "host accessor" - {
-        "is the literal '127.0.0.1' on every Container instance" in {
-            // The `host` field is a constant on the Container class — no backend access needed.
-            // Construct a Container with null backend/healthState since reading `host` never dereferences them.
-            val c = new Container(
-                Container.Id("unit-test-host"),
-                Container.Config(ContainerImage("alpine:3.19")),
-                backend = null,
-                healthState = null
-            )
-            assert(c.host == "127.0.0.1")
-        }
-    }
-
     // =========================================================================
     // HttpContainerBackend env var parsing — pure parsing, no Docker required.
     // Validates that DOCKER_HOST / CONTAINER_HOST values are interpreted with
@@ -871,6 +857,408 @@ class ContainerTest extends Test:
             ))
             val img = assertSuccess(ContainerImage.parse("quay.io/kyo-test/nope:v1"))
             assert(kyo.internal.HttpContainerBackend.registryAuthHeader(img, auth) == Absent)
+        }
+    }
+
+    // =========================================================================
+    // Container.Config builder
+    // =========================================================================
+
+    "Config" - {
+        "minimal config only requires image" in {
+            val config = Container.Config("alpine")
+            assert(config.image.reference.contains("alpine"))
+            assert(config.ports.isEmpty)
+            assert(config.mounts.isEmpty)
+            assert(config.labels.isEmpty)
+            assert(config.dns.isEmpty)
+            assert(config.extraHosts.isEmpty)
+            assert(config.memory == Absent)
+            assert(!config.privileged)
+            assert(!config.interactive)
+            assert(!config.allocateTty)
+            assert(!config.autoRemove)
+        }
+
+        "builder chains are immutable" in {
+            val base     = Container.Config("alpine")
+            val withName = base.name("test")
+            val withPort = base.port(80, 8080)
+            assert(base.name == Absent)
+            assert(base.ports.isEmpty)
+            assert(withName.name == Present("test"))
+            assert(withName.ports.isEmpty)
+            assert(withPort.name == Absent)
+            assert(withPort.ports.size == 1)
+        }
+
+        "port(container, host) adds a PortBinding with both ports" in {
+            val config = Container.Config("alpine").port(80, 8080)
+            assert(config.ports.size == 1)
+            assert(config.ports.head.containerPort == 80)
+            assert(config.ports.head.hostPort == 8080)
+            assert(config.ports.head.protocol == Container.Config.Protocol.TCP)
+        }
+
+        "port(container) adds a PortBinding with random host port" in {
+            val config = Container.Config("alpine").port(80)
+            assert(config.ports.size == 1)
+            assert(config.ports.head.containerPort == 80)
+            assert(config.ports.head.hostPort == 0)
+        }
+
+        "multiple port calls accumulate" in {
+            val config = Container.Config("app").port(80, 8080).port(443, 8443)
+            assert(config.ports.size == 2)
+            assert(config.ports(0).containerPort == 80)
+            assert(config.ports(1).containerPort == 443)
+        }
+
+        "bind mount via builder" in {
+            val config = Container.Config("alpine").bind(Path("/host"), Path("/container"))
+            assert(config.mounts.size == 1)
+            config.mounts.head match
+                case Container.Config.Mount.Bind(s, t, ro) =>
+                    assert(s == Path("/host"))
+                    assert(t == Path("/container"))
+                    assert(!ro)
+                case other => fail(s"Expected Bind mount, got $other")
+            end match
+        }
+
+        "volume mount via builder" in {
+            val config = Container.Config("alpine").volume(Container.Volume.Id("data"), Path("/var/data"))
+            assert(config.mounts.size == 1)
+            config.mounts.head match
+                case Container.Config.Mount.Volume(n, t, ro) =>
+                    assert(n == Container.Volume.Id("data"))
+                    assert(t == Path("/var/data"))
+                    assert(!ro)
+                case other => fail(s"Expected Volume mount, got $other")
+            end match
+        }
+
+        "tmpfs mount via builder" in {
+            val config = Container.Config("alpine").tmpfs(Path("/tmp/test"))
+            assert(config.mounts.size == 1)
+            config.mounts.head match
+                case Container.Config.Mount.Tmpfs(t, sz) =>
+                    assert(t == Path("/tmp/test"))
+                    assert(sz == Absent)
+                case other => fail(s"Expected Tmpfs mount, got $other")
+            end match
+        }
+
+        "mount with function DSL" in {
+            val config = Container.Config("alpine")
+                .mount(_.Bind(Path("/a"), Path("/b"), readOnly = true))
+            assert(config.mounts.size == 1)
+            config.mounts.head match
+                case Container.Config.Mount.Bind(s, t, ro) =>
+                    assert(s == Path("/a"))
+                    assert(t == Path("/b"))
+                    assert(ro)
+                case other => fail(s"Expected Bind mount, got $other")
+            end match
+        }
+
+        "multiple mount calls accumulate in order" in {
+            val config = Container.Config("alpine")
+                .bind(Path("/a"), Path("/b"))
+                .volume(Container.Volume.Id("v"), Path("/c"))
+                .tmpfs(Path("/d"))
+            assert(config.mounts.size == 3)
+            config.mounts(0) match
+                case _: Container.Config.Mount.Bind => succeed
+                case other                          => fail(s"Expected Bind mount, got $other")
+            config.mounts(1) match
+                case _: Container.Config.Mount.Volume => succeed
+                case other                            => fail(s"Expected Volume mount, got $other")
+            config.mounts(2) match
+                case _: Container.Config.Mount.Tmpfs => succeed
+                case other                           => fail(s"Expected Tmpfs mount, got $other")
+        }
+
+        "networkMode with function DSL" in {
+            val config = Container.Config("alpine").networkMode(_.Host)
+            assert(config.networkMode == Container.Config.NetworkMode.Host)
+        }
+
+        "restartPolicy with function DSL" in {
+            val config = Container.Config("alpine").restartPolicy(_.Always)
+            assert(config.restartPolicy == Container.Config.RestartPolicy.Always)
+        }
+
+        "restartPolicy OnFailure with maxRetries" in {
+            val config = Container.Config("alpine").restartPolicy(_.OnFailure(5))
+            config.restartPolicy match
+                case Container.Config.RestartPolicy.OnFailure(n) => assert(n == 5)
+                case other                                       => fail(s"Expected OnFailure(5), got $other")
+        }
+
+        "label adds a single label" in {
+            val config = Container.Config("alpine").label("env", "test")
+            assert(config.labels.is(Dict("env" -> "test")))
+        }
+
+        "labels merges with existing" in {
+            val config = Container.Config("alpine")
+                .label("a", "1")
+                .labels(Dict("b" -> "2", "c" -> "3"))
+            assert(config.labels.is(Dict("a" -> "1", "b" -> "2", "c" -> "3")))
+        }
+
+        "labels overwrites on conflict" in {
+            val config = Container.Config("alpine")
+                .label("a", "1")
+                .labels(Dict("a" -> "2"))
+            assert(config.labels.is(Dict("a" -> "2")))
+        }
+
+        "dns accumulates across calls" in {
+            val config = Container.Config("alpine").dns("8.8.8.8").dns("8.8.4.4")
+            assert(config.dns == Chunk("8.8.8.8", "8.8.4.4"))
+        }
+
+        "extraHost adds structured entry" in {
+            val config = Container.Config("alpine").extraHost("myhost", "10.0.0.1")
+            assert(config.extraHosts.size == 1)
+            assert(config.extraHosts.head.hostname == "myhost")
+            assert(config.extraHosts.head.ip == "10.0.0.1")
+        }
+
+        "command(String*) creates Command from args" in {
+            val config = Container.Config("alpine").command("sh", "-c", "echo hello")
+            assert(config.command.isDefined)
+            assert(config.command.map(_.args) == Present(Chunk("sh", "-c", "echo hello")))
+        }
+
+        "command(Command) preserves env and cwd" in {
+            val cmd = Command("sh", "-c", "echo hello")
+                .envAppend(Map("FOO" -> "bar"))
+                .cwd(Path("/tmp"))
+            val config = Container.Config("alpine").command(cmd)
+            assert(config.command.map(_.args) == Present(Chunk("sh", "-c", "echo hello")))
+            assert(config.command.map(_.env) == Present(Map("FOO" -> "bar")))
+            assert(config.command.flatMap(_.workDir) == Present(Path("/tmp")))
+        }
+
+        "default command is Absent — uses image CMD/ENTRYPOINT" in {
+            val config = Container.Config("alpine")
+            assert(config.command.isEmpty)
+        }
+
+        "default restartPolicy is No" in {
+            assert(Container.Config("alpine").restartPolicy == Container.Config.RestartPolicy.No)
+        }
+
+        "default stopTimeout is 3 seconds" in {
+            assert(Container.Config("alpine").stopTimeout == 3.seconds)
+        }
+
+        "resource limit builders set values" in {
+            val config = Container.Config("alpine")
+                .memory(512 * 1024 * 1024L)
+                .cpuLimit(1.5)
+                .cpuAffinity("0-3")
+                .maxProcesses(100)
+            assert(config.memory == Present(512 * 1024 * 1024L))
+            assert(config.cpuLimit == Present(1.5))
+            assert(config.cpuAffinity == Present("0-3"))
+            assert(config.maxProcesses == Present(100L))
+        }
+
+        "security builders set values" in {
+            val config = Container.Config("alpine")
+                .privileged(true)
+                .addCapabilities(Container.Capability.NetAdmin, Container.Capability.SysPtrace)
+                .dropCapabilities(Container.Capability.Mknod)
+                .readOnlyFilesystem(true)
+            assert(config.privileged)
+            assert(config.addCapabilities == Chunk(Container.Capability.NetAdmin, Container.Capability.SysPtrace))
+            assert(config.dropCapabilities == Chunk(Container.Capability.Mknod))
+            assert(config.readOnlyFilesystem)
+        }
+    }
+
+    // =========================================================================
+    // explainPortMissing — error-message branching for failed mappedPort lookups
+    // =========================================================================
+
+    private def fakeInfo(state: Container.State, exitCode: Maybe[ExitCode] = Absent): Container.Info =
+        Container.Info(
+            id = Container.Id("c-id"),
+            name = "test",
+            image = ContainerImage("alpine"),
+            imageId = ContainerImage.Id(""),
+            state = state,
+            exitCode = exitCode,
+            pid = 0,
+            startedAt = Absent,
+            finishedAt = Absent,
+            healthStatus = Container.HealthStatus.NoHealthcheck,
+            ports = Chunk.empty,
+            mounts = Chunk.empty,
+            labels = Dict.empty,
+            env = Dict.empty,
+            command = "",
+            createdAt = Instant.Epoch,
+            restartCount = 0,
+            driver = "",
+            platform = Container.Platform.default,
+            networkSettings = Container.Info.NetworkSettings(Absent, Absent, Absent, Dict.empty)
+        )
+
+    "Container.explainPortMissing" - {
+        "container not running mentions state and exit code" in {
+            val msg = Container.explainPortMissing(
+                id = Container.Id("c-id"),
+                configuredPorts = Seq(80),
+                info = fakeInfo(Container.State.Stopped, Present(ExitCode.Failure(2))),
+                containerPort = 80
+            )
+            assert(msg.contains("Stopped"))
+            assert(msg.contains("exit=2"))
+            assert(msg.contains("c-id"))
+        }
+
+        "running but port not declared lists configured ports" in {
+            val msg = Container.explainPortMissing(
+                id = Container.Id("c-id"),
+                configuredPorts = Seq(80, 443),
+                info = fakeInfo(Container.State.Running),
+                containerPort = 9999
+            )
+            assert(msg.contains("not declared"))
+            assert(msg.contains("80"))
+            assert(msg.contains("443"))
+        }
+
+        "running with no configured ports says 'none'" in {
+            val msg = Container.explainPortMissing(
+                id = Container.Id("c-id"),
+                configuredPorts = Seq.empty,
+                info = fakeInfo(Container.State.Running),
+                containerPort = 80
+            )
+            assert(msg.contains("not declared"))
+            assert(msg.contains("none"))
+        }
+
+        "running and port IS declared but not visible flags the framework bug" in {
+            val msg = Container.explainPortMissing(
+                id = Container.Id("c-id"),
+                configuredPorts = Seq(80),
+                info = fakeInfo(Container.State.Running),
+                containerPort = 80
+            )
+            assert(msg.contains("not yet observable"))
+            assert(msg.contains("Please report"))
+        }
+
+        "exit code Signaled is rendered as signaled(N)" in {
+            val msg = Container.explainPortMissing(
+                id = Container.Id("c-id"),
+                configuredPorts = Seq(80),
+                info = fakeInfo(Container.State.Stopped, Present(ExitCode.Signaled(9))),
+                containerPort = 80
+            )
+            assert(msg.contains("signaled(9)"))
+        }
+
+        "exit code Absent renders as 'none'" in {
+            val msg = Container.explainPortMissing(
+                id = Container.Id("c-id"),
+                configuredPorts = Seq(80),
+                info = fakeInfo(Container.State.Stopped, Absent),
+                containerPort = 80
+            )
+            assert(msg.contains("exit=none"))
+        }
+    }
+
+    // =========================================================================
+    // HealthCheck error truncation + recent-errors aggregation
+    // =========================================================================
+
+    "Container.truncateHealthCheckError" - {
+        "short message preserved unchanged" in {
+            val short = "x" * 100
+            assert(Container.truncateHealthCheckError(short) == short)
+        }
+
+        "message exactly at the cap is preserved unchanged" in {
+            val atCap = "x" * Container.healthCheckErrorMessageMaxLength
+            assert(Container.truncateHealthCheckError(atCap) == atCap)
+        }
+
+        "long message is truncated to the cap" in {
+            val long      = "x" * 1000
+            val truncated = Container.truncateHealthCheckError(long)
+            assert(truncated.length == Container.healthCheckErrorMessageMaxLength)
+            assert(truncated == "x" * Container.healthCheckErrorMessageMaxLength)
+        }
+    }
+
+    "Container.appendRecentHealthCheckError" - {
+        "appends when buffer is empty" in {
+            assert(Container.appendRecentHealthCheckError(Seq.empty, "a") == Seq("a"))
+        }
+
+        "appends until capacity is reached" in {
+            val cap    = Container.healthCheckRecentErrorsCapacity
+            val filled = (1 until cap).map(i => s"e$i")
+            val r      = Container.appendRecentHealthCheckError(filled, s"e$cap")
+            assert(r.length == cap)
+            assert(r.last == s"e$cap")
+        }
+
+        "drops oldest when at capacity" in {
+            val cap  = Container.healthCheckRecentErrorsCapacity
+            val full = (1 to cap).map(i => s"e$i")
+            val r    = Container.appendRecentHealthCheckError(full, "newest")
+            assert(r.length == cap)
+            assert(!r.contains("e1"), "oldest entry must be dropped")
+            assert(r.last == "newest")
+        }
+    }
+
+    "Container.formatRecentHealthCheckErrors" - {
+        "empty input produces empty string" in {
+            assert(Container.formatRecentHealthCheckErrors(Seq.empty) == "")
+        }
+
+        "single entry wrapped in brackets" in {
+            assert(Container.formatRecentHealthCheckErrors(Seq("oops")) == "[oops]")
+        }
+
+        "multiple entries joined by single space" in {
+            assert(Container.formatRecentHealthCheckErrors(Seq("a", "b", "c")) == "[a] [b] [c]")
+        }
+
+        "ContainerHealthCheckException.lastError shape: short reason ≤500 chars per entry" in {
+            val short    = "check-failed-short"
+            val errors   = Seq(Container.truncateHealthCheckError(short))
+            val lastErr  = Container.formatRecentHealthCheckErrors(errors)
+            val maxEntry = Container.healthCheckErrorMessageMaxLength + 2 // brackets
+            assert(lastErr.contains(short))
+            assert(lastErr.length <= maxEntry)
+        }
+
+        "ContainerHealthCheckException.lastError shape: long reason truncated to cap per entry" in {
+            val long = "x" * 1000
+            // Simulate the runHealthCheck loop filling the buffer to capacity with the same long error.
+            val cap = Container.healthCheckRecentErrorsCapacity
+            val errs = (1 to cap).foldLeft(Seq.empty[String])((acc, _) =>
+                Container.appendRecentHealthCheckError(acc, Container.truncateHealthCheckError(long))
+            )
+            val out         = Container.formatRecentHealthCheckErrors(errs)
+            val maxEntryLen = Container.healthCheckErrorMessageMaxLength + 2 // brackets
+            val maxTotal    = maxEntryLen * cap + (cap - 1)                  // separating spaces
+            assert(out.length <= maxTotal)
+            val entries   = out.split("\\] \\[").toSeq
+            val lastEntry = entries.last.stripPrefix("[").stripSuffix("]")
+            assert(lastEntry.length <= Container.healthCheckErrorMessageMaxLength)
         }
     }
 

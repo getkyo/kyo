@@ -4,55 +4,81 @@ import kyo.*
 
 class LineAssemblerTest extends kyo.Test:
 
-    "LineAssembler" - {
+    private def runPipe(strings: String*)(using Frame): Chunk[String] < Sync =
+        Stream.init(strings).into(LineAssembler.pipe).run
 
-        "empty feed returns empty chunk" in {
-            val la = new LineAssembler
-            assert(la.feed("") == Chunk.empty[String])
+    enum Src derives CanEqual:
+        case A, B
+
+    private def runPart(pairs: (String, Src)*)(using Frame): Chunk[(String, Src)] < Sync =
+        Stream.init(pairs).into(LineAssembler.partitionedPipe[Src]).run
+
+    "LineAssembler.pipe" - {
+
+        "empty input returns empty chunk" in run {
+            runPipe().map(r => assert(r.isEmpty))
         }
 
-        "single complete line returns one entry" in {
-            val la = new LineAssembler
-            assert(la.feed("hello\n") == Chunk("hello"))
+        "single complete line" in run {
+            runPipe("hello\n").map(r => assert(r == Chunk("hello")))
         }
 
-        "partial line held in buffer" in {
-            val la = new LineAssembler
-            assert(la.feed("hello") == Chunk.empty[String])
+        "partial line is dropped on stream end" in run {
+            runPipe("hello").map(r => assert(r.isEmpty))
         }
 
-        "multi-line in one feed" in {
-            val la = new LineAssembler
-            assert(la.feed("a\nb\nc\n") == Chunk("a", "b", "c"))
+        "multi-line in one chunk" in run {
+            runPipe("a\nb\nc\n").map(r => assert(r == Chunk("a", "b", "c")))
         }
 
-        "line straddling two feeds" in {
-            val la = new LineAssembler
-            assert(la.feed("hello, ") == Chunk.empty[String])
-            assert(la.feed("world!\n") == Chunk("hello, world!"))
+        "line straddling two chunks" in run {
+            runPipe("hello, ", "world!\n").map(r => assert(r == Chunk("hello, world!")))
         }
 
-        "line straddling three feeds" in {
-            val la = new LineAssembler
-            assert(la.feed("one ") == Chunk.empty[String])
-            assert(la.feed("two ") == Chunk.empty[String])
-            assert(la.feed("three\n") == Chunk("one two three"))
+        "line straddling three chunks" in run {
+            runPipe("one ", "two ", "three\n").map(r => assert(r == Chunk("one two three")))
         }
 
-        "trailing newline after complete and partial lines" in {
-            val la = new LineAssembler
-            // complete "a", then partial "b" held
-            assert(la.feed("a\nb") == Chunk("a"))
-            // add "c\n" to partial → "bc" complete
-            assert(la.feed("c\n") == Chunk("bc"))
+        "trailing newline after complete and partial lines" in run {
+            // First chunk: "a\nb" — complete "a", partial "b" carried
+            // Second chunk: "c\n" — combined "bc\n" emits "bc"
+            runPipe("a\nb", "c\n").map(r => assert(r == Chunk("a", "bc")))
         }
 
-        "flush returns residual when buffer is non-empty" in {
-            val la = new LineAssembler
-            assert(la.feed("partial-no-newline") == Chunk.empty[String])
-            assert(la.flush == Present("partial-no-newline"))
-            // After flush, buffer is empty
-            assert(la.flush == Absent)
+        "consecutive newlines preserved as empty lines" in run {
+            runPipe("\n\nhello\n").map(r => assert(r == Chunk("", "", "hello")))
         }
     }
+
+    "LineAssembler.partitionedPipe" - {
+
+        "single complete line per key" in run {
+            runPart(("hello\n", Src.A), ("world\n", Src.B)).map { r =>
+                assert(r == Chunk(("hello", Src.A), ("world", Src.B)))
+            }
+        }
+
+        "interleaved partial+complete frames stitch per key" in run {
+            // A: "hello, " + "world!\n" = "hello, world!"
+            // B: "foo " + "bar\n" = "foo bar"
+            // Each key threads its own residual independently across interleaved fragments.
+            runPart(
+                ("hello, ", Src.A),
+                ("foo ", Src.B),
+                ("world!\n", Src.A),
+                ("bar\n", Src.B)
+            ).map { r =>
+                assert(r == Chunk(("hello, world!", Src.A), ("foo bar", Src.B)))
+            }
+        }
+
+        "partial residual per key dropped on stream end" in run {
+            runPart(("partial-a", Src.A), ("partial-b", Src.B)).map(r => assert(r.isEmpty))
+        }
+
+        "multi-line content in a single frame emits all lines under same key" in run {
+            runPart(("a\nb\nc\n", Src.A)).map(r => assert(r == Chunk(("a", Src.A), ("b", Src.A), ("c", Src.A))))
+        }
+    }
+
 end LineAssemblerTest

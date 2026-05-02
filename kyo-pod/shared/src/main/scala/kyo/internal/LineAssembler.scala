@@ -2,42 +2,68 @@ package kyo.internal
 
 import kyo.*
 
-/** Accumulates partial-line text across stream chunks, emitting only complete `\n`-terminated lines. Trailing text without a newline is
-  * retained in an internal buffer and flushed via [[flush]] on stream termination.
+/** Pure-functional line stitcher for newline-delimited text streams.
   *
-  * Single-threaded by design — create one assembler per stream invocation.
+  * Provides two [[Pipe]] variants:
+  *
+  *   - [[pipe]] — single-source: takes `Stream[String]`, emits complete `\n`-terminated lines, retaining trailing partial text in a
+  *     residual `String` threaded through `Loop`.
+  *   - [[partitionedPipe]] — multi-source: takes `Stream[(String, K)]`, threads one residual per key (e.g. one per `LogEntry.Source` for
+  *     interleaved stdout/stderr demux output).
+  *
+  * Stream end discards any partial trailing text — matches the prior `LineAssembler` callers' behaviour of dropping the residual.
   */
-final private[kyo] class LineAssembler:
-    private val buffer = new StringBuilder
+object LineAssembler:
 
-    /** Append `text` to the internal buffer and return any complete lines it now contains. Partial trailing text is retained for the next
-      * call.
+    def pipe(using
+        Tag[Poll[Chunk[String]]],
+        Tag[Emit[Chunk[String]]],
+        Frame
+    ): Pipe[String, String, Any] =
+        Pipe:
+            Loop("") { residual =>
+                Poll.andMap[Chunk[String]] {
+                    case Absent => Loop.done
+                    case Present(strings) =>
+                        val (newResidual, lines) = strings.foldLeft((residual, Chunk.empty[String])) {
+                            case ((r, acc), s) =>
+                                val (newLines, rest) = splitLines(r + s)
+                                (rest, acc ++ newLines)
+                        }
+                        Emit.valueWith(lines)(Loop.continue(newResidual))
+                }
+            }
+
+    def partitionedPipe[K](using
+        Tag[Poll[Chunk[(String, K)]]],
+        Tag[Emit[Chunk[(String, K)]]],
+        Frame
+    ): Pipe[(String, K), (String, K), Any] =
+        Pipe:
+            Loop(Map.empty[K, String]) { state =>
+                Poll.andMap[Chunk[(String, K)]] {
+                    case Absent => Loop.done
+                    case Present(pairs) =>
+                        val (newState, emitted) = pairs.foldLeft((state, Chunk.empty[(String, K)])) {
+                            case ((st, acc), (content, key)) =>
+                                val combined          = st.getOrElse(key, "") + content
+                                val (lines, residual) = splitLines(combined)
+                                (st.updated(key, residual), acc ++ lines.map(l => (l, key)))
+                        }
+                        Emit.valueWith(emitted)(Loop.continue(newState))
+                }
+            }
+
+    /** Split `text` on '\n', returning (complete lines, trailing residual). Empty lines (consecutive `\n`s) are preserved as empty strings;
+      * callers that want to drop them filter downstream.
       */
-    def feed(text: String): Chunk[String] =
-        if text.isEmpty then Chunk.empty[String]
+    private def splitLines(text: String): (Chunk[String], String) =
+        if text.isEmpty then (Chunk.empty, "")
         else
-            buffer.append(text)
-            val acc   = Chunk.newBuilder[String]
-            var start = 0
-            var i     = 0
-            val len   = buffer.length
-            while i < len do
-                if buffer.charAt(i) == '\n' then
-                    acc.addOne(buffer.substring(start, i))
-                    start = i + 1
-                end if
-                i += 1
-            end while
-            if start > 0 then buffer.delete(0, start)
-            acc.result()
-        end if
-    end feed
+            val parts    = text.split("\n", -1) // -1 keeps trailing empties so split-after-final-\n yields ""
+            val lines    = Chunk.from(parts.init.toIndexedSeq)
+            val residual = parts.last
+            (lines, residual)
+    end splitLines
 
-    /** Flush the buffered residual (a partial trailing line). Returns `Absent` if nothing is buffered. */
-    def flush: Maybe[String] =
-        if buffer.isEmpty then Absent
-        else
-            val s = buffer.toString
-            buffer.setLength(0)
-            Present(s)
 end LineAssembler

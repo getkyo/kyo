@@ -5,7 +5,7 @@ import kyo.*
 /** Shared error-classification primitives used by HttpContainerBackend and ShellBackend.
   *
   * Both backends need to map a [[ResourceContext]] to the correct [[ContainerException]] subtype when the daemon signals resource-not-found
-  * (§1.7) or conflict (§1.8). This object is the single place where that dispatch lives.
+  * or conflict. This object is the single place where that dispatch lives.
   *
   * @see
   *   [[DaemonErrorPhrases]] for the shared phrase vocabulary used by both backends.
@@ -15,8 +15,8 @@ private[internal] object ErrorClassification:
     /** Construct the appropriate "resource not found" exception for a given context.
       *
       * The `cause` parameter is only forwarded to the [[ContainerOperationException]] produced for the `Op` context — the four
-      * resource-specific branches produce exceptions whose constructors do not accept a cause, preserving the `getCause == null` invariant
-      * tested by ContainerTest.scala:308-315.
+      * resource-specific branches produce exceptions whose constructors do not accept a cause, preserving a `getCause == null` invariant
+      * for typed leaves.
       */
     def missingFor(ctx: ResourceContext, cause: String | Throwable)(using Frame): ContainerException =
         ctx match

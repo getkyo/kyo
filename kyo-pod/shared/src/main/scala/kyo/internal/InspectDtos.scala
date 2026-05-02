@@ -2,10 +2,6 @@ package kyo.internal
 
 import kyo.Schema
 
-/** Shared DTOs for container inspect JSON — shapes that are byte-for-byte identical across both the HTTP (Docker/Podman compat API) and
-  * Shell (docker/podman CLI JSON output) backends.
-  */
-
 /** Single mount entry in a container inspect response.
   *
   * Fields are identical between Docker and Podman (both daemon variants) for the 5-field projection we consume. Additional fields (`Mode`,

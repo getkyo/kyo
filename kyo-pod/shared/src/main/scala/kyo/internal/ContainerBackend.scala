@@ -164,6 +164,7 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
                 image = info.image,
                 name = if info.name.nonEmpty then Present(info.name) else Absent,
                 labels = info.labels,
+                env = info.env,
                 ports = info.ports,
                 mounts = info.mounts
             )
@@ -171,8 +172,7 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
                 if info.command.isEmpty then config0
                 else
                     val args = Chunk.from(info.command.split(" ").iterator.filter(_.nonEmpty).toSeq)
-                    val cmd  = if info.env.isEmpty then Command(args*) else Command(args*).envAppend(info.env.toMap)
-                    config0.command(cmd)
+                    config0.command(Command(args*))
             (info.id, config)
         }
 

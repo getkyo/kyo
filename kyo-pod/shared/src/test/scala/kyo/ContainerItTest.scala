@@ -12,227 +12,6 @@ class ContainerItTest extends Test:
         s"$prefix-${nameCounter.incrementAndGet()}"
 
     // =========================================================================
-    // Config Builder
-    // =========================================================================
-
-    "Config" - {
-        "minimal config only requires image" in {
-            val config = Container.Config("alpine")
-            assert(config.image.reference.contains("alpine"))
-            assert(config.ports.isEmpty)
-            assert(config.mounts.isEmpty)
-            assert(config.labels.isEmpty)
-            assert(config.dns.isEmpty)
-            assert(config.extraHosts.isEmpty)
-            assert(config.memory == Absent)
-            assert(!config.privileged)
-            assert(!config.interactive)
-            assert(!config.allocateTty)
-            assert(!config.autoRemove)
-        }
-
-        "builder chains are immutable" in {
-            val base     = Container.Config("alpine")
-            val withName = base.name("test")
-            val withPort = base.port(80, 8080)
-            assert(base.name == Absent)
-            assert(base.ports.isEmpty)
-            assert(withName.name == Present("test"))
-            assert(withName.ports.isEmpty)
-            assert(withPort.name == Absent)
-            assert(withPort.ports.size == 1)
-        }
-
-        "port(container, host) adds a PortBinding with both ports" in {
-            val config = Container.Config("alpine").port(80, 8080)
-            assert(config.ports.size == 1)
-            assert(config.ports.head.containerPort == 80)
-            assert(config.ports.head.hostPort == 8080)
-            assert(config.ports.head.protocol == Container.Config.Protocol.TCP)
-        }
-
-        "port(container) adds a PortBinding with random host port" in {
-            val config = Container.Config("alpine").port(80)
-            assert(config.ports.size == 1)
-            assert(config.ports.head.containerPort == 80)
-            assert(config.ports.head.hostPort == 0)
-        }
-
-        "multiple port calls accumulate" in {
-            val config = Container.Config("app").port(80, 8080).port(443, 8443)
-            assert(config.ports.size == 2)
-            assert(config.ports(0).containerPort == 80)
-            assert(config.ports(1).containerPort == 443)
-        }
-
-        "bind mount via builder" in {
-            val config = Container.Config("alpine").bind(Path("/host"), Path("/container"))
-            assert(config.mounts.size == 1)
-            config.mounts.head match
-                case Container.Config.Mount.Bind(s, t, ro) =>
-                    assert(s == Path("/host"))
-                    assert(t == Path("/container"))
-                    assert(!ro)
-                case other => fail(s"Expected Bind mount, got $other")
-            end match
-        }
-
-        "volume mount via builder" in {
-            val config = Container.Config("alpine").volume(Container.Volume.Id("data"), Path("/var/data"))
-            assert(config.mounts.size == 1)
-            config.mounts.head match
-                case Container.Config.Mount.Volume(n, t, ro) =>
-                    assert(n == Container.Volume.Id("data"))
-                    assert(t == Path("/var/data"))
-                    assert(!ro)
-                case other => fail(s"Expected Volume mount, got $other")
-            end match
-        }
-
-        "tmpfs mount via builder" in {
-            val config = Container.Config("alpine").tmpfs(Path("/tmp/test"))
-            assert(config.mounts.size == 1)
-            config.mounts.head match
-                case Container.Config.Mount.Tmpfs(t, sz) =>
-                    assert(t == Path("/tmp/test"))
-                    assert(sz == Absent)
-                case other => fail(s"Expected Tmpfs mount, got $other")
-            end match
-        }
-
-        "mount with function DSL" in {
-            val config = Container.Config("alpine")
-                .mount(_.Bind(Path("/a"), Path("/b"), readOnly = true))
-            assert(config.mounts.size == 1)
-            config.mounts.head match
-                case Container.Config.Mount.Bind(s, t, ro) =>
-                    assert(s == Path("/a"))
-                    assert(t == Path("/b"))
-                    assert(ro)
-                case other => fail(s"Expected Bind mount, got $other")
-            end match
-        }
-
-        "multiple mount calls accumulate in order" in {
-            val config = Container.Config("alpine")
-                .bind(Path("/a"), Path("/b"))
-                .volume(Container.Volume.Id("v"), Path("/c"))
-                .tmpfs(Path("/d"))
-            assert(config.mounts.size == 3)
-            config.mounts(0) match
-                case _: Container.Config.Mount.Bind => succeed
-                case other                          => fail(s"Expected Bind mount, got $other")
-            config.mounts(1) match
-                case _: Container.Config.Mount.Volume => succeed
-                case other                            => fail(s"Expected Volume mount, got $other")
-            config.mounts(2) match
-                case _: Container.Config.Mount.Tmpfs => succeed
-                case other                           => fail(s"Expected Tmpfs mount, got $other")
-        }
-
-        "networkMode with function DSL" in {
-            val config = Container.Config("alpine").networkMode(_.Host)
-            assert(config.networkMode == Container.Config.NetworkMode.Host)
-        }
-
-        "restartPolicy with function DSL" in {
-            val config = Container.Config("alpine").restartPolicy(_.Always)
-            assert(config.restartPolicy == Container.Config.RestartPolicy.Always)
-        }
-
-        "restartPolicy OnFailure with maxRetries" in {
-            val config = Container.Config("alpine").restartPolicy(_.OnFailure(5))
-            config.restartPolicy match
-                case Container.Config.RestartPolicy.OnFailure(n) => assert(n == 5)
-                case other                                       => fail(s"Expected OnFailure(5), got $other")
-        }
-
-        "label adds a single label" in {
-            val config = Container.Config("alpine").label("env", "test")
-            assert(config.labels.is(Dict("env" -> "test")))
-        }
-
-        "labels merges with existing" in {
-            val config = Container.Config("alpine")
-                .label("a", "1")
-                .labels(Dict("b" -> "2", "c" -> "3"))
-            assert(config.labels.is(Dict("a" -> "1", "b" -> "2", "c" -> "3")))
-        }
-
-        "labels overwrites on conflict" in {
-            val config = Container.Config("alpine")
-                .label("a", "1")
-                .labels(Dict("a" -> "2"))
-            assert(config.labels.is(Dict("a" -> "2")))
-        }
-
-        "dns accumulates across calls" in {
-            val config = Container.Config("alpine").dns("8.8.8.8").dns("8.8.4.4")
-            assert(config.dns == Chunk("8.8.8.8", "8.8.4.4"))
-        }
-
-        "extraHost adds structured entry" in {
-            val config = Container.Config("alpine").extraHost("myhost", "10.0.0.1")
-            assert(config.extraHosts.size == 1)
-            assert(config.extraHosts.head.hostname == "myhost")
-            assert(config.extraHosts.head.ip == "10.0.0.1")
-        }
-
-        "command(String*) creates Command from args" in {
-            val config = Container.Config("alpine").command("sh", "-c", "echo hello")
-            assert(config.command.isDefined)
-            assert(config.command.map(_.args) == Present(Chunk("sh", "-c", "echo hello")))
-        }
-
-        "command(Command) preserves env and cwd" in {
-            val cmd = Command("sh", "-c", "echo hello")
-                .envAppend(Map("FOO" -> "bar"))
-                .cwd(Path("/tmp"))
-            val config = Container.Config("alpine").command(cmd)
-            assert(config.command.map(_.args) == Present(Chunk("sh", "-c", "echo hello")))
-            assert(config.command.map(_.env) == Present(Map("FOO" -> "bar")))
-            assert(config.command.flatMap(_.workDir) == Present(Path("/tmp")))
-        }
-
-        "default command is Absent — uses image CMD/ENTRYPOINT" in {
-            val config = Container.Config("alpine")
-            assert(config.command.isEmpty)
-        }
-
-        "default restartPolicy is No" in {
-            assert(Container.Config("alpine").restartPolicy == Container.Config.RestartPolicy.No)
-        }
-
-        "default stopTimeout is 3 seconds" in {
-            assert(Container.Config("alpine").stopTimeout == 3.seconds)
-        }
-
-        "resource limit builders set values" in {
-            val config = Container.Config("alpine")
-                .memory(512 * 1024 * 1024L)
-                .cpuLimit(1.5)
-                .cpuAffinity("0-3")
-                .maxProcesses(100)
-            assert(config.memory == Present(512 * 1024 * 1024L))
-            assert(config.cpuLimit == Present(1.5))
-            assert(config.cpuAffinity == Present("0-3"))
-            assert(config.maxProcesses == Present(100L))
-        }
-
-        "security builders set values" in {
-            val config = Container.Config("alpine")
-                .privileged(true)
-                .addCapabilities(Container.Capability.NetAdmin, Container.Capability.SysPtrace)
-                .dropCapabilities(Container.Capability.Mknod)
-                .readOnlyFilesystem(true)
-            assert(config.privileged)
-            assert(config.addCapabilities == Chunk(Container.Capability.NetAdmin, Container.Capability.SysPtrace))
-            assert(config.dropCapabilities == Chunk(Container.Capability.Mknod))
-            assert(config.readOnlyFilesystem)
-        }
-    }
-
-    // =========================================================================
     // Backend Selection
     // =========================================================================
 
@@ -477,23 +256,6 @@ class ContainerItTest extends Test:
             }
         }
 
-        // mappedPort error must distinguish "port not declared in config" from "port simply missing
-        // from inspect" — same behaviour across backends. (When the container has actually crashed
-        // we surface ContainerStartFailedException at init time, so mappedPort never sees a dead
-        // container handle in the normal flow.)
-        "mappedPort for an undeclared port produces a clear configuration error" - runBackends {
-            Container.init(alpine.port(80)).map { c =>
-                Abort.run[ContainerException](c.mappedPort(9999)).map {
-                    case Result.Failure(e: ContainerOperationException) =>
-                        assert(
-                            e.getMessage.contains("not declared") || e.getMessage.contains("Configured ports"),
-                            s"expected config-aware error mentioning declared/configured ports, got: ${e.getMessage}"
-                        )
-                    case other => fail(s"expected ContainerOperationException, got $other")
-                }
-            }
-        }
-
         // Port-mapping wait: init must not return until every configured port has a positive
         // hostPort observable via inspect. Same contract on http and shell — neither should
         // race the host-side port-forwarding hook.
@@ -707,8 +469,12 @@ class ContainerItTest extends Test:
         // — stop() must start /wait fiber before sending stop signal so the auto-remove cleanup
         // race does not clobber the exit code observed by the caller.
         "kill+waitForExit on autoRemove container preserves real exit code" - runBackends {
+            // The `& wait` pattern is required for SIGTERM delivery on alpine: a foreground
+            // `sleep infinity` blocks the shell in waitpid() and the trap never fires until
+            // the child exits, so signals to PID 1 are deferred indefinitely. Backgrounding
+            // sleep and using the shell's `wait` builtin makes the wait interruptible.
             val cfg = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 137' TERM; sleep infinity")
+                .command("sh", "-c", "trap 'exit 137' TERM; sleep infinity & wait")
                 .autoRemove(true)
             Container.init(cfg).map { c =>
                 for
@@ -1025,69 +791,6 @@ class ContainerItTest extends Test:
             Container.init(cfg).map(_ => succeed)
         }
 
-        // short error reason (getMessage < 500 chars) survives truncation unchanged
-        "HealthCheck error message ≤500 chars is preserved in lastError without truncation" - runBackends {
-            val shortReason = "check-failed-short"
-            val hc = Container.HealthCheck.init(Schedule.fixed(100.millis).take(2)) { c =>
-                Abort.fail(ContainerHealthCheckException(c.id, shortReason, 1))
-            }
-            val config = Container.Config(ContainerImage("alpine", "latest"))
-                .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")
-                .stopTimeout(0.seconds)
-                .healthCheck(hc)
-            Abort.run[ContainerException](Container.init(config)).map {
-                case Result.Failure(e: ContainerHealthCheckException) =>
-                    assert(e.lastError.nonEmpty, "lastError must be non-empty")
-                    // A short reason produces a getMessage well under 500 chars — entry length < 502
-                    assert(
-                        e.lastError.length < 502,
-                        s"expected lastError.length < 502 for short reason, got: ${e.lastError.length}"
-                    )
-                    assert(
-                        e.lastError.contains(shortReason),
-                        s"expected lastError to contain '$shortReason', got: ${e.lastError}"
-                    )
-                    succeed
-                case Result.Panic(t) => fail(s"panic: $t")
-                case other           => fail(s"expected ContainerHealthCheckException, got $other")
-            }
-        }
-
-        // long error reason (getMessage > 500 chars) gets truncated to at most 502 chars per entry
-        "HealthCheck error message >500 chars is truncated to healthCheckErrorMessageMaxLength in lastError" - runBackends {
-            // reason of "x"*450 → getMessage is ~"Health check failed for <64-char-id> after 1 attempt(s): " + "x"*450 ≈ 514 chars > 500
-            val longReason = "x" * 450
-            val hc = Container.HealthCheck.init(Schedule.fixed(100.millis).take(2)) { c =>
-                Abort.fail(ContainerHealthCheckException(c.id, longReason, 1))
-            }
-            val config = Container.Config(ContainerImage("alpine", "latest"))
-                .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")
-                .stopTimeout(0.seconds)
-                .healthCheck(hc)
-            Abort.run[ContainerException](Container.init(config)).map {
-                case Result.Failure(e: ContainerHealthCheckException) =>
-                    assert(e.lastError.nonEmpty, "lastError must be non-empty")
-                    // Each entry is "[" + getMessage.take(500) + "]" = at most 502 chars
-                    // With up to healthCheckRecentErrorsCapacity entries joined by " ", bound = 502 * cap + sep
-                    val maxEntryLen = 502
-                    val cap         = kyo.Container.healthCheckRecentErrorsCapacity
-                    val maxTotal    = maxEntryLen * cap + (cap - 1) // separating spaces
-                    assert(
-                        e.lastError.length <= maxTotal,
-                        s"expected lastError.length <= $maxTotal, got: ${e.lastError.length}"
-                    )
-                    // The most recent entry must be exactly truncated to 500 chars content (502 with brackets)
-                    val entries   = e.lastError.split("\\] \\[").toSeq
-                    val lastEntry = entries.last.stripPrefix("[").stripSuffix("]")
-                    assert(
-                        lastEntry.length <= 500,
-                        s"expected per-entry content <= 500 chars, got: ${lastEntry.length}"
-                    )
-                    succeed
-                case Result.Panic(t) => fail(s"panic: $t")
-                case other           => fail(s"expected ContainerHealthCheckException, got $other")
-            }
-        }
     }
 
     // =========================================================================
@@ -1885,8 +1588,12 @@ class ContainerItTest extends Test:
                     _ <- c.stop
                     s <- Container.list(all = true)
                 yield
-                    assert(s.exists(_.id == c.id))
-                    assert(s.find(_.id == c.id).exists(_.state == Container.State.Stopped))
+                    val found = s.find(_.id == c.id)
+                    assert(found.isDefined, s"container ${c.id.value} not in list of ${s.size} entries")
+                    assert(
+                        found.exists(_.state == Container.State.Stopped),
+                        s"expected Stopped, got: ${found.map(_.state)}"
+                    )
             }
         }
 
@@ -2251,8 +1958,8 @@ class ContainerItTest extends Test:
                 // extend total time without strengthening the signal.
                 _ <- (dir / "Dockerfile").write(
                     "FROM alpine:latest\n" +
-                        "RUN sleep 1 && echo step1\n" +
-                        "RUN sleep 1 && echo step2\n"
+                        "RUN sleep 2 && echo step1\n" +
+                        "RUN sleep 2 && echo step2\n"
                 )
                 // Consume the full stream but capture the time of the first event. This avoids closing
                 // the streaming HTTP response early, which would leave the connection in a state kyo-http's
@@ -2279,11 +1986,12 @@ class ContainerItTest extends Test:
                 _ <- dir.removeAll
             yield
                 val firstMs = result.getOrElse(fail("Expected at least one build progress event"))
-                // Build takes 2+ seconds (two sleep steps). If streaming, the first event arrives
-                // quickly (< 1.5s). If events are buffered until build completes, this exceeds 2s.
+                // Build takes 4+ seconds (two `sleep 2` steps). If streaming, the first event
+                // arrives well under 3s even with daemon overhead. If events are buffered until
+                // the build completes, the first event would arrive at 4s+.
                 assert(
-                    firstMs < 1500,
-                    s"First build event took ${firstMs}ms — expected < 1500ms for a 2s build. " +
+                    firstMs < 3000,
+                    s"First build event took ${firstMs}ms — expected < 3000ms for a 4s build. " +
                         "Events are likely buffered until build completes (not streaming)"
                 )
             end for
@@ -3358,11 +3066,14 @@ class ContainerItTest extends Test:
         }
 
         "logsText with tail=Int.MaxValue on a 1MB log returns the full content" - runBackends {
+            // 1000 × 1024-byte lines = ~1MB total. Few lines but wide ones — staying under
+            // podman/journald's default ~10k msgs/30s rate limit, which would otherwise drop the
+            // END-MARKER line and leave the takeWhile waiting indefinitely.
             val cfg = Container.Config("alpine")
                 .command(
                     "sh",
                     "-c",
-                    "i=0; while [ $i -lt 50000 ]; do echo xxxxxxxxxxxxxxxxxxxx; i=$((i+1)); done; echo END-MARKER; sleep 5"
+                    "i=0; while [ $i -lt 1000 ]; do printf '%01024s\\n' x; i=$((i+1)); done; echo END-MARKER; sleep 5"
                 )
             Container.init(cfg).map { c =>
                 Scope.run {
@@ -3370,7 +3081,7 @@ class ContainerItTest extends Test:
                         // Block until the marker line is observed — deterministic, no sleep.
                         _       <- c.logStream.takeWhile(e => !e.content.contains("END-MARKER")).run
                         entries <- c.logs(stdout = true, stderr = false, tail = Int.MaxValue)
-                    yield assert(entries.size >= 49000, s"expected ~50000 entries, got ${entries.size}")
+                    yield assert(entries.size >= 999, s"expected ~1000 entries, got ${entries.size}")
                 }
             }
         }
@@ -3571,45 +3282,28 @@ class ContainerItTest extends Test:
         }
 
         "two containers on the same host port — second fails with PortConflict carrying port" - runBackends {
-            // Keep the ServerSocket OPEN so the port is definitely still held when the container
-            // tries to bind it (avoids TIME_WAIT races on Linux/macOS). Close after both inits.
-            val sock = new java.net.ServerSocket(0)
-            val port = sock.getLocalPort
-            val cfg1 = alpine.command("sleep", "10").port(80, port).autoRemove(true)
-            try
-                Scope.run {
-                    Abort.run[ContainerException](Container.init(cfg1)).flatMap {
-                        case Result.Failure(e: ContainerPortConflictException) =>
-                            // First container also failed — port still held by ServerSocket
-                            assert(
-                                e.port == port,
-                                s"expected port=$port, got port=${e.port} (regex extracted wrong number)"
-                            )
-                        case Result.Failure(other) =>
-                            fail(s"expected ContainerPortConflictException on first init, got: $other")
-                        case Result.Panic(t) =>
-                            fail(s"panic on first init: $t")
-                        case Result.Success(c1) =>
-                            val cfg2 = alpine.command("sleep", "10").port(80, port).autoRemove(true)
-                            Abort.run[ContainerException](Container.init(cfg2)).map { r =>
-                                r match
-                                    case Result.Failure(e: ContainerPortConflictException) =>
-                                        assert(
-                                            e.port == port,
-                                            s"expected port=$port, got port=${e.port} (regex extracted wrong number)"
-                                        )
-                                    case Result.Failure(other) =>
-                                        fail(s"expected ContainerPortConflictException, got: $other")
-                                    case Result.Success(_) =>
-                                        fail("expected port conflict — second container bound same host port as first")
-                                    case Result.Panic(t) =>
-                                        fail(s"panic: $t")
-                                end match
-                            }
+            // Let the runtime pick a free host port for the first container, then try to bind a second container
+            // to that same host port. The second init must surface PortConflict carrying the contended port.
+            Scope.run {
+                Container.init(alpine.command("sleep", "10").port(80, 0).autoRemove(true)).map { c1 =>
+                    c1.mappedPort(80).map { hostPort =>
+                        val cfg2 = alpine.command("sleep", "10").port(80, hostPort).autoRemove(true)
+                        Abort.run[ContainerException](Container.init(cfg2)).map {
+                            case Result.Failure(e: ContainerPortConflictException) =>
+                                assert(
+                                    e.port == hostPort,
+                                    s"expected port=$hostPort, got port=${e.port} (regex extracted wrong number)"
+                                )
+                            case Result.Failure(other) =>
+                                fail(s"expected ContainerPortConflictException, got: $other")
+                            case Result.Success(_) =>
+                                fail("expected port conflict — second container bound same host port as first")
+                            case Result.Panic(t) =>
+                                fail(s"panic: $t")
+                        }
                     }
                 }
-            finally sock.close()
-            end try
+            }
         }
     }
 

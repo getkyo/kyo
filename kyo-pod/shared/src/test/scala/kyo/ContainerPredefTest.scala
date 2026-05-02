@@ -131,4 +131,56 @@ class ContainerPredefTest extends Test:
         }
     }
 
+    // =========================================================================
+    // URL formatters — pure string formatting, no runtime needed
+    // =========================================================================
+
+    "Postgres.formatJdbcUrl" - {
+        "default shape" in {
+            assert(Postgres.formatJdbcUrl("127.0.0.1", 5432, "test") == "jdbc:postgresql://127.0.0.1:5432/test")
+        }
+        "preserves custom database name" in {
+            assert(Postgres.formatJdbcUrl("127.0.0.1", 49154, "mydb") == "jdbc:postgresql://127.0.0.1:49154/mydb")
+        }
+        "ephemeral host port (e.g. 0-allocated mapping) matches expected pattern" in {
+            val url = Postgres.formatJdbcUrl("127.0.0.1", 65432, "test")
+            val pat = """^jdbc:postgresql://127\.0\.0\.1:\d+/test$""".r
+            assert(pat.matches(url), s"URL didn't match expected pattern: $url")
+        }
+    }
+
+    "MySQL.formatJdbcUrl" - {
+        "default shape" in {
+            assert(MySQL.formatJdbcUrl("127.0.0.1", 3306, "test") == "jdbc:mysql://127.0.0.1:3306/test")
+        }
+        "preserves custom database name" in {
+            assert(MySQL.formatJdbcUrl("127.0.0.1", 49155, "mydb") == "jdbc:mysql://127.0.0.1:49155/mydb")
+        }
+        "ephemeral host port matches expected pattern" in {
+            val url = MySQL.formatJdbcUrl("127.0.0.1", 33060, "test")
+            val pat = """^jdbc:mysql://127\.0\.0\.1:\d+/test$""".r
+            assert(pat.matches(url), s"URL didn't match expected pattern: $url")
+        }
+    }
+
+    "MongoDB.formatConnectionString" - {
+        "default shape (no database segment)" in {
+            assert(MongoDB.formatConnectionString("127.0.0.1", 27017) == "mongodb://127.0.0.1:27017")
+        }
+    }
+
+    "MongoDB.formatUrl" - {
+        "default shape with database" in {
+            assert(MongoDB.formatUrl("127.0.0.1", 27017, "test") == "mongodb://127.0.0.1:27017/test")
+        }
+        "preserves custom database name" in {
+            assert(MongoDB.formatUrl("127.0.0.1", 49156, "mydb") == "mongodb://127.0.0.1:49156/mydb")
+        }
+        "ephemeral host port matches expected pattern" in {
+            val url = MongoDB.formatUrl("127.0.0.1", 27018, "test")
+            val pat = """^mongodb://127\.0\.0\.1:\d+/test$""".r
+            assert(pat.matches(url), s"URL didn't match expected pattern: $url")
+        }
+    }
+
 end ContainerPredefTest
