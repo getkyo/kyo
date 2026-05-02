@@ -824,7 +824,9 @@ object HttpClient:
             val req = HttpRequest(route.method, applyQuery(url, query), headers, Record.empty)
             client.sendWithConfig(route, req, config) { resp =>
                 if !resp.status.isSuccess then
-                    Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl))
+                    resp.rawBody match
+                        case Present(b) => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl, b))
+                        case Absent     => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl))
                 else extract(resp)
             }
         }
@@ -842,7 +844,9 @@ object HttpClient:
             val req = HttpRequest(route.method, applyQuery(url, query), headers, Record.empty).addField("body", body)
             client.sendWithConfig(route, req, config) { resp =>
                 if !resp.status.isSuccess then
-                    Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl))
+                    resp.rawBody match
+                        case Present(b) => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl, b))
+                        case Absent     => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl))
                 else extract(resp)
             }
         }

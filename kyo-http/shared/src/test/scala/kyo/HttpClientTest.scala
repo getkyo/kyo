@@ -3229,6 +3229,95 @@ class HttpClientTest extends Test:
                 }
             }
         }
+
+        // Body capture matters for callers that classify errors by content (kyo-pod's
+        // HttpContainerBackend reads e.body to detect "name in use" / "no such image" patterns
+        // when the daemon picks a non-standard status code).
+
+        "body is captured when response decodes as the success type" - {
+            val route = HttpRoute.getJson[User]("body-cap-decoded")
+            // Server returns 500 with a User-shaped body: zio-schema decodes it permissively,
+            // so the response struct is Success but the status is non-2xx. Without rawBody we
+            // would lose the response body entirely on the way to HttpStatusException.
+            val ep = route.handler(_ => HttpResponse(HttpStatus.InternalServerError).addField("body", User(0, "boom")))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getJson[User](s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/body-cap-decoded")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.body.isDefined, s"expected body to be present, got Absent")
+                            assert(e.body.get.contains("boom"), s"expected 'boom' in body, got: ${e.body.get}")
+                        case other =>
+                            fail(s"Expected HttpStatusException, got $other")
+                    }
+                }
+            }
+        }
+
+        "body is captured when response shape doesn't decode as the success type" - {
+            val route = HttpRoute.getJson[User]("body-cap-mismatch")
+            // Raw text route on the server but typed as JSON User on the client — schema decode
+            // fails on the client side, the failure is rewritten to HttpStatusException with raw body.
+            val rawRoute = HttpRoute.getText("body-cap-mismatch")
+            val ep = rawRoute.handler(_ => HttpResponse(HttpStatus.InternalServerError).addField("body", "{\"message\":\"name in use\"}"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getJson[User](s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/body-cap-mismatch")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.body.isDefined, s"expected body to be present, got Absent")
+                            assert(e.body.get.contains("name in use"), s"expected 'name in use' in body, got: ${e.body.get}")
+                        case other =>
+                            fail(s"Expected HttpStatusException, got $other")
+                    }
+                }
+            }
+        }
+
+        "body is Absent when server returns non-2xx with empty body" - {
+            val route = HttpRoute.getText("body-cap-empty")
+            val ep    = route.handler(_ => HttpResponse(HttpStatus.InternalServerError).addField("body", ""))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/body-cap-empty")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.body.isEmpty, s"expected body to be Absent for empty response, got Present: ${e.body}")
+                        case other =>
+                            fail(s"Expected HttpStatusException, got $other")
+                    }
+                }
+            }
+        }
+
+        // Streaming-route 4xx/5xx — daemons sometimes respond with a small JSON error body
+        // even though the route declares streaming (docker/podman's /images/create returns
+        // JSON errors instead of pull-progress events when auth fails). The body must be
+        // captured for error classifiers to read it.
+
+        "body is captured for streaming routes on non-2xx" - {
+            val route = HttpRoute.postRaw("body-cap-stream").request(_.bodyBinary).response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse(HttpStatus.InternalServerError).addField("body", "stream-error-body"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.postStreamBytes(
+                            s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/body-cap-stream",
+                            kyo.Span.empty[Byte]
+                        ).run
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.body.isDefined, s"expected body to be present, got Absent")
+                            assert(e.body.get.contains("stream-error-body"), s"expected 'stream-error-body' in body, got: ${e.body.get}")
+                        case other =>
+                            fail(s"Expected HttpStatusException, got $other")
+                    }
+                }
+            }
+        }
     }
 
     "unit methods" - {

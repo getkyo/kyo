@@ -1,0 +1,45 @@
+## Local-repro image for kyo-pod's CI rootless-podman tests.
+##
+## Built and launched by `dev.KyoPodDevRunner` (kyo-pod/shared/src/test/scala/dev/).
+## Contains: rootless podman (inherited from upstream image), JDK 21, sbt, git.
+##
+## Build:    podman build -t kyo-pod-dev:latest -f kyo-pod/dev/Containerfile.dev kyo-pod/dev
+## Run:      sbt 'kyo-pod / Test / runMain dev.KyoPodDevRunner'
+##
+## The base image (quay.io/podman/stable) has a `podman` user pre-configured for
+## rootless containers — newuidmap/newgidmap, subuid/subgid, fuse-overlayfs.
+## We add the JVM toolchain on top.
+
+FROM quay.io/podman/stable:v4.9.4
+
+USER root
+
+# JDK + sbt + utilities. JDK 21 is fine for Scala 3 builds; what we're reproducing
+# (rootless-podman behaviour) doesn't depend on the JDK version.
+RUN dnf install -y --setopt=install_weak_deps=False \
+        java-21-openjdk-headless \
+        git tar gzip findutils which procps-ng rsync \
+        iptables iptables-nft \
+    && curl -fLsS https://github.com/sbt/sbt/releases/download/v1.10.0/sbt-1.10.0.tgz \
+       | tar xz -C /opt \
+    && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt \
+    && dnf clean all
+
+# Without systemd-logind there is no /run/user/$UID, and /run gets remounted as a
+# fresh tmpfs at container start anyway. Use /tmp/runtime-1000 instead — owned by
+# the rootless `podman` user, which is where the inner script will put the socket.
+# This mirrors kyo-pod's CI setup before we switched to systemd lingering; in the
+# dev container we don't have systemd PID-1, so cgroupfs fallback is expected.
+RUN mkdir -p /tmp/runtime-1000 \
+    && chown podman:podman /tmp/runtime-1000 \
+    && chmod 0700 /tmp/runtime-1000
+
+# Force netavark to use iptables instead of nftables. nftables can't apply rules
+# from a nested unprivileged user namespace (`netavark: nftables error: "nft" did not
+# return successfully while applying ruleset`); iptables-nft passes through
+# br_netfilter without needing direct nftables socket access.
+RUN mkdir -p /etc/containers \
+    && printf '[network]\nfirewall_driver = "iptables"\n' >> /etc/containers/containers.conf
+
+USER podman
+WORKDIR /work

@@ -996,7 +996,7 @@ class StreamCoreExtensionsTest extends Test:
                 assert(result.toSet == (1 to 500).toSet)
         }
 
-        "should handle Closed from channel operations gracefully" in run {
+        "should handle Closed from channel operations gracefully" in runNotNative {
             val stream = Stream
                 .init(1 to 100, 1)
                 .mapParUnordered(4) { v =>

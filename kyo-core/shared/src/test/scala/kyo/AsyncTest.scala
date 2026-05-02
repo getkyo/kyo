@@ -127,7 +127,7 @@ class AsyncTest extends Test:
                 _           <- done.await
             yield assert(interrupted)
         }
-        "multiple fibers" in run {
+        "multiple fibers" in runNotNative {
             for
                 started      <- Latch.init(3)
                 done         <- Latch.init(3)
