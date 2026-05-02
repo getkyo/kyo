@@ -68,10 +68,15 @@ object IntegrationTestScaffold extends KyoApp:
             }
         }
 
+    /** Per-probe outcomes from [[exampleTest]]: each `ExecResult` carries exit code + stdout/stderr so callers can verify the probe
+      * actually succeeded (not just that no exception was thrown).
+      */
+    final case class ProbeResults(postgres: Container.ExecResult, redis: Container.ExecResult, dns: Container.ExecResult)
+
     /** Example test body: verifies both containers are up by exec-ing real client tools, then proves cross-container DNS resolution by
       * having the Postgres container reach Redis via the network alias.
       */
-    def exampleTest(pg: Container, redis: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
+    def exampleTest(pg: Container, redis: Container)(using Frame): ProbeResults < (Async & Abort[ContainerException]) =
         for
             pgRes    <- pg.exec("psql", "-U", postgresUser, "-d", postgresDb, "-c", "SELECT 1")
             redisRes <- redis.exec("redis-cli", "ping")
@@ -84,18 +89,23 @@ object IntegrationTestScaffold extends KyoApp:
                 s"[redis]    ready=${redisRes.exitCode.isSuccess && redisRes.stdout.trim.equalsIgnoreCase("PONG")} stdout='${redisRes.stdout.trim}'"
             )
             _ <- Console.printLine(s"[dns]      pg→redis exit=${crossRes.exitCode.toInt} stdout='${crossRes.stdout.trim}'")
-        yield ()
+        yield ProbeResults(pgRes, redisRes, crossRes)
     end exampleTest
 
-    run {
+    /** Demo entry point — runs the example probes against a freshly-stood-up PG + Redis pair and returns the results so callers can assert
+      * on per-probe outcomes.
+      */
+    def demoMain(using Frame): ProbeResults < (Async & Scope & Abort[ContainerException]) =
         Console.printLine("[scaffold] starting Postgres + Redis...").andThen {
             withStack { (pg, redis) =>
                 Console.printLine(s"[scaffold] postgres=${pg.id.value.take(12)} redis=${redis.id.value.take(12)}").andThen {
                     exampleTest(pg, redis)
                 }
-            }.andThen {
-                Console.printLine("[scaffold] done; containers + network cleaned up").unit
+            }.map { results =>
+                Console.printLine("[scaffold] done; containers + network cleaned up").andThen(results)
             }
         }
-    }
+    end demoMain
+
+    run(demoMain.unit)
 end IntegrationTestScaffold

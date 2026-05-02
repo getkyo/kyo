@@ -72,7 +72,7 @@ object ServiceMesh extends KyoApp:
             |http.server.ThreadingHTTPServer(("0.0.0.0", 8000), H).serve_forever()
             |""".stripMargin
 
-    def standUp(using Frame): Unit < (Async & Abort[ContainerException] & Scope) =
+    def standUp(using Frame): String < (Async & Abort[ContainerException] & Scope) =
         Container.Network.init(Container.Network.Config.default.copy(name = netName).label("demo", "service-mesh")).map { _ =>
             // cache — omit command; redis:7-alpine's default CMD is redis-server
             val cacheConfig = Container.Config.default.copy(
@@ -114,20 +114,25 @@ object ServiceMesh extends KyoApp:
             }
         }
 
-    def probeFromHost(using Frame): Unit < (Async & Abort[ContainerException]) =
+    def probeFromHost(using Frame): String < (Async & Abort[ContainerException]) =
         Abort.recover[CommandException] { (e: CommandException) =>
-            Console.printLine(s"[mesh] curl failed: $e").unit
+            Console.printLine(s"[mesh] curl failed: $e").andThen("")
         } {
             Command("curl", "-sS", s"http://localhost:$edgeHostPort/").text.map { body =>
-                Console.printLine(s"[mesh] curl :$edgeHostPort -> $body").unit
+                Console.printLine(s"[mesh] curl :$edgeHostPort -> $body").andThen(body)
             }
         }
 
-    run {
+    /** Demo entry point — stands up the edge + api + cache mesh and returns the response body received from probing the edge so callers can
+      * assert end-to-end routing actually works (not just that no exception was thrown).
+      */
+    def demoMain(using Frame): String < (Async & Scope & Abort[ContainerException]) =
         Console.printLine("[mesh] provisioning edge + api + cache...").andThen {
-            standUp.andThen {
-                Console.printLine("[mesh] done; tearing down via Scope").unit
+            standUp.map { body =>
+                Console.printLine("[mesh] done; tearing down via Scope").andThen(body)
             }
         }
-    }
+    end demoMain
+
+    run(demoMain)
 end ServiceMesh

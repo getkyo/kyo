@@ -96,10 +96,13 @@ object CodeSandbox extends KyoApp:
               |""".stripMargin
     )
 
-    run {
+    /** Demo entry point — runs the canonical examples and returns each `(name, result)` pair so callers can assert on the per-example
+      * outcomes (`DemoTest` does this).
+      */
+    def demoMain(using Frame): Chunk[(String, SandboxResult)] < (Async & Abort[ContainerException]) =
         val pythonImage = ContainerImage("python:3.12-alpine")
         ContainerImage.ensure(pythonImage).andThen {
-            Kyo.foreachDiscard(examples) { case (name, source) =>
+            Kyo.foreach(examples) { case (name, source) =>
                 Scope.run {
                     Console.printLine(s"=== $name ===").andThen {
                         runPython(source, timeout = 3.seconds).map { r =>
@@ -110,12 +113,14 @@ object CodeSandbox extends KyoApp:
                                 val printErr =
                                     if r.stderr.nonEmpty then Console.printLine(s"  stderr: ${r.stderr.replace("\n", " | ")}")
                                     else Kyo.unit
-                                printOut.andThen(printErr)
+                                printOut.andThen(printErr).andThen((name, r))
                             }
                         }
                     }
                 }
             }
         }
-    }
+    end demoMain
+
+    run(demoMain.unit)
 end CodeSandbox

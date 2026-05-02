@@ -119,13 +119,20 @@ object PrometheusExporter extends KyoApp:
         loop(rounds)
     end scrapeLoop
 
-    run {
+    /** Demo entry point — spawns the workload, sleeps for one scrape interval to let stats stabilise, then takes one scrape and returns its
+      * rendered Prometheus-format string so callers can assert on the metric content.
+      */
+    def demoMain(using Frame): String < (Async & Scope & Abort[ContainerException]) =
         Console.printLine("[exporter] spawning workload...").andThen {
             spawnWorkload.map { _ =>
                 Async.sleep(2.seconds).andThen {
-                    scrapeLoop(rounds = 3, interval = 3.seconds)
+                    scrape.map { exposition =>
+                        Console.printLine(exposition).andThen(exposition)
+                    }
                 }
             }
         }
-    }
+    end demoMain
+
+    run(demoMain.unit)
 end PrometheusExporter

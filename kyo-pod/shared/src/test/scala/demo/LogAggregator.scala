@@ -67,9 +67,17 @@ object LogAggregator extends KyoApp:
         end match
     end aggregate
 
-    run {
+    /** Outcome of [[demoMain]]: how many workers were enumerated via the label filter and how many ERROR-grepped log lines were collected
+      * during the 5-second window.
+      */
+    final case class DemoOutcome(workersFound: Int, errorLines: Chunk[String])
+
+    /** Demo entry point — spawns N workers, lists them by label, streams their merged logs (filtered to ERROR) for 5 seconds, and returns
+      * the per-window outcome so callers can assert on what was actually observed.
+      */
+    def demoMain(using Frame): DemoOutcome < (Async & Scope & Abort[ContainerException]) =
         Console.printLine(s"[aggregator] spawning $workerCount workers...").andThen {
-            spawnWorkers(workerCount).map { workers =>
+            spawnWorkers(workerCount).map { _ =>
                 Console.printLine("[aggregator] listing by label filter...").andThen {
                     Container.list(
                         all = false,
@@ -87,12 +95,23 @@ object LogAggregator extends KyoApp:
                             }.map { sources =>
                                 Console.printLine("[aggregator] streaming logs for 5 seconds (grep=ERROR only)...").andThen {
                                     val tagged = aggregate(sources, grep = Present("ERROR"))
-                                    Abort.recover[Timeout] { (_: Timeout) =>
-                                        Console.printLine("[aggregator] 5s elapsed; tearing down").unit
-                                    } {
-                                        Async.timeout(5.seconds) {
-                                            tagged.foreach(line => Console.printLine(line))
-                                        }.unit
+                                    // Accumulate lines as they stream so the result survives a Timeout interrupt —
+                                    // `.run` would block until the (infinite) stream ends, then yield nothing back
+                                    // when the timeout fires.
+                                    AtomicRef.init(Chunk.empty[String]).map { acc =>
+                                        val drain = tagged.foreach { line =>
+                                            Console.printLine(line).andThen(acc.updateAndGet(_ :+ line).unit)
+                                        }
+                                        Abort.recover[Timeout] { (_: Timeout) =>
+                                            acc.get.map { lines =>
+                                                Console.printLine(s"[aggregator] 5s elapsed; tearing down (${lines.length} lines)")
+                                                    .andThen(DemoOutcome(summaries.length, lines))
+                                            }
+                                        } {
+                                            Async.timeout(5.seconds)(drain).andThen {
+                                                acc.get.map(lines => DemoOutcome(summaries.length, lines))
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -101,5 +120,7 @@ object LogAggregator extends KyoApp:
                 }
             }
         }
-    }
+    end demoMain
+
+    run(demoMain.unit)
 end LogAggregator
