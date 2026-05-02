@@ -1569,7 +1569,7 @@ final private[kyo] class HttpContainerBackend(
         withErrorMapping(ResourceContext.Image(ref)) {
             HttpClient.getJson[Seq[ImageHistoryEntryDto]](url(s"/images/$ref/history"))
         }.map { entries =>
-            Chunk.from(entries.map { e =>
+            val parsed = Chunk.from(entries.map { e =>
                 ContainerImage.HistoryEntry(
                     id = e.Id,
                     createdAt = fromEpochSecond(e.Created),
@@ -1579,6 +1579,19 @@ final private[kyo] class HttpContainerBackend(
                     comment = e.Comment
                 )
             })
+            // The /history endpoint reports each layer's source-comment (e.g. "FROM …:latest"); the user's
+            // `commit -m` text lives on the image-level Comment instead. Overlay it on the head entry so callers
+            // see a uniform shape across runtimes (matches the corresponding overlay in ShellBackend).
+            if parsed.isEmpty then parsed
+            else
+                withErrorMapping(ResourceContext.Image(ref)) {
+                    HttpClient.getJson[ImageInspectDto](url(s"/images/$ref/json"))
+                }.map { dto =>
+                    val imgComment = dto.Comment.trim
+                    if imgComment.isEmpty then parsed
+                    else parsed.updated(0, parsed(0).copy(comment = imgComment))
+                }
+            end if
         }
     end imageHistory
 
@@ -2436,6 +2449,7 @@ final private[kyo] class HttpContainerBackend(
         Size: Long = 0,
         Architecture: String = "",
         Os: String = "",
+        Comment: String = "",
         Config: ImageConfigDto = ImageConfigDto()
     ) derives Schema
 

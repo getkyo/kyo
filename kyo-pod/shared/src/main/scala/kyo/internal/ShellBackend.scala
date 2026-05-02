@@ -158,6 +158,23 @@ final private[kyo] class ShellBackend(
 
     def stop(id: Container.Id, timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException]) =
         runUnit(ResourceContext.Container(id), "stop", "-t", parseDurationSeconds(timeout).toString, id.value)
+            .andThen(awaitTerminalState(id))
+
+    /** Poll `state(id)` until it reflects a terminal value (Stopped or Dead). The CLI returns once the daemon acknowledges the stop, but on
+      * slower runners the listing-side state lags briefly behind the inspect-side state, causing `Container.list` calls right after `stop`
+      * to race-read the still-Running entry. A short bounded poll closes that gap (mirrors the same fix in `HttpContainerBackend.stop`).
+      */
+    private def awaitTerminalState(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        val maxAttempts = 20
+        val pollDelay   = 50.millis
+        def loop(attempt: Int): Unit < (Async & Abort[ContainerException]) =
+            state(id).map { s =>
+                if s == Container.State.Stopped || s == Container.State.Dead then ()
+                else if attempt >= maxAttempts then ()
+                else Async.sleep(pollDelay).andThen(loop(attempt + 1))
+            }
+        loop(0)
+    end awaitTerminalState
 
     def kill(id: Container.Id, signal: Container.Signal)(using Frame): Unit < (Async & Abort[ContainerException]) =
         runUnit(ResourceContext.Container(id), "kill", "-s", signal.name, id.value)

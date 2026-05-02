@@ -1190,9 +1190,11 @@ class ContainerItTest extends Test:
             val config = Container.Config("alpine")
                 .command("sh", "-c", "trap 'exit 0' TERM; echo hello-from-container; sleep infinity")
             Container.init(config).map { c =>
-                c.logs.map { entries =>
-                    assert(entries.exists(_.content.contains("hello-from-container")))
-                    assert(entries.exists(_.source == Container.LogEntry.Source.Stdout))
+                // Container is Running by the time `init` returns, but the docker/podman log driver flushes
+                // stdout on its own cadence — under CI load the first `c.logs` call can race the daemon's
+                // log buffer. Poll until the expected line appears, bounded by the test wrapper.
+                untilTrue(c.logs.map(_.exists(_.content.contains("hello-from-container")))).andThen {
+                    c.logs.map(entries => assert(entries.exists(_.source == Container.LogEntry.Source.Stdout)))
                 }
             }
         }
