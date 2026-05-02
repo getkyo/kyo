@@ -86,9 +86,11 @@ final private[kyo] class Http1ResponseParser(
             needMoreBytes()
         else
             val response = packResponse(buf, headerEnd)
-            // Guard against unparseable status lines — treat as protocol error
+            // Guard against unparseable status lines. Common in cancellation paths where the buffered bytes
+            // are response-body fragments (not a new status line) — keep at debug to avoid burying real
+            // failures under cancellation noise.
             if response.statusCode < 100 || response.statusCode > 599 then
-                Log.live.unsafe.error(s"Http1ResponseParser: invalid status code ${response.statusCode}, closing")
+                Log.live.unsafe.debug(s"Http1ResponseParser: invalid status code ${response.statusCode}, closing")
                 onClosed()
             else
                 // Extract remaining bytes after headers — these are body bytes

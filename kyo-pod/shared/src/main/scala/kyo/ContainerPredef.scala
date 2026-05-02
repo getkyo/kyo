@@ -296,7 +296,7 @@ object ContainerPredef:
                 .healthCheck(Container.HealthCheck.exec(
                     Command(healthCmdBase*),
                     Absent,
-                    Schedule.fixed(1.second).take(60)
+                    Schedule.fixed(200.millis).take(300)
                 ))
             applyEnv(base, c)
         end buildContainerConfig

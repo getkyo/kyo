@@ -450,7 +450,11 @@ object Container:
                             Abort.run[ContainerException](b.stop(cid, config.stopTimeout)).map(logFailure("stop"))
 
                     shutdown.andThen(
-                        Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = false)).map(logFailure("remove"))
+                        // `removeVolumes = true` reaps anonymous volumes attached to the container (e.g. the
+                        // `/var/lib/mysql` volume the official MySQL image declares). Without it, a long-running
+                        // suite of scope-managed containers leaks daemon-side state until inspect/start latency
+                        // exceeds the test wrapper. Named volumes are unaffected.
+                        Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = true)).map(logFailure("remove"))
                     )
                 }.andThen {
                     b.start(cid).andThen {
@@ -511,15 +515,12 @@ object Container:
                                 .andThen(runHealthCheck(container, config.healthCheck))
                                 .andThen(waitForPortMappings(container))
                         }.map {
-                            case Result.Success(_)   => container
-                            case Result.Failure(err) =>
-                                // Cleanup on failure — best effort
-                                Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = false))
-                                    .andThen(Abort.fail[ContainerException](err))
-                            case Result.Panic(ex) =>
-                                // Cleanup on panic — best effort
-                                Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = false))
-                                    .andThen(Abort.panic[ContainerException](ex))
+                            case Result.Success(_)                                => container
+                            case e: (Result.Error[ContainerException] @unchecked) =>
+                                // Best-effort cleanup; reap anonymous volumes too — caller never received a
+                                // handle, so they can't reach those volumes through any other API.
+                                Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = true))
+                                    .andThen(Abort.error(e))
                         }
                     }
                 }
@@ -2037,12 +2038,15 @@ object Container:
     /** Threshold (milliseconds) above which elapsed-time strings switch from "Nms" to "Ns" formatting. */
     private val elapsedMillisFormatThreshold: Long = 1000L
 
-    /** Poll interval and timeout for `waitForPortMappings`. The host-side port forwarding hook on rootless podman (slirp4netns/pasta) and
-      * Docker Desktop's VM completes asynchronously after `start` — typically <100ms but can stretch under load. 50 attempts × 100ms = 5s
-      * window before we surface a clear timeout.
+    /** Wall-clock budget for `waitForPortMappings` and the bounds of its adaptive backoff. The host-side port forwarding hook on rootless
+      * podman (slirp4netns/pasta) and Docker Desktop's VM completes asynchronously after `start` — typically <100ms but can stretch
+      * dramatically under load when `inspect` itself takes 1–2s per call. The budget is wall-clock so the actual timeout matches the
+      * configured value regardless of `inspect` latency, and the backoff doubles from `min` to `max` to reduce daemon pressure when the
+      * first few attempts fail.
       */
-    private val portMappingPollInterval: Duration = 100.millis
-    private val portMappingMaxAttempts: Int       = 50
+    private val portMappingBudget: Duration  = 30.seconds
+    private val portMappingMinPoll: Duration = 50.millis
+    private val portMappingMaxPoll: Duration = 500.millis
 
     /** Default upper bound on lines returned by the buffered log APIs (`logs`, `logsText`, `logStream`). Prevents accidental OOM when
       * called on long-running containers with megabytes of history. Pass an explicit `tail` to override; pass `Int.MaxValue` for unbounded.
@@ -2141,21 +2145,35 @@ object Container:
     private def waitForPortMappings(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
         if container.config.ports.isEmpty then ()
         else
-            Loop.indexed { i =>
-                container.backend.inspect(container.id).map { info =>
-                    val allBound = container.config.ports.forall { pb =>
-                        info.ports.exists(b => b.containerPort == pb.containerPort && b.protocol == pb.protocol && b.hostPort > 0)
+            Clock.now.map { startedAt =>
+                val deadlineMs = startedAt.toJava.toEpochMilli + portMappingBudget.toMillis
+                val maxPollMs  = portMappingMaxPoll.toMillis
+                Loop(portMappingMinPoll.toMillis) { pollMs =>
+                    container.backend.inspect(container.id).map { info =>
+                        val allBound = container.config.ports.forall { pb =>
+                            info.ports.exists(b => b.containerPort == pb.containerPort && b.protocol == pb.protocol && b.hostPort > 0)
+                        }
+                        if allBound then Loop.done(())
+                        else
+                            Clock.now.map { now =>
+                                val nowMs = now.toJava.toEpochMilli
+                                if nowMs >= deadlineMs then
+                                    val elapsedMs = nowMs - startedAt.toJava.toEpochMilli
+                                    val configured =
+                                        container.config.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}").mkString(", ")
+                                    val observed =
+                                        info.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}->${p.hostPort}").mkString(", ")
+                                    Abort.fail[ContainerException](ContainerOperationException(
+                                        s"Container ${container.id.value} ports not bound on host after ${elapsedMs}ms (budget ${portMappingBudget.toMillis}ms). " +
+                                            s"Configured: [$configured]. Observed via inspect: [$observed]."
+                                    ))
+                                else
+                                    Async.sleep(Duration.fromJava(java.time.Duration.ofMillis(pollMs)))
+                                        .andThen(Loop.continue(math.min(pollMs * 2, maxPollMs)))
+                                end if
+                            }
+                        end if
                     }
-                    if allBound then Loop.done(())
-                    else if i < portMappingMaxAttempts then Async.sleep(portMappingPollInterval).andThen(Loop.continue)
-                    else
-                        val configured = container.config.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}").mkString(", ")
-                        val observed   = info.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}->${p.hostPort}").mkString(", ")
-                        Abort.fail[ContainerException](ContainerOperationException(
-                            s"Container ${container.id.value} ports not bound on host after ${portMappingMaxAttempts * portMappingPollInterval.toMillis}ms. " +
-                                s"Configured: [$configured]. Observed via inspect: [$observed]."
-                        ))
-                    end if
                 }
             }
 
