@@ -59,15 +59,27 @@ Global / commands += TestKyo.command
 //   reduce contention on slow runners. On local dev use 80% of cores — fewer
 //   than the full count, to leave headroom for sbt's scalatest reporter sockets
 //   and other background work, but higher than CI for faster iteration.
-Global / concurrentRestrictions ++= {
+// Replace sbt's default concurrentRestrictions wholesale (rather than appending), because sbt
+// resolves multiple Tags.limit on the same tag by taking the most-restrictive one. The default
+// `Tags.limit(Tags.ForkedTestGroup, 1)` would otherwise shadow our larger forkLimit. Per-project
+// `Global / concurrentRestrictions ++=` (e.g. Scala.JS linker locks) still appends as expected.
+Global / concurrentRestrictions := {
     val taskLimit   = sys.env.getOrElse("SBT_TASK_LIMIT", "0")
     val updateLimit = sys.env.getOrElse("SBT_UPDATE_LIMIT", "0")
     val cores       = java.lang.Runtime.getRuntime.availableProcessors()
     val isCI        = sys.env.contains("CI")
     val testLimit   = 1 max (if (isCI) cores / 2 else math.ceil(cores * 0.8).toInt)
-    (if (taskLimit != "0") Seq(Tags.limitAll(taskLimit.toInt)) else Nil) ++
-        (if (updateLimit != "0") Seq(Tags.limit(Tags.Update, updateLimit.toInt)) else Nil) ++
-        Seq(Tags.limit(Tags.Test, testLimit))
+    // Forked-test cap: how many forked test JVMs run concurrently. On CI we hard-cap at 2 so kyo-pod
+    // (which splits each suite into a podman fork and a docker fork via KYO_POD_RUNTIME pinning) ends
+    // up with at most one fork per daemon — strictly bounding container-daemon contention. Locally
+    // we allow up to half the cores for fast iteration; some same-daemon overlap is tolerable.
+    val forkLimit = if (isCI) 2 else 1 max cores / 2
+    Seq(
+        Tags.limitAll(if (taskLimit != "0") taskLimit.toInt else cores),
+        Tags.limit(Tags.Update, if (updateLimit != "0") updateLimit.toInt else 1),
+        Tags.limit(Tags.Test, testLimit),
+        Tags.limit(Tags.ForkedTestGroup, forkLimit)
+    )
 }
 
 lazy val `kyo-settings` = Seq(
@@ -146,6 +158,7 @@ lazy val kyoJVM = project
         `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
         `kyo-playwright`.jvm,
+        `kyo-pod`.jvm,
         `kyo-examples`.jvm,
         `kyo-actor`.jvm
     )
@@ -177,7 +190,8 @@ lazy val kyoJS = project
         `kyo-combinators`.js,
         `kyo-actor`.js,
         `kyo-http`.js,
-        `kyo-flow`.js
+        `kyo-flow`.js,
+        `kyo-pod`.js
     )
 
 lazy val kyoNative = project
@@ -208,7 +222,8 @@ lazy val kyoNative = project
         `kyo-zio`.native,
         `kyo-zio-test`.native,
         `kyo-stm`.native,
-        `kyo-stats-otlp`.native
+        `kyo-stats-otlp`.native,
+        `kyo-pod`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -704,6 +719,102 @@ lazy val `kyo-combinators` =
         .jsSettings(`js-settings`)
         .nativeSettings(`native-settings`)
         .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-pod` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-pod"))
+        .dependsOn(`kyo-core`, `kyo-http`)
+        .settings(
+            `kyo-settings`
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            // Each suite is forked once by default; suites that exercise a container runtime via
+            // `runBackends` / `runBackendsLong` / `runRuntimes` are forked once per runtime instead
+            // (KYO_POD_RUNTIME pinned in each fork) so each fork hits a single daemon and the two
+            // daemons run concurrently up to the global ForkedTestGroup cap. We auto-detect which
+            // suites need the per-runtime split by instantiating each suite at config time and
+            // checking whether `Suite.testNames` contains the bracketed runtime markers `[podman]`
+            // / `[docker]` registered by those test helpers — no marker trait or naming convention
+            // for humans to forget. Brackets ensure no collision with unit-test descriptions that
+            // happen to mention "podman" or "docker" as words (e.g. "docker auto-pull progress…").
+            Test / testForkedParallel := true,
+            Test / testGrouping := {
+                val javaOptionsValue = javaOptions.value.toVector
+                val envsVarsValue    = envVars.value
+                val loader           = (Test / testLoader).value
+                val baseFork = (envOverrides: Map[String, String]) =>
+                    ForkOptions(
+                        javaHome = javaHome.value,
+                        outputStrategy = outputStrategy.value,
+                        bootJars = Vector.empty,
+                        workingDirectory = Some(baseDirectory.value),
+                        runJVMOptions = javaOptionsValue,
+                        connectInput = connectInput.value,
+                        envVars = envsVarsValue ++ envOverrides
+                    )
+                (Test / definedTests).value.flatMap { test =>
+                    // Reflection-only: build.sbt runs under sbt's Scala 2.12 classloader, which has no
+                    // visibility into scalatest. We instantiate the suite, call `testNames`, and rely on
+                    // Set.toString containing the bracket-marked runtime scopes (e.g. "[podman] http").
+                    val suiteObj       = loader.loadClass(test.name).getConstructor().newInstance()
+                    val namesObj       = suiteObj.getClass.getMethod("testNames").invoke(suiteObj)
+                    val namesString    = namesObj.toString
+                    val targetRuntimes = Seq("podman", "docker").filter(rt => namesString.contains(s"[$rt]"))
+                    if (targetRuntimes.isEmpty)
+                        Seq(Tests.Group(
+                            name = test.name,
+                            tests = Seq(test),
+                            runPolicy = Tests.SubProcess(baseFork(Map.empty))
+                        ))
+                    else
+                        targetRuntimes.map { runtime =>
+                            Tests.Group(
+                                name = s"${test.name}#$runtime",
+                                tests = Seq(test),
+                                runPolicy = Tests.SubProcess(baseFork(Map("KYO_POD_RUNTIME" -> runtime)))
+                            )
+                        }
+                }
+            }
+        )
+        .nativeSettings(
+            `native-settings`,
+            nativeConfig ~= { c =>
+                val opensslOpts =
+                    if (System.getProperty("os.name").toLowerCase.contains("mac")) {
+                        val prefix = {
+                            val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
+                            val p1 = new java.io.File("/opt/homebrew/opt/openssl")
+                            val p0 = new java.io.File("/usr/local/opt/openssl")
+                            if (p3.exists()) p3.getAbsolutePath
+                            else if (p1.exists()) p1.getAbsolutePath
+                            else p0.getAbsolutePath
+                        }
+                        Seq(s"-L$prefix/lib", s"-I$prefix/include", "-lssl", "-lcrypto")
+                    } else Seq("-lssl", "-lcrypto")
+                c.withLinkingOptions(c.linkingOptions ++ opensslOpts)
+                    .withCompileOptions(c.compileOptions ++ {
+                        if (System.getProperty("os.name").toLowerCase.contains("mac")) {
+                            val prefix = {
+                                val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
+                                val p1 = new java.io.File("/opt/homebrew/opt/openssl")
+                                val p0 = new java.io.File("/usr/local/opt/openssl")
+                                if (p3.exists()) p3.getAbsolutePath
+                                else if (p1.exists()) p1.getAbsolutePath
+                                else p0.getAbsolutePath
+                            }
+                            Seq(s"-I$prefix/include")
+                        } else Nil
+                    })
+            }
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
 
 lazy val `kyo-playwright` =
     crossProject(JVMPlatform)

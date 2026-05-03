@@ -1,0 +1,3 @@
+package kyo
+
+object ContainerRuntime extends ContainerRuntimeJvmLike
