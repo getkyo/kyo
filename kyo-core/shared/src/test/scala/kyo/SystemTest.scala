@@ -2,6 +2,7 @@ package kyo
 
 import System.Parser
 import java.lang as j
+import kyo.System.Arch
 import kyo.System.OS
 import kyo.System.Unsafe
 
@@ -119,6 +120,7 @@ class SystemTest extends Test:
             def userName(using Frame): String < Sync         = Sync.defer("custom_user")
             def userHome(using Frame): String < Sync         = Sync.defer("custom_home")
             def operatingSystem(using Frame): OS < Sync      = Sync.defer(OS.AIX)
+            def architecture(using Frame): Arch < Sync       = Sync.defer(Arch.X86_64)
             def availableProcessors(using Frame): Int < Sync = Sync.defer(4)
 
         for
@@ -379,6 +381,7 @@ class SystemTest extends Test:
         lineSeparator: String = "\n",
         userName: String = "test_user",
         os: OS = OS.Unknown,
+        arch: Arch = Arch.Unknown,
         processors: Int = 1
     ) extends System.Unsafe:
         def env(name: String)(using AllowUnsafe): Maybe[String] =
@@ -392,6 +395,8 @@ class SystemTest extends Test:
         def userName()(using AllowUnsafe): String = userName
 
         def operatingSystem()(using AllowUnsafe): OS = os
+
+        def architecture()(using AllowUnsafe): Arch = arch
 
         def availableProcessors()(using AllowUnsafe): Int = processors
     end TestUnsafeSystem
