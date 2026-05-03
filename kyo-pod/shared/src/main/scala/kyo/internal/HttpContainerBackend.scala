@@ -1348,6 +1348,13 @@ final private[kyo] class HttpContainerBackend(
         httpEx match
             case _: HttpStatusException if auth.isEmpty =>
                 Abort.fail(ContainerImageMissingException(image))
+            case e: HttpStatusException
+                if auth.isDefined &&
+                    (e.status.code == 401 || e.status.code == 403) =>
+                // With auth supplied a 401/403 is a credential rejection, not a missing image.
+                val registry = image.registry.map(_.value).getOrElse("docker.io")
+                val detail   = e.body.getOrElse(s"HTTP ${e.status.code}")
+                Abort.fail(ContainerAuthException(registry, detail))
             case _ =>
                 mapHttpError(httpEx, ResourceContext.Image(image.reference)).unit
     end normalizePullError

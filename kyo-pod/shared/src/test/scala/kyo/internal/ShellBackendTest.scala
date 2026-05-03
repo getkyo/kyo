@@ -172,4 +172,80 @@ class ShellBackendTest extends kyo.Test:
         }
     }
 
+    // =========================================================================
+    // classifyLoginError — auth-error classification for docker login failures
+    // =========================================================================
+
+    "classifyLoginError" - {
+        import kyo.internal.ShellBackend.classifyLoginError
+
+        "denied → ContainerAuthException" in {
+            val ex = classifyLoginError("ghcr.io", "unauthorized: denied")
+            assert(ex.isInstanceOf[kyo.ContainerAuthException])
+        }
+
+        "unauthorized → ContainerAuthException" in {
+            val ex = classifyLoginError("ghcr.io", "Error response: unauthorized: incorrect username or password")
+            assert(ex.isInstanceOf[kyo.ContainerAuthException])
+        }
+
+        "forbidden → ContainerAuthException" in {
+            val ex = classifyLoginError("registry.example.com", "403 Forbidden from server")
+            assert(ex.isInstanceOf[kyo.ContainerAuthException])
+        }
+
+        "no basic auth credentials → ContainerAuthException" in {
+            val ex = classifyLoginError("docker.io", "no basic auth credentials")
+            assert(ex.isInstanceOf[kyo.ContainerAuthException])
+        }
+
+        "invalid username or password → ContainerAuthException" in {
+            val ex = classifyLoginError("docker.io", "invalid username or password")
+            assert(ex.isInstanceOf[kyo.ContainerAuthException])
+        }
+
+        "incorrect username or password → ContainerAuthException" in {
+            val ex = classifyLoginError("docker.io", "incorrect username or password")
+            assert(ex.isInstanceOf[kyo.ContainerAuthException])
+        }
+
+        "access denied → ContainerAuthException" in {
+            val ex = classifyLoginError("ghcr.io", "access denied")
+            assert(ex.isInstanceOf[kyo.ContainerAuthException])
+        }
+
+        "authentication required → ContainerAuthException" in {
+            val ex = classifyLoginError("ghcr.io", "authentication required")
+            assert(ex.isInstanceOf[kyo.ContainerAuthException])
+        }
+
+        "case-insensitive matching → ContainerAuthException" in {
+            val ex = classifyLoginError("ghcr.io", "UNAUTHORIZED: Access Denied")
+            assert(ex.isInstanceOf[kyo.ContainerAuthException])
+        }
+
+        "non-auth stderr → ContainerOperationException with 'auth' in message" in {
+            val ex = classifyLoginError("ghcr.io", "tag does not exist")
+            assert(ex.isInstanceOf[kyo.ContainerOperationException])
+            val msg = Option(ex.getMessage).getOrElse("").toLowerCase
+            assert(msg.contains("auth"), s"expected 'auth' in fallback message, got: $msg")
+        }
+
+        "empty output → ContainerOperationException with 'auth' in message" in {
+            val ex = classifyLoginError("ghcr.io", "")
+            assert(ex.isInstanceOf[kyo.ContainerOperationException])
+            val msg = Option(ex.getMessage).getOrElse("").toLowerCase
+            assert(msg.contains("auth"), s"expected 'auth' in fallback message, got: $msg")
+        }
+
+        "ContainerAuthException carries registry as first field" in {
+            val ex = classifyLoginError("ghcr.io", "unauthorized: denied")
+            ex match
+                case kyo.ContainerAuthException(registry, _) =>
+                    assert(registry == "ghcr.io")
+                case _ => fail(s"expected ContainerAuthException, got $ex")
+            end match
+        }
+    }
+
 end ShellBackendTest

@@ -1307,10 +1307,12 @@ final private[kyo] class ShellBackend(
                     case Array(u, p) => (u, p)
                     case Array(u)    => (u, "")
                     case _           => ("", "")
+                // Merge stderr into stdout so auth-error messages emitted on stderr are captured.
                 val loginCmd = Command(cmd, "login", "--username", user, "--password-stdin", server)
                     .stdin(Process.Input.FromStream(
                         new java.io.ByteArrayInputStream(password.getBytes(java.nio.charset.StandardCharsets.UTF_8))
                     ))
+                    .redirectErrorStream(true)
                 Abort.runWith[CommandException](loginCmd.textWithExitCode) {
                     case Result.Success((_, exit)) if exit.isSuccess =>
                         // Manual try/finally — Sync.ensure can't take an Async finalizer (logout calls
@@ -1324,9 +1326,12 @@ final private[kyo] class ShellBackend(
                             }
                         }
                     case Result.Success((out, _)) =>
-                        Abort.fail[ContainerException](mapError(out, ctx, Seq("login", server)))
+                        Abort.fail[ContainerException](classifyLoginError(server, out))
                     case Result.Failure(cmdEx) =>
-                        Abort.fail[ContainerException](ContainerOperationException(s"docker login failed for $server", cmdEx))
+                        Abort.fail[ContainerException](ContainerOperationException(
+                            s"docker login $server failed (auth): ${cmdEx.getMessage}",
+                            cmdEx
+                        ))
                     case Result.Panic(ex) =>
                         Abort.fail[ContainerException](ContainerBackendException(s"docker login panicked for $server", ex))
                 }
@@ -2356,6 +2361,32 @@ private[kyo] object ShellBackend:
             Container.TopResult(titles, processes)
         end if
     end parseTopOutput
+
+    /** Classify a docker-login failure by inspecting the combined stdout+stderr output.
+      *
+      * Docker emits auth-error messages to stderr; the caller must merge stderr into stdout (via `.redirectErrorStream(true)`) before
+      * passing the output here. Known auth-error phrases produce [[ContainerAuthException]]; anything else produces
+      * [[ContainerOperationException]] with a message that includes "auth" so callers can reliably detect auth-related failures.
+      *
+      * @param server
+      *   The registry hostname (e.g. `"ghcr.io"`, `"docker.io"`)
+      * @param output
+      *   The merged stdout+stderr of the failed `docker login` invocation
+      */
+    private[kyo] def classifyLoginError(server: String, output: String)(using Frame): ContainerException =
+        val lower = output.toLowerCase
+        val isAuthError =
+            lower.contains("denied") ||
+                lower.contains("unauthorized") ||
+                lower.contains("forbidden") ||
+                lower.contains("no basic auth credentials") ||
+                lower.contains("invalid username or password") ||
+                lower.contains("incorrect username or password") ||
+                lower.contains("access denied") ||
+                lower.contains("authentication required")
+        if isAuthError then ContainerAuthException(server, output)
+        else ContainerOperationException(s"docker login $server failed (auth): $output")
+    end classifyLoginError
 
     /** Auto-detect an available container runtime by probing CLI binaries on `PATH`.
       *
