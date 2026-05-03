@@ -2110,6 +2110,7 @@ object Container:
                         Abort.runWith[ContainerException](hc.check(container)) {
                             case Result.Success(_) =>
                                 container.healthState.set(ContainerHealthState(Present(hc)))
+                            case Result.Failure(_: ContainerMissingException) => ()
                             case failure =>
                                 val errorMsg = failure match
                                     // Prefer the structured `lastError` for HealthCheckException — `getMessage` on
