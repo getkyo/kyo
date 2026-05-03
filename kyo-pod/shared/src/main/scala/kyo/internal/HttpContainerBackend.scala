@@ -1348,16 +1348,42 @@ final private[kyo] class HttpContainerBackend(
         httpEx match
             case _: HttpStatusException if auth.isEmpty =>
                 Abort.fail(ContainerImageMissingException(image))
-            case e: HttpStatusException
-                if auth.isDefined &&
-                    (e.status.code == 401 || e.status.code == 403) =>
-                // With auth supplied a 401/403 is a credential rejection, not a missing image.
+            case e: HttpStatusException if auth.isDefined && isAuthDenialBody(e) =>
+                // With auth supplied, a daemon response carrying registry-denial wording is
+                // a credential rejection regardless of HTTP status code. Docker daemons return
+                // HTTP 500 with `{"message":"... denied"}` (or "unauthorized" / "forbidden" /
+                // "no basic auth credentials") when the upstream registry rejects the supplied
+                // creds — not 401/403 from the daemon itself. Surface it as ContainerAuthException
+                // so callers can distinguish auth failure from generic operation failure.
                 val registry = image.registry.map(_.value).getOrElse("docker.io")
                 val detail   = e.body.getOrElse(s"HTTP ${e.status.code}")
                 Abort.fail(ContainerAuthException(registry, detail))
             case _ =>
                 mapHttpError(httpEx, ResourceContext.Image(image.reference)).unit
     end normalizePullError
+
+    /** True when the response status code OR body carries a registry-level auth-denial signal.
+      *
+      * Status-code path: 401 / 403 from the daemon itself. Body path: substrings the daemon proxies verbatim from the upstream registry —
+      * `denied`, `unauthorized`, `forbidden`, `no basic auth credentials`, `invalid username or password`, `incorrect username or
+      * password`, `access denied`, `authentication required`. Case-insensitive.
+      */
+    private def isAuthDenialBody(e: HttpStatusException): Boolean =
+        if e.status.code == 401 || e.status.code == 403 then true
+        else
+            e.body match
+                case Absent => false
+                case Present(body) =>
+                    val lower = body.toLowerCase
+                    lower.contains("denied") ||
+                    lower.contains("unauthorized") ||
+                    lower.contains("forbidden") ||
+                    lower.contains("no basic auth credentials") ||
+                    lower.contains("invalid username or password") ||
+                    lower.contains("incorrect username or password") ||
+                    lower.contains("access denied") ||
+                    lower.contains("authentication required")
+    end isAuthDenialBody
 
     private def processPullLine(
         line: String,

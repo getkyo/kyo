@@ -6,6 +6,11 @@ object ContainerRuntime extends ContainerRuntimeBase:
 
     private val childProcess = js.Dynamic.global.require("node:child_process")
 
+    /** On Node.js, `user.home` Java system property is not set. Use Node's `os.homedir()` instead. */
+    override private[kyo] def getHome(using AllowUnsafe): String =
+        try js.Dynamic.global.require("os").homedir().asInstanceOf[String]
+        catch case _: Throwable => ""
+
     private[kyo] def cliExists(command: String): Boolean =
         try
             childProcess.execSync(s"$command version", js.Dynamic.literal(stdio = "pipe"))
