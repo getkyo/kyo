@@ -465,29 +465,6 @@ class ContainerItTest extends Test:
             }
         }
 
-        // kill+waitForExit on autoRemove container preserves real exit code
-        // — stop() must start /wait fiber before sending stop signal so the auto-remove cleanup
-        // race does not clobber the exit code observed by the caller.
-        "kill+waitForExit on autoRemove container preserves real exit code" - runBackends {
-            // The `& wait` pattern is required for SIGTERM delivery on alpine: a foreground
-            // `sleep infinity` blocks the shell in waitpid() and the trap never fires until
-            // the child exits, so signals to PID 1 are deferred indefinitely. Backgrounding
-            // sleep and using the shell's `wait` builtin makes the wait interruptible.
-            val cfg = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 137' TERM; sleep infinity & wait")
-                .autoRemove(true)
-            Container.init(cfg).map { c =>
-                for
-                    _ <- c.kill(Container.Signal.SIGTERM)
-                    // Capture exit code BEFORE auto-remove cleanup races to clobber it.
-                    exit <- c.waitForExit
-                yield exit match
-                    case ExitCode.Failure(137) => succeed
-                    case ExitCode.Signaled(9)  => succeed // ExitCode.apply(137) maps to Signaled(9)
-                    case other =>
-                        fail(s"expected exit 137 (Failure(137) or Signaled(9)), got $other")
-            }
-        }
     }
 
     "restart" - {

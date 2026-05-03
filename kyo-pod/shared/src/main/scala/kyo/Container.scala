@@ -70,7 +70,14 @@ final class Container private[kyo] (
     def kill(using Frame): Unit < (Async & Abort[ContainerException]) =
         kill(Signal.SIGTERM)
 
-    /** Send a signal to the container process immediately without waiting. */
+    /** Send a signal to the container process immediately without waiting.
+      *
+      * Note: combining `kill` with `waitForExit` on an `autoRemove(true)` container is inherently racy. The Container API best-efforts to
+      * subscribe to the daemon's exit channel before issuing the signal, but the daemon's HTTP API does not give a synchronous
+      * "subscription registered" acknowledgement: under sufficient daemon-side latency, the signal can be delivered, the container can
+      * exit, and the auto-remove can complete before the wait subscription lands — at which point the daemon returns `Success(0)` and the
+      * real exit code is lost. If the exit code matters, prefer `autoRemove(false)` and call `waitForExit` followed by `remove` manually.
+      */
     def kill(signal: Signal)(using Frame): Unit < (Async & Abort[ContainerException]) =
         ensurePendingExit.andThen(backend.kill(id, signal))
 
