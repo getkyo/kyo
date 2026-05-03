@@ -2967,7 +2967,7 @@ class ContainerItTest extends Test:
         "port not immediately available after start — health check waits" - runBackends {
             val config = Container.Config("alpine")
                 .command("sh", "-c", "sleep 1; while true; do echo ok | nc -l -p 9090; done")
-                .port(9090, 19090)
+                .port(9090)
                 .healthCheck(Container.HealthCheck.port(9090, retrySchedule = Schedule.fixed(200.millis).take(30)))
             assertRuns(config)
         }
