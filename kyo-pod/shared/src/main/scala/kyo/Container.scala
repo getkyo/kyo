@@ -439,13 +439,17 @@ object Container:
             b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config)).map { cid =>
                 // Register cleanup IMMEDIATELY after create, before start
                 Scope.ensure {
+                    def safeMessage(t: Throwable): String =
+                        try t.getMessage
+                        catch case scala.util.control.NonFatal(_) => "(failed to format)"
+
                     def logFailure(op: String)(r: Result[Throwable, Unit])(using Frame): Unit < Sync = r match
                         case Result.Success(_) => ()
                         // The container being already absent is the desired end state — nothing to warn about.
                         // Happens when the caller (or autoRemove) removed it before the Scope finalizer ran.
                         case Result.Failure(_: ContainerMissingException) => ()
-                        case Result.Failure(e)                            => Log.warn(s"Container ${cid.value} $op failed: ${e.getMessage}")
-                        case Result.Panic(e) => Log.warn(s"Container ${cid.value} $op panicked: ${e.getMessage}")
+                        case Result.Failure(e) => Log.warn(s"Container ${cid.value} $op failed: ${safeMessage(e)}")
+                        case Result.Panic(e)   => Log.warn(s"Container ${cid.value} $op panicked: ${safeMessage(e)}")
 
                     val shutdown: Unit < (Async & Abort[Nothing]) = config.stopSignal match
                         case Present(signal) =>
@@ -457,13 +461,13 @@ object Container:
                         case Absent =>
                             Abort.run[ContainerException](b.stop(cid, config.stopTimeout)).map(logFailure("stop"))
 
-                    shutdown.andThen(
+                    shutdown.andThen {
                         // `removeVolumes = true` reaps anonymous volumes attached to the container (e.g. the
                         // `/var/lib/mysql` volume the official MySQL image declares). Without it, a long-running
                         // suite of scope-managed containers leaks daemon-side state until inspect/start latency
                         // exceeds the test wrapper. Named volumes are unaffected.
                         Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = true)).map(logFailure("remove"))
-                    )
+                    }
                 }.andThen {
                     b.start(cid).andThen {
                         AtomicRef.init(ContainerHealthState(Absent)).map { healthRef =>
