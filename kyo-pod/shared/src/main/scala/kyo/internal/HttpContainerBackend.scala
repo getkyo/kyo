@@ -398,7 +398,13 @@ final private[kyo] class HttpContainerBackend(
     private def ctxContainer(id: Container.Id): ResourceContext = ResourceContext.Container(id)
 
     def start(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        postUnitAccept304(s"/containers/${id.value}/start", ctxContainer(id))
+        // Container start can stall under daemon load (e.g. parallel test forks). The default
+        // HttpClient timeout (5s) is too tight for the cold-start path; raise it to at least
+        // 30s so the daemon has time to ack /start. `c.timeout.max(...)` preserves any caller
+        // override that already requests a longer ceiling.
+        HttpClient.withConfig(c => c.timeout(c.timeout.max(30.seconds))) {
+            postUnitAccept304(s"/containers/${id.value}/start", ctxContainer(id))
+        }
 
     def stop(id: Container.Id, timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException]) =
         val seconds = timeout.toMillis / 1000
