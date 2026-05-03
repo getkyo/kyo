@@ -256,6 +256,7 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
         labels: Dict[String, String],
         noCache: Boolean,
         pull: Boolean,
+        forceRm: Boolean,
         target: Maybe[String],
         platform: Maybe[Container.Platform],
         auth: Maybe[ContainerImage.RegistryAuth]

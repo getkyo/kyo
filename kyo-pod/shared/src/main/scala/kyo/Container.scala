@@ -76,6 +76,12 @@ final class Container private[kyo] (
 
     /** When `autoRemove == true`, attach a `waitForExit` fiber before any destructive signal so the exit code is captured before the daemon
       * cleans the container up. Idempotent — subsequent calls are no-ops while a fiber is already attached.
+      *
+      * The Latch handshake is essential: `Fiber.initUnscoped` only schedules the fiber — it returns before the fiber has run a single line.
+      * Without synchronisation, `kill` can race ahead, the daemon SIGTERMs the container, autoRemove reaps it, and the still-pending
+      * `/wait` call lands on a 404 (returning `Success(0)` and silently losing the exit code). The fiber releases the latch as its first
+      * action, so by the time we set `pendingExit`, the fiber is committed to running and the `/wait` request is on the wire well before
+      * any later signal can race the daemon's reap path.
       */
     private def ensurePendingExit(using Frame): Unit < (Async & Abort[ContainerException]) =
         if !config.autoRemove then Kyo.unit
@@ -83,8 +89,10 @@ final class Container private[kyo] (
             pendingExit.get.map {
                 case Present(_) => ()
                 case Absent =>
-                    Fiber.initUnscoped(backend.waitForExit(id)).map { fiber =>
-                        pendingExit.set(Present(fiber))
+                    Latch.init(1).map { latch =>
+                        Fiber.initUnscoped(latch.release.andThen(backend.waitForExit(id))).map { fiber =>
+                            latch.await.andThen(pendingExit.set(Present(fiber)))
+                        }
                     }
             }
 
@@ -463,6 +471,7 @@ object Container:
                                 val container = new Container(cid, config, b, healthRef, pendingRef)
                                 runHealthCheck(container, config.healthCheck)
                                     .andThen(waitForPortMappings(container))
+                                    .andThen(probePortConflict(container))
                                     .andThen(container)
                             }
                         }
@@ -514,6 +523,7 @@ object Container:
                             b.start(cid)
                                 .andThen(runHealthCheck(container, config.healthCheck))
                                 .andThen(waitForPortMappings(container))
+                                .andThen(probePortConflict(container))
                         }.map {
                             case Result.Success(_)                                => container
                             case e: (Result.Error[ContainerException] @unchecked) =>
@@ -2135,6 +2145,55 @@ object Container:
                     loop(hc.schedule, 0, Seq.empty)
                 }
         }
+
+    /** After the daemon reports that all ports are bound (via [[waitForPortMappings]]), verify that no other running container claims the
+      * same host port via inspect.
+      *
+      * On Linux / Podman, a conflicting bind is rejected at `/start` (HTTP 500 "port is already allocated"), which
+      * [[kyo.internal.HttpContainerBackend]] maps to [[ContainerPortConflictException]] before this probe is ever reached. Docker Desktop
+      * on macOS, however, silently accepts duplicate host-port binds: `/start` returns 204 and `inspect` reports the port as bound for
+      * multiple containers — but only the first container actually receives traffic.
+      *
+      * Detection strategy: list all running containers, then inspect each one and compare its inspect-level host ports against the
+      * configured explicit host ports of the container being started. This relies on inspect rather than the list summary because Docker
+      * Desktop's port-proxy layer causes `/containers/json` (list) and `/containers/{id}/json` (inspect) to report different port numbers
+      * (the macOS proxy port vs the VM-internal port, respectively). The conflict is consistently visible at the inspect level — both the
+      * existing and the newly-started container report the same VM-internal host port.
+      *
+      * Skipped when no explicit host-port bindings (hostPort > 0) are configured for TCP — dynamic (0) and UDP-only bindings are excluded
+      * because they cannot produce a detectable silent conflict.
+      */
+    private def probePortConflict(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        val tcpBindings = container.config.ports.filter(pb => pb.hostPort > 0 && pb.protocol == Config.Protocol.TCP)
+        if tcpBindings.isEmpty then ()
+        else
+            container.backend.list(all = false, filters = Dict.empty).map { summaries =>
+                val otherIds = summaries.collect { case s if s.id != container.id => s.id }
+                Kyo.foreach(otherIds) { otherId =>
+                    Abort.run[ContainerException](container.backend.inspect(otherId))
+                        .map {
+                            case Result.Success(info) => Present(info)
+                            case _                    => Absent
+                        }
+                }.map { maybeInfos =>
+                    val otherInfos = maybeInfos.collect { case Present(info) => info }
+                    Kyo.foreachDiscard(tcpBindings) { pb =>
+                        val hostPort = pb.hostPort
+                        val conflict = otherInfos.exists { info =>
+                            info.ports.exists(p => p.hostPort == hostPort && p.protocol == Config.Protocol.TCP)
+                        }
+                        if conflict then
+                            Abort.fail(ContainerPortConflictException(
+                                hostPort,
+                                s"Daemon reports port $hostPort bound but another container's inspect also claims it (Docker Desktop silent-bind)"
+                            ))
+                        else ()
+                        end if
+                    }
+                }
+            }
+        end if
+    end probePortConflict
 
     /** After health check passes, wait until every configured host port binding is observable via `inspect`. Backends report container
       * state Running before the port-forwarding hook completes (rootless podman uses slirp4netns/pasta async; Docker Desktop's VM has a

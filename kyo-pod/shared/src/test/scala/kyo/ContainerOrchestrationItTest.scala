@@ -13,7 +13,7 @@ package kyo
 class ContainerOrchestrationItTest extends Test:
 
     val alpine = Container.Config(ContainerImage("alpine", "latest"))
-        .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")
+        .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait")
         .stopTimeout(0.seconds)
 
     private val nameCounter = new java.util.concurrent.atomic.AtomicLong(0L)
@@ -417,7 +417,7 @@ class ContainerOrchestrationItTest extends Test:
 
     "isHealthy returns false in under 500ms when healthcheck fails" - runBackend {
         val config = Container.Config("alpine")
-            .command("sh", "-c", "trap 'exit 0' TERM; touch /tmp/healthy; sleep infinity")
+            .command("sh", "-c", "trap 'exit 0' TERM; touch /tmp/healthy; sleep infinity & wait")
             .healthCheck(Container.HealthCheck.init(Schedule.fixed(200.millis).take(10)) { c =>
                 c.exec("test", "-f", "/tmp/healthy").map { r =>
                     if !r.isSuccess then

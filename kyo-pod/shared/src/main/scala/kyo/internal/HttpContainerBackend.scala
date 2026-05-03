@@ -405,7 +405,16 @@ final private[kyo] class HttpContainerBackend(
         // Start the /wait call as a background fiber BEFORE sending stop, so the exit code is
         // captured before auto-remove cleanup can race and remove the container from the daemon.
         Fiber.initUnscoped(waitForExit(id)).map { waitFiber =>
-            postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id)).andThen {
+            // Truncate the HTTP client's timeout to the caller's stop timeout — the HTTP call should
+            // not wait longer than the daemon's `t=$seconds` deadline. Skip the override for
+            // `stopTimeout == 0` (instant kill) since `HttpClientConfig.timeout` rejects zero.
+            val bounded =
+                if timeout > Duration.Zero then
+                    HttpClient.withConfig(c => c.timeout(c.timeout.min(timeout))) {
+                        postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id))
+                    }
+                else postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id))
+            bounded.andThen {
                 // Docker HTTP API returns before the container fully transitions to "exited".
                 // Join the pre-started /wait fiber to confirm exit and preserve the exit code.
                 waitFiber.get.andThen(awaitTerminalState(id))
@@ -1448,6 +1457,7 @@ final private[kyo] class HttpContainerBackend(
         labels: Dict[String, String],
         noCache: Boolean,
         pull: Boolean,
+        forceRm: Boolean,
         target: Maybe[String],
         platform: Maybe[Container.Platform],
         auth: Maybe[ContainerImage.RegistryAuth]
@@ -1458,7 +1468,8 @@ final private[kyo] class HttpContainerBackend(
             // integration-test / CI context sizes this is fine; very large contexts (GB-scale)
             // would need a streaming request body which kyo-http does not yet expose as a helper.
             val params =
-                tags.toSeq.map("t" -> _) ++
+                (if forceRm then Seq("forcerm" -> "true") else Seq.empty) ++
+                    tags.toSeq.map("t" -> _) ++
                     (if dockerfile != "Dockerfile" then Seq("dockerfile" -> dockerfile) else Seq.empty) ++
                     (if noCache then Seq("nocache" -> "true") else Seq.empty) ++
                     (if pull then Seq("pull" -> "true") else Seq.empty) ++

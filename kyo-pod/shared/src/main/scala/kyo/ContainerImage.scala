@@ -239,7 +239,14 @@ object ContainerImage:
             currentBackend.map(_.imageBuild(context, dockerfile, tags, buildArgs, labels, noCache, pull, target, platform, auth).emit)
         }
 
-    /** Build an image from a Dockerfile directory path. Returns build progress events. */
+    /** Build an image from a Dockerfile directory path. Returns build progress events.
+      *
+      * `forceRm = true` (the library default) tells the daemon to remove intermediate containers even when a build step fails. The Docker
+      * CLI default is the opposite (`--force-rm` opt-in) because an interactive operator may want to `docker exec` into the failed
+      * intermediate to debug — for a programmatic library that surfaces failures via `ContainerBuildFailedException` and the progress
+      * stream, leaving daemon-side state behind on every failed build is just a leak. Pass `forceRm = false` to preserve the failed
+      * intermediate for manual inspection.
+      */
     def buildFromPath(
         path: Path,
         dockerfile: String = "Dockerfile",
@@ -248,12 +255,25 @@ object ContainerImage:
         labels: Dict[String, String] = Dict.empty,
         noCache: Boolean = false,
         pull: Boolean = false,
+        forceRm: Boolean = true,
         target: Maybe[String] = Absent,
         platform: Maybe[Container.Platform] = Absent,
         auth: Maybe[RegistryAuth] = Absent
     )(using Frame): Stream[BuildProgress, Async & Abort[ContainerException]] =
         Stream {
-            currentBackend.map(_.imageBuildFromPath(path, dockerfile, tags, buildArgs, labels, noCache, pull, target, platform, auth).emit)
+            currentBackend.map(_.imageBuildFromPath(
+                path,
+                dockerfile,
+                tags,
+                buildArgs,
+                labels,
+                noCache,
+                pull,
+                forceRm,
+                target,
+                platform,
+                auth
+            ).emit)
         }
 
     /** Push an image to its registry. */

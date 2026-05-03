@@ -1728,6 +1728,36 @@ class HttpClientTest extends Test:
             }
         }
 
+        "subsequent request on reused pool sees no stale bytes after a cancelled request" - {
+            // Regression: when an in-flight request was cancelled mid-response (e.g. via Async.timeout)
+            // the underlying connection used to be returned to the pool with un-drained body bytes.
+            // The next request on that pooled connection then read those stale bytes as a new status
+            // line, surfacing as `Http1ResponseParser: invalid status code 0` (or worse, a successful
+            // response carrying the previous request's body). The fix: `Sync.ensure` in
+            // HttpClientBackend.poolWithImpl discards the connection (instead of releasing) whenever
+            // its callback fires with `error = Present(_)`. This test exercises that discard path.
+            val slow  = HttpRoute.getRaw("slow").response(_.bodyText)
+            val fast  = HttpRoute.getRaw("fast").response(_.bodyText)
+            val slowH = slow.handler { _ => Async.never.andThen(HttpResponse.ok("never")) }
+            val fastH = fast.handler { _ => HttpResponse.ok("hello-fresh") }
+            runServer(slowH, fastH) { url =>
+                withClient { c =>
+                    val slowReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
+                    val fastReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/fast", Absent))
+                    Abort.run[HttpException | kyo.Timeout] {
+                        Async.timeout(100.millis)(c.sendWith(slow, slowReq)(identity))
+                    }.andThen {
+                        c.sendWith(fast, fastReq)(identity).map { resp =>
+                            assert(
+                                resp.fields.body == "hello-fresh",
+                                s"second request should return its own body, got '${resp.fields.body}' — connection pool returned a stale connection"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         "streaming response: fiber interruption stops stream consumption" - {
             // Server sends an infinite stream. Client reads one chunk then cancels via scope close.
             val route = HttpRoute.getRaw("infinite").response(_.bodyStream)

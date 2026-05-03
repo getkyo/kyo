@@ -3,7 +3,7 @@ package kyo
 class ContainerItTest extends Test:
 
     val alpine = Container.Config(ContainerImage("alpine", "latest"))
-        .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")
+        .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait")
         .stopTimeout(0.seconds)
 
     private val nameCounter = new java.util.concurrent.atomic.AtomicLong(0L)
@@ -294,7 +294,7 @@ class ContainerItTest extends Test:
                 result <- Abort.run[ContainerException](
                     Container.init(Container.Config.default.copy(
                         image = img,
-                        command = Maybe(Command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")),
+                        command = Maybe(Command("sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait")),
                         stopTimeout = 0.seconds,
                         healthCheck = Container.HealthCheck.running
                     )).map(_ => ())
@@ -406,7 +406,7 @@ class ContainerItTest extends Test:
         // attachById preserves env vars set in Container.Config
         "attachById preserves env vars from container config" - runBackends {
             val config = Container.Config(ContainerImage("alpine", "latest"))
-                .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait")
                 .env("MY_KEY", "my-value")
                 .stopTimeout(0.seconds)
             Container.init(config).map { c =>
@@ -663,7 +663,7 @@ class ContainerItTest extends Test:
 
         "log — passes when message found in logs" - runBackends {
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; echo 'ready to serve'; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; echo 'ready to serve'; sleep infinity & wait")
                 .healthCheck(Container.HealthCheck.log(
                     "ready to serve",
                     retrySchedule = Schedule.fixed(200.millis).take(30)
@@ -675,7 +675,7 @@ class ContainerItTest extends Test:
 
         "port — passes when port is listening" - runBackends {
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; while true; do echo ok | nc -l -p 8080; done & sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; while true; do echo ok | nc -l -p 8080; done & sleep infinity & wait")
                 .healthCheck(Container.HealthCheck.port(
                     8080,
                     retrySchedule = Schedule.fixed(200.millis).take(30)
@@ -710,7 +710,7 @@ class ContainerItTest extends Test:
 
         "ongoing — isHealthy tracks health continuously" - runBackends {
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; touch /tmp/healthy; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; touch /tmp/healthy; sleep infinity & wait")
                 .healthCheck(Container.HealthCheck.init(Schedule.fixed(200.millis).take(10)) { c =>
                     c.exec("test", "-f", "/tmp/healthy").map { r =>
                         if !r.isSuccess then
@@ -781,7 +781,7 @@ class ContainerItTest extends Test:
         "HealthCheck.exec recovers after transient failures" - runBackends {
             // Container creates the sentinel file after 500ms; healthcheck fails before that, succeeds after.
             val cfg = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; sleep 0.5; touch /tmp/up; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; sleep 0.5; touch /tmp/up; sleep infinity & wait")
                 .healthCheck(Container.HealthCheck.exec(
                     command = Command("test", "-f", "/tmp/up"),
                     expected = Absent,
@@ -1164,7 +1164,7 @@ class ContainerItTest extends Test:
 
         "attach(stdout=false) does not receive stdout data" - runBackends {
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; echo stdout-visible; echo stderr-visible >&2; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; echo stdout-visible; echo stderr-visible >&2; sleep infinity & wait")
             Container.init(config).map { c =>
                 Scope.run {
                     c.attach(stdin = false, stdout = false, stderr = true).map { session =>
@@ -1188,7 +1188,7 @@ class ContainerItTest extends Test:
     "logs" - {
         "returns LogEntry entries with stdout output" - runBackends {
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; echo hello-from-container; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; echo hello-from-container; sleep infinity & wait")
             Container.init(config).map { c =>
                 // Container is Running by the time `init` returns, but the docker/podman log driver flushes
                 // stdout on its own cadence — under CI load the first `c.logs` call can race the daemon's
@@ -1201,7 +1201,7 @@ class ContainerItTest extends Test:
 
         "stdout=false excludes stdout, keeps stderr" - runBackends {
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; echo stdout-msg; echo stderr-msg >&2; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; echo stdout-msg; echo stderr-msg >&2; sleep infinity & wait")
             Container.init(config).map { c =>
                 c.logs(stdout = false, stderr = true).map { entries =>
                     assert(!entries.exists(_.content.contains("stdout-msg")))
@@ -1212,7 +1212,7 @@ class ContainerItTest extends Test:
 
         "tail limits to last N lines" - runBackends {
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; for i in $(seq 1 20); do echo line$i; done; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; for i in $(seq 1 20); do echo line$i; done; sleep infinity & wait")
             Container.init(config).map { c =>
                 c.logs(stdout = true, stderr = true, tail = 5).map { entries =>
                     assert(entries.size == 5)
@@ -1230,7 +1230,7 @@ class ContainerItTest extends Test:
 
         "logsText returns raw string for backward compat" - runBackends {
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; echo hello-from-container; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; echo hello-from-container; sleep infinity & wait")
             Container.init(config).map { c =>
                 c.logsText.map { text =>
                     assert(text.contains("hello-from-container"))
@@ -1242,7 +1242,7 @@ class ContainerItTest extends Test:
     "logStream" - {
         "streams log entries containing both stdout and stderr content" - runBackends {
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; echo stdout-data; echo stderr-data >&2; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; echo stdout-data; echo stderr-data >&2; sleep infinity & wait")
             Container.init(config).map { c =>
                 Scope.run {
                     // Shell backend merges stdout/stderr via redirectErrorStream,
@@ -1282,7 +1282,7 @@ class ContainerItTest extends Test:
 
         "logStream(stdout=false, stderr=true) returns only stderr entries" - runBackends {
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; echo stdout-only; echo stderr-only >&2; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; echo stdout-only; echo stderr-only >&2; sleep infinity & wait")
             Container.init(config).map { c =>
                 Scope.run {
                     c.logStream(stdout = false, stderr = true).take(1).run.map { entries =>
@@ -1303,7 +1303,7 @@ class ContainerItTest extends Test:
 
         "logStream with timestamps=true populates LogEntry.timestamp" - runBackends {
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; echo timestamped-entry; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; echo timestamped-entry; sleep infinity & wait")
             Container.init(config).map { c =>
                 Scope.run {
                     c.logStream(stdout = true, stderr = true, timestamps = true).take(1).run.map { entries =>
@@ -2640,7 +2640,7 @@ class ContainerItTest extends Test:
             Scope.run {
                 Container.initWith(
                     Container.Config("alpine")
-                        .command(Command("sh", "-c", "trap 'exit 0' TERM; echo $MY_VAR; sleep infinity")
+                        .command(Command("sh", "-c", "trap 'exit 0' TERM; echo $MY_VAR; sleep infinity & wait")
                             .envAppend(Map("MY_VAR" -> "from-command-env")))
                 ) { c =>
                     c.logsText.map { text =>
@@ -2764,7 +2764,7 @@ class ContainerItTest extends Test:
             // Reuse the shared alpine config (stopTimeout=0) — its `sleep infinity` command is
             // equivalent to the per-test trap+echo pattern for the restart signal test.
             val config = alpine
-                .command("sh", "-c", "trap 'exit 0' TERM; echo run-marker; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; echo run-marker; sleep infinity & wait")
                 .autoRemove(false)
             Container.init(config).map { c =>
                 for
@@ -2778,7 +2778,7 @@ class ContainerItTest extends Test:
 
         "TTY mode logs — no multiplexing, raw stream" - runBackends {
             val config = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; echo tty-output; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; echo tty-output; sleep infinity & wait")
                 .allocateTty(true)
             Container.init(config).map { c =>
                 c.logsText.map { text =>
@@ -2991,7 +2991,7 @@ class ContainerItTest extends Test:
                 protocol = Container.Config.Protocol.UDP
             )
             val cfg = Container.Config("alpine")
-                .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity")
+                .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait")
                 .port(udpBinding)
             Container.init(cfg).map { c =>
                 Abort.run[ContainerException](c.mappedPort(9999)).map {
@@ -3004,15 +3004,7 @@ class ContainerItTest extends Test:
         }
 
         "two containers on the same host port — second fails with PortConflict carrying port" - runBackends {
-            // Let the runtime pick a free host port for the first container, then try to bind a second container
-            // to that same host port. The expected outcome depends on the daemon: native Linux Docker and Podman
-            // surface the conflict at /start (HTTP 500 with "port is already allocated"), which kyo-pod maps to
-            // ContainerPortConflictException. Docker Desktop on macOS, however, silently accepts the conflicting
-            // bind — /start returns 204 success and inspect's NetworkSettings.Ports reports the requested
-            // hostPort as if it were bound, even though only the first container actually receives traffic on
-            // the host port. That's a daemon-side limitation kyo-pod cannot work around without a separate TCP
-            // probe. The assertion handles both branches: PortConflict raised (Linux) OR success with the lying
-            // port report (Docker Desktop).
+            // Binding a second container to an already-allocated host port must always raise ContainerPortConflictException.
             Scope.run {
                 Container.init(alpine.command("sleep", "10").port(80, 0).autoRemove(true)).map { c1 =>
                     c1.mappedPort(80).map { hostPort =>
@@ -3025,19 +3017,8 @@ class ContainerItTest extends Test:
                                 )
                             case Result.Failure(other) =>
                                 fail(s"expected ContainerPortConflictException, got: $other")
-                            case Result.Success(c2) =>
-                                c2.inspect.map { info =>
-                                    val matchesContended = info.ports.exists(p =>
-                                        p.containerPort == 80 && p.hostPort == hostPort
-                                    )
-                                    assert(
-                                        matchesContended,
-                                        s"second container reported as Running with no PortConflict — but neither does it report " +
-                                            s"the contended hostPort=$hostPort (got ports=${info.ports}). This breaks both the " +
-                                            s"native-Docker contract (must surface PortConflict) and the Docker Desktop pattern " +
-                                            s"(silently accept and report the requested port)."
-                                    )
-                                }
+                            case Result.Success(_) =>
+                                fail("expected port conflict — second container bound same host port as first")
                             case Result.Panic(t) =>
                                 fail(s"panic: $t")
                         }

@@ -1489,6 +1489,7 @@ final private[kyo] class ShellBackend(
         labels: Dict[String, String],
         noCache: Boolean,
         pull: Boolean,
+        forceRm: Boolean,
         target: Maybe[String],
         platform: Maybe[Container.Platform],
         auth: Maybe[ContainerImage.RegistryAuth]
@@ -1501,6 +1502,7 @@ final private[kyo] class ShellBackend(
                 Chunk.from(labels.toMap.toSeq.flatMap { case (k, v) => Seq("--label", s"$k=$v") }) ++
                 (if noCache then Chunk("--no-cache") else Chunk.empty) ++
                 (if pull then Chunk("--pull") else Chunk.empty) ++
+                (if forceRm then Chunk("--force-rm") else Chunk.empty) ++
                 target.map(t => Chunk("--target", t)).getOrElse(Chunk.empty) ++
                 platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
                 Chunk(path.toString)
