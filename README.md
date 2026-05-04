@@ -2485,7 +2485,7 @@ val c: Boolean < Sync =
 
 > A `Promise` is basically a `Fiber` with all the regular functionality plus the `complete` and `become` methods to manually fulfill the promise.
 
-## Retry: Automatic Retries
+### Retry: Automatic Retries
 
 `Retry` provides a mechanism for retrying computations that may fail, with configurable policies for backoff and retry limits. This is particularly useful for operations that might fail due to transient issues, such as network requests or database operations.
 
