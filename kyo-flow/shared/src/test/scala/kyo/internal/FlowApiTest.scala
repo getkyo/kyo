@@ -19,7 +19,7 @@ class FlowApiTest extends Test:
                 engine.register(Flow.Id.Workflow("test-flow"), flow).map { _ =>
                     val handlers = FlowApi.handlers(engine)
                     HttpServer.init(0, "localhost")(handlers.toSeq*).map { server =>
-                        f(server.port)
+                        HttpClient.withConfig(_.timeout(30.seconds))(f(server.port))
                     }
                 }
             }

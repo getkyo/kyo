@@ -1728,6 +1728,36 @@ class HttpClientTest extends Test:
             }
         }
 
+        "subsequent request on reused pool sees no stale bytes after a cancelled request" - {
+            // Regression: when an in-flight request was cancelled mid-response (e.g. via Async.timeout)
+            // the underlying connection used to be returned to the pool with un-drained body bytes.
+            // The next request on that pooled connection then read those stale bytes as a new status
+            // line, surfacing as `Http1ResponseParser: invalid status code 0` (or worse, a successful
+            // response carrying the previous request's body). The fix: `Sync.ensure` in
+            // HttpClientBackend.poolWithImpl discards the connection (instead of releasing) whenever
+            // its callback fires with `error = Present(_)`. This test exercises that discard path.
+            val slow  = HttpRoute.getRaw("slow").response(_.bodyText)
+            val fast  = HttpRoute.getRaw("fast").response(_.bodyText)
+            val slowH = slow.handler { _ => Async.never.andThen(HttpResponse.ok("never")) }
+            val fastH = fast.handler { _ => HttpResponse.ok("hello-fresh") }
+            runServer(slowH, fastH) { url =>
+                withClient { c =>
+                    val slowReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
+                    val fastReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/fast", Absent))
+                    Abort.run[HttpException | kyo.Timeout] {
+                        Async.timeout(100.millis)(c.sendWith(slow, slowReq)(identity))
+                    }.andThen {
+                        c.sendWith(fast, fastReq)(identity).map { resp =>
+                            assert(
+                                resp.fields.body == "hello-fresh",
+                                s"second request should return its own body, got '${resp.fields.body}' — connection pool returned a stale connection"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         "streaming response: fiber interruption stops stream consumption" - {
             // Server sends an infinite stream. Client reads one chunk then cancels via scope close.
             val route = HttpRoute.getRaw("infinite").response(_.bodyStream)
@@ -3223,6 +3253,95 @@ class HttpClientTest extends Test:
                         case Result.Failure(e: HttpStatusException) =>
                             assert(e.getMessage.contains("404"))
                             assert(e.getMessage.contains("Not Found"))
+                        case other =>
+                            fail(s"Expected HttpStatusException, got $other")
+                    }
+                }
+            }
+        }
+
+        // Body capture matters for callers that classify errors by content (kyo-pod's
+        // HttpContainerBackend reads e.body to detect "name in use" / "no such image" patterns
+        // when the daemon picks a non-standard status code).
+
+        "body is captured when response decodes as the success type" - {
+            val route = HttpRoute.getJson[User]("body-cap-decoded")
+            // Server returns 500 with a User-shaped body: zio-schema decodes it permissively,
+            // so the response struct is Success but the status is non-2xx. Without rawBody we
+            // would lose the response body entirely on the way to HttpStatusException.
+            val ep = route.handler(_ => HttpResponse(HttpStatus.InternalServerError).addField("body", User(0, "boom")))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getJson[User](s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/body-cap-decoded")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.body.isDefined, s"expected body to be present, got Absent")
+                            assert(e.body.get.contains("boom"), s"expected 'boom' in body, got: ${e.body.get}")
+                        case other =>
+                            fail(s"Expected HttpStatusException, got $other")
+                    }
+                }
+            }
+        }
+
+        "body is captured when response shape doesn't decode as the success type" - {
+            val route = HttpRoute.getJson[User]("body-cap-mismatch")
+            // Raw text route on the server but typed as JSON User on the client — schema decode
+            // fails on the client side, the failure is rewritten to HttpStatusException with raw body.
+            val rawRoute = HttpRoute.getText("body-cap-mismatch")
+            val ep = rawRoute.handler(_ => HttpResponse(HttpStatus.InternalServerError).addField("body", "{\"message\":\"name in use\"}"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getJson[User](s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/body-cap-mismatch")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.body.isDefined, s"expected body to be present, got Absent")
+                            assert(e.body.get.contains("name in use"), s"expected 'name in use' in body, got: ${e.body.get}")
+                        case other =>
+                            fail(s"Expected HttpStatusException, got $other")
+                    }
+                }
+            }
+        }
+
+        "body is Absent when server returns non-2xx with empty body" - {
+            val route = HttpRoute.getText("body-cap-empty")
+            val ep    = route.handler(_ => HttpResponse(HttpStatus.InternalServerError).addField("body", ""))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/body-cap-empty")
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.body.isEmpty, s"expected body to be Absent for empty response, got Present: ${e.body}")
+                        case other =>
+                            fail(s"Expected HttpStatusException, got $other")
+                    }
+                }
+            }
+        }
+
+        // Streaming-route 4xx/5xx — daemons sometimes respond with a small JSON error body
+        // even though the route declares streaming (docker/podman's /images/create returns
+        // JSON errors instead of pull-progress events when auth fails). The body must be
+        // captured for error classifiers to read it.
+
+        "body is captured for streaming routes on non-2xx" - {
+            val route = HttpRoute.postRaw("body-cap-stream").request(_.bodyBinary).response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse(HttpStatus.InternalServerError).addField("body", "stream-error-body"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.postStreamBytes(
+                            s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/body-cap-stream",
+                            kyo.Span.empty[Byte]
+                        ).run
+                    ).map {
+                        case Result.Failure(e: HttpStatusException) =>
+                            assert(e.body.isDefined, s"expected body to be present, got Absent")
+                            assert(e.body.get.contains("stream-error-body"), s"expected 'stream-error-body' in body, got: ${e.body.get}")
                         case other =>
                             fail(s"Expected HttpStatusException, got $other")
                     }

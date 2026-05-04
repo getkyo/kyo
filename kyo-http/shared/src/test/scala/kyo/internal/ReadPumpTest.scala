@@ -344,7 +344,7 @@ class ReadPumpTest extends kyo.Test:
             succeed
         }
 
-        "EOF after data delivery causes teardown" in {
+        "EOF after data delivery causes teardown after consumer drains the buffered bytes" in {
             val (driver, channel, pump, closeFn) = mkPump()
             pump.start()
 
@@ -353,9 +353,18 @@ class ReadPumpTest extends kyo.Test:
             assert(driver.awaitReadCount == 2)
             assert(closeFn().isEmpty)
 
-            // Second: deliver EOF
+            // Second: deliver EOF — teardown is deferred until the consumer drains the channel,
+            // so that buffered bytes are not lost (see "EOF preserves bytes…" test).
             driver.deliverEOF()
-            assert(closeFn().nonEmpty)
+            assert(closeFn().isEmpty, "teardown must not call closeFn until the consumer drains the buffered bytes")
+
+            // Consumer drains the buffered byte
+            val polled = channel.poll().getOrThrow
+            assert(polled.isDefined)
+
+            // After the poll, the channel transitions to FullyClosed; the closeAwaitEmpty fiber
+            // completes synchronously inline and closeFn fires.
+            assert(closeFn().nonEmpty, s"expected closeFn to fire after consumer drained, got ${closeFn()}")
             succeed
         }
 
@@ -368,6 +377,43 @@ class ReadPumpTest extends kyo.Test:
 
             // teardown calls channel.close() and closeFn()
             assert(channel.closed())
+            assert(closeFn().nonEmpty)
+            succeed
+        }
+
+        // Repro for kyo-pod ContainerItTest > execStream stderr-empty failure on Linux x64.
+        //
+        // When the upstream peer (e.g. Docker daemon for /exec/start) writes data and immediately
+        // closes the connection, the IO driver sees the bytes in earlier reads and EOF in a later
+        // read. ReadPump pumps each chunk into the channel, then on EOF calls `channel.close()`.
+        // If the consumer (downstream stream pipeline) hasn't drained the channel yet, those
+        // buffered bytes are returned as the close() backlog — and ReadPump.teardown DISCARDS them.
+        //
+        // The chunked-body path in HttpClientBackend uses `closeAwaitEmpty` for exactly this reason
+        // (see HttpClientBackend.scala:463-465 comment). The raw-connection path uses ReadPump's
+        // regular close(), losing the buffered bytes. This test asserts that bytes pumped before
+        // EOF must remain readable from the channel after teardown completes.
+        "EOF preserves bytes already in the channel buffer (Docker exec stderr-empty repro)" in {
+            val (driver, channel, pump, closeFn) = mkPump(capacity = 16)
+            pump.start()
+
+            // Simulate Docker's two-frame write: stdout frame, then stderr frame, then close.
+            driver.deliverBytes(mkBytes("first-chunk!")) // 12 bytes — same size as Docker exec stdout frame
+            driver.deliverBytes(mkBytes("second-chunk")) // 12 bytes — same size as Docker exec stderr frame
+
+            // CRITICAL: do NOT poll the channel here. Simulate the consumer being momentarily
+            // behind (downstream stream pipeline still wiring up). The bytes should be in the
+            // channel buffer.
+            driver.deliverEOF()
+
+            // Now try to drain. If the bug exists, the channel reports closed and empty.
+            // If the fix is in place, both items are still readable.
+            val r1 = channel.poll().getOrThrow
+            val r2 = channel.poll().getOrThrow
+            assert(r1 != Absent, "first chunk lost on EOF — close() discarded the backlog")
+            assert(r2 != Absent, "second chunk lost on EOF — close() discarded the backlog")
+            assert(r1.get.toArrayUnsafe.sameElements("first-chunk!".getBytes("UTF-8")))
+            assert(r2.get.toArrayUnsafe.sameElements("second-chunk".getBytes("UTF-8")))
             assert(closeFn().nonEmpty)
             succeed
         }
