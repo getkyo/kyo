@@ -768,6 +768,7 @@ class ContainerTest extends Test:
                 def lineSeparator()(using AllowUnsafe): String          = java.lang.System.lineSeparator()
                 def userName()(using AllowUnsafe): String               = java.lang.System.getProperty("user.name")
                 def operatingSystem()(using AllowUnsafe): kyo.System.OS = kyo.System.OS.Linux
+                def architecture()(using AllowUnsafe): kyo.System.Arch  = kyo.System.Arch.X86_64
                 def availableProcessors()(using AllowUnsafe): Int       = 1)
 
         "XDG_RUNTIME_DIR/containers/auth.json is consulted when present" in run {
