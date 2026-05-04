@@ -34,10 +34,7 @@ object Grpc:
       *   A computation that completes with the result of the Future
       */
     def fromFuture[A](f: Future[A])(using Frame): A < Grpc =
-        Abort.recoverError[Throwable] {
-            // TODO: Fix match not exhaustive warning
-            case Result.Error(t) => Abort.fail(GrpcFailure.fromThrowable(t))
-        }(Async.fromFuture(f))
+        Abort.recoverError[Throwable](e => Abort.fail(GrpcFailure.fromThrowable(e.failureOrPanic)))(Async.fromFuture(f))
     end fromFuture
 
 end Grpc

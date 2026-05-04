@@ -415,9 +415,16 @@ object ClientCall:
         def processCompletion(listener: ServerStreamingClientCallListener[Response])(
             completionEffect: GrpcResponsesAwaitingCompletion[Stream[Response, Grpc]]
         ): Stream[Response, Grpc] < Async =
-            Emit.runForeach(completionEffect)(handler =>
-                listener.completionPromise.get.map(Env.run(_)(handler))
-            )
+            Emit.run[GrpcRequestCompletion](completionEffect).map: (handlers, responses) =>
+                val tail = Stream.unwrap:
+                    listener.completionPromise.get.map: callClosed =>
+                        val completed = handlers.foldLeft(Kyo.unit: Unit < Async): (acc, handler) =>
+                            acc.andThen(Env.run(callClosed)(handler))
+                        completed.andThen:
+                            if callClosed.status.isOk then Stream.empty[Response]
+                            else Stream(Abort.fail(callClosed.asException))
+                responses.concat(tail)
+        end processCompletion
 
         def run(call: ClientCall[Request, Response]): Stream[Response, Grpc] < Async =
             RequestOptions.run(requestsInit).map: (options, requestsEffect) =>
