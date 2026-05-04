@@ -23,7 +23,8 @@ import scala.annotation.targetName
 case class HttpResponse[Fields](
     status: HttpStatus,
     headers: HttpHeaders,
-    fields: Record[Fields]
+    fields: Record[Fields],
+    rawBody: Maybe[String] = Absent
 ):
     def addField[N <: String & Singleton, V](name: N, value: V): HttpResponse[Fields & name.type ~ V] =
         copy(fields = fields & name ~ value)
