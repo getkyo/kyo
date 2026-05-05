@@ -99,8 +99,8 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         val safepoint = Safepoint.get
         val next      = eval(startMillis, clock, deadline)(using safepoint)
         if !isPending() then
-            if !isNull(curr) && curr.evalNow.isEmpty then
-                ensureInterrupt()(using safepoint)
+            if !isNull(next) && next.evalNow.isEmpty then
+                ensureInterrupt(next)(using safepoint)
             if !finalizers.isEmpty then
                 finalizers.run(pollError())
                 finalizers = Finalizers.empty
@@ -118,16 +118,15 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     end run
 
     // Handles the race where the task is interrupted before its Async.Join handler had a chance
-    // to register `interrupts(input)`. Only runs when the task is in an error state (i.e., was
-    // actually interrupted) — for normally-completed fibers, `curr` may still hold the post-resume
-    // Sync.defer(cont(result)) from the prior suspension, and draining it would re-run side
-    // effects that already ran during eval. Drains a bounded number of leading Defer effects with
-    // this task's context (so Locals stay correct); the bound prevents infinite recursion in cases
-    // like `loop(ref) = increment.map(_ => loop(ref))`. If what's left is a suspension on
-    // Async.Join, dispatches the interrupt directly to the awaited fiber.
-    private def ensureInterrupt()(using Safepoint): Unit =
+    // to register `interrupts(input)`. Walks `next` (the unprocessed remainder eval bailed on,
+    // never `curr` which may still hold the prior resumption's Sync.defer(cont(result)) and would
+    // re-run side effects that already ran). Skips when state isn't an error (interrupt didn't
+    // actually fire). Drains a bounded number of leading Defer effects with this task's context
+    // so the cascade still finds an Async.Join sitting behind a `Sync.defer(...)` prefix; the
+    // bound prevents infinite recursion in cases like `loop(ref) = increment.map(_ => loop(ref))`.
+    private def ensureInterrupt(next: A < (Ctx & Async & Abort[E]))(using Safepoint): Unit =
         if pollError().isDefined then
-            ArrowEffect.dispatchFirst(Tag[Async.Join], curr.asInstanceOf[Any < Async.Join], context, defersLimit = 16) {
+            ArrowEffect.dispatchFirst(Tag[Async.Join], next.asInstanceOf[Any < Async.Join], context, defersLimit = 16) {
                 [C] => input => this.interrupts(input)
             }
     end ensureInterrupt
