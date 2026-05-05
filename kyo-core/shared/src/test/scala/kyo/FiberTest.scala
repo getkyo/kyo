@@ -201,6 +201,29 @@ class FiberTest extends Test:
                     _      <- untilTrue(interruptCount.get.map(_ == 2))
                 yield assert(result == 1)
             }
+            "interrupt-before-run with Defer prefix still cascades to awaited promise" in run {
+                // Regression guard: when an IOTask is interrupted before its Async.Join handler runs
+                // and `curr` starts with a Defer (e.g. `Sync.defer(...).andThen(promise.get)`),
+                // ensureInterrupt must still dispatch the interrupt to the awaited promise.
+                val attempts = 200
+                Loop.indexed { i =>
+                    if i >= attempts then Loop.done(succeed)
+                    else
+                        for
+                            triggered <- AtomicBoolean.init
+                            promise   <- Promise.init[Int, Any]
+                            _         <- promise.onInterrupt(_ => triggered.set(true))
+                            fiber <- Fiber.initUnscoped(
+                                Sync.defer(()).andThen(promise.get)
+                            )
+                            _    <- fiber.interrupt
+                            _    <- Async.sleep(5.millis)
+                            done <- triggered.get
+                        yield
+                            if !done then Loop.done(fail(s"iter $i: promise.onInterrupt did not fire"))
+                            else Loop.continue
+                }
+            }
         }
         "interrupts losers" - {
             "promise + plain value" in run {

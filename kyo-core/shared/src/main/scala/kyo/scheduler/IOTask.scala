@@ -117,14 +117,20 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         end if
     end run
 
-    // Handle race when interrupted before processing Async.Join and linking interrupts
+    // Handles the race where the task is interrupted before its Async.Join handler had a chance
+    // to register `interrupts(input)`. Only runs when the task is in an error state (i.e., was
+    // actually interrupted) — for normally-completed fibers, `curr` may still hold the post-resume
+    // Sync.defer(cont(result)) from the prior suspension, and draining it would re-run side
+    // effects that already ran during eval. Drains a bounded number of leading Defer effects with
+    // this task's context (so Locals stay correct); the bound prevents infinite recursion in cases
+    // like `loop(ref) = increment.map(_ => loop(ref))`. If what's left is a suspension on
+    // Async.Join, dispatches the interrupt directly to the awaited fiber.
     private def ensureInterrupt()(using Safepoint): Unit =
-        discard {
-            ArrowEffect.handleFirst(Tag[Async.Join], curr.asInstanceOf[Any < Async.Join])(
-                [C] => (input, _) => this.interrupts(input),
-                _ => ()
-            )
-        }
+        if pollError().isDefined then
+            ArrowEffect.dispatchFirst(Tag[Async.Join], curr.asInstanceOf[Any < Async.Join], context, defersLimit = 16) {
+                [C] => input => this.interrupts(input)
+            }
+    end ensureInterrupt
 
     private inline def nullResult = null.asInstanceOf[A < Ctx & Async & Abort[E]]
 
