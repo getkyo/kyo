@@ -2869,15 +2869,12 @@ class ContainerItTest extends Test:
             }
         }
 
-        // Stats.Cpu and Stats.Memory use nested field paths; cgroup v2 may omit totalUsage
+        // Stats.Cpu and Stats.Memory use nested field paths; cgroup v2 may omit totalUsage.
+        // No exec workload needed — alpine PID 1 alone yields memory.usage > 0, and
+        // usagePercent >= 0.0 is trivially true for any non-negative double.
         "stats fields handle cgroup v2 nullable values" - runBackends {
-            // Drive non-trivial CPU + memory load so stats values are populated.
-            // c.exec binds its result; c.stats is called after the burst completes.
             Container.init(alpine).map { c =>
-                for
-                    _ <- c.exec("sh", "-c", "yes > /dev/null & sleep 0.5; kill $!")
-                    s <- c.stats
-                yield
+                c.stats.map { s =>
                     // s.memory.usage: Long — always present, non-zero for a live container
                     assert(
                         s.memory.usage > 0L && s.memory.usage < 1L * 1024 * 1024 * 1024,
@@ -2889,6 +2886,7 @@ class ContainerItTest extends Test:
                         s.cpu.usagePercent >= 0.0,
                         s"cpu usagePercent must be non-negative; got ${s.cpu.usagePercent}"
                     )
+                }
             }
         }
     }

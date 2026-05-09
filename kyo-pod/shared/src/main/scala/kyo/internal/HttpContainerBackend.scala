@@ -553,8 +553,10 @@ final private[kyo] class HttpContainerBackend(
                     // and on podman (4 and 5). On podman, only memory_stats.limit lies — it returns
                     // the original spec memory rather than the live cgroup memory.max after
                     // `c.update(memory=...)`. We make a second call to libpod's multi-stats endpoint
-                    // and override just `memory.limit` from that. The libpod call is best-effort
-                    // (Abort.run): any failure leaves the docker-compat baseline intact.
+                    // and override `memory.limit` and `memory.usage` from that — on cgroup v2 the
+                    // docker-compat endpoint sometimes reports `memory_stats.usage = 0` even for live
+                    // containers, while libpod's `MemUsage` is correctly populated. The libpod call is
+                    // best-effort (Abort.run): any failure leaves the docker-compat baseline intact.
                     val baseline = withErrorMapping(ctxContainer(id)) {
                         HttpClient.getJson[StatsResponse](url(s"/containers/${id.value}/stats", "stream" -> "false"))
                     }.map(dto => mapStatsResponse(dto, now))
@@ -566,9 +568,12 @@ final private[kyo] class HttpContainerBackend(
                                 )
                             ).map {
                                 case Result.Success(resp) =>
-                                    resp.Stats.headOption.filter(_.MemLimit > 0) match
-                                        case Some(entry) => base.copy(memory = base.memory.copy(limit = Present(entry.MemLimit)))
-                                        case None        => base
+                                    resp.Stats.headOption match
+                                        case Some(entry) =>
+                                            val patchedLimit = if entry.MemLimit > 0 then Present(entry.MemLimit) else base.memory.limit
+                                            val patchedUsage = if entry.MemUsage > 0 then entry.MemUsage else base.memory.usage
+                                            base.copy(memory = base.memory.copy(limit = patchedLimit, usage = patchedUsage))
+                                        case None => base
                                 case _ => base
                             }
                         }
