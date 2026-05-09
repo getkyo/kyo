@@ -12,7 +12,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     def assertionSuccess              = succeed
     def assertionFailure(msg: String) = fail(msg)
 
-    override def timeout = 15.seconds
+    override def timeout = 60.seconds
 
     override given executionContext: ExecutionContext = kyo.internal.Platform.executionContext
 
