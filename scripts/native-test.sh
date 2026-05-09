@@ -3,10 +3,14 @@ set -uo pipefail
 #
 # Run Scala Native tests with retry and crash tolerance.
 #
-# Handles three failure modes:
+# Handles four failure modes:
 # 1. Process killed before tests complete (no test output) — retries
 # 2. Scala Native libunwind crash — tolerates if 0 test failures
 # 3. Process hangs with no output for 3 minutes — killed and retried
+# 4. Native test binary crashes mid-RPC (SocketException errno 104 in
+#    scala.scalanative.testinterface.NativeRPC) — retries; the test
+#    runner died so the FAILED lines preceding the crash are not
+#    reliable signal of real test failures.
 #
 # Only fails on actual test failures (failed > 0).
 #
@@ -107,6 +111,27 @@ else
     exit 0
 fi'
 
+    # ── native runner mid-RPC crash (errno 104) — retried as unreliable signal ──
+    rm -f /tmp/native-test-rpc-flag
+    assert "native runner errno 104 retried, then passes"  0  '
+if [ ! -f /tmp/native-test-rpc-flag ]; then
+    touch /tmp/native-test-rpc-flag
+    echo "  - some test *** FAILED *** (15 seconds)"
+    echo "Exception in thread \"main\" java.net.SocketException: read failed, errno: 104"
+    echo "    at scala.scalanative.testinterface.NativeRPC.loop(Unknown Source)"
+    exit 1
+else
+    rm -f /tmp/native-test-rpc-flag
+    echo "Tests: succeeded 100, failed 0"
+    exit 0
+fi'
+
+    # FAILED lines without the errno 104 + NativeRPC pair stay real failures (no retry mask).
+    assert "individual FAILED without rpc crash still fails"  1  '
+echo "  - some test *** FAILED *** (15 seconds)"
+echo "Exception in thread \"main\" java.lang.RuntimeException: oops"
+exit 1'
+
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
     rm -rf "$TMPDIR_SELF"
@@ -145,8 +170,23 @@ kill_tree() {
     kill -$sig $pid 2>/dev/null
 }
 
+# Detect the native test binary crashing mid-RPC. Signature is unique to
+# Scala Native's testinterface RPC loop: errno 104 (ECONNRESET) on the
+# DataInputStream read paired with the NativeRPC.loop frame. When this
+# fires, any preceding "FAILED" / 15s-timeout lines came from tests
+# running against a server the runner could no longer reach — the
+# results are not reliable signal of real test failures.
+crashed_native_runner() {
+    grep -qE 'java\.net\.SocketException: read failed, errno: 104' "$LOG" \
+        && grep -qE 'scala\.scalanative\.testinterface\.NativeRPC' "$LOG"
+}
+
 # Evaluate log contents: returns 0 (pass), 1 (fail), or 2 (no test output).
 check_log() {
+    if crashed_native_runner; then
+        log "native test runner crashed mid-RPC (errno 104) — preceding test results unreliable, retrying"
+        return 2
+    fi
     if grep -qE "Tests:.*failed [1-9]" "$LOG"; then
         log "tests FAILED (real test failures detected)"
         return 1
