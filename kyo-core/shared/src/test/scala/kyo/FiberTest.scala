@@ -213,6 +213,7 @@ class FiberTest extends Test:
                             _         <- promise.onInterrupt(_ => triggered.set(true))
                             fiber     <- Fiber.initUnscoped(started.release.andThen(promise.get))
                             _         <- started.await
+                            _         <- Async.sleep(50.millis)
                             _         <- fiber.interrupt
                             _         <- Async.sleep(5.millis)
                             done      <- triggered.get
