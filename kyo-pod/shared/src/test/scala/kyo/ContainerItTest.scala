@@ -2620,8 +2620,13 @@ class ContainerItTest extends Test:
                         .command(Command("sh", "-c", "trap 'exit 0' TERM; echo $MY_VAR; sleep infinity & wait")
                             .envAppend(Map("MY_VAR" -> "from-command-env")))
                 ) { c =>
-                    c.logsText.map { text =>
-                        assert(text.contains("from-command-env"))
+                    // Race: c.logsText on the http backend can return before the container's `echo`
+                    // has flushed. Poll until the echo line appears (or timeout via outer test budget).
+                    Retry[AssertionError](Schedule.fixed(50.millis).take(40)) {
+                        c.logsText.map { text =>
+                            if text.contains("from-command-env") then assert(true)
+                            else throw new AssertionError(s"logs not yet flushed: '$text'")
+                        }
                     }
                 }
             }
