@@ -157,8 +157,8 @@ object Index:
                     transactions(size - 1 - i) = new Transaction(
                         amount.abs,
                         if amount < 0 then "d" else "c",
-                        Some(new String(descChars)),
-                        Some(Instant.ofEpochMilli(timestamp))
+                        Present(new String(descChars)),
+                        Present(Instant.ofEpochMilli(timestamp))
                     )
                     pos = (pos + 1) % transactionHistory
                     i += 1
