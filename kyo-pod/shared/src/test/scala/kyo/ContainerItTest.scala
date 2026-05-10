@@ -1600,7 +1600,9 @@ class ContainerItTest extends Test:
 
         "returns populated ports for container with port mapping" - runBackends {
             val name = uniqueName("kyo-list-ports")
-            Container.init(alpine.name(name).port(80, 18080)).map { c =>
+            // Random ephemeral host port (0); we only assert containerPort=80 is reported.
+            // Fixed host ports flake under leaked-container conditions on CI runners.
+            Container.init(alpine.name(name).port(80, 0)).map { c =>
                 Container.list.map { summaries =>
                     val summary = summaries.find(_.id == c.id)
                     assert(summary.isDefined, s"Container $name not found in list")
