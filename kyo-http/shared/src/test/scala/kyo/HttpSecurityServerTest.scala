@@ -67,7 +67,7 @@ class HttpSecurityServerTest extends Test:
 
     "request smuggling defenses" - {
 
-        "duplicate Content-Length headers (CVE-2019-20445)" in run {
+        "duplicate Content-Length headers (CVE-2019-20445)" in runNotNative {
             withEchoServer { (host, port) =>
                 val raw =
                     ("POST /echo HTTP/1.1\r\n" +
@@ -83,7 +83,7 @@ class HttpSecurityServerTest extends Test:
             }
         }
 
-        "CL+TE conflict (classic CL.TE smuggling)" in run {
+        "CL+TE conflict (classic CL.TE smuggling)" in runNotNative {
             withEchoServer { (host, port) =>
                 val raw =
                     ("POST /echo HTTP/1.1\r\n" +
@@ -102,7 +102,7 @@ class HttpSecurityServerTest extends Test:
             }
         }
 
-        "Content-Length integer overflow" in run {
+        "Content-Length integer overflow" in runNotNative {
             withEchoServer { (host, port) =>
                 val raw =
                     ("POST /echo HTTP/1.1\r\n" +

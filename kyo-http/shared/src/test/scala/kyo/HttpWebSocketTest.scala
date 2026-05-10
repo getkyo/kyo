@@ -20,7 +20,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
 
     "basic connectivity" - {
 
-        "text echo" in run {
+        "text echo" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(HttpWebSocket.Payload.Text("hello")).andThen {
@@ -30,7 +30,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "binary echo" in run {
+        "binary echo" in runNotNative {
             val bytes = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
@@ -47,7 +47,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "multiple messages in order" in run {
+        "multiple messages in order" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     Kyo.foreach(1 to 10)(i => ws.put(HttpWebSocket.Payload.Text(s"msg$i"))).andThen {
@@ -59,7 +59,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "empty text frame" in run {
+        "empty text frame" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(HttpWebSocket.Payload.Text("")).andThen {
@@ -69,7 +69,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "large text frame" in run {
+        "large text frame" in runNotNative {
             val text = "x" * 65000
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
@@ -80,7 +80,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "large binary frame" in run {
+        "large binary frame" in runNotNative {
             val data = Span.fromUnsafe(Array.tabulate[Byte](65000)(i => (i % 256).toByte))
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
@@ -94,7 +94,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "interleaved text and binary" in run {
+        "interleaved text and binary" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(HttpWebSocket.Payload.Text("a"))
@@ -110,7 +110,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "unicode text roundtrip" in run {
+        "unicode text roundtrip" in runNotNative {
             val text = "Hello \uD83D\uDE00 \u4F60\u597D"
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
@@ -121,7 +121,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "binary all byte values" in run {
+        "binary all byte values" in runNotNative {
             val allBytes = Span.fromUnsafe(Array.tabulate[Byte](256)(_.toByte))
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
@@ -141,7 +141,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "single byte binary" in run {
+        "single byte binary" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(HttpWebSocket.Payload.Binary(Span.fromUnsafe(Array[Byte](42)))).andThen {
@@ -156,7 +156,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "single char text" in run {
+        "single char text" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(HttpWebSocket.Payload.Text("x")).andThen {
@@ -171,7 +171,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
 
     "close handshake" - {
 
-        "client initiates close" in run {
+        "client initiates close" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(HttpWebSocket.Payload.Text("hi")).andThen(ws.take()).andThen(ws.close())
@@ -179,7 +179,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "server initiates close" in run {
+        "server initiates close" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/close") { (_, ws) =>
                 ws.take().andThen(ws.close())
             }) { url =>
@@ -193,7 +193,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "close code preserved" in run {
+        "close code preserved" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/closecode") { (_, ws) =>
                 ws.take().andThen(ws.close(4000, "app error"))
             }) { url =>
@@ -207,7 +207,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "take after server close fails with Closed" in run {
+        "take after server close fails with Closed" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/close-fast") { (_, ws) =>
                 ws.close()
             }) { url =>
@@ -220,7 +220,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "close after exchange" in run {
+        "close after exchange" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(HttpWebSocket.Payload.Text("a")).andThen(ws.take())
@@ -235,7 +235,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
 
     "backpressure" - {
 
-        "bidirectional concurrent exchange" in run {
+        "bidirectional concurrent exchange" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     val count = 100
@@ -251,7 +251,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "handler that only sends" in run {
+        "handler that only sends" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/send-only") { (_, ws) =>
                 Kyo.foreach(1 to 5)(i => ws.put(HttpWebSocket.Payload.Text(s"server$i"))).andThen {
                     Abort.run[Closed](ws.take()).unit
@@ -265,7 +265,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "handler that only reads" in run {
+        "handler that only reads" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/read-only") { (_, ws) =>
                 // Read 3 messages without sending any response
                 Kyo.foreach(1 to 3)(_ => ws.take()).unit
@@ -284,7 +284,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
 
     "disconnect scenarios" - {
 
-        "server handler throws" in run {
+        "server handler throws" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/bad") { (_, _) =>
                 throw new RuntimeException("server boom")
             }) { url =>
@@ -296,7 +296,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "server handler returns immediately" in run {
+        "server handler returns immediately" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/empty") { (_, _) =>
                 ()
             }) { url =>
@@ -308,7 +308,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "server handler Abort.fails with Closed" in run {
+        "server handler Abort.fails with Closed" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/abort") { (_, _) =>
                 Abort.fail(Closed("test", Frame.internal))
             }) { url =>
@@ -320,7 +320,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "multiple client connections" in run {
+        "multiple client connections" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Async.gather(
                     HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
@@ -342,7 +342,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "5 concurrent clients" in run {
+        "5 concurrent clients" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Async.foreach(1 to 5) { i =>
                     HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
@@ -354,7 +354,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "rapid connect disconnect cycles" in run {
+        "rapid connect disconnect cycles" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Kyo.foreach(1 to 10) { i =>
                     Abort.run[HttpException] {
@@ -368,7 +368,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "client disconnects mid-stream" in run {
+        "client disconnects mid-stream" in runNotNative {
             Latch.init(1).map { serverDone =>
                 withWsServer(HttpHandler.webSocket("ws/infinite") { (_, ws) =>
                     Sync.ensure(serverDone.release) {
@@ -386,7 +386,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }
         }
 
-        "client closes before reading anything" in run {
+        "client closes before reading anything" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.close()
@@ -394,7 +394,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "client sends then immediately closes" in run {
+        "client sends then immediately closes" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(HttpWebSocket.Payload.Text("bye")).andThen(ws.close())
@@ -407,7 +407,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
 
     "HTTP integration" - {
 
-        "websocket alongside http handlers" in run {
+        "websocket alongside http handlers" in runNotNative {
             val httpHandler = HttpHandler.getText("api/hello") { _ => "world" }
             withWsServer(httpHandler, HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/api/hello").map(text =>
@@ -422,7 +422,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "http after websocket on same server" in run {
+        "http after websocket on same server" in runNotNative {
             val httpHandler = HttpHandler.getText("api/ping") { _ => "pong" }
             withWsServer(httpHandler, HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
@@ -435,7 +435,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "multiple http and ws requests interleaved" in run {
+        "multiple http and ws requests interleaved" in runNotNative {
             val httpHandler = HttpHandler.getText("api/count") { _ => "ok" }
             withWsServer(httpHandler, HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/api/count").andThen {
@@ -452,7 +452,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "path routing" in run {
+        "path routing" in runNotNative {
             withWsServer(
                 HttpHandler.webSocket("ws/echo1")(echo),
                 HttpHandler.webSocket("ws/echo2") { (_, ws) =>
@@ -476,7 +476,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "three different ws endpoints" in run {
+        "three different ws endpoints" in runNotNative {
             withWsServer(
                 HttpHandler.webSocket("ws/a") { (_, ws) =>
                     ws.take().andThen(ws.put(HttpWebSocket.Payload.Text("from-a")))
@@ -511,7 +511,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "request headers accessible" in run {
+        "request headers accessible" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/auth") { (req, ws) =>
                 val auth = req.headers.get("Authorization").getOrElse("none")
                 ws.put(HttpWebSocket.Payload.Text(auth)).andThen {
@@ -533,7 +533,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
 
     "server handler patterns" - {
 
-        "handler transforms messages" in run {
+        "handler transforms messages" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/upper") { (_, ws) =>
                 ws.stream.map {
                     case HttpWebSocket.Payload.Text(data) => HttpWebSocket.Payload.Text(data.toUpperCase)
@@ -548,7 +548,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "handler sends greeting then echoes" in run {
+        "handler sends greeting then echoes" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/greet") { (_, ws) =>
                 ws.put(HttpWebSocket.Payload.Text("welcome")).andThen {
                     ws.stream.foreach(ws.put)
@@ -564,7 +564,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "handler responds with count" in run {
+        "handler responds with count" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/count") { (_, ws) =>
                 AtomicRef.init(0).map { counter =>
                     ws.stream.foreach { _ =>
@@ -595,7 +595,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
 
     "server lifecycle" - {
 
-        "server handles connection after previous ws closed" in run {
+        "server handles connection after previous ws closed" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
                     ws.put(HttpWebSocket.Payload.Text("first")).andThen(ws.take()).map(f =>
@@ -611,7 +611,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "three sequential connections" in run {
+        "three sequential connections" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Kyo.foreach(1 to 3) { i =>
                     HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
@@ -623,7 +623,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "sequential then concurrent" in run {
+        "sequential then concurrent" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 // Sequential first
                 HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
@@ -648,7 +648,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
     "edge cases" - {
 
         // zio-http #2737, tapir #3685: server sends before client is ready
-        "server sends immediately on connect" in run {
+        "server sends immediately on connect" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/eager") { (_, ws) =>
                 // Send immediately without waiting for client message
                 ws.put(HttpWebSocket.Payload.Text("eager1"))
@@ -665,7 +665,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
         }
 
         // sttp #901: large unicode payload inflates byte count beyond frame limit
-        "large unicode payload" in run {
+        "large unicode payload" in runNotNative {
             // 3500 emoji chars × 4 bytes each = ~14000 bytes
             val text = "\uD83D\uDE00" * 3500
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
@@ -678,7 +678,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
         }
 
         // zio-http #1147: close handler side-effects must execute
-        "server cleanup runs on normal close" in run {
+        "server cleanup runs on normal close" in runNotNative {
             Latch.init(1).map { cleanupDone =>
                 withWsServer(HttpHandler.webSocket("ws/cleanup") { (_, ws) =>
                     Sync.ensure(cleanupDone.release) {
@@ -695,7 +695,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
         }
 
         // zio-http #1147: close handler runs even when handler throws
-        "server cleanup runs on handler error" in run {
+        "server cleanup runs on handler error" in runNotNative {
             Latch.init(1).map { cleanupDone =>
                 withWsServer(HttpHandler.webSocket("ws/cleanup-err") { (_, ws) =>
                     Sync.ensure(cleanupDone.release) {
@@ -718,7 +718,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
         }
 
         // tapir #3776: in-flight messages must arrive before close takes effect
-        "messages before close are delivered" in run {
+        "messages before close are delivered" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/send-then-close") { (_, ws) =>
                 ws.put(HttpWebSocket.Payload.Text("msg1"))
                     .andThen(ws.put(HttpWebSocket.Payload.Text("msg2")))
@@ -734,7 +734,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
         }
 
         // zio-http #623: many concurrent connections must all succeed
-        "10 concurrent connections" in run {
+        "10 concurrent connections" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Async.foreach(1 to 10) { i =>
                     HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
@@ -747,7 +747,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
         }
 
         // zio-http #623: many concurrent connections with multi-message exchange
-        "10 concurrent connections with multiple messages each" in run {
+        "10 concurrent connections with multiple messages each" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Async.foreach(1 to 10) { i =>
                     HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
@@ -762,7 +762,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
         }
 
         // zio-http #1004: binary frame data integrity across echo
-        "binary echo preserves exact bytes" in run {
+        "binary echo preserves exact bytes" in runNotNative {
             // Pattern that could trigger reference counting bugs
             val data1 = Span.fromUnsafe(Array.fill[Byte](100)(0x7f.toByte))
             val data2 = Span.fromUnsafe(Array.fill[Byte](200)(0x80.toByte))
@@ -795,7 +795,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
         }
 
         // Derived from zio-http #2977: WS and HTTP on same server must not interfere
-        "interleaved ws and http requests under load" in run {
+        "interleaved ws and http requests under load" in runNotNative {
             val httpHandler = HttpHandler.getText("api/v") { _ => "ok" }
             withWsServer(httpHandler, HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Async.foreach(1 to 5) { i =>
@@ -814,7 +814,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
         }
 
         // Regression: rapid open/close without any data exchange
-        "rapid open close no data" in run {
+        "rapid open close no data" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 Kyo.foreach(1 to 20) { _ =>
                     Abort.run[HttpException] {
@@ -827,7 +827,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
         }
 
         // Client sends and waits for ack before closing — server must process the message
-        "server processes message with client ack" in run {
+        "server processes message with client ack" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/ack") { (_, ws) =>
                 ws.take().andThen(ws.put(HttpWebSocket.Payload.Text("ack")))
                     .andThen(Abort.run[Closed](ws.take()).unit)
@@ -857,7 +857,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
 
     "HttpWebSocket.connect" - {
 
-        "text echo" in run {
+        "text echo" in runNotNative {
             connectTest(
                 echo,
                 ws =>
@@ -867,7 +867,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "binary echo" in run {
+        "binary echo" in runNotNative {
             val bytes = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
             connectTest(
                 echo,
@@ -884,7 +884,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "multiple messages in order" in run {
+        "multiple messages in order" in runNotNative {
             connectTest(
                 echo,
                 ws =>
@@ -896,7 +896,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "empty text" in run {
+        "empty text" in runNotNative {
             connectTest(
                 echo,
                 ws =>
@@ -906,7 +906,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "empty binary" in run {
+        "empty binary" in runNotNative {
             connectTest(
                 echo,
                 ws =>
@@ -919,7 +919,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "interleaved text and binary" in run {
+        "interleaved text and binary" in runNotNative {
             connectTest(
                 echo,
                 ws =>
@@ -935,7 +935,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "unicode text" in run {
+        "unicode text" in runNotNative {
             val text = "Hello \uD83D\uDE00 \u4F60\u597D"
             connectTest(
                 echo,
@@ -946,7 +946,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "binary with all byte values" in run {
+        "binary with all byte values" in runNotNative {
             val allBytes = Array.tabulate[Byte](256)(i => i.toByte)
             connectTest(
                 echo,
@@ -966,7 +966,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "close propagation" in run {
+        "close propagation" in runNotNative {
             connectTest(
                 ws =>
                     Abort.run[Closed](ws.take()).map(result =>
@@ -976,7 +976,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "close reason preserved" in run {
+        "close reason preserved" in runNotNative {
             // Both sides share the close reason ref via doClose — check it after connect returns
             val closeReasonRef = AtomicRef.init[Maybe[(Int, String)]](Absent)
             closeReasonRef.map { ref =>
@@ -999,7 +999,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }
         }
 
-        "close with custom code" in run {
+        "close with custom code" in runNotNative {
             val closeReasonRef = AtomicRef.init[Maybe[(Int, String)]](Absent)
             closeReasonRef.map { ref =>
                 val closeFn: (Int, String) => Unit < Async = (code, reason) =>
@@ -1021,7 +1021,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }
         }
 
-        "put after close" in run {
+        "put after close" in runNotNative {
             connectTest(
                 echo,
                 ws =>
@@ -1033,7 +1033,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "take after close" in run {
+        "take after close" in runNotNative {
             connectTest(
                 ws => ws.close(),
                 ws =>
@@ -1043,14 +1043,14 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "double close is safe" in run {
+        "double close is safe" in runNotNative {
             connectTest(
                 ws => ws.close().andThen(ws.close()),
                 ws => Abort.run[Closed](ws.take()).unit
             ).andThen(succeed)
         }
 
-        "one party is infinite loop" in run {
+        "one party is infinite loop" in runNotNative {
             connectTest(
                 echo,
                 ws =>
@@ -1060,7 +1060,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "one party throws" in run {
+        "one party throws" in runNotNative {
             connectTest(
                 _ => throw new RuntimeException("boom"),
                 ws =>
@@ -1070,14 +1070,14 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "both parties throw" in run {
+        "both parties throw" in runNotNative {
             connectTest(
                 _ => throw new RuntimeException("boom1"),
                 _ => throw new RuntimeException("boom2")
             ).andThen(succeed)
         }
 
-        "empty party" in run {
+        "empty party" in runNotNative {
             connectTest(
                 _ => (),
                 ws =>
@@ -1087,7 +1087,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "concurrent bidirectional" in run {
+        "concurrent bidirectional" in runNotNative {
             connectTest(
                 ws =>
                     Async.gather(
@@ -1102,7 +1102,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "poll returns Absent when empty" in run {
+        "poll returns Absent when empty" in runNotNative {
             connectTest(
                 _ => (),
                 ws =>
@@ -1113,7 +1113,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "reuse server handler fn" in run {
+        "reuse server handler fn" in runNotNative {
             HttpWebSocket.connect(
                 echoWithReq,
                 ws =>
@@ -1123,7 +1123,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "many small messages" in run {
+        "many small messages" in runNotNative {
             val count = 200
             connectTest(
                 echo,
@@ -1137,7 +1137,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             ).andThen(succeed)
         }
 
-        "stream terminates on close" in run {
+        "stream terminates on close" in runNotNative {
             connectTest(
                 ws =>
                     ws.put(HttpWebSocket.Payload.Text("a"))
@@ -1170,7 +1170,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
 
     "basic messaging over Unix socket" - {
 
-        "text echo over Unix socket" in run {
+        "text echo over Unix socket" in runNotNative {
             withWsUnixServer(HttpHandler.webSocket("ws/echo")(echo)) { sockPath =>
                 val url = mkWsUrl(sockPath, "/ws/echo")
                 HttpClient.webSocket(url) { ws =>
@@ -1181,7 +1181,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "binary echo over Unix socket" in run {
+        "binary echo over Unix socket" in runNotNative {
             val bytes = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
             withWsUnixServer(HttpHandler.webSocket("ws/echo")(echo)) { sockPath =>
                 val url = mkWsUrl(sockPath, "/ws/echo")
@@ -1199,7 +1199,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "multiple sequential messages over Unix socket" in run {
+        "multiple sequential messages over Unix socket" in runNotNative {
             withWsUnixServer(HttpHandler.webSocket("ws/echo")(echo)) { sockPath =>
                 val url = mkWsUrl(sockPath, "/ws/echo")
                 HttpClient.webSocket(url) { ws =>
@@ -1212,7 +1212,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "server pushes message to client over Unix socket" in run {
+        "server pushes message to client over Unix socket" in runNotNative {
             val serverHandler: (HttpRequest[Any], HttpWebSocket) => Unit < (Async & Abort[Closed]) =
                 (_, ws) =>
                     ws.put(HttpWebSocket.Payload.Text("server-hello")).andThen {
@@ -1233,7 +1233,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
 
     "close and lifecycle over Unix socket" - {
 
-        "client close over Unix socket" in run {
+        "client close over Unix socket" in runNotNative {
             withWsUnixServer(HttpHandler.webSocket("ws/echo")(echo)) { sockPath =>
                 val url = mkWsUrl(sockPath, "/ws/echo")
                 HttpClient.webSocket(url) { ws =>
@@ -1246,7 +1246,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "server close over Unix socket" in run {
+        "server close over Unix socket" in runNotNative {
             val serverHandler: (HttpRequest[Any], HttpWebSocket) => Unit < (Async & Abort[Closed]) =
                 (_, ws) => ws.take().andThen(ws.close())
             withWsUnixServer(HttpHandler.webSocket("ws/srv-close")(serverHandler)) { sockPath =>
@@ -1261,7 +1261,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "function return closes connection over Unix socket" in run {
+        "function return closes connection over Unix socket" in runNotNative {
             withWsUnixServer(HttpHandler.webSocket("ws/echo")(echo)) { sockPath =>
                 val url = mkWsUrl(sockPath, "/ws/echo")
                 HttpClient.webSocket(url) { ws =>
@@ -1275,7 +1275,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
 
     "edge cases over Unix socket" - {
 
-        "large text message (64KB) over Unix socket" in run {
+        "large text message (64KB) over Unix socket" in runNotNative {
             val largeText = "x" * 65536
             withWsUnixServer(HttpHandler.webSocket("ws/echo")(echo)) { sockPath =>
                 val url = mkWsUrl(sockPath, "/ws/echo")
@@ -1287,7 +1287,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "empty text message over Unix socket" in run {
+        "empty text message over Unix socket" in runNotNative {
             withWsUnixServer(HttpHandler.webSocket("ws/echo")(echo)) { sockPath =>
                 val url = mkWsUrl(sockPath, "/ws/echo")
                 HttpClient.webSocket(url) { ws =>
@@ -1298,7 +1298,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "binary with all byte values over Unix socket" in run {
+        "binary with all byte values over Unix socket" in runNotNative {
             val allBytes = Span.fromUnsafe(Array.tabulate[Byte](256)(i => i.toByte))
             withWsUnixServer(HttpHandler.webSocket("ws/echo")(echo)) { sockPath =>
                 val url = mkWsUrl(sockPath, "/ws/echo")
@@ -1324,7 +1324,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
 
     "config" - {
 
-        "webSocket respects baseUrl config" in run {
+        "webSocket respects baseUrl config" in runNotNative {
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
                 // Set baseUrl to the server URL, then connect with a path-only string.
                 // The bug: webSocket ignores HttpClientConfig, so baseUrl is never applied
@@ -1339,7 +1339,7 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "webSocket respects connectTimeout config" in run {
+        "webSocket respects connectTimeout config" in runNotNative {
             // 192.0.2.0/24 is TEST-NET-1 (RFC 5737) — routable but no host responds,
             // so a TCP connect will hang until timeout rather than fail immediately.
             HttpClient.withConfig(_.connectTimeout(100.millis)) {

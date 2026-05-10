@@ -18,8 +18,13 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 object TestHttpServer:
-    val port         = 8888
-    val maxRetries   = 20
+    val port = 8888
+    // Linux CI under load (high parallelism, GC pressure) can take >2s for vertx
+    // to fork the server process AND bind the port. The original 20×100ms = 2s budget
+    // hit Connection-refused failures (build-pr 25611709736 linux-x64/JVM); 100×100ms = 10s
+    // gives enough headroom while keeping fast-path startup snappy when the server is
+    // already responsive (waitForServer returns on the first 200 OK).
+    val maxRetries   = 100
     val retryDelayMs = 100
 
     def log(port: Int, msg: String) = println(s"TestHttpServer(port=$port): $msg")

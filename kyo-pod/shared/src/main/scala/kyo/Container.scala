@@ -58,9 +58,9 @@ final class Container private[kyo] (
     def start(using Frame): Unit < (Async & Abort[ContainerException]) =
         backend.start(id)
 
-    /** Send SIGTERM and wait 3 seconds for graceful shutdown. */
+    /** Send SIGTERM and wait 10 seconds for graceful shutdown — matches the Docker CLI default. */
     def stop(using Frame): Unit < (Async & Abort[ContainerException]) =
-        stop(3.seconds)
+        stop(10.seconds)
 
     /** Send SIGTERM and wait up to `timeout` for graceful shutdown, then SIGKILL. */
     def stop(timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException]) =

@@ -18,6 +18,16 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
 
     override def timeout = 60.seconds
 
+    // Linux CI's container runtime (podman REST API) intermittently takes longer than
+    // the production 5-second `HttpClientConfig.timeout` default for ordinary Container ops
+    // (init, exec, stats) under load — every test request would fail with HttpTimeoutException.
+    // Tests get a 60s client request timeout to match the per-test budget; production users
+    // still see the 5s default until they set their own via withConfig.
+    // For tests that explicitly need a longer timeout (e.g. image pulls), use runBackendsLong /
+    // runBackendLong which scope an even longer 5-minute timeout inside the test body.
+    override def run(v: Future[Assertion] < (Abort[Any] & Async & Scope))(using Frame): Future[Assertion] =
+        super.run(HttpClient.withConfig(_.timeout(60.seconds))(v))
+
     private def runWhen(cond: => Boolean) = if cond then "" else "org.scalatest.Ignore"
     object jvmOnly         extends Tag(runWhen(kyo.internal.Platform.isJVM))
     object jsOnly          extends Tag(runWhen(kyo.internal.Platform.isJS))

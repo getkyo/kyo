@@ -398,46 +398,6 @@ object ArrowEffect:
         handleFirstLoop(v, Context.empty)
     end handleFirst
 
-    /** Walks `v` advancing through up to `defersLimit` leading `Defer` suspensions using `context` and, if the resulting first remaining
-      * suspension matches `effectTag`, calls `f` with that suspension's input. Otherwise does nothing.
-      *
-      * Unlike [[handleFirst]], this variant evaluates `Defer` effects (mirroring [[handlePartial]]) so it can reach a target effect that
-      * sits behind a `Sync.defer(...)` prefix. Because evaluating Defer requires the captured `Context` (Locals are read from it), the
-      * caller must supply one — typically the same context the surrounding evaluator would use.
-      *
-      * The depth limit is required because a Defer's body can produce another Defer (e.g. an infinite recursive loop like
-      * `incrementAndGet.map(_ => loop(ref))`); without a bound the drain would never terminate. Each drain step also runs the Defer's side
-      * effects, so callers should keep the limit small.
-      *
-      * Used by `IOTask.ensureInterrupt` to dispatch an interrupt to an awaited fiber when the task is interrupted before its `Async.Join`
-      * handler had a chance to register the cascade link.
-      */
-    @nowarn("msg=anonymous")
-    private[kyo] inline def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
-        inline effectTag: Tag[E],
-        v: A < (E & S),
-        context: Context,
-        defersLimit: Int
-    )(
-        inline f: [C] => I[C] => Unit
-    )(
-        using
-        inline _frame: Frame,
-        safepoint: Safepoint
-    ): Unit =
-        def loop(v: A < (E & S), remaining: Int): Unit =
-            v match
-                case kyo: KyoSuspend[I, O, E, Any, A, E & S] @unchecked if effectTag <:< kyo.tag =>
-                    f[Any](kyo.input)
-                case kyo: KyoSuspend[?, ?, ?, Any, A, E & S] @unchecked if remaining > 0 && kyo.tag <:< Tag[Defer] =>
-                    val k = kyo.asInstanceOf[KyoSuspend[Const[Unit], Const[Unit], Defer, Any, A, E & S]]
-                    loop(k((), context), remaining - 1)
-                case _ => ()
-            end match
-        end loop
-        loop(v, defersLimit)
-    end dispatchFirst
-
     /** Handles an arrow effect with a loop-based approach for greater flexibility.
       *
       * This variant provides two key advantages over basic handle:
