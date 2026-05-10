@@ -55,15 +55,29 @@ class OTLPMetricsExporterTest extends Test:
                 val uniqueName = "test.export.counter." + java.util.UUID.randomUUID().toString.take(8)
                 val counter    = Stat.initScope("test", "export").initCounter(uniqueName, "test counter")
                 for
-                    _        <- counter.add(100)
-                    _        <- OTLPMetricsExporter.run(config)
-                    received <- metricCh.take
+                    _ <- counter.add(100)
+                    _ <- OTLPMetricsExporter.run(config)
+                    // Same Loop+reachability pattern as the histogram test below — the first export
+                    // may fire before the counter is fully registered with the global registry, and
+                    // the registry holds a WeakReference to the underlying UnsafeCounter so the JVM
+                    // is otherwise free to GC `counter` mid-test. Capture `counter` inside the Loop
+                    // closure to keep it strongly reachable.
+                    found <- Loop.indexed { i =>
+                        discard(counter)
+                        metricCh.take.map { received =>
+                            val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
+                            allMetrics.find(_.name == s"test.export.$uniqueName") match
+                                case Some(m)       => Loop.done(m)
+                                case None if i < 9 => Loop.continue
+                                case None => throw new AssertionError(
+                                        s"Counter test.export.$uniqueName not found after ${i + 1} exports"
+                                    )
+                            end match
+                        }
+                    }
                 yield
-                    val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
-                    val found      = allMetrics.find(_.name == s"test.export.$uniqueName")
-                    assert(found.isDefined)
-                    assert(found.get.sum.isDefined)
-                    assert(found.get.sum.get.dataPoints.head.asInt == Present("100"))
+                    assert(found.sum.isDefined)
+                    assert(found.sum.get.dataPoints.head.asInt == Present("100"))
                 end for
             }
         }

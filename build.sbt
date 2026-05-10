@@ -147,8 +147,6 @@ lazy val kyoJVM = project
         `kyo-logging-slf4j`.jvm,
         `kyo-reactive-streams`.jvm,
         `kyo-aeron`.jvm,
-        `kyo-sttp`.jvm,
-        `kyo-tapir`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
         `kyo-caliban`.jvm,
@@ -182,7 +180,6 @@ lazy val kyoJS = project
         `kyo-stats-registry`.js,
         `kyo-config`.js,
         `kyo-reactive-streams`.js,
-        `kyo-sttp`.js,
         `kyo-stats-otlp`.js,
         `kyo-zio-test`.js,
         `kyo-zio`.js,
@@ -214,7 +211,6 @@ lazy val kyoNative = project
         `kyo-direct`.native,
         `kyo-combinators`.native,
         `kyo-reactive-streams`.native,
-        `kyo-sttp`.native,
         `kyo-actor`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
@@ -574,34 +570,6 @@ lazy val `kyo-aeron` =
         )
         .jvmSettings(mimaCheck(false))
 
-lazy val `kyo-sttp` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-sttp"))
-        .dependsOn(`kyo-core`)
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.11.0"
-        )
-        .jsSettings(`js-settings`)
-        .nativeSettings(`native-settings`)
-        .jvmSettings(mimaCheck(false))
-
-lazy val `kyo-tapir` =
-    crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-tapir"))
-        .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-sttp`)
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.13.11",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.13.11"
-        )
-        .jvmSettings(mimaCheck(false))
-
 lazy val `kyo-http` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -833,7 +801,8 @@ lazy val `kyo-examples` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-examples"))
-        .dependsOn(`kyo-tapir`)
+        .dependsOn(`kyo-http`)
+        .dependsOn(`kyo-schema`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-core`)
         .disablePlugins(MimaPlugin)
@@ -846,8 +815,7 @@ lazy val `kyo-examples` =
                 "--add-opens=java.base/java.nio=ALL-UNNAMED",
                 "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
             ),
-            Compile / doc / sources                              := Seq.empty,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.13.11"
+            Compile / doc / sources := Seq.empty
         )
         .jvmSettings(mimaCheck(false))
 
@@ -859,8 +827,6 @@ lazy val `kyo-bench` =
         .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-parse`)
-        .dependsOn(`kyo-sttp`)
-        .dependsOn(`kyo-tapir`)
         .dependsOn(`kyo-http`)
         .dependsOn(`kyo-schema`)
         .dependsOn(`kyo-stm`)
@@ -953,8 +919,6 @@ lazy val readme =
         .dependsOn(
             `kyo-core`,
             `kyo-direct`,
-            `kyo-sttp`,
-            `kyo-tapir`,
             `kyo-bench`,
             `kyo-zio`,
             `kyo-cats`,
