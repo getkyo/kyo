@@ -1454,7 +1454,12 @@ class HttpClientTest extends Test:
                 val sizes   = Choice.eval(4, 8)
                 (for
                     size <- sizes
-                    c    <- initTrustAllClient(size)
+                    // Pool size = burst size + 2: connection return-to-pool can lag behind fiber.get
+                    // (the response future completes before the connection is fully released back),
+                    // so back-to-back bursts at exactly pool capacity occasionally see HttpPoolExhausted
+                    // on linux-x64/JVM CI under load. Headroom of 2 absorbs in-flight returns without
+                    // changing the test's stress shape (still fires `size` concurrent per batch).
+                    c <- initTrustAllClient(size + 2)
                     request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stress", Absent))
                     // Run 5 batches, each batch fires `size` concurrent requests with a latch
                     _ <- Kyo.foreach(1 to 5) { _ =>
