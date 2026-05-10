@@ -2886,22 +2886,19 @@ class ContainerItTest extends Test:
         }
 
         // Stats.Cpu and Stats.Memory use nested field paths; cgroup v2 may omit totalUsage.
-        // No exec workload needed — alpine PID 1 alone yields memory.usage > 0, and
-        // usagePercent >= 0.0 is trivially true for any non-negative double.
+        // Both docker-compat /stats and libpod /containers/stats can report memory.usage = 0
+        // immediately after startup before cgroup accounting catches up; poll until non-zero.
         "stats fields handle cgroup v2 nullable values" - runBackends {
             Container.init(alpine).map { c =>
-                c.stats.map { s =>
-                    // s.memory.usage: Long — always present, non-zero for a live container
-                    assert(
-                        s.memory.usage > 0L && s.memory.usage < 1L * 1024 * 1024 * 1024,
-                        s"sane memory usage expected; got ${s.memory.usage}"
-                    )
-                    // s.cpu.usagePercent: Double — derived by backend; cgroup-v2 robust;
-                    // negative value would indicate a backend calculation bug.
-                    assert(
-                        s.cpu.usagePercent >= 0.0,
-                        s"cpu usagePercent must be non-negative; got ${s.cpu.usagePercent}"
-                    )
+                Retry[AssertionError](Schedule.fixed(50.millis).take(40)) {
+                    c.stats.map { s =>
+                        if s.memory.usage > 0L && s.memory.usage < 1L * 1024 * 1024 * 1024 && s.cpu.usagePercent >= 0.0 then
+                            assert(true)
+                        else
+                            throw new AssertionError(
+                                s"stats not yet populated; memory.usage=${s.memory.usage}, cpu.usagePercent=${s.cpu.usagePercent}"
+                            )
+                    }
                 }
             }
         }
