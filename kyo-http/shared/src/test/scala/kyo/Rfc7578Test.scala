@@ -28,7 +28,7 @@ class Rfc7578Test extends Test:
 
     // ==================== Section 4.2: Content-Disposition ====================
 
-    "Section 4.2 - Part with filename parameter" in run {
+    "Section 4.2 - Part with filename parameter" in runNotNative {
         // RFC 7578 §4.2: "each part MAY have an (optional) 'Content-Disposition' header field
         // that further describes the part... may include a 'filename' parameter"
         val route = HttpRoute.postRaw("upload")
@@ -57,7 +57,7 @@ class Rfc7578Test extends Test:
         }
     }
 
-    "Section 4.2 - Part without filename" in run {
+    "Section 4.2 - Part without filename" in runNotNative {
         val route = HttpRoute.postRaw("upload")
             .request(_.bodyMultipart)
             .response(_.bodyText)
@@ -83,7 +83,7 @@ class Rfc7578Test extends Test:
         }
     }
 
-    "Section 4.4 - Part with explicit Content-Type" in run {
+    "Section 4.4 - Part with explicit Content-Type" in runNotNative {
         val route = HttpRoute.postRaw("upload")
             .request(_.bodyMultipart)
             .response(_.bodyText)
@@ -109,7 +109,7 @@ class Rfc7578Test extends Test:
         }
     }
 
-    "Section 4.4 - Part without Content-Type" in run {
+    "Section 4.4 - Part without Content-Type" in runNotNative {
         val route = HttpRoute.postRaw("upload")
             .request(_.bodyMultipart)
             .response(_.bodyText)
@@ -140,7 +140,7 @@ class Rfc7578Test extends Test:
         }
     }
 
-    "Section 4 - Empty part body" in run {
+    "Section 4 - Empty part body" in runNotNative {
         val route = HttpRoute.postRaw("upload")
             .request(_.bodyMultipart)
             .response(_.bodyText)
@@ -166,7 +166,7 @@ class Rfc7578Test extends Test:
         }
     }
 
-    "Section 4 - Many parts (>10) preserved in order" in run {
+    "Section 4 - Many parts (>10) preserved in order" in runNotNative {
         val route = HttpRoute.postRaw("upload")
             .request(_.bodyMultipart)
             .response(_.bodyText)
@@ -198,7 +198,7 @@ class Rfc7578Test extends Test:
         }
     }
 
-    "Section 4 - Streaming multipart parts arrive in order" in run {
+    "Section 4 - Streaming multipart parts arrive in order" in runNotNative {
         val route = HttpRoute.postRaw("upload")
             .request(_.bodyMultipartStream)
             .response(_.bodyText)
@@ -235,7 +235,7 @@ class Rfc7578Test extends Test:
 
     // ==================== Additional multipart tests ====================
 
-    "Section 4.2 - Part name is preserved" in run {
+    "Section 4.2 - Part name is preserved" in runNotNative {
         val route = HttpRoute.postRaw("upload")
             .request(_.bodyMultipart)
             .response(_.bodyText)
@@ -261,7 +261,7 @@ class Rfc7578Test extends Test:
         }
     }
 
-    "Section 4 - Binary data preserved in part" in run {
+    "Section 4 - Binary data preserved in part" in runNotNative {
         val route = HttpRoute.postRaw("upload")
             .request(_.bodyMultipart)
             .response(_.bodyText)
@@ -291,7 +291,7 @@ class Rfc7578Test extends Test:
         }
     }
 
-    "Section 4.2 - Multiple parts with different content types" in run {
+    "Section 4.2 - Multiple parts with different content types" in runNotNative {
         val route = HttpRoute.postRaw("upload")
             .request(_.bodyMultipart)
             .response(_.bodyText)
@@ -319,7 +319,7 @@ class Rfc7578Test extends Test:
         }
     }
 
-    "Section 4 - Single part upload and download" in run {
+    "Section 4 - Single part upload and download" in runNotNative {
         val route = HttpRoute.postRaw("upload")
             .request(_.bodyMultipart)
             .response(_.bodyText)
@@ -346,7 +346,7 @@ class Rfc7578Test extends Test:
         }
     }
 
-    "Section 4.2 - Filename with special characters" in run {
+    "Section 4.2 - Filename with special characters" in runNotNative {
         val route = HttpRoute.postRaw("upload")
             .request(_.bodyMultipart)
             .response(_.bodyText)

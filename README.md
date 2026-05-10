@@ -48,8 +48,6 @@ Kyo is structured as a monorepo, published to Maven Central:
 
 | Module               | JVM | JS  | Native | Description                                                          |
 | -------------------- | --- | --- | ------ | -------------------------------------------------------------------- |
-| kyo-sttp             | ✅   | ✅   | ✅      | HTTP client using Sttp with automatic effect management              |
-| kyo-tapir            | ✅   | ❌   | ❌      | HTTP server endpoints using Tapir with Netty backend                 |
 | kyo-caliban          | ✅   | ❌   | ❌      | GraphQL server using Caliban with schema derivation                  |
 | kyo-zio              | ✅   | ✅   | ❌      | Bidirectional ZIO interop with support for ZIO, ZLayer, and ZStream  |
 | kyo-zio-test         | ✅   | ✅   | ❌      | ZIO Test framework integration for testing Kyo effects               |
@@ -2485,7 +2483,7 @@ val c: Boolean < Sync =
 
 > A `Promise` is basically a `Fiber` with all the regular functionality plus the `complete` and `become` methods to manually fulfill the promise.
 
-## Retry: Automatic Retries
+### Retry: Automatic Retries
 
 `Retry` provides a mechanism for retrying computations that may fail, with configurable policies for backoff and retry limits. This is particularly useful for operations that might fail due to transient issues, such as network requests or database operations.
 

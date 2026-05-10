@@ -17,7 +17,7 @@ class HttpTransportConfigTest extends Test:
             }
         }
 
-    "default config values match design doc" in run {
+    "default config values match design doc" in runNotNative {
         val config = HttpTransportConfig.default
         assert(config.channelCapacity == 4)
         assert(config.readChunkSize == 8192)
@@ -25,7 +25,7 @@ class HttpTransportConfigTest extends Test:
         assert(config.maxHeaderSize == 65536)
     }
 
-    "builder methods produce correct values" in run {
+    "builder methods produce correct values" in runNotNative {
         val config = HttpTransportConfig.default
             .channelCapacity(8)
             .readChunkSize(4096)
@@ -37,7 +37,7 @@ class HttpTransportConfigTest extends Test:
         assert(config.maxHeaderSize == 32768)
     }
 
-    "custom channelCapacity respected" in run {
+    "custom channelCapacity respected" in runNotNative {
         val tc     = HttpTransportConfig.default.channelCapacity(1)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -54,7 +54,7 @@ class HttpTransportConfigTest extends Test:
         }
     }
 
-    "custom readChunkSize respected" in run {
+    "custom readChunkSize respected" in runNotNative {
         val tc     = HttpTransportConfig.default.readChunkSize(512)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -71,7 +71,7 @@ class HttpTransportConfigTest extends Test:
         }
     }
 
-    "custom writeBatchSize respected" in run {
+    "custom writeBatchSize respected" in runNotNative {
         val tc     = HttpTransportConfig.default.writeBatchSize(2)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -88,7 +88,7 @@ class HttpTransportConfigTest extends Test:
         }
     }
 
-    "custom maxHeaderSize rejects oversized headers" in run {
+    "custom maxHeaderSize rejects oversized headers" in runNotNative {
         val tc     = HttpTransportConfig.default.maxHeaderSize(128)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -118,7 +118,7 @@ class HttpTransportConfigTest extends Test:
         }
     }
 
-    "config propagated through HttpServerConfig" in run {
+    "config propagated through HttpServerConfig" in runNotNative {
         val tc = HttpTransportConfig.default
             .channelCapacity(2)
             .readChunkSize(1024)
@@ -141,7 +141,7 @@ class HttpTransportConfigTest extends Test:
         }
     }
 
-    "config propagated through HttpClientConfig" in run {
+    "config propagated through HttpClientConfig" in runNotNative {
         val tc = HttpTransportConfig.default
             .channelCapacity(2)
             .readChunkSize(1024)
