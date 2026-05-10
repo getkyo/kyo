@@ -1191,10 +1191,16 @@ class ContainerItTest extends Test:
             val config = Container.Config("alpine")
                 .command("sh", "-c", "trap 'exit 0' TERM; for i in $(seq 1 20); do echo line$i; done; sleep infinity & wait")
             Container.init(config).map { c =>
-                c.logs(stdout = true, stderr = true, tail = 5).map { entries =>
-                    assert(entries.size == 5)
-                    assert(entries.last.content == "line20")
-                    assert(entries.head.content == "line16")
+                // Race: c.logs on the http backend can return before the container's echo loop
+                // has flushed all 20 iterations. Poll until the expected final line ("line20")
+                // appears (or timeout via outer test budget).
+                Retry[AssertionError](Schedule.fixed(50.millis).take(40)) {
+                    c.logs(stdout = true, stderr = true, tail = 5).map { entries =>
+                        if entries.size == 5 && entries.last.content == "line20" && entries.head.content == "line16" then
+                            assert(true)
+                        else
+                            throw new AssertionError(s"logs not yet flushed to line20: ${entries.map(_.content).mkString(",")}")
+                    }
                 }
             }
         }
