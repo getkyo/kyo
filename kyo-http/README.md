@@ -2,11 +2,11 @@
 
 Kyo's HTTP/1.1 client and server module. Both client and server share a single API that compiles across JVM, JavaScript, and Scala Native, with platform-specific backends handling the actual I/O:
 
-| Platform | Client | Server |
-|----------|--------|--------|
-| JVM | [Netty](https://netty.io/) | [Netty](https://netty.io/) |
-| JS | [Fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) | [Node.js HTTP](https://nodejs.org/api/http.html) |
-| Native | [libcurl](https://curl.se/libcurl/) | [H2O](https://h2o.examp1e.net/) |
+| Platform | I/O backend |
+|----------|-------------|
+| JVM | Java NIO selectors |
+| JS | Node.js [`net`](https://nodejs.org/api/net.html) and [`tls`](https://nodejs.org/api/tls.html) |
+| Native | Direct [`epoll`](https://man7.org/linux/man-pages/man7/epoll.7.html) (Linux) and [`kqueue`](https://www.freebsd.org/cgi/man.cgi?kqueue) (macOS) |
 
 The library handles JSON, text, and binary content types with automatic serialization, supports streaming via SSE and NDJSON, includes composable middleware (filters), and supports OpenAPI in both directions: generating specs from routes and generating typed routes from specs at compile time. On the client side, it manages connection pooling, retries, and redirect following.
 
@@ -753,7 +753,7 @@ All APIs are shared across platforms. The same code compiles for JVM, JavaScript
 
 - **JVM**: No additional setup required.
 - **JavaScript**: The server backend requires a Node.js runtime.
-- **Native**: Requires libcurl and H2O to be available on the system.
+- **Native**: Requires OpenSSL on the system when TLS is used. Plain HTTP needs no additional setup.
 
 Backends are expected to behave uniformly across platforms. If you encounter a behavioral difference between backends, please [report it](https://github.com/getkyo/kyo/issues).
 
