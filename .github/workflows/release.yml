@@ -14,8 +14,8 @@ jobs:
   publish:
     if: |
       (github.event_name == 'push') ||
-      (github.event_name == 'issue_comment' && 
-       github.event.issue.pull_request && 
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
        github.event.comment.body == '/release')
     runs-on: ubuntu-latest
     env:
@@ -39,8 +39,8 @@ jobs:
         uses: nick-fields/retry@v4
         with:
           max_attempts: 3
-          timeout_minutes: 15
-          command: echo "$PGP_SECRET" | base64 --decode | gpg --batch --import && rm -rf target/sona-staging && sbt -Dplatform=JVM "; kyo-schema / publishSigned ; sonaRelease"
+          timeout_minutes: 30
+          command: rm -rf target/sona-staging && sbt -Dplatform=JVM "ci-release"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
@@ -50,8 +50,8 @@ jobs:
         uses: nick-fields/retry@v4
         with:
           max_attempts: 3
-          timeout_minutes: 15
-          command: echo "$PGP_SECRET" | base64 --decode | gpg --batch --import && rm -rf target/sona-staging && sbt -Dplatform=JS "; kyo-schemaJS / publishSigned ; sonaRelease"
+          timeout_minutes: 30
+          command: rm -rf target/sona-staging && sbt -Dplatform=JS "ci-release"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
@@ -61,8 +61,8 @@ jobs:
         uses: nick-fields/retry@v4
         with:
           max_attempts: 3
-          timeout_minutes: 15
-          command: echo "$PGP_SECRET" | base64 --decode | gpg --batch --import && rm -rf target/sona-staging && sbt -Dplatform=Native "; kyo-schemaNative / publishSigned ; sonaRelease"
+          timeout_minutes: 30
+          command: rm -rf target/sona-staging && sbt -Dplatform=Native "ci-release"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
