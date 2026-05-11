@@ -35,19 +35,17 @@ jobs:
         with:
           jvm: corretto:24
           apps: sbt
-      # JVM artifacts for v1.0.0-RC2 are already published on Maven Central and immutable.
-      # Temporarily disabled for the RC2 re-tag rerun; restore after the JS+Native publish succeeds.
-      # - name: Publish JVM
-      #   uses: nick-fields/retry@v4
-      #   with:
-      #     max_attempts: 3
-      #     timeout_minutes: 15
-      #     command: rm -rf target/sona-staging && sbt -Dplatform=JVM "ci-release"
-      #   env:
-      #     PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
-      #     PGP_SECRET: ${{ secrets.PGP_SECRET }}
-      #     SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
-      #     SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+      - name: Publish JVM
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          timeout_minutes: 15
+          command: rm -rf target/sona-staging && sbt -Dplatform=JVM "ci-release"
+        env:
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          PGP_SECRET: ${{ secrets.PGP_SECRET }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
       - name: Publish JS
         uses: nick-fields/retry@v4
         with:
