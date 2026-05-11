@@ -1412,6 +1412,50 @@ class StreamTest extends Test:
         )
     }
 
+    "zip" - {
+        "should zip all elements of streams of the same length" in {
+            val s1: Stream[Int, Any]  = Stream.init(Chunk(1, 2, 3, 4, 5))
+            val s2: Stream[Char, Any] = Stream.init(Chunk('a', 'b', 'c', 'd', 'e'))
+            val sz                    = s1.zip(s2)
+            val result                = sz.run.eval
+            assert(result == Chunk((1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')))
+        }
+
+        "should drop elements of second stream if it's longer" in {
+            val s1: Stream[Int, Any]  = Stream.init(Chunk(1, 2, 3))
+            val s2: Stream[Char, Any] = Stream.init(Chunk('a', 'b', 'c', 'd', 'e'))
+            val sz                    = s1.zip(s2)
+            val result                = sz.run.eval
+            assert(result == Chunk((1, 'a'), (2, 'b'), (3, 'c')))
+        }
+
+        "should drop elements of first stream if it's longer" in {
+            val s1: Stream[Int, Any]  = Stream.init(Chunk(1, 2, 3, 4, 5))
+            val s2: Stream[Char, Any] = Stream.init(Chunk('a', 'b', 'c'))
+            val sz                    = s1.zip(s2)
+            val result                = sz.run.eval
+            assert(result == Chunk((1, 'a'), (2, 'b'), (3, 'c')))
+        }
+
+        "should combine effects" in {
+            val s1: Stream[Int, Var[Int]] =
+                val emit = Loop.forever:
+                    Var.use[Int](i => Var.update[Int](_ + 1).andThen(Emit.value(Chunk(i))))
+                Stream(emit)
+            end s1
+
+            val s2: Stream[Char, Env[String]] = Stream.unwrap(Env.use[String](_ => Stream.init(Chunk('a', 'b', 'c', 'd', 'e'))))
+
+            val s2v = Env.run("test")(s2.run).eval
+            assert(s2v == Chunk('a', 'b', 'c', 'd', 'e'))
+
+            val sz = s1.zip(s2)
+
+            val result = sz.run.handle(Env.run("test"), Var.run(1)).eval
+            assert(result == Chunk((1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')))
+        }
+    }
+
     "unwrap" - {
         "should fuse effect contexts" in {
             val stream: Stream[Int, Choice] =
