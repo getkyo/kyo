@@ -51,9 +51,18 @@ jobs:
       - name: Publish JS
         uses: nick-fields/retry@v4
         with:
-          max_attempts: 3
+          max_attempts: 1
           timeout_minutes: 30
-          command: rm -rf target/sona-staging && sbt -Dplatform=JS "ci-release"
+          command: |-
+            rm -rf target/sona-staging
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+              echo "$PGP_SECRET" | base64 --decode | gpg --batch --import
+              sbt -Dplatform=JS "+publishSigned"
+              rm -rf target/sona-staging/io/getkyo/kyojs_3
+              sbt -Dplatform=JS sonaRelease
+            else
+              sbt -Dplatform=JS "ci-release"
+            fi
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
@@ -62,9 +71,18 @@ jobs:
       - name: Publish Native
         uses: nick-fields/retry@v4
         with:
-          max_attempts: 3
+          max_attempts: 1
           timeout_minutes: 30
-          command: rm -rf target/sona-staging && sbt -Dplatform=Native "ci-release"
+          command: |-
+            rm -rf target/sona-staging
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+              echo "$PGP_SECRET" | base64 --decode | gpg --batch --import
+              sbt -Dplatform=Native "+publishSigned"
+              rm -rf target/sona-staging/io/getkyo/kyonative_3
+              sbt -Dplatform=Native sonaRelease
+            else
+              sbt -Dplatform=Native "ci-release"
+            fi
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
