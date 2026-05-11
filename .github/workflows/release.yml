@@ -40,7 +40,7 @@ jobs:
         with:
           max_attempts: 3
           timeout_minutes: 15
-          command: rm -rf target/sona-staging && sbt -Dplatform=JVM "; kyo-schema / publishSigned ; sonaRelease"
+          command: echo "$PGP_SECRET" | base64 --decode | gpg --batch --import && rm -rf target/sona-staging && sbt -Dplatform=JVM "; kyo-schema / publishSigned ; sonaRelease"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
@@ -51,7 +51,7 @@ jobs:
         with:
           max_attempts: 3
           timeout_minutes: 15
-          command: rm -rf target/sona-staging && sbt -Dplatform=JS "; kyo-schemaJS / publishSigned ; sonaRelease"
+          command: echo "$PGP_SECRET" | base64 --decode | gpg --batch --import && rm -rf target/sona-staging && sbt -Dplatform=JS "; kyo-schemaJS / publishSigned ; sonaRelease"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
@@ -62,7 +62,7 @@ jobs:
         with:
           max_attempts: 3
           timeout_minutes: 15
-          command: rm -rf target/sona-staging && sbt -Dplatform=Native "; kyo-schemaNative / publishSigned ; sonaRelease"
+          command: echo "$PGP_SECRET" | base64 --decode | gpg --batch --import && rm -rf target/sona-staging && sbt -Dplatform=Native "; kyo-schemaNative / publishSigned ; sonaRelease"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
