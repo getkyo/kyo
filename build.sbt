@@ -147,6 +147,7 @@ lazy val kyoJVM = project
         `kyo-logging-slf4j`.jvm,
         `kyo-reactive-streams`.jvm,
         `kyo-aeron`.jvm,
+        `kyo-schema`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
         `kyo-caliban`.jvm,
@@ -186,6 +187,7 @@ lazy val kyoJS = project
         `kyo-cats`.js,
         `kyo-combinators`.js,
         `kyo-actor`.js,
+        `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
         `kyo-pod`.js
@@ -212,6 +214,7 @@ lazy val kyoNative = project
         `kyo-combinators`.native,
         `kyo-reactive-streams`.native,
         `kyo-actor`.native,
+        `kyo-schema`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
         `kyo-scheduler-zio`.native,
