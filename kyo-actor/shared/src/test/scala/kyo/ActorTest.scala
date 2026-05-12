@@ -119,12 +119,13 @@ class ActorTest extends Test:
         "child actors are properly cleaned up when parent finishes" in run {
             for
                 consumed         <- Latch.init(2)
+                cleanedUp        <- Latch.init(2)
                 childActorStates <- Queue.Unbounded.init[String]()
                 parentActor <- Actor.run {
                     for
                         childActor1 <- Actor.run {
                             for
-                                _ <- Scope.ensure(childActorStates.add("child1 cleaned up"))
+                                _ <- Scope.ensure(childActorStates.add("child1 cleaned up").andThen(cleanedUp.release))
                                 _ <- childActorStates.add("child1 started")
                             yield Actor.receiveAll[Int] { _ =>
                                 childActorStates.add("child1 received message").andThen(consumed.release)
@@ -132,7 +133,7 @@ class ActorTest extends Test:
                         }
                         childActor2 <- Actor.run {
                             for
-                                _ <- Scope.ensure(childActorStates.add("child2 cleaned up"))
+                                _ <- Scope.ensure(childActorStates.add("child2 cleaned up").andThen(cleanedUp.release))
                                 _ <- childActorStates.add("child2 started")
                             yield Actor.receiveAll[Int] { _ =>
                                 childActorStates.add("child2 received message").andThen(consumed.release)
@@ -144,7 +145,7 @@ class ActorTest extends Test:
                     yield "parent complete"
                 }
                 result <- parentActor.await
-                _      <- untilTrue(childActorStates.size.map(_ == 6))
+                _      <- cleanedUp.await
                 events <- childActorStates.drain
             yield
                 assert(result == "parent complete")
