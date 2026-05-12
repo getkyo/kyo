@@ -61,15 +61,27 @@ Global / commands += TestKyo.command
 //   reduce contention on slow runners. On local dev use 80% of cores — fewer
 //   than the full count, to leave headroom for sbt's scalatest reporter sockets
 //   and other background work, but higher than CI for faster iteration.
-Global / concurrentRestrictions ++= {
+// Replace sbt's default concurrentRestrictions wholesale (rather than appending), because sbt
+// resolves multiple Tags.limit on the same tag by taking the most-restrictive one. The default
+// `Tags.limit(Tags.ForkedTestGroup, 1)` would otherwise shadow our larger forkLimit. Per-project
+// `Global / concurrentRestrictions ++=` (e.g. Scala.JS linker locks) still appends as expected.
+Global / concurrentRestrictions := {
     val taskLimit   = sys.env.getOrElse("SBT_TASK_LIMIT", "0")
     val updateLimit = sys.env.getOrElse("SBT_UPDATE_LIMIT", "0")
     val cores       = java.lang.Runtime.getRuntime.availableProcessors()
     val isCI        = sys.env.contains("CI")
     val testLimit   = 1 max (if (isCI) cores / 2 else math.ceil(cores * 0.8).toInt)
-    (if (taskLimit != "0") Seq(Tags.limitAll(taskLimit.toInt)) else Nil) ++
-        (if (updateLimit != "0") Seq(Tags.limit(Tags.Update, updateLimit.toInt)) else Nil) ++
-        Seq(Tags.limit(Tags.Test, testLimit))
+    // Forked-test cap: how many forked test JVMs run concurrently. On CI we hard-cap at 2 so kyo-pod
+    // (which splits each suite into a podman fork and a docker fork via KYO_POD_RUNTIME pinning) ends
+    // up with at most one fork per daemon — strictly bounding container-daemon contention. Locally
+    // we allow up to half the cores for fast iteration; some same-daemon overlap is tolerable.
+    val forkLimit = if (isCI) 2 else 1 max cores / 2
+    Seq(
+        Tags.limitAll(if (taskLimit != "0") taskLimit.toInt else cores),
+        Tags.limit(Tags.Update, if (updateLimit != "0") updateLimit.toInt else 1),
+        Tags.limit(Tags.Test, testLimit),
+        Tags.limit(Tags.ForkedTestGroup, forkLimit)
+    )
 }
 
 lazy val `kyo-settings` = Seq(
@@ -137,8 +149,7 @@ lazy val kyoJVM = project
         `kyo-logging-slf4j`.jvm,
         `kyo-reactive-streams`.jvm,
         `kyo-aeron`.jvm,
-        `kyo-sttp`.jvm,
-        `kyo-tapir`.jvm,
+        `kyo-schema`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
         `kyo-caliban`.jvm,
@@ -148,6 +159,7 @@ lazy val kyoJVM = project
         `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
         `kyo-playwright`.jvm,
+        `kyo-pod`.jvm,
         `kyo-examples`.jvm,
         `kyo-actor`.jvm,
         `kyo-grpc`.jvm
@@ -172,7 +184,6 @@ lazy val kyoJS = project
         `kyo-stats-registry`.js,
         `kyo-config`.js,
         `kyo-reactive-streams`.js,
-        `kyo-sttp`.js,
         `kyo-stats-otlp`.js,
         `kyo-zio-test`.js,
         `kyo-zio`.js,
@@ -180,8 +191,10 @@ lazy val kyoJS = project
         `kyo-combinators`.js,
         `kyo-actor`.js,
         `kyo-grpc`.js,
+        `kyo-schema`.js,
         `kyo-http`.js,
-        `kyo-flow`.js
+        `kyo-flow`.js,
+        `kyo-pod`.js
     )
 
 lazy val kyoNative = project
@@ -204,15 +217,16 @@ lazy val kyoNative = project
         `kyo-direct`.native,
         `kyo-combinators`.native,
         `kyo-reactive-streams`.native,
-        `kyo-sttp`.native,
         `kyo-actor`.native,
+        `kyo-schema`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
         `kyo-scheduler-zio`.native,
         `kyo-zio`.native,
         `kyo-zio-test`.native,
         `kyo-stm`.native,
-        `kyo-stats-otlp`.native
+        `kyo-stats-otlp`.native,
+        `kyo-pod`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -563,34 +577,6 @@ lazy val `kyo-aeron` =
         )
         .jvmSettings(mimaCheck(false))
 
-lazy val `kyo-sttp` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-sttp"))
-        .dependsOn(`kyo-core`)
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.11.0"
-        )
-        .jsSettings(`js-settings`)
-        .nativeSettings(`native-settings`)
-        .jvmSettings(mimaCheck(false))
-
-lazy val `kyo-tapir` =
-    crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-tapir"))
-        .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-sttp`)
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.13.11",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.13.11"
-        )
-        .jvmSettings(mimaCheck(false))
-
 lazy val `kyo-http` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -825,6 +811,102 @@ lazy val `kyo-combinators` =
         .nativeSettings(`native-settings`)
         .jvmSettings(mimaCheck(false))
 
+lazy val `kyo-pod` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-pod"))
+        .dependsOn(`kyo-core`, `kyo-http`)
+        .settings(
+            `kyo-settings`
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            // Each suite is forked once by default; suites that exercise a container runtime via
+            // `runBackends` / `runBackendsLong` / `runRuntimes` are forked once per runtime instead
+            // (KYO_POD_RUNTIME pinned in each fork) so each fork hits a single daemon and the two
+            // daemons run concurrently up to the global ForkedTestGroup cap. We auto-detect which
+            // suites need the per-runtime split by instantiating each suite at config time and
+            // checking whether `Suite.testNames` contains the bracketed runtime markers `[podman]`
+            // / `[docker]` registered by those test helpers — no marker trait or naming convention
+            // for humans to forget. Brackets ensure no collision with unit-test descriptions that
+            // happen to mention "podman" or "docker" as words (e.g. "docker auto-pull progress…").
+            Test / testForkedParallel := true,
+            Test / testGrouping := {
+                val javaOptionsValue = javaOptions.value.toVector
+                val envsVarsValue    = envVars.value
+                val loader           = (Test / testLoader).value
+                val baseFork = (envOverrides: Map[String, String]) =>
+                    ForkOptions(
+                        javaHome = javaHome.value,
+                        outputStrategy = outputStrategy.value,
+                        bootJars = Vector.empty,
+                        workingDirectory = Some(baseDirectory.value),
+                        runJVMOptions = javaOptionsValue,
+                        connectInput = connectInput.value,
+                        envVars = envsVarsValue ++ envOverrides
+                    )
+                (Test / definedTests).value.flatMap { test =>
+                    // Reflection-only: build.sbt runs under sbt's Scala 2.12 classloader, which has no
+                    // visibility into scalatest. We instantiate the suite, call `testNames`, and rely on
+                    // Set.toString containing the bracket-marked runtime scopes (e.g. "[podman] http").
+                    val suiteObj       = loader.loadClass(test.name).getConstructor().newInstance()
+                    val namesObj       = suiteObj.getClass.getMethod("testNames").invoke(suiteObj)
+                    val namesString    = namesObj.toString
+                    val targetRuntimes = Seq("podman", "docker").filter(rt => namesString.contains(s"[$rt]"))
+                    if (targetRuntimes.isEmpty)
+                        Seq(Tests.Group(
+                            name = test.name,
+                            tests = Seq(test),
+                            runPolicy = Tests.SubProcess(baseFork(Map.empty))
+                        ))
+                    else
+                        targetRuntimes.map { runtime =>
+                            Tests.Group(
+                                name = s"${test.name}#$runtime",
+                                tests = Seq(test),
+                                runPolicy = Tests.SubProcess(baseFork(Map("KYO_POD_RUNTIME" -> runtime)))
+                            )
+                        }
+                }
+            }
+        )
+        .nativeSettings(
+            `native-settings`,
+            nativeConfig ~= { c =>
+                val opensslOpts =
+                    if (System.getProperty("os.name").toLowerCase.contains("mac")) {
+                        val prefix = {
+                            val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
+                            val p1 = new java.io.File("/opt/homebrew/opt/openssl")
+                            val p0 = new java.io.File("/usr/local/opt/openssl")
+                            if (p3.exists()) p3.getAbsolutePath
+                            else if (p1.exists()) p1.getAbsolutePath
+                            else p0.getAbsolutePath
+                        }
+                        Seq(s"-L$prefix/lib", s"-I$prefix/include", "-lssl", "-lcrypto")
+                    } else Seq("-lssl", "-lcrypto")
+                c.withLinkingOptions(c.linkingOptions ++ opensslOpts)
+                    .withCompileOptions(c.compileOptions ++ {
+                        if (System.getProperty("os.name").toLowerCase.contains("mac")) {
+                            val prefix = {
+                                val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
+                                val p1 = new java.io.File("/opt/homebrew/opt/openssl")
+                                val p0 = new java.io.File("/usr/local/opt/openssl")
+                                if (p3.exists()) p3.getAbsolutePath
+                                else if (p1.exists()) p1.getAbsolutePath
+                                else p0.getAbsolutePath
+                            }
+                            Seq(s"-I$prefix/include")
+                        } else Nil
+                    })
+            }
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+
 lazy val `kyo-playwright` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -842,7 +924,8 @@ lazy val `kyo-examples` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-examples"))
-        .dependsOn(`kyo-tapir`)
+        .dependsOn(`kyo-http`)
+        .dependsOn(`kyo-schema`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-core`)
         .disablePlugins(MimaPlugin)
@@ -855,8 +938,7 @@ lazy val `kyo-examples` =
                 "--add-opens=java.base/java.nio=ALL-UNNAMED",
                 "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
             ),
-            Compile / doc / sources                              := Seq.empty,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.13.11"
+            Compile / doc / sources := Seq.empty
         )
         .jvmSettings(mimaCheck(false))
 
@@ -876,9 +958,7 @@ lazy val `kyo-bench` =
             `kyo-schema`,
             `kyo-scheduler-cats`,
             `kyo-scheduler-zio`,
-            `kyo-stm`,
-            `kyo-sttp`,
-            `kyo-tapir`
+            `kyo-stm`
         )
         .settings(
             `kyo-settings`,
@@ -1000,8 +1080,6 @@ lazy val readme =
         .dependsOn(
             `kyo-core`,
             `kyo-direct`,
-            `kyo-sttp`,
-            `kyo-tapir`,
             `kyo-bench`,
             `kyo-zio`,
             `kyo-cats`,

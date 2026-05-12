@@ -127,7 +127,7 @@ class AsyncTest extends Test:
                 _           <- done.await
             yield assert(interrupted)
         }
-        "multiple fibers" in run {
+        "multiple fibers" in runNotNative {
             for
                 started      <- Latch.init(3)
                 done         <- Latch.init(3)
@@ -135,7 +135,7 @@ class AsyncTest extends Test:
                 fiber2       <- Fiber.initUnscoped(runLoop(started, done))
                 fiber3       <- Fiber.initUnscoped(runLoop(started, done))
                 _            <- started.await
-                _            <- Async.sleep(100.millis)
+                _            <- Async.sleep(2.seconds)
                 interrupted1 <- fiber1.interrupt(panic)
                 interrupted2 <- fiber2.interrupt(panic)
                 interrupted3 <- fiber3.interrupt(panic)

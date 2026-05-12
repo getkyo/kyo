@@ -52,7 +52,7 @@ Layered stack — each module depends only on modules above it:
 |-------|---------|---------|
 | Foundation | `kyo-data`, `kyo-kernel` | Data types, effect system kernel |
 | Effects | `kyo-prelude`, `kyo-core`, `kyo-combinators` | Effect definitions and combinators |
-| Integrations | `kyo-sttp`, `kyo-tapir`, `kyo-caliban`, `kyo-cats`, `kyo-zio`, ... | Library integrations |
+| Integrations | `kyo-caliban`, `kyo-cats`, `kyo-zio`, ... | Library integrations |
 | Applications | `kyo-http`, `kyo-cache`, `kyo-stm`, `kyo-actor`, ... | Higher-level modules |
 
 Source layout within each module:

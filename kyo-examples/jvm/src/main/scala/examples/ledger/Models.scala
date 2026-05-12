@@ -1,14 +1,14 @@
 package examples.ledger
 
 import java.time.Instant
-import zio.json.JsonCodec
+import kyo.*
 
 case class Transaction(
     amount: Int,
     kind: String,
-    description: Option[String],
-    timestamp: Option[Instant]
-) derives JsonCodec
+    description: Maybe[String] = Absent,
+    timestamp: Maybe[Instant] = Absent
+) derives Schema, CanEqual
 
 sealed trait Result derives CanEqual
 
@@ -18,15 +18,15 @@ case object Denied
 case class Processed(
     limit: Int,
     balance: Int
-) extends Result derives JsonCodec
+) extends Result derives Schema, CanEqual
 
 case class Statement(
     balance: Balance,
     lastTransactions: Seq[Transaction]
-) derives JsonCodec
+) derives Schema, CanEqual
 
 case class Balance(
     total: Int,
     date: Instant,
     limit: Int
-) derives JsonCodec
+) derives Schema, CanEqual

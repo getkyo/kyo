@@ -2,11 +2,11 @@
 
 Kyo's HTTP/1.1 client and server module. Both client and server share a single API that compiles across JVM, JavaScript, and Scala Native, with platform-specific backends handling the actual I/O:
 
-| Platform | Client | Server |
-|----------|--------|--------|
-| JVM | [Netty](https://netty.io/) | [Netty](https://netty.io/) |
-| JS | [Fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) | [Node.js HTTP](https://nodejs.org/api/http.html) |
-| Native | [libcurl](https://curl.se/libcurl/) | [H2O](https://h2o.examp1e.net/) |
+| Platform | I/O backend |
+|----------|-------------|
+| JVM | Java NIO selectors |
+| JS | Node.js [`net`](https://nodejs.org/api/net.html) and [`tls`](https://nodejs.org/api/tls.html) |
+| Native | Direct [`epoll`](https://man7.org/linux/man-pages/man7/epoll.7.html) (Linux) and [`kqueue`](https://www.freebsd.org/cgi/man.cgi?kqueue) (macOS) |
 
 The library handles JSON, text, and binary content types with automatic serialization, supports streaming via SSE and NDJSON, includes composable middleware (filters), and supports OpenAPI in both directions: generating specs from routes and generating typed routes from specs at compile time. On the client side, it manages connection pooling, retries, and redirect following.
 
@@ -753,6 +753,160 @@ All APIs are shared across platforms. The same code compiles for JVM, JavaScript
 
 - **JVM**: No additional setup required.
 - **JavaScript**: The server backend requires a Node.js runtime.
-- **Native**: Requires libcurl and H2O to be available on the system.
+- **Native**: Requires OpenSSL on the system when TLS is used. Plain HTTP needs no additional setup.
 
 Backends are expected to behave uniformly across platforms. If you encounter a behavioral difference between backends, please [report it](https://github.com/getkyo/kyo/issues).
+
+## Migrating from kyo-sttp and kyo-tapir
+
+`kyo-sttp` (sttp client wrapper) and `kyo-tapir` (tapir + Netty server) have been replaced by `kyo-http`, which provides a unified client/server API across JVM, JavaScript, and Scala Native. The sections below show the most common kyo-sttp / kyo-tapir patterns and their kyo-http equivalents.
+
+### Client: kyo-sttp → HttpClient
+
+`kyo-sttp` exposed sttp's request DSL through `Requests`, where the request was built with a function over `BasicRequest`. In kyo-http, requests are issued with method-specific helpers on `HttpClient`, and JSON/text/binary codecs are inferred from the type.
+
+```scala
+// kyo-sttp
+import sttp.client3.*
+val resp: String < (Async & Abort[FailedRequest]) =
+  Requests(_.get(uri"https://example.com"))
+
+// kyo-http
+import kyo.*
+val resp: String < (Async & Abort[HttpException]) =
+  HttpClient.getText("https://example.com")
+```
+
+For typed JSON requests, derive `Schema` instead of a zio-json codec:
+
+```scala
+case class User(id: Int, name: String) derives Schema
+
+val user = HttpClient.getJson[User]("https://api.example.com/users/1")
+```
+
+See the [Client](#client) section for the full set of helpers (`getText`, `postJson`, `*Unit`, `*Response`, etc.) and for connection-level access via `HttpClient.connect`.
+
+### Server: tapir endpoint → HttpRoute
+
+Tapir endpoints described inputs/outputs/errors with a fluent builder, then bound an implementation through `Routes.add`. In kyo-http, the same description lives on `HttpRoute`, and the implementation is attached with `.handler`. Path captures use `HttpPath.Capture` instead of `path[A](...)`, and `jsonBody` is replaced by `request(_.bodyJson[A])` / `response(_.bodyJson[A])`.
+
+```scala
+// kyo-tapir
+import sttp.tapir.*
+import sttp.tapir.json.zio.*
+
+case class CreateUser(name: String) derives JsonCodec
+case class User(id: Int, name: String) derives JsonCodec
+
+val createUser =
+  endpoint
+    .post
+    .in("users")
+    .in(jsonBody[CreateUser])
+    .out(jsonBody[User])
+
+val routes =
+  Routes.add(createUser) { req =>
+    direct {
+      User(1, req.name)
+    }
+  }
+
+// kyo-http
+import kyo.*
+import kyo.HttpPath.*
+
+case class CreateUser(name: String) derives Schema
+case class User(id: Int, name: String) derives Schema
+
+val createUser =
+  HttpRoute.postRaw("users")
+    .request(_.bodyJson[CreateUser])
+    .response(_.bodyJson[User])
+
+val handler = createUser.handler { req =>
+  HttpResponse.ok(User(1, req.fields.body.name))
+}
+```
+
+`HttpRoute` exposes higher-level shortcuts when you don't need path captures, e.g. `HttpRoute.postJson[User, CreateUser]("users")` produces the route above directly. Path captures are written `"users" / Capture[Int]("id") / "posts"` and are accessible on the typed request as `req.fields.id`.
+
+### Server: NettyKyoServer → HttpServer
+
+`NettyKyoServer` and `Routes.run` are replaced by a single `HttpServer.init` that accepts handlers as varargs and returns a `Scope`-managed server.
+
+```scala
+// kyo-tapir
+import sttp.tapir.server.netty.*
+
+val server =
+  NettyKyoServer(NettyKyoServerOptions.default(), NettyConfig.default)
+    .host("0.0.0.0")
+    .port(9999)
+
+val app = Routes.run(server)(endpoints)
+
+// kyo-http
+val app =
+  HttpServer.initWith(9999, "0.0.0.0")(handlers*) { server =>
+    Console.printLine(s"Server started on port ${server.port}").andThen(Async.never)
+  }
+```
+
+`HttpServer.init` returns a server managed by `Scope`, so the listener and connections are cleaned up automatically when the enclosing scope exits. Use `HttpServerConfig` for TLS, CORS, idle timeouts, OpenAPI exposure, etc.
+
+### Errors: StatusCode → HttpResponse.halt / .error
+
+`kyo-tapir` mapped errors with `errorOut(statusCode)` and handlers aborted with `Abort.fail[StatusCode](StatusCode.NotFound)`. In `kyo-http`, there are two idiomatic options:
+
+- **Status-only short-circuit** — abort with `HttpResponse.halt` to bypass route serialization and return any response directly:
+
+  ```scala
+  val notFound: Nothing < Abort[HttpResponse.Halt] =
+    HttpResponse.halt(HttpResponse(HttpStatus.NotFound))
+  ```
+
+- **Typed domain errors** — declare error types on the route with `.error[E](status)`. The framework serializes the error as JSON and responds with the declared status:
+
+  ```scala
+  case class ApiError(message: String) derives Schema
+
+  val route =
+    HttpRoute.getRaw("users" / Capture[Int]("id"))
+      .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
+
+  val handler = route.handler { req =>
+    Abort.fail(ApiError(s"User ${req.fields.id} not found"))
+  }
+  ```
+
+### JSON: zio-json → Schema
+
+kyo-http uses `Schema` from `kyo-schema` for all JSON, form, and protobuf serialization. Replace zio-json's `derives JsonCodec` with `derives Schema`. Both `Option[A]` and `Maybe[A]` are supported for optional fields; `Maybe[A] = Absent` is the idiomatic choice in Kyo code.
+
+```scala
+// before
+case class Transaction(amount: Int, description: Option[String]) derives JsonCodec
+
+// after
+import kyo.*
+case class Transaction(amount: Int, description: Maybe[String] = Absent) derives Schema
+```
+
+### Cheat sheet
+
+| kyo-sttp / kyo-tapir | kyo-http |
+| -------------------- | -------- |
+| `Requests(_.get(uri"..."))` | `HttpClient.getText` / `getJson` / `postJson` / etc. |
+| `endpoint.in(...).out(...)` | `HttpRoute.<method>Raw(...).request(...).response(...)` |
+| `path[A]("id")` | `Capture[A]("id")` |
+| `jsonBody[A]` | `_.bodyJson[A]` |
+| `errorOut(jsonBody[E])` + status | `.error[E](HttpStatus.X)` + `Abort.fail(e)` |
+| `errorOut(statusCode)` | `HttpResponse.halt(HttpResponse(HttpStatus.X))` |
+| `Routes.add(endpoint)(impl)` | `route.handler(req => impl)` |
+| `NettyKyoServer(...).host(h).port(p)` + `Routes.run(server)(...)` | `HttpServer.init(p, h)(handlers*)` |
+| `derives JsonCodec` (zio-json) | `derives Schema` |
+| `Option[A]` field | `Maybe[A] = Absent` |
+
+For a complete working example, see [kyo-examples ledger](../kyo-examples/jvm/src/main/scala/examples/ledger), which has been migrated from `kyo-tapir` to `kyo-http`.
