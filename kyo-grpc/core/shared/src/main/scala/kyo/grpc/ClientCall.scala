@@ -173,19 +173,24 @@ object ClientCall:
                     case Maybe.Present(callClosed) => Abort.fail(callClosed)
                     case Maybe.Absent              => Kyo.unit
 
-            val send = requests.foreach(request =>
-                for
-                    _ <- Sync.defer(call.sendMessage(request))
-                    // There is a race condition between setting the ready signal to false and the listener setting it
-                    // to true. Either update may be lost, however, we always check isReady which is the source of
-                    // truth. The only case where the signal value matters is when isReady is false. We know that the
-                    // signal will still be false, and the listener guarantees that the ready signal will be set to true
-                    // when isReady becomes true.
-                    _       <- listener.readySignal.set(false)
-                    isReady <- Sync.defer(call.isReady)
-                    _       <- if isReady then Kyo.unit else awaitReadyOrClosed
-                yield ()
-            )
+            val send = requests.fold(true) { (first, request) =>
+                val send =
+                    if first then
+                        Sync.defer(call.sendMessage(request))
+                    else
+                        for
+                            // There is a race condition between setting the ready signal to false and the listener setting it
+                            // to true. Either update may be lost, however, we always check isReady which is the source of
+                            // truth. The only case where the signal value matters is when isReady is false. We know that the
+                            // signal will still be false, and the listener guarantees that the ready signal will be set to true
+                            // when isReady becomes true.
+                            _       <- listener.readySignal.set(false)
+                            isReady <- Sync.defer(call.isReady)
+                            _       <- if isReady then Kyo.unit else awaitReadyOrClosed
+                            _       <- Sync.defer(call.sendMessage(request))
+                        yield ()
+                send.map(_ => false)
+            }.unit
 
             Abort.run[GrpcFailure](
                 Abort.run[CallClosed](send).map:
@@ -397,19 +402,24 @@ object ClientCall:
                     case Maybe.Present(callClosed) => Abort.fail(callClosed)
                     case Maybe.Absent              => Kyo.unit
 
-            val send = requests.foreach(request =>
-                for
-                    _ <- Sync.defer(call.sendMessage(request))
-                    // There is a race condition between setting the ready signal to false and the listener setting it
-                    // to true. Either update may be lost, however, we always check isReady which is the source of
-                    // truth. The only case where the signal value matters is when isReady is false. We know that the
-                    // signal will still be false, and the listener guarantees that the ready signal will be set to true
-                    // when isReady becomes true.
-                    _       <- listener.readySignal.set(false)
-                    isReady <- Sync.defer(call.isReady)
-                    _       <- if isReady then Kyo.unit else listener.readySignal.next
-                yield ()
-            )
+            val send = requests.fold(true) { (first, request) =>
+                val send =
+                    if first then
+                        Sync.defer(call.sendMessage(request))
+                    else
+                        for
+                            // There is a race condition between setting the ready signal to false and the listener setting it
+                            // to true. Either update may be lost, however, we always check isReady which is the source of
+                            // truth. The only case where the signal value matters is when isReady is false. We know that the
+                            // signal will still be false, and the listener guarantees that the ready signal will be set to true
+                            // when isReady becomes true.
+                            _       <- listener.readySignal.set(false)
+                            isReady <- Sync.defer(call.isReady)
+                            _       <- if isReady then Kyo.unit else awaitReadyOrClosed
+                            _       <- Sync.defer(call.sendMessage(request))
+                        yield ()
+                send.map(_ => false)
+            }.unit
 
             Abort.run[GrpcFailure](
                 Abort.run[CallClosed](send).map:
