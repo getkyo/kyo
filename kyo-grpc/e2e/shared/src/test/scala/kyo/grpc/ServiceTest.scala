@@ -3,7 +3,6 @@ package kyo.grpc
 import io.grpc.{Server as _, *}
 import io.grpc.internal.GrpcUtil
 
-import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
 import kgrpc.*
 import kgrpc.test.*
@@ -536,13 +535,12 @@ class ServiceTest extends Test:
 
     private def createClientAndServer: Client < (Scope & Sync) =
         for
-            port   <- findFreePort
-            _      <- createServer(port)
-            client <- createClient(port)
+            server <- createServer()
+            client <- createClient(server.getPort)
         yield client
 
-    private def createServer(port: Int): Server < (Scope & Sync) =
-        Server.start(port)(_.addService(TestServiceImpl.definition))
+    private def createServer(): Server < (Scope & Sync) =
+        Server.start(0)(_.addService(TestServiceImpl.definition))
 
     private def createClient(port: Int): Client < (Scope & Sync) =
         createChannel(port).map(TestService.client(_))
@@ -558,11 +556,5 @@ class ServiceTest extends Test:
         ) { channel =>
             Sync.defer(channel.shutdownNow().awaitTermination(10, TimeUnit.SECONDS)).unit
         }
-
-    private def findFreePort =
-        for
-            socket <- Sync.defer(new ServerSocket(0))
-            port   <- Sync.ensure(Sync.defer(socket.close()))(socket.getLocalPort)
-        yield port
 
 end ServiceTest
