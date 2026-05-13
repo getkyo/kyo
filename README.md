@@ -57,6 +57,7 @@ Kyo is structured as a monorepo, published to Maven Central:
 | kyo-playwright       | ✅   | ❌   | ❌      | Browser automation testing using Microsoft Playwright                |
 | kyo-reactive-streams | ✅   | ❌   | ❌      | Bidirectional Reactive Streams interop implementation                |
 | kyo-aeron            | ✅   | ❌   | ❌      | High-performance messaging using Aeron transport                     |
+| kyo-grpc             | ✅   | ✅   | ❌      | Fiber-native gRPC with protoc code generation                        |
 
 #### Scheduler
 
