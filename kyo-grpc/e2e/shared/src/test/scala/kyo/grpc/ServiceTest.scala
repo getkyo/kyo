@@ -2,6 +2,7 @@ package kyo.grpc
 
 import io.grpc.{Server as _, *}
 import io.grpc.internal.GrpcUtil
+import io.grpc.stub.{ServerCalls, StreamObserver}
 import java.util.concurrent.TimeUnit
 import kgrpc.*
 import kgrpc.test.*
@@ -316,6 +317,16 @@ class ServiceTest extends Test:
     }
 
     "bidirectional streaming" - {
+        "sends first request before response headers" in run {
+            val message  = "Hello"
+            val requests = Stream(Emit.value(Chunk(Success(message): Request)))
+            for
+                client    <- createDelayedHeadersClientAndServer
+                responses <- Async.timeout(1.second)(client.manyToMany(Kyo.lift(requests)).run)
+            yield assert(responses == Chunk(Echo(message)))
+            end for
+        }
+
         "empty" in run {
             val successes = Chunk.empty[Request]
             val requests  = Stream(Emit.value(successes))
@@ -535,8 +546,41 @@ class ServiceTest extends Test:
             client <- createClient(server.getPort)
         yield client
 
+    private def createDelayedHeadersClientAndServer: Client < (Scope & Sync) =
+        for
+            server <- createDelayedHeadersServer()
+            client <- createClient(server.getPort)
+        yield client
+
     private def createServer(): Server < (Scope & Sync) =
         Server.start(0)(_.addService(TestServiceImpl.definition))
+
+    private def createDelayedHeadersServer(): Server < (Scope & Sync) =
+        val service =
+            ServerServiceDefinition.builder(TestServiceGrpc.SERVICE)
+                .addMethod(
+                    TestServiceGrpc.METHOD_MANY_TO_MANY,
+                    ServerCalls.asyncBidiStreamingCall(
+                        new ServerCalls.BidiStreamingMethod[Request, Response]:
+                            override def invoke(responseObserver: StreamObserver[Response]): StreamObserver[Request] =
+                                new StreamObserver[Request]:
+                                    override def onNext(request: Request): Unit =
+                                        request.asNonEmpty.get match
+                                            case Success(message, _, _) =>
+                                                responseObserver.onNext(Echo(message))
+                                            case _ =>
+                                                responseObserver.onError(Status.INVALID_ARGUMENT.asException)
+
+                                    override def onError(t: Throwable): Unit = ()
+
+                                    override def onCompleted(): Unit =
+                                        responseObserver.onCompleted()
+                                end new
+                    )
+                )
+                .build()
+
+        Server.start(0)(_.addService(service))
 
     private def createClient(port: Int): Client < (Scope & Sync) =
         createChannel(port).map(TestService.client(_))

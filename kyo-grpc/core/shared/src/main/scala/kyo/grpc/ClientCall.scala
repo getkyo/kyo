@@ -355,11 +355,10 @@ object ClientCall:
             yield listener
         end start
 
-        def processHeaders(
-            listener: ServerStreamingClientCallListener[Response],
-            requestsEffect: GrpcRequestsPendingHeaders[Stream[Request, Grpc]]
-        ): GrpcRequest[Stream[Request, Grpc]] =
-            listener.headersPromise.get.map(Env.run(_)(requestsEffect))
+        def processHeaders(requestsEffect: GrpcRequestsPendingHeaders[Stream[Request, Grpc]]): GrpcRequest[Stream[Request, Grpc]] =
+            // Bidirectional-streaming servers may wait to send response headers until they receive
+            // the first request, so gating the outbound stream on headers can deadlock the call.
+            Env.run(Metadata())(requestsEffect)
 
         def sendAndClose(
             call: ClientCall[Request, Response],
@@ -446,7 +445,7 @@ object ClientCall:
                 for
                     listener <- start(call, options)
                     responses <- (for
-                        requestsWithHeaders <- processHeaders(listener, requestsEffect)
+                        requestsWithHeaders <- processHeaders(requestsEffect)
                         responses           <- sendAndReceive(call, listener, requestsWithHeaders)
                     yield responses).handle(
                         processCompletion(listener),
