@@ -201,10 +201,11 @@ object Async extends AsyncPlatformSpecific:
         end if
     end _timeout
 
-    def tapFiber[E, A, S, S2](using isolate: Isolate[S, Abort[E] & Async, S])
-                             (v: => A < (Abort[E] & Async & S))
-                             (f: Fiber[Any, Abort[E] & S] => Unit < S2)
-                             (using frame: Frame): A < (kyo.Abort[E] & kyo.Async & S & S2) =
+    def tapFiber[E, A, S, S2](using
+        isolate: Isolate[S, Abort[E] & Async, S]
+    )(v: => A < (Abort[E] & Async & S))(f: Fiber[Any, Abort[E] & S] => Unit < S2)(using
+        frame: Frame
+    ): A < (kyo.Abort[E] & kyo.Async & S & S2) =
         isolate.capture { state =>
             Fiber.initUnscoped(isolate.isolate(state, v)).map { fiber =>
                 f(fiber).andThen {

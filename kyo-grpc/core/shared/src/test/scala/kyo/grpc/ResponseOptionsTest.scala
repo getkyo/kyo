@@ -23,8 +23,8 @@ class ResponseOptionsTest extends Test with AsyncMockFactory:
         }
 
         "creates instance with specified values" in run {
-            val headers  = new Metadata()
-            val buffer   = 16
+            val headers   = new Metadata()
+            val buffer    = 16
             val threshold = 32
 
             val options = ResponseOptions(
@@ -276,6 +276,7 @@ class ResponseOptionsTest extends Test with AsyncMockFactory:
                         succeed
                     case Maybe.Absent =>
                         fail("Expected merged headers")
+                end match
         }
     }
 
@@ -401,10 +402,11 @@ class ResponseOptionsTest extends Test with AsyncMockFactory:
             val options1 = ResponseOptions(messageCompression = Maybe.Present(true))
             val options2 = ResponseOptions(requestBuffer = Maybe.Present(20))
 
-            val computation = for
-                _ <- Emit.value(options1)
-                _ <- Emit.value(options2)
-            yield "result"
+            val computation =
+                for
+                    _ <- Emit.value(options1)
+                    _ <- Emit.value(options2)
+                yield "result"
 
             ResponseOptions.run(computation).map: (result, value) =>
                 assert(result.messageCompression === Maybe.Present(true))
@@ -434,10 +436,11 @@ class ResponseOptionsTest extends Test with AsyncMockFactory:
             val options1 = ResponseOptions(headers = Maybe.Present(metadata1))
             val options2 = ResponseOptions(headers = Maybe.Present(metadata2))
 
-            val computation = for
-                _ <- Emit.value(options1)
-                _ <- Emit.value(options2)
-            yield ()
+            val computation =
+                for
+                    _ <- Emit.value(options1)
+                    _ <- Emit.value(options2)
+                yield ()
 
             ResponseOptions.run(computation).map: (result, _) =>
                 result.headers match
@@ -453,7 +456,7 @@ class ResponseOptionsTest extends Test with AsyncMockFactory:
     "runSend" - {
         "extracts options, sends headers, and returns result" in run {
             val metadata = new Metadata()
-            val options  = ResponseOptions(
+            val options = ResponseOptions(
                 headers = Maybe.Present(metadata),
                 messageCompression = Maybe.Present(true)
             )
@@ -490,10 +493,11 @@ class ResponseOptionsTest extends Test with AsyncMockFactory:
                 compression = Maybe.Present("gzip")
             )
 
-            val computation = for
-                _ <- Emit.value(options1)
-                _ <- Emit.value(options2)
-            yield "final-result"
+            val computation =
+                for
+                    _ <- Emit.value(options1)
+                    _ <- Emit.value(options2)
+                yield "final-result"
 
             val call = mock[ServerCall[String, String]]
 

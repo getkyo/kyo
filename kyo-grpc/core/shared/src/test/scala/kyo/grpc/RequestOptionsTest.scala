@@ -203,6 +203,7 @@ class RequestOptionsTest extends Test:
                         succeed
                     case Maybe.Absent =>
                         fail("Expected merged headers")
+                end match
         }
     }
 
@@ -221,10 +222,11 @@ class RequestOptionsTest extends Test:
             val options1 = RequestOptions(messageCompression = Maybe.Present(true))
             val options2 = RequestOptions(responseCapacity = Maybe.Present(20))
 
-            val computation = for
-                _ <- Emit.value(options1)
-                _ <- Emit.value(options2)
-            yield "result"
+            val computation =
+                for
+                    _ <- Emit.value(options1)
+                    _ <- Emit.value(options2)
+                yield "result"
 
             RequestOptions.run(computation).map: (result, value) =>
                 assert(result.messageCompression === Maybe.Present(true))
@@ -254,10 +256,11 @@ class RequestOptionsTest extends Test:
             val options1 = RequestOptions(headers = Maybe.Present(metadata1))
             val options2 = RequestOptions(headers = Maybe.Present(metadata2))
 
-            val computation = for
-                _ <- Emit.value(options1)
-                _ <- Emit.value(options2)
-            yield ()
+            val computation =
+                for
+                    _ <- Emit.value(options1)
+                    _ <- Emit.value(options2)
+                yield ()
 
             RequestOptions.run(computation).map: (result, _) =>
                 result.headers match
