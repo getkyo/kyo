@@ -1,6 +1,8 @@
 package kyo.grpc
 
+import io.grpc.Deadline
 import io.grpc.Metadata
+import java.util.concurrent.TimeUnit
 import kyo.*
 import org.scalactic.TripleEquals.*
 
@@ -13,22 +15,26 @@ class RequestOptionsTest extends Test:
             assert(options.headers === Maybe.empty)
             assert(options.messageCompression === Maybe.empty)
             assert(options.responseCapacity === Maybe.empty)
+            assert(options.deadline === Maybe.empty)
             succeed
         }
 
         "creates instance with specified values" in run {
             val headers  = new Metadata()
             val capacity = 16
+            val deadline = Deadline.after(1, TimeUnit.SECONDS)
 
             val options = RequestOptions(
                 headers = Maybe.Present(headers),
                 messageCompression = Maybe.Present(true),
-                responseCapacity = Maybe.Present(capacity)
+                responseCapacity = Maybe.Present(capacity),
+                deadline = Maybe.Present(deadline)
             )
 
             assert(options.headers === Maybe.Present(headers))
             assert(options.messageCompression === Maybe.Present(true))
             assert(options.responseCapacity === Maybe.Present(capacity))
+            assert(options.deadline === Maybe.Present(deadline))
             succeed
         }
     }
@@ -113,6 +119,37 @@ class RequestOptionsTest extends Test:
 
             options1.combine(options2).map: result =>
                 assert(result.responseCapacity === Maybe.Present(20))
+                succeed
+        }
+
+        "prefers second options deadline when both present" in run {
+            val deadline1 = Deadline.after(1, TimeUnit.SECONDS)
+            val deadline2 = Deadline.after(2, TimeUnit.SECONDS)
+            val options1  = RequestOptions(deadline = Maybe.Present(deadline1))
+            val options2  = RequestOptions(deadline = Maybe.Present(deadline2))
+
+            options1.combine(options2).map: result =>
+                assert(result.deadline === Maybe.Present(deadline2))
+                succeed
+        }
+
+        "keeps first options deadline when second is absent" in run {
+            val deadline = Deadline.after(1, TimeUnit.SECONDS)
+            val options1 = RequestOptions(deadline = Maybe.Present(deadline))
+            val options2 = RequestOptions()
+
+            options1.combine(options2).map: result =>
+                assert(result.deadline === Maybe.Present(deadline))
+                succeed
+        }
+
+        "uses second options deadline when first is absent" in run {
+            val deadline = Deadline.after(1, TimeUnit.SECONDS)
+            val options1 = RequestOptions()
+            val options2 = RequestOptions(deadline = Maybe.Present(deadline))
+
+            options1.combine(options2).map: result =>
+                assert(result.deadline === Maybe.Present(deadline))
                 succeed
         }
 

@@ -1,5 +1,6 @@
 package kyo.grpc
 
+import io.grpc.Deadline
 import io.grpc.Metadata
 import io.grpc.ServerCall
 import kyo.*
@@ -12,7 +13,8 @@ import kyo.grpc.internal.mergeIfDefined
 final case class RequestOptions(
     headers: Maybe[Metadata] = Maybe.empty,
     messageCompression: Maybe[Boolean] = Maybe.empty,
-    responseCapacity: Maybe[Int] = Maybe.empty
+    responseCapacity: Maybe[Int] = Maybe.empty,
+    deadline: Maybe[Deadline] = Maybe.empty
 ):
 
     // TODO: Delete?
@@ -21,7 +23,8 @@ final case class RequestOptions(
             RequestOptions(
                 headers = mergedHeaders,
                 messageCompression = that.messageCompression.orElse(this.messageCompression),
-                responseCapacity = that.responseCapacity.orElse(this.responseCapacity)
+                responseCapacity = that.responseCapacity.orElse(this.responseCapacity),
+                deadline = that.deadline.orElse(this.deadline)
             )
     end combine
 

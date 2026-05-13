@@ -35,6 +35,9 @@ type GrpcRequestInit[Request] = GrpcRequest[Request] < (Emit[RequestOptions] & A
   */
 object ClientCall:
 
+    private def withRequestOptions(options: CallOptions, requestOptions: RequestOptions): CallOptions =
+        requestOptions.deadline.fold(options)(options.withDeadline)
+
     // TODO:
     //  - unary and serverStreaming need to provide the headers with the response.
     //  - all methods need to provide trailers.
@@ -102,18 +105,16 @@ object ClientCall:
                 listener.completionPromise.get.map(Env.run(_)(handler))
             ).map(Abort.get)
 
-        def run(call: ClientCall[Request, Response]): Response < Grpc =
-            RequestOptions.run(requestInit).map: (options, requestEffect) =>
-                for
-                    listener <- start(call, options)
-                    response <- sendAndReceive(call, listener, requestEffect).handle(
-                        processCompletion(listener),
-                        cancelOnError(call),
-                        cancelOnInterrupt(call)
-                    )
-                yield response
-
-        Sync.defer(channel.newCall(method, options)).map(run)
+        RequestOptions.run(requestInit).map: (requestOptions, requestEffect) =>
+            for
+                call     <- Sync.defer(channel.newCall(method, withRequestOptions(options, requestOptions)))
+                listener <- start(call, requestOptions)
+                response <- sendAndReceive(call, listener, requestEffect).handle(
+                    processCompletion(listener),
+                    cancelOnError(call),
+                    cancelOnInterrupt(call)
+                )
+            yield response
     end unary
 
     /** Executes a client streaming gRPC call.
@@ -206,21 +207,19 @@ object ClientCall:
                 listener.completionPromise.get.map(Env.run(_)(handler))
             ).map(Abort.get)
 
-        def run(call: ClientCall[Request, Response]): Response < Grpc =
-            RequestOptions.run(requestsInit).map: (options, requestsEffect) =>
-                for
-                    listener <- start(call, options)
-                    response <- (for
-                        requestsWithHeaders <- processHeaders(requestsEffect)
-                        response            <- sendAndReceive(call, listener, requestsWithHeaders)
-                    yield response).handle(
-                        processCompletion(listener),
-                        cancelOnError(call),
-                        cancelOnInterrupt(call)
-                    )
-                yield response
-
-        Sync.defer(channel.newCall(method, options)).map(run)
+        RequestOptions.run(requestsInit).map: (requestOptions, requestsEffect) =>
+            for
+                call     <- Sync.defer(channel.newCall(method, withRequestOptions(options, requestOptions)))
+                listener <- start(call, requestOptions)
+                response <- (for
+                    requestsWithHeaders <- processHeaders(requestsEffect)
+                    response            <- sendAndReceive(call, listener, requestsWithHeaders)
+                yield response).handle(
+                    processCompletion(listener),
+                    cancelOnError(call),
+                    cancelOnInterrupt(call)
+                )
+            yield response
     end clientStreaming
 
     /** Executes a server streaming gRPC call.
@@ -299,19 +298,17 @@ object ClientCall:
                 responses.concat(Stream[Response, Grpc](completion))
         end processCompletion
 
-        def run(call: ClientCall[Request, Response]): Stream[Response, Grpc] < Async =
-            RequestOptions.run(requestInit).map: (options, requestEffect) =>
+        Stream.unwrap:
+            RequestOptions.run(requestInit).map: (requestOptions, requestEffect) =>
                 for
-                    listener <- start(call, options)
+                    call      <- Sync.defer(channel.newCall(method, withRequestOptions(options, requestOptions)))
+                    listener  <- start(call, requestOptions)
                     responses <- sendAndReceive(call, listener, requestEffect).handle(
                         processCompletion(listener),
                         cancelOnError(call),
                         cancelOnInterrupt(call)
                     )
                 yield responses
-
-        Stream.unwrap:
-            Sync.defer(channel.newCall(method, options)).map(run)
     end serverStreaming
 
     /** Executes a bidirectional streaming gRPC call.
@@ -441,10 +438,11 @@ object ClientCall:
                             else Abort.fail(callClosed.asException)
                 responses.concat(Stream[Response, Grpc](completion))
 
-        def run(call: ClientCall[Request, Response]): Stream[Response, Grpc] < Async =
-            RequestOptions.run(requestsInit).map: (options, requestsEffect) =>
+        Stream.unwrap:
+            RequestOptions.run(requestsInit).map: (requestOptions, requestsEffect) =>
                 for
-                    listener <- start(call, options)
+                    call      <- Sync.defer(channel.newCall(method, withRequestOptions(options, requestOptions)))
+                    listener  <- start(call, requestOptions)
                     responses <- (for
                         requestsWithHeaders <- processHeaders(listener, requestsEffect)
                         responses           <- sendAndReceive(call, listener, requestsWithHeaders)
@@ -454,9 +452,6 @@ object ClientCall:
                         cancelOnInterrupt(call)
                     )
                 yield responses
-
-        Stream.unwrap:
-            Sync.defer(channel.newCall(method, options)).map(run)
     end bidiStreaming
 
     private def cancelOnError[E <: Throwable: ConcreteTag, Response, S](call: ClientCall[?, ?])(v: => Response < (Abort[E] & S))(using
