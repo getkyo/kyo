@@ -41,7 +41,7 @@ class ClientCallTest extends Test:
 
             "server streaming method descriptor" in run {
                 val method = MethodDescriptor.newBuilder[TestRequest, TestResponse]()
-                .setType(MethodDescriptor.MethodType.SERVER_STREAMING)
+                    .setType(MethodDescriptor.MethodType.SERVER_STREAMING)
                     .setFullMethodName("test.Service/ServerStreamingMethod")
                     .setRequestMarshaller(TestMarshaller[TestRequest]())
                     .setResponseMarshaller(TestMarshaller[TestResponse]())
@@ -161,6 +161,7 @@ class ClientCallTest extends Test:
                     assert(combined.messageCompression.get == true)
                     assert(combined.responseCapacity.isDefined)
                     assert(combined.responseCapacity.get == 50)
+                end for
             }
         }
     }
