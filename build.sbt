@@ -151,6 +151,7 @@ lazy val kyoJVM = project
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
         `kyo-caliban`.jvm,
+        `kyo-grpc`.jvm,
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
         `kyo-zio`.jvm,
@@ -608,6 +609,25 @@ lazy val `kyo-flow` =
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
+
+lazy val `kyo-grpc` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Pure)
+        .in(file("kyo-grpc"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies ++= Seq(
+                "io.grpc"              % "grpc-stub"              % "1.72.0",
+                "io.grpc"              % "grpc-protobuf"          % "1.72.0",
+                "io.grpc"              % "grpc-netty"             % "1.72.0",
+                "com.thesamet.scalapb" %% "scalapb-runtime"       % "0.11.17",
+                "com.thesamet.scalapb" %% "scalapb-runtime-grpc"  % "0.11.17"
+            ),
+            libraryDependencies += "org.scalatest" %% "scalatest" % scalaTestVersion % Test
+        )
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-caliban` =
     crossProject(JVMPlatform)
