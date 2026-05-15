@@ -1,0 +1,229 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc => ScalaPbGrpc}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success, Try}
+
+/**
+ * Kyo gRPC support module providing integration between Kyo effects and gRPC.
+ * 
+ * This module enables:
+ * - Type-safe gRPC service definitions using Kyo effects
+ * - Automatic conversion between gRPC futures and Kyo effects
+ * - Streaming support with Kyo streams
+ * - Efficient resource management with Kyo's resource handling
+ */
+object Grpc {
+
+  /** Kyo effect type for gRPC operations */
+  type GrpcIO[T] = T < (Abort[Status] with Async)
+
+  /** Converts a gRPC Future to a Kyo effect */
+  def fromFuture[T](f: => Future[T])(using Frame): GrpcIO[T] =
+    Abort.catching[Status](Status.fromThrowable) {
+      Async.fromFuture(f)
+    }
+
+  /** Converts a Kyo effect to a gRPC Future */
+  def toFuture[T: Flat](v: => T < (Abort[Status] with Async))(using Frame): Future[T] =
+    Async.run(Abort.run(v)).map {
+      case Result.Success(value) => Future.successful(value)
+      case Result.Failure(error) => Future.failed(error.toException)
+      case Result.Panic(cause)   => Future.failed(cause)
+    }.pipe(Async.toFuture).flatMap(identity)
+
+  /** Creates a gRPC service definition from a Kyo handler */
+  def service[S, T](
+      serviceName: String,
+      methods: Seq[MethodDescriptor[_, _]]
+  )(handler: S)(using
+      S: ServiceHandler[S, T],
+      Flat[T]
+  ): ServerServiceDefinition = {
+    val builder = ServerServiceDefinition.builder(serviceName)
+    methods.foreach { method =>
+      builder.addMethod(
+        method.asInstanceOf[MethodDescriptor[Any, Any]],
+        ServerCalls.asyncUnaryCall(
+          new ServerCalls.UnaryMethod[Any, Any] {
+            override def invoke(request: Any, responseObserver: StreamObserver[Any]): Unit = {
+              val result = S.handle(handler, request)
+              Async.run(result).map { r =>
+                r match {
+                  case Result.Success(value) =>
+                    responseObserver.onNext(value)
+                    responseObserver.onCompleted()
+                  case Result.Failure(status) =>
+                    responseObserver.onError(status.toException)
+                  case Result.Panic(cause) =>
+                    responseObserver.onError(cause)
+                }
+              }.pipe(Async.run)
+            }
+          }
+        )
+      )
+    }
+    builder.build()
+  }
+
+  /** Client stub for making gRPC calls with Kyo effects */
+  class KyoClientStub[BlockingStub](private val stub: BlockingStub) {
+
+    /** Makes a unary gRPC call */
+    def call[Req, Res](
+        f: BlockingStub => (Req, Metadata) => Future[Res]
+    )(request: Req, metadata: Metadata = new Metadata())(using
+        Frame,
+        Flat[Res]
+    ): GrpcIO[Res] =
+      fromFuture(f(stub)(request, metadata))
+
+    /** Makes a unary gRPC call with default metadata */
+    def call[Req, Res](
+        f: BlockingStub => Req => Future[Res]
+    )(request: Req)(using Frame, Flat[Res]): GrpcIO[Res] =
+      call(stub => (req, _) => f(stub)(req))(request, new Metadata())
+  }
+
+  /** Creates a Kyo client stub from a gRPC blocking stub */
+  def client[BlockingStub](stub: BlockingStub): KyoClientStub[BlockingStub] =
+    new KyoClientStub(stub)
+
+  /** Managed channel resource */
+  def managedChannel(target: String, config: ManagedChannelBuilder[_] => ManagedChannelBuilder[_] = identity)(using
+      Frame
+  ): Resource[IO, ManagedChannel] =
+    Resource {
+      IO {
+        val builder = ManagedChannelBuilder.forTarget(target).asInstanceOf[ManagedChannelBuilder[_]]
+        val channel = config(builder).build()
+        (channel, IO(channel.shutdown()).unit)
+      }
+    }
+
+  /** Type class for service handlers */
+  trait ServiceHandler[S, T] {
+    def handle(service: S, request: Any): T < (Abort[Status] with Async)
+  }
+
+  object ServiceHandler {
+    given unitHandler[S]: ServiceHandler[S, Unit] with {
+      def handle(service: S, request: Any): Unit < (Abort[Status] with Async) = ()
+    }
+
+    given messageHandler[S, M <: GeneratedMessage](using
+        companion: GeneratedMessageCompanion[M]
+    ): ServiceHandler[S, M] with {
+      def handle(service: S, request: Any): M < (Abort[Status] with Async) =
+        request match {
+          case m: M => m
+          case _    => Abort.fail(Status.INVALID_ARGUMENT.withDescription("Invalid message type"))
+        }
+    }
+  }
+}
+
+package kyo.grpc.internal {
+
+  import kyo.*
+
+  /** Internal utilities for gRPC integration */
+  private[grpc] object Internal {
+
+    /** Converts a Status to an exception */
+    def statusToException(status: Status): StatusRuntimeException =
+      status.asRuntimeException()
+
+    /** Safe resource management for gRPC channels */
+    def withChannel[T](
+        channel: ManagedChannel
+    )(f: ManagedChannel => T < (Abort[Status] with Async))(using
+        Frame
+    ): T < (Abort[Status] with Async) =
+      IO.ensure(IO(channel.shutdown()).unit)(f(channel))
+  }
+}
+
+package kyo.grpc.test {
+
+  import kyo.*
+  import kyo.grpc.*
+  import org.scalatest.freespec.AsyncFreeSpec
+  import org.scalatest.matchers.should.Matchers
+  import io.grpc.*
+  import io.grpc.stub.StreamObserver
+  import scala.concurrent.{ExecutionContext, Future, Promise}
+  import scala.util.Try
+
+  /** Test service definition */
+  object TestService {
+    val SERVICE_NAME = "test.TestService"
+
+    val METHOD_HELLO = MethodDescriptor.newBuilder()
+      .setType(MethodDescriptor.MethodType.UNARY)
+      .setFullMethodName(MethodDescriptor.generateFullMethodName(SERVICE_NAME, "Hello"))
+      .setRequestMarshaller(new Marshaller[String] {
+        def parse(stream: java.io.InputStream): String = 
+          new String(stream.readAllBytes(), "UTF-8")
+        def stream(value: String): java.io.InputStream = 
+          new java.io.ByteArrayInputStream(value.getBytes("UTF-8"))
+      })
+      .setResponseMarshaller(new Marshaller[String] {
+        def parse(stream: java.io.InputStream): String = 
+          new String(stream.readAllBytes(), "UTF-8")
+        def stream(value: String): java.io.InputStream = 
+          new java.io.ByteArrayInputStream(value.getBytes("UTF-8"))
+      })
+      .build()
+
+    val methods = Seq(METHOD_HELLO)
+  }
+
+  class GrpcSpec extends AsyncFreeSpec with Matchers {
+
+    "Grpc.fromFuture should convert a successful Future" in {
+      val future = Future.successful("hello")
+      val result = IO.Unsafe.run(Grpc.fromFuture(future)).eval
+      result shouldBe "hello"
+    }
+
+    "Grpc.fromFuture should convert a failed Future" in {
+      val future = Future.failed(new RuntimeException("error"))
+      val result = Try(IO.Unsafe.run(Grpc.fromFuture(future)).eval)
+      result.isFailure shouldBe true
+    }
+
+    "Grpc.toFuture should convert a successful Kyo effect" in {
+      val effect: String < (Abort[Status] with Async) = "kyo"
+      val future = IO.Unsafe.run(Grpc.toFuture(effect)).eval
+      future.map(_ shouldBe "kyo")
+    }
+
+    "Grpc.toFuture should convert a failed Kyo effect" in {
+      val effect: String < (Abort[Status] with Async) = Abort.fail(Status.INTERNAL)
+      val future = IO.Unsafe.run(Grpc.to
