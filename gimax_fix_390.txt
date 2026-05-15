@@ -1,0 +1,285 @@
+```scala
+/*
+ * Copyright 2023 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.{ServerBuilder, ServerServiceDefinition, ManagedChannelBuilder, StatusRuntimeException}
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc, ServiceCompanion}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+import com.google.protobuf.ByteString
+
+import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.ClassTag
+
+/**
+ * Kyo gRPC support module providing integration between Kyo effects and gRPC.
+ * 
+ * This module enables:
+ * - Defining gRPC services using Kyo effects
+ * - Client-side gRPC calls that return Kyo effects
+ * - Efficient streaming support
+ * - Automatic resource management
+ */
+object Grpc:
+
+  /**
+   * Creates a gRPC server that handles requests using Kyo effects.
+   *
+   * @param port the port to bind the server to
+   * @param services the service definitions to register
+   * @return a Kyo effect that manages the server lifecycle
+   */
+  def server(port: Int, services: List[ServerServiceDefinition]): Server < IOs =
+    IOs {
+      val builder = ServerBuilder.forPort(port)
+      services.foreach(builder.addService)
+      val server = builder.build()
+      server.start()
+      Server(server)
+    }
+
+  /**
+   * Creates a gRPC server from service implementations.
+   *
+   * @param port the port to bind the server to
+   * @param services the service implementations
+   * @return a Kyo effect that manages the server lifecycle
+   */
+  def fromServices(port: Int, services: GrpcService*): Server < IOs =
+    IOs {
+      val builder = ServerBuilder.forPort(port)
+      services.foreach { service =>
+        builder.addService(service.bindService())
+      }
+      val server = builder.build()
+      server.start()
+      Server(server)
+    }
+
+  /**
+   * Creates a gRPC client channel.
+   *
+   * @param host the server host
+   * @param port the server port
+   * @return a Kyo effect that manages the channel lifecycle
+   */
+  def client(host: String, port: Int): Client < IOs =
+    IOs {
+      val channel = ManagedChannelBuilder.forAddress(host, port)
+        .usePlaintext()
+        .build()
+      Client(channel)
+    }
+
+  /**
+   * Wraps a gRPC service implementation.
+   */
+  trait GrpcService:
+    def bindService(): ServerServiceDefinition
+
+  /**
+   * Server resource wrapper.
+   */
+  case class Server private[grpc] (server: io.grpc.Server):
+    def shutdown: Unit < IOs = IOs {
+      server.shutdown()
+      ()
+    }
+
+    def awaitTermination: Unit < IOs = IOs {
+      server.awaitTermination()
+      ()
+    }
+
+  /**
+   * Client resource wrapper.
+   */
+  case class Client private[grpc] (channel: io.grpc.ManagedChannel):
+    def shutdown: Unit < IOs = IOs {
+      channel.shutdown()
+      ()
+    }
+
+  /**
+   * Converts a Kyo effect to a gRPC async response.
+   */
+  def toGrpcFuture[A: ClassTag](effect: A < IOs): Future[A] =
+    val promise = scala.concurrent.Promise[A]()
+    IOs.run {
+      effect.map { value =>
+        promise.success(value)
+        ()
+      }.onError { ex =>
+        promise.failure(ex)
+        ()
+      }
+    }
+    promise.future
+
+  /**
+   * Converts a gRPC Future to a Kyo effect.
+   */
+  def fromGrpcFuture[A](future: Future[A]): A < IOs =
+    Fibers.fromFuture(future)
+
+  /**
+   * Creates a unary gRPC call from a Kyo effect.
+   */
+  def unary[Req <: GeneratedMessage, Res <: GeneratedMessage](
+      stub: Grpc.Stub[Req, Res],
+      request: Req
+  ): Res < IOs =
+    IOs {
+      stub.call(request)
+    }
+
+  /**
+   * Creates a server streaming gRPC call.
+   */
+  def serverStreaming[Req <: GeneratedMessage, Res <: GeneratedMessage](
+      stub: Grpc.ServerStreamingStub[Req, Res],
+      request: Req
+  ): Stream[Res] < IOs =
+    IOs {
+      val stream = Stream[Res]()
+      stub.call(request, new StreamObserver[Res] {
+        def onNext(value: Res): Unit = stream.emit(value)
+        def onError(t: Throwable): Unit = stream.fail(t)
+        def onCompleted(): Unit = stream.end()
+      })
+      stream
+    }
+
+  /**
+   * Creates a client streaming gRPC call.
+   */
+  def clientStreaming[Req <: GeneratedMessage, Res <: GeneratedMessage](
+      stub: Grpc.ClientStreamingStub[Req, Res],
+      requests: Stream[Req]
+  ): Res < IOs =
+    IOs {
+      val observer = stub.call()
+      requests.foreach { request =>
+        observer.onNext(request)
+      }
+      observer.onCompleted()
+      fromGrpcFuture(observer.future)
+    }
+
+  /**
+   * Creates a bidirectional streaming gRPC call.
+   */
+  def bidiStreaming[Req <: GeneratedMessage, Res <: GeneratedMessage](
+      stub: Grpc.BidiStreamingStub[Req, Res],
+      requests: Stream[Req]
+  ): Stream[Res] < IOs =
+    IOs {
+      val stream = Stream[Res]()
+      val observer = stub.call(new StreamObserver[Res] {
+        def onNext(value: Res): Unit = stream.emit(value)
+        def onError(t: Throwable): Unit = stream.fail(t)
+        def onCompleted(): Unit = stream.end()
+      })
+      requests.foreach { request =>
+        observer.onNext(request)
+      }
+      observer.onCompleted()
+      stream
+    }
+
+  /**
+   * Internal gRPC stub types.
+   */
+  object Stub:
+    class Stub[Req, Res](val call: Req => Res)
+    class ServerStreamingStub[Req, Res](val call: (Req, StreamObserver[Res]) => Unit)
+    class ClientStreamingStub[Req, Res](val call: () => StreamObserver[Req] with FutureObserver[Res])
+    class BidiStreamingStub[Req, Res](val call: StreamObserver[Res] => StreamObserver[Req])
+
+  /**
+   * Internal helper for Future-based observers.
+   */
+  trait FutureObserver[A]:
+    def future: Future[A]
+
+  /**
+   * Simple stream implementation for gRPC streaming.
+   */
+  class Stream[A]:
+    private val subscribers = scala.collection.mutable.ListBuffer[A => Unit]()
+    private val errorHandlers = scala.collection.mutable.ListBuffer[Throwable => Unit]()
+    private val completionHandlers = scala.collection.mutable.ListBuffer[() => Unit]()
+    private var completed = false
+    private var error: Option[Throwable] = None
+
+    def emit(value: A): Unit = synchronized {
+      if (!completed && error.isEmpty) {
+        subscribers.foreach(_(value))
+      }
+    }
+
+    def fail(t: Throwable): Unit = synchronized {
+      error = Some(t)
+      errorHandlers.foreach(_(t))
+    }
+
+    def end(): Unit = synchronized {
+      completed = true
+      completionHandlers.foreach(_())
+    }
+
+    def foreach(f: A => Unit): Unit = synchronized {
+      subscribers += f
+    }
+
+    def onError(f: Throwable => Unit): Unit = synchronized {
+      errorHandlers += f
+      error.foreach(f)
+    }
+
+    def onComplete(f: () => Unit): Unit = synchronized {
+      completionHandlers += f
+      if (completed) f()
+    }
+
+  object Stream:
+    def apply[A](): Stream[A] = new Stream[A]()
+
+end Grpc
+
+/**
+ * Internal gRPC utilities.
+ */
+package kyo.grpc.internal:
+
+  import io.grpc.{ServerBuilder, ManagedChannelBuilder}
+  import io.grpc.stub.StreamObserver
+  import kyo.*
+
+  private[grpc] object GrpcInternal:
+
+    def serverBuilder(port: Int): ServerBuilder[_] =
+      ServerBuilder.forPort(port)
+
+    def channelBuilder(host: String, port: Int): ManagedChannelBuilder[_] =
+      ManagedChannelBuilder.forAddress(host, port).usePlaintext()
+
+    def toKyo[A](future: scala.concurrent.Future[A]): A < IOs =
+     
