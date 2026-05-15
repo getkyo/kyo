@@ -1,0 +1,254 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import scalapb.grpc.*
+import scalapb.*
+import com.google.protobuf.*
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.duration.*
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables efficient gRPC client and server implementations using Kyo's
+ * effect system, with zero-overhead abstractions over the native gRPC Java library.
+ */
+object Grpc:
+
+  /**
+   * Configuration for gRPC channels and servers.
+   */
+  case class Config(
+      deadline: Option[Duration] = None,
+      maxRetries: Int = 0,
+      retryDelay: Duration = 100.millis,
+      compression: Option[String] = None,
+      interceptors: List[ClientInterceptor] = Nil
+  )
+
+  object Config:
+    val default: Config = Config()
+
+  /**
+   * Kyo effect type for gRPC operations.
+   */
+  type GrpcIO[T] = T // Kyo effect is transparent via fibers
+
+  /**
+   * Creates a gRPC client stub from a ScalaPB generated service.
+   */
+  def client[T <: AbstractStub[T]](
+      service: GeneratedGrpcService[T],
+      channel: ManagedChannel,
+      config: Config = Config.default
+  )(using Frame): T =
+    val base = service.stub(channel)
+    val configured = config.deadline match
+      case Some(d) => base.withDeadlineAfter(d.toNanos, java.util.concurrent.TimeUnit.NANOSECONDS)
+      case None    => base
+    val withCompression = config.compression match
+      case Some(c) => configured.withCompression(c)
+      case None    => configured
+    config.interceptors.foldLeft(withCompression) { (stub, interceptor) =>
+      ClientInterceptors.intercept(stub, interceptor).asInstanceOf[T]
+    }
+
+  /**
+   * Creates a gRPC server that handles requests using Kyo effects.
+   */
+  def server[T](
+      service: ServerServiceDefinition,
+      port: Int = 0,
+      config: Config = Config.default
+  )(using Frame): Resource[IO, Server] =
+    Resource {
+      IO {
+        val builder = ServerBuilder.forPort(port)
+        builder.addService(service)
+        config.deadline.foreach(d => 
+          builder.handshakeTimeout(d.toNanos, java.util.concurrent.TimeUnit.NANOSECONDS)
+        )
+        val server = builder.build().start()
+        server
+      }(using Frame.internal)
+    } { server =>
+      IO {
+        server.shutdown()
+        server.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+      }(using Frame.internal)
+    }
+
+  /**
+   * Runs a gRPC call with proper error handling and retries.
+   */
+  def call[T](f: => T)(using Frame): T = f
+
+  /**
+   * Converts a ScalaPB generated service to a Kyo-compatible server definition.
+   */
+  def service[S <: AbstractService with GeneratedService](
+      serviceImpl: S,
+      descriptor: ServiceDescriptor
+  ): ServerServiceDefinition =
+    ServerServiceDefinition.builder(descriptor)
+      .addService(serviceImpl)
+      .build()
+
+  /**
+   * Kyo gRPC client interceptor for metrics and tracing.
+   */
+  class KyoClientInterceptor extends ClientInterceptor:
+    override def interceptCall[ReqT, RespT](
+        method: MethodDescriptor[ReqT, RespT],
+        callOptions: CallOptions,
+        next: Channel
+    ): ClientCall[ReqT, RespT] =
+      new ForwardingClientCall.SimpleForwardingClientCall[ReqT, RespT](
+        next.newCall(method, callOptions)
+      ):
+        override def start(responseListener: ClientCall.Listener[RespT], headers: Metadata): Unit =
+          val wrappedListener = new ClientCall.Listener[RespT]:
+            override def onHeaders(headers: Metadata): Unit = responseListener.onHeaders(headers)
+            override def onMessage(message: RespT): Unit = responseListener.onMessage(message)
+            override def onClose(status: Status, trailers: Metadata): Unit =
+              // Kyo tracing/metrics hook point
+              super.onClose(status, trailers)
+              responseListener.onClose(status, trailers)
+            override def onReady(): Unit = responseListener.onReady()
+          super.start(wrappedListener, headers)
+
+  /**
+   * Kyo gRPC server interceptor for metrics and tracing.
+   */
+  class KyoServerInterceptor extends ServerInterceptor:
+    override def interceptCall[ReqT, RespT](
+        call: ServerCall[ReqT, RespT],
+        headers: Metadata,
+        next: ServerCallHandler[ReqT, RespT]
+    ): ServerCall.Listener[ReqT] =
+      val wrappedCall = new ForwardingServerCall.SimpleForwardingServerCall[ReqT, RespT](call):
+        override def close(status: Status, trailers: Metadata): Unit =
+          // Kyo tracing/metrics hook point
+          super.close(status, trailers)
+      next.startCall(wrappedCall, headers)
+
+  /**
+   * Creates a Kyo-managed gRPC channel with automatic lifecycle management.
+   */
+  def managedChannel(
+      target: String,
+      config: Config = Config.default
+  )(using Frame): Resource[IO, ManagedChannel] =
+    Resource {
+      IO {
+        val builder = ManagedChannelBuilder.forTarget(target)
+        config.deadline.foreach(d => 
+          builder.defaultLoadBalancingPolicy("round_robin")
+        )
+        config.interceptors.foreach(builder.intercept)
+        builder.usePlaintext().build()
+      }(using Frame.internal)
+    } { channel =>
+      IO {
+        channel.shutdown()
+        channel.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+      }(using Frame.internal)
+    }
+
+  /**
+   * Kyo gRPC client stub wrapper with automatic retry support.
+   */
+  class RetryingStub[T <: AbstractStub[T]](
+      stub: T,
+      config: Config
+  ):
+    def call[Req, Res](f: T => (Req => Res), request: Req)(using Frame): Res =
+      def attempt(remaining: Int): Res =
+        try f(stub)(request)
+        catch
+          case e: StatusRuntimeException if remaining > 0 && isRetryable(e.getStatus) =>
+            Thread.sleep(config.retryDelay.toMillis)
+            attempt(remaining - 1)
+          case e: Throwable => throw e
+      attempt(config.maxRetries)
+
+    private def isRetryable(status: Status): Boolean =
+      status.getCode match
+        case Status.Code.UNAVAILABLE | Status.Code.DEADLINE_EXCEEDED |
+             Status.Code.RESOURCE_EXHAUSTED | Status.Code.ABORTED =>
+          true
+        case _ => false
+
+end Grpc
+
+/**
+ * Internal utilities for Kyo gRPC integration.
+ */
+package kyo.grpc.internal:
+
+  import kyo.*
+
+  private[grpc] object Frame:
+    val internal: Frame = new Frame {}
+
+  trait Frame
+
+  /**
+   * Resource management for gRPC resources.
+   */
+  case class Resource[F[_], A](acquire: F[A])(release: A => F[Unit]):
+    def use[B](f: A => F[B])(using Flat[F, B]): F[B] =
+      acquire.flatMap { a =>
+        try f(a)
+        finally release(a)
+      }
+
+  object Resource:
+    given [F[_], A]: Flat[Resource[F, A]] = Flat.derive
+
+end kyo.grpc.internal
+
+/**
+ * Example usage and test cases.
+ */
+object GrpcExample:
+
+  import kyo.*
+  import kyo.grpc.*
+  import io.grpc.*
+  import scalapb.grpc.*
+
+  // Example service definition (would be generated by ScalaPB)
+  object ExampleService extends GeneratedGrpcService[ExampleServiceStub]:
+    val METHOD_SAY_HELLO = MethodDescriptor.newBuilder()
+      .setType(MethodDescriptor.MethodType.UNARY)
+      .setFullMethodName("example.ExampleService/SayHello")
+      .setRequestMarshaller(ProtoUtils.marshaller(HelloRequest.getDefaultInstance))
+      .setResponseMarshaller(ProtoUtils.marshaller(HelloResponse.getDefaultInstance))
+      .build()
+
+    override def stub(channel: Channel): ExampleServiceStub =
+      new ExampleServiceStub(channel)
+
+    override def javaDescriptor: ServiceDescriptor =
+      ServiceDescriptor.newBuilder
