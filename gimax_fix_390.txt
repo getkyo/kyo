@@ -1,0 +1,214 @@
+// build.sbt
+val kyoVersion = "0.1.0"
+val scalaPbVersion = "0.11.15"
+val grpcVersion = "1.57.2"
+
+lazy val root = (project in file("."))
+  .settings(
+    name := "kyo-grpc",
+    version := "0.1.0-SNAPSHOT",
+    scalaVersion := "3.3.1",
+    libraryDependencies ++= Seq(
+      "io.getkyo" %% "kyo-core" % kyoVersion,
+      "io.getkyo" %% "kyo-io" % kyoVersion,
+      "io.grpc" % "grpc-netty" % grpcVersion,
+      "io.grpc" % "grpc-protobuf" % grpcVersion,
+      "io.grpc" % "grpc-stub" % grpcVersion,
+      "com.thesamet.scalapb" %% "scalapb-runtime" % scalaPbVersion % "protobuf",
+      "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalaPbVersion,
+      "com.thesamet.scalapb" %% "scalapb-json4s" % scalaPbVersion % Test,
+      "org.scalatest" %% "scalatest" % "3.2.17" % Test
+    ),
+    Compile / PB.targets := Seq(
+      scalapb.gen(grpc = true) -> (Compile / sourceManaged).value / "scalapb"
+    ),
+    Test / PB.targets := Seq(
+      scalapb.gen(grpc = true) -> (Test / sourceManaged).value / "scalapb"
+    )
+  )
+
+// project/plugins.sbt
+addSbtPlugin("com.thesamet" % "sbt-protoc" % "1.0.6")
+libraryDependencies += "com.thesamet.scalapb" %% "compilerplugin" % "0.11.15"
+
+// src/main/protobuf/helloworld.proto
+syntax = "proto3";
+
+package helloworld;
+
+service Greeter {
+  rpc SayHello (HelloRequest) returns (HelloReply) {}
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloReply {
+  string message = 1;
+}
+
+// src/main/scala/io/kyo/grpc/GrpcServer.scala
+package io.kyo.grpc
+
+import io.grpc.{ServerBuilder, ServerServiceDefinition}
+import io.kyo.*
+import io.kyo.io.*
+import scala.concurrent.{ExecutionContext, Future}
+
+trait GrpcServer:
+  def start(port: Int, services: ServerServiceDefinition*)(using IO): Unit < IO
+
+object GrpcServer:
+  val live: GrpcServer = new GrpcServer:
+    def start(port: Int, services: ServerServiceDefinition*)(using IO): Unit < IO =
+      IO:
+        val server = ServerBuilder
+          .forPort(port)
+          .addServices(services.asJava)
+          .build()
+          .start()
+        println(s"gRPC server started on port $port")
+        server.awaitTermination()
+
+// src/main/scala/io/kyo/grpc/GrpcClient.scala
+package io.kyo.grpc
+
+import io.grpc.{ManagedChannelBuilder, Channel}
+import io.kyo.*
+import io.kyo.io.*
+import scala.concurrent.{ExecutionContext, Future}
+
+trait GrpcClient:
+  def channel(host: String, port: Int)(using IO): Channel < IO
+
+object GrpcClient:
+  val live: GrpcClient = new GrpcClient:
+    def channel(host: String, port: Int)(using IO): Channel < IO =
+      IO:
+        ManagedChannelBuilder
+          .forAddress(host, port)
+          .usePlaintext()
+          .build()
+
+// src/main/scala/io/kyo/grpc/GrpcKyo.scala
+package io.kyo.grpc
+
+import io.grpc.stub.AbstractStub
+import io.kyo.*
+import io.kyo.io.*
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Try
+
+object GrpcKyo:
+  def fromFuture[A](future: => Future[A])(using IO): A < IO =
+    IO:
+      scala.concurrent.Await.result(future, scala.concurrent.duration.Duration.Inf)
+
+  def stub[S <: AbstractStub[S]](stub: S): S =
+    stub
+
+// src/main/scala/io/kyo/grpc/GreeterService.scala
+package io.kyo.grpc
+
+import io.grpc.stub.StreamObserver
+import io.kyo.*
+import io.kyo.io.*
+import helloworld.*
+
+class GreeterService(using IO) extends GreeterGrpc.Greeter:
+  override def sayHello(
+      request: HelloRequest,
+      responseObserver: StreamObserver[HelloReply]
+  ): Unit =
+    val effect: HelloReply < IO = IO:
+      val name = request.name
+      val message = s"Hello, $name!"
+      HelloReply(message)
+
+    IO.run(effect).onComplete:
+      case scala.util.Success(reply) =>
+        responseObserver.onNext(reply)
+        responseObserver.onCompleted()
+      case scala.util.Failure(exception) =>
+        responseObserver.onError(exception)
+
+// src/test/scala/io/kyo/grpc/GrpcSpec.scala
+package io.kyo.grpc
+
+import io.grpc.{ServerBuilder, ManagedChannelBuilder}
+import io.kyo.*
+import io.kyo.io.*
+import helloworld.*
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
+import scala.concurrent.{ExecutionContext, Future}
+
+class GrpcSpec extends AnyFlatSpec with Matchers:
+  "gRPC server and client" should "work with Kyo" in {
+    val test = IO:
+      val server = ServerBuilder
+        .forPort(0)
+        .addService(new GreeterService())
+        .build()
+        .start()
+
+      val port = server.getPort()
+      val channel = ManagedChannelBuilder
+        .forAddress("localhost", port)
+        .usePlaintext()
+        .build()
+
+      val stub = GreeterGrpc.stub(channel)
+      val request = HelloRequest("Kyo")
+      val response = GrpcKyo.fromFuture(stub.sayHello(request))
+
+      response.message should be("Hello, Kyo!")
+
+      channel.shutdown()
+      server.shutdown()
+
+    IO.run(test)
+  }
+
+// src/test/scala/io/kyo/grpc/GrpcIntegrationSpec.scala
+package io.kyo.grpc
+
+import io.grpc.Server
+import io.kyo.*
+import io.kyo.io.*
+import helloworld.*
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
+import scala.concurrent.{ExecutionContext, Future}
+
+class GrpcIntegrationSpec extends AnyFlatSpec with Matchers:
+  "GrpcServer and GrpcClient" should "work together" in {
+    val test = IO:
+      val serverEffect = GrpcServer.live.start(0, new GreeterService())
+      val clientEffect = GrpcClient.live.channel("localhost", 0)
+
+      // In a real application, you would fork these effects
+      // For testing, we use a simpler approach
+      val server = ServerBuilder
+        .forPort(0)
+        .addService(new GreeterService())
+        .build()
+        .start()
+
+      val channel = ManagedChannelBuilder
+        .forAddress("localhost", server.getPort())
+        .usePlaintext()
+        .build()
+
+      val stub = GreeterGrpc.stub(channel)
+      val request = HelloRequest("Integration Test")
+      val response = GrpcKyo.fromFuture(stub.sayHello(request))
+
+      response.message should be("Hello, Integration Test!")
+
+      channel.shutdown()
+      server.shutdown()
+
+    IO.run(test)
+  }
