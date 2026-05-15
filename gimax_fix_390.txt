@@ -1,0 +1,247 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import io.grpc.protobuf.*
+import scalapb.grpc.*
+import scalapb.*
+import com.google.protobuf.*
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.duration.*
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables gRPC client and server implementations using Kyo's effect system,
+ * providing efficient, composable gRPC services with proper resource handling and backpressure.
+ */
+object Grpc:
+
+  /**
+   * Configuration for gRPC channel and server settings.
+   */
+  case class Config(
+    deadline: Option[Duration] = None,
+    maxRetries: Int = 3,
+    retryDelay: Duration = 100.millis,
+    compression: Option[String] = None,
+    interceptors: List[ClientInterceptor] = Nil
+  )
+
+  object Config:
+    val default: Config = Config()
+
+  /**
+   * Kyo effect type for gRPC operations.
+   */
+  type GrpcIO[T] = Async > (Abort[StatusException] | Resource)
+
+  /**
+   * Creates a gRPC client stub for the given service.
+   * 
+   * @tparam T The ScalaPB service stub type
+   * @param channel The gRPC ManagedChannel
+   * @param config Client configuration
+   * @return A Kyo effect that produces the client stub
+   */
+  def client[T](channel: ManagedChannel, config: Config = Config.default)(
+    using stubFactory: GrpcStubFactory[T]
+  ): T < GrpcIO =
+    Resource.ensure(IO(channel.shutdown())) *>
+      IO {
+        val stub = stubFactory.create(channel)
+        val configured = config.interceptors.foldLeft(stub) { (s, interceptor) =>
+          stubFactory.intercept(s, interceptor)
+        }
+        configured
+      }
+
+  /**
+   * Creates a gRPC server that serves the given service implementation.
+   * 
+   * @tparam T The ScalaPB service type
+   * @param service The service implementation
+   * @param port The server port
+   * @param config Server configuration
+   * @return A Kyo effect that manages the server lifecycle
+   */
+  def server[T](
+    service: T,
+    port: Int = 0,
+    config: ServerConfig = ServerConfig.default
+  )(
+    using serviceFactory: GrpcServiceFactory[T]
+  ): Server < GrpcIO =
+    IO {
+      val serverBuilder = ServerBuilder.forPort(port)
+        .addService(serviceFactory.create(service))
+        .executor(config.executor.getOrElse(kyo.concurrent.ThreadPool.default))
+      
+      config.interceptors.foreach(serverBuilder.intercept)
+      
+      val server = serverBuilder.build().start()
+      server
+    }.flatMap { server =>
+      Resource.ensure(IO(server.shutdown()).map(_ => server.awaitTermination()))
+        .andThen(server)
+    }
+
+  /**
+   * Runs a gRPC call with proper error handling and retries.
+   */
+  def call[A, B](request: A, stub: B, config: Config = Config.default)(
+    using callable: GrpcCallable[A, B]
+  ): A < GrpcIO =
+    def attempt(retriesLeft: Int): A < GrpcIO =
+      IO {
+        callable.call(request, stub)
+      }.map { result =>
+        result
+      }.catch {
+        case ex: StatusException if retriesLeft > 0 && isRetryable(ex.getStatus) =>
+          IO.sleep(config.retryDelay) *> attempt(retriesLeft - 1)
+        case ex: StatusException =>
+          Abort.fail(ex)
+      }
+
+    attempt(config.maxRetries)
+
+  private def isRetryable(status: Status): Boolean =
+    status.getCode match {
+      case Status.Code.UNAVAILABLE | Status.Code.DEADLINE_EXCEEDED |
+           Status.Code.RESOURCE_EXHAUSTED | Status.Code.ABORTED =>
+        true
+      case _ => false
+    }
+
+  /**
+   * Server configuration.
+   */
+  case class ServerConfig(
+    executor: Option[kyo.concurrent.ThreadPool] = None,
+    interceptors: List[ServerInterceptor] = Nil,
+    maxInboundMessageSize: Option[Int] = None
+  )
+
+  object ServerConfig:
+    val default: ServerConfig = ServerConfig()
+
+  /**
+   * Type class for creating gRPC stubs.
+   */
+  trait GrpcStubFactory[T]:
+    def create(channel: ManagedChannel): T
+    def intercept(stub: T, interceptor: ClientInterceptor): T
+
+  /**
+   * Type class for creating gRPC service implementations.
+   */
+  trait GrpcServiceFactory[T]:
+    def create(service: T): BindableService
+
+  /**
+   * Type class for making gRPC calls.
+   */
+  trait GrpcCallable[A, B]:
+    def call(request: A, stub: B): A < IO
+
+end Grpc
+
+/**
+ * Internal utilities for gRPC support.
+ */
+package kyo.grpc.internal:
+
+  import kyo.*
+  import io.grpc.*
+
+  private[grpc] object GrpcInternal:
+
+    /**
+     * Converts a gRPC StatusException to a Kyo Abort.
+     */
+    def toAbort[T](status: Status, description: String = ""): T < Abort[StatusException] =
+      Abort.fail(status.withDescription(description).asRuntimeException())
+
+    /**
+     * Wraps a gRPC future-style call into a Kyo effect.
+     */
+    def futureToKyo[T](future: com.google.common.util.concurrent.ListenableFuture[T]): T < Async =
+      Async.fromFuture(
+        scala.concurrent.Future {
+          future.get()
+        }(scala.concurrent.ExecutionContext.global)
+      )
+
+    /**
+     * Manages gRPC call cancellation via Kyo resources.
+     */
+    def cancellableCall[T](call: ClientCall[_, _], effect: T < Async): T < (Async | Resource) =
+      Resource.ensure(IO(call.cancel("Kyo cancellation", null))).andThen(effect)
+
+  end GrpcInternal
+
+end kyo.grpc.internal
+
+/**
+ * Example usage and test suite for Kyo gRPC support.
+ */
+package kyo.grpc.test:
+
+  import kyo.*
+  import kyo.grpc.*
+  import io.grpc.*
+  import scalapb.grpc.*
+  import scalapb.*
+  import com.google.protobuf.*
+
+  // Example protobuf service definition (would be generated by ScalaPB)
+  // This is a simplified example for testing purposes
+  object ExampleService:
+    case class HelloRequest(name: String) extends GeneratedMessage:
+      def serializedSize: Int = name.length
+      def writeTo(output: CodedOutputStream): Unit = output.writeStringNoTag(name)
+      def getField(field: FieldDescriptor): Any = name
+      def getFieldCount(field: FieldDescriptor): Int = 0
+      def getRepeatedFieldCount(field: FieldDescriptor): Int = 0
+      def getAllFields: Map[FieldDescriptor, Any] = Map.empty
+      def toBuilder: HelloRequest.Builder = HelloRequest.Builder(this)
+      def writeReplace(): AnyRef = this
+
+    object HelloRequest:
+      case class Builder(private val msg: HelloRequest = HelloRequest("")) 
+          extends GeneratedMessage.Builder[Builder]:
+        def build(): HelloRequest = msg
+        def clone(): Builder = copy()
+        def getField(field: FieldDescriptor): Any = msg.getField(field)
+        def setField(field: FieldDescriptor, value: Any): Builder = this
+        def clearField(field: FieldDescriptor): Builder = this
+        def getRepeatedFieldCount(field: FieldDescriptor): Int = 0
+        def getRepeatedField(field: FieldDescriptor, index: Int): Any = ???
+        def setRepeatedField(field: FieldDescriptor, index: Int, value: Any): Builder = this
+        def addRepeatedField(field: FieldDescriptor, value: Any): Builder = this
+        def getUnknownFields: UnknownFieldSet = UnknownFieldSet.getDefaultInstance
+        def setUnknownFields(unknownFields: UnknownFieldSet): Builder = this
+        def mergeFrom(other: Message): Builder = this
+        def isInitialized: Boolean = true
+        def mergeFrom(input: CodedInputStream, extensionRegistry: ExtensionRegistryLite): Builder = this
+        def newBuilderForType(): Builder =
