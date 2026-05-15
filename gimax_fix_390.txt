@@ -1,0 +1,266 @@
+```scala
+// build.sbt
+val kyoVersion = "0.1.0"
+val scalaPBVersion = "0.11.15"
+val grpcVersion = "1.56.1"
+
+lazy val root = (project in file("."))
+  .settings(
+    name := "kyo-grpc",
+    version := "0.1.0-SNAPSHOT",
+    scalaVersion := "3.3.1",
+    libraryDependencies ++= Seq(
+      "io.getkyo" %% "kyo-core" % kyoVersion,
+      "io.getkyo" %% "kyo-direct" % kyoVersion,
+      "io.grpc" % "grpc-netty" % grpcVersion,
+      "io.grpc" % "grpc-protobuf" % grpcVersion,
+      "io.grpc" % "grpc-stub" % grpcVersion,
+      "com.thesamet.scalapb" %% "scalapb-runtime" % scalaPBVersion % "protobuf",
+      "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalaPBVersion,
+      "com.thesamet.scalapb" %% "scalapb-json4s" % scalaPBVersion % Test,
+      "org.scalatest" %% "scalatest" % "3.2.17" % Test
+    ),
+    Compile / PB.targets := Seq(
+      scalapb.gen(grpc = true) -> (Compile / sourceManaged).value
+    ),
+    Compile / PB.protoSources := Seq(file("protobuf")),
+    Test / fork := true
+  )
+
+// protobuf/helloworld.proto
+syntax = "proto3";
+
+package helloworld;
+
+service Greeter {
+  rpc SayHello (HelloRequest) returns (HelloReply) {}
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloReply {
+  string message = 1;
+}
+
+// src/main/scala/kyo/grpc/KyoGrpcServer.scala
+package kyo.grpc
+
+import io.grpc.{Server, ServerBuilder}
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.direct.*
+import scala.concurrent.{ExecutionContext, Future}
+
+abstract class KyoGrpcServer(port: Int) {
+  private var server: Server = _
+
+  def start(): Unit > (IOs | Envs[ExecutionContext]) = {
+    val builder = ServerBuilder.forPort(port).addService(bindService())
+    server = builder.build().start()
+    IOs {
+      println(s"Server started on port $port")
+      sys.addShutdownHook {
+        System.err.println("Shutting down gRPC server...")
+        stop()
+        System.err.println("Server shut down")
+      }
+    }
+  }
+
+  def stop(): Unit > IOs = IOs {
+    if server != null then
+      server.shutdown()
+  }
+
+  def blockUntilShutdown(): Unit > IOs = IOs {
+    if server != null then
+      server.awaitTermination()
+  }
+
+  protected def bindService(): io.grpc.ServerServiceDefinition
+}
+
+// src/main/scala/kyo/grpc/KyoGrpcClient.scala
+package kyo.grpc
+
+import io.grpc.{ManagedChannel, ManagedChannelBuilder}
+import kyo.*
+
+class KyoGrpcClient(host: String, port: Int) {
+  private val channel: ManagedChannel = ManagedChannelBuilder
+    .forAddress(host, port)
+    .usePlaintext()
+    .build()
+
+  def shutdown(): Unit > IOs = IOs {
+    channel.shutdown()
+  }
+
+  protected def getChannel: ManagedChannel = channel
+}
+
+// src/main/scala/kyo/grpc/GreeterService.scala
+package kyo.grpc
+
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.direct.*
+import helloworld.*
+
+class GreeterService extends KyoGrpcServer(50051) {
+
+  override protected def bindService(): io.grpc.ServerServiceDefinition = {
+    GreeterGrpc.bindService(new GreeterImpl, scala.concurrent.ExecutionContext.global)
+  }
+
+  private class GreeterImpl extends GreeterGrpc.Greeter {
+    override def sayHello(
+        request: HelloRequest,
+        responseObserver: StreamObserver[HelloReply]
+    ): Unit = {
+      val effect: HelloReply > IOs = defer {
+        val name = request.name
+        val message = s"Hello, $name!"
+        HelloReply(message)
+      }
+
+      IOs.run(effect) match {
+        case Right(reply) =>
+          responseObserver.onNext(reply)
+          responseObserver.onCompleted()
+        case Left(ex) =>
+          responseObserver.onError(ex)
+      }
+    }
+  }
+}
+
+// src/main/scala/kyo/grpc/GreeterClient.scala
+package kyo.grpc
+
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.direct.*
+import helloworld.*
+import scala.concurrent.{Future, Promise}
+
+class GreeterClient(host: String, port: Int) extends KyoGrpcClient(host, port) {
+  private val stub = GreeterGrpc.stub(getChannel)
+
+  def sayHello(name: String): HelloReply > IOs = {
+    val request = HelloRequest(name)
+    val promise = Promise[HelloReply]()
+
+    val observer = new StreamObserver[HelloReply] {
+      override def onNext(value: HelloReply): Unit = promise.success(value)
+      override def onError(t: Throwable): Unit = promise.failure(t)
+      override def onCompleted(): Unit = ()
+    }
+
+    IOs {
+      stub.sayHello(request, observer)
+      IOs.fromFuture(Future(promise.future)(scala.concurrent.ExecutionContext.global))
+    }.flatMap(identity)
+  }
+}
+
+// src/main/scala/kyo/grpc/package.scala
+package kyo
+
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Try, Success, Failure}
+
+package object grpc {
+  implicit class KyoFutureOps[T](future: Future[T]) {
+    def toKyo: T > IOs = IOs.fromFuture(Future(future)(ExecutionContext.global))
+  }
+
+  implicit class KyoTryOps[T](tryValue: Try[T]) {
+    def toKyo: T > IOs = tryValue match {
+      case Success(value) => IOs(value)
+      case Failure(ex)    => IOs.fail(ex)
+    }
+  }
+}
+
+// src/test/scala/kyo/grpc/GreeterServiceTest.scala
+package kyo.grpc
+
+import kyo.*
+import kyo.direct.*
+import helloworld.*
+import org.scalatest.*
+import org.scalatest.concurrent.*
+import org.scalatest.time.{Millis, Seconds, Span}
+import scala.concurrent.ExecutionContext
+
+class GreeterServiceTest extends AsyncFlatSpec with BeforeAndAfterAll with Eventually {
+  implicit override val patienceConfig: PatienceConfig = PatienceConfig(
+    timeout = Span(10, Seconds),
+    interval = Span(100, Millis)
+  )
+
+  private var server: GreeterService = _
+  private var client: GreeterClient = _
+
+  override def beforeAll(): Unit = {
+    server = new GreeterService()
+    client = new GreeterClient("localhost", 50051)
+
+    IOs.run(server.start()(using ExecutionContext.global))
+  }
+
+  override def afterAll(): Unit = {
+    IOs.run(client.shutdown())
+    IOs.run(server.stop())
+  }
+
+  "GreeterService" should "respond with correct greeting" in {
+    val effect: HelloReply > IOs = client.sayHello("World")
+    val result = IOs.run(effect)
+
+    result match {
+      case Right(reply) =>
+        assert(reply.message == "Hello, World!")
+      case Left(ex) =>
+        fail(s"gRPC call failed: ${ex.getMessage}")
+    }
+  }
+
+  it should "handle multiple requests" in {
+    val names = List("Alice", "Bob", "Charlie")
+    val effects = names.map(name => client.sayHello(name))
+    val combined = IOs.collectAll(effects)
+
+    val result = IOs.run(combined)
+
+    result match {
+      case Right(replies) =>
+        assert(replies.size == 3)
+        assert(replies(0).message == "Hello, Alice!")
+        assert(replies(1).message == "Hello, Bob!")
+        assert(replies(2).message == "Hello, Charlie!")
+      case Left(ex) =>
+        fail(s"Multiple gRPC calls failed: ${ex.getMessage}")
+    }
+  }
+
+  it should "handle empty name" in {
+    val effect: HelloReply > IOs = client.sayHello("")
+    val result = IOs.run(effect)
+
+    result match {
+      case Right(reply) =>
+        assert(reply.message == "Hello, !")
+      case Left(ex) =>
+        fail(s"Empty name gRPC call failed: ${ex.getMessage}")
+    }
+  }
+
+  it should "handle special characters" in {
+    val effect: HelloReply > IOs = client.sayHello("John Doe")
+    val result = IOs.run(effect)
+
+    result
