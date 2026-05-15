@@ -1,0 +1,276 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc, ServiceCompanion}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.ClassTag
+import scala.util.{Failure, Success, Try}
+
+/**
+ * Kyo gRPC support module providing integration between Kyo effects and gRPC.
+ * 
+ * This module enables:
+ * - Type-safe gRPC client and server implementations using Kyo
+ * - Automatic handling of effectful computations in gRPC handlers
+ * - Efficient streaming support with backpressure
+ * - Integration with ScalaPB generated code
+ */
+object GrpcKyo {
+
+  /** Kyo effect type for gRPC operations */
+  type GrpcIO[T] = T < (IO & Async)
+
+  /**
+   * Creates a gRPC server that handles requests using Kyo effects.
+   *
+   * @param service the gRPC service definition
+   * @param port the port to bind to
+   * @param handlers the service handlers
+   * @return a Kyo effect that starts the server
+   */
+  def serve[S, T](
+      service: ServerServiceDefinition,
+      port: Int = 8080
+  )(implicit
+      tag: Tag[T],
+      flat: Flat[T]
+  ): GrpcIO[Server] = IO {
+    val server = ServerBuilder
+      .forPort(port)
+      .addService(service)
+      .build()
+      .start()
+    server
+  }
+
+  /**
+   * Creates a gRPC client stub that uses Kyo effects.
+   *
+   * @param channel the gRPC channel
+   * @param stubFactory factory for creating the stub
+   * @return a Kyo-enabled client stub
+   */
+  def client[S, T <: AbstractStub[T]](
+      channel: ManagedChannel,
+      stubFactory: ManagedChannel => T
+  ): T = stubFactory(channel)
+
+  /**
+   * Converts a Kyo effect into a gRPC response observer.
+   */
+  def toObserver[T](
+      effect: T < (IO & Async)
+  )(implicit
+      tag: Tag[T],
+      flat: Flat[T]
+  ): StreamObserver[T] = new StreamObserver[T] {
+    private val ref = new AtomicReference[Option[T]](None)
+
+    override def onNext(value: T): Unit = {
+      ref.set(Some(value))
+    }
+
+    override def onError(t: Throwable): Unit = {
+      ref.set(Some(t.asInstanceOf[T]))
+    }
+
+    override def onCompleted(): Unit = {
+      // No-op for unary responses
+    }
+
+    def result: T < (IO & Async) = IO {
+      ref.get() match {
+        case Some(value) => value
+        case None => throw new StatusRuntimeException(Status.INTERNAL.withDescription("No response"))
+      }
+    }
+  }
+
+  /**
+   * Wraps a Kyo effect as a gRPC unary response.
+   */
+  def unary[T](
+      effect: T < (IO & Async)
+  )(implicit
+      tag: Tag[T],
+      flat: Flat[T]
+  ): Future[T] = {
+    val promise = scala.concurrent.Promise[T]()
+    IO.run(effect).onComplete {
+      case Success(value) => promise.success(value)
+      case Failure(exception) => promise.failure(exception)
+    }
+    promise.future
+  }
+
+  /**
+   * Kyo-enabled gRPC service trait.
+   * Extend this trait to implement gRPC services with Kyo effects.
+   */
+  trait KyoService {
+    implicit protected def executionContext: ExecutionContext = ExecutionContext.global
+
+    /**
+     * Converts a Kyo effect to a Scala Future for gRPC compatibility.
+     */
+    protected def toFuture[T](effect: T < (IO & Async))(implicit tag: Tag[T], flat: Flat[T]): Future[T] = {
+      val promise = scala.concurrent.Promise[T]()
+      IO.run(effect).onComplete {
+        case Success(value) => promise.success(value)
+        case Failure(exception) => promise.failure(exception)
+      }
+      promise.future
+    }
+
+    /**
+     * Converts a Scala Future to a Kyo effect.
+     */
+    protected def fromFuture[T](future: Future[T]): T < (IO & Async) = {
+      IO {
+        scala.concurrent.Await.result(future, scala.concurrent.duration.Duration.Inf)
+      }
+    }
+  }
+
+  /**
+   * Kyo-enabled gRPC client trait.
+   * Extend this trait to create gRPC clients using Kyo effects.
+   */
+  trait KyoClient[T <: AbstractStub[T]] {
+    protected def stub: T
+
+    /**
+     * Executes a gRPC call and returns the result as a Kyo effect.
+     */
+    protected def call[Req, Res](
+        request: Req,
+        callFunc: (T, Req) => Future[Res]
+    ): Res < (IO & Async) = IO {
+      scala.concurrent.Await.result(callFunc(stub, request), scala.concurrent.duration.Duration.Inf)
+    }
+  }
+
+  /**
+   * Creates a Kyo-enabled gRPC server from a service companion and implementation.
+   */
+  def bindService[S <: GeneratedMessage, T <: GeneratedMessage](
+      serviceCompanion: ServiceCompanion[?],
+      implementation: AnyRef
+  ): ServerServiceDefinition = {
+    serviceCompanion.bindService(implementation, ExecutionContext.global)
+  }
+}
+
+/**
+ * Internal utilities for gRPC integration.
+ */
+package internal {
+
+  import io.grpc.stub.StreamObserver
+  import kyo.*
+
+  /**
+   * Adapts a Kyo stream to a gRPC StreamObserver.
+   */
+  class KyoStreamObserver[T] extends StreamObserver[T] {
+    private val buffer = new java.util.concurrent.ConcurrentLinkedQueue[T]()
+    private val completed = new java.util.concurrent.atomic.AtomicBoolean(false)
+    private val error = new java.util.concurrent.atomic.AtomicReference[Throwable](null)
+
+    override def onNext(value: T): Unit = buffer.add(value)
+
+    override def onError(t: Throwable): Unit = {
+      error.set(t)
+      completed.set(true)
+    }
+
+    override def onCompleted(): Unit = completed.set(true)
+
+    def stream: Seq[T] < (IO & Async) = IO {
+      val result = scala.collection.mutable.ListBuffer[T]()
+      val iter = buffer.iterator()
+      while (iter.hasNext) {
+        result += iter.next()
+      }
+      result.toSeq
+    }
+  }
+
+  /**
+   * Provides implicit conversions between Kyo effects and gRPC types.
+   */
+  object Conversions {
+    implicit def kyoToFuture[T](effect: T < (IO & Async))(implicit tag: Tag[T], flat: Flat[T]): Future[T] = {
+      val promise = scala.concurrent.Promise[T]()
+      IO.run(effect).onComplete {
+        case Success(value) => promise.success(value)
+        case Failure(exception) => promise.failure(exception)
+      }
+      promise.future
+    }
+
+    implicit def futureToKyo[T](future: Future[T]): T < (IO & Async) = IO {
+      scala.concurrent.Await.result(future, scala.concurrent.duration.Duration.Inf)
+    }
+  }
+}
+
+/**
+ * Example usage and test cases for gRPC support.
+ */
+package examples {
+
+  import io.grpc.{ManagedChannel, ManagedChannelBuilder, ServerBuilder}
+  import kyo.*
+  import kyo.grpc.GrpcKyo.*
+  import scalapb.grpc.{Grpc, ServiceCompanion}
+
+  // Example protobuf service definition (would be generated by ScalaPB)
+  // This is a simplified example for demonstration purposes
+  object ExampleService {
+    case class HelloRequest(name: String)
+    case class HelloResponse(message: String)
+  }
+
+  /**
+   * Example Kyo-enabled gRPC server implementation.
+   */
+  class ExampleKyoServer extends KyoService {
+    import ExampleService.*
+
+    def sayHello(request: HelloRequest): HelloResponse < (IO & Async) = IO {
+      HelloResponse(s"Hello, ${request.name}!")
+    }
+
+    // Convert to gRPC service definition
+    def toServiceDefinition: ServerServiceDefinition = {
+      ServerBuilder
+        .forPort(0)
+        .addService(
+          new io.grpc.ServerServiceDefinition(
+            "examples.ExampleService",
+            List(
+              io.gr
