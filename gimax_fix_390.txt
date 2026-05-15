@@ -1,0 +1,260 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc, ServiceCompanion}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+
+import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.ClassTag
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables gRPC client and server implementations using Kyo effects,
+ * providing better performance through Kyo's efficient effect system compared to
+ * traditional Future-based implementations.
+ */
+object GrpcKyo:
+
+  /**
+   * Creates a Kyo-based gRPC client stub for the given service.
+   * 
+   * @tparam T The service trait type
+   * @param channel The gRPC channel
+   * @param serviceCompanion The ScalaPB service companion
+   * @return A Kyo effect that resolves to the client stub
+   */
+  def client[T <: Grpc.Client](channel: Channel)(using 
+    serviceCompanion: ServiceCompanion[T],
+    tag: ClassTag[T]
+  ): T < IOs =
+    IOs {
+      serviceCompanion.newStub(channel) match
+        case stub: T => stub
+        case _ => throw new IllegalArgumentException("Invalid stub type")
+    }
+
+  /**
+   * Creates a Kyo-based gRPC server that handles requests using Kyo effects.
+   * 
+   * @param service The service implementation
+   * @param port The server port
+   * @return A Kyo effect that resolves to the started server
+   */
+  def server[T <: Grpc.BindableService](service: T, port: Int): Server < IOs =
+    IOs {
+      ServerBuilder.forPort(port)
+        .addService(service)
+        .build()
+        .start()
+    }
+
+  /**
+   * Kyo-based unary call handler that converts between gRPC and Kyo effects.
+   */
+  object Unary:
+    def apply[Req <: GeneratedMessage, Res <: GeneratedMessage](
+      f: Req => Res < IOs
+    ): (Req, StreamObserver[Res]) => Unit =
+      (request: Req, responseObserver: StreamObserver[Res]) =>
+        IOs.run {
+          f(request).map { response =>
+            responseObserver.onNext(response)
+            responseObserver.onCompleted()
+          }.onError { ex =>
+            IOs(responseObserver.onError(ex))
+          }
+        }
+
+  /**
+   * Kyo-based server streaming handler.
+   */
+  object ServerStreaming:
+    def apply[Req <: GeneratedMessage, Res <: GeneratedMessage](
+      f: Req => Seq[Res] < IOs
+    ): (Req, StreamObserver[Res]) => Unit =
+      (request: Req, responseObserver: StreamObserver[Res]) =>
+        IOs.run {
+          f(request).map { responses =>
+            responses.foreach(responseObserver.onNext)
+            responseObserver.onCompleted()
+          }.onError { ex =>
+            IOs(responseObserver.onError(ex))
+          }
+        }
+
+  /**
+   * Kyo-based client streaming handler.
+   */
+  object ClientStreaming:
+    def apply[Req <: GeneratedMessage, Res <: GeneratedMessage](
+      f: Seq[Req] => Res < IOs
+    ): StreamObserver[Req] =
+      new StreamObserver[Req]:
+        private val requests = scala.collection.mutable.ListBuffer.empty[Req]
+        private var responseObserver: StreamObserver[Res] = _
+
+        def onNext(value: Req): Unit =
+          requests += value
+
+        def onError(t: Throwable): Unit =
+          IOs.run {
+            IOs(t).map(_ => ())
+          }
+
+        def onCompleted(): Unit =
+          IOs.run {
+            f(requests.toSeq).map { response =>
+              responseObserver.onNext(response)
+              responseObserver.onCompleted()
+            }
+          }
+
+  /**
+   * Kyo-based bidirectional streaming handler.
+   */
+  object BidiStreaming:
+    def apply[Req <: GeneratedMessage, Res <: GeneratedMessage](
+      f: Req => Res < IOs
+    ): StreamObserver[Req] =
+      new StreamObserver[Req]:
+        private var responseObserver: StreamObserver[Res] = _
+
+        def onNext(value: Req): Unit =
+          IOs.run {
+            f(value).map { response =>
+              responseObserver.onNext(response)
+            }
+          }
+
+        def onError(t: Throwable): Unit =
+          responseObserver.onError(t)
+
+        def onCompleted(): Unit =
+          responseObserver.onCompleted()
+
+  /**
+   * Kyo-based gRPC client interceptor for automatic effect handling.
+   */
+  class KyoClientInterceptor extends ClientInterceptor:
+    override def interceptCall[ReqT, RespT](
+      method: MethodDescriptor[ReqT, RespT],
+      callOptions: CallOptions,
+      next: Channel
+    ): ClientCall[ReqT, RespT] =
+      new ForwardingClientCall.SimpleForwardingClientCall[ReqT, RespT](
+        next.newCall(method, callOptions)
+      ):
+        override def start(responseListener: ClientCall.Listener[RespT], headers: Metadata): Unit =
+          val kyoListener = new ClientCall.Listener[RespT]:
+            override def onHeaders(headers: Metadata): Unit =
+              responseListener.onHeaders(headers)
+
+            override def onMessage(message: RespT): Unit =
+              IOs.run {
+                IOs(responseListener.onMessage(message))
+              }
+
+            override def onClose(status: Status, trailers: Metadata): Unit =
+              IOs.run {
+                IOs(responseListener.onClose(status, trailers))
+              }
+
+            override def onReady(): Unit =
+              responseListener.onReady()
+
+          super.start(kyoListener, headers)
+
+  /**
+   * Creates a gRPC channel with Kyo interceptor for automatic effect handling.
+   */
+  def channel(target: String): Channel < IOs =
+    IOs {
+      ManagedChannelBuilder.forTarget(target)
+        .intercept(new KyoClientInterceptor)
+        .usePlaintext()
+        .build()
+    }
+
+  /**
+   * Shuts down a gRPC server gracefully.
+   */
+  def shutdown(server: Server): Unit < IOs =
+    IOs {
+      server.shutdown()
+      server.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
+end GrpcKyo
+
+package kyo.grpc.internal:
+
+  import kyo.*
+
+  /**
+   * Internal utilities for Kyo gRPC integration.
+   */
+  private[grpc] object IOs:
+    def apply[T](f: => T): T < IOs = kyo.IOs(f)
+
+    def run[T](v: T < IOs): T = kyo.IOs.run(v)
+
+  end IOs
+
+end kyo.grpc.internal
+
+package kyo.grpc.testing:
+
+  import kyo.*
+  import kyo.grpc.*
+  import io.grpc.*
+  import io.grpc.stub.StreamObserver
+  import scalapb.grpc.{Grpc, ServiceCompanion}
+  import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+  import org.scalatest.freespec.AnyFreeSpec
+  import org.scalatest.matchers.should.Matchers
+
+  /**
+   * Test service definition for gRPC testing.
+   */
+  object TestService:
+    case class TestRequest(data: String) extends GeneratedMessage:
+      def serializedSize: Int = data.length
+      def writeTo(output: com.google.protobuf.CodedOutputStream): Unit =
+        output.writeString(1, data)
+      def getField(field: com.google.protobuf.Descriptors.FieldDescriptor): Any = data
+      def getFieldByNumber(fieldNumber: Int): Any = data
+      def getAllFields: Map[com.google.protobuf.Descriptors.FieldDescriptor, Any] = Map.empty
+      def toBuilder: TestRequest.Builder = TestRequest.newBuilder().setData(data)
+      def isInitialized: Boolean = true
+
+    object TestRequest extends GeneratedMessageCompanion[TestRequest]:
+      def parseFrom(input: com.google.protobuf.CodedInputStream): TestRequest =
+        TestRequest(input.readString())
+      def parseFrom(input: Array[Byte]): TestRequest = TestRequest(new String(input))
+      def javaDescriptor: com.google.protobuf.Descriptors.Descriptor = ???
+      def messageCompanionForField(field: com.google.protobuf.Descriptors.FieldDescriptor): GeneratedMessageCompanion[_] = this
+      def defaultInstance: TestRequest = TestRequest("")
+
+    case class TestResponse(result: String) extends GeneratedMessage:
+      def serialized
