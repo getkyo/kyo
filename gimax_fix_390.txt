@@ -1,0 +1,237 @@
+// build.sbt
+val kyoVersion = "0.1.0"
+val scalaPbVersion = "0.11.15"
+val grpcVersion = "1.56.1"
+
+lazy val root = (project in file("."))
+  .settings(
+    name := "kyo-grpc",
+    version := "0.1.0-SNAPSHOT",
+    scalaVersion := "3.3.1",
+    libraryDependencies ++= Seq(
+      "io.getkyo" %% "kyo-core" % kyoVersion,
+      "io.getkyo" %% "kyo-direct" % kyoVersion,
+      "io.grpc" % "grpc-netty" % grpcVersion,
+      "io.grpc" % "grpc-protobuf" % grpcVersion,
+      "io.grpc" % "grpc-stub" % grpcVersion,
+      "com.thesamet.scalapb" %% "scalapb-runtime" % scalaPbVersion % "protobuf",
+      "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalaPbVersion,
+      "com.thesamet.scalapb" %% "scalapb-json4s" % scalaPbVersion % Test,
+      "org.scalatest" %% "scalatest" % "3.2.17" % Test
+    ),
+    Compile / PB.targets := Seq(
+      scalapb.gen(grpc = true) -> (Compile / sourceManaged).value
+    ),
+    Compile / PB.protoSources := Seq(file("protobuf"))
+  )
+
+// protobuf/helloworld.proto
+syntax = "proto3";
+
+package helloworld;
+
+service Greeter {
+  rpc SayHello (HelloRequest) returns (HelloReply) {}
+  rpc SayHelloStream (HelloRequest) returns (stream HelloReply) {}
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloReply {
+  string message = 1;
+}
+
+// src/main/scala/kyogrpc/GrpcServer.scala
+package kyogrpc
+
+import io.grpc.{Server, ServerBuilder}
+import io.grpc.stub.StreamObserver
+import scalapb.grpc.{Grpc, ServiceCompanion}
+import kyo.*
+import kyo.direct.*
+import scala.concurrent.{ExecutionContext, Future}
+
+trait GrpcServer:
+  def start(port: Int): Unit < IO
+  def shutdown(): Unit < IO
+
+object GrpcServer:
+  def apply(services: ServiceCompanion[_]*): GrpcServer < IO =
+    IO {
+      val builder = ServerBuilder.forPort(0)
+      services.foreach { service =>
+        service.bindService(builder, ExecutionContext.global)
+      }
+      new GrpcServer:
+        private val server: Server = builder.build().start()
+        def start(port: Int): Unit < IO = IO(server.start())
+        def shutdown(): Unit < IO = IO(server.shutdown())
+    }
+
+// src/main/scala/kyogrpc/GrpcClient.scala
+package kyogrpc
+
+import io.grpc.{ManagedChannel, ManagedChannelBuilder}
+import kyo.*
+
+trait GrpcClient:
+  def channel: ManagedChannel < IO
+  def close(): Unit < IO
+
+object GrpcClient:
+  def apply(host: String, port: Int): GrpcClient < IO =
+    IO {
+      val ch = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build()
+      new GrpcClient:
+        def channel: ManagedChannel < IO = IO(ch)
+        def close(): Unit < IO = IO(ch.shutdown())
+    }
+
+// src/main/scala/kyogrpc/GreeterService.scala
+package kyogrpc
+
+import helloworld.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.direct.*
+
+class GreeterService extends GreeterGrpc.Greeter:
+  def sayHello(request: HelloRequest): Future[HelloReply] =
+    val effect: HelloReply < IO = IO {
+      val reply = HelloReply(message = s"Hello, ${request.name}!")
+      reply
+    }
+    Future.successful(IO.run(effect))
+
+  def sayHelloStream(
+      request: HelloRequest,
+      responseObserver: StreamObserver[HelloReply]
+  ): Unit =
+    val effect: Unit < IO = IO {
+      (1 to 5).foreach { i =>
+        val reply = HelloReply(message = s"Hello ${request.name} #$i")
+        responseObserver.onNext(reply)
+      }
+      responseObserver.onCompleted()
+    }
+    IO.run(effect)
+
+// src/main/scala/kyogrpc/GreeterClient.scala
+package kyogrpc
+
+import helloworld.*
+import io.grpc.ManagedChannel
+import kyo.*
+
+class GreeterClient(client: GrpcClient):
+  def sayHello(name: String): HelloReply < IO =
+    for
+      ch <- client.channel
+      stub = GreeterGrpc.stub(ch)
+      reply <- IO.fromFuture(_ => stub.sayHello(HelloRequest(name)))
+    yield reply
+
+  def sayHelloStream(name: String): Seq[HelloReply] < IO =
+    for
+      ch <- client.channel
+      stub = GreeterGrpc.stub(ch)
+      replies <- IO.fromFuture { _ =>
+        import scala.concurrent.ExecutionContext.Implicits.global
+        val observer = new StreamObserver[HelloReply]:
+          val buffer = scala.collection.mutable.ListBuffer[HelloReply]()
+          def onNext(value: HelloReply): Unit = buffer += value
+          def onError(t: Throwable): Unit = ()
+          def onCompleted(): Unit = ()
+        stub.sayHelloStream(HelloRequest(name), observer)
+        Future.successful(observer.buffer.toSeq)
+      }
+    yield replies
+
+// src/main/scala/kyogrpc/GrpcApp.scala
+package kyogrpc
+
+import kyo.*
+
+object GrpcApp extends KyoApp:
+  run {
+    for
+      server <- GrpcServer(GreeterGrpc)
+      _ <- server.start(50051)
+      client <- GrpcClient("localhost", 50051)
+      greeterClient = new GreeterClient(client)
+      reply <- greeterClient.sayHello("World")
+      _ <- IO(println(s"Response: ${reply.message}"))
+      _ <- client.close()
+      _ <- server.shutdown()
+    yield ()
+  }
+
+// src/test/scala/kyogrpc/GrpcSpec.scala
+package kyogrpc
+
+import helloworld.*
+import io.grpc.{Server, ServerBuilder, ManagedChannel, ManagedChannelBuilder}
+import io.grpc.stub.StreamObserver
+import kyo.*
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
+import scala.concurrent.{Future, Promise}
+
+class GrpcSpec extends AnyFlatSpec with Matchers:
+  "GreeterService" should "respond to SayHello" in {
+    val server: Server = ServerBuilder
+      .forPort(0)
+      .addService(new GreeterService())
+      .build()
+      .start()
+
+    val port = server.getPort()
+    val channel: ManagedChannel = ManagedChannelBuilder
+      .forAddress("localhost", port)
+      .usePlaintext()
+      .build()
+
+    val stub = GreeterGrpc.stub(channel)
+    val reply = stub.sayHello(HelloRequest("Scala"))
+
+    reply.map { r =>
+      r.message shouldBe "Hello, Scala!"
+    }
+
+    channel.shutdown()
+    server.shutdown()
+  }
+
+  it should "handle streaming response" in {
+    val server: Server = ServerBuilder
+      .forPort(0)
+      .addService(new GreeterService())
+      .build()
+      .start()
+
+    val port = server.getPort()
+    val channel: ManagedChannel = ManagedChannelBuilder
+      .forAddress("localhost", port)
+      .usePlaintext()
+      .build()
+
+    val stub = GreeterGrpc.stub(channel)
+    val promise = Promise[Seq[HelloReply]]()
+    val observer = new StreamObserver[HelloReply]:
+      val buffer = scala.collection.mutable.ListBuffer[HelloReply]()
+      def onNext(value: HelloReply): Unit = buffer += value
+      def onError(t: Throwable): Unit = promise.failure(t)
+      def onCompleted(): Unit = promise.success(buffer.toSeq)
+
+    stub.sayHelloStream(HelloRequest("Stream"), observer)
+
+    promise.future.map { replies =>
+      replies.size shouldBe 5
+      replies.foreach(_.message should include("Hello Stream"))
+    }
+
+    channel.shutdown()
+    server.shutdown()
+  }
