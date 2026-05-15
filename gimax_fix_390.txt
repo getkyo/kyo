@@ -1,0 +1,249 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import scalapb.grpc.*
+import scalapb.*
+import com.google.protobuf.*
+
+import scala.concurrent.duration.*
+import scala.reflect.ClassTag
+
+/**
+ * Kyo gRPC support module providing integration between Kyo effects and gRPC.
+ * 
+ * This module enables:
+ * - Unary, server-streaming, client-streaming, and bidirectional streaming calls
+ * - Automatic resource management via Kyo's Resource effect
+ * - Proper error handling with Kyo's Abort effect
+ * - Integration with Kyo's IO effect for async operations
+ */
+object Grpc:
+
+  /** Configuration for gRPC client */
+  case class Config(
+    deadline: Option[Duration] = None,
+    compression: Option[String] = None,
+    interceptors: List[ClientInterceptor] = Nil,
+    maxRetries: Int = 0,
+    retryDelay: Duration = 100.millis
+  )
+
+  object Config:
+    val default: Config = Config()
+
+  /**
+   * Creates a gRPC client stub for the given service.
+   * 
+   * @tparam T The service stub type (e.g., GreeterGrpc.GreeterStub)
+   * @param channel The managed channel
+   * @param config Client configuration
+   * @return A Kyo effect that yields the configured stub
+   */
+  def client[T: ClassTag](
+    channel: ManagedChannel,
+    config: Config = Config.default
+  )(using 
+    tag: Tag[T],
+    flat: Flat[T],
+    stubFactory: GrpcStubFactory[T]
+  ): T < (IO & Abort[GrpcException]) =
+    IO {
+      val baseStub = stubFactory.create(channel)
+      val configured = config.interceptors.foldLeft(baseStub) { (stub, interceptor) =>
+        stubFactory.intercept(stub, interceptor)
+      }
+      configureStub(configured, config)
+    }
+
+  private def configureStub[T](stub: T, config: Config): T =
+    stub match
+      case s: AbstractStub[_, _] =>
+        var configured = s
+        config.deadline.foreach { d =>
+          configured = configured.withDeadlineAfter(d.toMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+        }
+        config.compression.foreach { c =>
+          configured = configured.withCompression(c)
+        }
+        configured.asInstanceOf[T]
+      case _ => stub
+
+  /**
+   * Creates a managed channel with proper resource management.
+   * 
+   * @param target The target address (e.g., "localhost:8080")
+   * @param usePlaintext Whether to use plaintext (no TLS)
+   * @return A Kyo Resource effect that manages the channel lifecycle
+   */
+  def channel(
+    target: String,
+    usePlaintext: Boolean = true
+  ): ManagedChannel < (IO & Resource) =
+    IO {
+      val builder = ManagedChannelBuilder.forTarget(target)
+      if usePlaintext then builder.usePlaintext()
+      builder.build()
+    }.flatMap { ch =>
+      Resource.ensure(IO(ch.shutdownNow()))
+        .andThen(ch)
+    }
+
+  /**
+   * Executes a unary gRPC call.
+   * 
+   * @param stub The configured stub
+   * @param call The call function (e.g., stub.greet)
+   * @param request The request message
+   * @return A Kyo effect that yields the response
+   */
+  def unary[Req, Res](
+    stub: AnyRef,
+    call: AnyRef => (Req, Metadata) => ListenableFuture[Res],
+    request: Req,
+    metadata: Metadata = new Metadata()
+  )(using tag: Tag[Res], flat: Flat[Res]): Res < (IO & Abort[GrpcException]) =
+    IO {
+      val future = call(stub)(request, metadata)
+      GrpcFuture(future)
+    }.flatMap(identity)
+
+  /**
+   * Executes a server-streaming gRPC call.
+   * 
+   * @param stub The configured stub
+   * @param call The call function
+   * @param request The request message
+   * @return A Kyo Stream effect yielding response items
+   */
+  def serverStreaming[Req, Res](
+    stub: AnyRef,
+    call: AnyRef => (Req, Metadata) => Iterator[Res],
+    request: Req,
+    metadata: Metadata = new Metadata()
+  )(using tag: Tag[Res], flat: Flat[Res]): Stream[Res, IO & Abort[GrpcException]] =
+    Stream {
+      IO {
+        val iterator = call(stub)(request, metadata)
+        iterator
+      }.flatMap { iter =>
+        Stream.fromIterator(iter)
+      }
+    }
+
+  /**
+   * Executes a client-streaming gRPC call.
+   * 
+   * @param stub The configured stub
+   * @param call The call function
+   * @param requests Stream of request messages
+   * @return A Kyo effect yielding the response
+   */
+  def clientStreaming[Req, Res](
+    stub: AnyRef,
+    call: AnyRef => (Iterator[Req], Metadata) => ListenableFuture[Res],
+    requests: Stream[Req, Any],
+    metadata: Metadata = new Metadata()
+  )(using tag: Tag[Res], flat: Flat[Res]): Res < (IO & Abort[GrpcException]) =
+    IO {
+      val reqs = requests.run
+      val future = call(stub)(reqs, metadata)
+      GrpcFuture(future)
+    }.flatMap(identity)
+
+  /**
+   * Executes a bidirectional streaming gRPC call.
+   * 
+   * @param stub The configured stub
+   * @param call The call function
+   * @param requests Stream of request messages
+   * @return A Stream effect yielding response items
+   */
+  def bidiStreaming[Req, Res](
+    stub: AnyRef,
+    call: AnyRef => (Iterator[Req], Metadata) => Iterator[Res],
+    requests: Stream[Req, Any],
+    metadata: Metadata = new Metadata()
+  )(using tag: Tag[Res], flat: Flat[Res]): Stream[Res, IO & Abort[GrpcException]] =
+    Stream {
+      IO {
+        val reqs = requests.run
+        val iterator = call(stub)(reqs, metadata)
+        iterator
+      }.flatMap { iter =>
+        Stream.fromIterator(iter)
+      }
+    }
+
+  /** Exception type for gRPC errors */
+  case class GrpcException(
+    status: Status,
+    message: String,
+    cause: Option[Throwable] = None
+  ) extends RuntimeException(s"gRPC error: ${status.getCode} - $message", cause.orNull)
+
+  object GrpcException:
+    def apply(status: Status): GrpcException = GrpcException(status, status.getDescription)
+
+  /** Type class for creating gRPC stubs */
+  trait GrpcStubFactory[T]:
+    def create(channel: ManagedChannel): T
+    def intercept(stub: T, interceptor: ClientInterceptor): T
+
+  object GrpcStubFactory:
+    implicit def forAbstractStub[T <: AbstractStub[T]]: GrpcStubFactory[T] =
+      new GrpcStubFactory[T]:
+        def create(channel: ManagedChannel): T =
+          // This would be implemented by the generated code
+          throw new UnsupportedOperationException("Generated stubs must provide factory")
+        
+        def intercept(stub: T, interceptor: ClientInterceptor): T =
+          stub.asInstanceOf[AbstractStub[_, _]]
+            .withInterceptors(interceptor)
+            .asInstanceOf[T]
+
+  /** Internal utilities */
+  private object internal:
+    def GrpcFuture[T](future: ListenableFuture[T]): T < (IO & Abort[GrpcException]) =
+      IO {
+        try
+          future.get()
+        catch
+          case e: StatusRuntimeException =>
+            Abort.fail(GrpcException(e.getStatus, e.getMessage, Some(e)))
+          case e: Exception =>
+            Abort.fail(GrpcException(Status.INTERNAL, e.getMessage, Some(e)))
+      }
+
+end Grpc
+
+/**
+ * Example usage and test cases
+ */
+object GrpcExample:
+
+  import kyo.grpc.Grpc.*
+
+  // Example protobuf service definition (would be generated)
+  // service Greeter {
+  //   rpc SayHello (HelloRequest) returns (HelloReply);
+  //   rpc LotsOfReplies (HelloRequest)
