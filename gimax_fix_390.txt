@@ -1,0 +1,254 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import scalapb.grpc.{Grpc => ScalaPbGrpc}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion}
+import com.google.protobuf.{ByteString, CodedInputStream, CodedOutputStream}
+import java.io.{ByteArrayInputStream, InputStream}
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success, Try}
+
+// Core gRPC types for Kyo
+package object types {
+  type GrpcIO[T] = IO[GrpcException | Interrupt, T]
+  
+  sealed abstract class GrpcException(message: String, cause: Throwable = null) 
+    extends Exception(message, cause)
+  
+  case class StatusRuntimeExceptionWrapper(status: Status, metadata: Metadata = new Metadata())
+    extends GrpcException(status.getDescription, status.getCause)
+  
+  case class GrpcInterruptedException() extends GrpcException("gRPC call was interrupted")
+}
+
+// Server implementation
+package server {
+  import types.*
+  
+  trait GrpcService {
+    def bindService: ServerServiceDefinition
+  }
+  
+  class GrpcServer(
+    private val serverBuilder: ServerBuilder[_],
+    private val services: Seq[GrpcService],
+    private val port: Int = 50051
+  ) {
+    private var server: Server = null
+    
+    def start: GrpcIO[Unit] = IO {
+      val builder = serverBuilder.port(port)
+      services.foreach(s => builder.addService(s.bindService))
+      server = builder.build().start()
+      ()
+    }
+    
+    def shutdown: GrpcIO[Unit] = IO {
+      if (server != null) {
+        server.shutdown()
+        server.awaitTermination()
+      }
+    }
+    
+    def awaitTermination: GrpcIO[Unit] = IO {
+      if (server != null) {
+        server.awaitTermination()
+      }
+    }
+  }
+  
+  object GrpcServer {
+    def apply(services: GrpcService*): GrpcServer = 
+      new GrpcServer(ServerBuilder.forPort(0), services)
+    
+    def apply(port: Int, services: GrpcService*): GrpcServer = 
+      new GrpcServer(ServerBuilder.forPort(port), services)
+  }
+}
+
+// Client implementation
+package client {
+  import types.*
+  
+  class GrpcChannel(
+    private val managedChannel: ManagedChannel
+  ) {
+    def shutdown: GrpcIO[Unit] = IO {
+      managedChannel.shutdown()
+      managedChannel.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+      ()
+    }
+    
+    def isShutdown: Boolean = managedChannel.isShutdown
+  }
+  
+  object GrpcChannel {
+    def apply(target: String): GrpcIO[GrpcChannel] = IO {
+      new GrpcChannel(ManagedChannelBuilder.forTarget(target).usePlaintext().build())
+    }
+    
+    def apply(target: String, port: Int): GrpcIO[GrpcChannel] = IO {
+      new GrpcChannel(ManagedChannelBuilder.forAddress(target, port).usePlaintext().build())
+    }
+  }
+}
+
+// Code generation support using ScalaPB
+package internal {
+  import types.*
+  import scalapb.{GeneratedMessage, GeneratedMessageCompanion}
+  import io.grpc.stub.{ClientCalls, ServerCalls, StreamObserver}
+  
+  object GrpcConversions {
+    def toKyo[T](f: Future[T])(using Frame): GrpcIO[T] = 
+      IO.fromFuture(scala.concurrent.ExecutionContext.global)(f)
+        .map(identity)
+        .catching {
+          case e: StatusRuntimeException => 
+            throw StatusRuntimeExceptionWrapper(e.getStatus, e.getMetadata)
+          case e: InterruptedException =>
+            throw GrpcInterruptedException()
+        }
+    
+    def toFuture[T](io: GrpcIO[T])(using Frame): Future[T] = {
+      val promise = scala.concurrent.Promise[T]()
+      IO.run(io).onComplete {
+        case Success(value) => promise.success(value)
+        case Failure(exception) => promise.failure(exception)
+      }
+      promise.future
+    }
+    
+    def kyoUnaryServerCallHandler[Req, Res](
+      f: Req => GrpcIO[Res]
+    )(using
+      Frame,
+      GeneratedMessageCompanion[Req],
+      GeneratedMessageCompanion[Res]
+    ): ServerCalls.UnaryServerCallHandler[Req, Res] = {
+      ServerCalls.asyncUnaryCall(
+        new ServerCalls.UnaryServerCall[Req, Res] {
+          override def invoke(request: Req, responseObserver: StreamObserver[Res]): Unit = {
+            val result = f(request)
+            IO.run(result).onComplete {
+              case Success(response) =>
+                responseObserver.onNext(response)
+                responseObserver.onCompleted()
+              case Failure(exception) =>
+                responseObserver.onError(exception)
+            }
+          }
+        }
+      )
+    }
+    
+    def kyoServerStreamingServerCallHandler[Req, Res](
+      f: Req => GrpcIO[Seq[Res]]
+    )(using
+      Frame,
+      GeneratedMessageCompanion[Req],
+      GeneratedMessageCompanion[Res]
+    ): ServerCalls.ServerStreamingServerCallHandler[Req, Res] = {
+      ServerCalls.asyncServerStreamingCall(
+        new ServerCalls.ServerStreamingServerCall[Req, Res] {
+          override def invoke(request: Req, responseObserver: StreamObserver[Res]): Unit = {
+            val result = f(request)
+            IO.run(result).onComplete {
+              case Success(responses) =>
+                responses.foreach(responseObserver.onNext)
+                responseObserver.onCompleted()
+              case Failure(exception) =>
+                responseObserver.onError(exception)
+            }
+          }
+        }
+      )
+    }
+  }
+}
+
+// Test support
+package test {
+  import types.*
+  import io.grpc.{Server, ServerBuilder, ManagedChannel, ManagedChannelBuilder}
+  import io.grpc.stub.StreamObserver
+  import scalapb.{GeneratedMessage, GeneratedMessageCompanion}
+  import scalapb.grpc.{Grpc => ScalaPbGrpc}
+  
+  trait GrpcTestSupport {
+    def withTestServer[T](services: server.GrpcService*)(test: server.GrpcServer => GrpcIO[T])(using Frame): T = {
+      val server = server.GrpcServer(services*)
+      IO.run {
+        for {
+          _ <- server.start
+          result <- test(server)
+          _ <- server.shutdown
+        } yield result
+      }.getOrThrow()
+    }
+    
+    def withTestChannel[T](target: String, port: Int)(test: client.GrpcChannel => GrpcIO[T])(using Frame): T = {
+      val channel = client.GrpcChannel(target, port).getOrThrow()
+      IO.run {
+        for {
+          result <- test(channel)
+          _ <- channel.shutdown
+        } yield result
+      }.getOrThrow()
+    }
+  }
+}
+
+// Example usage and tests
+package example {
+  import types.*
+  import server.*
+  import client.*
+  import internal.GrpcConversions.*
+  import io.grpc.{ServerServiceDefinition, MethodDescriptor, ServiceDescriptor}
+  import io.grpc.stub.{ServerCalls, StreamObserver}
+  import scalapb.{GeneratedMessage, GeneratedMessageCompanion}
+  import com.google.protobuf.{ByteString, CodedInputStream, CodedOutputStream}
+  
+  // Example protobuf messages (simplified for testing)
+  case class HelloRequest(name: String) extends GeneratedMessage {
+    def writeTo(output: CodedOutputStream): Unit = {
+      output.writeString(1, name)
+    }
+    def getSerializedSize: Int = name.length + 2
+    def toByteString: ByteString = {
+      val bytes = new Array[Byte](getSerializedSize)
+      val output = CodedOutputStream.newInstance(bytes)
+      writeTo(output)
+      output.flush()
+      ByteString.copyFrom(bytes)
+    }
+    def toByteArray: Array[Byte] = toByteString.toByteArray
+    def writeDelimitedTo(output: java.io.OutputStream): Unit = {
+      val size = getSerializedSize
+      CodedOutputStream.newInstance(output).writeUInt32NoTag(size)
+      writeTo(CodedOutputStream.newInstance(output))
+    }
+    def getParserForType: com.google.protobuf.Parser[HelloRequest] = ???
+    def getDefaultInstanceForType: HelloRequest = HelloRequest("")
+    def isInitialized:
