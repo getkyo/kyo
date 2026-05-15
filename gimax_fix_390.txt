@@ -1,0 +1,260 @@
+```scala
+/*
+ * Copyright 2023 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import scalapb.grpc.{Grpc => ScalaPbGrpc}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+import com.google.protobuf.{ByteString, CodedInputStream, CodedOutputStream}
+import java.io.{ByteArrayInputStream, InputStream}
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success, Try}
+
+// Core gRPC types for Kyo
+object Grpc {
+
+  /** A gRPC service descriptor */
+  trait ServiceDescriptor {
+    def serviceName: String
+    def methods: Seq[MethodDescriptor[?, ?]]
+  }
+
+  /** A gRPC method descriptor */
+  case class MethodDescriptor[Req, Res](
+      name: String,
+      serviceName: String,
+      methodType: MethodType,
+      requestMarshaller: Marshaller[Req],
+      responseMarshaller: Marshaller[Res]
+  ) {
+    def fullName: String = s"$serviceName/$name"
+    
+    def toGrpcDescriptor: io.grpc.MethodDescriptor[Req, Res] = {
+      io.grpc.MethodDescriptor.newBuilder()
+        .setFullMethodName(fullName)
+        .setType(methodType match {
+          case MethodType.Unary => io.grpc.MethodDescriptor.MethodType.UNARY
+          case MethodType.ServerStreaming => io.grpc.MethodDescriptor.MethodType.SERVER_STREAMING
+          case MethodType.ClientStreaming => io.grpc.MethodDescriptor.MethodType.CLIENT_STREAMING
+          case MethodType.BidirectionalStreaming => io.grpc.MethodDescriptor.MethodType.BIDIRECTIONAL_STREAMING
+        })
+        .setRequestMarshaller(requestMarshaller)
+        .setResponseMarshaller(responseMarshaller)
+        .build()
+    }
+  }
+
+  sealed trait MethodType
+  object MethodType {
+    case object Unary extends MethodType
+    case object ServerStreaming extends MethodType
+    case object ClientStreaming extends MethodType
+    case object BidirectionalStreaming extends MethodType
+  }
+
+  /** Protobuf marshaller for generated messages */
+  class ProtobufMarshaller[T <: GeneratedMessage with Message[T]](
+      companion: GeneratedMessageCompanion[T]
+  ) extends Marshaller[T] {
+    
+    override def parse(stream: InputStream): T = {
+      companion.parseFrom(stream)
+    }
+
+    override def stream(value: T): InputStream = {
+      new ByteArrayInputStream(value.toByteArray)
+    }
+  }
+
+  /** Kyo gRPC client stub */
+  class KyoClientStub(
+      channel: Channel,
+      options: CallOptions = CallOptions.DEFAULT
+  ) {
+    
+    /** Make a unary call */
+    def unaryCall[Req, Res](
+        method: MethodDescriptor[Req, Res],
+        request: Req
+    ): Req < (IOs with Aborts[StatusRuntimeException]) = {
+      IOs {
+        val call = channel.newCall(method.toGrpcDescriptor, options)
+        val listener = new KyoUnaryListener[Res]()
+        call.start(listener, new Metadata())
+        call.sendMessage(request)
+        call.halfClose()
+        call.request(1)
+        listener.result
+      }
+    }
+
+    /** Make a server streaming call */
+    def serverStreamingCall[Req, Res](
+        method: MethodDescriptor[Req, Res],
+        request: Req
+    ): Stream[Res, IOs with Aborts[StatusRuntimeException]] = {
+      Stream(emit => IOs {
+        val call = channel.newCall(method.toGrpcDescriptor, options)
+        val listener = new KyoStreamingListener[Res](emit)
+        call.start(listener, new Metadata())
+        call.sendMessage(request)
+        call.halfClose()
+        call.request(Int.MaxValue)
+      })
+    }
+
+    /** Make a client streaming call */
+    def clientStreamingCall[Req, Res](
+        method: MethodDescriptor[Req, Res],
+        requests: Stream[Req, Any]
+    ): Res < (IOs with Aborts[StatusRuntimeException]) = {
+      IOs {
+        val call = channel.newCall(method.toGrpcDescriptor, options)
+        val listener = new KyoUnaryListener[Res]()
+        call.start(listener, new Metadata())
+        
+        requests.run(Fiber => IOs {
+          Fiber.foreach(requests) { req =>
+            IOs(call.sendMessage(req))
+          }
+        })
+        
+        call.halfClose()
+        call.request(1)
+        listener.result
+      }
+    }
+
+    /** Make a bidirectional streaming call */
+    def bidiStreamingCall[Req, Res](
+        method: MethodDescriptor[Req, Res],
+        requests: Stream[Req, Any]
+    ): Stream[Res, IOs with Aborts[StatusRuntimeException]] = {
+      Stream(emit => IOs {
+        val call = channel.newCall(method.toGrpcDescriptor, options)
+        val listener = new KyoStreamingListener[Res](emit)
+        call.start(listener, new Metadata())
+        
+        requests.run(Fiber => IOs {
+          Fiber.foreach(requests) { req =>
+            IOs(call.sendMessage(req))
+          }
+        })
+        
+        call.halfClose()
+        call.request(Int.MaxValue)
+      })
+    }
+  }
+
+  /** Create a gRPC server */
+  def server(port: Int): ServerBuilder = ServerBuilder(port)
+
+  case class ServerBuilder(port: Int, services: List[ServerServiceDefinition] = Nil) {
+    def addService(service: ServerServiceDefinition): ServerBuilder =
+      copy(services = service :: services)
+
+    def build: Server < IOs = IOs {
+      val server = io.grpc.ServerBuilder.forPort(port)
+      services.foreach(server.addService)
+      server.build()
+    }
+  }
+
+  /** Create a gRPC channel */
+  def channel(host: String, port: Int): ManagedChannel < IOs = IOs {
+    ManagedChannelBuilder.forAddress(host, port).usePlaintext().build()
+  }
+
+  /** Create a gRPC client stub */
+  def clientStub(channel: Channel): KyoClientStub = new KyoClientStub(channel)
+}
+
+// Internal listeners for gRPC calls
+package internal {
+
+  import kyo.*
+
+  class KyoUnaryListener[T] extends ClientCall.Listener[T] {
+    private var result: T = _
+    private var error: StatusRuntimeException = _
+    private val latch = new java.util.concurrent.CountDownLatch(1)
+
+    override def onMessage(message: T): Unit = {
+      result = message
+    }
+
+    override def onClose(status: Status, trailers: Metadata): Unit = {
+      if (!status.isOk) {
+        error = new StatusRuntimeException(status, trailers)
+      }
+      latch.countDown()
+    }
+
+    def result: T < (IOs with Aborts[StatusRuntimeException]) = IOs {
+      latch.await()
+      if (error != null) IOs.fail(error)
+      else result
+    }
+  }
+
+  class KyoStreamingListener[T](emit: T => Unit < IOs) extends ClientCall.Listener[T] {
+    private var error: StatusRuntimeException = _
+    private val latch = new java.util.concurrent.CountDownLatch(1)
+
+    override def onMessage(message: T): Unit = {
+      IOs.run(emit(message))
+    }
+
+    override def onClose(status: Status, trailers: Metadata): Unit = {
+      if (!status.isOk) {
+        error = new StatusRuntimeException(status, trailers)
+      }
+      latch.countDown()
+    }
+
+    def await(): Unit < IOs = IOs {
+      latch.await()
+      if (error != null) IOs.fail(error)
+    }
+  }
+}
+
+// Example usage with generated protobuf code
+object Example {
+  import kyo.grpc.Grpc.*
+
+  // Assume these are generated by scalapb
+  // case class HelloRequest(name: String) extends GeneratedMessage
+  // case class HelloReply(message: String) extends GeneratedMessage
+
+  // val HelloRequest = GeneratedMessageCompanion[HelloRequest]
+  // val HelloReply = GeneratedMessageCompanion[HelloReply]
+
+  // val helloMethod = MethodDescriptor(
+  //   name = "SayHello",
+  //   serviceName = "helloworld.Greeter",
+  //   methodType = MethodType.Unary,
+  //   requestMarshaller = new ProtobufMarshaller(HelloRequest),
+  //   responseMarshaller = new ProtobufMarshaller(HelloReply)
+  // )
+
+  // def sayHello(client:
