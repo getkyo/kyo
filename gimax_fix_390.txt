@@ -1,0 +1,256 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.{ServerBuilder, ServerServiceDefinition, ManagedChannelBuilder, Channel, MethodDescriptor, ServerCallHandler, ServerCall, Metadata, Status, CallOptions}
+import io.grpc.stub.{ServerCalls, ClientCalls, StreamObserver}
+import kyo.*
+import kyo.kernel.*
+import kyo.concurrent.*
+import kyo.ios.*
+import kyo.fibers.*
+import scala.concurrent.duration.*
+import com.google.protobuf.{ByteString, MessageLite, GeneratedMessageV3}
+import scala.reflect.ClassTag
+import java.util.concurrent.atomic.AtomicReference
+import scala.util.{Try, Success, Failure}
+
+/**
+ * Kyo gRPC support module providing integration between Kyo effects and gRPC.
+ */
+object Grpc {
+
+  /**
+   * Type class for protobuf message serialization/deserialization.
+   */
+  trait GrpcSerializer[A] {
+    def serialize(a: A): Array[Byte]
+    def deserialize(bytes: Array[Byte]): A
+  }
+
+  object GrpcSerializer {
+    implicit def forProtobuf[A <: MessageLite](implicit ct: ClassTag[A]): GrpcSerializer[A] =
+      new GrpcSerializer[A] {
+        def serialize(a: A): Array[Byte] = a.toByteArray
+        def deserialize(bytes: Array[Byte]): A = {
+          val parser = ct.runtimeClass.getMethod("parseFrom", classOf[Array[Byte]])
+          parser.invoke(null, bytes).asInstanceOf[A]
+        }
+      }
+  }
+
+  /**
+   * Kyo-based gRPC server.
+   */
+  class GrpcServer private (private val server: io.grpc.Server) {
+    def start(): Unit = server.start()
+    def shutdown(): Unit = server.shutdown()
+    def awaitTermination(): Unit = server.awaitTermination()
+  }
+
+  object GrpcServer {
+    def apply(port: Int): GrpcServer = {
+      val builder = ServerBuilder.forPort(port)
+      new GrpcServer(builder.build())
+    }
+
+    def addService(server: GrpcServer, service: ServerServiceDefinition): GrpcServer = {
+      val builder = ServerBuilder.forPort(server.server.getPort)
+      builder.addService(service)
+      new GrpcServer(builder.build())
+    }
+  }
+
+  /**
+   * Kyo-based gRPC client channel.
+   */
+  class GrpcChannel private (private val channel: Channel) {
+    def close(): Unit = channel match {
+      case mc: io.grpc.ManagedChannel => mc.shutdown()
+      case _ =>
+    }
+  }
+
+  object GrpcChannel {
+    def apply(host: String, port: Int): GrpcChannel = {
+      val channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build()
+      new GrpcChannel(channel)
+    }
+  }
+
+  /**
+   * Kyo effect for gRPC operations.
+   */
+  opaque type GrpcIO[T] = T
+
+  object GrpcIO {
+    def apply[T](v: T)(using Frame): T = v
+    def run[T](v: => T)(using Frame): T = v
+  }
+
+  /**
+   * Kyo-based gRPC service definition.
+   */
+  object GrpcService {
+    def unary[Req, Res](
+        methodName: String,
+        serviceName: String,
+        handler: Req => Res < (IOs & Fibers)
+    )(implicit
+        reqSer: GrpcSerializer[Req],
+        resSer: GrpcSerializer[Res],
+        frame: Frame
+    ): ServerServiceDefinition = {
+      val methodDescriptor = MethodDescriptor.newBuilder()
+        .setFullMethodName(MethodDescriptor.generateFullMethodName(serviceName, methodName))
+        .setType(MethodDescriptor.MethodType.UNARY)
+        .setRequestMarshaller(new GrpcMarshaller[Req](reqSer))
+        .setResponseMarshaller(new GrpcMarshaller[Res](resSer))
+        .build()
+
+      val serverCallHandler = new ServerCallHandler[Req, Res] {
+        override def startCall(
+            call: ServerCall[Req, Res],
+            headers: Metadata
+        ): ServerCall.Listener[Req] = {
+          new ServerCall.Listener[Req] {
+            private var request: Req = _
+
+            override def onMessage(message: Req): Unit = {
+              request = message
+            }
+
+            override def onHalfClose(): Unit = {
+              val result: Res < (IOs & Fibers) = handler(request)
+              IOs.run(Fibers.run(result)).onComplete {
+                case Success(response) =>
+                  call.sendHeaders(new Metadata())
+                  call.sendMessage(response)
+                  call.close(Status.OK, new Metadata())
+                case Failure(exception) =>
+                  call.close(Status.INTERNAL.withDescription(exception.getMessage), new Metadata())
+              }
+            }
+
+            override def onCancel(): Unit = {
+              call.close(Status.CANCELLED, new Metadata())
+            }
+          }
+        }
+      }
+
+      ServerServiceDefinition.builder(serviceName)
+        .addMethod(methodDescriptor, serverCallHandler)
+        .build()
+    }
+
+    def serverStreaming[Req, Res](
+        methodName: String,
+        serviceName: String,
+        handler: Req => Seq[Res] < (IOs & Fibers)
+    )(implicit
+        reqSer: GrpcSerializer[Req],
+        resSer: GrpcSerializer[Res],
+        frame: Frame
+    ): ServerServiceDefinition = {
+      val methodDescriptor = MethodDescriptor.newBuilder()
+        .setFullMethodName(MethodDescriptor.generateFullMethodName(serviceName, methodName))
+        .setType(MethodDescriptor.MethodType.SERVER_STREAMING)
+        .setRequestMarshaller(new GrpcMarshaller[Req](reqSer))
+        .setResponseMarshaller(new GrpcMarshaller[Res](resSer))
+        .build()
+
+      val serverCallHandler = new ServerCallHandler[Req, Res] {
+        override def startCall(
+            call: ServerCall[Req, Res],
+            headers: Metadata
+        ): ServerCall.Listener[Req] = {
+          new ServerCall.Listener[Req] {
+            private var request: Req = _
+
+            override def onMessage(message: Req): Unit = {
+              request = message
+            }
+
+            override def onHalfClose(): Unit = {
+              val result: Seq[Res] < (IOs & Fibers) = handler(request)
+              IOs.run(Fibers.run(result)).onComplete {
+                case Success(responses) =>
+                  call.sendHeaders(new Metadata())
+                  responses.foreach(call.sendMessage)
+                  call.close(Status.OK, new Metadata())
+                case Failure(exception) =>
+                  call.close(Status.INTERNAL.withDescription(exception.getMessage), new Metadata())
+              }
+            }
+
+            override def onCancel(): Unit = {
+              call.close(Status.CANCELLED, new Metadata())
+            }
+          }
+        }
+      }
+
+      ServerServiceDefinition.builder(serviceName)
+        .addMethod(methodDescriptor, serverCallHandler)
+        .build()
+    }
+  }
+
+  /**
+   * Kyo-based gRPC client stub.
+   */
+  class GrpcStub private (private val channel: Channel) {
+    def unary[Req, Res](
+        methodName: String,
+        serviceName: String,
+        request: Req
+    )(implicit
+        reqSer: GrpcSerializer[Req],
+        resSer: GrpcSerializer[Res],
+        frame: Frame
+    ): Res < (IOs & Fibers) = {
+      val methodDescriptor = MethodDescriptor.newBuilder()
+        .setFullMethodName(MethodDescriptor.generateFullMethodName(serviceName, methodName))
+        .setType(MethodDescriptor.MethodType.UNARY)
+        .setRequestMarshaller(new GrpcMarshaller[Req](reqSer))
+        .setResponseMarshaller(new GrpcMarshaller[Res](resSer))
+        .build()
+
+      val call = channel.newCall(methodDescriptor, CallOptions.DEFAULT)
+      val responseRef = new AtomicReference[Option[Res]](None)
+      val errorRef = new AtomicReference[Option[Throwable]](None)
+      val latch = new java.util.concurrent.CountDownLatch(1)
+
+      call.start(new StreamObserver[Res] {
+        override def onNext(value: Res): Unit = {
+          responseRef.set(Some(value))
+        }
+
+        override def onError(t: Throwable): Unit = {
+          errorRef.set(Some(t))
+          latch.countDown()
+        }
+
+        override def onCompleted(): Unit = {
+          latch.countDown()
+        }
+      }, new Metadata())
+
+      call.sendMessage(request)
+      call.half
