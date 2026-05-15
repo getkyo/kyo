@@ -1,0 +1,294 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import scalapb.grpc.*
+import scalapb.GeneratedMessage
+import scalapb.GeneratedMessageCompanion
+import com.google.protobuf.Descriptors
+import scala.concurrent.Future
+import scala.concurrent.Promise
+import scala.util.Try
+import scala.util.Success
+import scala.util.Failure
+import java.util.concurrent.atomic.AtomicReference
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables native Kyo effect handling for gRPC services without
+ * requiring ZIO or FS2 interop, providing better performance characteristics.
+ */
+object Grpc:
+
+  /**
+   * Creates a gRPC server that handles requests within Kyo effects.
+   * 
+   * @param service The ScalaPB generated service definition
+   * @param port The port to bind to
+   * @param handlers Map of method names to Kyo effect handlers
+   * @return A Kyo effect that starts the server
+   */
+  def server[S](
+    service: ServerServiceDefinition,
+    port: Int = 8080
+  )(using
+    tag: Tag[S],
+    frame: Frame
+  ): Server < (IOs & S) =
+    IOs {
+      val server = ServerBuilder
+        .forPort(port)
+        .addService(service)
+        .build()
+        .start()
+      server
+    }
+
+  /**
+   * Creates a gRPC client stub that executes calls within Kyo effects.
+   * 
+   * @param channel The gRPC channel
+   * @param stubFactory Factory function to create the blocking stub
+   * @return A Kyo-aware client stub
+   */
+  def client[Stub, S](
+    channel: ManagedChannel,
+    stubFactory: ManagedChannel => Stub
+  )(using
+    tag: Tag[S],
+    frame: Frame
+  ): Stub < (IOs & S) =
+    IOs {
+      stubFactory(channel)
+    }
+
+  /**
+   * Converts a Kyo effect to a gRPC async response observer.
+   */
+  def toStreamObserver[A, S](
+    effect: A < S
+  )(using
+    tag: Tag[S],
+    frame: Frame
+  ): StreamObserver[A] =
+    new StreamObserver[A]:
+      private val promise = Promise[A]()
+      
+      def onNext(value: A): Unit =
+        promise.trySuccess(value)
+      
+      def onError(t: Throwable): Unit =
+        promise.tryFailure(t)
+      
+      def onCompleted(): Unit =
+        // For unary calls, completion is handled via promise
+        ()
+
+      def result: Future[A] = promise.future
+
+  /**
+   * Runs a gRPC unary call within a Kyo effect.
+   */
+  def unaryCall[Req, Res, S](
+    call: (Req, Metadata) => Future[Res],
+    request: Req,
+    metadata: Metadata = new Metadata()
+  )(using
+    tag: Tag[S],
+    frame: Frame
+  ): Res < (IOs & S) =
+    IOs {
+      val promise = Promise[Res]()
+      call(request, metadata).onComplete {
+        case Success(value) => promise.success(value)
+        case Failure(ex)    => promise.failure(ex)
+      }(scala.concurrent.ExecutionContext.parasitic)
+      IOs.fromPromiseScala(promise)
+    }
+
+  /**
+   * Runs a gRPC server streaming call within a Kyo effect.
+   */
+  def serverStreaming[Req, Res, S](
+    call: (Req, StreamObserver[Res]) => Unit,
+    request: Req
+  )(using
+    tag: Tag[S],
+    frame: Frame
+  ): Seq[Res] < (IOs & S) =
+    IOs {
+      val results = scala.collection.mutable.ListBuffer[Res]()
+      val promise = Promise[Seq[Res]]()
+      
+      val observer = new StreamObserver[Res]:
+        def onNext(value: Res): Unit =
+          results += value
+        def onError(t: Throwable): Unit =
+          promise.failure(t)
+        def onCompleted(): Unit =
+          promise.success(results.toSeq)
+      
+      call(request, observer)
+      IOs.fromPromiseScala(promise)
+    }
+
+  /**
+   * Creates a gRPC service definition from a ScalaPB service with Kyo handlers.
+   */
+  def service[S](
+    serviceCompanion: GeneratedServiceCompanion[_],
+    handlers: Map[String, (GeneratedMessage, Metadata) => GeneratedMessage < S]
+  )(using
+    tag: Tag[S],
+    frame: Frame
+  ): ServerServiceDefinition < (IOs & S) =
+    IOs {
+      val serviceDescriptor = serviceCompanion.javaDescriptor
+      val serviceDefinition = ServerServiceDefinition.builder(serviceDescriptor)
+      
+      for (methodDescriptor <- serviceDescriptor.getMethods) do
+        val methodName = methodDescriptor.getName
+        handlers.get(methodName) match
+          case Some(handler) =>
+            val serverCallHandler = new ServerCallHandler[GeneratedMessage, GeneratedMessage]:
+              def startCall(
+                call: ServerCall[GeneratedMessage, GeneratedMessage],
+                headers: Metadata
+              ): ServerCall.Listener[GeneratedMessage] =
+                val listener = new ServerCall.Listener[GeneratedMessage]:
+                  override def onMessage(message: GeneratedMessage): Unit =
+                    val effect = handler(message, headers)
+                    val io = IOs.run(effect)
+                    io.unsafeRun match
+                      case Success(response) =>
+                        call.sendHeaders(new Metadata())
+                        call.sendMessage(response)
+                        call.close(Status.OK, new Metadata())
+                      case Failure(ex) =>
+                        call.close(Status.INTERNAL.withCause(ex), new Metadata())
+                  
+                  override def onHalfClose(): Unit = ()
+                  override def onCancel(): Unit = ()
+                  override def onComplete(): Unit = ()
+                
+                listener
+            serviceDefinition.addMethod(methodDescriptor, serverCallHandler)
+          case None =>
+            serviceDefinition.addMethod(
+              methodDescriptor,
+              ServerCalls.asyncUnaryCall(
+                new ServerCalls.UnaryMethod[GeneratedMessage, GeneratedMessage]:
+                  def invoke(
+                    request: GeneratedMessage,
+                    responseObserver: StreamObserver[GeneratedMessage]
+                  ): Unit =
+                    responseObserver.onError(
+                      Status.UNIMPLEMENTED
+                        .withDescription(s"Method $methodName not implemented")
+                        .asRuntimeException()
+                    )
+              )
+            )
+      
+      serviceDefinition.build()
+    }
+
+  /**
+   * Manages gRPC channel lifecycle within Kyo effects.
+   */
+  def managedChannel[S](
+    target: String,
+    config: ManagedChannelBuilder[_] => ManagedChannelBuilder[_] = identity
+  )(using
+    tag: Tag[S],
+    frame: Frame
+  ): ManagedChannel < (IOs & S) =
+    IOs {
+      config(ManagedChannelBuilder.forTarget(target)).build()
+    }
+
+  /**
+   * Safely shuts down a gRPC channel.
+   */
+  def shutdown[S](
+    channel: ManagedChannel
+  )(using
+    tag: Tag[S],
+    frame: Frame
+  ): Unit < (IOs & S) =
+    IOs {
+      channel.shutdown()
+      ()
+    }
+
+  /**
+   * Safely shuts down a gRPC server.
+   */
+  def shutdown[S](
+    server: Server
+  )(using
+    tag: Tag[S],
+    frame: Frame
+  ): Unit < (IOs & S) =
+    IOs {
+      server.shutdown()
+      ()
+    }
+
+end Grpc
+
+/**
+ * Internal utilities for gRPC support.
+ */
+package internal:
+
+  import kyo.*
+
+  object IOs:
+    def run[A, S](v: A < S)(using frame: Frame): A < IOs =
+      v.asInstanceOf[A < IOs]
+
+    def fromPromiseScala[A](promise: scala.concurrent.Promise[A])(using frame: Frame): A < IOs =
+      new KyoIO[A]:
+        def apply(v: Unit, ctx: Context)(using frame: Frame): A < IOs =
+          promise.future.value match
+            case Some(Success(value)) => value
+            case Some(Failure(ex))    => throw ex
+            case None =>
+              // In a real implementation, this would properly suspend
+              throw new IllegalStateException("Promise not completed")
+
+  end IOs
+
+end internal
+
+/**
+ * Example usage and test cases.
+ */
+object GrpcExample:
+
+  import kyo.*
+  import kyo.grpc.Grpc
+
+  // Example protobuf service definition (would be generated by ScalaPB)
+  // This is a
