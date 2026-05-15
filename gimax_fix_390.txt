@@ -1,0 +1,271 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import io.grpc.protobuf.*
+import scalapb.grpc.*
+import scalapb.*
+import com.google.protobuf.*
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.duration.*
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables gRPC client and server implementations using Kyo's effect system,
+ * providing efficient, composable gRPC services with proper resource management.
+ */
+object Grpc:
+
+  /**
+   * Configuration for gRPC channels and servers.
+   */
+  case class Config(
+    deadline: Option[Duration] = None,
+    maxRetries: Int = 0,
+    compression: Option[String] = None,
+    interceptors: List[ClientInterceptor] = Nil
+  )
+
+  object Config:
+    val default: Config = Config()
+
+  /**
+   * Kyo effect type for gRPC operations.
+   */
+  type GrpcIO[T] = IO[GrpcException, T]
+
+  /**
+   * Exception type for gRPC failures.
+   */
+  class GrpcException(message: String, cause: Throwable = null) 
+    extends RuntimeException(message, cause)
+
+  /**
+   * Client stub wrapper providing Kyo-native gRPC calls.
+   */
+  class GrpcClient[StubType <: AbstractStub[StubType]](
+    stub: StubType,
+    config: Config = Config.default
+  ):
+    
+    private def configureStub(s: StubType): StubType =
+      var configured = s
+      config.deadline.foreach { d =>
+        configured = configured.withDeadlineAfter(d.toMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+      }
+      config.compression.foreach { c =>
+        configured = configured.withCompression(c)
+      }
+      configured
+
+    /**
+     * Execute a gRPC call with proper error handling and resource management.
+     */
+    def call[T](f: StubType => GrpcIO[T]): GrpcIO[T] =
+      IO {
+        val configuredStub = configureStub(stub)
+        f(configuredStub)
+      }.flatten
+
+    /**
+     * Execute a unary gRPC call.
+     */
+    def unary[Req, Res](request: Req)(
+      call: (StubType, Req) => GrpcIO[Res]
+    ): GrpcIO[Res] =
+      IO {
+        val configuredStub = configureStub(stub)
+        call(configuredStub, request)
+      }.flatten
+
+    /**
+     * Execute a server-streaming gRPC call.
+     */
+    def serverStreaming[Req, Res](request: Req)(
+      call: (StubType, Req) => Iterator[Res]
+    ): GrpcIO[Seq[Res]] =
+      IO {
+        val configuredStub = configureStub(stub)
+        val iterator = call(configuredStub, request)
+        iterator.toSeq
+      }
+
+    /**
+     * Execute a client-streaming gRPC call.
+     */
+    def clientStreaming[Req, Res](requests: Seq[Req])(
+      call: (StubType, Iterator[Req]) => GrpcIO[Res]
+    ): GrpcIO[Res] =
+      IO {
+        val configuredStub = configureStub(stub)
+        call(configuredStub, requests.iterator)
+      }.flatten
+
+    /**
+     * Execute a bidirectional streaming gRPC call.
+     */
+    def bidiStreaming[Req, Res](requests: Seq[Req])(
+      call: (StubType, Iterator[Req]) => Iterator[Res]
+    ): GrpcIO[Seq[Res]] =
+      IO {
+        val configuredStub = configureStub(stub)
+        val iterator = call(configuredStub, requests.iterator)
+        iterator.toSeq
+      }
+
+  /**
+   * Server implementation for Kyo gRPC services.
+   */
+  class GrpcServer(
+    private val serverBuilder: ServerBuilder[_],
+    private val services: List[ServerServiceDefinition]
+  ):
+    
+    private var server: Option[Server] = None
+
+    /**
+     * Start the gRPC server.
+     */
+    def start: GrpcIO[Unit] = IO {
+      val built = services.foldLeft(serverBuilder) { (builder, service) =>
+        builder.addService(service)
+      }
+      server = Some(built.build().start())
+    }
+
+    /**
+     * Gracefully shutdown the server.
+     */
+    def shutdown: GrpcIO[Unit] = IO {
+      server.foreach { s =>
+        s.shutdown()
+        s.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+      }
+    }
+
+    /**
+     * Get the server port.
+     */
+    def port: GrpcIO[Int] = IO {
+      server.map(_.getPort()).getOrElse(throw new GrpcException("Server not started"))
+    }
+
+  object GrpcServer:
+    
+    /**
+     * Create a server builder for a given port.
+     */
+    def builder(port: Int): GrpcServerBuilder =
+      new GrpcServerBuilder(ServerBuilder.forPort(port))
+
+    /**
+     * Create a server builder with SSL/TLS.
+     */
+    def builder(port: Int, sslContext: io.grpc.netty.GrpcSslContexts): GrpcServerBuilder =
+      new GrpcServerBuilder(
+        io.grpc.netty.NettyServerBuilder.forPort(port).sslContext(sslContext)
+      )
+
+  class GrpcServerBuilder(private val builder: ServerBuilder[_]):
+    
+    /**
+     * Add a service definition to the server.
+     */
+    def addService(service: ServerServiceDefinition): GrpcServerBuilder =
+      new GrpcServerBuilder(builder.addService(service))
+
+    /**
+     * Add a bindable service to the server.
+     */
+    def addService(service: BindableService): GrpcServerBuilder =
+      new GrpcServerBuilder(builder.addService(service))
+
+    /**
+     * Build the server.
+     */
+    def build: GrpcServer = new GrpcServer(builder, Nil)
+
+  /**
+   * Managed channel resource for gRPC clients.
+   */
+  class ManagedChannelResource(target: String, config: Config = Config.default) 
+    extends Resource[ManagedChannel]:
+    
+    def acquire: GrpcIO[ManagedChannel] = IO {
+      val builder = ManagedChannelBuilder.forTarget(target)
+        .usePlaintext()
+      config.deadline.foreach { d =>
+        builder.defaultLoadBalancingPolicy("round_robin")
+      }
+      builder.build()
+    }
+
+    def release(channel: ManagedChannel): GrpcIO[Unit] = IO {
+      channel.shutdown()
+      channel.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
+  /**
+   * Create a gRPC client from a managed channel.
+   */
+  def client[StubType <: AbstractStub[StubType]](
+    channel: ManagedChannel,
+    stubFactory: ManagedChannel => StubType,
+    config: Config = Config.default
+  ): GrpcClient[StubType] =
+    new GrpcClient(stubFactory(channel), config)
+
+  /**
+   * Create a gRPC client with automatic resource management.
+   */
+  def managedClient[StubType <: AbstractStub[StubType]](
+    target: String,
+    stubFactory: ManagedChannel => StubType,
+    config: Config = Config.default
+  ): Resource[GrpcClient[StubType]] =
+    Resource {
+      val channelResource = new ManagedChannelResource(target, config)
+      channelResource.map(channel => client(channel, stubFactory, config))
+    }
+
+  /**
+   * Interceptor for logging gRPC calls.
+   */
+  class LoggingInterceptor extends ClientInterceptor:
+    override def interceptCall[ReqT, RespT](
+      method: MethodDescriptor[ReqT, RespT],
+      callOptions: CallOptions,
+      next: Channel
+    ): ClientCall[ReqT, RespT] =
+      new ForwardingClientCall.SimpleForwardingClientCall[ReqT, RespT](
+        next.newCall(method, callOptions)
+      ):
+        override def start(responseListener: ClientCall.Listener[RespT], headers: Metadata): Unit =
+          println(s"gRPC call: ${method.getFullMethodName()}")
+          super.start(responseListener, headers)
+
+  /**
+   * Interceptor for measuring gRPC call duration.
+   */
+  class MetricsInterceptor extends ClientInterceptor:
+    override def interceptCall[ReqT
