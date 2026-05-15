@@ -1,0 +1,227 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.{ManagedChannel, ManagedChannelBuilder, Server, ServerBuilder, Status, StatusRuntimeException}
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Channels, Grpc}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+import io.grpc.stub.{AbstractStub, StreamObserver}
+import io.grpc.{CallOptions, Channel, MethodDescriptor}
+import scala.concurrent.{Future, Promise}
+import scala.util.{Failure, Success, Try}
+import java.util.concurrent.atomic.AtomicReference
+import scala.reflect.ClassTag
+
+package object grpc {
+  
+  /** Kyo effect for gRPC operations */
+  type GrpcIO[T] = Async[Throwable] < (IO & Abort[Throwable])
+  
+  /** Creates a gRPC server builder */
+  def server(port: Int): ServerBuilder[ServerBuilder[?]] = 
+    ServerBuilder.forPort(port)
+  
+  /** Creates a gRPC channel */
+  def channel(target: String): ManagedChannel = 
+    ManagedChannelBuilder.forTarget(target).usePlaintext().build()
+  
+  /** Starts a gRPC server */
+  def startServer(server: Server): GrpcIO[Server] = 
+    IO(server.start())
+  
+  /** Shuts down a gRPC server */
+  def shutdownServer(server: Server): GrpcIO[Unit] = 
+    IO(server.shutdown())
+  
+  /** Shuts down a gRPC channel */
+  def shutdownChannel(channel: ManagedChannel): GrpcIO[Unit] = 
+    IO(channel.shutdown())
+}
+
+package kyo.grpc.internal {
+
+  import kyo.*
+
+  /** Kyo-based gRPC stub that wraps async gRPC calls */
+  abstract class KyoGrpcStub[Stub <: AbstractStub[Stub]](channel: Channel, options: CallOptions = CallOptions.DEFAULT) {
+    
+    protected def stub: Stub
+    
+    /** Converts a gRPC async call to a Kyo effect */
+    protected def call[A, B](request: A, method: MethodDescriptor[A, B]): GrpcIO[B] = {
+      val promise = Promise[B]()
+      val call = stub.getChannel.newCall(method, stub.getCallOptions)
+      call.start(new KyoGrpcClientCallListener(promise), new io.grpc.Metadata())
+      call.sendMessage(request)
+      call.halfClose()
+      promise.future.toKyo
+    }
+    
+    /** Converts a gRPC server streaming call to a Kyo stream */
+    protected def serverStreaming[A, B](request: A, method: MethodDescriptor[A, B]): Stream[B, GrpcIO] = {
+      val stream = new KyoGrpcStream[B]()
+      val call = stub.getChannel.newCall(method, stub.getCallOptions)
+      call.start(new KyoGrpcStreamingClientCallListener(stream), new io.grpc.Metadata())
+      call.sendMessage(request)
+      call.halfClose()
+      stream
+    }
+    
+    /** Converts a gRPC client streaming call to a Kyo effect */
+    protected def clientStreaming[A, B](requests: Stream[A, Any], method: MethodDescriptor[A, B]): GrpcIO[B] = {
+      val promise = Promise[B]()
+      val call = stub.getChannel.newCall(method, stub.getCallOptions)
+      call.start(new KyoGrpcClientCallListener(promise), new io.grpc.Metadata())
+      requests.run.foreach { request =>
+        call.sendMessage(request)
+      }
+      call.halfClose()
+      promise.future.toKyo
+    }
+    
+    /** Converts a gRPC bidirectional streaming call to a Kyo stream */
+    protected def bidiStreaming[A, B](requests: Stream[A, Any], method: MethodDescriptor[A, B]): Stream[B, GrpcIO] = {
+      val stream = new KyoGrpcStream[B]()
+      val call = stub.getChannel.newCall(method, stub.getCallOptions)
+      call.start(new KyoGrpcStreamingClientCallListener(stream), new io.grpc.Metadata())
+      requests.run.foreach { request =>
+        call.sendMessage(request)
+      }
+      call.halfClose()
+      stream
+    }
+  }
+
+  /** Kyo-based gRPC server interceptor */
+  abstract class KyoGrpcServerInterceptor extends io.grpc.ServerInterceptor {
+    def interceptCall[ReqT, RespT](
+      call: io.grpc.ServerCall[ReqT, RespT],
+      headers: io.grpc.Metadata,
+      next: io.grpc.ServerCallHandler[ReqT, RespT]
+    ): io.grpc.ServerCall.Listener[ReqT] = {
+      next.startCall(call, headers)
+    }
+  }
+
+  /** Kyo-based gRPC client call listener */
+  private class KyoGrpcClientCallListener[T](promise: Promise[T]) extends io.grpc.ClientCall.Listener[T] {
+    private val response = new AtomicReference[Option[T]](None)
+    
+    override def onMessage(message: T): Unit = {
+      response.set(Some(message))
+    }
+    
+    override def onClose(status: io.grpc.Status, trailers: io.grpc.Metadata): Unit = {
+      if (status.isOk) {
+        response.get() match {
+          case Some(value) => promise.success(value)
+          case None => promise.failure(new StatusRuntimeException(Status.INTERNAL.withDescription("No response received")))
+        }
+      } else {
+        promise.failure(new StatusRuntimeException(status))
+      }
+    }
+  }
+
+  /** Kyo-based gRPC streaming client call listener */
+  private class KyoGrpcStreamingClientCallListener[T](stream: KyoGrpcStream[T]) extends io.grpc.ClientCall.Listener[T] {
+    override def onMessage(message: T): Unit = {
+      stream.offer(message)
+    }
+    
+    override def onClose(status: io.grpc.Status, trailers: io.grpc.Metadata): Unit = {
+      if (!status.isOk) {
+        stream.fail(new StatusRuntimeException(status))
+      }
+      stream.end()
+    }
+  }
+
+  /** Kyo-based gRPC stream implementation */
+  private class KyoGrpcStream[T] extends Stream[T, GrpcIO] {
+    private val buffer = new java.util.concurrent.ConcurrentLinkedQueue[T]()
+    private val waiters = new java.util.concurrent.ConcurrentLinkedQueue[Promise[T]]()
+    private val done = new AtomicReference[Option[Throwable]](None)
+    
+    def offer(value: T): Unit = {
+      val waiter = waiters.poll()
+      if (waiter != null) {
+        waiter.success(value)
+      } else {
+        buffer.offer(value)
+      }
+    }
+    
+    def fail(error: Throwable): Unit = {
+      done.set(Some(error))
+      var waiter = waiters.poll()
+      while (waiter != null) {
+        waiter.failure(error)
+        waiter = waiters.poll()
+      }
+    }
+    
+    def end(): Unit = {
+      done.set(Some(new NoSuchElementException("Stream ended")))
+      var waiter = waiters.poll()
+      while (waiter != null) {
+        waiter.failure(new NoSuchElementException("Stream ended"))
+        waiter = waiters.poll()
+      }
+    }
+    
+    def pull: GrpcIO[Option[T]] = IO {
+      val value = buffer.poll()
+      if (value != null) {
+        Some(value)
+      } else {
+        done.get() match {
+          case Some(error) => None
+          case None =>
+            val promise = Promise[T]()
+            waiters.offer(promise)
+            promise.future.toKyo.map(Some(_))
+        }
+      }
+    }
+  }
+
+  /** Extension methods for Future to Kyo conversion */
+  implicit class FutureToKyo[T](future: Future[T]) {
+    def toKyo: GrpcIO[T] = Async[Throwable].fromFuture(future)
+  }
+}
+
+package kyo.grpc.examples {
+
+  import kyo.*
+  import kyo.grpc.*
+  import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+  import io.grpc.{Server, ServerBuilder, ManagedChannel, ManagedChannelBuilder}
+  import io.grpc.stub.{AbstractStub, StreamObserver}
+  import scala.concurrent.{Future, Promise}
+  import scala.util.Try
+
+  // Example protobuf messages (would be generated by scalapb)
+  case class HelloRequest(name: String) extends GeneratedMessage {
+    def writeTo(output: com.google.protobuf.CodedOutputStream): Unit = {
+      output.writeString(1, name)
+    }
+    def getSerializedSize
