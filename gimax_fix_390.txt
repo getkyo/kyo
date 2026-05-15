@@ -1,0 +1,283 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc => ScalaPbGrpc}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Try
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables gRPC client and server implementations using Kyo effects,
+ * leveraging ScalaPB for protobuf code generation.
+ */
+object Grpc:
+
+  /**
+   * Kyo effect type for gRPC operations.
+   */
+  type GrpcIO[T] = < T | IO | Async >
+
+  /**
+   * Creates a gRPC client stub from a ScalaPB generated service.
+   * 
+   * @param channel the gRPC channel
+   * @param options call options
+   * @return a client stub wrapped in Kyo effect
+   */
+  def clientStub[T](channel: Channel, options: CallOptions = CallOptions.DEFAULT)(
+      using stubFactory: GrpcStubFactory[T]
+  ): T < IO =
+    IO {
+      stubFactory.newClientStub(channel, options)
+    }
+
+  /**
+   * Creates a gRPC server that serves a ScalaPB generated service.
+   * 
+   * @param service the service implementation
+   * @param port the server port
+   * @return a server instance wrapped in Kyo effect
+   */
+  def server[T](service: ServerServiceDefinition, port: Int): Server < IO =
+    IO {
+      ServerBuilder
+        .forPort(port)
+        .addService(service)
+        .build()
+    }
+
+  /**
+   * Starts the gRPC server.
+   * 
+   * @param server the server to start
+   * @return the started server
+   */
+  def start(server: Server): Server < IO =
+    IO {
+      server.start()
+      server
+    }
+
+  /**
+   * Shuts down the gRPC server gracefully.
+   * 
+   * @param server the server to shutdown
+   * @return unit
+   */
+  def shutdown(server: Server): Unit < IO =
+    IO {
+      server.shutdown()
+    }
+
+  /**
+   * Awaits server termination.
+   * 
+   * @param server the server to await
+   * @return unit
+   */
+  def awaitTermination(server: Server): Unit < IO =
+    IO {
+      server.awaitTermination()
+    }
+
+  /**
+   * Converts a ScalaPB gRPC future to a Kyo effect.
+   * 
+   * @param future the ScalaPB future
+   * @return the result wrapped in Kyo effect
+   */
+  def fromFuture[T](future: Future[T]): T < Async =
+    Async.fromFuture(future)
+
+  /**
+   * Converts a Kyo effect to a ScalaPB gRPC future.
+   * 
+   * @param effect the Kyo effect
+   * @return the future
+   */
+  def toFuture[T](effect: T < GrpcIO)(using frame: Frame): Future[T] =
+    val promise = scala.concurrent.Promise[T]()
+    Async.run(effect).map { fiber =>
+      fiber.onComplete { result =>
+        promise.complete(result)
+      }
+    }
+    promise.future
+
+  /**
+   * Type class for creating gRPC stubs from ScalaPB generated services.
+   */
+  trait GrpcStubFactory[T]:
+    def newClientStub(channel: Channel, options: CallOptions): T
+
+  object GrpcStubFactory:
+    given [T]: GrpcStubFactory[T] with
+      def newClientStub(channel: Channel, options: CallOptions): T =
+        throw new UnsupportedOperationException(
+          "GrpcStubFactory not implemented for this type. " +
+          "Use the generated stub factory from ScalaPB."
+        )
+
+  /**
+   * Binds a ScalaPB service implementation to a ServerServiceDefinition.
+   */
+  trait ServiceBinding[T]:
+    def bindService(implementation: T): ServerServiceDefinition
+
+  /**
+   * Kyo gRPC client implementation.
+   */
+  class KyoClient[T](stub: T)(using descriptor: MethodDescriptor[?, ?]):
+    
+    def unaryCall[Req <: GeneratedMessage, Res <: GeneratedMessage](
+        request: Req,
+        method: MethodDescriptor[Req, Res]
+    ): Res < GrpcIO =
+      IO {
+        val call = stub.asInstanceOf[AbstractStub[?]]
+          .getChannel
+          .newCall(method, CallOptions.DEFAULT)
+        val listener = new KyoClientCallListener[Res]()
+        call.start(listener, new Metadata())
+        call.sendMessage(request)
+        call.halfClose()
+        listener.result
+      }.flatMap(identity)
+
+    def serverStreaming[Req <: GeneratedMessage, Res <: GeneratedMessage](
+        request: Req,
+        method: MethodDescriptor[Req, Res]
+    ): Stream[Res, GrpcIO] =
+      Stream[Res, GrpcIO] { emit =>
+        IO {
+          val call = stub.asInstanceOf[AbstractStub[?]]
+            .getChannel
+            .newCall(method, CallOptions.DEFAULT)
+          val listener = new KyoStreamingCallListener[Res](emit)
+          call.start(listener, new Metadata())
+          call.sendMessage(request)
+          call.halfClose()
+          listener.completion
+        }.flatMap(identity)
+      }
+
+  /**
+   * Kyo gRPC server implementation.
+   */
+  class KyoServer(server: Server):
+    
+    def serve: Unit < IO =
+      IO {
+        server.start()
+        server.awaitTermination()
+      }
+
+    def shutdown: Unit < IO =
+      IO {
+        server.shutdown()
+      }
+
+  /**
+   * Internal call listener for unary calls.
+   */
+  private class KyoClientCallListener[T] extends ClientCall.Listener[T]:
+    private var result: T = _
+    private val promise = scala.concurrent.Promise[T]()
+
+    def result: T < Async =
+      Async.fromFuture(promise.future)
+
+    override def onMessage(message: T): Unit =
+      result = message
+
+    override def onClose(status: Status, trailers: Metadata): Unit =
+      if status.isOk then
+        promise.success(result)
+      else
+        promise.failure(status.asRuntimeException(trailers))
+
+  /**
+   * Internal call listener for streaming calls.
+   */
+  private class KyoStreamingCallListener[T](emit: T => Unit < IO) extends ClientCall.Listener[T]:
+    private val promise = scala.concurrent.Promise[Unit]()
+
+    def completion: Unit < Async =
+      Async.fromFuture(promise.future)
+
+    override def onMessage(message: T): Unit =
+      IO.run(emit(message))
+
+    override def onClose(status: Status, trailers: Metadata): Unit =
+      if status.isOk then
+        promise.success(())
+      else
+        promise.failure(status.asRuntimeException(trailers))
+
+  /**
+   * Stream implementation for gRPC streaming.
+   */
+  class Stream[T, E]:
+    def apply(f: (T => Unit < IO) => Unit < IO): Stream[T, E] = this
+
+  object Stream:
+    def apply[T, E](f: (T => Unit < IO) => Unit < IO): Stream[T, E] = new Stream
+
+end Grpc
+
+/**
+ * Internal utilities for gRPC support.
+ */
+package kyo.grpc.internal:
+
+  import io.grpc.*
+  import scala.concurrent.{ExecutionContext, Future}
+
+  private[grpc] object GrpcInternal:
+
+    def toScalaFuture[T](listener: ClientCall.Listener[T], call: ClientCall[?, ?]): Future[T] =
+      val promise = scala.concurrent.Promise[T]()
+      call.start(new ClientCall.Listener[T] {
+        override def onMessage(message: T): Unit =
+          promise.success(message)
+        override def onClose(status: Status, trailers: Metadata): Unit =
+          if !promise.isCompleted then
+            if status.isOk then
+              promise.failure(new IllegalStateException("No message received"))
+            else
+              promise.failure(status.asRuntimeException(trailers))
+      }, new Metadata())
+      promise.future
+
+    def serverCallHandler[Req, Res](
+        handler: Req => Res < (IO | Async)
+    ): ServerCallHandler[Req, Res] =
+      new ServerCallHandler[Req, Res] {
+        def startCall(
+            call: ServerCall[Req, Res],
+            headers: Metadata
+        ): ServerCall.Listener[Req] =
+          new ServerCall.Listener[Req] {
+            override def onMessage(message: Req): Unit =
+              IO
