@@ -156,6 +156,85 @@ class ProtobufTest extends Test:
 
     }
 
+    // ===== gRPC message framing =====
+
+    "gRPC message framing" - {
+
+        "encodeGrpcPayload writes uncompressed gRPC header" in {
+            val payload = Span[Byte](0x11.toByte, 0x22.toByte)
+            val framed  = Protobuf.encodeGrpcPayload(payload)
+            val expected = Seq(
+                0.toByte,
+                0.toByte,
+                0.toByte,
+                0.toByte,
+                2.toByte,
+                0x11.toByte,
+                0x22.toByte
+            )
+            assert(framed.toArray.toSeq == expected)
+        }
+
+        "encodeGrpc and decodeGrpc round-trip typed values" in {
+            val person = MTPerson("Alice", 30)
+            val framed = Protobuf.encodeGrpc(person)
+            assert(Protobuf.decodeGrpc[MTPerson](framed) == Result.Success(person))
+        }
+
+        "decodeGrpcPayloads parses consecutive streaming frames" in {
+            val first   = Protobuf.encode(MTPerson("Alice", 30))
+            val second  = Protobuf.encode(MTPerson("Bob", 25))
+            val framed  = Protobuf.encodeGrpcPayloads(Seq(first, second))
+            val decoded = Protobuf.decodeGrpcPayloads(framed)
+
+            decoded match
+                case Result.Success(payloads) =>
+                    assert(payloads.size == 2)
+                    assert(payloads(0).toArray.toSeq == first.toArray.toSeq)
+                    assert(payloads(1).toArray.toSeq == second.toArray.toSeq)
+                case _ =>
+                    assert(false)
+        }
+
+        "decodeGrpcPayload rejects compressed messages" in {
+            val compressed = Span[Byte](
+                1.toByte,
+                0.toByte,
+                0.toByte,
+                0.toByte,
+                0.toByte
+            )
+            val failed = Protobuf.decodeGrpcPayload(compressed) match
+                case Result.Failure(_: ParseException) => true
+                case _                                 => false
+            assert(failed)
+        }
+
+        "decodeGrpcPayload rejects truncated payloads" in {
+            val truncated = Span[Byte](
+                0.toByte,
+                0.toByte,
+                0.toByte,
+                0.toByte,
+                2.toByte,
+                0x11.toByte
+            )
+            val failed = Protobuf.decodeGrpcPayload(truncated) match
+                case Result.Failure(_: TruncatedInputException) => true
+                case _                                          => false
+            assert(failed)
+        }
+
+        "decodeGrpcPayload enforces max message size" in {
+            val framed = Protobuf.encodeGrpcPayload(Span[Byte](0x11.toByte, 0x22.toByte))
+            val failed = Protobuf.decodeGrpcPayload(framed, maxMessageSize = 1) match
+                case Result.Failure(_: LimitExceededException) => true
+                case _                                         => false
+            assert(failed)
+        }
+
+    }
+
     // ===== ProtoSchema =====
 
     "ProtoSchema" - {

@@ -183,6 +183,18 @@ val schema =
 
 `Protobuf.decode` accepts the same `maxDepth` and `maxCollectionSize` safety limits as `Json.decode`.
 
+For gRPC transports, Protobuf values can also be wrapped in the standard uncompressed gRPC Length-Prefixed-Message frame:
+
+```scala
+val framed: Span[Byte] = Protobuf.encodeGrpc(alice)
+
+Protobuf.decodeGrpc[User](framed)
+// Result.Success(alice)
+```
+
+`Protobuf.encodeGrpcPayloads` and `Protobuf.decodeGrpcPayloads` expose the same framing for streaming bodies when generated service code or
+transport code already works with raw Protobuf payload bytes.
+
 `Protobuf.protoSchema[A]` generates a `.proto` definition as a string:
 
 ```scala

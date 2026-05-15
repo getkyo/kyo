@@ -12,10 +12,10 @@ final class Protobuf extends Codec:
         new kyo.internal.ProtobufReader(input.toArray)
 end Protobuf
 
-/** Entry point for Protocol Buffers binary serialization and schema generation.
+/** Entry point for Protocol Buffers binary serialization, schema generation, and gRPC message framing.
   *
-  * All methods are inline and require a `Schema[A]` instance in scope. Encoding produces proto3 wire-format bytes. Field numbers are
-  * derived from stable MurmurHash3 hashes of field names, enabling schema evolution without breaking existing encoded data.
+  * Encoding produces proto3 wire-format bytes. Field numbers are derived from stable MurmurHash3 hashes of field names, enabling schema
+  * evolution without breaking existing encoded data.
   *
   * @see
   *   [[kyo.Schema]] for the type-driven serialization model
@@ -24,6 +24,9 @@ end Protobuf
   */
 object Protobuf:
     given Protobuf = Protobuf()
+
+    private val GrpcHeaderSize       = 5
+    private val GrpcUncompressedFlag = 0.toByte
 
     /** Encodes a value of type A to Protocol Buffers binary bytes.
       *
@@ -54,6 +57,206 @@ object Protobuf:
         reader.resetLimits(maxDepth, maxCollectionSize)
         Result.catching[DecodeException](schema.readFrom(reader))
     end decode
+
+    /** Encodes a value of type A as a single uncompressed gRPC message.
+      *
+      * The result is a gRPC Length-Prefixed-Message: a one-byte compression flag followed by a four-byte big-endian message length and the
+      * Protobuf payload. This helper covers the wire shape used by unary calls and each element of streaming calls while leaving service
+      * dispatch and HTTP/2 transport concerns to a higher-level gRPC module.
+      *
+      * @param value
+      *   the value to encode
+      * @return
+      *   a gRPC-framed Protobuf message
+      */
+    inline def encodeGrpc[A](value: A)(using schema: Schema[A], frame: Frame): Span[Byte] =
+        encodeGrpcPayload(encode(value))
+    end encodeGrpc
+
+    /** Decodes a single uncompressed gRPC message into a value of type A.
+      *
+      * The input must contain exactly one gRPC Length-Prefixed-Message. Compressed messages are rejected because compression negotiation is
+      * part of the surrounding gRPC transport metadata, not the Protobuf payload itself. Use `maxMessageSize` to enforce a per-message
+      * receive limit before the payload is decoded.
+      *
+      * @param input
+      *   the gRPC-framed Protobuf message
+      * @param maxMessageSize
+      *   the maximum allowed decoded payload size in bytes
+      * @param maxDepth
+      *   the maximum nesting depth accepted by the Protobuf decoder
+      * @param maxCollectionSize
+      *   the maximum collection size accepted by the Protobuf decoder
+      * @return
+      *   the decoded value, or a DecodeException if the frame or payload is invalid
+      */
+    def decodeGrpc[A](
+        input: Span[Byte],
+        maxMessageSize: Int = Int.MaxValue,
+        maxDepth: Int = Json.DefaultMaxDepth,
+        maxCollectionSize: Int = Json.DefaultMaxCollectionSize
+    )(using protobuf: Protobuf, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        decodeGrpcPayload(input, maxMessageSize).flatMap(payload => decode[A](payload, maxDepth, maxCollectionSize))
+    end decodeGrpc
+
+    /** Encodes raw Protobuf payload bytes as a single uncompressed gRPC message.
+      *
+      * The payload is copied behind the standard five-byte gRPC message header. The compression flag is always `0`, matching an
+      * uncompressed message. Higher-level clients and servers can use this when they already own Protobuf bytes and only need correct gRPC
+      * message framing.
+      *
+      * @param payload
+      *   raw Protobuf payload bytes
+      * @return
+      *   a gRPC Length-Prefixed-Message
+      */
+    def encodeGrpcPayload(payload: Span[Byte]): Span[Byte] =
+        val payloadSize = payload.size
+        val out         = new Array[Byte](GrpcHeaderSize + payloadSize)
+        writeGrpcPayload(payload, out, 0)
+        Span.fromUnsafe(out)
+    end encodeGrpcPayload
+
+    /** Encodes raw Protobuf payload bytes as consecutive uncompressed gRPC messages.
+      *
+      * gRPC streaming bodies are represented as a sequence of Length-Prefixed-Message values. This helper frames each payload in order and
+      * concatenates the resulting bytes so a transport layer can stream or buffer the result without reimplementing the gRPC frame header.
+      *
+      * @param payloads
+      *   raw Protobuf payload bytes, one entry per gRPC message
+      * @return
+      *   concatenated gRPC Length-Prefixed-Message bytes
+      */
+    def encodeGrpcPayloads(payloads: IterableOnce[Span[Byte]]): Span[Byte] =
+        val chunk = Chunk.from(payloads)
+        var total = 0L
+        chunk.foreach(payload => total += GrpcHeaderSize + payload.size)
+        if total > Int.MaxValue then
+            throw new IllegalArgumentException(s"gRPC payload stream is too large to fit in a single Span[Byte]: $total bytes")
+
+        val out    = new Array[Byte](total.toInt)
+        var offset = 0
+        chunk.foreach { payload =>
+            writeGrpcPayload(payload, out, offset)
+            offset += GrpcHeaderSize + payload.size
+        }
+        Span.fromUnsafe(out)
+    end encodeGrpcPayloads
+
+    /** Decodes a single uncompressed gRPC message to raw Protobuf payload bytes.
+      *
+      * The input must contain exactly one Length-Prefixed-Message. Use `decodeGrpcPayloads` when parsing a streaming body with multiple
+      * frames. The returned payload can be passed to `Protobuf.decode` or to a generated service binding.
+      *
+      * @param input
+      *   a gRPC Length-Prefixed-Message
+      * @param maxMessageSize
+      *   the maximum allowed payload size in bytes
+      * @return
+      *   the raw Protobuf payload, or a DecodeException if the frame is invalid
+      */
+    def decodeGrpcPayload(
+        input: Span[Byte],
+        maxMessageSize: Int = Int.MaxValue
+    )(using protobuf: Protobuf, frame: Frame): Result[DecodeException, Span[Byte]] =
+        if maxMessageSize < 0 then Result.fail(LimitExceededException("gRPC message size", 0, maxMessageSize))
+        else
+            decodeGrpcPayloadAt(input, 0, maxMessageSize).flatMap { case (payload, nextOffset) =>
+                if nextOffset == input.size then Result.succeed(payload)
+                else
+                    Result.fail(
+                        ParseException(protobuf, s"${input.size - nextOffset} trailing bytes", "single gRPC message", position = nextOffset)
+                    )
+            }
+    end decodeGrpcPayload
+
+    /** Decodes consecutive uncompressed gRPC messages to raw Protobuf payload bytes.
+      *
+      * Empty input decodes to an empty Chunk. Each frame is validated independently: compressed frames, truncated headers, truncated
+      * payloads, and payloads larger than `maxMessageSize` return a DecodeException before any payload is decoded as Protobuf.
+      *
+      * @param input
+      *   concatenated gRPC Length-Prefixed-Message bytes
+      * @param maxMessageSize
+      *   the maximum allowed payload size for each message
+      * @return
+      *   one raw Protobuf payload per gRPC frame
+      */
+    def decodeGrpcPayloads(
+        input: Span[Byte],
+        maxMessageSize: Int = Int.MaxValue
+    )(using protobuf: Protobuf, frame: Frame): Result[DecodeException, Chunk[Span[Byte]]] =
+        val builder = Chunk.newBuilder[Span[Byte]]
+
+        @annotation.tailrec
+        def loop(offset: Int): Result[DecodeException, Chunk[Span[Byte]]] =
+            if offset == input.size then Result.succeed(builder.result())
+            else
+                decodeGrpcPayloadAt(input, offset, maxMessageSize) match
+                    case Result.Success((payload, nextOffset)) =>
+                        discard(builder.addOne(payload))
+                        loop(nextOffset)
+                    case Result.Failure(ex) =>
+                        Result.fail(ex)
+                    case Result.Panic(ex) =>
+                        Result.panic(ex)
+                end match
+            end if
+        end loop
+
+        if maxMessageSize < 0 then Result.fail(LimitExceededException("gRPC message size", 0, maxMessageSize))
+        else loop(0)
+    end decodeGrpcPayloads
+
+    private def writeGrpcPayload(payload: Span[Byte], out: Array[Byte], offset: Int): Unit =
+        val payloadSize = payload.size
+        out(offset) = GrpcUncompressedFlag
+        out(offset + 1) = ((payloadSize >>> 24) & 0xff).toByte
+        out(offset + 2) = ((payloadSize >>> 16) & 0xff).toByte
+        out(offset + 3) = ((payloadSize >>> 8) & 0xff).toByte
+        out(offset + 4) = (payloadSize & 0xff).toByte
+        java.lang.System.arraycopy(payload.toArrayUnsafe, 0, out, offset + GrpcHeaderSize, payloadSize)
+    end writeGrpcPayload
+
+    private def decodeGrpcPayloadAt(
+        input: Span[Byte],
+        offset: Int,
+        maxMessageSize: Int
+    )(using protobuf: Protobuf, frame: Frame): Result[DecodeException, (Span[Byte], Int)] =
+        val remaining = input.size - offset
+        if remaining < GrpcHeaderSize then
+            Result.fail(TruncatedInputException(protobuf, s"gRPC message header requires $GrpcHeaderSize bytes but only $remaining remain"))
+        else
+            val compressionFlag = input(offset)
+            if compressionFlag != GrpcUncompressedFlag then
+                Result.fail(ParseException(protobuf, compressionFlag.toString, "uncompressed gRPC message", position = offset))
+            else
+                val payloadSize =
+                    ((input(offset + 1).toLong & 0xffL) << 24) |
+                        ((input(offset + 2).toLong & 0xffL) << 16) |
+                        ((input(offset + 3).toLong & 0xffL) << 8) |
+                        (input(offset + 4).toLong & 0xffL)
+                if payloadSize > maxMessageSize then
+                    val actual = math.min(payloadSize, Int.MaxValue.toLong).toInt
+                    Result.fail(LimitExceededException("gRPC message size", actual, maxMessageSize))
+                else
+                    val payloadOffset = offset + GrpcHeaderSize
+                    val nextOffset    = payloadOffset.toLong + payloadSize
+                    if nextOffset > input.size then
+                        Result.fail(
+                            TruncatedInputException(
+                                protobuf,
+                                s"gRPC message declared $payloadSize bytes but only ${input.size - payloadOffset} remain"
+                            )
+                        )
+                    else
+                        val next = nextOffset.toInt
+                        Result.succeed((input.slice(payloadOffset, next), next))
+                    end if
+                end if
+            end if
+        end if
+    end decodeGrpcPayloadAt
 
     /** Generates a `.proto` file definition string for type A at compile time.
       *
