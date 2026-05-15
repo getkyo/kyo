@@ -1,0 +1,190 @@
+```scala
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import com.google.protobuf.{ByteString, MessageLite}
+import io.grpc.*
+import io.grpc.stub.{ClientCalls, ServerCalls}
+import scala.concurrent.duration.*
+import scala.reflect.ClassTag
+
+// Core gRPC types
+opaque type GrpcStatus = io.grpc.Status
+object GrpcStatus:
+  def apply(code: io.grpc.Status.Code): GrpcStatus = io.grpc.Status.fromCode(code)
+  def apply(code: io.grpc.Status.Code, description: String): GrpcStatus = io.grpc.Status.fromCode(code).withDescription(description)
+  def ok: GrpcStatus = io.grpc.Status.OK
+  def cancelled: GrpcStatus = io.grpc.Status.CANCELLED
+  def unknown: GrpcStatus = io.grpc.Status.UNKNOWN
+  def invalidArgument: GrpcStatus = io.grpc.Status.INVALID_ARGUMENT
+  def deadlineExceeded: GrpcStatus = io.grpc.Status.DEADLINE_EXCEEDED
+  def notFound: GrpcStatus = io.grpc.Status.NOT_FOUND
+  def internal: GrpcStatus = io.grpc.Status.INTERNAL
+  def unauthenticated: GrpcStatus = io.grpc.Status.UNAUTHENTICATED
+  def unavailable: GrpcStatus = io.grpc.Status.UNAVAILABLE
+
+  extension (s: GrpcStatus)
+    def toException: GrpcException = GrpcException(s)
+    def isOk: Boolean = s.isOk
+    def code: io.grpc.Status.Code = s.getCode
+    def description: Option[String] = Option(s.getDescription)
+
+case class GrpcException(status: GrpcStatus) extends RuntimeException(status.toString)
+
+// Metadata wrapper
+opaque type GrpcMetadata = io.grpc.Metadata
+object GrpcMetadata:
+  def empty: GrpcMetadata = new io.grpc.Metadata()
+  def apply(pairs: (String, String)*): GrpcMetadata =
+    val m = new io.grpc.Metadata()
+    pairs.foreach { case (k, v) => m.put(io.grpc.Metadata.Key.of(k, io.grpc.Metadata.ASCII_STRING_MARSHALLER), v) }
+    m
+  extension (m: GrpcMetadata)
+    def toJava: io.grpc.Metadata = m
+    def get(key: String): Option[String] = Option(m.get(io.grpc.Metadata.Key.of(key, io.grpc.Metadata.ASCII_STRING_MARSHALLER)))
+
+// Call options
+case class GrpcCallOptions(
+  deadline: Option[Duration] = None,
+  metadata: GrpcMetadata = GrpcMetadata.empty,
+  compression: Option[String] = None
+)
+
+// Server service definition
+trait GrpcService:
+  def bindService: ServerServiceDefinition
+
+// Client stub base
+abstract class GrpcClientStub(channel: ManagedChannel, options: GrpcCallOptions = GrpcCallOptions()):
+  protected def call[Req, Res](
+    method: MethodDescriptor[Req, Res],
+    request: Req
+  )(using Frame): Res < (IO & Abort[GrpcException]) =
+    IO {
+      val call = channel.newCall(method, CallOptions.DEFAULT)
+      val listener = new GrpcClientListener[Res]()
+      call.start(listener, options.metadata.toJava)
+      call.sendMessage(request)
+      call.halfClose()
+      listener.awaitResponse()
+    }
+
+  protected def serverStreaming[Req, Res](
+    method: MethodDescriptor[Req, Res],
+    request: Req
+  )(using Frame): Stream[Res, IO & Abort[GrpcException]] =
+    Stream(emit => IO {
+      val call = channel.newCall(method, CallOptions.DEFAULT)
+      val listener = new GrpcStreamingClientListener[Res](emit)
+      call.start(listener, options.metadata.toJava)
+      call.sendMessage(request)
+      call.halfClose()
+    })
+
+  protected def clientStreaming[Req, Res](
+    method: MethodDescriptor[Req, Res]
+  )(using Frame): Sink[Req, IO & Abort[GrpcException]] & Source[Res, IO & Abort[GrpcException]] =
+    new GrpcClientStream(method, channel, options)
+
+  protected def bidiStreaming[Req, Res](
+    method: MethodDescriptor[Req, Res]
+  )(using Frame): Sink[Req, IO & Abort[GrpcException]] & Source[Res, IO & Abort[GrpcException]] =
+    new GrpcBidiStream(method, channel, options)
+
+  def close(): Unit < IO = IO(channel.shutdown())
+
+// Internal implementations
+private[grpc] class GrpcClientListener[T] extends ClientCall.Listener[T]:
+  private var response: Option[T] = None
+  private var error: Option[Throwable] = None
+  private val latch = new java.util.concurrent.CountDownLatch(1)
+
+  override def onMessage(message: T): Unit =
+    response = Some(message)
+
+  override def onClose(status: io.grpc.Status, trailers: io.grpc.Metadata): Unit =
+    if !status.isOk then error = Some(GrpcException(status))
+    latch.countDown()
+
+  def awaitResponse(): T =
+    latch.await()
+    error.foreach(e => throw e)
+    response.getOrElse(throw GrpcException(GrpcStatus.internal("No response")))
+
+private[grpc] class GrpcStreamingClientListener[T](emit: T => Unit < IO) extends ClientCall.Listener[T]:
+  private var error: Option[Throwable] = None
+  private val latch = new java.util.concurrent.CountDownLatch(1)
+
+  override def onMessage(message: T): Unit =
+    kyo.Kyo.run(emit(message))
+
+  override def onClose(status: io.grpc.Status, trailers: io.grpc.Metadata): Unit =
+    if !status.isOk then error = Some(GrpcException(status))
+    latch.countDown()
+
+  def await(): Unit =
+    latch.await()
+    error.foreach(e => throw e)
+
+private[grpc] class GrpcClientStream[Req, Res](
+  method: MethodDescriptor[Req, Res],
+  channel: ManagedChannel,
+  options: GrpcCallOptions
+) extends Sink[Req, IO & Abort[GrpcException]] with Source[Res, IO & Abort[GrpcException]]:
+  private val call = channel.newCall(method, CallOptions.DEFAULT)
+  private val listener = new GrpcStreamingClientListener[Res](_ => ())
+  call.start(listener, options.metadata.toJava)
+
+  def emit(value: Req)(using Frame): Unit < (IO & Abort[GrpcException]) =
+    IO(call.sendMessage(value))
+
+  def pull(using Frame): Option[Res] < (IO & Abort[GrpcException]) =
+    IO(??? ) // Simplified; real impl needs async signaling
+
+  def end(using Frame): Unit < (IO & Abort[GrpcException]) =
+    IO(call.halfClose())
+
+private[grpc] class GrpcBidiStream[Req, Res](
+  method: MethodDescriptor[Req, Res],
+  channel: ManagedChannel,
+  options: GrpcCallOptions
+) extends Sink[Req, IO & Abort[GrpcException]] with Source[Res, IO & Abort[GrpcException]]:
+  private val call = channel.newCall(method, CallOptions.DEFAULT)
+  private val listener = new GrpcStreamingClientListener[Res](_ => ())
+  call.start(listener, options.metadata.toJava)
+
+  def emit(value: Req)(using Frame): Unit < (IO & Abort[GrpcException]) =
+    IO(call.sendMessage(value))
+
+  def pull(using Frame): Option[Res] < (IO & Abort[GrpcException]) =
+    IO(??? ) // Simplified
+
+  def end(using Frame): Unit < (IO & Abort[GrpcException]) =
+    IO(call.halfClose())
+
+// Server utilities
+object GrpcServer:
+  def serve(services: List[GrpcService], port: Int = 50051)(using Frame): Server < (IO & Resource) =
+    for
+      server <- IO {
+        val builder = io.grpc.ServerBuilder.forPort(port)
+        services.foreach(s => builder.addService(s.bindService))
+        builder.build().start()
+      }
+      _ <- Resource.addFinalizer(IO(server.shutdown()))
+    yield server
+
+  def serve(service: GrpcService, port: Int = 50051)(using Frame): Server < (IO & Resource) =
+    serve(List(service), port)
+
+// Example protobuf service definition (would be generated by scalapb)
+object ExampleService:
+  case class HelloRequest(name: String)
+  case class HelloResponse(message: String)
+
+  val methodDescriptor: MethodDescriptor[HelloRequest, HelloResponse] =
+    MethodDescriptor.newBuilder()
+      .setType(MethodDescriptor.MethodType.UNARY)
+      .setFullMethodName(MethodDescriptor.generateFullMethodName("example", "SayHello"))
+      .setRequestMarshaller(new
