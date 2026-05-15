@@ -1,0 +1,287 @@
+```scala
+/*
+ * Copyright 2023 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import io.grpc.protobuf.*
+import scalapb.grpc.*
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion}
+import com.google.protobuf.Descriptors
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success, Try}
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables type-safe, effectful gRPC client and server implementations
+ * using Kyo's algebraic effects system for resource management and concurrency.
+ */
+object Grpc {
+
+  /** Type alias for a gRPC service definition */
+  type ServiceDefinition = io.grpc.ServerServiceDefinition
+
+  /** Type alias for a gRPC channel */
+  type Channel = io.grpc.Channel
+
+  /** Type alias for a gRPC call options */
+  type CallOptions = io.grpc.CallOptions
+
+  /** Type alias for a gRPC metadata */
+  type Metadata = io.grpc.Metadata
+
+  /**
+   * Creates a gRPC server builder with Kyo integration.
+   *
+   * @param port the port to listen on
+   * @return a Kyo effect that yields a ServerBuilder
+   */
+  def serverBuilder(port: Int): ServerBuilder < IOs =
+    IOs {
+      val builder = io.grpc.ServerBuilder.forPort(port)
+      new ServerBuilder(builder)
+    }
+
+  /**
+   * Creates a gRPC channel builder for the given target.
+   *
+   * @param target the target address (e.g., "localhost:8080")
+   * @return a Kyo effect that yields a ManagedChannelBuilder
+   */
+  def channelBuilder(target: String): ManagedChannelBuilder < IOs =
+    IOs {
+      val builder = io.grpc.ManagedChannelBuilder.forTarget(target)
+      new ManagedChannelBuilder(builder)
+    }
+
+  /**
+   * Wraps a gRPC server builder with Kyo effects.
+   */
+  class ServerBuilder private[grpc] (private val underlying: io.grpc.ServerBuilder[_]) {
+
+    /**
+     * Adds a service to the server.
+     *
+     * @param service the service definition to add
+     * @return this builder
+     */
+    def addService(service: ServiceDefinition): ServerBuilder < IOs =
+      IOs {
+        underlying.addService(service)
+        this
+      }
+
+    /**
+     * Adds a bindable service to the server.
+     *
+     * @param service the bindable service to add
+     * @return this builder
+     */
+    def addService(service: BindableService): ServerBuilder < IOs =
+      IOs {
+        underlying.addService(service)
+        this
+      }
+
+    /**
+     * Builds and starts the server.
+     *
+     * @return a Kyo effect that yields a started GrpcServer
+     */
+    def buildAndStart(): GrpcServer < IOs =
+      IOs {
+        val server = underlying.build().start()
+        new GrpcServer(server)
+      }
+  }
+
+  /**
+   * Wraps a gRPC managed channel builder with Kyo effects.
+   */
+  class ManagedChannelBuilder private[grpc] (private val underlying: io.grpc.ManagedChannelBuilder[_]) {
+
+    /**
+     * Sets whether to use plaintext (no TLS).
+     *
+     * @param usePlaintext whether to use plaintext
+     * @return this builder
+     */
+    def usePlaintext(usePlaintext: Boolean = true): ManagedChannelBuilder < IOs =
+      IOs {
+        underlying.usePlaintext()
+        this
+      }
+
+    /**
+     * Builds the channel.
+     *
+     * @return a Kyo effect that yields a ManagedChannel
+     */
+    def build(): ManagedChannel < IOs =
+      IOs {
+        val channel = underlying.build()
+        new ManagedChannel(channel)
+      }
+  }
+
+  /**
+   * Wraps a gRPC server with Kyo resource management.
+   */
+  class GrpcServer private[grpc] (private val underlying: io.grpc.Server) {
+
+    /**
+     * Shuts down the server gracefully.
+     *
+     * @return a Kyo effect that completes when the server is terminated
+     */
+    def shutdown(): Unit < IOs =
+      IOs {
+        underlying.shutdown()
+        ()
+      }
+
+    /**
+     * Awaits termination of the server.
+     *
+     * @return a Kyo effect that completes when the server terminates
+     */
+    def awaitTermination(): Unit < IOs =
+      IOs {
+        underlying.awaitTermination()
+        ()
+      }
+
+    /**
+     * Gets the port the server is listening on.
+     *
+     * @return the port number
+     */
+    def port: Int < IOs =
+      IOs(underlying.getPort())
+  }
+
+  /**
+   * Wraps a gRPC managed channel with Kyo resource management.
+   */
+  class ManagedChannel private[grpc] (private val underlying: io.grpc.ManagedChannel) {
+
+    /**
+     * Shuts down the channel.
+     *
+     * @return a Kyo effect that completes when the channel is terminated
+     */
+    def shutdown(): Unit < IOs =
+      IOs {
+        underlying.shutdown()
+        ()
+      }
+
+    /**
+     * Creates a stub for the given service.
+     *
+     * @tparam A the stub type
+     * @param stubFactory the factory to create the stub
+     * @return a Kyo effect that yields the stub
+     */
+    def stub[A](stubFactory: Channel => A): A < IOs =
+      IOs(stubFactory(underlying))
+  }
+
+  /**
+   * Provides Kyo integration for ScalaPB generated gRPC clients.
+   */
+  object client {
+
+    /**
+     * Creates a client call that returns a Kyo effect.
+     *
+     * @param call the gRPC call to execute
+     * @tparam Req the request type
+     * @tparam Res the response type
+     * @return a Kyo effect that yields the response
+     */
+    def unaryCall[Req, Res](
+        call: Req => Future[Res]
+    )(request: Req): Res < IOs =
+      IOs {
+        val p = Promise[Res]()
+        call(request).onComplete {
+          case Success(value) => p.success(value)
+          case Failure(exception) => p.fail(exception)
+        }(ExecutionContext.parasitic)
+        p.get
+      }
+
+    /**
+     * Creates a server streaming call that returns a Kyo stream.
+     *
+     * @param call the gRPC call to execute
+     * @tparam Req the request type
+     * @tparam Res the response type
+     * @return a function that takes a request and returns a stream of responses
+     */
+    def serverStreamingCall[Req, Res](
+        call: (Req, StreamObserver[Res]) => Unit
+    )(request: Req): Stream[Res, IOs] < IOs =
+      IOs {
+        val (stream, observer) = StreamObserverKyo[Res]()
+        call(request, observer)
+        stream
+      }
+
+    /**
+     * Creates a client streaming call.
+     *
+     * @param call the gRPC call to execute
+     * @tparam Req the request type
+     * @tparam Res the response type
+     * @return a function that takes a stream of requests and returns a response
+     */
+    def clientStreamingCall[Req, Res](
+        call: StreamObserver[Res] => StreamObserver[Req]
+    ): Stream[Req, IOs] => Res < IOs =
+      (requestStream: Stream[Req, IOs]) =>
+        IOs {
+          val p = Promise[Res]()
+          val responseObserver = new StreamObserver[Res] {
+            def onNext(value: Res): Unit = p.success(value)
+            def onError(t: Throwable): Unit = p.fail(t)
+            def onCompleted(): Unit = ()
+          }
+          val requestObserver = call(responseObserver)
+          requestStream.run.foreach { req =>
+            requestObserver.onNext(req)
+          }(IOs).andThen {
+            IOs(requestObserver.onCompleted())
+          }
+          p.get
+        }
+
+    /**
+     * Creates a bidi streaming call.
+     *
+     * @param call the gRPC call to execute
+     * @tparam Req the request type
+     * @tparam Res the response type
+     * @return a function that takes a stream of requests and returns a stream of responses
+     */
+    def bidi
