@@ -1,0 +1,262 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc, ServiceCompanion}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success, Try}
+
+/**
+ * Kyo gRPC support module providing integration between Kyo effects and gRPC.
+ * 
+ * This module enables:
+ * - Defining gRPC services using Kyo effects
+ * - Creating gRPC clients that return Kyo effects
+ * - Automatic handling of gRPC lifecycle within Kyo's effect system
+ */
+object GrpcKyo {
+
+  /**
+   * Creates a gRPC server that runs within Kyo's effect system.
+   * 
+   * @param service The gRPC service definition
+   * @param port The port to bind to
+   * @param config Additional server configuration
+   * @return A Kyo effect that manages the server lifecycle
+   */
+  def serve[A](
+      service: ServerServiceDefinition,
+      port: Int = 8080,
+      config: ServerBuilder => ServerBuilder = identity
+  )(implicit
+      frame: Frame
+  ): Server < IOs =
+    IOs {
+      val builder = config(ServerBuilder.forPort(port).addService(service))
+      val server = builder.build().start()
+      server
+    }
+
+  /**
+   * Stops a gRPC server gracefully.
+   */
+  def shutdown(server: Server)(implicit frame: Frame): Unit < IOs =
+    IOs {
+      server.shutdown()
+      ()
+    }
+
+  /**
+   * Creates a gRPC client stub that returns Kyo effects.
+   * 
+   * @param channel The gRPC channel
+   * @param stubFactory Factory function to create the stub
+   * @return A Kyo effect wrapping the stub
+   */
+  def client[A](
+      channel: ManagedChannel,
+      stubFactory: ManagedChannel => A
+  )(implicit frame: Frame): A < IOs =
+    IOs {
+      stubFactory(channel)
+    }
+
+  /**
+   * Converts a Kyo effect to a gRPC StreamObserver.
+   * 
+   * @param f Function that processes the stream and returns a Kyo effect
+   * @return A StreamObserver that bridges gRPC streaming to Kyo
+   */
+  def streamObserver[A, B](
+      f: A => B < IOs
+  )(implicit frame: Frame): StreamObserver[A] =
+    new StreamObserver[A] {
+      private val result = new AtomicReference[Option[Try[B]]](None)
+
+      def onNext(value: A): Unit = {
+        val effect = f(value)
+        IOs.run(effect) match {
+          case Success(r) => result.set(Some(Success(r)))
+          case Failure(e) => result.set(Some(Failure(e)))
+        }
+      }
+
+      def onError(t: Throwable): Unit =
+        result.set(Some(Failure(t)))
+
+      def onCompleted(): Unit = {}
+
+      def getResult: Option[Try[B]] = result.get()
+    }
+
+  /**
+   * Creates a gRPC service definition from a Kyo-based service implementation.
+   * 
+   * @param serviceName The fully qualified service name
+   * @param methods List of method definitions
+   * @return A ServerServiceDefinition
+   */
+  def service(
+      serviceName: String,
+      methods: List[ServerMethodDefinition[_, _]]
+  ): ServerServiceDefinition =
+    ServerServiceDefinition.builder(serviceName)
+      .addMethods(methods: _*)
+      .build()
+
+  /**
+   * Creates a unary method definition using Kyo effects.
+   * 
+   * @param methodName The method name
+   * @param marshaller Marshaller for the request type
+   * @param handler Kyo effect handler for the method
+   * @return A ServerMethodDefinition
+   */
+  def unaryMethod[Req, Res](
+      methodName: String,
+      marshaller: MethodDescriptor.Marshaller[Req] with MethodDescriptor.Marshaller[Res],
+      handler: Req => Res < IOs
+  )(implicit frame: Frame): ServerMethodDefinition[Req, Res] = {
+    val descriptor = MethodDescriptor.newBuilder()
+      .setType(MethodDescriptor.MethodType.UNARY)
+      .setFullMethodName(methodName)
+      .setRequestMarshaller(marshaller)
+      .setResponseMarshaller(marshaller)
+      .build()
+
+    ServerMethodDefinition.create(
+      descriptor,
+      new ServerCallHandler[Req, Res] {
+        def startCall(
+            call: ServerCall[Req, Res],
+            headers: Metadata
+        ): ServerCall.Listener[Req] = {
+          new ServerCall.Listener[Req] {
+            override def onMessage(message: Req): Unit = {
+              val effect = handler(message)
+              IOs.run(effect) match {
+                case Success(response) =>
+                  call.sendHeaders(new Metadata())
+                  call.sendMessage(response)
+                  call.close(Status.OK, new Metadata())
+                case Failure(e) =>
+                  call.close(Status.INTERNAL.withCause(e), new Metadata())
+              }
+            }
+
+            override def onHalfClose(): Unit = {}
+            override def onCancel(): Unit = {}
+            override def onComplete(): Unit = {}
+          }
+        }
+      }
+    )
+  }
+
+  /**
+   * Creates a server streaming method definition using Kyo effects.
+   */
+  def serverStreamingMethod[Req, Res](
+      methodName: String,
+      marshaller: MethodDescriptor.Marshaller[Req] with MethodDescriptor.Marshaller[Res],
+      handler: (Req, StreamObserver[Res]) => Unit < IOs
+  )(implicit frame: Frame): ServerMethodDefinition[Req, Res] = {
+    val descriptor = MethodDescriptor.newBuilder()
+      .setType(MethodDescriptor.MethodType.SERVER_STREAMING)
+      .setFullMethodName(methodName)
+      .setRequestMarshaller(marshaller)
+      .setResponseMarshaller(marshaller)
+      .build()
+
+    ServerMethodDefinition.create(
+      descriptor,
+      new ServerCallHandler[Req, Res] {
+        def startCall(
+            call: ServerCall[Req, Res],
+            headers: Metadata
+        ): ServerCall.Listener[Req] = {
+          new ServerCall.Listener[Req] {
+            override def onMessage(message: Req): Unit = {
+              val observer = new StreamObserver[Res] {
+                def onNext(value: Res): Unit = {
+                  call.sendHeaders(new Metadata())
+                  call.sendMessage(value)
+                }
+                def onError(t: Throwable): Unit =
+                  call.close(Status.INTERNAL.withCause(t), new Metadata())
+                def onCompleted(): Unit =
+                  call.close(Status.OK, new Metadata())
+              }
+              IOs.run(handler(message, observer))
+            }
+
+            override def onHalfClose(): Unit = {}
+            override def onCancel(): Unit = {}
+            override def onComplete(): Unit = {}
+          }
+        }
+      }
+    )
+  }
+
+  /**
+   * Creates a client streaming method definition using Kyo effects.
+   */
+  def clientStreamingMethod[Req, Res](
+      methodName: String,
+      marshaller: MethodDescriptor.Marshaller[Req] with MethodDescriptor.Marshaller[Res],
+      handler: StreamObserver[Req] => Res < IOs
+  )(implicit frame: Frame): ServerMethodDefinition[Req, Res] = {
+    val descriptor = MethodDescriptor.newBuilder()
+      .setType(MethodDescriptor.MethodType.CLIENT_STREAMING)
+      .setFullMethodName(methodName)
+      .setRequestMarshaller(marshaller)
+      .setResponseMarshaller(marshaller)
+      .build()
+
+    ServerMethodDefinition.create(
+      descriptor,
+      new ServerCallHandler[Req, Res] {
+        def startCall(
+            call: ServerCall[Req, Res],
+            headers: Metadata
+        ): ServerCall.Listener[Req] = {
+          val requests = new java.util.concurrent.ConcurrentLinkedQueue[Req]()
+          new ServerCall.Listener[Req] {
+            override def onMessage(message: Req): Unit = {
+              requests.add(message)
+            }
+
+            override def onHalfClose(): Unit = {
+              val observer = new StreamObserver[Req] {
+                def onNext(value: Req): Unit = requests.add(value)
+                def onError(t: Throwable): Unit = {}
+                def onCompleted(): Unit = {}
+              }
+              val effect = handler(observer)
+              IOs.run(effect) match {
+                case Success(response) =>
+                  call.sendHeaders(new Metadata())
+                  call.send
