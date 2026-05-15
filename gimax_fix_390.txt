@@ -1,0 +1,285 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc, ServiceCompanion}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+
+import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.ClassTag
+
+/**
+ * Kyo gRPC support module providing integration between Kyo effects and gRPC.
+ * 
+ * This module enables:
+ * - Defining gRPC services using Kyo effects
+ * - Automatic conversion between gRPC streams and Kyo streams
+ * - Efficient resource management via Kyo's effect system
+ * - High-performance gRPC server and client implementations
+ */
+object GrpcKyo {
+
+  /**
+   * Kyo effect type for gRPC operations.
+   * Combines IO, Async, and Resource effects.
+   */
+  type GrpcIO[T] = T < (IO & Async & Resource)
+
+  /**
+   * Creates a gRPC server that handles requests using Kyo effects.
+   *
+   * @param service the gRPC service definition
+   * @param port the port to bind to
+   * @param config additional server configuration
+   * @return a Kyo effect that yields a managed server
+   */
+  def server[T](
+      service: ServerServiceDefinition,
+      port: Int = 8080,
+      config: ServerBuilder => ServerBuilder = identity
+  )(using
+      io: IO,
+      async: Async,
+      resource: Resource
+  ): GrpcIO[Managed[Server]] = {
+    IO {
+      val builder = config(
+        ServerBuilder.forPort(port)
+          .addService(service)
+          .executor(new KyoExecutionContext())
+      )
+      val server = builder.build()
+      Managed {
+        IO(server.start())
+      }(server => IO {
+        server.shutdown()
+        ()
+      })
+    }
+  }
+
+  /**
+   * Creates a gRPC client stub that uses Kyo effects.
+   *
+   * @param channel the gRPC channel
+   * @param stubFactory factory to create the stub
+   * @return a Kyo effect that yields the stub
+   */
+  def clientStub[T](
+      channel: ManagedChannel,
+      stubFactory: ManagedChannel => T
+  )(using
+      io: IO,
+      async: Async,
+      resource: Resource
+  ): GrpcIO[T] = {
+    IO(stubFactory(channel))
+  }
+
+  /**
+   * Converts a Kyo effect to a gRPC response observer.
+   *
+   * @param effect the Kyo effect producing the response
+   * @param observer the gRPC response observer
+   */
+  def toGrpcObserver[T](
+      effect: T < (IO & Async),
+      observer: StreamObserver[T]
+  )(using io: IO, async: Async): Unit < (IO & Async) = {
+    effect.map { value =>
+      IO {
+        observer.onNext(value)
+        observer.onCompleted()
+      }
+    }.recover {
+      case ex: Throwable =>
+        IO(observer.onError(ex))
+    }
+  }
+
+  /**
+   * Converts a gRPC stream observer to a Kyo stream.
+   *
+   * @param observer the gRPC stream observer
+   * @return a Kyo stream of values
+   */
+  def fromGrpcObserver[T](
+      observer: StreamObserver[T]
+  )(using io: IO, async: Async): Stream[T, IO & Async] = {
+    Stream(observer).flatMap { obs =>
+      Stream.emit(obs).map(identity)
+    }
+  }
+
+  /**
+   * Kyo-based gRPC service definition.
+   * Allows defining gRPC methods using Kyo effects.
+   */
+  abstract class KyoGrpcService(using io: IO, async: Async, resource: Resource) {
+
+    /**
+     * Defines a unary gRPC method.
+     *
+     * @param name the method name
+     * @param handler the handler function
+     * @return the server service definition
+     */
+    def unary[Req, Res](
+        name: MethodDescriptor[Req, Res],
+        handler: Req => Res < (IO & Async)
+    )(using
+        ct: ClassTag[Res]
+    ): ServerServiceDefinition = {
+      ServerServiceDefinition.builder("kyo.grpc")
+        .addMethod(
+          name,
+          ServerCalls.UnaryServerCallHandler[Req, Res] { (request, responseObserver) =>
+            val effect = handler(request)
+            toGrpcObserver(effect, responseObserver)
+          }
+        )
+        .build()
+    }
+
+    /**
+     * Defines a server-streaming gRPC method.
+     *
+     * @param name the method name
+     * @param handler the handler function producing a stream
+     * @return the server service definition
+     */
+    def serverStreaming[Req, Res](
+        name: MethodDescriptor[Req, Res],
+        handler: Req => Stream[Res, IO & Async]
+    )(using
+        ct: ClassTag[Res]
+    ): ServerServiceDefinition = {
+      ServerServiceDefinition.builder("kyo.grpc")
+        .addMethod(
+          name,
+          ServerCalls.ServerStreamingServerCallHandler[Req, Res] { (request, responseObserver) =>
+            val stream = handler(request)
+            stream.runForeach { value =>
+              IO(responseObserver.onNext(value))
+            }.andThen(IO(responseObserver.onCompleted()))
+              .recover { case ex: Throwable =>
+                IO(responseObserver.onError(ex))
+              }
+          }
+        )
+        .build()
+    }
+
+    /**
+     * Defines a client-streaming gRPC method.
+     *
+     * @param name the method name
+     * @param handler the handler function processing a stream
+     * @return the server service definition
+     */
+    def clientStreaming[Req, Res](
+        name: MethodDescriptor[Req, Res],
+        handler: Stream[Req, IO & Async] => Res < (IO & Async)
+    )(using
+        ct: ClassTag[Res]
+    ): ServerServiceDefinition = {
+      ServerServiceDefinition.builder("kyo.grpc")
+        .addMethod(
+          name,
+          ServerCalls.ClientStreamingServerCallHandler[Req, Res] { (responseObserver) =>
+            new StreamObserver[Req] {
+              private val buffer = new java.util.concurrent.ConcurrentLinkedQueue[Req]()
+              private var completed = false
+
+              def onNext(value: Req): Unit = {
+                buffer.add(value)
+              }
+
+              def onError(t: Throwable): Unit = {
+                responseObserver.onError(t)
+              }
+
+              def onCompleted(): Unit = {
+                completed = true
+                val stream = Stream.fromIterable(buffer.toArray(Array.empty[Req]))
+                val effect = handler(stream)
+                toGrpcObserver(effect, responseObserver)
+              }
+            }
+          }
+        )
+        .build()
+    }
+
+    /**
+     * Defines a bidirectional streaming gRPC method.
+     *
+     * @param name the method name
+     * @param handler the handler function processing and producing streams
+     * @return the server service definition
+     */
+    def bidiStreaming[Req, Res](
+        name: MethodDescriptor[Req, Res],
+        handler: Stream[Req, IO & Async] => Stream[Res, IO & Async]
+    )(using
+        ct: ClassTag[Res]
+    ): ServerServiceDefinition = {
+      ServerServiceDefinition.builder("kyo.grpc")
+        .addMethod(
+          name,
+          ServerCalls.BidiStreamingServerCallHandler[Req, Res] { (responseObserver) =>
+            new StreamObserver[Req] {
+              private val buffer = new java.util.concurrent.ConcurrentLinkedQueue[Req]()
+              private var completed = false
+
+              def onNext(value: Req): Unit = {
+                buffer.add(value)
+              }
+
+              def onError(t: Throwable): Unit = {
+                responseObserver.onError(t)
+              }
+
+              def onCompleted(): Unit = {
+                completed = true
+                val inputStream = Stream.fromIterable(buffer.toArray(Array.empty[Req]))
+                val outputStream = handler(inputStream)
+                outputStream.runForeach { value =>
+                  IO(responseObserver.onNext(value))
+                }.andThen(IO(responseObserver.onCompleted()))
+                  .recover { case ex: Throwable =>
+                    IO(responseObserver.onError(ex))
+                  }
+              }
+            }
+          }
+        )
+        .build()
+    }
+  }
+
+  /**
+   * Kyo execution context for gRPC.
+   * Bridges gRPC's threading model with Kyo's effect system.
+   */
+  private class KyoExecutionContext extends ExecutionContext {
+    def execute(r
