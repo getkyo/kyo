@@ -1,0 +1,261 @@
+```scala
+/*
+ * Copyright 2023 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc, ServiceCompanion}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success, Try}
+
+/**
+ * Kyo gRPC support module providing integration between Kyo effects and gRPC services.
+ * 
+ * This module enables:
+ * - Defining gRPC services using Kyo effects
+ * - Client-side gRPC calls with Kyo effect handling
+ * - Server-side gRPC service implementation with Kyo
+ * - Automatic resource management for gRPC channels and servers
+ */
+object GrpcKyo {
+
+  /**
+   * Creates a gRPC server that handles requests using Kyo effects.
+   *
+   * @param service the gRPC service definition
+   * @param port the port to bind to
+   * @param configurer optional server builder configurer
+   * @return a Resource that provides the started gRPC server
+   */
+  def server[T](
+      service: ServerServiceDefinition,
+      port: Int = 8080,
+      configurer: ServerBuilder[?] => ServerBuilder[?] = identity
+  ): Resource[IO, Server] =
+    Resource {
+      IO {
+        val builder = configurer(ServerBuilder.forPort(port)).asInstanceOf[ServerBuilder[ServerBuilder[?]]]
+        builder.addService(service).build().start()
+      } { server =>
+        IO {
+          server.shutdown()
+          ()
+        }
+      }
+    }
+
+  /**
+   * Creates a gRPC client channel with automatic resource management.
+   *
+   * @param target the target address (e.g., "localhost:8080")
+   * @param configurer optional channel builder configurer
+   * @return a Resource that provides the managed channel
+   */
+  def channel(
+      target: String,
+      configurer: ManagedChannelBuilder[?] => ManagedChannelBuilder[?] = identity
+  ): Resource[IO, ManagedChannel] =
+    Resource {
+      IO {
+        configurer(ManagedChannelBuilder.forTarget(target).usePlaintext())
+          .asInstanceOf[ManagedChannelBuilder[ManagedChannelBuilder[?]]]
+          .build()
+      } { channel =>
+        IO {
+          channel.shutdown()
+          ()
+        }
+      }
+    }
+
+  /**
+   * Converts a Kyo effect into a gRPC response observer.
+   *
+   * @param effect the Kyo effect producing a response
+   * @param observer the gRPC StreamObserver to complete
+   * @return a Kyo effect that runs the computation and completes the observer
+   */
+  def toObserver[A, S](
+      effect: A < (IO & S)
+  )(observer: StreamObserver[A])(using Frame): Unit < (IO & S) =
+    effect.map { value =>
+      IO {
+        observer.onNext(value)
+        observer.onCompleted()
+      }
+    }.recover {
+      case ex: Throwable =>
+        IO {
+          observer.onError(ex)
+        }
+    }
+
+  /**
+   * Converts a Kyo effect producing a stream into a gRPC streaming response.
+   *
+   * @param stream the Kyo effect producing a stream of responses
+   * @param observer the gRPC StreamObserver to feed
+   * @return a Kyo effect that runs the stream and completes the observer
+   */
+  def toStreamingObserver[A, S](
+      stream: Stream[A, IO & S]
+  )(observer: StreamObserver[A])(using Frame): Unit < (IO & S) =
+    stream.runForeach { value =>
+      IO {
+        observer.onNext(value)
+      }
+    }.map { _ =>
+      IO {
+        observer.onCompleted()
+      }
+    }.recover {
+      case ex: Throwable =>
+        IO {
+          observer.onError(ex)
+        }
+    }
+
+  /**
+   * Converts a gRPC Future-style call into a Kyo effect.
+   *
+   * @param future the gRPC future to convert
+   * @return a Kyo effect that completes with the future result
+   */
+  def fromFuture[A](future: => Future[A])(using Frame): A < IO =
+    IO {
+      val p = Promise[A]()
+      future.onComplete {
+        case Success(value) => p.success(value)
+        case Failure(ex)    => p.failure(ex)
+      }(using ExecutionContext.parasitic)
+      p
+    }.flatMap(_.get)
+
+  /**
+   * Creates a unary gRPC call from a Kyo effect.
+   *
+   * @param stub the gRPC stub providing the call
+   * @param call the function that creates the gRPC future call
+   * @return a Kyo effect that performs the gRPC call
+   */
+  def unaryCall[Req, Res, S](
+      stub: AnyRef,
+      call: (Req, StreamObserver[Res]) => Unit
+  )(request: Req)(using Frame): Res < IO =
+    IO {
+      val observer = new GrpcKyoObserver[Res]()
+      call(request, observer)
+      observer.future
+    }.flatMap(fromFuture)
+
+  /**
+   * Creates a server-streaming gRPC call returning a Kyo Stream.
+   *
+   * @param stub the gRPC stub providing the call
+   * @param call the function that creates the streaming call
+   * @return a Kyo effect that produces a Stream of responses
+   */
+  def serverStreamingCall[Req, Res, S](
+      stub: AnyRef,
+      call: (Req, StreamObserver[Res]) => Unit
+  )(request: Req)(using Frame): Stream[Res, IO] =
+    Stream(IO {
+      val observer = new GrpcKyoStreamingObserver[Res]()
+      call(request, observer)
+      observer.stream
+    }).flatten
+
+  /**
+   * Creates a client-streaming gRPC call.
+   *
+   * @param stub the gRPC stub providing the call
+   * @param call the function that creates the streaming call
+   * @return a Kyo effect that sends a stream and receives a response
+   */
+  def clientStreamingCall[Req, Res, S](
+      stub: AnyRef,
+      call: StreamObserver[Req] => StreamObserver[Res]
+  )(requests: Stream[Req, IO & S])(using Frame): Res < (IO & S) =
+    IO {
+      val responseObserver = new GrpcKyoObserver[Res]()
+      val requestObserver = call(responseObserver)
+      requests.runForeach { req =>
+        IO {
+          requestObserver.onNext(req)
+        }
+      }.map { _ =>
+        IO {
+          requestObserver.onCompleted()
+        }
+      }.andThen(
+        IO {
+          responseObserver.future
+        }
+      )
+    }.flatMap(fromFuture)
+
+  /**
+   * Creates a bidirectional streaming gRPC call.
+   *
+   * @param stub the gRPC stub providing the call
+   * @param call the function that creates the streaming call
+   * @return a Kyo effect that sends a stream and receives a response stream
+   */
+  def bidiStreamingCall[Req, Res, S](
+      stub: AnyRef,
+      call: StreamObserver[Res] => StreamObserver[Req]
+  )(requests: Stream[Req, IO & S])(using Frame): Stream[Res, IO & S] =
+    Stream(IO {
+      val responseObserver = new GrpcKyoStreamingObserver[Res]()
+      val requestObserver = call(responseObserver)
+      requests.runForeach { req =>
+        IO {
+          requestObserver.onNext(req)
+        }
+      }.map { _ =>
+        IO {
+          requestObserver.onCompleted()
+        }
+      }.andThen(
+        IO {
+          responseObserver.stream
+        }
+      )
+    }).flatten
+
+  /**
+   * Implicit conversion to add Kyo support to gRPC service companions.
+   */
+  implicit class ServiceCompanionOps[T](companion: ServiceCompanion[T]) {
+    def bindService(impl: T): ServerServiceDefinition =
+      companion.bindService(impl, ExecutionContext.parasitic)
+  }
+
+  /**
+   * Extension methods for gRPC stubs to enable Kyo integration.
+   */
+  implicit class GrpcStubOps[Req, Res](stub: AnyRef) {
+    def kyoUnaryCall(call: (Req, StreamObserver[Res]) => Unit)(request: Req)(using Frame): Res < IO =
+      unaryCall(stub, call)(request)
+
+    def
