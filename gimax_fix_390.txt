@@ -1,0 +1,267 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import scala.concurrent.duration.*
+import scalapb.grpc.{Grpc => ScalaPbGrpc}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+import com.google.protobuf.{ByteString, CodedInputStream, CodedOutputStream}
+import java.io.{ByteArrayInputStream, InputStream}
+import java.util.concurrent.TimeUnit
+import scala.reflect.ClassTag
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables type-safe, high-performance gRPC client and server implementations
+ * using Kyo's effect system for resource management, concurrency, and error handling.
+ */
+object Grpc:
+
+  /**
+   * Configuration for gRPC channels and servers.
+   *
+   * @param deadline Default deadline for RPC calls
+   * @param maxMessageSize Maximum message size in bytes
+   * @param enableRetry Whether to enable automatic retries
+   * @param retryMaxAttempts Maximum number of retry attempts
+   * @param retryBackoff Initial backoff duration for retries
+   */
+  case class Config(
+      deadline: Duration = 30.seconds,
+      maxMessageSize: Int = 4 * 1024 * 1024,
+      enableRetry: Boolean = false,
+      retryMaxAttempts: Int = 3,
+      retryBackoff: Duration = 100.millis
+  )
+
+  /**
+   * A managed gRPC channel with automatic resource cleanup.
+   */
+  class ManagedChannel private[grpc] (
+      private val channel: io.grpc.ManagedChannel,
+      private val config: Config
+  ):
+    
+    /**
+     * Creates a blocking stub for synchronous calls.
+     */
+    def blockingStub[T <: AbstractBlockingStub[T]](stubFactory: ManagedChannel => T): T =
+      stubFactory(this)
+
+    /**
+     * Creates a future stub for async calls.
+     */
+    def futureStub[T <: AbstractFutureStub[T]](stubFactory: ManagedChannel => T): T =
+      stubFactory(this)
+
+    /**
+     * Shuts down the channel gracefully.
+     */
+    def shutdown: Unit < IOs =
+      IOs {
+        channel.shutdown()
+        channel.awaitTermination(5, TimeUnit.SECONDS)
+        ()
+      }
+
+    /**
+     * Shuts down the channel forcefully.
+     */
+    def shutdownNow: Unit < IOs =
+      IOs {
+        channel.shutdownNow()
+        ()
+      }
+
+  /**
+   * Creates a managed channel to the given target.
+   *
+   * @param target Target address (e.g., "localhost:8080")
+   * @param config Optional configuration
+   * @return Managed channel wrapped in IOs
+   */
+  def channel(target: String, config: Config = Config()): ManagedChannel < IOs =
+    IOs {
+      val builder = ManagedChannelBuilder.forTarget(target)
+        .maxInboundMessageSize(config.maxMessageSize)
+        .maxOutboundMessageSize(config.maxMessageSize)
+        .deadlineAfter(config.deadline.toMillis, TimeUnit.MILLISECONDS)
+        .keepAliveTime(30, TimeUnit.SECONDS)
+        .keepAliveTimeout(10, TimeUnit.SECONDS)
+        .keepAliveWithoutCalls(true)
+        .idleTimeout(60, TimeUnit.SECONDS)
+      
+      if config.enableRetry then
+        builder.enableRetry()
+        builder.defaultServiceConfig(
+          Map(
+            "methodConfig" -> List(
+              Map(
+                "name" -> List(Map("service" -> "", "method" -> "")),
+                "retryPolicy" -> Map(
+                  "maxAttempts" -> config.retryMaxAttempts.toString,
+                  "initialBackoff" -> config.retryBackoff.toMillis.toString,
+                  "maxBackoff" -> (config.retryBackoff * 10).toMillis.toString,
+                  "backoffMultiplier" -> "2.0",
+                  "retryableStatusCodes" -> List("UNAVAILABLE")
+                )
+              )
+            )
+          ).asJava
+        )
+      
+      new ManagedChannel(builder.build(), config)
+    }
+
+  /**
+   * Creates a server builder for implementing gRPC services.
+   *
+   * @param port Port to listen on
+   * @param config Optional configuration
+   * @return ServerBuilder wrapped in IOs
+   */
+  def server(port: Int, config: Config = Config()): ServerBuilder < IOs =
+    IOs {
+      ServerBuilder.forPort(port)
+        .maxInboundMessageSize(config.maxMessageSize)
+        .maxOutboundMessageSize(config.maxMessageSize)
+        .handshakeTimeout(config.deadline.toMillis, TimeUnit.MILLISECONDS)
+    }
+
+  /**
+   * Server builder wrapper providing fluent API for service registration.
+   */
+  class ServerBuilder private[grpc] (private val builder: io.grpc.ServerBuilder[_]):
+
+    /**
+     * Adds a service implementation to the server.
+     *
+     * @param service Service definition and implementation
+     * @return This builder
+     */
+    def addService(service: BindableService): ServerBuilder =
+      new ServerBuilder(builder.addService(service))
+
+    /**
+     * Starts the server.
+     *
+     * @return Started server
+     */
+    def start: Server < IOs =
+      IOs {
+        val server = builder.build()
+        server.start()
+        new Server(server)
+      }
+
+  /**
+   * A running gRPC server with automatic shutdown.
+   */
+  class Server private[grpc] (private val server: io.grpc.Server):
+    
+    /**
+     * Returns the port the server is listening on.
+     */
+    def port: Int < IOs = IOs(server.getPort())
+
+    /**
+     * Shuts down the server gracefully.
+     */
+    def shutdown: Unit < IOs =
+      IOs {
+        server.shutdown()
+        server.awaitTermination(5, TimeUnit.SECONDS)
+        ()
+      }
+
+    /**
+     * Shuts down the server forcefully.
+     */
+    def shutdownNow: Unit < IOs =
+      IOs {
+        server.shutdownNow()
+        ()
+      }
+
+  /**
+   * Type class for marshalling protobuf messages.
+   */
+  trait Marshaller[A]:
+    def marshall(a: A): Array[Byte]
+    def unmarshall(bytes: Array[Byte]): A
+
+  object Marshaller:
+    given [A <: GeneratedMessage with Message[A]: GeneratedMessageCompanion]: Marshaller[A] with
+      def marshall(a: A): Array[Byte] = a.toByteArray
+      def unmarshall(bytes: Array[Byte]): A = 
+        summon[GeneratedMessageCompanion[A]].parseFrom(bytes)
+
+  /**
+   * Makes a unary gRPC call using Kyo effects.
+   *
+   * @param stub The gRPC stub
+   * @param request The request message
+   * @param call The call function on the stub
+   * @return Response wrapped in IOs
+   */
+  def unaryCall[Req, Res](
+      stub: AbstractStub[_],
+      request: Req
+  )(call: (AbstractStub[_], Req) => com.google.common.util.concurrent.ListenableFuture[Res]): Res < IOs =
+    IOs {
+      val future = call(stub, request)
+      val result = future.get(30, TimeUnit.SECONDS)
+      result
+    }
+
+  /**
+   * Makes a server-streaming gRPC call.
+   *
+   * @param stub The gRPC stub
+   * @param request The request message
+   * @param call The call function on the stub
+   * @return Stream of responses
+   */
+  def serverStreaming[Req, Res](
+      stub: AbstractStub[_],
+      request: Req
+  )(call: (AbstractStub[_], Req) => java.util.Iterator[Res]): Stream[Res, IOs] =
+    Stream[Res, IOs] { emit =>
+      IOs {
+        val iterator = call(stub, request)
+        while iterator.hasNext do
+          emit(iterator.next())
+      }
+    }
+
+  /**
+   * Makes a client-streaming gRPC call.
+   *
+   * @param stub The gRPC stub
+   * @param requests Stream of requests
+   * @param call The call function on the stub
+   * @return Response wrapped in IOs
+   */
+  def clientStreaming[Req, Res](
+      stub: AbstractStub[_],
+      requests: Stream[Req, IOs
