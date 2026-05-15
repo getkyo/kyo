@@ -1,0 +1,190 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.{ServerBuilder, ServerServiceDefinition, ManagedChannelBuilder, Channel, MethodDescriptor, ServerCall, ServerCallHandler, ClientCall, ClientInterceptor, Metadata, Status, CallOptions}
+import io.grpc.stub.{ServerCalls, ClientCalls, StreamObserver}
+import kyo.*
+import kyo.kernel.*
+import scala.concurrent.duration.*
+import scala.reflect.ClassTag
+import com.google.protobuf.{Message, Parser}
+import java.util.concurrent.TimeUnit
+import scala.jdk.CollectionConverters.*
+
+// Core gRPC types for Kyo
+object Grpc:
+
+  // Type class for protobuf message serialization
+  trait GrpcSerializable[T]:
+    def toMessage(t: T): Message
+    def fromMessage(m: Message): T
+    def parser: Parser[? <: Message]
+
+  // Kyo effect for gRPC operations
+  sealed trait GrpcIO extends IO
+
+  // Server abstraction
+  class GrpcServer private (private val server: io.grpc.Server):
+    def start: Unit < GrpcIO = IO(server.start())
+    def shutdown: Unit < GrpcIO = IO(server.shutdown())
+    def awaitTermination(timeout: Duration): Boolean < GrpcIO = 
+      IO(server.awaitTermination(timeout.toMillis, TimeUnit.MILLISECONDS))
+    def getPort: Int < GrpcIO = IO(server.getPort)
+
+  object GrpcServer:
+    def builder(port: Int): GrpcServerBuilder = GrpcServerBuilder(ServerBuilder.forPort(port))
+
+  case class GrpcServerBuilder(private val builder: ServerBuilder[?]):
+    def addService(service: GrpcService): GrpcServerBuilder =
+      copy(builder = builder.addService(service.definition))
+    def build: GrpcServer < GrpcIO = IO(new GrpcServer(builder.build()))
+
+  // Service definition
+  trait GrpcService:
+    def definition: ServerServiceDefinition
+
+  // Client abstraction
+  class GrpcClient private (private val channel: Channel):
+    def close: Unit < GrpcIO = IO(channel match
+      case mc: io.grpc.ManagedChannel => mc.shutdown()
+      case _ => ()
+    )
+
+  object GrpcClient:
+    def connect(host: String, port: Int): GrpcClient < GrpcIO =
+      IO {
+        val channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build()
+        new GrpcClient(channel)
+      }
+
+  // Unary call support
+  def unaryCall[Req: GrpcSerializable, Res: GrpcSerializable](
+      client: GrpcClient,
+      method: MethodDescriptor[Req, Res],
+      request: Req
+  ): Res < GrpcIO =
+    IO {
+      val serializableReq = implicitly[GrpcSerializable[Req]]
+      val serializableRes = implicitly[GrpcSerializable[Res]]
+      val call = client.channel.newCall(method, CallOptions.DEFAULT)
+      val listener = new ClientCalls.UnaryStreamObserver[Res]()
+      call.start(listener, new Metadata())
+      call.sendMessage(serializableReq.toMessage(request).asInstanceOf[Req])
+      call.halfClose()
+      listener.awaitResponse()
+    }
+
+  // Server streaming support
+  def serverStreamingCall[Req: GrpcSerializable, Res: GrpcSerializable](
+      client: GrpcClient,
+      method: MethodDescriptor[Req, Res],
+      request: Req
+  ): Stream[Res, GrpcIO] < GrpcIO =
+    IO {
+      val serializableReq = implicitly[GrpcSerializable[Req]]
+      val serializableRes = implicitly[GrpcSerializable[Res]]
+      val call = client.channel.newCall(method, CallOptions.DEFAULT)
+      val listener = new ClientCalls.StreamingStreamObserver[Res]()
+      call.start(listener, new Metadata())
+      call.sendMessage(serializableReq.toMessage(request).asInstanceOf[Req])
+      call.halfClose()
+      Stream.fromIterator(listener.iterator().asScala.map(serializableRes.fromMessage))
+    }
+
+  // Client streaming support
+  def clientStreamingCall[Req: GrpcSerializable, Res: GrpcSerializable](
+      client: GrpcClient,
+      method: MethodDescriptor[Req, Res],
+      requests: Stream[Req, Any]
+  ): Res < GrpcIO =
+    IO {
+      val serializableReq = implicitly[GrpcSerializable[Req]]
+      val serializableRes = implicitly[GrpcSerializable[Res]]
+      val call = client.channel.newCall(method, CallOptions.DEFAULT)
+      val listener = new ClientCalls.UnaryStreamObserver[Res]()
+      call.start(listener, new Metadata())
+      requests.foreach(req => call.sendMessage(serializableReq.toMessage(req).asInstanceOf[Req]))
+      call.halfClose()
+      listener.awaitResponse()
+    }
+
+  // Bidirectional streaming support
+  def bidiStreamingCall[Req: GrpcSerializable, Res: GrpcSerializable](
+      client: GrpcClient,
+      method: MethodDescriptor[Req, Res],
+      requests: Stream[Req, Any]
+  ): Stream[Res, GrpcIO] < GrpcIO =
+    IO {
+      val serializableReq = implicitly[GrpcSerializable[Req]]
+      val serializableRes = implicitly[GrpcSerializable[Res]]
+      val call = client.channel.newCall(method, CallOptions.DEFAULT)
+      val listener = new ClientCalls.StreamingStreamObserver[Res]()
+      call.start(listener, new Metadata())
+      requests.foreach(req => call.sendMessage(serializableReq.toMessage(req).asInstanceOf[Req]))
+      call.halfClose()
+      Stream.fromIterator(listener.iterator().asScala.map(serializableRes.fromMessage))
+    }
+
+  // Helper to create method descriptors
+  def methodDescriptor[Req: GrpcSerializable, Res: GrpcSerializable](
+      serviceName: String,
+      methodName: String,
+      isServerStreaming: Boolean = false,
+      isClientStreaming: Boolean = false
+  ): MethodDescriptor[Req, Res] =
+    val serializableReq = implicitly[GrpcSerializable[Req]]
+    val serializableRes = implicitly[GrpcSerializable[Res]]
+    MethodDescriptor.newBuilder()
+      .setFullMethodName(MethodDescriptor.generateFullMethodName(serviceName, methodName))
+      .setType(
+        if (isServerStreaming && isClientStreaming) MethodDescriptor.MethodType.BIDI_STREAMING
+        else if (isServerStreaming) MethodDescriptor.MethodType.SERVER_STREAMING
+        else if (isClientStreaming) MethodDescriptor.MethodType.CLIENT_STREAMING
+        else MethodDescriptor.MethodType.UNARY
+      )
+      .setRequestMarshaller(new GrpcMarshaller(serializableReq.parser))
+      .setResponseMarshaller(new GrpcMarshaller(serializableRes.parser))
+      .build()
+
+  private class GrpcMarshaller[T](parser: Parser[? <: Message]) extends MethodDescriptor.Marshaller[T]:
+    override def parse(stream: java.io.InputStream): T = 
+      parser.parseFrom(stream).asInstanceOf[T]
+    override def stream(value: T): java.io.InputStream = 
+      value.asInstanceOf[Message].toByteString.newInput()
+
+  // Server call handler helpers
+  def unaryServerHandler[Req: GrpcSerializable, Res: GrpcSerializable](
+      f: Req => Res < GrpcIO
+  ): ServerCallHandler[Req, Res] =
+    new ServerCallHandler[Req, Res]:
+      override def startCall(call: ServerCall[Req, Res], headers: Metadata): ServerCall.Listener[Req] =
+        new ServerCall.Listener[Req]:
+          override def onMessage(message: Req): Unit =
+            val serializableRes = implicitly[GrpcSerializable[Res]]
+            val result = IO.run(f(message))
+            call.sendMessage(serializableRes.toMessage(result).asInstanceOf[Res])
+            call.close(Status.OK, new Metadata())
+
+  def serverStreamingHandler[Req: GrpcSerializable, Res: GrpcSerializable](
+      f: Req => Stream[Res, GrpcIO]
+  ): ServerCallHandler[Req, Res] =
+    new ServerCallHandler[Req, Res]:
+      override def startCall(call: ServerCall[Req, Res], headers: Metadata): ServerCall.Listener[Req] =
+        new ServerCall.Listener[Req]:
+          override def onMessage(message: Re
