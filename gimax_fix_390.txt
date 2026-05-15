@@ -1,0 +1,259 @@
+```scala
+/*
+ * Copyright 2023 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import scalapb.grpc.{Grpc => ScalaPbGrpc}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion}
+import com.google.protobuf.{ByteString, CodedInputStream, CodedOutputStream}
+import java.io.{ByteArrayInputStream, InputStream}
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success, Try}
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables efficient gRPC client and server implementations using
+ * Kyo's effect system for resource management and concurrency.
+ */
+object Grpc {
+
+  /**
+   * Creates a gRPC client stub for the given service.
+   * 
+   * @param channel The gRPC channel to use
+   * @param options Call options for the stub
+   * @return A client stub wrapped in Kyo effects
+   */
+  def client[T <: AbstractStub[T]](
+      channel: Channel,
+      options: CallOptions = CallOptions.DEFAULT
+  ): T = 
+    throw new UnsupportedOperationException("Use generated client stubs instead")
+
+  /**
+   * Creates a gRPC server that handles requests using Kyo effects.
+   * 
+   * @param service The service definition
+   * @param port The port to bind to
+   * @return A Kyo effect that starts the server
+   */
+  def server(
+      service: ServerServiceDefinition,
+      port: Int = 8080
+  ): Server = 
+    ServerBuilder.forPort(port)
+      .addService(service)
+      .build()
+      .start()
+
+  /**
+   * Kyo-based gRPC client stub that uses fibers for non-blocking I/O.
+   */
+  abstract class KyoClientStub[S <: KyoClientStub[S]](
+      channel: Channel,
+      options: CallOptions
+  ) extends AbstractStub[S](channel, options) {
+
+    /**
+     * Performs a unary gRPC call.
+     * 
+     * @param method The method descriptor
+     * @param request The request message
+     * @param marshaller The response marshaller
+     * @return A Kyo effect that yields the response
+     */
+    def unaryCall[Req, Res](
+        method: MethodDescriptor[Req, Res],
+        request: Req,
+        marshaller: MessageMarshaller[Res]
+    )(using Frame): Res < (IO & Async) = {
+      IO {
+        val call = newCall(method, options)
+        Async.run {
+          val listener = new KyoClientCallListener[Res]()
+          call.start(listener, new KyoClientCallListener.KyoClientResponseListener(request, marshaller))
+          listener.result
+        }
+      }.flatMap(identity)
+    }
+
+    /**
+     * Performs a server-streaming gRPC call.
+     * 
+     * @param method The method descriptor
+     * @param request The request message
+     * @param marshaller The response marshaller
+     * @return A Kyo stream of responses
+     */
+    def serverStreamingCall[Req, Res](
+        method: MethodDescriptor[Req, Res],
+        request: Req,
+        marshaller: MessageMarshaller[Res]
+    )(using Frame): Stream[Res, IO & Async] = {
+      Stream(emit => {
+        IO {
+          val call = newCall(method, options)
+          val listener = new KyoServerStreamingListener[Res](emit, marshaller)
+          call.start(listener, new KyoClientCallListener.KyoClientResponseListener(request, marshaller))
+          listener.done
+        }.flatMap(identity)
+      })
+    }
+
+    /**
+     * Performs a client-streaming gRPC call.
+     * 
+     * @param method The method descriptor
+     * @param requests A stream of requests
+     * @param marshaller The response marshaller
+     * @return A Kyo effect that yields the response
+     */
+    def clientStreamingCall[Req, Res](
+        method: MethodDescriptor[Req, Res],
+        requests: Stream[Req, Any],
+        marshaller: MessageMarshaller[Res]
+    )(using Frame): Res < (IO & Async) = {
+      IO {
+        val call = newCall(method, options)
+        val listener = new KyoClientCallListener[Res]()
+        call.start(listener, new KyoClientStreamingRequestListener(requests, call, marshaller))
+        listener.result
+      }.flatMap(identity)
+    }
+
+    /**
+     * Performs a bidirectional streaming gRPC call.
+     * 
+     * @param method The method descriptor
+     * @param requests A stream of requests
+     * @param marshaller The response marshaller
+     * @return A stream of responses
+     */
+    def bidiStreamingCall[Req, Res](
+        method: MethodDescriptor[Req, Res],
+        requests: Stream[Req, Any],
+        marshaller: MessageMarshaller[Res]
+    )(using Frame): Stream[Res, IO & Async] = {
+      Stream(emit => {
+        IO {
+          val call = newCall(method, options)
+          val listener = new KyoServerStreamingListener[Res](emit, marshaller)
+          call.start(listener, new KyoClientStreamingRequestListener(requests, call, marshaller))
+          listener.done
+        }.flatMap(identity)
+      })
+    }
+
+    override def build(channel: Channel, options: CallOptions): S
+  }
+
+  /**
+   * Kyo-based gRPC server service definition.
+   */
+  abstract class KyoServerServiceDefinition {
+    
+    /**
+     * Binds this service to a server.
+     * 
+     * @return The server service definition
+     */
+    def bindService(): ServerServiceDefinition
+  }
+
+  /**
+   * Helper to create a unary server method handler.
+   * 
+   * @param handler The handler function
+   * @return A server call handler
+   */
+  def unaryServerHandler[Req, Res](
+      handler: Req => Res < (IO & Async)
+  )(using 
+      marshaller: MessageMarshaller[Res],
+      descriptor: MethodDescriptor[Req, Res]
+  ): ServerCallHandler[Req, Res] = {
+    new ServerCallHandler[Req, Res] {
+      def startCall(
+          call: ServerCall[Req, Res],
+          headers: Metadata
+      ): Unit = {
+        val listener = new KyoServerCallListener[Req, Res](call, handler, marshaller)
+        call.request(1)
+        call.setMessageCompression(false)
+        call.sendHeaders(new Metadata())
+        listener.start()
+      }
+    }
+  }
+
+  /**
+   * Helper to create a server-streaming server method handler.
+   * 
+   * @param handler The handler function that returns a stream
+   * @return A server call handler
+   */
+  def serverStreamingServerHandler[Req, Res](
+      handler: Req => Stream[Res, IO & Async]
+  )(using 
+      marshaller: MessageMarshaller[Res],
+      descriptor: MethodDescriptor[Req, Res]
+  ): ServerCallHandler[Req, Res] = {
+    new ServerCallHandler[Req, Res] {
+      def startCall(
+          call: ServerCall[Req, Res],
+          headers: Metadata
+      ): Unit = {
+        val listener = new KyoServerStreamingServerCallListener[Req, Res](call, handler, marshaller)
+        call.request(1)
+        call.setMessageCompression(false)
+        call.sendHeaders(new Metadata())
+        listener.start()
+      }
+    }
+  }
+
+  /**
+   * Helper to create a client-streaming server method handler.
+   * 
+   * @param handler The handler function that processes a stream of requests
+   * @return A server call handler
+   */
+  def clientStreamingServerHandler[Req, Res](
+      handler: Stream[Req, IO & Async] => Res < (IO & Async)
+  )(using 
+      marshaller: MessageMarshaller[Res],
+      descriptor: MethodDescriptor[Req, Res]
+  ): ServerCallHandler[Req, Res] = {
+    new ServerCallHandler[Req, Res] {
+      def startCall(
+          call: ServerCall[Req, Res],
+          headers: Metadata
+      ): Unit = {
+        val listener = new KyoClientStreamingServerCallListener[Req, Res](call, handler, marshaller)
+        call.request(1)
+        call.setMessageCompression(false)
+        call.sendHeaders(new Metadata())
+        listener.start()
+      }
+    }
+ 
