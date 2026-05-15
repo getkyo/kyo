@@ -1,0 +1,263 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.{ServerBuilder, ServerServiceDefinition, ManagedChannelBuilder, StatusRuntimeException}
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.kernel.*
+import scalapb.grpc.{Grpc, ServiceCompanion}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+import com.google.protobuf.ByteString
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Try
+import java.util.concurrent.atomic.AtomicReference
+import java.util.logging.Logger
+
+/**
+ * Kyo gRPC support module providing integration between Kyo effects and gRPC.
+ * 
+ * This module enables:
+ * - Defining gRPC services using Kyo effects
+ * - Client-side gRPC calls with Kyo effect handling
+ * - Automatic conversion between gRPC futures and Kyo effects
+ * - Streaming support via Kyo streams
+ */
+object GrpcKyo {
+
+  private val logger = Logger.getLogger(getClass.getName)
+
+  /**
+   * Converts a Scala Future to a Kyo effect.
+   */
+  def fromFuture[A](future: => Future[A])(using Frame): A < (Async & Abort[Throwable]) =
+    Async.fromFuture(future)
+
+  /**
+   * Converts a Kyo effect to a Scala Future.
+   */
+  def toFuture[A](effect: => A < (Async & Abort[Throwable]))(using Frame): Future[A] =
+    Async.run(effect).map(_.toFuture).pipe(Async.run).eval
+
+  /**
+   * Creates a gRPC server that handles requests using Kyo effects.
+   */
+  class KyoServer private (builder: ServerBuilder[_]) {
+    
+    /**
+     * Adds a service definition to the server.
+     */
+    def addService(service: ServerServiceDefinition): KyoServer =
+      new KyoServer(builder.addService(service))
+
+    /**
+     * Starts the server and returns a Kyo effect that completes when the server is started.
+     */
+    def start(using Frame): Server < (Async & Abort[Throwable]) =
+      fromFuture(Future {
+        val server = builder.build().start()
+        logger.info(s"gRPC server started on port ${server.getPort}")
+        Server(server)
+      })
+
+    /**
+     * Creates a server on the specified port.
+     */
+    def port(port: Int): KyoServer =
+      new KyoServer(builder.directExecutor().forPort(port))
+  }
+
+  object KyoServer {
+    def apply(): KyoServer = new KyoServer(ServerBuilder.forPort(0))
+    def apply(port: Int): KyoServer = new KyoServer(ServerBuilder.forPort(port))
+  }
+
+  /**
+   * Wrapper around a gRPC server that provides Kyo-based lifecycle management.
+   */
+  case class Server private[grpc] (server: io.grpc.Server) {
+    
+    /**
+     * Shuts down the server gracefully.
+     */
+    def shutdown(using Frame): Unit < (Async & Abort[Throwable]) =
+      fromFuture(Future {
+        server.shutdown()
+        server.awaitTermination()
+      })
+
+    /**
+     * Shuts down the server immediately.
+     */
+    def shutdownNow(using Frame): Unit < (Async & Abort[Throwable]) =
+      fromFuture(Future {
+        server.shutdownNow()
+        server.awaitTermination()
+      })
+
+    /**
+     * Returns the port the server is listening on.
+     */
+    def port: Int = server.getPort
+  }
+
+  /**
+   * Creates a gRPC client channel managed with Kyo effects.
+   */
+  class KyoChannel private (builder: ManagedChannelBuilder[_]) {
+    
+    /**
+     * Builds the channel and returns a Kyo-managed channel.
+     */
+    def build(using Frame): Channel < (Async & Abort[Throwable]) =
+      fromFuture(Future {
+        val channel = builder.build()
+        logger.info(s"gRPC channel created to ${channel.authority()}")
+        Channel(channel)
+      })
+
+    /**
+     * Configures the channel to use plaintext (no TLS).
+     */
+    def usePlaintext(): KyoChannel =
+      new KyoChannel(builder.usePlaintext())
+  }
+
+  object KyoChannel {
+    def forAddress(host: String, port: Int): KyoChannel =
+      new KyoChannel(ManagedChannelBuilder.forAddress(host, port))
+    def forTarget(target: String): KyoChannel =
+      new KyoChannel(ManagedChannelBuilder.forTarget(target))
+  }
+
+  /**
+   * Wrapper around a gRPC channel that provides Kyo-based lifecycle management.
+   */
+  case class Channel private[grpc] (channel: io.grpc.Channel) {
+    
+    /**
+     * Shuts down the channel.
+     */
+    def shutdown(using Frame): Unit < (Async & Abort[Throwable]) =
+      fromFuture(Future {
+        channel.asInstanceOf[io.grpc.ManagedChannel].shutdown()
+        channel.asInstanceOf[io.grpc.ManagedChannel].awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+      })
+
+    /**
+     * Creates a blocking stub for the given service.
+     */
+    def blockingStub[S](companion: ServiceCompanion[S]): S =
+      companion.blockingStub(channel)
+
+    /**
+     * Creates a future stub for the given service.
+     */
+    def futureStub[S](companion: ServiceCompanion[S]): S =
+      companion.stub(channel)
+  }
+
+  /**
+   * Provides Kyo-based gRPC service implementation support.
+   * 
+   * Usage:
+   * {{{
+   *   object MyService extends KyoGrpcService[MyServiceGrpc.MyService] {
+   *     def bindService: ServerServiceDefinition = ???
+   *   }
+   * }}}
+   */
+  trait KyoGrpcService[S] {
+    
+    /**
+     * Binds the service implementation to a gRPC service definition.
+     */
+    def bindService: ServerServiceDefinition
+
+    /**
+     * Creates a server service definition from a Kyo-based implementation.
+     */
+    def bindKyoService(impl: S)(using Frame): ServerServiceDefinition =
+      impl.asInstanceOf[Any] match {
+        case service: KyoGrpcService[_] => service.bindService
+        case _ => throw new IllegalArgumentException("Service must extend KyoGrpcService")
+      }
+  }
+
+  /**
+   * Converts a Kyo effect to a gRPC StreamObserver.
+   */
+  def toStreamObserver[A](effect: => A < (Async & Abort[Throwable]))(using Frame): StreamObserver[A] =
+    new StreamObserver[A] {
+      private val result = new AtomicReference[Option[Try[A]]](None)
+      
+      def onNext(value: A): Unit = {
+        result.set(Some(Try(value)))
+      }
+      
+      def onError(t: Throwable): Unit = {
+        result.set(Some(scala.util.Failure(t)))
+      }
+      
+      def onCompleted(): Unit = {
+        // Stream completed
+      }
+      
+      def getResult: Option[Try[A]] = result.get()
+    }
+
+  /**
+   * Creates a gRPC unary call from a Kyo effect.
+   */
+  def unaryCall[Req, Res](
+    request: Req,
+    f: (Req, StreamObserver[Res]) => Unit
+  )(using Frame): Res < (Async & Abort[Throwable]) =
+    fromFuture {
+      val promise = scala.concurrent.Promise[Res]()
+      f(request, new StreamObserver[Res] {
+        def onNext(value: Res): Unit = promise.success(value)
+        def onError(t: Throwable): Unit = promise.failure(t)
+        def onCompleted(): Unit = {
+          if (!promise.isCompleted) {
+            promise.failure(new StatusRuntimeException(io.grpc.Status.INTERNAL.withDescription("No response received")))
+          }
+        }
+      })
+      promise.future
+    }
+
+  /**
+   * Creates a gRPC server streaming call from a Kyo effect.
+   */
+  def serverStreamingCall[Req, Res](
+    request: Req,
+    f: (Req, StreamObserver[Res]) => Unit
+  )(using Frame): Stream[Res, Async & Abort[Throwable]] =
+    Stream(emit => {
+      val observer = new StreamObserver[Res] {
+        def onNext(value: Res): Unit = emit(value)
+        def onError(t: Throwable): Unit = throw t
+        def onCompleted(): Unit = ()
+      }
+      f(request, observer)
+    })
+
+  /**
+   * Creates a gRPC client streaming call from a Kyo effect.
+   */
