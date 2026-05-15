@@ -1,0 +1,251 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc, ServiceCompanion}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+
+import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.ClassTag
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables gRPC client and server implementations using Kyo's effect system,
+ * providing type-safe, composable gRPC services with proper resource management.
+ */
+object GrpcKyo:
+
+  /**
+   * Creates a gRPC server that handles requests using Kyo effects.
+   * 
+   * @param service the service implementation
+   * @param port the port to bind to
+   * @param configurer optional server builder configurer
+   * @return a Kyo effect that manages the server lifecycle
+   */
+  def serve[A <: BindableService: ClassTag](
+      service: A,
+      port: Int,
+      configurer: ServerBuilder => ServerBuilder = identity
+  )(using Frame): ServerResource[A] =
+    ServerResource(service, port, configurer)
+
+  /**
+   * Creates a gRPC client stub for the given service.
+   * 
+   * @param channel the managed channel
+   * @return a Kyo effect that provides the client stub
+   */
+  def client[A <: Grpc.Client](serviceCompanion: ServiceCompanion[A], channel: ManagedChannel): A =
+    serviceCompanion.newStub(channel)
+
+  /**
+   * Resource wrapper for gRPC server lifecycle management.
+   */
+  class ServerResource[A <: BindableService](
+      service: A,
+      port: Int,
+      configurer: ServerBuilder => ServerBuilder
+  )(using Frame):
+    
+    private val serverBuilder = configurer(
+      ServerBuilder.forPort(port).addService(service)
+    )
+    
+    /**
+     * Starts the server and returns a resource that ensures proper shutdown.
+     */
+    def start: ServerResource.Handle < (IO & Resource) =
+      IO {
+        val server = serverBuilder.build().start()
+        ServerResource.Handle(server)
+      }
+    
+    object ServerResource:
+      case class Handle private[GrpcKyo] (server: Server):
+        /**
+         * Shuts down the server gracefully.
+         */
+        def shutdown: Unit < IO =
+          IO(server.shutdown())
+        
+        /**
+         * Blocks until the server terminates.
+         */
+        def awaitTermination: Unit < IO =
+          IO(server.awaitTermination())
+
+  /**
+   * Kyo-based StreamObserver implementation for gRPC streaming.
+   */
+  class KyoStreamObserver[T] extends StreamObserver[T]:
+    private val promise = Promise[T]()
+    
+    def onNext(value: T): Unit =
+      promise.complete(Result.success(value))
+    
+    def onError(t: Throwable): Unit =
+      promise.complete(Result.fail(t))
+    
+    def onCompleted(): Unit =
+      promise.complete(Result.success(null.asInstanceOf[T]))
+    
+    def awaitNext(using Frame): T < IO =
+      IO(promise.future.map(_.get))
+
+  /**
+   * Converts a Kyo effect to a gRPC Future for unary calls.
+   */
+  def toGrpcFuture[A: ClassTag](effect: A < IO)(using Frame): Future[A] =
+    val promise = scala.concurrent.Promise[A]()
+    IO.run(effect).onComplete {
+      case Result.Success(value) => promise.success(value)
+      case Result.Fail(ex)       => promise.failure(ex)
+      case _                     => promise.failure(new RuntimeException("Unexpected result"))
+    }
+    promise.future
+
+  /**
+   * Converts a gRPC Future to a Kyo effect.
+   */
+  def fromGrpcFuture[A](future: Future[A])(using Frame): A < IO =
+    IO.fromFuture(_ => future)
+
+  /**
+   * Kyo-based gRPC client interceptor for tracing and metrics.
+   */
+  class KyoClientInterceptor extends ClientInterceptor:
+    override def interceptCall[ReqT, RespT](
+        method: MethodDescriptor[ReqT, RespT],
+        callOptions: CallOptions,
+        next: Channel
+    ): ClientCall[ReqT, RespT] =
+      new ForwardingClientCall.SimpleForwardingClientCall[ReqT, RespT](
+        next.newCall(method, callOptions)
+      ):
+        override def start(responseListener: ClientCall.Listener[RespT], headers: Metadata): Unit =
+          super.start(responseListener, headers)
+
+  /**
+   * Kyo-based gRPC server interceptor for tracing and metrics.
+   */
+  class KyoServerInterceptor extends ServerInterceptor:
+    override def interceptCall[ReqT, RespT](
+        serverCall: ServerCall[ReqT, RespT],
+        headers: Metadata,
+        next: ServerCallHandler[ReqT, RespT]
+    ): ServerCall.Listener[ReqT] =
+      next.startCall(serverCall, headers)
+
+  /**
+   * Helper to create a unary gRPC method handler from a Kyo effect.
+   */
+  def unaryHandler[Req, Res](
+      f: Req => Res < IO
+  )(using
+      reqCompanion: GeneratedMessageCompanion[Req],
+      resCompanion: GeneratedMessageCompanion[Res],
+      frame: Frame
+  ): ServerCallHandler[Req, Res] =
+    new ServerCallHandler[Req, Res]:
+      override def startCall(
+          call: ServerCall[Req, Res],
+          headers: Metadata
+      ): ServerCall.Listener[Req] =
+        new ServerCall.Listener[Req]:
+          override def onMessage(message: Req): Unit =
+            val response = f(message)
+            IO.run(response).onComplete {
+              case Result.Success(value) =>
+                call.sendHeaders(new Metadata())
+                call.sendMessage(value)
+                call.close(Status.OK, new Metadata())
+              case Result.Fail(ex) =>
+                call.close(Status.INTERNAL.withCause(ex), new Metadata())
+              case _ =>
+                call.close(Status.INTERNAL, new Metadata())
+            }
+
+  /**
+   * Helper to create a server streaming gRPC method handler.
+   */
+  def serverStreamingHandler[Req, Res](
+      f: Req => Seq[Res] < IO
+  )(using
+      reqCompanion: GeneratedMessageCompanion[Req],
+      resCompanion: GeneratedMessageCompanion[Res],
+      frame: Frame
+  ): ServerCallHandler[Req, Res] =
+    new ServerCallHandler[Req, Res]:
+      override def startCall(
+          call: ServerCall[Req, Res],
+          headers: Metadata
+      ): ServerCall.Listener[Req] =
+        new ServerCall.Listener[Req]:
+          override def onMessage(message: Req): Unit =
+            val responses = f(message)
+            IO.run(responses).onComplete {
+              case Result.Success(values) =>
+                call.sendHeaders(new Metadata())
+                values.foreach(call.sendMessage)
+                call.close(Status.OK, new Metadata())
+              case Result.Fail(ex) =>
+                call.close(Status.INTERNAL.withCause(ex), new Metadata())
+              case _ =>
+                call.close(Status.INTERNAL, new Metadata())
+            }
+
+  /**
+   * Helper to create a client streaming gRPC method handler.
+   */
+  def clientStreamingHandler[Req, Res](
+      f: Seq[Req] => Res < IO
+  )(using
+      reqCompanion: GeneratedMessageCompanion[Req],
+      resCompanion: GeneratedMessageCompanion[Res],
+      frame: Frame
+  ): ServerCallHandler[Req, Res] =
+    new ServerCallHandler[Req, Res]:
+      override def startCall(
+          call: ServerCall[Req, Res],
+          headers: Metadata
+      ): ServerCall.Listener[Req] =
+        val requests = scala.collection.mutable.ListBuffer[Req]()
+        new ServerCall.Listener[Req]:
+          override def onMessage(message: Req): Unit =
+            requests += message
+          override def onHalfClose(): Unit =
+            val response = f(requests.toSeq)
+            IO.run(response).onComplete {
+              case Result.Success(value) =>
+                call.sendHeaders(new Metadata())
+                call.sendMessage(value)
+                call.close(Status.OK, new Metadata())
+              case Result.Fail(ex) =>
+                call.close(Status.INTERNAL.withCause(ex), new Metadata())
+              case _ =>
+                call.close(Status.INTERNAL, new Metadata())
+            }
+
+  /**
+   * Helper to create a bidirectional streaming gRPC method handler.
