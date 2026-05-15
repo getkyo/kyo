@@ -1,0 +1,291 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc => ScalaPbGrpc, *}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.ClassTag
+import scala.util.Try
+
+/**
+ * Kyo gRPC support module providing integration between Kyo effects and gRPC services.
+ * 
+ * This module enables:
+ * - Defining gRPC service handlers using Kyo effects
+ * - Creating gRPC clients that return Kyo effects
+ * - Automatic lifecycle management for gRPC channels and servers
+ * 
+ * Usage:
+ * {{{
+ *   // Server side
+ *   val service = KyoGrpc.service(new MyServiceImpl())
+ *   val server = KyoGrpc.serverBuilder(port).addService(service).build()
+ *   
+ *   // Client side
+ *   val client = KyoGrpc.client[MyServiceBlockingClient](channel)
+ *   val result: MyResponse < IO = client.myMethod(MyRequest())
+ * }}}
+ */
+object KyoGrpc {
+
+  /**
+   * Creates a gRPC service definition from a service implementation.
+   * The implementation methods should return Kyo effects.
+   */
+  def service[Service](impl: Service)(using 
+      descriptor: ServiceDescriptor,
+      bindService: BindService[Service],
+      tag: ClassTag[Service]
+  ): ServerServiceDefinition = {
+    bindService.bind(impl, descriptor)
+  }
+
+  /**
+   * Creates a gRPC server builder with Kyo integration.
+   */
+  def serverBuilder(port: Int): ServerBuilder[?] = {
+    ServerBuilder.forPort(port)
+  }
+
+  /**
+   * Creates a gRPC client that returns Kyo effects.
+   */
+  def client[Client](channel: ManagedChannel)(using 
+      descriptor: ServiceDescriptor,
+      clientFactory: ClientFactory[Client],
+      tag: ClassTag[Client]
+  ): Client = {
+    clientFactory.create(channel, descriptor)
+  }
+
+  /**
+   * Creates a managed channel with automatic resource management.
+   */
+  def managedChannel(target: String): ManagedChannel < IO = {
+    IO {
+      ManagedChannelBuilder.forTarget(target)
+        .usePlaintext()
+        .build()
+    }
+  }
+
+  /**
+   * Resource-safe channel usage.
+   */
+  def withChannel[A](target: String)(f: ManagedChannel => A < IO): A < IO = {
+    IO.ensure(managedChannel(target)) { channel =>
+      IO {
+        channel.shutdown()
+        ()
+      }
+    }.flatMap(f)
+  }
+
+  /**
+   * Resource-safe server usage.
+   */
+  def withServer[A](server: Server)(f: Server => A < IO): A < IO = {
+    IO.ensure(IO(server.start())) { s =>
+      IO {
+        s.shutdown()
+        ()
+      }
+    }.flatMap(f)
+  }
+}
+
+/**
+ * Type class for binding a service implementation to a gRPC service definition.
+ */
+trait BindService[Service]:
+  def bind(impl: Service, descriptor: ServiceDescriptor): ServerServiceDefinition
+
+/**
+ * Type class for creating a client from a channel and descriptor.
+ */
+trait ClientFactory[Client]:
+  def create(channel: ManagedChannel, descriptor: ServiceDescriptor): Client
+
+/**
+ * Service descriptor type class.
+ */
+trait ServiceDescriptor:
+  def descriptor: ServerServiceDefinition
+
+object ServiceDescriptor:
+  given fromDefinition(using d: ServerServiceDefinition): ServiceDescriptor =
+    new ServiceDescriptor:
+      def descriptor: ServerServiceDefinition = d
+
+/**
+ * Internal utilities for Kyo gRPC integration.
+ */
+package internal {
+
+  import io.grpc.stub.{ClientCalls, ServerCalls}
+  import scalapb.grpc.{Grpc => ScalaPbGrpc}
+
+  /**
+   * Converts a Kyo effect to a gRPC response observer.
+   */
+  private[grpc] def kyoToObserver[A](effect: A < IO)(observer: StreamObserver[A]): Unit = {
+    IO.run(effect).onComplete {
+      case scala.util.Success(value) =>
+        observer.onNext(value)
+        observer.onCompleted()
+      case scala.util.Failure(exception) =>
+        observer.onError(exception)
+    }
+  }
+
+  /**
+   * Converts a gRPC streaming response to a Kyo effect.
+   */
+  private[grpc] def observerToKyo[A](f: StreamObserver[A] => Unit): A < IO = {
+    IO {
+      val result = new AtomicReference[Option[Try[A]]](None)
+      val observer = new StreamObserver[A] {
+        def onNext(value: A): Unit = {
+          result.set(Some(scala.util.Success(value)))
+        }
+        def onError(t: Throwable): Unit = {
+          result.set(Some(scala.util.Failure(t)))
+        }
+        def onCompleted(): Unit = {
+          // No-op for unary responses
+        }
+      }
+      f(observer)
+      result.get() match {
+        case Some(scala.util.Success(value)) => value
+        case Some(scala.util.Failure(e))    => throw e
+        case None                           => throw new IllegalStateException("No response received")
+      }
+    }
+  }
+
+  /**
+   * Creates a server call handler from a Kyo effect function.
+   */
+  private[grpc] def unaryServerHandler[Req, Res](
+      f: Req => Res < IO
+  ): ServerCalls.UnaryServerCallHandler[Req, Res] = {
+    ServerCalls.asyncUnaryCall { (request: Req, responseObserver: StreamObserver[Res]) =>
+      kyoToObserver(f(request))(responseObserver)
+    }
+  }
+
+  /**
+   * Creates a client call handler that returns a Kyo effect.
+   */
+  private[grpc] def unaryClientCall[Req, Res](
+      channel: ManagedChannel,
+      method: MethodDescriptor[Req, Res]
+  )(request: Req): Res < IO = {
+    observerToKyo { observer =>
+      ClientCalls.asyncUnaryCall(
+        channel.newCall(method, CallOptions.DEFAULT),
+        request,
+        observer
+      )
+    }
+  }
+}
+
+/**
+ * Example service implementation using Kyo effects.
+ */
+// Example protobuf service definition (would be generated by scalapb):
+// service Greeter {
+//   rpc SayHello (HelloRequest) returns (HelloReply);
+// }
+
+// Generated classes would look like:
+// case class HelloRequest(name: String) extends GeneratedMessage
+// case class HelloReply(message: String) extends GeneratedMessage
+
+// Example implementation:
+class GreeterServiceImpl extends GreeterGrpc.Greeter:
+  def sayHello(request: HelloRequest): HelloReply < IO = {
+    IO {
+      HelloReply(s"Hello, ${request.name}!")
+    }
+  }
+
+// Example usage:
+object KyoGrpcExample extends KyoApp:
+  run {
+    for
+      channel <- KyoGrpc.managedChannel("localhost:50051")
+      client  = KyoGrpc.client[GreeterGrpc.GreeterBlockingClient](channel)
+      reply   <- client.sayHello(HelloRequest("World"))
+      _       <- IO(println(reply.message))
+    yield ()
+  }
+
+/**
+ * Test suite for Kyo gRPC support.
+ */
+package kyo.grpc.test {
+
+  import kyo.grpc.*
+  import kyo.*
+  import kyo.test.*
+
+  class KyoGrpcSpec extends KyoSpec:
+    
+    "KyoGrpc" should {
+      "create a server and client" in {
+        val port = 50052
+        
+        val test = for
+          // Create server
+          serviceDef = GreeterGrpc.bindService(
+            new GreeterServiceImpl(),
+            ExecutionContext.global
+          )
+          server <- IO(ServerBuilder.forPort(port).addService(serviceDef).build())
+          _      <- IO(server.start())
+          
+          // Create client
+          channel <- KyoGrpc.managedChannel(s"localhost:$port")
+          client  = GreeterGrpc.blockingStub(channel)
+          
+          // Make request
+          reply <- IO(client.sayHello(HelloRequest("Test")))
+          _     <- IO(reply.message shouldBe "Hello, Test!")
+          
+          // Cleanup
+          _ <- IO(channel.shutdown())
+          _ <- IO(server.shutdown())
+        yield ()
+        
+        test
+      }
+      
+      "handle errors gracefully" in {
+        val test = for
+          channel <- KyoGrpc.managedChannel("localhost:1") // Invalid port
+          client  = Gre
