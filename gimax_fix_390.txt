@@ -1,0 +1,245 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import scala.concurrent.duration.*
+import scala.reflect.ClassTag
+import com.google.protobuf.*
+
+// Core gRPC types for Kyo
+object Grpc:
+
+  /** Represents a gRPC status with metadata */
+  case class GrpcStatus(code: Status.Code, description: Option[String] = None, cause: Option[Throwable] = None)
+
+  /** Exception wrapper for gRPC failures */
+  class GrpcException(val status: GrpcStatus, message: String, cause: Throwable = null)
+      extends RuntimeException(message, cause)
+
+  /** Type alias for a managed channel resource */
+  type ChannelResource = Resource[IOMaybe[ManagedChannel]]
+
+  /** Type alias for a server resource */
+  type ServerResource = Resource[IOMaybe[Server]]
+
+  /** Configuration for gRPC clients */
+  case class ClientConfig(
+      deadline: Duration = Duration.Inf,
+      compression: Option[String] = None,
+      interceptors: List[ClientInterceptor] = Nil,
+      maxRetries: Int = 0,
+      retryBufferSize: Long = 16777216L
+  )
+
+  /** Configuration for gRPC servers */
+  case class ServerConfig(
+      port: Int = 8080,
+      maxInboundMessageSize: Int = 4 * 1024 * 1024,
+      interceptors: List[ServerInterceptor] = Nil,
+      handshakeTimeout: Duration = 120.seconds,
+      keepAliveTime: Duration = Duration.Inf,
+      keepAliveTimeout: Duration = 20.seconds,
+      permitKeepAliveWithoutCalls: Boolean = false,
+      permitKeepAliveTime: Duration = 5.minutes
+  )
+
+  /** Create a managed channel */
+  def managedChannel(
+      target: String,
+      config: ClientConfig = ClientConfig()
+  ): ChannelResource =
+    Resource {
+      IO {
+        val builder = ManagedChannelBuilder.forTarget(target)
+          .intercept(config.interceptors: _*)
+          .enableRetry(config.maxRetries)
+          .retryBufferSize(config.retryBufferSize)
+
+        config.deadline match {
+          case d: FiniteDuration => builder.defaultLoadBalancingPolicy("round_robin")
+          case _ => 
+        }
+
+        val channel = builder.build()
+        (channel, IO(channel.shutdown()).unit)
+      }
+    }
+
+  /** Create a gRPC server */
+  def server(
+      services: List[ServerServiceDefinition],
+      config: ServerConfig = ServerConfig()
+  ): ServerResource =
+    Resource {
+      IO {
+        val builder = ServerBuilder.forPort(config.port)
+          .maxInboundMessageSize(config.maxInboundMessageSize)
+          .intercept(config.interceptors: _*)
+          .handshakeTimeout(config.handshakeTimeout.length, config.handshakeTimeout.unit)
+          .keepAliveTime(config.keepAliveTime.length, config.keepAliveTime.unit)
+          .keepAliveTimeout(config.keepAliveTimeout.length, config.keepAliveTimeout.unit)
+          .permitKeepAliveWithoutCalls(config.permitKeepAliveWithoutCalls)
+          .permitKeepAliveTime(config.permitKeepAliveTime.length, config.permitKeepAliveTime.unit)
+
+        services.foreach(builder.addService)
+
+        val server = builder.build().start()
+        (server, IO(server.shutdown()).unit)
+      }
+    }
+
+  /** Execute a gRPC call with proper error handling */
+  def call[A](
+      call: => A
+  )(using Frame): A < IOs =
+    IOs {
+      try call
+      catch
+        case e: StatusRuntimeException =>
+          val status = GrpcStatus(e.getStatus.getCode, Option(e.getMessage), Option(e.getCause))
+          IOs.fail(new GrpcException(status, e.getMessage, e))
+        case e: Exception =>
+          IOs.fail(new GrpcException(GrpcStatus(Status.Code.UNKNOWN), e.getMessage, e))
+    }
+
+  /** Execute a streaming gRPC call */
+  def streamingCall[A, B](
+      observer: StreamObserver[A],
+      call: StreamObserver[A] => Unit
+  )(using Frame): B < IOs =
+    IOs {
+      try
+        call(observer)
+        // Return type B is handled by the caller
+        ??? // This is a placeholder; actual implementation depends on the stub
+      catch
+        case e: StatusRuntimeException =>
+          val status = GrpcStatus(e.getStatus.getCode, Option(e.getMessage), Option(e.getCause))
+          IOs.fail(new GrpcException(status, e.getMessage, e))
+        case e: Exception =>
+          IOs.fail(new GrpcException(GrpcStatus(Status.Code.UNKNOWN), e.getMessage, e))
+    }
+
+  /** Convert a Kyo effect to a gRPC future */
+  def toGrpcFuture[A](effect: A < IOs)(using Frame): com.google.common.util.concurrent.ListenableFuture[A] =
+    val promise = com.google.common.util.concurrent.SettableFuture.create[A]()
+    IOs.run {
+      effect.map { value =>
+        promise.set(value)
+        value
+      }.catchAll { ex =>
+        IOs {
+          promise.setException(ex)
+          throw ex
+        }
+      }
+    }
+    promise
+
+  /** Convert a gRPC future to a Kyo effect */
+  def fromGrpcFuture[A](future: com.google.common.util.concurrent.ListenableFuture[A])(using Frame): A < IOs =
+    IOs {
+      try future.get()
+      catch
+        case e: java.util.concurrent.ExecutionException =>
+          throw e.getCause
+        case e: Exception =>
+          throw e
+    }
+
+  /** Create a unary call stub */
+  def unaryCall[Req, Res](
+      stub: AbstractStub[_],
+      method: MethodDescriptor[Req, Res],
+      request: Req
+  )(using Frame): Res < IOs =
+    call {
+      val call = stub.getChannel.newCall(method, stub.getCallOptions)
+      ClientCalls.blockingUnaryCall(call, request)
+    }
+
+  /** Create a server streaming call */
+  def serverStreamingCall[Req, Res](
+      stub: AbstractStub[_],
+      method: MethodDescriptor[Req, Res],
+      request: Req
+  )(using Frame): Iterator[Res] < IOs =
+    call {
+      val call = stub.getChannel.newCall(method, stub.getCallOptions)
+      ClientCalls.blockingServerStreamingCall(call, request)
+    }
+
+  /** Create a client streaming call */
+  def clientStreamingCall[Req, Res](
+      stub: AbstractStub[_],
+      method: MethodDescriptor[Req, Res],
+      requests: Seq[Req]
+  )(using Frame): Res < IOs =
+    call {
+      val call = stub.getChannel.newCall(method, stub.getCallOptions)
+      ClientCalls.blockingClientStreamingCall(call, requests.iterator)
+    }
+
+  /** Create a bidi streaming call */
+  def bidiStreamingCall[Req, Res](
+      stub: AbstractStub[_],
+      method: MethodDescriptor[Req, Res],
+      requests: Seq[Req]
+  )(using Frame): Iterator[Res] < IOs =
+    call {
+      val call = stub.getChannel.newCall(method, stub.getCallOptions)
+      ClientCalls.blockingBidiStreamingCall(call, requests.iterator)
+    }
+
+end Grpc
+
+// Internal utilities
+package kyo.grpc.internal:
+
+  import kyo.*
+
+  object GrpcIO:
+
+    /** Run a gRPC call with proper resource management */
+    def managed[A](resource: Resource[IOMaybe[A]])(f: A => A < IOs)(using Frame): A < IOs =
+      resource.use { value =>
+        value match
+          case Some(v) => f(v)
+          case None    => IOs.fail(new Grpc.GrpcException(Grpc.GrpcStatus(Status.Code.INTERNAL), "Resource not available"))
+      }
+
+    /** Convert a gRPC status to a Kyo failure */
+    def fail(status: Grpc.GrpcStatus, message: String)(using Frame): Nothing < IOs =
+      IOs.fail(new Grpc.GrpcException(status, message))
+
+  end GrpcIO
+
+end kyo.grpc.internal
+
+// Test suite
+package kyo.grpc.test:
+
+  import kyo.*
+  import kyo.grpc.*
+  import io.grpc.*
+  import io.grpc.stub.*
+  import org.scalatest.freespec.Any
