@@ -1,0 +1,257 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc => ScalaPbGrpc}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+import com.google.protobuf.ByteString
+
+import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.ClassTag
+
+/**
+ * Kyo gRPC support module providing integration between Kyo effects and gRPC services.
+ * 
+ * This module enables:
+ * - Unary RPC calls
+ * - Server streaming RPC calls
+ * - Client streaming RPC calls  
+ * - Bidirectional streaming RPC calls
+ * - Automatic resource management via Kyo's `IO` effect
+ * - Integration with ScalaPB generated code
+ */
+object Grpc {
+
+  /**
+   * Kyo effect type for gRPC operations.
+   * Wraps gRPC calls in Kyo's effect system for proper resource handling.
+   */
+  type GrpcIO[T] = IO[GrpcException, T]
+
+  /**
+   * Exception type for gRPC errors.
+   */
+  case class GrpcException(cause: StatusRuntimeException) extends RuntimeException(cause)
+
+  /**
+   * Creates a gRPC channel with proper resource management.
+   * 
+   * @param target The target address (e.g., "localhost:8080")
+   * @param usePlaintext Whether to use plaintext (no TLS)
+   * @return A Kyo effect that manages the channel lifecycle
+   */
+  def managedChannel(target: String, usePlaintext: Boolean = true): Resource[IO, ManagedChannel] = {
+    val builder = ManagedChannelBuilder.forTarget(target)
+    val configured = if (usePlaintext) builder.usePlaintext() else builder
+    Resource.fromAutoCloseable(IO(configured.build()))
+  }
+
+  /**
+   * Creates a gRPC server with proper resource management.
+   * 
+   * @param port The port to listen on
+   * @param services The gRPC services to bind
+   * @return A Kyo effect that manages the server lifecycle
+   */
+  def managedServer(port: Int, services: ServerServiceDefinition*): Resource[IO, Server] = {
+    val builder = ServerBuilder.forPort(port)
+    services.foreach(builder.addService)
+    Resource.fromAutoCloseable(IO(builder.build().start()))
+  }
+
+  /**
+   * Unary RPC call.
+   * 
+   * @param stub The gRPC stub
+   * @param request The request message
+   * @param call The actual gRPC call implementation
+   * @return A Kyo effect containing the response
+   */
+  def unaryCall[Req <: GeneratedMessage, Res <: GeneratedMessage](
+    stub: AbstractStub[_],
+    request: Req,
+    call: (AbstractStub[_], Req, StreamObserver[Res]) => Unit
+  )(using
+    tag: ClassTag[Res]
+  ): GrpcIO[Res] = {
+    IO {
+      val responseObserver = new KyoStreamObserver[Res]()
+      call(stub, request, responseObserver)
+      responseObserver.result
+    }.flatMap(identity)
+      .mapError(ex => GrpcException(new StatusRuntimeException(Status.INTERNAL.withCause(ex))))
+  }
+
+  /**
+   * Server streaming RPC call.
+   * 
+   * @param stub The gRPC stub
+   * @param request The request message
+   * @param call The actual gRPC call implementation
+   * @return A Kyo effect that emits response chunks
+   */
+  def serverStreamingCall[Req <: GeneratedMessage, Res <: GeneratedMessage](
+    stub: AbstractStub[_],
+    request: Req,
+    call: (AbstractStub[_], Req, StreamObserver[Res]) => Unit
+  ): GrpcIO[Stream[GrpcIO, Res]] = {
+    IO {
+      val responseObserver = new KyoStreamingObserver[Res]()
+      call(stub, request, responseObserver)
+      responseObserver.stream
+    }.flatMap(identity)
+      .mapError(ex => GrpcException(new StatusRuntimeException(Status.INTERNAL.withCause(ex))))
+  }
+
+  /**
+   * Client streaming RPC call.
+   * 
+   * @param stub The gRPC stub
+   * @param requests Stream of request messages
+   * @param call The actual gRPC call implementation
+   * @return A Kyo effect containing the response
+   */
+  def clientStreamingCall[Req <: GeneratedMessage, Res <: GeneratedMessage](
+    stub: AbstractStub[_],
+    requests: Stream[GrpcIO, Req],
+    call: (AbstractStub[_], StreamObserver[Res]) => StreamObserver[Req]
+  )(using
+    tag: ClassTag[Res]
+  ): GrpcIO[Res] = {
+    IO {
+      val responseObserver = new KyoStreamObserver[Res]()
+      val requestObserver = call(stub, responseObserver)
+      
+      requests.foreach { req =>
+        IO(requestObserver.onNext(req))
+      }.andThen {
+        IO(requestObserver.onCompleted())
+      }
+      
+      responseObserver.result
+    }.flatMap(identity)
+      .mapError(ex => GrpcException(new StatusRuntimeException(Status.INTERNAL.withCause(ex))))
+  }
+
+  /**
+   * Bidirectional streaming RPC call.
+   * 
+   * @param stub The gRPC stub
+   * @param requests Stream of request messages
+   * @param call The actual gRPC call implementation
+   * @return A Kyo effect that emits response chunks
+   */
+  def bidiStreamingCall[Req <: GeneratedMessage, Res <: GeneratedMessage](
+    stub: AbstractStub[_],
+    requests: Stream[GrpcIO, Req],
+    call: (AbstractStub[_], StreamObserver[Res]) => StreamObserver[Req]
+  ): GrpcIO[Stream[GrpcIO, Res]] = {
+    IO {
+      val responseObserver = new KyoStreamingObserver[Res]()
+      val requestObserver = call(stub, responseObserver)
+      
+      requests.foreach { req =>
+        IO(requestObserver.onNext(req))
+      }.andThen {
+        IO(requestObserver.onCompleted())
+      }
+      
+      responseObserver.stream
+    }.flatMap(identity)
+      .mapError(ex => GrpcException(new StatusRuntimeException(Status.INTERNAL.withCause(ex))))
+  }
+
+  /**
+   * Converts a Scala Future to a Kyo effect.
+   */
+  def fromFuture[T](future: => Future[T])(using ExecutionContext): GrpcIO[T] = {
+    IO.fromFuture(IO(future))
+      .mapError(ex => GrpcException(new StatusRuntimeException(Status.INTERNAL.withCause(ex))))
+  }
+
+  /**
+   * Provides a Kyo-based gRPC stub wrapper.
+   * 
+   * @param channel The managed channel
+   * @param stubFactory Factory to create the stub
+   * @return A Kyo effect containing the stub
+   */
+  def stub[T <: AbstractStub[T]](channel: ManagedChannel)(stubFactory: ManagedChannel => T): GrpcIO[T] = {
+    IO(stubFactory(channel))
+  }
+}
+
+/**
+ * Internal implementations for gRPC support.
+ */
+package internal {
+
+  import kyo.*
+
+  /**
+   * A StreamObserver that captures a single response.
+   */
+  class KyoStreamObserver[T] extends StreamObserver[T] {
+    private var result: T = _
+    private var error: Throwable = _
+    private val latch = new java.util.concurrent.CountDownLatch(1)
+
+    override def onNext(value: T): Unit = {
+      result = value
+    }
+
+    override def onError(t: Throwable): Unit = {
+      error = t
+      latch.countDown()
+    }
+
+    override def onCompleted(): Unit = {
+      latch.countDown()
+    }
+
+    def result: GrpcIO[T] = IO {
+      latch.await()
+      if (error != null) throw error
+      result
+    }
+  }
+
+  /**
+   * A StreamObserver that captures a stream of responses.
+   */
+  class KyoStreamingObserver[T] extends StreamObserver[T] {
+    private val buffer = new java.util.concurrent.ConcurrentLinkedQueue[T]()
+    private var completed = false
+    private var error: Throwable = _
+    private val latch = new java.util.concurrent.CountDownLatch(1)
+
+    override def onNext(value: T): Unit = {
+      buffer.add(value)
+    }
+
+    override def onError(t: Throwable): Unit = {
+      error = t
+      completed = true
+      latch.countDown()
+    }
+
+    override
