@@ -1,0 +1,268 @@
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.{ServerBuilder, ServerServiceDefinition, ManagedChannelBuilder, Channel, CallOptions, MethodDescriptor, Status}
+import io.grpc.stub.{ServerCalls, ClientCalls, StreamObserver}
+import kyo.*
+import kyo.kernel.*
+import scala.concurrent.duration.*
+import scala.reflect.ClassTag
+import com.google.protobuf.{Message, Parser}
+
+/**
+ * Kyo gRPC support module providing integration with gRPC and protobuf.
+ * 
+ * This module enables building gRPC servers and clients using Kyo effects,
+ * with automatic resource management and proper error handling.
+ */
+object Grpc:
+
+  /**
+   * Kyo effect type for gRPC operations.
+   */
+  opaque type GrpcIO[T] = T
+
+  /**
+   * Manages gRPC server lifecycle.
+   */
+  class GrpcServer private (private val server: io.grpc.Server):
+    
+    /**
+     * Starts the server and returns a handle for shutdown.
+     */
+    def start: GrpcIO[GrpcServer] < IOs =
+      IOs {
+        server.start()
+        this
+      }
+
+    /**
+     * Gracefully shuts down the server.
+     */
+    def shutdown: GrpcIO[Unit] < IOs =
+      IOs {
+        server.shutdown()
+        ()
+      }
+
+    /**
+     * Awaits server termination.
+     */
+    def awaitTermination(timeout: Duration = Duration.Inf): GrpcIO[Boolean] < IOs =
+      IOs {
+        if timeout.isFinite then
+          server.awaitTermination(timeout.length, timeout.unit)
+        else
+          server.awaitTermination()
+          true
+      }
+
+    /**
+     * Returns the server's port.
+     */
+    def port: Int = server.getPort
+
+  object GrpcServer:
+
+    /**
+     * Creates a new gRPC server builder.
+     */
+    def builder(port: Int): GrpcServerBuilder =
+      new GrpcServerBuilder(ServerBuilder.forPort(port))
+
+    /**
+     * Creates a new gRPC server from an existing builder.
+     */
+    def fromBuilder(builder: ServerBuilder[_]): GrpcServerBuilder =
+      new GrpcServerBuilder(builder)
+
+  /**
+   * Builder for configuring and creating gRPC servers.
+   */
+  class GrpcServerBuilder private[grpc] (private val builder: ServerBuilder[_]):
+
+    /**
+     * Adds a service definition to the server.
+     */
+    def addService(service: ServerServiceDefinition): GrpcServerBuilder =
+      new GrpcServerBuilder(builder.addService(service))
+
+    /**
+     * Adds a bindable service to the server.
+     */
+    def addService(service: io.grpc.BindableService): GrpcServerBuilder =
+      new GrpcServerBuilder(builder.addService(service))
+
+    /**
+     * Builds the server.
+     */
+    def build: GrpcIO[GrpcServer] < IOs =
+      IOs {
+        new GrpcServer(builder.build())
+      }
+
+  /**
+   * Kyo gRPC client for making RPC calls.
+   */
+  class GrpcClient private (private val channel: Channel):
+
+    /**
+     * Makes a unary RPC call.
+     */
+    def unaryCall[Req <: Message, Res <: Message](
+        method: MethodDescriptor[Req, Res],
+        request: Req
+    )(using
+        tag: ClassTag[Res],
+        parser: Parser[Res]
+    ): GrpcIO[Res] < IOs =
+      IOs {
+        val call = channel.newCall(method, CallOptions.DEFAULT)
+        var response: Res = null.asInstanceOf[Res]
+        val observer = new StreamObserver[Res]:
+          def onNext(value: Res): Unit = response = value
+          def onError(t: Throwable): Unit = throw t
+          def onCompleted(): Unit = ()
+        ClientCalls.asyncUnaryCall(call, request, observer)
+        response
+      }
+
+    /**
+     * Makes a server streaming RPC call.
+     */
+    def serverStreamingCall[Req <: Message, Res <: Message](
+        method: MethodDescriptor[Req, Res],
+        request: Req
+    )(using
+        tag: ClassTag[Res],
+        parser: Parser[Res]
+    ): GrpcIO[Seq[Res]] < IOs =
+      IOs {
+        val call = channel.newCall(method, CallOptions.DEFAULT)
+        val responses = scala.collection.mutable.ListBuffer[Res]()
+        val observer = new StreamObserver[Res]:
+          def onNext(value: Res): Unit = responses += value
+          def onError(t: Throwable): Unit = throw t
+          def onCompleted(): Unit = ()
+        ClientCalls.asyncServerStreamingCall(call, request, observer)
+        responses.toSeq
+      }
+
+    /**
+     * Shuts down the client channel.
+     */
+    def shutdown: GrpcIO[Unit] < IOs =
+      channel match
+        case mc: io.grpc.ManagedChannel =>
+          IOs {
+            mc.shutdown()
+            ()
+          }
+        case _ => IOs(())
+
+  object GrpcClient:
+
+    /**
+     * Creates a new gRPC client connecting to the specified target.
+     */
+    def connect(target: String): GrpcIO[GrpcClient] < IOs =
+      IOs {
+        val channel = ManagedChannelBuilder.forTarget(target)
+          .usePlaintext()
+          .build()
+        new GrpcClient(channel)
+      }
+
+    /**
+     * Creates a new gRPC client from an existing channel.
+     */
+    def fromChannel(channel: Channel): GrpcClient =
+      new GrpcClient(channel)
+
+  /**
+   * Helper for creating gRPC service definitions with Kyo handlers.
+   */
+  object Service:
+
+    /**
+     * Creates a unary RPC method handler.
+     */
+    def unary[Req <: Message, Res <: Message](
+        methodName: String,
+        handler: Req => GrpcIO[Res] < IOs
+    )(using
+        marshaller: MethodDescriptor.Marshaller[Req],
+        resMarshaller: MethodDescriptor.Marshaller[Res]
+    ): ServerServiceDefinition =
+      val method = MethodDescriptor.newBuilder()
+        .setFullMethodName(methodName)
+        .setType(MethodDescriptor.MethodType.UNARY)
+        .setRequestMarshaller(marshaller)
+        .setResponseMarshaller(resMarshaller)
+        .build()
+
+      ServerServiceDefinition.builder(method.getServiceName)
+        .addMethod(method, ServerCalls.asyncUnaryCall(
+          new ServerCalls.UnaryServerCallHandler[Req, Res]:
+            def invokeCall(
+                request: Req,
+                responseObserver: StreamObserver[Res]
+            ): Unit =
+              IOs.run {
+                handler(request).map { response =>
+                  responseObserver.onNext(response)
+                  responseObserver.onCompleted()
+                }
+              }.pipe(IOs.run)
+        ))
+        .build()
+
+    /**
+     * Creates a server streaming RPC method handler.
+     */
+    def serverStreaming[Req <: Message, Res <: Message](
+        methodName: String,
+        handler: Req => GrpcIO[Seq[Res]] < IOs
+    )(using
+        marshaller: MethodDescriptor.Marshaller[Req],
+        resMarshaller: MethodDescriptor.Marshaller[Res]
+    ): ServerServiceDefinition =
+      val method = MethodDescriptor.newBuilder()
+        .setFullMethodName(methodName)
+        .setType(MethodDescriptor.MethodType.SERVER_STREAMING)
+        .setRequestMarshaller(marshaller)
+        .setResponseMarshaller(resMarshaller)
+        .build()
+
+      ServerServiceDefinition.builder(method.getServiceName)
+        .addMethod(method, ServerCalls.asyncServerStreamingCall(
+          new ServerCalls.ServerStreamingServerCallHandler[Req, Res]:
+            def invokeCall(
+                request: Req,
+                responseObserver: StreamObserver[Res]
+            ): Unit =
+              IOs.run {
+                handler(request).map { responses =>
+                  responses.foreach(responseObserver.onNext)
+                  responseObserver.onCompleted()
+                }
+              }.pipe(IOs.run)
+        ))
+        .build()
+
+end Grpc
