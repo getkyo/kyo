@@ -1,0 +1,275 @@
+```scala
+/*
+ * Copyright 2023 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import scalapb.grpc.*
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+import com.google.protobuf.Descriptors
+
+import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.ClassTag
+import java.util.concurrent.atomic.AtomicReference
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables gRPC client and server implementations using Kyo's effect system,
+ * providing efficient, composable gRPC services with proper resource handling.
+ */
+object Grpc:
+
+  /**
+   * Creates a gRPC server that serves the given services.
+   *
+   * @param port the port to bind to
+   * @param services the services to serve
+   * @return a Kyo effect that manages the server lifecycle
+   */
+  def serve(port: Int, services: ServerServiceDefinition*): ServerBuilder[Server] < IOs =
+    IOs {
+      val builder = ServerBuilder.forPort(port)
+      services.foreach(builder.addService)
+      builder.build()
+    }
+
+  /**
+   * Starts the server and returns a resource that manages its lifecycle.
+   */
+  def start(server: Server): Resource[IOs, Server] =
+    Resource[IOs, Server](
+      acquire = IOs(server.start()),
+      release = (s: Server) => IOs(s.shutdown())
+    )
+
+  /**
+   * Creates a gRPC client channel.
+   *
+   * @param target the target address (e.g., "localhost:8080")
+   * @return a resource that manages the channel lifecycle
+   */
+  def channel(target: String): Resource[IOs, ManagedChannel] =
+    Resource[IOs, ManagedChannel](
+      acquire = IOs(ManagedChannelBuilder.forTarget(target).usePlaintext().build()),
+      release = (ch: ManagedChannel) => IOs(ch.shutdown())
+    )
+
+  /**
+   * Provides a Kyo-based gRPC client stub for a given service.
+   *
+   * @tparam T the stub type (e.g., MyServiceGrpc.MyServiceStub)
+   * @return a Kyo effect that creates the stub
+   */
+  def stub[T: ClassTag](channel: ManagedChannel)(implicit
+      stubFactory: GrpcStubFactory[T]
+  ): T < IOs =
+    IOs(stubFactory(channel))
+
+  /**
+   * Type class for creating gRPC stubs from channels.
+   */
+  trait GrpcStubFactory[T]:
+    def apply(channel: ManagedChannel): T
+
+  object GrpcStubFactory:
+    implicit def forAbstractStub[T <: AbstractStub[T]](implicit
+        ct: ClassTag[T]
+    ): GrpcStubFactory[T] =
+      (channel: ManagedChannel) =>
+        val constructor = ct.runtimeClass.getConstructor(classOf[io.grpc.Channel])
+        constructor.newInstance(channel).asInstanceOf[T]
+
+  /**
+   * Kyo effect type for gRPC operations.
+   */
+  type GrpcIO[T] = T < (IOs | Aborts[StatusRuntimeException])
+
+  /**
+   * Executes a gRPC call with proper error handling.
+   */
+  def call[T](f: => T): T < (IOs | Aborts[StatusRuntimeException]) =
+    IOs {
+      try f
+      catch
+        case e: StatusRuntimeException => IOs.throwAbort(e)
+        case e: Exception =>
+          IOs.throwAbort(
+            Status.INTERNAL.withDescription(e.getMessage).asRuntimeException()
+          )
+    }
+
+  /**
+   * Converts a Scala Future to a Kyo effect.
+   */
+  def fromFuture[T](future: => Future[T])(using
+      ExecutionContext
+  ): T < (IOs | Aborts[StatusRuntimeException]) =
+    IOs {
+      try
+        val result = scala.concurrent.Await.result(future, scala.concurrent.duration.Duration.Inf)
+        result
+      catch
+        case e: StatusRuntimeException => IOs.throwAbort(e)
+        case e: Exception =>
+          IOs.throwAbort(
+            Status.INTERNAL.withDescription(e.getMessage).asRuntimeException()
+          )
+    }
+
+  /**
+   * Server-side handler for unary gRPC calls.
+   */
+  def unary[Req, Res](
+      f: Req => Res < (IOs | Aborts[StatusRuntimeException])
+  )(using
+      companion: GeneratedMessageCompanion[Req],
+      ct: ClassTag[Req]
+  ): ServerCallHandler[Req, Res] =
+    new ServerCallHandler[Req, Res]:
+      def startCall(
+          call: ServerCall[Req, Res],
+          headers: Metadata
+      ): ServerCall.Listener[Req] =
+        new ServerCall.Listener[Req]:
+          private val requestRef = new AtomicReference[Option[Req]](None)
+
+          override def onMessage(message: Req): Unit =
+            requestRef.set(Some(message))
+
+          override def onHalfClose(): Unit =
+            requestRef.get() match
+              case Some(req) =>
+                try
+                  val result = IOs.run(f(req))
+                  result match
+                    case Right(res) =>
+                      call.sendHeaders(new Metadata())
+                      call.sendMessage(res)
+                      call.close(Status.OK, new Metadata())
+                    case Left(abort) =>
+                      call.close(abort.value.getStatus, new Metadata())
+                catch
+                  case e: Exception =>
+                    call.close(
+                      Status.INTERNAL.withDescription(e.getMessage),
+                      new Metadata()
+                    )
+              case None =>
+                call.close(
+                  Status.INVALID_ARGUMENT.withDescription("No request message"),
+                  new Metadata()
+                )
+
+          override def onCancel(): Unit =
+            call.close(Status.CANCELLED, new Metadata())
+
+  /**
+   * Creates a server service definition from a set of method handlers.
+   */
+  def service[T](serviceName: String, handlers: (String, ServerCallHandler[?, ?])*): ServerServiceDefinition =
+    val builder = ServerServiceDefinition.builder(serviceName)
+    handlers.foreach { case (methodName, handler) =>
+      builder.addMethod(
+        MethodDescriptor.newBuilder()
+          .setFullMethodName(MethodDescriptor.generateFullMethodName(serviceName, methodName))
+          .setType(MethodDescriptor.MethodType.UNARY)
+          .build(),
+        handler
+      )
+    }
+    builder.build()
+
+end Grpc
+
+/**
+ * Internal utilities for gRPC support.
+ */
+package internal:
+
+  import kyo.*
+
+  private[grpc] object GrpcInternal:
+
+    /**
+     * Manages the lifecycle of a gRPC server.
+     */
+    def serverResource(server: Server): Resource[IOs, Server] =
+      Resource(
+        acquire = IOs(server.start()),
+        release = (s: Server) => IOs {
+          s.shutdown()
+          s.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+          ()
+        }
+      )
+
+    /**
+     * Manages the lifecycle of a gRPC channel.
+     */
+    def channelResource(target: String): Resource[IOs, ManagedChannel] =
+      Resource(
+        acquire = IOs(
+          ManagedChannelBuilder.forTarget(target)
+            .usePlaintext()
+            .build()
+        ),
+        release = (ch: ManagedChannel) => IOs {
+          ch.shutdown()
+          ch.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+          ()
+        }
+      )
+
+  end GrpcInternal
+
+end internal
+
+/**
+ * Example usage and test cases.
+ */
+object GrpcExample:
+
+  import kyo.*
+
+  // Example protobuf service definition (would be generated by ScalaPB)
+  // message HelloRequest { string name = 1; }
+  // message HelloResponse { string greeting = 1; }
+  // service Greeter { rpc SayHello (HelloRequest) returns (HelloResponse); }
+
+  // Example implementation
+  class GreeterService:
+    def sayHello(request: HelloRequest): HelloResponse < (IOs | Aborts[StatusRuntimeException]) =
+      for
+        _ <- IOs(println(s"Received request: ${request.name}"))
+        response = HelloResponse(s"Hello, ${request.name}!")
+      yield response
+
+  // Example client
+  class GreeterClient(channel: ManagedChannel):
+    private val stub = GreeterGrpc.stub(channel)
+
+    def sayHello(name: String): HelloResponse < (IOs | Aborts[StatusRuntimeException]) =
+      Grpc.call(stub.sayHello(HelloRequest(name)))
+
+end GrpcExample
+
+/**
+ * Test suite for gRPC support
