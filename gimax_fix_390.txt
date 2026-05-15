@@ -1,0 +1,242 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc => ScalaPbGrpc, ServiceCompanion}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.ClassTag
+import scala.util.{Failure, Success, Try}
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables gRPC server and client implementations using Kyo's effect system,
+ * providing better performance characteristics compared to ZIO-based alternatives.
+ */
+object Grpc {
+
+  /**
+   * Type alias for Kyo gRPC service definition.
+   */
+  type ServiceDefinition = ServerServiceDefinition
+
+  /**
+   * Creates a Kyo-based gRPC server builder.
+   *
+   * @param port the port to bind the server to
+   * @return a ServerBuilder configured for Kyo
+   */
+  def server(port: Int): ServerBuilder = 
+    ServerBuilder.forPort(port)
+
+  /**
+   * Creates a Kyo-based gRPC channel for client connections.
+   *
+   * @param target the target address (e.g., "localhost:8080")
+   * @return a ManagedChannel
+   */
+  def channel(target: String): ManagedChannel =
+    ManagedChannelBuilder.forTarget(target).usePlaintext().build()
+
+  /**
+   * Binds a Kyo gRPC service to a server builder.
+   *
+   * @param serverBuilder the server builder
+   * @param service the service definition to bind
+   * @return the updated server builder
+   */
+  def addService(serverBuilder: ServerBuilder, service: ServiceDefinition): ServerBuilder =
+    serverBuilder.addService(service)
+
+  /**
+   * Starts the gRPC server.
+   *
+   * @param serverBuilder the server builder
+   * @return a Kyo effect that resolves to the started server
+   */
+  def start(serverBuilder: ServerBuilder): Server < IOs =
+    IOs(serverBuilder.build().start())
+
+  /**
+   * Stops a gRPC server gracefully.
+   *
+   * @param server the server to stop
+   * @return a Kyo effect that completes when the server is terminated
+   */
+  def shutdown(server: Server): Unit < IOs =
+    IOs {
+      server.shutdown()
+      server.awaitTermination()
+    }
+
+  /**
+   * Creates a Kyo-based gRPC server service definition from a ScalaPB service companion.
+   *
+   * @param serviceCompanion the ScalaPB service companion
+   * @param impl the service implementation using Kyo effects
+   * @tparam A the service trait type
+   * @return a ServerServiceDefinition
+   */
+  def bindService[A <: ScalapbGrpcService](serviceCompanion: ServiceCompanion[A], impl: A): ServiceDefinition = {
+    val serviceDefinition = ServerServiceDefinition.builder(serviceCompanion.descriptor.getName)
+    
+    for (method <- serviceCompanion.methods) {
+      val methodDescriptor = method.descriptor
+      val methodType = methodDescriptor.getType
+      
+      methodType match {
+        case MethodDescriptor.MethodType.UNARY =>
+          serviceDefinition.addMethod(
+            methodDescriptor,
+            ServerCalls.asyncUnaryCall(new ServerCalls.UnaryMethod[Any, Any] {
+              override def invoke(request: Any, responseObserver: StreamObserver[Any]): Unit = {
+                val result = impl.invokeUnary(methodDescriptor.getFullMethodName, request)
+                IOs.run {
+                  result.map { response =>
+                    responseObserver.onNext(response)
+                    responseObserver.onCompleted()
+                  }.onError { ex =>
+                    IOs(responseObserver.onError(ex))
+                  }
+                }
+              }
+            })
+          )
+        
+        case MethodDescriptor.MethodType.SERVER_STREAMING =>
+          serviceDefinition.addMethod(
+            methodDescriptor,
+            ServerCalls.asyncServerStreamingCall(new ServerCalls.ServerStreamingMethod[Any, Any] {
+              override def invoke(request: Any, responseObserver: StreamObserver[Any]): Unit = {
+                val stream = impl.invokeServerStreaming(methodDescriptor.getFullMethodName, request)
+                IOs.run {
+                  stream.foreach { response =>
+                    IOs(responseObserver.onNext(response))
+                  }.map { _ =>
+                    responseObserver.onCompleted()
+                  }.onError { ex =>
+                    IOs(responseObserver.onError(ex))
+                  }
+                }
+              }
+            })
+          )
+        
+        case MethodDescriptor.MethodType.CLIENT_STREAMING =>
+          serviceDefinition.addMethod(
+            methodDescriptor,
+            ServerCalls.asyncClientStreamingCall(new ServerCalls.ClientStreamingMethod[Any, Any] {
+              override def invoke(responseObserver: StreamObserver[Any]): StreamObserver[Any] = {
+                val requests = new java.util.concurrent.ConcurrentLinkedQueue[Any]()
+                new StreamObserver[Any] {
+                  override def onNext(value: Any): Unit = requests.add(value)
+                  override def onError(t: Throwable): Unit = responseObserver.onError(t)
+                  override def onCompleted(): Unit = {
+                    val result = impl.invokeClientStreaming(
+                      methodDescriptor.getFullMethodName,
+                      kyo.collections.Iterator.from(requests.iterator().asScala)
+                    )
+                    IOs.run {
+                      result.map { response =>
+                        responseObserver.onNext(response)
+                        responseObserver.onCompleted()
+                      }.onError { ex =>
+                        IOs(responseObserver.onError(ex))
+                      }
+                    }
+                  }
+                }
+              }
+            })
+          )
+        
+        case MethodDescriptor.MethodType.BIDI_STREAMING =>
+          serviceDefinition.addMethod(
+            methodDescriptor,
+            ServerCalls.asyncBidiStreamingCall(new ServerCalls.BidiStreamingMethod[Any, Any] {
+              override def invoke(responseObserver: StreamObserver[Any]): StreamObserver[Any] = {
+                val requests = new java.util.concurrent.ConcurrentLinkedQueue[Any]()
+                new StreamObserver[Any] {
+                  override def onNext(value: Any): Unit = requests.add(value)
+                  override def onError(t: Throwable): Unit = responseObserver.onError(t)
+                  override def onCompleted(): Unit = {
+                    val stream = impl.invokeBidiStreaming(
+                      methodDescriptor.getFullMethodName,
+                      kyo.collections.Iterator.from(requests.iterator().asScala)
+                    )
+                    IOs.run {
+                      stream.foreach { response =>
+                        IOs(responseObserver.onNext(response))
+                      }.map { _ =>
+                        responseObserver.onCompleted()
+                      }.onError { ex =>
+                        IOs(responseObserver.onError(ex))
+                      }
+                    }
+                  }
+                }
+              }
+            })
+          )
+      }
+    }
+    
+    serviceDefinition.build()
+  }
+
+  /**
+   * Creates a Kyo-based gRPC client stub from a ScalaPB service companion.
+   *
+   * @param serviceCompanion the ScalaPB service companion
+   * @param channel the gRPC channel
+   * @tparam A the service trait type
+   * @return a client stub implementation
+   */
+  def clientStub[A <: ScalapbGrpcService](serviceCompanion: ServiceCompanion[A], channel: ManagedChannel): A = {
+    val clientCalls = new GrpcClientCalls(channel)
+    serviceCompanion.newStub(channel).asInstanceOf[A]
+    // Note: For full Kyo integration, we'd generate a proper client stub.
+    // This is a simplified version that wraps the standard gRPC stub.
+  }
+
+  /**
+   * Trait for Kyo-based gRPC services.
+   */
+  trait ScalapbGrpcService {
+    def invokeUnary(methodName: String, request: Any): Any < IOs
+    def invokeServerStreaming(methodName: String, request: Any): kyo.collections.Iterator[Any] < IOs
+    def invokeClientStreaming(methodName: String, requests: kyo.collections.Iterator[Any]): Any < IOs
+    def invokeBidiStreaming(methodName: String, requests: kyo.collections.Iterator[Any]): kyo.collections.Iterator[Any] < IOs
+  }
+
+  /**
+   * Internal utilities for gRPC integration.
+   */
+  private[grpc] object internal {
+    import scala.jdk.CollectionConverters.*
+
+    implicit class StreamObserverOps[T](observer: StreamObserver[T]) {
+      def onNextSafe(value: T): Unit < IOs = IOs(observer.onNext(value))
+      def onCompletedSafe(): Unit < IOs = IOs(observer.on
