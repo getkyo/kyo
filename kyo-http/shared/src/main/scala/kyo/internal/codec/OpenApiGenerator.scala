@@ -193,7 +193,9 @@ private[kyo] object OpenApiGenerator:
 
     private def contentToMediaType(content: HttpRoute.ContentType[?]): Option[(String, HttpOpenApi.SchemaObject)] =
         content match
-            case j: HttpRoute.ContentType.Json[?]      => Some("application/json" -> jsonSchemaToHttpOpenApi(j.jsonSchema))
+            case j: HttpRoute.ContentType.Json[?] => Some("application/json" -> jsonSchemaToHttpOpenApi(j.jsonSchema))
+            // OpenAPI represents binary Protobuf bodies as string payloads under the protobuf media type.
+            case HttpRoute.ContentType.Protobuf(_)     => Some("application/protobuf" -> HttpOpenApi.SchemaObject.string)
             case HttpRoute.ContentType.Text            => Some("text/plain" -> HttpOpenApi.SchemaObject.string)
             case HttpRoute.ContentType.Binary          => Some("application/octet-stream" -> HttpOpenApi.SchemaObject.string)
             case HttpRoute.ContentType.ByteStream      => Some("application/octet-stream" -> HttpOpenApi.SchemaObject.string)

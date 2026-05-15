@@ -93,6 +93,23 @@ class RouteUtilTest extends kyo.Test:
             assert(bodyStr.contains("30"))
         }
 
+        // Encoding proves bodyProtobuf selects the Protobuf codec and media type, not raw binary passthrough.
+        "protobuf body" in {
+            val route = HttpRoute.postRaw("users").request(_.bodyProtobuf[User])
+            val user  = User("Alice", 30)
+            val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/users").getOrThrow)
+                .addField("body", user)
+
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (_, _) => fail("expected buffered"),
+                onBuffered = (_, headers, bytes) =>
+                    assert(headers.get("Content-Type").contains("application/protobuf"))
+                    assert(Protobuf.decode[User](bytes).getOrThrow == user)
+                ,
+                onStreaming = (_, _, _) => fail("expected buffered")
+            )
+        }
+
         "text body" in {
             val route = HttpRoute.postRaw("echo").request(_.bodyText)
             val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/echo").getOrThrow)
@@ -242,6 +259,29 @@ class RouteUtilTest extends kyo.Test:
                     assert(response.status == HttpStatus.OK)
                     val user = response.fields.body
                     assert(user == User("Bob", 25))
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        // Client-side response decoding should reconstruct the typed body from application/protobuf bytes.
+        "protobuf body" in {
+            val route   = HttpRoute.getRaw("users").response(_.bodyProtobuf[User])
+            val user    = User("Bob", 25)
+            val bytes   = Protobuf.encode(user)
+            val headers = HttpHeaders.empty.add("Content-Type", "application/protobuf")
+
+            RouteUtil.decodeBufferedResponse(
+                route,
+                HttpStatus.OK,
+                headers,
+                bytes,
+                route.method.name,
+                HttpUrl.fromUri("/test")
+            ) match
+                case Result.Success(response) =>
+                    assert(response.status == HttpStatus.OK)
+                    assert(response.fields.body == user)
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
             end match
@@ -410,6 +450,23 @@ class RouteUtilTest extends kyo.Test:
             )
             assert(headers.get("Content-Type").contains("application/json"))
             assert(bodyStr.contains("Bob"))
+        }
+
+        // Server-side response encoding should produce protobuf bytes that round-trip through kyo-schema.
+        "protobuf body" in {
+            val route = HttpRoute.getRaw("users").response(_.bodyProtobuf[User])
+            val user  = User("Bob", 25)
+            val response = HttpResponse.ok
+                .addField("body", user)
+
+            RouteUtil.encodeResponse(route, response)(
+                onEmpty = (_, _) => fail("expected buffered"),
+                onBuffered = (_, headers, bytes) =>
+                    assert(headers.get("Content-Type").contains("application/protobuf"))
+                    assert(Protobuf.decode[User](bytes).getOrThrow == user)
+                ,
+                onStreaming = (_, _, _) => fail("expected buffered")
+            )
         }
 
         "empty body" in {
@@ -749,6 +806,34 @@ class RouteUtilTest extends kyo.Test:
             RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, HttpHeaders.empty, bytes) match
                 case Result.Success(_)   => fail("expected failure")
                 case Result.Failure(err) => assert(err.getMessage.contains("JSON decode failed"))
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        // Server-side request decoding should turn protobuf bytes into the typed route body.
+        "protobuf body" in {
+            val route   = HttpRoute.postRaw("users").request(_.bodyProtobuf[User])
+            val user    = User("Alice", 30)
+            val bytes   = Protobuf.encode(user)
+            val headers = HttpHeaders.empty.add("Content-Type", "application/protobuf")
+
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, bytes) match
+                case Result.Success(req) =>
+                    assert(req.fields.dict("body") == user)
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        // Malformed protobuf payloads should surface as HTTP decode failures, matching JSON/form behavior.
+        "invalid protobuf body fails" in {
+            val route   = HttpRoute.postRaw("users").request(_.bodyProtobuf[User])
+            val bytes   = Span.fromUnsafe(Array[Byte](8))
+            val headers = HttpHeaders.empty.add("Content-Type", "application/protobuf")
+
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, bytes) match
+                case Result.Success(_)   => fail("expected failure")
+                case Result.Failure(err) => assert(err.getMessage.contains("Protobuf decode failed"))
                 case p: Result.Panic     => throw p.exception
             end match
         }

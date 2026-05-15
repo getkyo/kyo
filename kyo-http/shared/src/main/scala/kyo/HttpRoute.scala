@@ -165,6 +165,25 @@ object HttpRoute:
     def deleteBinary(path: HttpPath[Any]): HttpRoute[Any, "body" ~ Span[Byte], Nothing] =
         deleteRaw(path).response(_.bodyBinary)
 
+    // ==================== Protobuf methods ====================
+
+    // Mirrors the JSON route helpers, but serializes typed bodies with kyo-schema's Protobuf codec.
+
+    def getProtobuf[A: Schema](path: HttpPath[Any]): HttpRoute[Any, "body" ~ A, Nothing] =
+        getRaw(path).response(_.bodyProtobuf[A])
+
+    def postProtobuf[A: Schema, B: Schema](path: HttpPath[Any]): HttpRoute["body" ~ B, "body" ~ A, Nothing] =
+        postRaw(path).request(_.bodyProtobuf[B]).response(_.bodyProtobuf[A])
+
+    def putProtobuf[A: Schema, B: Schema](path: HttpPath[Any]): HttpRoute["body" ~ B, "body" ~ A, Nothing] =
+        putRaw(path).request(_.bodyProtobuf[B]).response(_.bodyProtobuf[A])
+
+    def patchProtobuf[A: Schema, B: Schema](path: HttpPath[Any]): HttpRoute["body" ~ B, "body" ~ A, Nothing] =
+        patchRaw(path).request(_.bodyProtobuf[B]).response(_.bodyProtobuf[A])
+
+    def deleteProtobuf[A: Schema](path: HttpPath[Any]): HttpRoute[Any, "body" ~ A, Nothing] =
+        deleteRaw(path).response(_.bodyProtobuf[A])
+
     // ==================== ContentType ====================
 
     /** The content type and serialization strategy for a route's body field.
@@ -180,6 +199,8 @@ object HttpRoute:
         case Multipart                                                       extends ContentType[Seq[HttpRequest.Part]]
         case MultipartStream                                                 extends ContentType[Stream[HttpRequest.Part, Async]]
         case Json[A](schema: kyo.Schema[A], jsonSchema: kyo.Json.JsonSchema) extends ContentType[A]
+        // Schema-backed Protobuf payloads keep typed routes while using the binary wire format.
+        case Protobuf[A](schema: kyo.Schema[A]) extends ContentType[A]
         case Ndjson[V](schema: kyo.Schema[V], jsonSchema: kyo.Json.JsonSchema, emitTag: Tag[Emit[Chunk[V]]])
             extends ContentType[Stream[V, Async]]
         case Sse[V](schema: kyo.Schema[V], jsonSchema: kyo.Json.JsonSchema, emitTag: Tag[Emit[Chunk[HttpSseEvent[V]]]])
@@ -313,6 +334,15 @@ object HttpRoute:
         )[N <: String & Singleton](fieldName: N, description: String = "")(using Fields.Pin[N]): RequestDef[In & N ~ A] =
             add(Field.Body(fieldName, ContentType.Json(schema, kyo.Json.jsonSchema[A]), description))
 
+        // Declares a typed request body encoded as application/protobuf.
+        def bodyProtobuf[A](using schema: Schema[A]): RequestDef[In & "body" ~ A] =
+            add(Field.Body("body", ContentType.Protobuf(schema), ""))
+
+        def bodyProtobuf[A](using
+            schema: Schema[A]
+        )[N <: String & Singleton](fieldName: N, description: String = "")(using Fields.Pin[N]): RequestDef[In & N ~ A] =
+            add(Field.Body(fieldName, ContentType.Protobuf(schema), description))
+
         def bodyText: RequestDef[In & "body" ~ String] =
             add(Field.Body("body", ContentType.Text, ""))
 
@@ -438,6 +468,15 @@ object HttpRoute:
             schema: Schema[A]
         )[N <: String & Singleton](fieldName: N, description: String = "")(using Fields.Pin[N]): ResponseDef[Out & N ~ A] =
             addField(Field.Body(fieldName, ContentType.Json(schema, kyo.Json.jsonSchema[A]), description))
+
+        // Declares a typed response body encoded as application/protobuf.
+        def bodyProtobuf[A](using schema: Schema[A]): ResponseDef[Out & "body" ~ A] =
+            addField(Field.Body("body", ContentType.Protobuf(schema), ""))
+
+        def bodyProtobuf[A](using
+            schema: Schema[A]
+        )[N <: String & Singleton](fieldName: N, description: String = "")(using Fields.Pin[N]): ResponseDef[Out & N ~ A] =
+            addField(Field.Body(fieldName, ContentType.Protobuf(schema), description))
 
         def bodyText: ResponseDef[Out & "body" ~ String] =
             addField(Field.Body("body", ContentType.Text, ""))

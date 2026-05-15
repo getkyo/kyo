@@ -598,6 +598,10 @@ private[kyo] object RouteUtil:
             case json: HttpRoute.ContentType.Json[?] =>
                 val str = Json.encode(value)(using json.schema.asInstanceOf[Schema[Any]])
                 f("application/json", stringToSpan(str))
+            case protobuf: HttpRoute.ContentType.Protobuf[?] =>
+                // Route schemas carry enough information to encode typed values without generated message classes.
+                val bytes = Protobuf.encode(value)(using protobuf.schema.asInstanceOf[Schema[Any]])
+                f("application/protobuf", bytes)
             case form: HttpRoute.ContentType.Form[?] =>
                 val str = form.codec.asInstanceOf[HttpFormCodec[Any]].encode(value)
                 f("application/x-www-form-urlencoded", stringToSpan(str))
@@ -709,6 +713,18 @@ private[kyo] object RouteUtil:
                         Json.decode[Any](spanToString(bytes))(using summon[Json], schema, summon[Frame])
                             .mapFailure(e => HttpJsonDecodeException(e.getMessage, method, url.toString))
                     end if
+            case protobuf: HttpRoute.ContentType.Protobuf[?] =>
+                if !checkContentType(headers, "application/protobuf") then
+                    Result.fail(HttpUnsupportedMediaTypeException(
+                        "application/protobuf",
+                        headers.get("Content-Type"),
+                        method,
+                        url.toString
+                    ))
+                else
+                    // Convert schema decode failures into the HTTP decode error family used by clients and servers.
+                    Protobuf.decode[Any](bytes)(using summon[Protobuf], protobuf.schema.asInstanceOf[Schema[Any]], summon[Frame])
+                        .mapFailure(e => HttpProtobufDecodeException(e.getMessage, method, url.toString))
             case form: HttpRoute.ContentType.Form[?] =>
                 if !checkContentType(headers, "application/x-www-form-urlencoded") then
                     Result.fail(HttpUnsupportedMediaTypeException(

@@ -449,6 +449,25 @@ class HttpRouteTest extends Test:
             end match
         }
 
+        // Protobuf request bodies should behave like JSON bodies at the route-type level.
+        "protobuf stores field name and schema" in {
+            val r = HttpRoute.postRaw("users").request(_.bodyProtobuf[CreateUser])
+            assert(r.request.fields.size == 1)
+            r.request.fields(0) match
+                case Field.Body(fn, ContentType.Protobuf(_), _) =>
+                    assert(fn == "body")
+                case _ => fail("Expected Body with Protobuf")
+            end match
+        }
+
+        "protobuf with custom field name" in {
+            val r = HttpRoute.postRaw("users").request(_.bodyProtobuf[CreateUser]("payload"))
+            r.request.fields(0) match
+                case Field.Body(fn, ContentType.Protobuf(_), _) => assert(fn == "payload")
+                case _                                          => fail("Expected Protobuf body")
+            end match
+        }
+
         "text" in {
             val r = HttpRoute.postRaw("echo").request(_.bodyText)
             r.request.fields(0) match
@@ -558,6 +577,15 @@ class HttpRouteTest extends Test:
             r.response.fields(0) match
                 case Field.Body(fn, ContentType.Json(_, _), _) => assert(fn == "body")
                 case _                                         => fail("Expected Json body")
+            end match
+        }
+
+        // Response declarations carry the schema needed by RouteUtil to encode protobuf bytes.
+        "body protobuf" in {
+            val r = HttpRoute.getRaw("users").response(_.bodyProtobuf[User])
+            r.response.fields(0) match
+                case Field.Body(fn, ContentType.Protobuf(_), _) => assert(fn == "body")
+                case _                                          => fail("Expected Protobuf body")
             end match
         }
 

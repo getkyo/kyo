@@ -180,6 +180,8 @@ case class HttpHandlerException(error: Any)(using Frame)
   * @see
   *   [[kyo.HttpJsonDecodeException]] JSON body decode failed
   * @see
+  *   [[kyo.HttpProtobufDecodeException]] Protobuf body decode failed
+  * @see
   *   [[kyo.HttpFormDecodeException]] Form body decode failed
   * @see
   *   [[kyo.HttpUnsupportedMediaTypeException]] Unexpected Content-Type
@@ -250,6 +252,17 @@ case class HttpJsonDecodeException private (detail: String, method: String, url:
 object HttpJsonDecodeException:
     def apply(detail: String, method: String, url: String)(using Frame): HttpJsonDecodeException =
         new HttpJsonDecodeException(detail, method, HttpException.stripQuery(url))
+
+/** Protobuf body decode failed. */
+case class HttpProtobufDecodeException private (detail: String, method: String, url: String)(using Frame)
+    extends HttpDecodeException(
+        s"""Protobuf decode failed: $detail.
+           |
+           |  While processing: ${HttpException.showRequest(method, url)}""".stripMargin
+    )
+object HttpProtobufDecodeException:
+    def apply(detail: String, method: String, url: String)(using Frame): HttpProtobufDecodeException =
+        new HttpProtobufDecodeException(detail, method, HttpException.stripQuery(url))
 
 /** Form body decode failed. */
 case class HttpFormDecodeException private (detail: String, method: String, url: String, cause: Text | Throwable)(using Frame)
