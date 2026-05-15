@@ -1,0 +1,228 @@
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.{ServerBuilder, ServerServiceDefinition, ManagedChannelBuilder, StatusRuntimeException}
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc, ServiceCompanion}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion}
+
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success, Try}
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables building gRPC servers and clients using Kyo's effect system,
+ * providing better performance through direct fiber-based execution without
+ * intermediate Future wrappers.
+ */
+object Grpc:
+
+  /**
+   * Creates a Kyo-based gRPC server.
+   *
+   * @param port the port to bind the server to
+   * @param services the service definitions to register
+   * @return a Kyo effect that manages the server lifecycle
+   */
+  def server(port: Int)(services: ServerServiceDefinition*): GrpcServer < IOs =
+    IOs {
+      val builder = ServerBuilder.forPort(port)
+      services.foreach(builder.addService)
+      val server = builder.build()
+      new GrpcServer(server)
+    }
+
+  /**
+   * Creates a Kyo-based gRPC client channel.
+   *
+   * @param host the target host
+   * @param port the target port
+   * @param usePlaintext whether to use plaintext (no TLS)
+   * @return a Kyo effect that manages the channel lifecycle
+   */
+  def client(host: String, port: Int, usePlaintext: Boolean = true): GrpcChannel < IOs =
+    IOs {
+      val builder = ManagedChannelBuilder.forAddress(host, port)
+      if (usePlaintext) builder.usePlaintext()
+      val channel = builder.build()
+      new GrpcChannel(channel)
+    }
+
+  /**
+   * Wraps a ScalaPB service companion to create a Kyo-based service definition.
+   *
+   * @param companion the ScalaPB service companion
+   * @param implementation the service implementation using Kyo effects
+   * @return a ServerServiceDefinition
+   */
+  def service[S, A <: GeneratedMessage, B <: GeneratedMessage](
+      companion: ServiceCompanion[S],
+      implementation: S
+  ): ServerServiceDefinition =
+    companion.bindService(implementation, ExecutionContext.global)
+
+  /**
+   * Converts a Kyo effect to a gRPC StreamObserver for unary calls.
+   */
+  def unary[Req, Res](
+      f: Req => Res < IOs
+  ): Req => (StreamObserver[Res] => Unit) < IOs =
+    IOs { (req: Req) =>
+      (responseObserver: StreamObserver[Res]) =>
+        IOs.run {
+          f(req).map { response =>
+            responseObserver.onNext(response)
+            responseObserver.onCompleted()
+          }
+        }.onComplete {
+          case Failure(e) => responseObserver.onError(e)
+          case Success(_) => ()
+        }
+    }
+
+  /**
+   * Converts a Kyo effect to a gRPC StreamObserver for server streaming calls.
+   */
+  def serverStreaming[Req, Res](
+      f: Req => Seq[Res] < IOs
+  ): Req => (StreamObserver[Res] => Unit) < IOs =
+    IOs { (req: Req) =>
+      (responseObserver: StreamObserver[Res]) =>
+        IOs.run {
+          f(req).map { responses =>
+            responses.foreach(responseObserver.onNext)
+            responseObserver.onCompleted()
+          }
+        }.onComplete {
+          case Failure(e) => responseObserver.onError(e)
+          case Success(_) => ()
+        }
+    }
+
+  /**
+   * Converts a Kyo effect to a gRPC StreamObserver for client streaming calls.
+   */
+  def clientStreaming[Req, Res](
+      f: Seq[Req] => Res < IOs
+  ): StreamObserver[Req] => (StreamObserver[Res] => Unit) < IOs =
+    IOs { (responseObserver: StreamObserver[Res]) =>
+      val requests = new java.util.ArrayList[Req]()
+      new StreamObserver[Req]:
+        def onNext(value: Req): Unit = requests.add(value)
+        def onError(t: Throwable): Unit = responseObserver.onError(t)
+        def onCompleted(): Unit =
+          IOs.run {
+            f(requests.toArray(Array.empty[Req])).map { response =>
+              responseObserver.onNext(response)
+              responseObserver.onCompleted()
+            }
+          }.onComplete {
+            case Failure(e) => responseObserver.onError(e)
+            case Success(_) => ()
+          }
+    }
+
+  /**
+   * Converts a Kyo effect to a gRPC StreamObserver for bidirectional streaming calls.
+   */
+  def bidiStreaming[Req, Res](
+      f: Req => Res < IOs
+  ): StreamObserver[Req] => (StreamObserver[Res] => Unit) < IOs =
+    IOs { (responseObserver: StreamObserver[Res]) =>
+      new StreamObserver[Req]:
+        def onNext(value: Req): Unit =
+          IOs.run {
+            f(value).map { response =>
+              responseObserver.onNext(response)
+            }
+          }.onComplete {
+            case Failure(e) => responseObserver.onError(e)
+            case Success(_) => ()
+          }
+        def onError(t: Throwable): Unit = responseObserver.onError(t)
+        def onCompleted(): Unit = responseObserver.onCompleted()
+    }
+
+  /**
+   * Manages a gRPC server lifecycle.
+   */
+  class GrpcServer private[kyo] (private val server: io.grpc.Server):
+    
+    /** Starts the server. */
+    def start: Unit < IOs = IOs(server.start())
+    
+    /** Shuts down the server. */
+    def shutdown: Unit < IOs = IOs {
+      server.shutdown()
+      ()
+    }
+    
+    /** Awaits termination of the server. */
+    def awaitTermination: Unit < IOs = IOs {
+      server.awaitTermination()
+    }
+
+  /**
+   * Manages a gRPC client channel lifecycle.
+   */
+  class GrpcChannel private[kyo] (private val channel: io.grpc.ManagedChannel):
+    
+    /** Shuts down the channel. */
+    def shutdown: Unit < IOs = IOs {
+      channel.shutdown()
+      ()
+    }
+
+  /**
+   * Internal utilities for gRPC integration.
+   */
+  private[kyo] object internal:
+    
+    /** Converts a Scala Future to a Kyo effect. */
+    def fromFuture[A](future: => Future[A]): A < IOs =
+      IOs {
+        var result: Option[Try[A]] = None
+        future.onComplete { r =>
+          synchronized {
+            result = Some(r)
+            notify()
+          }
+        }(ExecutionContext.global)
+        
+        while result.isEmpty do
+          synchronized(wait())
+        
+        result.get match
+          case Success(value) => value
+          case Failure(e)     => throw e
+      }
+
+    /** Converts a Kyo effect to a Scala Future. */
+    def toFuture[A](effect: A < IOs): Future[A] =
+      val promise = scala.concurrent.Promise[A]()
+      IOs.run(effect).onComplete {
+        case Success(value) => promise.success(value)
+        case Failure(e)     => promise.failure(e)
+      }
+      promise.future
+
+end Grpc
