@@ -1,0 +1,280 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.protobuf.services.ProtoReflectionService
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc => ScalaPbGrpc, ServiceCompanion}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion}
+
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success, Try}
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables gRPC server and client implementations using Kyo effects,
+ * providing efficient and composable gRPC services.
+ */
+object Grpc:
+
+  /**
+   * Configuration for gRPC server and client.
+   * 
+   * @param port The port to bind the server to (default: 8080)
+   * @param maxMessageSize Maximum size of incoming/outgoing messages in bytes (default: 4MB)
+   * @param shutdownTimeoutSeconds Timeout for graceful shutdown in seconds (default: 30)
+   */
+  case class Config(
+    port: Int = 8080,
+    maxMessageSize: Int = 4 * 1024 * 1024,
+    shutdownTimeoutSeconds: Int = 30
+  )
+
+  /**
+   * A gRPC server managed by Kyo effects.
+   */
+  class GrpcServer private[grpc] (
+    private val server: Server,
+    private val config: Config
+  ):
+    
+    /**
+     * Starts the server and returns a handle to manage its lifecycle.
+     */
+    def start: GrpcServerHandle < IOs =
+      IOs {
+        val started = server.start()
+        new GrpcServerHandle(started, config)
+      }
+
+  /**
+   * Handle for managing a running gRPC server.
+   */
+  class GrpcServerHandle private[grpc] (
+    private val server: Server,
+    private val config: Config
+  ):
+    
+    /**
+     * Gracefully shuts down the server.
+     */
+    def shutdown: Unit < IOs =
+      IOs {
+        server.shutdown()
+        server.awaitTermination(config.shutdownTimeoutSeconds, java.util.concurrent.TimeUnit.SECONDS)
+        ()
+      }
+
+    /**
+     * Forces immediate shutdown of the server.
+     */
+    def shutdownNow: Unit < IOs =
+      IOs {
+        server.shutdownNow()
+        ()
+      }
+
+    /**
+     * Returns the port the server is listening on.
+     */
+    def port: Int < IOs =
+      IOs(server.getPort())
+
+  /**
+   * Creates a gRPC server builder with the given configuration.
+   * 
+   * @param config Server configuration
+   * @return A server builder that can be used to add services
+   */
+  def server(config: Config = Config()): ServerBuilder =
+    new ServerBuilder(config)
+
+  /**
+   * Builder for constructing a gRPC server.
+   */
+  class ServerBuilder private[grpc] (private val config: Config):
+    private val services = List.newBuilder[ServerServiceDefinition]
+
+    /**
+     * Adds a service definition to the server.
+     * 
+     * @param service The service definition to add
+     * @return This builder for chaining
+     */
+    def addService(service: ServerServiceDefinition): ServerBuilder =
+      services += service
+      this
+
+    /**
+     * Adds a ScalaPB generated service to the server.
+     * 
+     * @param service The ScalaPB service implementation
+     * @param companion The service companion object
+     * @tparam A The service type
+     * @return This builder for chaining
+     */
+    def addService[A <: BindableService](service: A)(implicit companion: ServiceCompanion[A]): ServerBuilder =
+      services += ScalaPbGrpc.bindService(service, ExecutionContext.global)
+      this
+
+    /**
+     * Builds and starts the server.
+     * 
+     * @return A GrpcServer instance
+     */
+    def build: GrpcServer < IOs =
+      IOs {
+        val serverBuilder = ServerBuilder
+          .forPort(config.port)
+          .maxInboundMessageSize(config.maxMessageSize)
+          .addService(ProtoReflectionService.newInstance())
+        
+        services.result().foreach(serverBuilder.addService)
+        
+        new GrpcServer(serverBuilder.build(), config)
+      }
+
+  /**
+   * Creates a gRPC client stub for the given service.
+   * 
+   * @param channel The gRPC channel to use
+   * @param companion The service companion object
+   * @tparam A The service type
+   * @return A client stub
+   */
+  def clientStub[A <: AbstractStub[A]](channel: ManagedChannel)(implicit companion: ServiceCompanion[A]): A =
+    companion.stub(channel)
+
+  /**
+   * Creates a managed channel to a gRPC server.
+   * 
+   * @param host The server host
+   * @param port The server port
+   * @param config Client configuration
+   * @return A managed channel
+   */
+  def managedChannel(
+    host: String = "localhost",
+    port: Int = 8080,
+    config: Config = Config()
+  ): ManagedChannel =
+    ManagedChannelBuilder
+      .forAddress(host, port)
+      .maxInboundMessageSize(config.maxMessageSize)
+      .usePlaintext()
+      .build()
+
+  /**
+   * Converts a Kyo effect to a gRPC Future for use in service implementations.
+   * 
+   * @param effect The Kyo effect to convert
+   * @tparam A The result type
+   * @return A Scala Future
+   */
+  def toFuture[A](effect: A < IOs): Future[A] =
+    val promise = scala.concurrent.Promise[A]()
+    IOs.run {
+      effect.map { result =>
+        promise.success(result)
+        result
+      }.onError { ex =>
+        promise.failure(ex)
+      }
+    }
+    promise.future
+
+  /**
+   * Converts a gRPC Future to a Kyo effect.
+   * 
+   * @param future The gRPC Future to convert
+   * @tparam A The result type
+   * @return A Kyo effect
+   */
+  def fromFuture[A](future: Future[A]): A < IOs =
+    IOs {
+      scala.concurrent.Await.result(future, scala.concurrent.duration.Duration.Inf)
+    }
+
+  /**
+   * Internal utilities for gRPC integration.
+   */
+  private[grpc] object internal:
+    
+    /**
+     * Wraps a gRPC service call in Kyo effects.
+     * 
+     * @param f The function to execute
+     * @tparam A The result type
+     * @return A Kyo effect
+     */
+    def serviceCall[A](f: => A): A < IOs =
+      IOs(f)
+
+    /**
+     * Handles errors in gRPC service calls.
+     * 
+     * @param effect The effect to handle errors for
+     * @tparam A The result type
+     * @return A Kyo effect that converts gRPC exceptions
+     */
+    def handleGrpcError[A](effect: A < IOs): A < IOs =
+      effect.catching {
+        case e: StatusRuntimeException => throw e
+        case e: Exception => throw Status.INTERNAL.withCause(e).asRuntimeException()
+      }
+
+end Grpc
+
+/**
+ * Example usage and test cases for gRPC support.
+ */
+object GrpcExample:
+
+  import kyo.grpc.Grpc.*
+
+  // Example service definition (would normally be generated by ScalaPB)
+  // For demonstration purposes only
+  object ExampleService:
+    case class HelloRequest(name: String)
+    case class HelloResponse(message: String)
+
+    val serviceName = "example.HelloService"
+    val methodDescriptor = MethodDescriptor.newBuilder()
+      .setFullMethodName(MethodDescriptor.generateFullMethodName(serviceName, "SayHello"))
+      .setType(MethodDescriptor.MethodType.UNARY)
+      .build()
+
+  /**
+   * Example server implementation.
+   */
+  class HelloServiceImpl extends BindableService:
+    override def bindService(): ServerServiceDefinition =
+      ServerServiceDefinition.builder(ExampleService.serviceName)
+        .addMethod(
+          ExampleService.methodDescriptor,
+          ServerCallHandler[ExampleService.HelloRequest, ExampleService.HelloResponse] { (call, headers) =>
+            new ServerCall.Listener[ExampleService.HelloRequest] {
+              override def onMessage(message: ExampleService.HelloRequest): Unit =
+                val response = ExampleService.HelloResponse(s"Hello, ${message.name}!")
+                call.sendHeaders(Metadata())
+                call.sendMessage(response)
+                call.close(Status.OK
