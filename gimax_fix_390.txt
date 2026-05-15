@@ -1,0 +1,253 @@
+```scala
+/*
+ * Copyright 2023 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import scalapb.grpc.*
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+import com.google.protobuf.Descriptors
+
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success, Try}
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables gRPC client and server implementations using Kyo's effect system,
+ * providing efficient, composable, and type-safe gRPC communication.
+ */
+object Grpc:
+
+  /**
+   * Kyo effect type for gRPC operations.
+   */
+  type GrpcIO[T] = T < (Abort[GrpcException] & Async)
+
+  /**
+   * Exception type for gRPC errors.
+   */
+  case class GrpcException(code: Status.Code, message: String, cause: Option[Throwable] = None) 
+    extends RuntimeException(s"gRPC error [${code}]: $message", cause.orNull)
+
+  /**
+   * Client stub wrapper providing Kyo-native gRPC calls.
+   */
+  class KyoClientStub[+T <: AbstractStub[T]] private[grpc] (stub: T):
+    
+    private def withStub[U](f: T => Future[U]): GrpcIO[U] =
+      Async.run(Future.fromTry(Try(f(stub)))).flatMap { fiber =>
+        fiber.toFuture.toTry.map {
+          case Success(value) => value
+          case Failure(ex)    => IO.fail(GrpcException(Status.Code.INTERNAL, ex.getMessage, Some(ex)))
+        }
+      }
+
+    /**
+     * Perform a unary gRPC call.
+     */
+    def unaryCall[Req <: GeneratedMessage, Res <: GeneratedMessage](
+        request: Req
+    )(implicit 
+        descriptor: MethodDescriptor[Req, Res],
+        companion: GeneratedMessageCompanion[Res]
+    ): GrpcIO[Res] =
+      withStub { s =>
+        val call = s.call(descriptor)
+        ClientCalls.futureUnaryCall(call, request)
+      }
+
+    /**
+     * Perform a server-streaming gRPC call.
+     */
+    def serverStreamingCall[Req <: GeneratedMessage, Res <: GeneratedMessage](
+        request: Req
+    )(implicit 
+        descriptor: MethodDescriptor[Req, Res],
+        companion: GeneratedMessageCompanion[Res]
+    ): GrpcIO[Stream[Res, Any]] =
+      withStub { s =>
+        val call = s.call(descriptor)
+        val responseStream = ClientCalls.blockingServerStreamingCall(call, request)
+        val kyoStream = Stream.init {
+          val iterator = responseStream.iterator()
+          Iterator.continually {
+            if (iterator.hasNext) Some(iterator.next())
+            else None
+          }.takeWhile(_.isDefined).map(_.get)
+        }
+        kyoStream
+      }
+
+    /**
+     * Perform a client-streaming gRPC call.
+     */
+    def clientStreamingCall[Req <: GeneratedMessage, Res <: GeneratedMessage](
+        requests: Stream[Req, Any]
+    )(implicit 
+        descriptor: MethodDescriptor[Req, Res],
+        companion: GeneratedMessageCompanion[Res]
+    ): GrpcIO[Res] =
+      withStub { s =>
+        val call = s.call(descriptor)
+        val responseObserver = new StreamObserver[Res]:
+          val result = Promise[Res]()
+          def onNext(value: Res): Unit = result.success(value)
+          def onError(t: Throwable): Unit = result.failure(t)
+          def onCompleted(): Unit = ()
+        
+        val requestObserver = ClientCalls.asyncClientStreamingCall(call, responseObserver)
+        
+        requests.run.foreach { req =>
+          requestObserver.onNext(req)
+        }
+        requestObserver.onCompleted()
+        
+        result.future
+      }
+
+    /**
+     * Perform a bidirectional streaming gRPC call.
+     */
+    def bidiStreamingCall[Req <: GeneratedMessage, Res <: GeneratedMessage](
+        requests: Stream[Req, Any]
+    )(implicit 
+        descriptor: MethodDescriptor[Req, Res],
+        companion: GeneratedMessageCompanion[Res]
+    ): GrpcIO[Stream[Res, Any]] =
+      withStub { s =>
+        val call = s.call(descriptor)
+        val responseQueue = new java.util.concurrent.ConcurrentLinkedQueue[Res]()
+        val completionSignal = Promise[Unit]()
+        
+        val responseObserver = new StreamObserver[Res]:
+          def onNext(value: Res): Unit = responseQueue.add(value)
+          def onError(t: Throwable): Unit = completionSignal.failure(t)
+          def onCompleted(): Unit = completionSignal.success(())
+        
+        val requestObserver = ClientCalls.asyncBidiStreamingCall(call, responseObserver)
+        
+        requests.run.foreach { req =>
+          requestObserver.onNext(req)
+        }
+        requestObserver.onCompleted()
+        
+        val kyoStream = Stream.init {
+          Iterator.continually {
+            Option(responseQueue.poll()) match {
+              case Some(value) => Some(value)
+              case None =>
+                if (completionSignal.isCompleted) None
+                else {
+                  Thread.sleep(10) // Small backoff
+                  Option(responseQueue.poll())
+                }
+            }
+          }.takeWhile(_.isDefined).map(_.get)
+        }
+        
+        kyoStream
+      }
+
+    /**
+     * Configure the stub with additional options.
+     */
+    def configure[U >: T](f: T => U): KyoClientStub[U] =
+      new KyoClientStub(f(stub))
+
+  /**
+   * Server service definition for Kyo gRPC.
+   */
+  abstract class KyoService:
+    /**
+     * Bind this service to a server service definition.
+     */
+    def bindService: ServerServiceDefinition
+
+  /**
+   * Create a gRPC client channel.
+   */
+  def channel(target: String, config: ManagedChannelBuilder[_] => ManagedChannelBuilder[_] = identity): GrpcIO[ManagedChannel] =
+    IO {
+      val builder = ManagedChannelBuilder.forTarget(target).usePlaintext()
+      config(builder).build()
+    }
+
+  /**
+   * Create a gRPC client stub from a channel.
+   */
+  def stub[T <: AbstractStub[T]](channel: ManagedChannel)(implicit stubFactory: AbstractStub[T]): KyoClientStub[T] =
+    new KyoClientStub(stubFactory)
+
+  /**
+   * Create a gRPC server.
+   */
+  def server(port: Int, services: List[KyoService], config: ServerBuilder[_] => ServerBuilder[_] = identity): GrpcIO[Server] =
+    IO {
+      val builder = ServerBuilder.forPort(port)
+      services.foreach { service =>
+        builder.addService(service.bindService)
+      }
+      config(builder).build().start()
+    }
+
+  /**
+   * Shutdown a gRPC channel gracefully.
+   */
+  def shutdown(channel: ManagedChannel): GrpcIO[Unit] =
+    IO {
+      channel.shutdown()
+      channel.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
+  /**
+   * Shutdown a gRPC server gracefully.
+   */
+  def shutdown(server: Server): GrpcIO[Unit] =
+    IO {
+      server.shutdown()
+      server.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
+  /**
+   * Interop utilities for integrating with existing gRPC code.
+   */
+  object interop:
+    /**
+     * Convert a Kyo effect to a gRPC Future.
+     */
+    def toGrpcFuture[T](effect: GrpcIO[T])(using Frame): Future[T] =
+      val promise = Promise[T]()
+      Async.run(effect).map { fiber =>
+        fiber.toFuture.unsafeRunSync() match
+          case Success(value) => promise.success(value)
+          case Failure(ex)    => promise.failure(ex)
+      }
+      promise.future
+
+    /**
+     * Convert a gRPC Future to a Kyo effect.
+     */
+    def fromGrpcFuture[T](future: => Future[T]): GrpcIO[T] =
+      Async.run(Future.fromTry(Try(future))).flatMap { fiber =>
+        fiber.toFuture.toTry.map {
+          case Success(value) => value
+          case Failure(ex)    => IO.fail(GrpcException(Status.Code
