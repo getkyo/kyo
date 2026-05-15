@@ -43,6 +43,23 @@ class ClockTest extends Test:
                 yield assert(now == Instant.Max)
             }
         }
+
+        "nested time control reuses current control" in run {
+            Clock.withTimeControl { outer =>
+                for
+                    _ <- outer.set(Instant.Epoch)
+                    result <- Clock.withTimeControl { inner =>
+                        for
+                            _   <- inner.advance(1.second)
+                            now <- Clock.now
+                        yield (outer.asInstanceOf[AnyRef] eq inner.asInstanceOf[AnyRef], now)
+                    }
+                    now <- Clock.now
+                yield
+                    assert(result == (true, Instant.Epoch + 1.second))
+                    assert(now == Instant.Epoch + 1.second)
+            }
+        }
     }
 
     "Stopwatch" - {
