@@ -1,0 +1,43 @@
+// build.sbt
+val kyoVersion = "0.1.0"
+val grpcVersion = "1.54.0"
+val scalapbVersion = "0.11.12"
+
+lazy val root = (project in file("."))
+  .settings(
+    name := "kyo-grpc",
+    version := "0.1.0-SNAPSHOT",
+    scalaVersion := "3.2.2",
+    libraryDependencies ++= Seq(
+      "io.getkyo" %% "kyo-core" % kyoVersion,
+      "io.getkyo" %% "kyo-direct" % kyoVersion,
+      "io.grpc" % "grpc-netty" % grpcVersion,
+      "io.grpc" % "grpc-protobuf" % grpcVersion,
+      "io.grpc" % "grpc-stub" % grpcVersion,
+      "com.thesamet.scalapb" %% "scalapb-runtime" % scalapbVersion % "protobuf",
+      "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapbVersion,
+      "ch.qos.logback" % "logback-classic" % "1.4.6" % Test,
+      "org.scalatest" %% "scalatest" % "3.2.15" % Test
+    ),
+    Compile / PB.targets := Seq(
+      scalapb.gen(grpc = true) -> (Compile / sourceManaged).value / "scalapb"
+    ),
+    Compile / PB.protoSources := Seq(file("protobuf"))
+  )
+
+// protobuf/helloworld.proto
+syntax = "proto3";
+
+package helloworld;
+
+service Greeter {
+  rpc SayHello (HelloRequest) returns (HelloReply) {}
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloReply {
+  string message = 1;
+}
