@@ -1,0 +1,290 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import scala.concurrent.duration.*
+import scala.reflect.ClassTag
+
+/**
+ * Kyo gRPC support module providing integration with gRPC services.
+ * 
+ * This module enables gRPC client and server implementations using Kyo's
+ * effect system for efficient, composable, and type-safe gRPC communication.
+ */
+object Grpc:
+
+  /**
+   * Configuration for gRPC clients and servers.
+   *
+   * @param deadline Maximum time to wait for a response
+   * @param compression Whether to enable compression
+   * @param maxRetries Maximum number of retry attempts
+   * @param interceptors List of client/server interceptors
+   */
+  case class Config(
+      deadline: Option[Duration] = None,
+      compression: Boolean = false,
+      maxRetries: Int = 0,
+      interceptors: List[ClientInterceptor] = Nil
+  )
+
+  object Config:
+    val default: Config = Config()
+
+  /**
+   * Kyo effect type for gRPC operations.
+   */
+  type GrpcIO[T] = IO[GrpcException, T]
+
+  /**
+   * Exception type for gRPC errors.
+   */
+  class GrpcException(
+      val status: Status,
+      val metadata: Metadata = new Metadata(),
+      message: String = "",
+      cause: Throwable = null
+  ) extends Exception(message, cause)
+
+  /**
+   * Creates a gRPC client stub for the given service.
+   *
+   * @tparam T The gRPC service stub type
+   * @param channel The gRPC channel to use
+   * @param config Client configuration
+   * @return A Kyo effect that produces the client stub
+   */
+  def client[T: ClassTag](
+      channel: ManagedChannel,
+      config: Config = Config.default
+  ): T < GrpcIO =
+    IO {
+      val stubClass = implicitly[ClassTag[T]].runtimeClass
+      val method = stubClass.getMethod("newBlockingStub", classOf[Channel])
+      val stub = method.invoke(null, channel)
+      
+      var configured = stub.asInstanceOf[AbstractStub[Any]]
+      configured = configured.withInterceptors(config.interceptors: _*)
+      
+      config.deadline.foreach { d =>
+        configured = configured.withDeadlineAfter(d.toNanos, java.util.concurrent.TimeUnit.NANOSECONDS)
+      }
+      
+      if (config.compression) {
+        configured = configured.withCompression("gzip")
+      }
+      
+      configured.asInstanceOf[T]
+    }
+
+  /**
+   * Creates a gRPC server builder with Kyo integration.
+   *
+   * @param port The port to listen on
+   * @param config Server configuration
+   * @return A server builder for adding services
+   */
+  def server(
+      port: Int,
+      config: Config = Config.default
+  ): ServerBuilder =
+    ServerBuilder(port, config)
+
+  /**
+   * Server builder for constructing gRPC servers.
+   */
+  case class ServerBuilder private[grpc] (
+      port: Int,
+      config: Config,
+      services: List[ServerServiceDefinition] = Nil
+  ):
+    /**
+     * Adds a service definition to the server.
+     */
+    def addService(service: ServerServiceDefinition): ServerBuilder =
+      copy(services = services :+ service)
+
+    /**
+     * Builds and starts the server.
+     *
+     * @return A Kyo effect that produces the started server
+     */
+    def build: GrpcServer < GrpcIO =
+      IO {
+        val builder = ServerBuilder.forPort(port)
+        services.foreach(builder.addService)
+        val server = builder.build()
+        server.start()
+        GrpcServer(server)
+      }
+
+  /**
+   * Represents a running gRPC server.
+   */
+  case class GrpcServer private[grpc] (server: Server):
+    /**
+     * Shuts down the server gracefully.
+     */
+    def shutdown: Unit < GrpcIO =
+      IO {
+        server.shutdown()
+        if (!server.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+          server.shutdownNow()
+        }
+      }
+
+    /**
+     * Blocks until the server is terminated.
+     */
+    def awaitTermination: Unit < GrpcIO =
+      IO {
+        server.awaitTermination()
+      }
+
+  /**
+   * Helper for creating unary gRPC calls.
+   *
+   * @param stub The client stub
+   * @param call The gRPC call function
+   * @return A Kyo effect with the response
+   */
+  def unaryCall[Req, Res](
+      stub: AbstractStub[?],
+      call: (Req, Metadata) => Res,
+      request: Req,
+      metadata: Metadata = new Metadata()
+  ): Res < GrpcIO =
+    IO {
+      try
+        call(request, metadata)
+      catch
+        case e: StatusRuntimeException =>
+          throw new GrpcException(e.getStatus, e.getTrailers, e.getMessage, e)
+    }
+
+  /**
+   * Helper for creating server streaming gRPC calls.
+   *
+   * @param stub The client stub
+   * @param call The gRPC call function
+   * @return A Kyo effect that produces an iterator of responses
+   */
+  def serverStreamingCall[Req, Res](
+      stub: AbstractStub[?],
+      call: (Req, Metadata) => java.util.Iterator[Res],
+      request: Req,
+      metadata: Metadata = new Metadata()
+  ): Iterator[Res] < GrpcIO =
+    IO {
+      try
+        call(request, metadata).asScala
+      catch
+        case e: StatusRuntimeException =>
+          throw new GrpcException(e.getStatus, e.getTrailers, e.getMessage, e)
+    }
+
+  /**
+   * Helper for creating client streaming gRPC calls.
+   *
+   * @param stub The client stub
+   * @param call The gRPC call function
+   * @return A Kyo effect that produces the response
+   */
+  def clientStreamingCall[Req, Res](
+      stub: AbstractStub[?],
+      call: (StreamObserver[Res]) => StreamObserver[Req],
+      requests: Seq[Req]
+  ): Res < GrpcIO =
+    IO {
+      val responseObserver = new StreamObserver[Res]:
+        var response: Option[Res] = None
+        var error: Option[Throwable] = None
+        var completed: Boolean = false
+
+        def onNext(value: Res): Unit =
+          response = Some(value)
+
+        def onError(t: Throwable): Unit =
+          error = Some(t)
+
+        def onCompleted(): Unit =
+          completed = true
+
+      val requestObserver = call(responseObserver)
+      requests.foreach(requestObserver.onNext)
+      requestObserver.onCompleted()
+
+      responseObserver.error.foreach { e =>
+        throw new GrpcException(Status.INTERNAL, cause = e)
+      }
+
+      responseObserver.response.getOrElse(
+        throw new GrpcException(Status.INTERNAL, message = "No response received")
+      )
+    }
+
+  /**
+   * Helper for creating bidirectional streaming gRPC calls.
+   *
+   * @param stub The client stub
+   * @param call The gRPC call function
+   * @return A Kyo effect that produces a stream of responses
+   */
+  def bidiStreamingCall[Req, Res](
+      stub: AbstractStub[?],
+      call: (StreamObserver[Res]) => StreamObserver[Req],
+      requests: Seq[Req]
+  ): Seq[Res] < GrpcIO =
+    IO {
+      val responses = scala.collection.mutable.ListBuffer[Res]()
+      val responseObserver = new StreamObserver[Res]:
+        def onNext(value: Res): Unit =
+          responses += value
+
+        def onError(t: Throwable): Unit =
+          throw new GrpcException(Status.INTERNAL, cause = t)
+
+        def onCompleted(): Unit = ()
+
+      val requestObserver = call(responseObserver)
+      requests.foreach(requestObserver.onNext)
+      requestObserver.onCompleted()
+
+      responses.toSeq
+    }
+
+  /**
+   * Converts a gRPC StatusRuntimeException to a Kyo GrpcException.
+   */
+  private[grpc] def toGrpcException(e: StatusRuntimeException): GrpcException =
+    new GrpcException(e.getStatus, e.getTrailers, e.getMessage, e)
+
+end Grpc
+
+/**
+ * Internal utilities for gRPC support.
+ */
+package kyo.grpc.internal:
+
+  import scala.collection.convert.{AsScalaExtensions, DecorateAsScala}
+
+  private[gr
