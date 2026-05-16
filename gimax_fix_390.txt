@@ -1,0 +1,268 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc, ServiceCompanion}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+
+import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.ClassTag
+
+/**
+ * Kyo gRPC support module providing integration between Kyo effects and gRPC.
+ * 
+ * This module enables:
+ * - Creating gRPC servers and clients using Kyo effects
+ * - Automatic handling of Kyo fibers for concurrent RPC handling
+ * - Efficient resource management with Kyo's resource handling
+ */
+object GrpcKyo {
+
+  /**
+   * Creates a gRPC server builder configured with Kyo's execution context.
+   */
+  def serverBuilder(port: Int): ServerBuilder[ServerBuilder[_]] =
+    ServerBuilder.forPort(port)
+
+  /**
+   * Starts a gRPC server with Kyo-managed lifecycle.
+   */
+  def startServer(server: Server): Server < IO =
+    IO(server.start())
+
+  /**
+   * Gracefully shuts down a gRPC server.
+   */
+  def shutdownServer(server: Server): Unit < IO =
+    IO(server.shutdown())
+
+  /**
+   * Awaits server termination.
+   */
+  def awaitTermination(server: Server): Unit < IO =
+    IO(server.awaitTermination())
+
+  /**
+   * Creates a managed channel for gRPC client communication.
+   */
+  def managedChannel(target: String): ManagedChannel =
+    ManagedChannelBuilder.forTarget(target).usePlaintext().build()
+
+  /**
+   * Shuts down a managed channel.
+   */
+  def shutdownChannel(channel: ManagedChannel): Unit < IO =
+    IO(channel.shutdown())
+
+  /**
+   * Provides a managed channel as a Kyo resource.
+   */
+  def channelResource(target: String): Resource[IO, ManagedChannel] =
+    Resource(acquire = IO(managedChannel(target)), release = shutdownChannel)
+
+  /**
+   * Converts a Kyo effect to a gRPC Future-style response.
+   */
+  def toGrpcFuture[A](effect: A < (IO & Async)): Future[A] = {
+    val promise = scala.concurrent.Promise[A]()
+    val runEffect = effect.map { value =>
+      promise.success(value)
+      value
+    }.catchAll { error =>
+      IO(promise.failure(error))
+    }
+    kyo.Fiber.run(runEffect)
+    promise.future
+  }
+
+  /**
+   * Converts a gRPC Future to a Kyo effect.
+   */
+  def fromGrpcFuture[A](future: Future[A])(using Frame): A < (IO & Async) =
+    IO.fromFuture(_ => future)
+
+  /**
+   * Kyo-based streaming observer for gRPC server streaming.
+   */
+  class KyoStreamObserver[A] extends StreamObserver[A] {
+    private val queue = new java.util.concurrent.ConcurrentLinkedQueue[A]()
+    private val completion = scala.concurrent.Promise[Unit]()
+    private var error: Throwable = null
+
+    def onNext(value: A): Unit = {
+      queue.add(value)
+    }
+
+    def onError(t: Throwable): Unit = {
+      error = t
+      completion.failure(t)
+    }
+
+    def onCompleted(): Unit = {
+      completion.success(())
+    }
+
+    def stream: Stream[A, IO] = {
+      Stream.fromPull {
+        IO {
+          if (error != null) throw error
+          val next = queue.poll()
+          if (next != null) Pull.value(next)
+          else if (completion.isCompleted) Pull.end
+          else Pull.empty
+        }
+      }
+    }
+  }
+
+  /**
+   * Creates a streaming observer for use with Kyo streams.
+   */
+  def streamObserver[A]: KyoStreamObserver[A] =
+    new KyoStreamObserver[A]()
+
+  /**
+   * Kyo-based gRPC service definition.
+   */
+  abstract class KyoGrpcService {
+    def bindService: ServerServiceDefinition
+  }
+
+  /**
+   * Helper to create a unary gRPC handler from a Kyo effect.
+   */
+  def unaryHandler[Req, Res](
+      f: Req => Res < (IO & Async)
+  )(using
+      reqCompanion: GeneratedMessageCompanion[Req],
+      resCompanion: GeneratedMessageCompanion[Res],
+      frame: Frame
+  ): ServerCallHandler[Req, Res] = {
+    val marshaller = Grpc.marshaller(reqCompanion)
+    val resMarshaller = Grpc.marshaller(resCompanion)
+    ServerCalls.asyncUnaryCall(
+      new ServerCalls.UnaryMethod[Req, Res] {
+        def invoke(request: Req, responseObserver: StreamObserver[Res]): Unit = {
+          val effect = f(request).map { response =>
+            responseObserver.onNext(response)
+            responseObserver.onCompleted()
+          }.catchAll { error =>
+            IO(responseObserver.onError(error))
+          }
+          kyo.Fiber.run(effect)
+        }
+      }
+    )
+  }
+
+  /**
+   * Helper to create a server streaming gRPC handler from a Kyo stream.
+   */
+  def serverStreamingHandler[Req, Res](
+      f: Req => Stream[Res, IO]
+  )(using
+      reqCompanion: GeneratedMessageCompanion[Req],
+      resCompanion: GeneratedMessageCompanion[Res],
+      frame: Frame
+  ): ServerCallHandler[Req, Res] = {
+    val marshaller = Grpc.marshaller(reqCompanion)
+    val resMarshaller = Grpc.marshaller(resCompanion)
+    ServerCalls.asyncServerStreamingCall(
+      new ServerCalls.ServerStreamingMethod[Req, Res] {
+        def invoke(request: Req, responseObserver: StreamObserver[Res]): Unit = {
+          val effect = f(request).foreach { response =>
+            IO(responseObserver.onNext(response))
+          }.andThen {
+            IO(responseObserver.onCompleted())
+          }.catchAll { error =>
+            IO(responseObserver.onError(error))
+          }
+          kyo.Fiber.run(effect)
+        }
+      }
+    )
+  }
+
+  /**
+   * Helper to create a client streaming gRPC handler from a Kyo stream.
+   */
+  def clientStreamingHandler[Req, Res](
+      f: Stream[Req, IO] => Res < (IO & Async)
+  )(using
+      reqCompanion: GeneratedMessageCompanion[Req],
+      resCompanion: GeneratedMessageCompanion[Res],
+      frame: Frame
+  ): ServerCallHandler[Req, Res] = {
+    val marshaller = Grpc.marshaller(reqCompanion)
+    val resMarshaller = Grpc.marshaller(resCompanion)
+    ServerCalls.asyncClientStreamingCall(
+      new ServerCalls.ClientStreamingMethod[Req, Res] {
+        def invoke(responseObserver: StreamObserver[Res]): StreamObserver[Req] = {
+          val observer = new KyoStreamObserver[Req]()
+          val effect = f(observer.stream).map { response =>
+            responseObserver.onNext(response)
+            responseObserver.onCompleted()
+          }.catchAll { error =>
+            responseObserver.onError(error)
+          }
+          kyo.Fiber.run(effect)
+          observer
+        }
+      }
+    )
+  }
+
+  /**
+   * Helper to create a bidirectional streaming gRPC handler.
+   */
+  def bidiStreamingHandler[Req, Res](
+      f: Stream[Req, IO] => Stream[Res, IO]
+  )(using
+      reqCompanion: GeneratedMessageCompanion[Req],
+      resCompanion: GeneratedMessageCompanion[Res],
+      frame: Frame
+  ): ServerCallHandler[Req, Res] = {
+    val marshaller = Grpc.marshaller(reqCompanion)
+    val resMarshaller = Grpc.marshaller(resCompanion)
+    ServerCalls.asyncBidiStreamingCall(
+      new ServerCalls.BidiStreamingMethod[Req, Res] {
+        def invoke(responseObserver: StreamObserver[Res]): StreamObserver[Req] = {
+          val observer = new KyoStreamObserver[Req]()
+          val effect = f(observer.stream).foreach { response =>
+            IO(responseObserver.onNext(response))
+          }.andThen {
+            IO(responseObserver.onCompleted())
+          }.catchAll { error =>
+            IO(responseObserver.onError(error))
+          }
+          kyo.Fiber.run(effect)
+          observer
+        }
+      }
+    )
+  }
+}
+
+/**
+ * Internal utilities for gRPC integration.
+ */
+package kyo.grpc
