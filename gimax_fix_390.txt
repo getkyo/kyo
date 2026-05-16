@@ -1,0 +1,206 @@
+// build.sbt
+val kyoVersion = "0.1.0"
+val scalapbVersion = "0.11.15"
+val grpcVersion = "1.57.2"
+
+lazy val root = (project in file("."))
+  .settings(
+    name := "kyo-grpc",
+    version := "0.1.0-SNAPSHOT",
+    scalaVersion := "3.3.1",
+    libraryDependencies ++= Seq(
+      "io.getkyo" %% "kyo-core" % kyoVersion,
+      "io.getkyo" %% "kyo-direct" % kyoVersion,
+      "com.thesamet.scalapb" %% "scalapb-runtime" % scalapbVersion,
+      "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapbVersion,
+      "io.grpc" % "grpc-netty" % grpcVersion,
+      "io.grpc" % "grpc-services" % grpcVersion,
+      "org.scalatest" %% "scalatest" % "3.2.17" % Test
+    ),
+    Compile / PB.targets := Seq(
+      scalapb.gen(grpc = true) -> (Compile / sourceManaged).value / "scalapb"
+    )
+  )
+
+// src/main/protobuf/helloworld.proto
+syntax = "proto3";
+
+package helloworld;
+
+service Greeter {
+  rpc SayHello (HelloRequest) returns (HelloReply) {}
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloReply {
+  string message = 1;
+}
+
+// src/main/scala/kyogrpc/GrpcServer.scala
+package kyogrpc
+
+import io.grpc.{Server, ServerBuilder}
+import io.grpc.protobuf.services.ProtoReflectionService
+import kyo.*
+import kyo.direct.*
+import scala.concurrent.duration.*
+
+class GrpcServer(port: Int, services: List[io.grpc.ServerServiceDefinition]):
+  private var server: Server = null
+
+  def start: Unit < IOs =
+    IOs {
+      server = ServerBuilder
+        .forPort(port)
+        .addServices(services)
+        .addService(ProtoReflectionService.newInstance())
+        .build()
+        .start()
+      println(s"Server started on port $port")
+    }
+
+  def shutdown: Unit < IOs =
+    IOs {
+      if server != null then
+        server.shutdown()
+        server.awaitTermination(5, SECONDS)
+    }
+
+// src/main/scala/kyogrpc/GrpcClient.scala
+package kyogrpc
+
+import io.grpc.{ManagedChannel, ManagedChannelBuilder}
+import kyo.*
+
+class GrpcClient(host: String, port: Int):
+  private val channel: ManagedChannel =
+    ManagedChannelBuilder.forAddress(host, port).usePlaintext().build()
+
+  def shutdown: Unit < IOs =
+    IOs {
+      channel.shutdown()
+    }
+
+  def managedChannel: ManagedChannel = channel
+
+// src/main/scala/kyogrpc/GreeterImpl.scala
+package kyogrpc
+
+import helloworld.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+
+class GreeterImpl extends GreeterGrpc.Greeter:
+  def sayHello(
+      request: HelloRequest,
+      responseObserver: StreamObserver[HelloReply]
+  ): Unit =
+    val effect: HelloReply < IOs = IOs {
+      val reply = HelloReply(s"Hello, ${request.name}!")
+      reply
+    }
+
+    IOs.run {
+      effect.map { reply =>
+        responseObserver.onNext(reply)
+        responseObserver.onCompleted()
+      }
+    }
+
+// src/main/scala/kyogrpc/GreeterClient.scala
+package kyogrpc
+
+import helloworld.*
+import io.grpc.ManagedChannel
+import kyo.*
+
+class GreeterClient(channel: ManagedChannel):
+  private val stub = GreeterGrpc.stub(channel)
+
+  def sayHello(name: String): String < IOs =
+    IOs {
+      val request = HelloRequest(name)
+      val response = stub.sayHello(request)
+      response.getMessage
+    }
+
+// src/main/scala/kyogrpc/GrpcApp.scala
+package kyogrpc
+
+import kyo.*
+
+object GrpcApp extends KyoApp:
+  run {
+    val server = new GrpcServer(50051, List(new GreeterImpl()))
+    val client = new GreeterClient(new GrpcClient("localhost", 50051).managedChannel)
+
+    for
+      _ <- server.start
+      _ <- IOs.sleep(1.second)
+      response <- client.sayHello("World")
+      _ <- IOs(println(s"Response: $response"))
+      _ <- server.shutdown
+    yield ()
+  }
+
+// src/test/scala/kyogrpc/GrpcSpec.scala
+package kyogrpc
+
+import helloworld.*
+import io.grpc.inprocess.{InProcessChannelBuilder, InProcessServerBuilder}
+import io.grpc.stub.StreamObserver
+import io.grpc.{Server, ServerServiceDefinition}
+import kyo.*
+import org.scalatest.BeforeAndAfterAll
+import org.scalatest.freespec.AnyFreeSpec
+import org.scalatest.matchers.should.Matchers
+import scala.concurrent.duration.*
+
+class GrpcSpec extends AnyFreeSpec with Matchers with BeforeAndAfterAll:
+  private var server: Server = null
+  private var client: GreeterClient = null
+  private val serverName = "in-process-test"
+
+  override def beforeAll(): Unit =
+    val service: ServerServiceDefinition = new GreeterImpl()
+    server = InProcessServerBuilder
+      .forName(serverName)
+      .directExecutor()
+      .addService(service)
+      .build()
+      .start()
+
+    val channel = InProcessChannelBuilder
+      .forName(serverName)
+      .directExecutor()
+      .build()
+
+    client = new GreeterClient(channel)
+
+  override def afterAll(): Unit =
+    if server != null then server.shutdown()
+
+  "Greeter service" - {
+    "should respond with correct greeting" in {
+      val result = IOs.run(client.sayHello("Kyo"))
+      result shouldBe "Hello, Kyo!"
+    }
+
+    "should handle empty name" in {
+      val result = IOs.run(client.sayHello(""))
+      result shouldBe "Hello, !"
+    }
+
+    "should handle special characters" in {
+      val result = IOs.run(client.sayHello("User 123!@#"))
+      result shouldBe "Hello, User 123!@#!"
+    }
+  }
+
+// src/main/scala/kyogrpc/package.scala
+package object kyogrpc:
+  type IOs = kyo.IOs
+  val IOs = kyo.IOs
