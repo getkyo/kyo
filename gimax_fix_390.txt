@@ -1,0 +1,266 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.protobuf.services.ProtoReflectionService
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc => ScalaPbGrpc, ServiceCompanion}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.ClassTag
+import scala.util.Try
+
+/**
+ * Kyo gRPC support module providing high-level abstractions for gRPC services
+ * built on top of ScalaPB code generation.
+ */
+object Grpc:
+
+  /** Type alias for gRPC service definitions */
+  type ServiceDef = ServerServiceDefinition
+
+  /** Type alias for gRPC channel */
+  type Channel = io.grpc.Channel
+
+  /** Type alias for gRPC server */
+  type Server = io.grpc.Server
+
+  /**
+   * Kyo effect type for gRPC operations.
+   * Wraps gRPC's Future-based API into Kyo effects.
+   */
+  type GrpcIO[T] = Async[T] // Using Async as the base effect for gRPC operations
+
+  /**
+   * Creates a gRPC server builder with Kyo integration.
+   *
+   * @param port the port to listen on
+   * @return a ServerBuilder instance
+   */
+  def serverBuilder(port: Int): ServerBuilder =
+    new ServerBuilder(ServerBuilder.forPort(port))
+
+  /**
+   * Creates a gRPC server builder with Kyo integration using a custom server builder.
+   *
+   * @param builder the underlying gRPC server builder
+   * @return a ServerBuilder instance
+   */
+  def serverBuilder(builder: io.grpc.ServerBuilder[_]): ServerBuilder =
+    new ServerBuilder(builder)
+
+  /**
+   * Creates a managed channel for gRPC communication.
+   *
+   * @param target the target address (e.g., "localhost:8080")
+   * @return a ManagedChannel instance wrapped in Kyo
+   */
+  def managedChannel(target: String): ManagedChannel =
+    new ManagedChannel(ManagedChannelBuilder.forTarget(target).usePlaintext().build())
+
+  /**
+   * Creates a managed channel with custom configuration.
+   *
+   * @param builder the underlying channel builder
+   * @return a ManagedChannel instance
+   */
+  def managedChannel(builder: ManagedChannelBuilder[_]): ManagedChannel =
+    new ManagedChannel(builder.build())
+
+  /**
+   * Wraps a gRPC Future into a Kyo effect.
+   *
+   * @param future the gRPC Future to wrap
+   * @tparam T the response type
+   * @return a Kyo effect that completes with the future result
+   */
+  def fromFuture[T](future: Future[T]): T < GrpcIO =
+    Async.fromFuture(future)
+
+  /**
+   * Wraps a gRPC call into a Kyo effect using the provided stub.
+   *
+   * @param stub the gRPC stub
+   * @param call the call function on the stub
+   * @tparam A the request type
+   * @tparam B the response type
+   * @return a Kyo effect that completes with the response
+   */
+  def call[A, B](stub: AnyRef, call: AnyRef => A => Future[B]): B < GrpcIO =
+    Async.fromFuture(call(stub))
+
+  /**
+   * Server builder with Kyo integration.
+   */
+  final class ServerBuilder private[Grpc] (private val underlying: io.grpc.ServerBuilder[_]):
+
+    /**
+     * Adds a gRPC service to the server.
+     *
+     * @param service the service definition
+     * @return this builder
+     */
+    def addService(service: ServiceDef): ServerBuilder =
+      new ServerBuilder(underlying.addService(service))
+
+    /**
+     * Adds a gRPC service implemented with Kyo effects.
+     *
+     * @param service the service implementation
+     * @tparam T the service trait type
+     * @return this builder
+     */
+    def addService[T <: AnyRef](service: T)(implicit
+        companion: ServiceCompanion[T],
+        tag: ClassTag[T]
+    ): ServerBuilder =
+      val serviceDef = ScalaPbGrpc.bindService(service, ExecutionContext.global)
+      new ServerBuilder(underlying.addService(serviceDef))
+
+    /**
+     * Adds a gRPC service implemented with Kyo effects using a custom binding.
+     *
+     * @param serviceDef the service definition
+     * @return this builder
+     */
+    def addServiceDef(serviceDef: ServiceDef): ServerBuilder =
+      new ServerBuilder(underlying.addService(serviceDef))
+
+    /**
+     * Adds a reflection service for debugging.
+     *
+     * @return this builder
+     */
+    def withReflection(): ServerBuilder =
+      new ServerBuilder(underlying.addService(ProtoReflectionService.newInstance()))
+
+    /**
+     * Builds and starts the server.
+     *
+     * @return a Kyo effect that completes with the started server
+     */
+    def start(): Server < GrpcIO =
+      Async.fromFuture(Future.successful(underlying.build().start()))
+
+    /**
+     * Builds the server without starting it.
+     *
+     * @return the built server
+     */
+    def build(): Server =
+      underlying.build()
+
+  /**
+   * Managed channel wrapper with Kyo integration.
+   */
+  final class ManagedChannel private[Grpc] (private val underlying: io.grpc.ManagedChannel):
+
+    /**
+     * Creates a blocking stub for the given service.
+     *
+     * @tparam T the blocking stub type
+     * @return the blocking stub
+     */
+    def blockingStub[T <: AnyRef](implicit companion: ServiceCompanion[T]): T =
+      companion.blockingStub(underlying)
+
+    /**
+     * Creates a future stub for the given service.
+     *
+     * @tparam T the future stub type
+     * @return the future stub
+     */
+    def futureStub[T <: AnyRef](implicit companion: ServiceCompanion[T]): T =
+      companion.stub(underlying)
+
+    /**
+     * Shuts down the channel gracefully.
+     *
+     * @return a Kyo effect that completes when the channel is terminated
+     */
+    def shutdown(): Unit < GrpcIO =
+      Async.fromFuture(Future.successful(underlying.shutdown()))
+
+    /**
+     * Shuts down the channel forcefully.
+     */
+    def shutdownNow(): Unit =
+      underlying.shutdownNow()
+
+    /**
+     * Returns whether the channel is terminated.
+     */
+    def isTerminated: Boolean =
+      underlying.isTerminated
+
+    /**
+     * Awaits termination of the channel.
+     *
+     * @return a Kyo effect that completes when the channel is terminated
+     */
+    def awaitTermination(): Unit < GrpcIO =
+      Async.fromFuture(Future.successful(underlying.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS)))
+
+  /**
+   * Helper object for creating gRPC service implementations with Kyo.
+   */
+  object Service:
+
+    /**
+     * Creates a server service definition from a service implementation.
+     *
+     * @param service the service implementation
+     * @param companion the service companion
+     * @tparam T the service trait type
+     * @return the server service definition
+     */
+    def bind[T <: AnyRef](service: T)(implicit companion: ServiceCompanion[T]): ServiceDef =
+      ScalaPbGrpc.bindService(service, ExecutionContext.global)
+
+    /**
+     * Creates a server service definition from a service implementation with custom execution context.
+     *
+     * @param service the service implementation
+     * @param ec the execution context
+     * @param companion the service companion
+     * @tparam T the service trait type
+     * @return the server service definition
+     */
+    def bind[T <: AnyRef](service: T, ec: ExecutionContext)(implicit companion: ServiceCompanion[T]): ServiceDef =
+      ScalaPbGrpc.bindService(service, ec)
+
+  /**
+   * Internal utilities for gRPC integration.
+   */
+  private[grpc] object internal:
+
+    /**
+     * Converts a Kyo effect to a gRPC Future.
+     *
+     * @param effect the Kyo effect
+     * @tparam T the result type
+     * @return a gRPC Future
+     */
+    def toGrpcFuture[T](effect: T < GrpcIO): Future[T] =
+      val promise = scala.concurrent.Promise[T]()
+      Async.run(effect).map { fiber =>
+        fiber
