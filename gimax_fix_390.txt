@@ -1,0 +1,215 @@
+// build.sbt
+val kyoVersion = "0.9.0"
+val scalaPbVersion = "0.11.15"
+val grpcVersion = "1.57.2"
+
+lazy val root = (project in file("."))
+  .settings(
+    name := "kyo-grpc",
+    version := "0.1.0-SNAPSHOT",
+    scalaVersion := "3.3.1",
+    libraryDependencies ++= Seq(
+      "io.getkyo" %% "kyo-core" % kyoVersion,
+      "io.getkyo" %% "kyo-direct" % kyoVersion,
+      "io.grpc" % "grpc-netty-shaded" % grpcVersion,
+      "io.grpc" % "grpc-protobuf" % grpcVersion,
+      "io.grpc" % "grpc-stub" % grpcVersion,
+      "com.thesamet.scalapb" %% "scalapb-runtime" % scalaPbVersion % "protobuf",
+      "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalaPbVersion,
+      "com.thesamet.scalapb" %% "scalapb-json4s" % scalaPbVersion % Test,
+      "org.scalameta" %% "munit" % "0.7.29" % Test
+    ),
+    Compile / PB.targets := Seq(
+      scalapb.gen(grpc = true) -> (Compile / sourceManaged).value / "scalapb"
+    ),
+    Test / PB.targets := Seq(
+      scalapb.gen(grpc = true) -> (Test / sourceManaged).value / "scalapb"
+    )
+  )
+
+// project/plugins.sbt
+addSbtPlugin("com.thesamet" % "sbt-protoc" % "1.0.6")
+
+// src/main/protobuf/helloworld.proto
+syntax = "proto3";
+
+package helloworld;
+
+service Greeter {
+  rpc SayHello (HelloRequest) returns (HelloReply) {}
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloReply {
+  string message = 1;
+}
+
+// src/main/scala/kyo/grpc/KyoGrpcServer.scala
+package kyo.grpc
+
+import io.grpc.{Server, ServerBuilder}
+import kyo.*
+import kyo.direct.*
+import scala.concurrent.ExecutionContext
+
+class KyoGrpcServer(port: Int, services: List[io.grpc.ServerServiceDefinition]):
+
+  private var server: Server = _
+
+  def start: Unit < IO =
+    IO {
+      server = ServerBuilder
+        .forPort(port)
+        .addServices(services.asJava)
+        .build()
+        .start()
+      println(s"Server started on port $port")
+    }
+
+  def shutdown: Unit < IO =
+    IO {
+      if server != null then
+        server.shutdown()
+        println("Server shut down")
+    }
+
+  def awaitTermination: Unit < IO =
+    IO {
+      if server != null then
+        server.awaitTermination()
+    }
+
+// src/main/scala/kyo/grpc/KyoGrpcClient.scala
+package kyo.grpc
+
+import io.grpc.{ManagedChannel, ManagedChannelBuilder}
+import kyo.*
+
+class KyoGrpcClient(host: String, port: Int):
+  private val channel: ManagedChannel =
+    ManagedChannelBuilder.forAddress(host, port).usePlaintext().build()
+
+  def shutdown: Unit < IO =
+    IO {
+      channel.shutdown()
+    }
+
+  def managedChannel: ManagedChannel = channel
+
+// src/main/scala/kyo/grpc/GreeterService.scala
+package kyo.grpc
+
+import helloworld.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+
+class GreeterService extends GreeterGrpc.Greeter:
+
+  override def sayHello(
+      request: HelloRequest,
+      responseObserver: StreamObserver[HelloReply]
+  ): Unit =
+    val effect: HelloReply < IO =
+      IO {
+        val reply = HelloReply(message = s"Hello, ${request.name}!")
+        reply
+      }
+
+    IO.run {
+      effect.map { reply =>
+        IO {
+          responseObserver.onNext(reply)
+          responseObserver.onCompleted()
+        }
+      }
+    }
+
+// src/main/scala/kyo/grpc/GreeterClient.scala
+package kyo.grpc
+
+import helloworld.*
+import kyo.*
+
+class GreeterClient(client: KyoGrpcClient):
+  private val stub = GreeterGrpc.stub(client.managedChannel)
+
+  def sayHello(name: String): String < IO =
+    IO {
+      val request = HelloRequest(name = name)
+      val response = stub.sayHello(request)
+      response.message
+    }
+
+// src/test/scala/kyo/grpc/GreeterServiceSpec.scala
+package kyo.grpc
+
+import helloworld.*
+import io.grpc.inprocess.{InProcessChannelBuilder, InProcessServerBuilder}
+import io.grpc.stub.StreamObserver
+import io.grpc.{Server, ServerBuilder}
+import kyo.*
+import kyo.direct.*
+import munit.*
+
+import scala.concurrent.{ExecutionContext, Promise}
+
+class GreeterServiceSpec extends FunSuite:
+
+  var server: Server = _
+  var client: GreeterClient = _
+
+  override def beforeAll(): Unit =
+    val service = new GreeterService()
+    server = InProcessServerBuilder
+      .forName("test")
+      .directExecutor()
+      .addService(service)
+      .build()
+      .start()
+
+    val channel = InProcessChannelBuilder
+      .forName("test")
+      .directExecutor()
+      .build()
+
+    val kyoClient = new KyoGrpcClient("localhost", 0) {
+      override val managedChannel = channel
+    }
+    client = new GreeterClient(kyoClient)
+
+  override def afterAll(): Unit =
+    server.shutdown()
+    ()
+
+  test("sayHello should return greeting") {
+    val result = IO.run(client.sayHello("World"))
+    assertEquals(result, "Hello, World!")
+  }
+
+  test("sayHello with different names") {
+    val result1 = IO.run(client.sayHello("Alice"))
+    val result2 = IO.run(client.sayHello("Bob"))
+    assertEquals(result1, "Hello, Alice!")
+    assertEquals(result2, "Hello, Bob!")
+  }
+
+// src/main/scala/kyo/grpc/Main.scala
+package kyo.grpc
+
+import kyo.*
+import kyo.direct.*
+
+object Main extends KyoApp:
+
+  override def run: Unit < IO =
+    val service = new GreeterService()
+    val server = new KyoGrpcServer(50051, List(service))
+
+    for
+      _ <- server.start
+      _ <- server.awaitTermination
+    yield ()
+
