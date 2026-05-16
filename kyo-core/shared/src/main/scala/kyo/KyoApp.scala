@@ -27,13 +27,16 @@ abstract class KyoApp extends KyoAppPlatformSpecific:
         promise.mask().safe
     end awaitInterrupt
 
-    override protected def handle[A](v: A < (Async & Scope & Abort[Throwable]))(using Frame): A < (Async & Abort[Throwable]) =
-        Async.raceFirst(Scope.run(v), awaitInterrupt.get)
+    override protected def handle[A](v: A < (Async & Scope & Abort[Any]))(using Frame): A < (Async & Abort[Throwable]) =
+        Async.raceFirst(KyoApp.abortAnyToThrowable(Scope.run(v)), awaitInterrupt.get)
     end handle
 end KyoApp
 
 object KyoApp:
-    def apply[A](v: => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): KyoApp =
+    final case class FailureException private[kyo] (error: Any)(using Frame)
+        extends KyoException("Uncaught error", String.valueOf(error))
+
+    def apply[A](v: => A < (Async & Scope & Abort[Any]))(using Frame, Render[A]): KyoApp =
         new KyoApp:
             run(v)
 
@@ -133,9 +136,18 @@ object KyoApp:
           *   A Result containing either the computed value or a failure.
           */
         def runAndBlock[A](timeout: Duration)(
-            v: A < (Async & Scope & Abort[Throwable])
+            v: A < (Async & Scope & Abort[Any])
         )(using Frame, AllowUnsafe): Result[Throwable, A] =
-            Abort.run(Sync.Unsafe.run(KyoApp.runAndBlock(timeout)(Scope.run(v)))).eval
+            Abort.run(Sync.Unsafe.run(KyoApp.runAndBlock(timeout)(KyoApp.abortAnyToThrowable(Scope.run(v))))).eval
     end Unsafe
+
+    private def abortAnyToThrowable[A, S](v: => A < (Abort[Any] & S))(using Frame): A < (Abort[Throwable] & S) =
+        Abort.run[Any](v).map {
+            case Result.Success(value)              => value
+            case Result.Failure(error: Throwable)   => Abort.fail(error)
+            case Result.Failure(error)              => Abort.fail(FailureException(error))
+            case panic @ Result.Panic(_: Throwable) => Abort.get(panic)
+        }
+    end abortAnyToThrowable
 
 end KyoApp
