@@ -1,0 +1,265 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import kyo.*
+import kyo.grpc.internal.*
+import io.grpc.*
+import io.grpc.stub.*
+import scalapb.grpc.{Grpc => ScalaPbGrpc}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion, Message}
+import com.google.protobuf.{ByteString, CodedInputStream, CodedOutputStream}
+import java.io.{ByteArrayInputStream, InputStream}
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success, Try}
+import scala.reflect.ClassTag
+
+// Core gRPC types and utilities
+object Grpc:
+
+  /** Type class for serializing/deserializing protobuf messages */
+  trait Codec[A]:
+    def serialize(a: A): Array[Byte]
+    def deserialize(bytes: Array[Byte]): A
+
+  object Codec:
+    given [A <: GeneratedMessage with Message[A]: GeneratedMessageCompanion]: Codec[A] with
+      def serialize(a: A): Array[Byte] = a.toByteArray
+      def deserialize(bytes: Array[Byte]): A =
+        summon[GeneratedMessageCompanion[A]].parseFrom(bytes)
+
+    given Codec[Array[Byte]] with
+      def serialize(a: Array[Byte]): Array[Byte] = a
+      def deserialize(bytes: Array[Byte]): Array[Byte] = bytes
+
+  /** Kyo effect for gRPC calls */
+  opaque type GrpcIO[A] = A < IOs
+
+  object GrpcIO:
+    def apply[A](f: => A)(using Frame): GrpcIO[A] = IOs(f)
+    def run[A](v: GrpcIO[A])(using Frame): A < IOs = v
+
+  /** Managed channel resource */
+  class ManagedChannel private[grpc] (channel: io.grpc.ManagedChannel):
+    def shutdown: Unit < IOs = IOs {
+      channel.shutdown()
+      ()
+    }
+    def shutdownNow: Unit < IOs = IOs {
+      channel.shutdownNow()
+      ()
+    }
+    def isShutdown: Boolean < IOs = IOs(channel.isShutdown)
+    def isTerminated: Boolean < IOs = IOs(channel.isTerminated)
+
+  object ManagedChannel:
+    def apply(target: String): ManagedChannel < IOs =
+      IOs {
+        val channel = io.grpc.ManagedChannelBuilder
+          .forTarget(target)
+          .usePlaintext()
+          .build()
+        new ManagedChannel(channel)
+      }
+
+    def apply(target: String, port: Int): ManagedChannel < IOs =
+      IOs {
+        val channel = io.grpc.ManagedChannelBuilder
+          .forAddress(target, port)
+          .usePlaintext()
+          .build()
+        new ManagedChannel(channel)
+      }
+
+    def apply(builder: ManagedChannelBuilder[_]): ManagedChannel < IOs =
+      IOs(new ManagedChannel(builder.build()))
+
+  /** Server builder */
+  class ServerBuilder private[grpc] (private val builder: io.grpc.ServerBuilder[_]):
+    def addService(service: BindableService): ServerBuilder =
+      new ServerBuilder(builder.addService(service))
+
+    def addServices(services: Seq[BindableService]): ServerBuilder =
+      services.foldLeft(this)(_.addService(_))
+
+    def build: Server < IOs = IOs {
+      new Server(builder.build())
+    }
+
+  object ServerBuilder:
+    def forPort(port: Int): ServerBuilder =
+      new ServerBuilder(io.grpc.ServerBuilder.forPort(port))
+
+  /** Server resource */
+  class Server private[grpc] (private val server: io.grpc.Server):
+    def start: Unit < IOs = IOs {
+      server.start()
+      ()
+    }
+    def shutdown: Unit < IOs = IOs {
+      server.shutdown()
+      ()
+    }
+    def awaitTermination: Unit < IOs = IOs {
+      server.awaitTermination()
+      ()
+    }
+    def getPort: Int < IOs = IOs(server.getPort)
+
+  /** Client stub wrapper */
+  class ClientStub[Stub] private[grpc] (val stub: Stub, val channel: ManagedChannel)
+
+  /** Service definition helper */
+  trait ServiceDefinition:
+    def bindService: ServerServiceDefinition
+
+  /** Unary call support */
+  object Unary:
+    def call[Req, Res](
+        stub: AbstractStub[_],
+        method: MethodDescriptor[Req, Res],
+        request: Req
+    )(using Frame): Res < IOs =
+      IOs {
+        val call = stub.newCall(method, CallOptions.DEFAULT)
+        val listener = new ClientCalls.UnaryClientCallListener[Res]()
+        call.start(listener, new Metadata())
+        call.sendMessage(request)
+        call.halfClose()
+        listener.get()
+      }
+
+  /** Server streaming support */
+  object ServerStreaming:
+    def call[Req, Res](
+        stub: AbstractStub[_],
+        method: MethodDescriptor[Req, Res],
+        request: Req
+    )(using Frame): Stream[Res, IOs] =
+      Stream(emit =>
+        IOs {
+          val call = stub.newCall(method, CallOptions.DEFAULT)
+          val listener = new ClientCalls.StreamingClientCallListener[Res](emit)
+          call.start(listener, new Metadata())
+          call.sendMessage(request)
+          call.halfClose()
+        }
+      )
+
+  /** Client streaming support */
+  object ClientStreaming:
+    def call[Req, Res](
+        stub: AbstractStub[_],
+        method: MethodDescriptor[Req, Res]
+    )(using Frame): Stream[Req, IOs] => Res < IOs =
+      (stream: Stream[Req, IOs]) =>
+        IOs {
+          val call = stub.newCall(method, CallOptions.DEFAULT)
+          val listener = new ClientCalls.UnaryClientCallListener[Res]()
+          call.start(listener, new Metadata())
+          stream.run(emit =>
+            IOs {
+              call.sendMessage(emit)
+              ()
+            }
+          )
+          call.halfClose()
+          listener.get()
+        }
+
+  /** Bidirectional streaming support */
+  object BidiStreaming:
+    def call[Req, Res](
+        stub: AbstractStub[_],
+        method: MethodDescriptor[Req, Res]
+    )(using Frame): Stream[Req, IOs] => Stream[Res, IOs] =
+      (stream: Stream[Req, IOs]) =>
+        Stream(emit =>
+          IOs {
+            val call = stub.newCall(method, CallOptions.DEFAULT)
+            val listener = new ClientCalls.StreamingClientCallListener[Res](emit)
+            call.start(listener, new Metadata())
+            stream.run(emit =>
+              IOs {
+                call.sendMessage(emit)
+                ()
+              }
+            )
+            call.halfClose()
+          }
+        )
+
+end Grpc
+
+// Internal implementation
+package internal:
+
+  import io.grpc.*
+
+  /** Unary client call listener */
+  class UnaryClientCallListener[T] extends ClientCall.Listener[T]:
+    private var response: Option[T] = None
+    private var error: Option[Throwable] = None
+    private var completed: Boolean = false
+
+    def get(): T =
+      while !completed do Thread.`yield`()
+      error.foreach(e => throw e)
+      response.get
+
+    override def onMessage(message: T): Unit =
+      response = Some(message)
+
+    override def onClose(status: Status, trailers: Metadata): Unit =
+      if status.isOk then
+        completed = true
+      else
+        error = Some(status.asRuntimeException(trailers))
+        completed = true
+
+  /** Streaming client call listener */
+  class StreamingClientCallListener[T](emit: T => Unit < IOs) extends ClientCall.Listener[T]:
+    private var error: Option[Throwable] = None
+    private var completed: Boolean = false
+
+    override def onMessage(message: T): Unit =
+      IOs.run(emit(message))
+
+    override def onClose(status: Status, trailers: Metadata): Unit =
+      if !status.isOk then
+        error = Some(status.asRuntimeException(trailers))
+      completed = true
+
+    def await(): Unit =
+      while !completed do Thread.`yield`()
+      error.foreach(e => throw e)
+
+end internal
+
+// Test support
+package test:
+
+  import kyo.grpc.*
+  import scalapb.grpc.{Grpc => ScalaPbGrpc}
+  import io.grpc.*
+  import io.grpc.stub.*
+
+  /** Test service definition helper */
+  trait TestService:
+    def unary(request: String): String < IOs
+    def serverStreaming(request: String
