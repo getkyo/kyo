@@ -1,0 +1,227 @@
+// build.sbt
+val kyoVersion = "0.9.0"
+val grpcVersion = "1.62.2"
+val protobufVersion = "3.25.3"
+val scalapbVersion = "0.11.15"
+
+lazy val root = (project in file("."))
+  .settings(
+    name := "kyo-grpc",
+    version := "0.1.0-SNAPSHOT",
+    scalaVersion := "3.4.0",
+    libraryDependencies ++= Seq(
+      "io.getkyo" %% "kyo-core" % kyoVersion,
+      "io.getkyo" %% "kyo-direct" % kyoVersion,
+      "io.grpc" % "grpc-netty" % grpcVersion,
+      "io.grpc" % "grpc-protobuf" % grpcVersion,
+      "io.grpc" % "grpc-stub" % grpcVersion,
+      "com.thesamet.scalapb" %% "scalapb-runtime" % scalapbVersion % "protobuf",
+      "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapbVersion,
+      "com.thesamet.scalapb" %% "scalapb-json4s" % scalapbVersion % Test,
+      "org.scalatest" %% "scalatest" % "3.2.18" % Test,
+      "io.grpc" % "grpc-testing" % grpcVersion % Test
+    ),
+    Compile / PB.targets := Seq(
+      scalapb.gen(grpc = true) -> (Compile / sourceManaged).value / "scalapb"
+    ),
+    Test / PB.targets := Seq(
+      scalapb.gen(grpc = true) -> (Test / sourceManaged).value / "scalapb"
+    )
+  )
+
+// project/plugins.sbt
+addSbtPlugin("com.thesamet" % "sbt-protoc" % "1.0.7")
+
+// src/main/protobuf/helloworld.proto
+syntax = "proto3";
+
+package helloworld;
+
+service Greeter {
+  rpc SayHello (HelloRequest) returns (HelloReply) {}
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloReply {
+  string message = 1;
+}
+
+// src/main/scala/io/kyo/grpc/KyoGrpcServer.scala
+package io.kyo.grpc
+
+import io.grpc.{Server, ServerBuilder, ServerServiceDefinition}
+import io.grpc.stub.StreamObserver
+import io.kyo.*
+import io.kyo.direct.*
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Try
+
+trait KyoGrpcServer:
+  def start(port: Int): Unit < (IO & Env[Server])
+  def shutdown(): Unit < IO
+
+object KyoGrpcServer:
+  def apply(services: ServerServiceDefinition*): KyoGrpcServer =
+    new KyoGrpcServer:
+      def start(port: Int): Unit < (IO & Env[Server]) =
+        IO {
+          val server = ServerBuilder
+            .forPort(port)
+            .addServices(services)
+            .build()
+            .start()
+          server
+        }.map { server =>
+          println(s"Server started on port $port")
+          ()
+        }
+
+      def shutdown(): Unit < IO =
+        IO {
+          val server = summon[Server]
+          server.shutdown()
+          server.awaitTermination()
+          ()
+        }
+
+// src/main/scala/io/kyo/grpc/KyoGrpcClient.scala
+package io.kyo.grpc
+
+import io.grpc.{Channel, ManagedChannelBuilder}
+import io.kyo.*
+import io.kyo.direct.*
+import scala.concurrent.{ExecutionContext, Future}
+
+trait KyoGrpcClient[Service]:
+  def withChannel[A](f: Channel => A < IO): A < IO
+
+object KyoGrpcClient:
+  def apply[Service](host: String, port: Int): KyoGrpcClient[Service] =
+    new KyoGrpcClient[Service]:
+      def withChannel[A](f: Channel => A < IO): A < IO =
+        IO {
+          val channel = ManagedChannelBuilder
+            .forAddress(host, port)
+            .usePlaintext()
+            .build()
+          channel
+        }.flatMap { channel =>
+          f(channel).flatMap { result =>
+            IO {
+              channel.shutdown()
+              channel.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+              result
+            }
+          }
+        }
+
+// src/main/scala/io/kyo/grpc/GreeterService.scala
+package io.kyo.grpc
+
+import io.grpc.stub.StreamObserver
+import io.kyo.*
+import io.kyo.direct.*
+import helloworld.*
+
+class GreeterService extends GreeterGrpc.Greeter:
+  override def sayHello(
+      request: HelloRequest,
+      responseObserver: StreamObserver[HelloReply]
+  ): Unit =
+    val effect: HelloReply < IO = defer {
+      val name = request.name
+      val message = s"Hello, $name!"
+      HelloReply(message)
+    }
+
+    IO.run(effect).map { reply =>
+      responseObserver.onNext(reply)
+      responseObserver.onCompleted()
+    }
+
+// src/main/scala/io/kyo/grpc/GreeterClient.scala
+package io.kyo.grpc
+
+import io.grpc.{Channel, ManagedChannelBuilder}
+import io.kyo.*
+import io.kyo.direct.*
+import helloworld.*
+
+class GreeterClient(channel: Channel):
+  private val stub = GreeterGrpc.stub(channel)
+
+  def sayHello(name: String): HelloReply < IO =
+    IO {
+      val request = HelloRequest(name)
+      val future = stub.sayHello(request)
+      import scala.concurrent.ExecutionContext.Implicits.global
+      future.map(reply => reply)
+    }.flatMap { future =>
+      IO.fromFuture(_ => future)
+    }
+
+// src/test/scala/io/kyo/grpc/GreeterServiceSpec.scala
+package io.kyo.grpc
+
+import io.grpc.{Server, ServerBuilder, ManagedChannelBuilder}
+import io.grpc.testing.GrpcCleanupRule
+import io.kyo.*
+import io.kyo.direct.*
+import helloworld.*
+import org.scalatest.*
+import org.scalatest.flatspec.*
+import org.scalatest.matchers.*
+
+class GreeterServiceSpec extends AnyFlatSpec with should.Matchers:
+
+  "GreeterService" should "respond with correct greeting" in {
+    val rule = new GrpcCleanupRule()
+
+    val server: Server = ServerBuilder
+      .forPort(0)
+      .addService(new GreeterService())
+      .build()
+      .start()
+
+    rule.register(server)
+
+    val port = server.getPort()
+    val channel = ManagedChannelBuilder
+      .forAddress("localhost", port)
+      .usePlaintext()
+      .build()
+
+    rule.register(channel)
+
+    val client = new GreeterClient(channel)
+    val effect: HelloReply < IO = client.sayHello("World")
+
+    val result = IO.run(effect)
+    result.message should be ("Hello, World!")
+  }
+
+// src/test/scala/io/kyo/grpc/KyoGrpcServerSpec.scala
+package io.kyo.grpc
+
+import io.grpc.{Server, ServerBuilder}
+import io.kyo.*
+import io.kyo.direct.*
+import org.scalatest.*
+import org.scalatest.flatspec.*
+import org.scalatest.matchers.*
+
+class KyoGrpcServerSpec extends AnyFlatSpec with should.Matchers:
+
+  "KyoGrpcServer" should "start and shutdown correctly" in {
+    val effect: Unit < (IO & Env[Server]) = defer {
+      val server = KyoGrpcServer(new GreeterService())
+      server.start(0)
+      server.shutdown()
+    }
+
+    val result = IO.run(Env.run(effect)(ServerBuilder.forPort(0).build()))
+    result should be (())
+  }
