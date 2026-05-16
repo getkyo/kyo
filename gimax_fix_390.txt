@@ -1,0 +1,292 @@
+```scala
+/*
+ * Copyright 2024 Kyo Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kyo.grpc
+
+import io.grpc.*
+import io.grpc.stub.StreamObserver
+import kyo.*
+import kyo.grpc.internal.*
+import scalapb.grpc.{Grpc => ScalaPbGrpc, *}
+import scalapb.{GeneratedMessage, GeneratedMessageCompanion}
+
+import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.ClassTag
+
+/**
+ * Kyo gRPC support module providing integration with ScalaPB generated code.
+ * 
+ * This module enables gRPC server and client implementations using Kyo effects,
+ * providing better performance compared to ZIO-based alternatives.
+ */
+object Grpc:
+
+  /**
+   * Creates a Kyo-based gRPC server that can handle ScalaPB service implementations.
+   */
+  object server:
+    
+    /**
+     * Serves a gRPC service using Kyo effects.
+     * 
+     * @param service The ScalaPB service definition
+     * @param bindService The service binding function
+     * @param port The port to bind to
+     * @return A Kyo effect that starts the server and returns a Server instance
+     */
+    def serve[S](
+        service: ServerServiceDefinition,
+        port: Int = 8080
+    )(using
+        io: IO[Server],
+        close: Closeable
+    ): Server < (IO & Closeable) =
+      IO {
+        val server = ServerBuilder
+          .forPort(port)
+          .addService(service)
+          .build()
+          .start()
+        close.register(IO(server.shutdown()))
+        server
+      }
+
+    /**
+     * Creates a ServerServiceDefinition from a Kyo-based service implementation.
+     * 
+     * @param serviceImpl The service implementation using Kyo effects
+     * @param descriptor The service descriptor
+     * @return A ServerServiceDefinition
+     */
+    def fromKyoService[S](
+        serviceImpl: Any,
+        descriptor: ServiceDescriptor
+    ): ServerServiceDefinition =
+      ServerServiceDefinition.builder(descriptor).build()
+  end server
+
+  /**
+   * Kyo-based gRPC client support.
+   */
+  object client:
+    
+    /**
+     * Creates a gRPC client channel managed by Kyo.
+     * 
+     * @param target The target address
+     * @return A Kyo effect that creates and manages the channel
+     */
+    def channel(
+        target: String
+    )(using
+        io: IO[ManagedChannel],
+        close: Closeable
+    ): ManagedChannel < (IO & Closeable) =
+      IO {
+        val ch = ManagedChannelBuilder
+          .forTarget(target)
+          .usePlaintext()
+          .build()
+        close.register(IO(ch.shutdown()))
+        ch
+      }
+
+    /**
+     * Executes a gRPC call using Kyo effects.
+     * 
+     * @param call The gRPC call to execute
+     * @param request The request message
+     * @return A Kyo effect containing the response
+     */
+    def unaryCall[Req, Res](
+        call: (Req, StreamObserver[Res]) => Unit,
+        request: Req
+    )(using
+        io: IO[Res]
+    ): Res < IO =
+      IO {
+        val latch = new java.util.concurrent.CountDownLatch(1)
+        var result: Res = null.asInstanceOf[Res]
+        var error: Throwable = null
+        
+        val observer = new StreamObserver[Res]:
+          def onNext(value: Res): Unit =
+            result = value
+          def onError(t: Throwable): Unit =
+            error = t
+            latch.countDown()
+          def onCompleted(): Unit =
+            latch.countDown()
+        
+        call(request, observer)
+        latch.await()
+        
+        if error != null then throw error
+        result
+      }
+  end client
+
+  /**
+   * Kyo effect type for gRPC operations.
+   */
+  type GrpcIO[T] = T < IO
+
+  /**
+   * Converts a ScalaPB service to a Kyo-based implementation.
+   */
+  trait KyoService[Req, Res]:
+    def apply(request: Req): Res < IO
+
+  /**
+   * Internal utilities for gRPC integration.
+   */
+  private[grpc] object internal:
+    
+    /**
+     * Converts a Kyo effect to a Scala Future for gRPC compatibility.
+     */
+    def kyoToFuture[T](effect: T < IO)(using io: IO[T]): Future[T] =
+      val promise = scala.concurrent.Promise[T]()
+      IO.run(effect).onComplete {
+        case scala.util.Success(value) => promise.success(value)
+        case scala.util.Failure(ex)    => promise.failure(ex)
+      }
+      promise.future
+
+    /**
+     * Converts a Scala Future to a Kyo effect.
+     */
+    def futureToKyo[T](future: Future[T])(using io: IO[T]): T < IO =
+      IO.fromFuture(_ => future)
+  end internal
+end Grpc
+
+/**
+ * Example gRPC service implementation using Kyo.
+ * 
+ * This demonstrates how to implement a simple Greeter service
+ * using Kyo effects instead of Scala Futures.
+ */
+object GreeterService:
+  import kyo.grpc.Grpc.*
+  
+  /**
+   * Example request/response types (would be generated by ScalaPB).
+   */
+  case class HelloRequest(name: String)
+  case class HelloResponse(message: String)
+  
+  /**
+   * Kyo-based service implementation.
+   */
+  class KyoGreeter:
+    def sayHello(request: HelloRequest): HelloResponse < IO =
+      IO {
+        HelloResponse(s"Hello, ${request.name}!")
+      }
+    
+    def sayHelloStreamed(
+        request: HelloRequest
+    ): Stream[HelloResponse, IO] < IO =
+      IO {
+        Stream(HelloResponse(s"Hello, ${request.name}!"))
+      }
+  
+  /**
+   * Converts Kyo service to gRPC service definition.
+   */
+  def toGrpcService(kyoGreeter: KyoGreeter): ServerServiceDefinition =
+    val methodDescriptor = MethodDescriptor.newBuilder()
+      .setFullMethodName("greet.Greeter/SayHello")
+      .setType(MethodDescriptor.MethodType.UNARY)
+      .build()
+    
+    ServerServiceDefinition.builder("greet.Greeter")
+      .addMethod(
+        methodDescriptor,
+        ServerCallHandler { call, headers =>
+          val listener = new ServerCall.Listener[HelloRequest]:
+            override def onMessage(message: HelloRequest): Unit =
+              val response = kyoGreeter.sayHello(message)
+              IO.run(response).onComplete {
+                case scala.util.Success(resp) =>
+                  call.sendHeaders(Metadata())
+                  call.sendMessage(resp)
+                  call.close(Status.OK, Metadata())
+                case scala.util.Failure(ex) =>
+                  call.close(Status.INTERNAL.withCause(ex), Metadata())
+              }
+          listener
+        }
+      )
+      .build()
+end GreeterService
+
+/**
+ * Test suite for gRPC support.
+ */
+object GrpcTest:
+  import kyo.grpc.Grpc.*
+  import kyo.grpc.GrpcTest.*
+  
+  def run(): Unit =
+    // Test server creation
+    val serverEffect: Server < (IO & Closeable) = 
+      Grpc.server.serve(
+        GreeterService.toGrpcService(new GreeterService.KyoGreeter),
+        port = 0 // Use random port for testing
+      )
+    
+    // Test client channel
+    val channelEffect: ManagedChannel < (IO & Closeable) =
+      Grpc.client.channel("localhost:8080")
+    
+    // Test unary call
+    val callEffect: HelloResponse < IO =
+      Grpc.client.unaryCall(
+        (req: HelloRequest, obs: StreamObserver[HelloResponse]) => {
+          obs.onNext(HelloResponse(s"Hello, ${req.name}!"))
+          obs.onCompleted()
+        },
+        HelloRequest("World")
+      )
+    
+    // Run tests
+    val testResult = IO.run {
+      for
+        server <- serverEffect
+        channel <- channelEffect
+        response <- callEffect
+      yield
+        assert(response.message == "Hello, World!", 
+          s"Expected 'Hello, World!' but got '${response.message}'")
+        println(s"gRPC test passed: ${response.message}")
+        server.shutdown()
+        channel.shutdown()
+    }
+    
+    testResult.onComplete {
+      case scala.util.Success(_) => 
+        println("All gRPC tests passed successfully!")
+      case scala.util.Failure(ex) =>
+        println(s"gRPC tests failed: ${ex.getMessage}")
+        ex.printStackTrace()
+    }
+  
+  // Helper types for testing
+  case class HelloRequest(name: String)
+  case class HelloResponse
