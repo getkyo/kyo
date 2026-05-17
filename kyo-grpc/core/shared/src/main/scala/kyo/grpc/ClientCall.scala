@@ -277,12 +277,14 @@ object ClientCall:
             completionEffect: GrpcResponsesAwaitingCompletion[Stream[Response, Grpc]]
         ): Stream[Response, Grpc] < Async =
             Emit.run[GrpcRequestCompletion](completionEffect).map: (handlers, responses) =>
-                listener.completionPromise.get.map: callClosed =>
-                    val completed = handlers.foldLeft(Kyo.unit: Unit < Async): (acc, handler) =>
-                        acc.andThen(Env.run(callClosed)(handler))
-                    completed.andThen:
-                        if callClosed.status.isOk then responses
-                        else responses.concat(Stream(Abort.fail(callClosed.asException)))
+                val completed =
+                    listener.completionPromise.get.map: callClosed =>
+                        val runHandlers = handlers.foldLeft(Kyo.unit: Unit < Async): (acc, handler) =>
+                            acc.andThen(Env.run(callClosed)(handler))
+                        runHandlers.andThen:
+                            if callClosed.status.isOk then Kyo.unit
+                            else Abort.fail(callClosed.asException)
+                responses.concat(Stream(completed))
         end processCompletion
 
         def run(call: ClientCall[Request, Response]): Stream[Response, Grpc] < Async =
@@ -367,21 +369,17 @@ object ClientCall:
         def sendAndReceive(
             call: ClientCall[Request, Response],
             listener: ServerStreamingClientCallListener[Response],
-            requestsEffect: GrpcRequest[Stream[Request, Grpc]]
+            requestsEffect: GrpcRequest[Stream[Request, Grpc]],
+            responseCapacity: Int
         ): GrpcResponsesAwaitingCompletion[Stream[Response, Grpc]] =
             def onResponseChunk(chunk: Chunk[Response]) =
                 Sync.defer(call.request(chunk.size))
 
             for
-                requests   <- requestsEffect
-                _          <- Sync.defer(call.request(RequestOptions.DefaultResponseCapacity))
-                sendResult <- sendAndClose(call, listener, requests)
-                stream <-
-                    sendResult match
-                        case Result.Success(_) =>
-                            Kyo.lift(listener.responseChannel.streamUntilClosed().tapChunk(onResponseChunk))
-                        case Result.Failure(e) => Kyo.lift(Stream(Abort.fail(e)))
-                        case Result.Panic(e)   => Kyo.lift(Stream(Abort.panic(e)))
+                requests <- requestsEffect
+                _        <- Sync.defer(call.request(responseCapacity))
+                _        <- Fiber.initUnscoped(sendAndClose(call, listener, requests))
+                stream   <- Kyo.lift(listener.responseChannel.streamUntilClosed().tapChunk(onResponseChunk))
             yield stream
             end for
         end sendAndReceive
@@ -390,12 +388,14 @@ object ClientCall:
             completionEffect: GrpcResponsesAwaitingCompletion[Stream[Response, Grpc]]
         ): Stream[Response, Grpc] < Async =
             Emit.run[GrpcRequestCompletion](completionEffect).map: (handlers, responses) =>
-                listener.completionPromise.get.map: callClosed =>
-                    val completed = handlers.foldLeft(Kyo.unit: Unit < Async): (acc, handler) =>
-                        acc.andThen(Env.run(callClosed)(handler))
-                    completed.andThen:
-                        if callClosed.status.isOk then responses
-                        else responses.concat(Stream(Abort.fail(callClosed.asException)))
+                val completed =
+                    listener.completionPromise.get.map: callClosed =>
+                        val runHandlers = handlers.foldLeft(Kyo.unit: Unit < Async): (acc, handler) =>
+                            acc.andThen(Env.run(callClosed)(handler))
+                        runHandlers.andThen:
+                            if callClosed.status.isOk then Kyo.unit
+                            else Abort.fail(callClosed.asException)
+                responses.concat(Stream(completed))
 
         def run(call: ClientCall[Request, Response]): Stream[Response, Grpc] < Async =
             RequestOptions.run(requestsInit).map: (options, requestsEffect) =>
@@ -403,7 +403,7 @@ object ClientCall:
                     listener <- start(call, options)
                     responses <- (for
                         requestsWithHeaders <- processHeaders(requestsEffect)
-                        responses           <- sendAndReceive(call, listener, requestsWithHeaders)
+                        responses           <- sendAndReceive(call, listener, requestsWithHeaders, options.responseCapacityOrDefault)
                     yield responses).handle(
                         processCompletion(listener),
                         cancelOnError(call),

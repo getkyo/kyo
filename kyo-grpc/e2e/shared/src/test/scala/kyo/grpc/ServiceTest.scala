@@ -83,6 +83,19 @@ class ServiceTest extends Test:
             end for
         }
 
+        "success above default response capacity" in run {
+            val message = "Hello"
+            val count   = RequestOptions.DefaultResponseCapacity + 1
+            val request = Success(message, count = count)
+            for
+                client <- createClientAndServer
+                responses <-
+                    client.oneToMany(Kyo.lift(request))
+                        .run
+            yield assert(responses == Chunk.from((1 to count).map(n => Echo(s"$message $n"))))
+            end for
+        }
+
         "fail" - {
             "producing stream" in {
 //                forEvery(notOKStatusCodes) { code =>
@@ -311,6 +324,18 @@ class ServiceTest extends Test:
         "success" in run {
             val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = n - 2): Request))
             val expected  = Chunk.from((3 to 5).flatMap(n => Chunk.from((1 to (n - 2)).map(m => Echo(s"$n $m")))))
+            val requests  = Stream(Emit.value(successes))
+            for
+                client    <- createClientAndServer
+                responses <- client.manyToMany(Kyo.lift(requests)).run
+            yield assert(responses == expected)
+            end for
+        }
+
+        "success above default response capacity" in run {
+            val count     = RequestOptions.DefaultResponseCapacity + 1
+            val successes = Chunk.from((1 to count).map(n => Success(n.toString, count = 1): Request))
+            val expected  = Chunk.from((1 to count).map(n => Echo(s"$n 1")))
             val requests  = Stream(Emit.value(successes))
             for
                 client    <- createClientAndServer
