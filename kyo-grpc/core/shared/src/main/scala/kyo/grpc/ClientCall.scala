@@ -362,36 +362,9 @@ object ClientCall:
 
         def sendAndClose(
             call: ClientCall[Request, Response],
-            listener: ServerStreamingClientCallListener[Response],
             requests: Stream[Request, Grpc]
         ): Result[GrpcFailure, Unit] < Async =
-            // Sends the first message regardless of readiness to ensure progress.
-            def awaitReadyOrClosed: Unit < (Abort[CallClosed] & Async) =
-                Async.race(
-                    listener.readySignal.next.map(_ => Maybe.empty[CallClosed]),
-                    listener.completionPromise.get.map(callClosed => Maybe(callClosed))
-                ).map:
-                    case Maybe.Present(callClosed) => Abort.fail(callClosed)
-                    case Maybe.Absent              => Kyo.unit
-
-            val send = requests.fold(true) { (first, request) =>
-                val send =
-                    if first then
-                        Sync.defer(call.sendMessage(request))
-                    else
-                        for
-                            // There is a race condition between setting the ready signal to false and the listener setting it
-                            // to true. Either update may be lost, however, we always check isReady which is the source of
-                            // truth. The only case where the signal value matters is when isReady is false. We know that the
-                            // signal will still be false, and the listener guarantees that the ready signal will be set to true
-                            // when isReady becomes true.
-                            _       <- listener.readySignal.set(false)
-                            isReady <- Sync.defer(call.isReady)
-                            _       <- if isReady then Kyo.unit else awaitReadyOrClosed
-                            _       <- Sync.defer(call.sendMessage(request))
-                        yield ()
-                send.map(_ => false)
-            }.unit
+            val send = requests.foreach(request => Sync.defer(call.sendMessage(request)))
 
             Abort.run[GrpcFailure](
                 Abort.run[CallClosed](send).map:
@@ -421,7 +394,7 @@ object ClientCall:
                 requests <- requestsEffect
                 _        <- Sync.defer(call.request(1))
                 // TODO: Is it fine for this to be unscoped?
-                _      <- Fiber.initUnscoped(sendAndClose(call, listener, requests))
+                _      <- Fiber.initUnscoped(sendAndClose(call, requests))
                 stream <- listener.responseChannel.streamUntilClosed().tapChunk(onResponseChunk)
             yield stream
             end for

@@ -559,6 +559,18 @@ class ServiceTest extends Test:
         val service =
             ServerServiceDefinition.builder(TestServiceGrpc.SERVICE)
                 .addMethod(
+                    TestServiceGrpc.METHOD_ONE_TO_ONE,
+                    ServerCallHandlers.unary(TestServiceImpl.oneToOne)
+                )
+                .addMethod(
+                    TestServiceGrpc.METHOD_ONE_TO_MANY,
+                    ServerCallHandlers.serverStreaming(TestServiceImpl.oneToMany)
+                )
+                .addMethod(
+                    TestServiceGrpc.METHOD_MANY_TO_ONE,
+                    ServerCallHandlers.clientStreaming(TestServiceImpl.manyToOne)
+                )
+                .addMethod(
                     TestServiceGrpc.METHOD_MANY_TO_MANY,
                     ServerCalls.asyncBidiStreamingCall(
                         new ServerCalls.BidiStreamingMethod[Request, Response]:
