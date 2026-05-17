@@ -146,7 +146,7 @@ object KyoApp:
             case Result.Success(value)              => value
             case Result.Failure(error: Throwable)   => Abort.fail(error)
             case Result.Failure(error)              => Abort.fail(FailureException(error))
-            case panic @ Result.Panic(_: Throwable) => Abort.get(panic)
+            case panic: Result.Panic => Abort.get(panic)
         }
     end abortAnyToThrowable
 
