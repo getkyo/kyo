@@ -193,8 +193,7 @@ lazy val kyoJS = project
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
-        `kyo-pod`.js,
-        `kyo-grpc`.js
+        `kyo-pod`.js
     )
 
 lazy val kyoNative = project
@@ -685,7 +684,7 @@ lazy val `kyo-cats` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-grpc` =
-    crossProject(JVMPlatform, JSPlatform)
+    crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .settings(
             `kyo-settings`,
@@ -702,7 +701,7 @@ lazy val `kyo-grpc-jvm` =
     `kyo-grpc`.jvm
 
 lazy val `kyo-grpc-core` =
-    crossProject(JVMPlatform, JSPlatform)
+    crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-grpc") / "core")
@@ -720,13 +719,9 @@ lazy val `kyo-grpc-core` =
                 "ch.qos.logback"        % "logback-classic"      % "1.5.32" % Test
             )
         )
-        .jsSettings(
-            `js-settings`,
-            libraryDependencies += "com.thesamet.scalapb.grpcweb" %%% "scalapb-grpcweb" % "0.7.0"
-        )
 
 lazy val `kyo-grpc-code-gen` =
-    crossProject(JVMPlatform, JSPlatform)
+    crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-grpc") / "code-gen")
@@ -746,10 +741,9 @@ lazy val `kyo-grpc-code-gen` =
             )
         )
         .jvmSettings(mimaCheck(false))
-        .jsSettings(`js-settings`)
 
 lazy val `kyo-grpc-e2e` =
-    crossProject(JVMPlatform, JSPlatform)
+    crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-grpc") / "e2e")
@@ -772,11 +766,6 @@ lazy val `kyo-grpc-e2e` =
                 "io.grpc"        % "grpc-netty-shaded" % "1.72.0",
                 "ch.qos.logback" % "logback-classic"   % "1.5.32" % Test
             )
-        )
-        .jsSettings(
-            `js-settings`,
-            codeGenClasspath := (`kyo-grpc-code-gen`.js / Compile / fullClasspath).value,
-            libraryDependencies += "com.thesamet.scalapb.grpcweb" %%% "scalapb-grpcweb" % "0.7.0"
         )
 
 lazy val `kyo-combinators` =

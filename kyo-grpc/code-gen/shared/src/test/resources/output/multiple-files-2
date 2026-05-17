@@ -1,9 +1,9 @@
 package kgrpc.test
 
 trait UtilityService extends _root_.kyo.grpc.Service {
-  
+
   override def definition: _root_.io.grpc.ServerServiceDefinition = UtilityService.service(this)
-  
+
   def health(request: kgrpc.test.Request): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
   def monitor(
     request: kgrpc.test.Request
@@ -14,7 +14,7 @@ trait UtilityService extends _root_.kyo.grpc.Service {
 }
 
 object UtilityService {
-  
+
   def service(serviceImpl: UtilityService): _root_.io.grpc.ServerServiceDefinition = {
     _root_.io.grpc.ServerServiceDefinition.builder(_root_.kgrpc.test.UtilityServiceGrpc.SERVICE)
     .addMethod(
@@ -31,12 +31,12 @@ object UtilityService {
     )
     .build()
   }
-  
+
   def client(
     channel: _root_.io.grpc.Channel,
     options: _root_.io.grpc.CallOptions = _root_.io.grpc.CallOptions.DEFAULT
   ): Client = ClientImpl(channel, options)
-  
+
   def managedClient(
     host: String,
     port: Int,
@@ -49,7 +49,7 @@ object UtilityService {
     _root_.kyo.Frame
   ): _root_.kyo.<[Client, _root_.kyo.Scope & _root_.kyo.Async] =
     _root_.kyo.grpc.Client.channel(host, port, timeout)(configure, shutdown).map(UtilityService.client(_, options))
-  
+
   trait Client {
     def health(
       request: _root_.kyo.grpc.GrpcRequestInit[kgrpc.test.Request]
@@ -61,7 +61,7 @@ object UtilityService {
       requests: _root_.kyo.grpc.GrpcRequestsInit[_root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]]
     ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
   }
-  
+
   class ClientImpl(channel: _root_.io.grpc.Channel, options: _root_.io.grpc.CallOptions)
       extends Client {
     override def health(

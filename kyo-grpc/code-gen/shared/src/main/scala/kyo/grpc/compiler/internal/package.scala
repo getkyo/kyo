@@ -159,7 +159,7 @@ package object internal {
         }
 
         def addDoc(doc: Doc): FunctionalPrinter =
-            fp.add(doc.render(WIDTH))
+            fp.add(doc.render(WIDTH).replaceAll("(?m)[ \\t]+$", ""))
     }
 
     implicit private[compiler] class StringParameterOps(val parameterName: String) extends AnyVal {
