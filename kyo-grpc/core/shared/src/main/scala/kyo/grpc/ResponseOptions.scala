@@ -5,9 +5,11 @@ import io.grpc.ServerCall
 import kyo.*
 import kyo.grpc.internal.mergeIfDefined
 
-// TODO: What to call this?
-// TODO: Is this safe? Metadata is not thread-safe. We use it in Vars but I think that is OK?
-// TODO: Provide nicer Metadata.
+/** Server-side response options emitted by service handlers before response headers are sent.
+  *
+  * `Metadata` values are merged synchronously on the server call path so handler code can compose headers without sharing mutable metadata
+  * across requests.
+  */
 final case class ResponseOptions(
     headers: Maybe[Metadata] = Maybe.empty,
     messageCompression: Maybe[Boolean] = Maybe.empty,

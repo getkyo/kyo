@@ -8,7 +8,6 @@ import io.grpc.ManagedChannelRegistry
 import io.grpc.Status
 import io.grpc.stub.StreamObserver
 import java.net.SocketAddress
-import java.util.concurrent.TimeUnit
 import kyo.*
 import org.scalamock.scalatest.AsyncMockFactory
 
@@ -25,8 +24,8 @@ class ClientTest extends Test with AsyncMockFactory:
             .returns(channel)
             .once()
 
-        channel.awaitTermination
-            .expects(30000000000L, TimeUnit.NANOSECONDS)
+        (() => channel.isTerminated)
+            .expects()
             .returns(true)
             .once()
 
@@ -34,29 +33,28 @@ class ClientTest extends Test with AsyncMockFactory:
     }
 
     "shutdown shuts down the channel forcefully" in run {
-        val channel = mock[ManagedChannel]
+        val channel    = mock[ManagedChannel]
+        var terminated = false
 
         (() => channel.shutdown())
             .expects()
             .returns(channel)
             .once()
 
-        channel.awaitTermination
-            .expects(30000000000L, TimeUnit.NANOSECONDS)
-            .returns(false)
-            .once()
+        (() => channel.isTerminated)
+            .expects()
+            .onCall(() => terminated)
+            .anyNumberOfTimes()
 
         (() => channel.shutdownNow())
             .expects()
-            .returns(channel)
+            .onCall(() =>
+                terminated = true
+                channel
+            )
             .once()
 
-        channel.awaitTermination
-            .expects(1, TimeUnit.MINUTES)
-            .returns(true)
-            .once()
-
-        Client.shutdown(channel).map(_ => succeed)
+        Client.shutdown(channel, Duration.Zero).map(_ => succeed)
     }
 
     "configures channel" in run {
@@ -66,8 +64,8 @@ class ClientTest extends Test with AsyncMockFactory:
             .returns(channel)
             .once()
 
-        channel.awaitTermination
-            .expects(30000000000L, TimeUnit.NANOSECONDS)
+        (() => channel.isTerminated)
+            .expects()
             .returns(true)
             .once()
 
@@ -115,8 +113,8 @@ class ClientTest extends Test with AsyncMockFactory:
             )
             .once()
 
-        channel.awaitTermination
-            .expects(30000000000L, TimeUnit.NANOSECONDS)
+        (() => channel.isTerminated)
+            .expects()
             .returns(true)
             .once()
 

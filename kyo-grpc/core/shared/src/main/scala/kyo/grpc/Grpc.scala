@@ -1,12 +1,10 @@
 package kyo.grpc
 
-import io.grpc.Metadata
 import io.grpc.StatusException
 import io.grpc.StatusRuntimeException
 import kyo.*
 import scala.concurrent.Future
 
-// TODO: Document how to include trailers in error.
 /** Effect of sending or receiving a gRPC message.
   *
   * Service method implementations will be [[Async]] effects that either succeed with some `Response` or terminate early with a
@@ -14,6 +12,8 @@ import scala.concurrent.Future
   * {{{
   *    Abort.fail(Status.INVALID_ARGUMENT.withDescription("Id cannot be empty.").asException)
   * }}}
+  *
+  * Attach gRPC trailers by failing with a [[StatusException]] or [[StatusRuntimeException]] that already carries trailers.
   *
   * Clients will typically handle the effect of calling a gRPC method using functions such as [[Abort.run]].
   */
@@ -35,8 +35,8 @@ object Grpc:
       */
     def fromFuture[A](f: Future[A])(using Frame): A < Grpc =
         Abort.recoverError[Throwable] {
-            // TODO: Fix match not exhaustive warning
-            case Result.Error(t) => Abort.fail(GrpcFailure.fromThrowable(t))
+            case failure: Result.Failure[Throwable] @unchecked => Abort.fail(GrpcFailure.fromThrowable(failure.failure))
+            case panic: Result.Panic                           => Abort.fail(GrpcFailure.fromThrowable(panic.exception))
         }(Async.fromFuture(f))
     end fromFuture
 

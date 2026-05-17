@@ -47,14 +47,14 @@ object TestService {
   def managedClient(
     host: String,
     port: Int,
-    timeout: _root_.kyo.Duration = _root_.kyo.Duration.fromUnits(30, _root_.kyo.Duration.Units.Millis),
+    timeout: _root_.kyo.Duration = _root_.kyo.Duration.fromUnits(30, _root_.kyo.Duration.Units.Seconds),
     options: _root_.io.grpc.CallOptions = _root_.io.grpc.CallOptions.DEFAULT
   )(
     configure: _root_.io.grpc.ManagedChannelBuilder[?] => _root_.io.grpc.ManagedChannelBuilder[?],
-    shutdown: (_root_.io.grpc.ManagedChannel, _root_.kyo.Duration) => _root_.kyo.Frame ?=> _root_.kyo.<[Any, _root_.kyo.Sync] = _root_.kyo.grpc.Client.shutdown
+    shutdown: (_root_.io.grpc.ManagedChannel, _root_.kyo.Duration) => _root_.kyo.Frame ?=> _root_.kyo.<[Any, _root_.kyo.Async] = _root_.kyo.grpc.Client.shutdown
   )(using
     _root_.kyo.Frame
-  ): _root_.kyo.<[Client, _root_.kyo.Scope & _root_.kyo.Sync] =
+  ): _root_.kyo.<[Client, _root_.kyo.Scope & _root_.kyo.Async] =
     _root_.kyo.grpc.Client.channel(host, port, timeout)(configure, shutdown).map(TestService.client(_, options))
   
   trait Client {

@@ -10,8 +10,6 @@ import kyo.grpc.*
 import kyo.grpc.internal.ServerStreamingClientCallListener
 import kyo.grpc.internal.UnaryClientCallListener
 
-// TODO: Name these.
-
 type GrpcRequestCompletion = Unit < (Env[CallClosed] & Async)
 
 private[grpc] type GrpcResponsesAwaitingCompletion[MaybeResponses] = MaybeResponses < (Emit[GrpcRequestCompletion] & Async)
@@ -19,7 +17,6 @@ private[grpc] type GrpcResponsesAwaitingCompletion[MaybeResponses] = MaybeRespon
 // Unary and server streaming method calls do not flush the request headers so they are only sent when the request is
 // sent. That means that they cannot be used in the creation of the request and can only be provided to the application
 // when the response is received.
-// TODO: Singular vs plural is confusing here.
 type GrpcRequest[Requests] = Requests < (Emit[GrpcRequestCompletion] & Async)
 
 type GrpcRequestsPendingHeaders[Requests] = Requests < (Env[Metadata] & Emit[GrpcRequestCompletion] & Async)
@@ -34,10 +31,6 @@ type GrpcRequestInit[Request] = GrpcRequest[Request] < (Emit[RequestOptions] & A
   * effect system.
   */
 object ClientCall:
-
-    // TODO:
-    //  - unary and serverStreaming need to provide the headers with the response.
-    //  - all methods need to provide trailers.
 
     /** Executes a unary gRPC call.
       *
@@ -90,7 +83,6 @@ object ClientCall:
                 _       <- Sync.defer(call.sendMessage(request))
                 _       <- Sync.defer(call.halfClose())
                 result  <- listener.responsePromise.getResult
-            // TODO: Where is the emit of the effect that waits for completion?
             yield result
         end sendAndReceive
 
@@ -250,7 +242,6 @@ object ClientCall:
         def start(call: ClientCall[Request, Response], options: RequestOptions): ServerStreamingClientCallListener[Response] < Sync =
             for
                 headersPromise <- Promise.init[Metadata, Any]
-                // TODO: What about the Scope?
                 // Assumption is that SPSC is fine which I think it is according to gRPC docs.
                 responseStream <-
                     Channel.initUnscoped[Response](options.responseCapacityOrDefault, access = Access.SingleProducerSingleConsumer)
@@ -259,7 +250,6 @@ object ClientCall:
                 listener = ServerStreamingClientCallListener(headersPromise, responseStream, completionPromise, readySignal)
                 _ <- Sync.defer(call.start(listener, options.headers.getOrElse(Metadata())))
                 _ <- Sync.defer(options.messageCompression.foreach(call.setMessageCompression))
-                // TODO: Add tests that ensure that we request the right amount.
                 _ <- Sync.defer(call.request(Math.max(1, options.responseCapacityOrDefault)))
             yield listener
         end start
@@ -339,7 +329,6 @@ object ClientCall:
         def start(call: ClientCall[Request, Response], options: RequestOptions): ServerStreamingClientCallListener[Response] < Sync =
             for
                 headersPromise <- Promise.init[Metadata, Any]
-                // TODO: What about the Scope?
                 // Assumption is that SPSC is fine which I think it is according to gRPC docs.
                 responseStream <-
                     Channel.initUnscoped[Response](options.responseCapacityOrDefault, access = Access.SingleProducerSingleConsumer)

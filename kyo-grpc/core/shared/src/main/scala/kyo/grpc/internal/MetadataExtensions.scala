@@ -16,7 +16,6 @@ end extension
 
 extension (metadata: Metadata)
 
-    // TODO: Rename
     inline def mergeSafe(other: Metadata)(using Frame): Metadata < Sync =
         Sync.defer:
             // This is a mutation.

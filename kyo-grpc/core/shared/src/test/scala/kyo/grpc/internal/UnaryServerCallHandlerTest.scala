@@ -1,7 +1,6 @@
 package kyo.grpc.internal
 
 import io.grpc.*
-import java.util.concurrent.atomic.AtomicBoolean as JAtomicBoolean
 import kyo.*
 import kyo.grpc.*
 import kyo.grpc.Equalities.given
@@ -41,7 +40,7 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
 
             "set options and sends headers" in run {
                 val handler: GrpcHandler[TestRequest, TestResponse] =
-                    req => TestResponse("response")
+                    _ => Async.never[TestResponse]
 
                 val requestHeaders = Metadata()
 
@@ -241,24 +240,12 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 call.sendHeaders.returnsWith(())
                 call.close.returnsWith(())
 
-                val interrupted = new JAtomicBoolean(false)
-                call.sendMessage.returnsWith {
-                    try
-                        Thread.sleep(patienceConfig.timeout.toMillis + 5000)
-                    catch
-                        case e: InterruptedException =>
-                            interrupted.set(true)
-                            throw e
-                }
-
                 val listener = callHandler.startCall(call, requestHeaders)
 
                 listener.onMessage(request)
                 listener.onCancel()
 
                 eventually {
-                    // This fails because of https://github.com/getkyo/kyo/issues/1431.
-                    // assert(interrupted.get === true)
                     assert(call.close.times === 1)
                 }
 

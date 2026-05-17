@@ -1,7 +1,6 @@
 package kyo.grpc.internal
 
 import io.grpc.{Grpc as _, *}
-import java.util.concurrent.atomic.AtomicBoolean as JAtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.grpc.*
@@ -348,7 +347,7 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
         "cancellation" - {
             "interrupts stream processing" in run {
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], TestResponse] =
-                    stream => stream.run.map(_ => TestResponse("response"))
+                    _ => Async.never[TestResponse]
 
                 val callHandler    = ClientStreamingServerCallHandler(handler)
                 val call           = stub[ServerCall[TestRequest, TestResponse]]
@@ -357,16 +356,6 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 call.request.returnsWith(())
                 call.sendHeaders.returnsWith(())
                 call.close.returnsWith(())
-
-                val interrupted = new JAtomicBoolean(false)
-                call.sendMessage.returnsWith {
-                    try
-                        Thread.sleep(patienceConfig.timeout.toMillis + 5000)
-                    catch
-                        case e: InterruptedException =>
-                            interrupted.set(true)
-                            throw e
-                }
 
                 val listener = callHandler.startCall(call, requestHeaders)
 

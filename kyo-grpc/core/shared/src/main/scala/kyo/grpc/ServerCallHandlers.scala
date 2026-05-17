@@ -25,9 +25,6 @@ type GrpcHandlerInit[Requests, Responses] = GrpcHandler[Requests, Responses] < G
   */
 object ServerCallHandlers:
 
-    // TODO: Update the docs for f
-    // TODO: Update the callers to include metadata and response options.
-
     /** Creates a server handler for unary gRPC calls.
       *
       * A unary call receives a single request and produces a single response. The handler function `f` takes a request and returns a
@@ -106,7 +103,6 @@ object ServerCallHandlers:
     ): ServerCallHandler[Request, Response] =
         BidiStreamingServerCallHandler(f)
 
-    // TODO: Inline this.
     private[kyo] def errorStatus(error: Result.Error[Throwable]): Status =
         val t = error.failureOrPanic
         Status.fromThrowable(t)

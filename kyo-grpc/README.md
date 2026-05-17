@@ -1,43 +1,49 @@
 # kyo-grpc
 
-A Protoc plugin that generates...
+`kyo-grpc` provides gRPC runtime support and ScalaPB code generation for Kyo services.
 
-# Using the plugin
+The runtime module supports all four gRPC method shapes:
 
-<!-- TODO: This should use some kind of doc test against the example project. -->
+- unary
+- server streaming
+- client streaming
+- bidirectional streaming
 
-To add the plugin to another project:
+The code generator is intended to run alongside ScalaPB. It emits a Kyo service trait, a gRPC `ServerServiceDefinition`, and a typed client facade for protobuf services.
 
+## Build Setup
+
+Add `sbt-protoc` and the Kyo gRPC code generator to `project/plugins.sbt`:
+
+```scala
+addSbtPlugin("com.thesamet" % "sbt-protoc" % "1.0.8")
+
+libraryDependencies += "io.getkyo" %% "kyo-grpc-code-gen" % kyoVersion
 ```
-addSbtPlugin("com.thesamet" % "sbt-protoc" % "1.0.6")
 
-libraryDependencies += "com.example" %% "kyo-grpc-codegen" % "0.1.0"
-```
+Add the runtime dependency and protoc targets to `build.sbt`:
 
-and the following to your `build.sbt`:
-```
-PB.targets in Compile := Seq(
-  scalapb.gen() -> (sourceManaged in Compile).value / "scalapb",
-  kyo.grpc.gen() -> (sourceManaged in Compile).value / "scalapb"
+```scala
+libraryDependencies += "io.getkyo" %% "kyo-grpc-core" % kyoVersion
+
+Compile / PB.targets := Seq(
+    scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
+    kyo.grpc.gen() -> (Compile / sourceManaged).value / "scalapb"
 )
 ```
 
-# Development and testing
+Generated service companions expose:
 
-Code structure:
-- [`core`](./core/): The runtime library for this plugin
-- [`code-gen`](./code-gen): The protoc plugin (code generator)
-- [`e2e`](./e2e): Integration tests for the plugin
-- [`examples`](./examples): Example projects
+- `service(serviceImpl)` for server registration
+- `client(channel, options)` for client creation from an existing channel
+- `managedClient(host, port)(configure)` for scoped channel and client creation
 
-To test the plugin, within SBT:
+## Local Validation
 
+Run the affected module checks from the repository root:
+
+```sh
+sbt 'kyo-grpc-core/test' 'kyo-grpc-code-gen/test' 'kyo-grpc-e2e/test'
 ```
-> e2eJVM2_13/test
-```
 
-or 
-
-```
-> e2eJVM2_12/test
-```
+The e2e module compiles `e2e/shared/src/main/protobuf/test.proto`, generates Kyo service/client code, starts a local gRPC server, and validates unary plus all streaming RPC shapes.

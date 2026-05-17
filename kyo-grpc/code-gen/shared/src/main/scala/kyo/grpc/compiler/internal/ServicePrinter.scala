@@ -132,15 +132,15 @@ private[compiler] case class ServicePrinter(
             .addParameterList(
                 "host" :- Types.string,
                 "port" :- Types.int,
-                "timeout" :- Types.duration    := s"${Types.duration}.fromUnits(30, ${Types.duration}.Units.Millis)",
+                "timeout" :- Types.duration    := s"${Types.duration}.fromUnits(30, ${Types.duration}.Units.Seconds)",
                 "options" :- Types.callOptions := (Types.callOptions + ".DEFAULT")
             )
             .addParameterList(
                 "configure" :- s"${Types.managedChannelBuilder("?")} => ${Types.managedChannelBuilder("?")}",
-                "shutdown" :- s"(${Types.managedChannel}, ${Types.duration}) => ${Types.frame} ?=> ${Types.pending(Types.any, Types.sync)}" := s"${Types.client}.shutdown"
+                "shutdown" :- s"(${Types.managedChannel}, ${Types.duration}) => ${Types.frame} ?=> ${Types.pending(Types.any, Types.async)}" := s"${Types.client}.shutdown"
             )
             .addUsingParameters(Types.frame)
-            .addReturnType(Types.pending("Client", s"${Types.scope} & ${Types.sync}"))
+            .addReturnType(Types.pending("Client", s"${Types.scope} & ${Types.async}"))
             .addBody(
                 _.add(s"${Types.client}.channel(host, port, timeout)(configure, shutdown).map($name.client(_, options))")
             )

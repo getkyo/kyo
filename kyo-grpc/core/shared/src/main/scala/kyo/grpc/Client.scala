@@ -1,7 +1,6 @@
 package kyo.grpc
 
 import io.grpc.*
-import java.util.concurrent.TimeUnit
 import kyo.*
 
 /** Utilities for creating and managing gRPC client channels.
@@ -21,22 +20,34 @@ object Client:
 
     /** Attempts an orderly shut down of the [[ManagedChannel]] within a timeout.
       *
-      * First attempts graceful shutdown by calling [[ManagedChannel.shutdown]] and waits up to `timeout` for termination. If the server
-      * doesn't terminate within the timeout, forces shutdown with [[ManagedChannel.shutdownNow]] and then waits up to 1 hour for it to
-      * terminate (there is no indefinite wait).
+      * First attempts graceful shutdown by calling [[ManagedChannel.shutdown]] and suspending up to `timeout` for termination. If the
+      * channel does not terminate within the timeout, it forces shutdown with [[ManagedChannel.shutdownNow]] and then suspends up to 1
+      * minute for termination.
       *
       * @param channel
       *   The channel to shut down
       * @param timeout
       *   The maximum duration to wait for graceful termination (default: 30 seconds)
       */
-    def shutdown(channel: ManagedChannel, timeout: Duration = 30.seconds)(using Frame): Unit < Sync =
-        Sync.defer:
-            val terminated =
-                channel
-                    .shutdown()
-                    .awaitTermination(timeout.toNanos, TimeUnit.NANOSECONDS)
-            if terminated then () else discard(channel.shutdownNow().awaitTermination(1, TimeUnit.MINUTES))
+    def shutdown(channel: ManagedChannel, timeout: Duration = 30.seconds)(using Frame): Unit < Async =
+        def pollTerminated(timeout: Duration): Boolean < Async =
+            def poll: Boolean < Async =
+                Sync.defer(channel.isTerminated).flatMap:
+                    case true  => true
+                    case false => Async.sleep(10.millis).andThen(poll)
+
+            Async.race(poll, Async.sleep(timeout).andThen(Sync.defer(channel.isTerminated)))
+        end pollTerminated
+
+        for
+            _          <- Sync.defer(channel.shutdown())
+            terminated <- pollTerminated(timeout)
+            _ <-
+                if terminated then Kyo.unit
+                else Sync.defer(channel.shutdownNow()).andThen(pollTerminated(1.minute).unit)
+        yield ()
+        end for
+    end shutdown
 
     /** Creates a managed gRPC channel with automatic resource cleanup.
       *
@@ -86,12 +97,12 @@ object Client:
       *   The shutdown function to use when releasing the channel resource. Defaults to [[shutdown]] method which performs graceful shutdown
       *   with fallback to forced shutdown
       * @return
-      *   A `ManagedChannel` pending `Scope` and `Sync` effects
+      *   A `ManagedChannel` pending `Scope` and `Async` effects
       */
     def channel(host: String, port: Int, timeout: Duration = 30.seconds)(
         configure: ManagedChannelBuilder[?] => ManagedChannelBuilder[?],
-        shutdown: (ManagedChannel, Duration) => Frame ?=> Any < Sync = shutdown
-    )(using Frame): ManagedChannel < (Scope & Sync) =
+        shutdown: (ManagedChannel, Duration) => Frame ?=> Any < Async = shutdown
+    )(using Frame): ManagedChannel < (Scope & Async) =
         Scope.acquireRelease(
             Sync.defer(configure(ManagedChannelBuilder.forAddress(host, port)).build())
         )(shutdown(_, timeout))

@@ -20,6 +20,8 @@ private[compiler] object Types {
 
     val sync = "_root_.kyo.Sync"
 
+    val async = "_root_.kyo.Async"
+
     val scope = "_root_.kyo.Scope"
 
     def streamGrpcResponse(t: String) = s"_root_.kyo.Stream[$t, $grpcResponse]"

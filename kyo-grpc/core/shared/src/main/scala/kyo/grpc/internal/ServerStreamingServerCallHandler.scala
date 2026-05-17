@@ -26,8 +26,8 @@ private[grpc] class ServerStreamingServerCallHandler[Request, Response](f: GrpcH
                 else ready.next.andThen(sendMessages(isFirst)(response))
 
         Abort.recoverError[Status] {
-            case Result.Failure(status) => Abort.fail(status.asException())
-            case Result.Panic(ex)       => Abort.panic(ex)
+            case failure: Result.Failure[Status] @unchecked => Abort.fail(failure.failure.asException())
+            case panic: Result.Panic                        => Abort.panic(panic.exception)
         } {
             for
                 request   <- promise.get

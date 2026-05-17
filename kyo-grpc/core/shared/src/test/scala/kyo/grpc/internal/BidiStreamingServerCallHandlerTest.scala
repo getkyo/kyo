@@ -1,7 +1,6 @@
 package kyo.grpc.internal
 
 import io.grpc.{Grpc as _, *}
-import java.util.concurrent.atomic.AtomicBoolean as JAtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.grpc.*
@@ -483,7 +482,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
         "cancellation" - {
             "interrupts stream processing" in run {
                 val handler: GrpcHandler[Stream[TestRequest, Grpc], Stream[TestResponse, Grpc]] =
-                    stream => stream.map(req => TestResponse(s"echo: ${req.message}"))
+                    _ => Async.never[Stream[TestResponse, Grpc]]
 
                 val callHandler    = BidiStreamingServerCallHandler(handler)
                 val call           = stub[ServerCall[TestRequest, TestResponse]]
@@ -492,16 +491,6 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 call.request.returnsWith(())
                 call.sendHeaders.returnsWith(())
                 call.close.returnsWith(())
-
-                val interrupted = new JAtomicBoolean(false)
-                call.sendMessage.returnsWith {
-                    try
-                        Thread.sleep(patienceConfig.timeout.toMillis + 5000)
-                    catch
-                        case e: InterruptedException =>
-                            interrupted.set(true)
-                            throw e
-                }
 
                 val listener = callHandler.startCall(call, requestHeaders)
 
@@ -517,11 +506,6 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 call.close.calls must contain theSameElementsInOrderAs List((status, Metadata()))
             }
         }
-
-        // TODO: Re-enable these tests after implementing Signal-based flow control
-        // "flow control" - {
-        //     ...
-        // }
 
         "lifecycle" - {
             "onComplete does nothing" in run {
