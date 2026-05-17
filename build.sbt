@@ -3,11 +3,13 @@ import org.scalajs.jsenv.nodejs.*
 import org.typelevel.scalacoptions.ScalacOption
 import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
+import protocbridge.Target
 import sbtdynver.DynVerPlugin.autoImport.*
 
 val scala3Version    = "3.8.3"
 val scala3LTSVersion = "3.3.7"
 val scala213Version  = "2.13.18"
+val scala212Version  = "2.12.20"
 
 val zioVersion       = "2.1.24"
 val catsVersion      = "3.7.0"
@@ -159,7 +161,8 @@ lazy val kyoJVM = project
         `kyo-playwright`.jvm,
         `kyo-pod`.jvm,
         `kyo-examples`.jvm,
-        `kyo-actor`.jvm
+        `kyo-actor`.jvm,
+        `kyo-grpc`.jvm
     )
 
 lazy val kyoJS = project
@@ -190,7 +193,8 @@ lazy val kyoJS = project
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
-        `kyo-pod`.js
+        `kyo-pod`.js,
+        `kyo-grpc`.js
     )
 
 lazy val kyoNative = project
@@ -679,6 +683,101 @@ lazy val `kyo-cats` =
             `js-settings`
         )
         .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-grpc` =
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .settings(
+            `kyo-settings`,
+            publish / skip      := true,
+            publishLocal / skip := true
+        )
+        .aggregate(
+            `kyo-grpc-core`,
+            `kyo-grpc-code-gen`,
+            `kyo-grpc-e2e`
+        )
+
+lazy val `kyo-grpc-jvm` =
+    `kyo-grpc`.jvm
+
+lazy val `kyo-grpc-core` =
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-grpc") / "core")
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "org.scalamock" %% "scalamock" % "7.5.0" % Test
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            libraryDependencies ++= Seq(
+                "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
+                "io.grpc"               % "grpc-api"             % "1.72.0",
+                "io.grpc"               % "grpc-stub"            % "1.72.0",
+                "ch.qos.logback"        % "logback-classic"      % "1.5.32" % Test
+            )
+        )
+        .jsSettings(
+            `js-settings`,
+            libraryDependencies += "com.thesamet.scalapb.grpcweb" %%% "scalapb-grpcweb" % "0.7.0"
+        )
+
+lazy val `kyo-grpc-code-gen` =
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-grpc") / "code-gen")
+        .enablePlugins(BuildInfoPlugin)
+        .settings(
+            `kyo-settings`,
+            buildInfoKeys       := Seq[BuildInfoKey](name, organization, version, scalaVersion, sbtVersion),
+            buildInfoPackage    := "kyo.grpc.compiler",
+            scalaVersion        := scala212Version,
+            crossScalaVersions  := List(scala212Version),
+            scalafmtOnCompile   := false,
+            scalacOptions --= scalacOptionToken(ScalacOptions.languageStrictEquality).value,
+            libraryDependencies ++= Seq(
+                "com.thesamet.scalapb"    %% "compilerplugin"          % scalapb.compiler.Version.scalapbVersion,
+                "org.scala-lang.modules" %%% "scala-collection-compat" % "2.13.0",
+                "org.typelevel"          %%% "paiges-core"             % "0.4.4"
+            )
+        )
+        .jvmSettings(mimaCheck(false))
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-grpc-e2e` =
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-grpc") / "e2e")
+        .enablePlugins(LocalCodeGenPlugin)
+        .dependsOn(`kyo-grpc-core` % "compile->compile;test->test")
+        .settings(
+            `kyo-settings`,
+            publish / skip := true,
+            Compile / PB.protoSources += (ThisBuild / baseDirectory).value / "kyo-grpc" / "e2e" / "shared" / "src" / "main" / "protobuf",
+            Compile / PB.targets := Seq(
+                scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
+                genModule("kyo.grpc.compiler.CodeGenerator$") -> (Compile / sourceManaged).value / "scalapb"
+            ),
+            Compile / scalacOptions ++= scalacOptionToken(ScalacOptions.warnOption("conf:src=.*/src_managed/main/scalapb/kgrpc/.*:silent")).value
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            codeGenClasspath := (`kyo-grpc-code-gen`.jvm / Compile / fullClasspath).value,
+            libraryDependencies ++= Seq(
+                "io.grpc"        % "grpc-netty-shaded" % "1.72.0",
+                "ch.qos.logback" % "logback-classic"   % "1.5.32" % Test
+            )
+        )
+        .jsSettings(
+            `js-settings`,
+            codeGenClasspath := (`kyo-grpc-code-gen`.js / Compile / fullClasspath).value,
+            libraryDependencies += "com.thesamet.scalapb.grpcweb" %%% "scalapb-grpcweb" % "0.7.0"
+        )
 
 lazy val `kyo-combinators` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)

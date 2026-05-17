@@ -1,0 +1,29 @@
+package kyo.grpc.internal
+
+import io.grpc.*
+import kyo.*
+import kyo.grpc.*
+import kyo.grpc.Grpc
+
+private[grpc] class UnaryServerCallHandler[Request, Response](f: GrpcHandlerInit[Request, Response])(using Frame)
+    extends BaseUnaryServerCallHandler[Request, Response, GrpcHandler[Request, Response]](f):
+
+    override protected def send(
+        call: ServerCall[Request, Response],
+        handler: GrpcHandler[Request, Response],
+        promise: Promise[Request, Abort[Status]],
+        ready: SignalRef[Boolean]
+    ): Status < (Grpc & Emit[Metadata]) =
+        Abort.recoverError[Status] {
+            case Result.Failure(status) => Abort.fail(status.asException())
+            case Result.Panic(ex)       => Abort.panic(ex)
+        } {
+            for
+                request  <- promise.get
+                response <- handler(request)
+                _        <- Sync.defer(call.sendMessage(response))
+            yield Status.OK
+        }
+    end send
+
+end UnaryServerCallHandler
