@@ -48,6 +48,7 @@ Kyo is structured as a monorepo, published to Maven Central:
 
 | Module               | JVM | JS  | Native | Description                                                          |
 | -------------------- | --- | --- | ------ | -------------------------------------------------------------------- |
+| kyo-case-app         | ✅   | ✅   | ✅      | case-app CLI parsing with Kyo `run` blocks                           |
 | kyo-caliban          | ✅   | ❌   | ❌      | GraphQL server using Caliban with schema derivation                  |
 | kyo-zio              | ✅   | ✅   | ❌      | Bidirectional ZIO interop with support for ZIO, ZLayer, and ZStream  |
 | kyo-zio-test         | ✅   | ✅   | ❌      | ZIO Test framework integration for testing Kyo effects               |

@@ -156,6 +156,7 @@ lazy val kyoJVM = project
         `kyo-zio`.jvm,
         `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
+        `kyo-case-app`.jvm,
         `kyo-playwright`.jvm,
         `kyo-pod`.jvm,
         `kyo-examples`.jvm,
@@ -186,6 +187,7 @@ lazy val kyoJS = project
         `kyo-zio`.js,
         `kyo-cats`.js,
         `kyo-combinators`.js,
+        `kyo-case-app`.js,
         `kyo-actor`.js,
         `kyo-schema`.js,
         `kyo-http`.js,
@@ -212,6 +214,7 @@ lazy val kyoNative = project
         `kyo-offheap`.native,
         `kyo-direct`.native,
         `kyo-combinators`.native,
+        `kyo-case-app`.native,
         `kyo-reactive-streams`.native,
         `kyo-actor`.native,
         `kyo-schema`.native,
@@ -687,6 +690,20 @@ lazy val `kyo-combinators` =
         .in(file("kyo-combinators"))
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
+        .jsSettings(`js-settings`)
+        .nativeSettings(`native-settings`)
+        .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-case-app` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-case-app"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.github.alexarchambault" %%% "case-app" % "2.1.0"
+        )
         .jsSettings(`js-settings`)
         .nativeSettings(`native-settings`)
         .jvmSettings(mimaCheck(false))

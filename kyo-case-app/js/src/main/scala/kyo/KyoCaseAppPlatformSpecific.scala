@@ -1,0 +1,21 @@
+package kyo
+
+trait KyoCaseAppPlatformSpecific:
+    self: KyoCaseAppSupport[?, Async & Scope & Abort[Throwable]] =>
+
+    private var last: Unit < (Async & Abort[Throwable]) = ()
+
+    final override protected def run[A](v: => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit =
+        import AllowUnsafe.embrace.danger
+        val current: Unit < (Async & Abort[Throwable]) =
+            Abort.runWith(Async.timeout(runTimeout)(handle(v)))(result => Sync.defer(onResult(result)).andThen(Abort.get(result)).unit)
+
+        last = last.andThen(current)
+
+        initCode = Chunk(() =>
+            val raced = Async.raceFirst(Clock.repeatWithDelay(1.hour)(()).map(_.get), last)
+            val _     = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(raced))
+        )
+    end run
+
+end KyoCaseAppPlatformSpecific
