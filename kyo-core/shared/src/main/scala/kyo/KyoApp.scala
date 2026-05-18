@@ -143,10 +143,10 @@ object KyoApp:
 
     private def abortAnyToThrowable[A, S](v: => A < (Abort[Any] & S))(using Frame): A < (Abort[Throwable] & S) =
         Abort.run[Any](v).map {
-            case Result.Success(value)              => value
-            case Result.Failure(error: Throwable)   => Abort.fail(error)
-            case Result.Failure(error)              => Abort.fail(FailureException(error))
-            case panic: Result.Panic => Abort.get(panic)
+            case Result.Success(value)            => value
+            case Result.Failure(error: Throwable) => Abort.fail(error)
+            case Result.Failure(error)            => Abort.fail(FailureException(error))
+            case panic: Result.Panic              => Abort.get(panic)
         }
     end abortAnyToThrowable
 
