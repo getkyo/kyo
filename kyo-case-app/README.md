@@ -2,7 +2,9 @@
 
 Bridge [case-app](https://github.com/alexarchambault/case-app) command-line parsing with Kyo application entrypoints. Use **`KyoCaseApp`** for single-command apps and **`KyoCommand`** for subcommands grouped via case-app's [`CommandsEntryPoint`](https://github.com/alexarchambault/case-app).
 
-Register effectful work with `run { (options, remainingArgs) => ... }`. Parsed options and positional arguments ([`RemainingArgs`](https://github.com/alexarchambault/case-app/blob/main/core/shared/src/main/scala/caseapp/core/RemainingArgs.scala)) are passed explicitly — unlike [`KyoApp`](https://github.com/getkyo/kyo), there are no implicit `options` / `remainingArgs` accessors. Use `_` for parameters you do not need.
+Register effectful work with `run { (options, remainingArgs) => ... }`. Parsed options and positional arguments ([`RemainingArgs`](https://github.com/alexarchambault/case-app/blob/main/core/shared/src/main/scala/caseapp/core/RemainingArgs.scala)) are passed explicitly — unlike [`KyoApp`](https://github.com/getkyo/kyo), there are no implicit `options` / `remainingArgs` accessors. Use `_` for parameters you do not need. For effects that do not use CLI data, use the no-parameter overload `run { ... }` — same registration order as the explicit form, without `(_, _) =>`.
+
+Multiple `run` blocks (with or without CLI parameters) share one registration queue and run in object-initialization order; each block sees the same parse result from that `main` invocation.
 
 case-app handles help, usage, and argument parsing; this module runs your effects after parsing completes. For how to define options (annotations, defaults, subcommand metadata, etc.), see the [case-app documentation](https://alexarchambault.github.io/case-app/) — that is not repeated here.
 
@@ -230,6 +232,7 @@ The test suite includes a runnable variant of this app in [`casetest.TodoAppFixt
 Both provide:
 
 - `protected def run[A](v: (T, RemainingArgs) => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit` — register effectful work after parsing
+- `protected def run[A](v: => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit` — same, when the effect does not use parsed CLI data
 
 Non-throwable failures call `exitApp(1)` (case-app already defines `exit` for its own use). Interrupt handling matches `KyoApp` (SIGINT/SIGTERM on non-Windows platforms).
 

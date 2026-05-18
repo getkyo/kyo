@@ -62,6 +62,47 @@ class KyoCaseAppTest extends Test:
         }
     }
 
+    "multiple runs share parsed cli" in runNotJS {
+        val captured = new ListBuffer[(String, Seq[String])]
+        val app = new KyoCaseApp[GreetOptions]:
+            run { (options, remainingArgs) =>
+                Sync.defer(captured += ((options.name, remainingArgs.remaining)))
+            }
+            run { (options, remainingArgs) =>
+                Sync.defer(captured += ((options.name, remainingArgs.remaining)))
+            }
+        for
+            _ <- Sync.defer(app.main(Array("--name", "same", "positional")))
+        yield assert(captured.toList == List(
+            ("same", Seq("positional")),
+            ("same", Seq("positional"))
+        ))
+    }
+
+    "run without cli params" in runNotJS {
+        val log = new ListBuffer[String]
+        val app = new KyoCaseApp[GreetOptions]:
+            run { Sync.defer(log += "no-cli") }
+            run { (options, _) =>
+                Sync.defer(log += s"with-cli:${options.name}")
+            }
+        for
+            _ <- Sync.defer(app.main(Array("--name", "cli")))
+        yield assert(log.toList == List("no-cli", "with-cli:cli"))
+    }
+
+    "mixed run overloads keep registration order" in runNotJS {
+        val log = new ListBuffer[String]
+        val app = new KyoCaseApp[GreetOptions]:
+            run { Sync.defer(log += "a") }
+            run { (_, _) => Sync.defer(log += "b") }
+            run { Sync.defer(log += "c") }
+            run { (options, _) => Sync.defer(log += s"d:${options.name}") }
+        for
+            _ <- Sync.defer(app.main(Array("--name", "cli")))
+        yield assert(log.toList == List("a", "b", "c", "d:cli"))
+    }
+
     "ordered runs" in {
         assume(!Platform.isNative, "KyoCaseApp.main too slow on Native")
         val x       = new ListBuffer[Int]

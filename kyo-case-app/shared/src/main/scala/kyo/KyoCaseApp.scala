@@ -6,7 +6,8 @@ import caseapp.core.parser.Parser
 
 /** A case-app [[CaseApp]] entrypoint that runs Kyo effects via [[run]] blocks.
   *
-  * Register effectful work with [[run]], passing parsed options and remaining arguments explicitly after case-app parsing completes.
+  * Register effectful work with [[run]] (explicit `(options, remainingArgs)` or a no-arg block). Multiple `run` blocks run in order with
+  * the same parse snapshot.
   *
   * Note: This class and its methods are unsafe and should only be used as the entrypoint of an application.
   */

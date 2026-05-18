@@ -8,7 +8,10 @@ trait KyoCaseAppPlatformSpecific[T]:
     private var last: Unit < (Async & Abort[Throwable]) = ()
     private var deferredRuns: Chunk[() => Unit]         = Chunk.empty
 
-    final override protected def run[A](v: (T, RemainingArgs) => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit =
+    final override protected def registerRun[A](v: (T, RemainingArgs) => A < (Async & Scope & Abort[Throwable]))(using
+        Frame,
+        Render[A]
+    ): Unit =
         import AllowUnsafe.embrace.danger
         deferredRuns = deferredRuns.appended { () =>
             val (options, remainingArgs) = cliArgs
@@ -24,6 +27,6 @@ trait KyoCaseAppPlatformSpecific[T]:
             val raced = Async.raceFirst(Clock.repeatWithDelay(1.hour)(()).map(_.get), last)
             val _     = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(raced))
         )
-    end run
+    end registerRun
 
 end KyoCaseAppPlatformSpecific
