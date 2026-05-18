@@ -23,7 +23,7 @@ trait KyoCaseAppSupport[T, S]:
                 header = "KyoCaseApp: nothing to execute. Did you forget to use a run block?",
                 code = """|
                           | object Example extends KyoCaseApp[MyOptions]:
-                          |   run { (options, remainingArgs) =>
+                          |   run { options =>
                           |     Console.printLine(s"Hello ${options}")
                           |   }
                           |""".stripMargin,
@@ -53,14 +53,17 @@ trait KyoCaseAppSupport[T, S]:
     /** The timeout for each [[run]] block. */
     protected def runTimeout: Duration = Duration.Infinity
 
-    /** Registers a Kyo effect to run after case-app parsing completes. */
-    final protected def run[A](v: (T, RemainingArgs) => A < S)(using Frame, Render[A]): Unit =
-        registerRun(v)
-    end run
-
-    /** Registers a Kyo effect that uses parsed options only (ignores [[caseapp.core.RemainingArgs RemainingArgs]]). */
+    /** Registers a Kyo effect to run after case-app parsing completes.
+      *
+      * '''Recommended''' for typical CLIs: most commands only need parsed flags and options, not leftover positionals.
+      */
     final protected def run[A](v: T => A < S)(using Frame, Render[A]): Unit =
         registerRun((options, _) => v(options))
+    end run
+
+    /** Registers a Kyo effect when both parsed options and [[caseapp.core.RemainingArgs RemainingArgs]] are required. */
+    final protected def run[A](v: (T, RemainingArgs) => A < S)(using Frame, Render[A]): Unit =
+        registerRun(v)
     end run
 
     /** Registers a Kyo effect that does not use parsed CLI data.

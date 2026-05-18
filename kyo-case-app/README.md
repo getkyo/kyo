@@ -6,8 +6,8 @@ Register effectful work with **`run`** after case-app parses the command line. U
 
 | Form | When to use |
 |------|-------------|
-| `run { (options, remainingArgs) => ... }` | You need options and leftover positionals ([`RemainingArgs`](https://github.com/alexarchambault/case-app/blob/main/core/shared/src/main/scala/caseapp/core/RemainingArgs.scala)) |
-| `run { options => ... }` | You need parsed options only |
+| **`run { options => ... }`** | **Recommended** — typical CLI logic uses parsed flags and options |
+| `run { (options, remainingArgs) => ... }` | You also need leftover positionals ([`RemainingArgs`](https://github.com/alexarchambault/case-app/blob/main/core/shared/src/main/scala/caseapp/core/RemainingArgs.scala)) |
 | `run { ... }` | The effect does not use parsed CLI data (startup hooks, etc.) |
 
 All three overloads share one registration queue: multiple `run` blocks run in object-initialization order, and each block sees the same parse result from that `main` invocation.
@@ -43,7 +43,7 @@ final case class GreetOptions(
 )
 
 object Greet extends KyoCaseApp[GreetOptions]:
-    run { (options, remainingArgs) =>
+    run { options =>
         Console.printLine(s"Hello, ${options.name}!")
     }
 ```
@@ -89,11 +89,11 @@ You can mix overloads in one app; registration order is preserved:
 
 ```scala
 object Greet extends KyoCaseApp[GreetOptions]:
-    run { Console.printLine("starting") }                    // no CLI params
-    run { options => Console.printLine(options.name) }       // options only
-    run { (options, remainingArgs) =>                       // full parse result
-        Console.printLine(s"${options.name} ${remainingArgs.remaining.mkString(" ")}")
+    run { options => Console.printLine(s"Hello, ${options.name}!") }  // recommended
+    run { (options, remainingArgs) =>                                    // when positionals matter
+        Console.printLine(s"extras: ${remainingArgs.remaining.mkString(" ")}")
     }
+    run { Console.printLine("starting") }                               // no CLI params
 ```
 
 ## `KyoCommand` — subcommands
@@ -246,8 +246,8 @@ The test suite includes a runnable variant of this app in [`casetest.TodoAppFixt
 
 Both provide three `run` overloads (same names, resolved by the shape of the block):
 
-- `run { (options, remainingArgs) => ... }` — full parse result
-- `run { options => ... }` — parsed options only
+- **`run { options => ... }`** — **recommended** for most commands
+- `run { (options, remainingArgs) => ... }` — when leftover positionals matter
 - `run { ... }` — effect without parsed CLI data
 
 All delegate to a single `registerRun` queue so mixed overloads keep registration order.
