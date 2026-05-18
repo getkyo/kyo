@@ -252,7 +252,7 @@ Both provide three `run` overloads (same names, resolved by the shape of the blo
 
 All delegate to a single `registerRun` queue so mixed overloads keep registration order.
 
-Non-throwable failures call `exitApp(1)` (case-app already defines `exit` for its own use). Interrupt handling matches `KyoApp` (SIGINT/SIGTERM on non-Windows platforms).
+Non-throwable failures call `exitHook(1)` (defaults to `Platform.exit`; case-app reserves `exit` for its own API). Interrupt handling is shared with `KyoApp` via [`KyoAppRunner`](../../kyo-core/shared/src/main/scala/kyo/KyoAppRunner.scala) (SIGINT/SIGTERM on non-Windows platforms).
 
 ## Related
 

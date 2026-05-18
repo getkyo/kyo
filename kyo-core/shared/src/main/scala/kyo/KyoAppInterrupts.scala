@@ -2,10 +2,8 @@ package kyo
 
 import kyo.internal.OsSignal
 
-/** Interrupt handling for Kyo case-app entrypoints. */
-trait KyoCaseAppInterrupts:
-    self: KyoCaseAppSupport[?, ?] =>
-
+/** Signal handling for Kyo application entrypoints. Mixed into [[KyoAppRunnerWithInterrupts]]. */
+private[kyo] trait KyoAppInterrupts:
     private val awaitInterrupt =
         given AllowUnsafe = AllowUnsafe.embrace.danger
         val promise       = Promise.Unsafe.init[Nothing, Any]()
@@ -22,7 +20,7 @@ trait KyoCaseAppInterrupts:
         promise.mask().safe
     end awaitInterrupt
 
-    override protected def handle[A](v: A < (Async & Scope & Abort[Throwable]))(using Frame): A < (Async & Abort[Throwable]) =
+    protected def handleWithInterrupts[A](v: A < (Async & Scope & Abort[Throwable]))(using Frame): A < (Async & Abort[Throwable]) =
         Async.raceFirst(Scope.run(v), awaitInterrupt.get)
-    end handle
-end KyoCaseAppInterrupts
+    end handleWithInterrupts
+end KyoAppInterrupts

@@ -13,8 +13,8 @@ import caseapp.core.parser.Parser
   */
 abstract class KyoCaseApp[T](using parser0: Parser[T], messages: Help[T])
     extends CaseApp[T](using parser0, messages)
-    with KyoCaseAppSupport[T, Async & Scope & Abort[Throwable]]
-    with KyoCaseAppInterrupts
-    with KyoCaseAppPlatformSpecific[T]
+    with KyoCaseAppSupport[T]
+    with KyoAppRunnerWithInterrupts
+    with KyoAppRunnerPlatform
 
 object KyoCaseApp

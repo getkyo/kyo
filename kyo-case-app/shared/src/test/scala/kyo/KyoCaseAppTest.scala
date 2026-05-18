@@ -119,7 +119,7 @@ class KyoCaseAppTest extends Test:
     "empty run blocks" in runNotJS {
         var exitCode = -1
         val app = new KyoCaseApp[GreetOptions]:
-            override def exitApp(code: Int)(using AllowUnsafe): Unit = exitCode = code
+            override def exitHook(code: Int)(using AllowUnsafe): Unit = exitCode = code
         app.main(Array.empty)
         assert(exitCode == 1)
     }

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|--------|
-| **Status** | Proposed |
+| **Status** | Accepted (implemented in PR [#1619](https://github.com/getkyo/kyo/pull/1619)) |
 | **Date** | 2026-05-18 |
 | **Context** | [kyo-case-app](https://github.com/getkyo/kyo/pull/1619), review by [@hearnadam](https://github.com/hearnadam) |
 | **Deciders** | Kyo maintainers (pending) |
