@@ -79,7 +79,7 @@ abstract class KyoCaseApp[T](...) extends CaseApp[T](...)
 |------|------|
 | Maximum dedup **inside the monorepo** | **External integrators cannot use it** unless they also use `package kyo` (undesirable) |
 | No public MiMa surface | Every third-party adapter still needs a custom module or copy-paste |
-| Can delete all case-app platform files | Hides the “integration SPI” from documented API |
+| Can delete all case-app platform files | Hides the integration API from documented surface |
 
 **Verdict:** Good **implementation tactic**, insufficient as the **whole strategy** if we want third-party framework adapters without new `kyo-*` artifacts.
 
@@ -94,7 +94,7 @@ Introduce a **documented, stable integration layer** in `kyo-core` (name: **`Kyo
 ```
 kyo-core/
   shared/
-    KyoAppRunner.scala           # integration SPI (public)
+    KyoAppRunner.scala           # public integration API
     KyoAppInterrupts.scala       # may be nested or mixed into runner
   jvm-native/
     KyoAppRunnerPlatform.scala   # JVM registration (public or apps package)
@@ -149,13 +149,13 @@ They add **`kyo-core` only** — not a fork of interrupt/`onResult`/JS fiber cod
 | Addresses review + **future frameworks** | Public API must be designed and MiMa-checked |
 | `kyo-case-app` becomes ~50 lines of real case-app logic | One-time refactor of `KyoApp` |
 | Clear story: “how to build a Kyo entrypoint” | Slightly larger documented surface |
-| Third-party integrations avoid `kyo-case-app`-style modules | Need versioning discipline for SPI |
+| Third-party integrations avoid `kyo-case-app`-style modules | Need versioning discipline for the public API |
 
 **Verdict:** **Recommended** as the strategic direction.
 
 ---
 
-### Alternative 4 — `KyoAppRunner` public SPI + `private[kyo]` implementation details (hybrid)
+### Alternative 4 — `KyoAppRunner` public integration API + `private[kyo]` implementation details (hybrid)
 
 Same as Alternative 3, but:
 
@@ -164,7 +164,7 @@ Same as Alternative 3, but:
 
 | Pros | Cons |
 |------|------|
-| Best of both: documented SPI + freedom to refactor internals | Two visibility levels to explain |
+| Best of both: documented integration API + freedom to refactor internals | Two visibility levels to explain |
 | Monorepo modules can share extra `private[kyo]` helpers | — |
 
 **Verdict:** Recommended **implementation** of Alternative 3.
@@ -241,7 +241,7 @@ extension (app: KyoApp.type) def registerParsedRun(...): Unit
 
 Adopt **Alternative 4 (hybrid)**:
 
-1. **`KyoAppRunner[S]`** — public integration SPI in `kyo-core` (documented in Scaladoc as the supported way to build app entrypoints).
+1. **`KyoAppRunner[S]`** — public integration API in `kyo-core` (documented in Scaladoc as the supported way to build app entrypoints).
 2. **`KyoAppRunnerPlatform`** — public JVM / JS mixins (or nested in a `kyo.apps` / `kyo.runner` package if we want to separate from `kyo.*` effect types).
 3. **`private[kyo]`** — only for helpers that are not part of the integration contract (e.g. shared `Ansi` empty-run snippet, signal setup details).
 4. **Refactor `KyoApp`** to mix `KyoAppRunner` instead of owning duplicate logic.
@@ -254,10 +254,17 @@ Adopt **Alternative 4 (hybrid)**:
 |---------------------|------------------------|
 | Works because `kyo-case-app` lives in `package kyo` | Works for **any** dependency on `kyo-core` |
 | Next integration → new `kyo-foo` module or copy-paste | Next integration → **thin adapter** in user or vendor code |
-| SPI is implicit and undocumented | SPI is **versioned and documented** |
+| Integration hook is implicit and undocumented | Integration API is **versioned and documented** |
 | Good for monorepo hygiene | Good for **ecosystem** hygiene |
 
-`private[kyo]` remains valuable **under** `KyoAppRunner` to keep the committed SPI small while refactoring internals between minors.
+Restricting the runner to `private[kyo]` is enough to deduplicate code **inside this repo**, but it does not help **external entrypoint models** that own their own `main` and bootstrap flow. Those adapters would still need a new `kyo-*` module or a copy of interrupt/`onResult`/platform logic unless they adopt `package kyo`. Examples we have in mind:
+
+- **CLI libraries** — [decline](https://github.com/bensigma/decline), zio-cli, and similar parsers that are not case-app
+- **Framework-owned `main`** — Spark, embedded servers, or other runtimes that call into user code after their own startup
+
+A public `KyoAppRunner` is the shared “run Kyo effects after your framework has started” layer; `kyo-case-app` is then one thin adapter on top, not the template every integration must fork.
+
+`private[kyo]` remains valuable **under** `KyoAppRunner` (e.g. `KyoAppInterrupts`) to keep the **committed public API** small while refactoring internals between minors.
 
 ### Naming
 
@@ -268,7 +275,7 @@ Adopt **Alternative 4 (hybrid)**:
 
 ```mermaid
 flowchart TB
-  subgraph core ["kyo-core (public integration SPI)"]
+  subgraph core ["kyo-core (public integration API)"]
     R["KyoAppRunner[S]"]
     P["KyoAppRunnerPlatform"]
     I["interrupts + handle"]
@@ -319,7 +326,7 @@ Net: modest line increase in `kyo-core`, **large reduction** in per-integration 
 | **1** | `KyoAppInterrupts` + `KyoAppRunner.onResult` / `exitHook` / `runInitCode`; refactor `KyoApp`; case-app drops `KyoCaseAppInterrupts` + duplicate `onResult` | Partial |
 | **2** | `KyoAppRunnerPlatform` JVM; delete both JVM platform duplicates | Partial |
 | **3** | `KyoAppRunnerPlatform` JS; delete both JS platform duplicates | **Yes** |
-| **4** (optional) | Scaladoc “Writing a Kyo entrypoint” page; MiMa filters for SPI package | Ecosystem |
+| **4** (optional) | Scaladoc “Writing a Kyo entrypoint” page; MiMa policy for the integration API | Ecosystem |
 
 Phases 1–2 can ship in the `kyo-case-app` PR or immediately after; phase 3 if JS diff is large.
 
@@ -336,7 +343,7 @@ Phases 1–2 can ship in the `kyo-case-app` PR or immediately after; phase 3 if 
 
 - **MiMa:** `KyoAppRunner` public methods are binary API — need careful initial design.
 - **`KyoApp` refactor:** must preserve behavior; rely on `KyoAppTest` + `KyoCaseAppTest`.
-- **SPI evolution:** breaking `KyoAppRunner` hurts third-party adapters — use `@since` docs and conservative defaults.
+- **API evolution:** breaking `KyoAppRunner` hurts third-party adapters — use `@since` docs and conservative defaults.
 
 ### Neutral
 
@@ -345,7 +352,7 @@ Phases 1–2 can ship in the `kyo-case-app` PR or immediately after; phase 3 if 
 ## Open questions (for maintainers)
 
 1. **Package placement:** `kyo.KyoAppRunner` vs `kyo.apps.KyoAppRunner` vs `kyo.runner.KyoAppRunner`?
-2. **MiMa:** full MiMa on runner SPI, or `kyo-core` internal package excluded?
+2. **MiMa:** full MiMa on `KyoAppRunner`, or a narrower binary-compatible surface?
 3. **PR scope:** phases 1–2 in [#1619](https://github.com/getkyo/kyo/pull/1619) vs follow-up PR?
 4. Should `KyoApp.apply` / `Unsafe.runAndBlock` delegate to `KyoAppRunner` helpers for consistency?
 
@@ -362,3 +369,4 @@ Phases 1–2 can ship in the `kyo-case-app` PR or immediately after; phase 3 if 
 | Date | Change |
 |------|--------|
 | 2026-05-18 | Initial proposal (Proposed) |
+| 2026-05-18 | Accepted; replace “SPI” wording; expand public API rationale (decline, zio-cli, Spark-style mains) |
