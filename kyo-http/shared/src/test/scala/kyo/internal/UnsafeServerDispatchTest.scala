@@ -1,6 +1,7 @@
 package kyo.internal
 
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.atomic.AtomicBoolean
 import kyo.*
 import kyo.internal.codec.*
 import kyo.internal.http1.*
@@ -1093,6 +1094,35 @@ class UnsafeServerDispatchTest extends kyo.Test:
                 // Clean up: close inbound to terminate WS fibers
                 discard(inbound.close())
                 succeed
+            }
+        }
+
+        "HttpWebSocket rejects frames exceeding configured maxFrameSize" in run {
+            val received = new AtomicBoolean(false)
+            val config   = HttpWebSocket.Config(maxFrameSize = 4)
+            val handler = HttpHandler.webSocket("ws", config) { (_, ws) =>
+                Abort.run[Closed](ws.take()).map {
+                    case Result.Success(_) =>
+                        discard(received.set(true))
+                    case _ => ()
+                }
+            }
+            val router = HttpRouter(Seq(handler), Absent)
+
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+
+            discard(inbound.offer(Span.fromUnsafe(wsUpgradeRequest("ws").getBytes(StandardCharsets.US_ASCII))))
+
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+
+            collectWsUpgradeResponse(outbound).map { response =>
+                assert(response.contains("HTTP/1.1 101 Switching Protocols"), s"Expected 101, got: $response")
+                discard(inbound.offer(Span.fromUnsafe(encodeClientTextFrame("hello"))))
+                Async.sleep(100.millis).map { _ =>
+                    assert(!received.get(), "Oversized frame should close before reaching the handler")
+                    discard(inbound.close())
+                }.andThen(succeed)
             }
         }
 
