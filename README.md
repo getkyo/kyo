@@ -1206,16 +1206,13 @@ val fibonacci: Int => Int < Memo =
             yield a + b
     }
 
-val result: (Int, Int) < Memo = 
+val result: (Int, Int) < Any =
     Memo.run {
         for
             fib10 <- fibonacci(10)
             fib11 <- fibonacci(11)
         yield (fib10, fib11)
     }
-
-val result2: (Int, Int) < Any =
-    Memo.run(result)
 ```
 
 Key points about `Memo`:
