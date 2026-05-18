@@ -58,6 +58,11 @@ trait KyoCaseAppSupport[T, S]:
         registerRun(v)
     end run
 
+    /** Registers a Kyo effect that uses parsed options only (ignores [[caseapp.core.RemainingArgs RemainingArgs]]). */
+    final protected def run[A](v: T => A < S)(using Frame, Render[A]): Unit =
+        registerRun((options, _) => v(options))
+    end run
+
     /** Registers a Kyo effect that does not use parsed CLI data.
       *
       * Ergonomic overload when the block does not need `options` or `remainingArgs` (equivalent to `run { (_, _) => ... }`). Uses the same
@@ -67,7 +72,7 @@ trait KyoCaseAppSupport[T, S]:
         registerRun((_, _) => v)
     end run
 
-    /** Registers one effect block. Both [[run]] overloads delegate here so registration order is global regardless of which overload is
+    /** Registers one effect block. All [[run]] overloads delegate here so registration order is global regardless of which overload is
       * used.
       *
       * At execution time each block receives the same `options` and `remainingArgs` from the single case-app parse for that `main` call.

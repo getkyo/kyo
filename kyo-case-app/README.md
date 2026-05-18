@@ -2,9 +2,15 @@
 
 Bridge [case-app](https://github.com/alexarchambault/case-app) command-line parsing with Kyo application entrypoints. Use **`KyoCaseApp`** for single-command apps and **`KyoCommand`** for subcommands grouped via case-app's [`CommandsEntryPoint`](https://github.com/alexarchambault/case-app).
 
-Register effectful work with `run { (options, remainingArgs) => ... }`. Parsed options and positional arguments ([`RemainingArgs`](https://github.com/alexarchambault/case-app/blob/main/core/shared/src/main/scala/caseapp/core/RemainingArgs.scala)) are passed explicitly — unlike [`KyoApp`](https://github.com/getkyo/kyo), there are no implicit `options` / `remainingArgs` accessors. Use `_` for parameters you do not need. For effects that do not use CLI data, use the no-parameter overload `run { ... }` — same registration order as the explicit form, without `(_, _) =>`.
+Register effectful work with **`run`** after case-app parses the command line. Unlike [`KyoApp`](https://github.com/getkyo/kyo), there are no implicit `options` / `remainingArgs` accessors — parsed data is passed explicitly via overloads:
 
-Multiple `run` blocks (with or without CLI parameters) share one registration queue and run in object-initialization order; each block sees the same parse result from that `main` invocation.
+| Form | When to use |
+|------|-------------|
+| `run { (options, remainingArgs) => ... }` | You need options and leftover positionals ([`RemainingArgs`](https://github.com/alexarchambault/case-app/blob/main/core/shared/src/main/scala/caseapp/core/RemainingArgs.scala)) |
+| `run { options => ... }` | You need parsed options only |
+| `run { ... }` | The effect does not use parsed CLI data (startup hooks, etc.) |
+
+All three overloads share one registration queue: multiple `run` blocks run in object-initialization order, and each block sees the same parse result from that `main` invocation.
 
 case-app handles help, usage, and argument parsing; this module runs your effects after parsing completes. For how to define options (annotations, defaults, subcommand metadata, etc.), see the [case-app documentation](https://alexarchambault.github.io/case-app/) — that is not repeated here.
 
@@ -79,7 +85,16 @@ With a packaged binary (for example after `assembly` / `nativeImage` / `scala-cl
 # Hello, Bob!
 ```
 
-Multiple `run` blocks are registered at object initialization and executed in order when `main` runs, like on `KyoApp`.
+You can mix overloads in one app; registration order is preserved:
+
+```scala
+object Greet extends KyoCaseApp[GreetOptions]:
+    run { Console.printLine("starting") }                    // no CLI params
+    run { options => Console.printLine(options.name) }       // options only
+    run { (options, remainingArgs) =>                       // full parse result
+        Console.printLine(s"${options.name} ${remainingArgs.remaining.mkString(" ")}")
+    }
+```
 
 ## `KyoCommand` — subcommands
 
@@ -136,7 +151,7 @@ object TodoApp extends CommandsEntryPoint:
 
     object List extends KyoCommand[ListOptions]:
         override def name = "list"
-        run { (options, _) =>
+        run { options =>
             for
                 todos   <- store.get
                 visible <- Sync.defer(if options.all then todos else todos.filter(t => t.status ne TodoStatus.Completed))
@@ -229,10 +244,13 @@ The test suite includes a runnable variant of this app in [`casetest.TodoAppFixt
 | [`KyoCaseApp[T]`](shared/src/main/scala/kyo/KyoCaseApp.scala) | `caseapp.CaseApp[T]` | One options type, one entrypoint |
 | [`KyoCommand[T]`](shared/src/main/scala/kyo/KyoCommand.scala) | `caseapp.core.app.Command[T]` | Subcommand with its own options type |
 
-Both provide:
+Both provide three `run` overloads (same names, resolved by the shape of the block):
 
-- `protected def run[A](v: (T, RemainingArgs) => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit` — register effectful work after parsing
-- `protected def run[A](v: => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit` — same, when the effect does not use parsed CLI data
+- `run { (options, remainingArgs) => ... }` — full parse result
+- `run { options => ... }` — parsed options only
+- `run { ... }` — effect without parsed CLI data
+
+All delegate to a single `registerRun` queue so mixed overloads keep registration order.
 
 Non-throwable failures call `exitApp(1)` (case-app already defines `exit` for its own use). Interrupt handling matches `KyoApp` (SIGINT/SIGTERM on non-Windows platforms).
 

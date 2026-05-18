@@ -97,7 +97,7 @@ class KyoCaseAppTest extends Test:
             run { Sync.defer(log += "a") }
             run { (_, _) => Sync.defer(log += "b") }
             run { Sync.defer(log += "c") }
-            run { (options, _) => Sync.defer(log += s"d:${options.name}") }
+            run { options => Sync.defer(log += s"d:${options.name}") }
         for
             _ <- Sync.defer(app.main(Array("--name", "cli")))
         yield assert(log.toList == List("a", "b", "c", "d:cli"))
