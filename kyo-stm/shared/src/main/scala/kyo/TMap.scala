@@ -61,14 +61,14 @@ object TMap:
       */
     inline def initWith[K, V](inline entries: (K, V)*)[A, S](inline f: TMap[K, V] => A < S)(
         using inline frame: Frame
-    ): TMap[K, V] < (Sync & S) =
+    ): A < (Sync & S) =
         STM.withCurrentTransactionOrNew { tick =>
             val trefs =
                 entries.foldLeft(Map.empty[K, TRef[V]]) {
                     case (acc, (k, v)) =>
                         acc.updated(k, TRef.Unsafe.init(tick, v))
                 }
-            TRef.Unsafe.init(tick, trefs)
+            f(TRef.Unsafe.init(tick, trefs))
         }
 
     extension [K, V](self: TMap[K, V])
@@ -165,7 +165,7 @@ object TMap:
           *   true if the key exists, false otherwise
           */
         def contains(key: K)(using Frame): Boolean < STM =
-            self.use(!_.isEmpty)
+            self.use(_.contains(key))
 
         /** Updates the value associated with a key based on its current value.
           *
