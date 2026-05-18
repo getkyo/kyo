@@ -258,3 +258,4 @@ Non-throwable failures call `exitApp(1)` (case-app already defines `exit` for it
 
 - [case-app](https://alexarchambault.github.io/case-app/) — option definitions, help, completions
 - [KyoApp](https://github.com/getkyo/kyo) — raw `args` without a CLI parser
+- [ADR 0001: KyoAppRunner integration entrypoints](docs/adr/0001-kyo-app-runner-integration-entrypoints.md) — design for deduplicating runner logic with `KyoApp`
