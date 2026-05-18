@@ -23,7 +23,7 @@ trait KyoCaseAppSupport[T, S]:
                 header = "KyoCaseApp: nothing to execute. Did you forget to use a run block?",
                 code = """|
                           | object Example extends KyoCaseApp[MyOptions]:
-                          |   run {
+                          |   run { (options, remainingArgs) =>
                           |     Console.printLine(s"Hello ${options}")
                           |   }
                           |""".stripMargin,
@@ -33,20 +33,15 @@ trait KyoCaseAppSupport[T, S]:
         end if
     end run
 
-    /** Parsed command-line options for this application. */
-    final protected def options: T =
+    /** Parsed options and remaining arguments; only valid while [[initCode]] thunks run. */
+    final protected def cliArgs: (T, RemainingArgs) =
         if !_parsed then
-            throw IllegalStateException("options are not available until after CaseApp parsing")
-        else _options
-    end options
-
-    /** Positional arguments that were not consumed by option parsing. */
-    final protected def remainingArgs: RemainingArgs =
-        val args = _remainingArgs
-        if args eq null then
-            throw IllegalStateException("remainingArgs are not available until after CaseApp parsing")
-        else args
-    end remainingArgs
+            throw IllegalStateException("cliArgs are not available until after CaseApp parsing")
+        val rem = _remainingArgs
+        if rem eq null then
+            throw IllegalStateException("cliArgs are not available until after CaseApp parsing")
+        (_options, rem)
+    end cliArgs
 
     /** Unsafely exits the application. */
     protected def exitApp(code: Int)(using AllowUnsafe): Unit =
@@ -59,7 +54,7 @@ trait KyoCaseAppSupport[T, S]:
     protected def runTimeout: Duration = Duration.Infinity
 
     /** Registers a Kyo effect to run after case-app parsing completes. */
-    protected def run[A](v: => A < S)(using Frame, Render[A]): Unit
+    protected def run[A](v: (T, RemainingArgs) => A < S)(using Frame, Render[A]): Unit
 
     /** Handles the result of the [[run]] block computation. */
     protected def onResult[E, A](result: Result[E, A])(using Render[Result[E, A]], AllowUnsafe): Unit =

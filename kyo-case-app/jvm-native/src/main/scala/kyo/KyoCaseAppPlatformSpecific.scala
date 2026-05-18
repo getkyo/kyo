@@ -1,12 +1,15 @@
 package kyo
 
-trait KyoCaseAppPlatformSpecific:
-    self: KyoCaseAppSupport[?, Async & Scope & Abort[Throwable]] =>
+import caseapp.core.RemainingArgs
 
-    final override protected def run[A](v: => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit =
+trait KyoCaseAppPlatformSpecific[T]:
+    self: KyoCaseAppSupport[T, Async & Scope & Abort[Throwable]] =>
+
+    final override protected def run[A](v: (T, RemainingArgs) => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit =
         import AllowUnsafe.embrace.danger
         initCode = initCode.appended(() =>
-            val result = Sync.Unsafe.evalOrThrow(Abort.run(KyoApp.runAndBlock(runTimeout)(handle(v))))
+            val (options, remainingArgs) = cliArgs
+            val result = Sync.Unsafe.evalOrThrow(Abort.run(KyoApp.runAndBlock(runTimeout)(handle(v(options, remainingArgs)))))
             onResult(result)
         )
     end run

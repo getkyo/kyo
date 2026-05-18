@@ -2,10 +2,7 @@
 
 Bridge [case-app](https://github.com/alexarchambault/case-app) command-line parsing with Kyo application entrypoints. Use **`KyoCaseApp`** for single-command apps and **`KyoCommand`** for subcommands grouped via case-app's [`CommandsEntryPoint`](https://github.com/alexarchambault/case-app).
 
-Parsed CLI data is available inside Kyo `run` blocks the same way `args` is available on [`KyoApp`](https://github.com/getkyo/kyo):
-
-- **`options`** — the parsed options type `T`
-- **`remainingArgs`** — positional arguments left after parsing ([`RemainingArgs`](https://github.com/alexarchambault/case-app/blob/main/core/shared/src/main/scala/caseapp/core/RemainingArgs.scala))
+Register effectful work with `run { (options, remainingArgs) => ... }`. Parsed options and positional arguments ([`RemainingArgs`](https://github.com/alexarchambault/case-app/blob/main/core/shared/src/main/scala/caseapp/core/RemainingArgs.scala)) are passed explicitly — unlike [`KyoApp`](https://github.com/getkyo/kyo), there are no implicit `options` / `remainingArgs` accessors. Use `_` for parameters you do not need.
 
 case-app handles help, usage, and argument parsing; this module runs your effects after parsing completes. For how to define options (annotations, defaults, subcommand metadata, etc.), see the [case-app documentation](https://alexarchambault.github.io/case-app/) — that is not repeated here.
 
@@ -38,7 +35,7 @@ final case class GreetOptions(
 )
 
 object Greet extends KyoCaseApp[GreetOptions]:
-    run {
+    run { (options, remainingArgs) =>
         Console.printLine(s"Hello, ${options.name}!")
     }
 ```
@@ -111,7 +108,7 @@ object TodoApp extends CommandsEntryPoint:
 
     object Create extends KyoCommand[CreateOptions]:
         override def name = "create"
-        run {
+        run { (options, remainingArgs) =>
             val title = options.title.orElse(remainingArgs.remaining.headOption).getOrElse {
                 throw new IllegalArgumentException("create requires --title or a positional title")
             }
@@ -125,7 +122,7 @@ object TodoApp extends CommandsEntryPoint:
 
     object Complete extends KyoCommand[IdOptions]:
         override def name = "complete"
-        run {
+        run { (options, remainingArgs) =>
             val id = options.id.orElse(remainingArgs.remaining.headOption.flatMap(_.toIntOption)).get
             for
                 todos <- store.get
@@ -137,7 +134,7 @@ object TodoApp extends CommandsEntryPoint:
 
     object List extends KyoCommand[ListOptions]:
         override def name = "list"
-        run {
+        run { (options, _) =>
             for
                 todos   <- store.get
                 visible <- Sync.defer(if options.all then todos else todos.filter(t => t.status ne TodoStatus.Completed))
@@ -148,7 +145,7 @@ object TodoApp extends CommandsEntryPoint:
 
     object Delete extends KyoCommand[IdOptions]:
         override def name = "delete"
-        run {
+        run { (options, remainingArgs) =>
             val id = options.id.orElse(remainingArgs.remaining.headOption.flatMap(_.toIntOption)).get
             for
                 todos <- store.get
@@ -160,7 +157,7 @@ object TodoApp extends CommandsEntryPoint:
 
     object Start extends KyoCommand[IdOptions]:
         override def name = "start"
-        run {
+        run { (options, remainingArgs) =>
             val id = options.id.orElse(remainingArgs.remaining.headOption.flatMap(_.toIntOption)).get
             for
                 todos <- store.get
@@ -232,9 +229,7 @@ The test suite includes a runnable variant of this app in [`casetest.TodoAppFixt
 
 Both provide:
 
-- `protected def run[A](v: => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit` — register effectful work
-- `protected def options: T` — parsed options (after `main`)
-- `protected def remainingArgs: RemainingArgs` — remaining positional arguments
+- `protected def run[A](v: (T, RemainingArgs) => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit` — register effectful work after parsing
 
 Non-throwable failures call `exitApp(1)` (case-app already defines `exit` for its own use). Interrupt handling matches `KyoApp` (SIGINT/SIGTERM on non-Windows platforms).
 

@@ -15,7 +15,7 @@ class KyoCaseAppTest extends Test:
         for
             ref <- AtomicRef.init[Maybe[(GreetOptions, RemainingArgs)]](Absent)
             app = new KyoCaseApp[GreetOptions]:
-                run {
+                run { (options, remainingArgs) =>
                     ref.set(Present((options, remainingArgs)))
                 }
             _      <- Sync.defer(app.main(Array("--name", "test", "positional")))
@@ -33,7 +33,7 @@ class KyoCaseAppTest extends Test:
             ref <- AtomicRef.init[Maybe[(GreetOptions, RemainingArgs)]](Absent)
             cmd = new KyoCommand[GreetOptions]:
                 override def name = "greet"
-                run {
+                run { (options, remainingArgs) =>
                     ref.set(Present((options, remainingArgs)))
                 }
             _      <- Sync.defer(cmd.main(Array("--name", "cli", "rest")))
@@ -52,9 +52,9 @@ class KyoCaseAppTest extends Test:
             for
                 ref <- AtomicInt.init(0)
                 app = new KyoCaseApp[GreetOptions]:
-                    run { ref.getAndIncrement }
-                    run { ref.getAndIncrement }
-                    run { ref.getAndIncrement }
+                    run { (_, _) => ref.getAndIncrement }
+                    run { (_, _) => ref.getAndIncrement }
+                    run { (_, _) => ref.getAndIncrement }
 
                 _    <- Sync.defer(app.main(Array.empty))
                 runs <- ref.get
@@ -67,10 +67,10 @@ class KyoCaseAppTest extends Test:
         val x       = new ListBuffer[Int]
         val promise = scala.concurrent.Promise[Assertion]()
         val app = new KyoCaseApp[GreetOptions]:
-            run { Async.delay(10.millis)(Sync.defer(x += 1)) }
-            run { Async.delay(10.millis)(Sync.defer(x += 2)) }
-            run { Async.delay(10.millis)(Sync.defer(x += 3)) }
-            run { Sync.defer(promise.complete(Try(assert(x.toList == List(1, 2, 3))))) }
+            run { (_, _) => Async.delay(10.millis)(Sync.defer(x += 1)) }
+            run { (_, _) => Async.delay(10.millis)(Sync.defer(x += 2)) }
+            run { (_, _) => Async.delay(10.millis)(Sync.defer(x += 3)) }
+            run { (_, _) => Sync.defer(promise.complete(Try(assert(x.toList == List(1, 2, 3))))) }
         app.main(Array.empty)
         promise.future
     }
@@ -86,7 +86,7 @@ class KyoCaseAppTest extends Test:
     "effect mismatch" in {
         typeCheckFailure("""
             new KyoCaseApp[GreetOptions]:
-                run(1: Int < Var[Int])
+                run { (_, _) => 1: Int < Var[Int] }
         """)(
             "Found:    Int < kyo.Var[Int]"
         )

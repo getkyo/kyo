@@ -47,7 +47,7 @@ object TodoAppFixture:
 
     object Create extends KyoCommand[CreateOptions]:
         override def name = "create"
-        run {
+        run { (options, remainingArgs) =>
             options.title.orElse(remainingArgs.remaining.headOption) match
                 case None =>
                     Abort.fail(new IllegalArgumentException("create requires a title (--title or positional)"))
@@ -64,7 +64,7 @@ object TodoAppFixture:
 
     object Complete extends KyoCommand[IdOptions]:
         override def name = "complete"
-        run {
+        run { (options, remainingArgs) =>
             for
                 id    <- requireId(options, remainingArgs)
                 todos <- store.get
@@ -85,7 +85,7 @@ object TodoAppFixture:
 
     object List extends KyoCommand[ListOptions]:
         override def name = "list"
-        run {
+        run { (options, _) =>
             for
                 todos <- store.get
                 visible <- Sync.defer {
@@ -101,7 +101,7 @@ object TodoAppFixture:
 
     object Delete extends KyoCommand[IdOptions]:
         override def name = "delete"
-        run {
+        run { (options, remainingArgs) =>
             for
                 id    <- requireId(options, remainingArgs)
                 todos <- store.get
@@ -118,7 +118,7 @@ object TodoAppFixture:
 
     object Start extends KyoCommand[IdOptions]:
         override def name = "start"
-        run {
+        run { (options, remainingArgs) =>
             for
                 id    <- requireId(options, remainingArgs)
                 todos <- store.get
