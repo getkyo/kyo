@@ -411,16 +411,16 @@ final private[kyo] class HttpContainerBackend(
         // Start the /wait call as a background fiber BEFORE sending stop, so the exit code is
         // captured before auto-remove cleanup can race and remove the container from the daemon.
         Fiber.initUnscoped(waitForExit(id)).map { waitFiber =>
-            // Honour the caller's stop timeout as the HTTP-client deadline too — the HTTP call
-            // should not wait longer than the daemon's `t=$seconds` graceful-shutdown contract.
-            // Skip when timeout is zero (instant kill) since `HttpClientConfig.timeout` rejects zero.
-            val bounded =
-                if timeout > Duration.Zero then
-                    HttpClient.withConfig(c => c.timeout(c.timeout.min(timeout))) {
-                        postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id))
-                    }
-                else postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id))
-            bounded.andThen {
+            // The daemon's `/stop?t=$seconds` waits up to `seconds` for graceful shutdown, then
+            // SIGKILLs the container; its HTTP response returns only once the container has
+            // actually stopped. The HTTP-client deadline must therefore cover the *full* grace
+            // period plus SIGKILL and API overhead — `timeout + 30s`. Clamping it down to
+            // `timeout` (the daemon's grace contract) guaranteed a spurious HttpTimeoutException
+            // whenever the daemon used most of its grace window. `c.timeout.max(...)` keeps any
+            // longer caller override.
+            HttpClient.withConfig(c => c.timeout(c.timeout.max(timeout + 30.seconds))) {
+                postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id))
+            }.andThen {
                 // Docker HTTP API returns before the container fully transitions to "exited".
                 // Join the pre-started /wait fiber to confirm exit and preserve the exit code.
                 waitFiber.get.andThen(awaitTerminalState(id))
