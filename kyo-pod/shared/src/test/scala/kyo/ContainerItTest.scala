@@ -11,6 +11,20 @@ class ContainerItTest extends Test:
     def uniqueName(prefix: String) =
         s"$prefix-${nameCounter.incrementAndGet()}"
 
+    // Pinging a container by DNS name on a freshly created network is racy: the network
+    // alias may not be registered yet when ping resolves it, and a lone ICMP packet can
+    // drop. Retry the whole exec — each attempt re-resolves DNS and sends fresh packets.
+    private def assertPingReachable(c: Container, host: String)(using Frame): Assertion < (Async & Abort[ContainerException]) =
+        def attempt(remaining: Int): Assertion < (Async & Abort[ContainerException]) =
+            c.exec("ping", "-c", "3", "-W", "2", host).map { r =>
+                if r.isSuccess then succeed
+                else if remaining <= 0 then
+                    fail(s"ping $host failed: exit=${r.exitCode.toInt} out=${r.stdout} err=${r.stderr}")
+                else Async.sleep(1.second).andThen(attempt(remaining - 1))
+            }
+        attempt(5)
+    end assertPingReachable
+
     // =========================================================================
     // Backend Selection
     // =========================================================================
@@ -2308,8 +2322,8 @@ class ContainerItTest extends Test:
                             for
                                 _ <- Container.Network.connect(netId, server.id, aliases = Chunk("server"))
                                 _ <- Container.Network.connect(netId, client.id)
-                                r <- client.exec("ping", "-c", "1", "-W", "2", "server")
-                            yield assert(r.isSuccess)
+                                r <- assertPingReachable(client, "server")
+                            yield r
                         }
                     }
                 }
@@ -2332,9 +2346,7 @@ class ContainerItTest extends Test:
                     ).stopTimeout(0.seconds)
                     Container.initWith(serverCfg) { _ =>
                         Container.initWith(clientCfg) { client =>
-                            client.exec("ping", "-c", "1", "-W", "2", "server-alias").map { r =>
-                                assert(r.isSuccess, s"ping server-alias failed: exit=${r.exitCode.toInt} out=${r.stdout} err=${r.stderr}")
-                            }
+                            assertPingReachable(client, "server-alias")
                         }
                     }
                 }

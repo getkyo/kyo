@@ -960,7 +960,9 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "wake backpressure and blocked flag reset" in {
-            // Part A: wake() backpressure
+            // Part A: wake() backpressure — a burst of wake() calls collapses into a few
+            // monitor scans via LockSupport's permit model, rather than one scan per call.
+            // Counting scans (not wall-clock time) makes this immune to CI scheduling jitter.
             val wakeStarted = new CountDownLatch(1)
             val wakeDone    = new CountDownLatch(1)
             val wakeTask = TestTask(_run = () => {
@@ -971,17 +973,17 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             scheduler.schedule(wakeTask)
             assert(wakeStarted.await(5, TimeUnit.SECONDS))
 
-            val wakeStart = System.nanoTime()
-            var i         = 0
+            val cyclesBefore = scheduler.blockingMonitor.cycles
+            var i            = 0
             while (i < 1000) {
                 scheduler.notifyInterrupt()
                 i += 1
             }
-            val wakeElapsed = System.nanoTime() - wakeStart
+            val cyclesAdded = scheduler.blockingMonitor.cycles - cyclesBefore
 
             assert(
-                wakeElapsed < 1000000000L,
-                s"1000 wake() calls took ${wakeElapsed / 1000000}ms — should be fast"
+                cyclesAdded < 200,
+                s"1000 wake() calls triggered $cyclesAdded monitor scans — should coalesce, not scan per call"
             )
 
             wakeDone.countDown()

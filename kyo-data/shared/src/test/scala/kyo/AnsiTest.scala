@@ -65,4 +65,20 @@ class AnsiTest extends Test:
         assert(coloredString.stripAnsi == "test")
     }
 
+    "text red" in {
+        val text: Text = Text("test")
+        assert(text.red.is(Text("\u001b[31mtest\u001b[0m")))
+    }
+
+    "text formatting composes without forcing the input text" in {
+        val text: Text    = Text("te") + Text("st")
+        val colored: Text = text.red.bold.underline
+        assert(colored.is(Text("\u001b[4m\u001b[1m\u001b[31mtest\u001b[0m\u001b[0m\u001b[0m")))
+    }
+
+    "text stripAnsi" in {
+        val coloredText: Text = (Text("te") + Text("st")).red.bold.underline
+        assert(coloredText.stripAnsi.is(Text("test")))
+    }
+
 end AnsiTest
