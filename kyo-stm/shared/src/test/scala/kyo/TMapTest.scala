@@ -26,6 +26,19 @@ class TMapTest extends Test:
             }
         }
 
+        "initWith applies function" in run {
+            STM.run {
+                TMap.initWith("a" -> 1, "b" -> 2) { map =>
+                    for
+                        _        <- map.put("c", 3)
+                        snapshot <- map.snapshot
+                    yield snapshot
+                }
+            }.map { snapshot =>
+                assert(snapshot == Map("a" -> 1, "b" -> 2, "c" -> 3))
+            }
+        }
+
         "add and contains" in run {
             STM.run {
                 for
@@ -36,7 +49,7 @@ class TMapTest extends Test:
                     value   <- map.get("key")
                 yield (exists, missing, value)
             }.map { case (exists, missing, value) =>
-                assert(exists && missing && value == Maybe(42))
+                assert(exists && !missing && value == Maybe(42))
             }
         }
 
