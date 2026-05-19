@@ -1,0 +1,17 @@
+# Scripted test - depends-on. Verifies dependency wiring scenarios:
+# (12) backend-aware compat-to-compat, (13) compat-to-plain-project,
+# (14) transitive A->B->C, all preserving the backend axis.
+# Cells are JVM-only Future + Kyo so the cross-product stays small.
+# Project ids: myFetcherFuture / myFetcherKyo, etc. (named accessors
+# return CompatBackendProjects views, so we publishLocal by id here).
+> publishFakes
+> ;myFetcherFuture/publishLocal ;myFetcherKyo/publishLocal
+> ;myHttpFuture/publishLocal ;myHttpKyo/publishLocal
+> plainCommon/publishLocal
+> ;myThingFuture/publishLocal ;myThingKyo/publishLocal
+> ;myCFuture/publishLocal ;myCKyo/publishLocal
+> ;myBFuture/publishLocal ;myBKyo/publishLocal
+> ;myAFuture/publishLocal ;myAKyo/publishLocal
+> checkBackendAwareDeps
+> checkPlainProjectDep
+> checkTransitiveDeps

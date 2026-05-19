@@ -1,0 +1,5 @@
+# Scripted test - all 5 backends, all 3 platforms.
+> checkProjects
+> checkSkippedCells
+> checkDepsPerPlatform
+> checkSharedSourcesAcrossPlatforms

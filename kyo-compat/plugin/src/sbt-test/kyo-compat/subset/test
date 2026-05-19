@@ -1,0 +1,3 @@
+# Scripted test - subset of backends and platforms.
+> checkProjects
+> checkNamedAccessors

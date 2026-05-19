@@ -1,0 +1,7 @@
+# Scripted test - source-overrides.
+> publishFakes
+> checkSharedReachesAllCells
+> checkPerBackendOverride
+> checkPerCellOverride
+> checkSharedTestSourcesReachAllCells
+> checkAllCompile

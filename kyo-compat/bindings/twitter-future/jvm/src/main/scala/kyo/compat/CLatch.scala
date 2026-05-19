@@ -1,0 +1,44 @@
+package kyo.compat
+
+import com.twitter.util.Promise
+import com.twitter.util.Return
+import java.util.concurrent.atomic.AtomicInteger
+import scala.annotation.publicInBinary
+
+/** A countdown latch backed by a `Promise[Unit]` gated by an `AtomicInteger` counter — no thread blocking. `release` decrements the counter
+  * and resolves the promise when it hits zero; `await` returns the promise as a Future. `init(n <= 0)` produces an already-released latch.
+  */
+final class CLatch @publicInBinary private[compat] (initial: Int):
+
+    private val remaining           = new AtomicInteger(math.max(initial, 0))
+    private val gate: Promise[Unit] = new Promise[Unit]()
+
+    if initial <= 0 then
+        val _ = gate.updateIfEmpty(Return(()))
+
+    inline def lower: CLatch = this
+
+    inline def await: CIO[Unit] =
+        CIO.lift(gate)
+
+    inline def release: CIO[Unit] =
+        CIO.defer {
+            val r = remaining.decrementAndGet()
+            if r == 0 then
+                val _ = gate.updateIfEmpty(Return(()))
+            else if r < 0 then
+                // Already released; clamp the counter so additional releases stay idempotent.
+                remaining.set(0)
+            end if
+        }
+
+end CLatch
+
+object CLatch:
+
+    inline def init(inline n: Int): CIO[CLatch] =
+        CIO.defer(new CLatch(n))
+
+    inline def lift(inline u: CLatch): CLatch = u
+
+end CLatch

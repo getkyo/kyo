@@ -1,0 +1,5 @@
+# Scripted test - graph-shapes. Verifies three matrix shapes.
+> publishFakes
+> checkMultiScala
+> checkFutureOnly
+> checkSingleCell

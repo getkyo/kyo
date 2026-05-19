@@ -1,0 +1,3 @@
+# Scripted test - error case (empty backend x platform intersection).
+-> triggerError
+> checkErrorMessage

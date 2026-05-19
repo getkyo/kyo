@@ -1,5 +1,6 @@
 .bloop
 .bsp
+.claude
 .metals
 project/target
 project/project
