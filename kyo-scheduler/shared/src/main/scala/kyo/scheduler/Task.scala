@@ -16,18 +16,12 @@ trait Task {
 
     def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result
 
-    /** Marks this task for thread interrupt dispatch by the BlockingMonitor.
+    /** Whether the BlockingMonitor should dispatch Thread.interrupt() for this task.
       *
-      * Called by IOTask.interrupt when a fiber is interrupted. Sets the needsInterrupt flag and also forces preemption so the task yields
-      * at the next effect boundary. The BlockingMonitor periodically checks this flag and, if the worker thread's CPU time is flat (thread
-      * is blocked), dispatches Thread.interrupt() to wake it.
+      * Defaults to false — plain tasks are never interrupted. IOTask overrides this to derive interruption from its own promise state, the
+      * single source of truth for fiber interruption.
       */
-    def requestInterrupt(): Unit =
-        this.state = state.interrupt
-
-    /** Whether this task has been marked for thread interrupt dispatch. */
-    def needsInterrupt(): Boolean =
-        state.needsInterrupt
+    def needsInterrupt(): Boolean = false
 
     protected def runtime(): Int =
         state.runtime
@@ -38,46 +32,36 @@ trait Task {
 
 object Task {
 
-    /** Bit-packed task state encoding preemption, interrupt request, and runtime priority in a single Int.
+    /** Bit-packed task state encoding preemption and runtime priority in a single Int.
       *
-      * The encoding avoids additional volatile fields on the hot path by packing three concerns into one value:
-      *   - '''bit 0''': needsInterrupt — whether the BlockingMonitor should dispatch Thread.interrupt() for this task
-      *   - '''bits 1-30''': runtime — accumulated execution time, used for priority ordering (lower = higher priority)
-      *   - '''bit 31 (sign)''': preempting — when negative, the task should yield at the next effect boundary
+      *   - '''bits 0-30''': runtime — accumulated execution time, used for priority ordering (lower = higher priority)
+      *   - '''bit 31 (sign)''': preempting — when negative, the task should yield at the next effect boundary so the worker can serve other
+      *     queued tasks (time-slice fairness)
       *
-      * Key invariants:
-      *   - Negation preserves bit 0 in two's complement (odd numbers stay odd when negated), so preemption doesn't clear the interrupt flag
-      *   - addRuntime shifts by 1 (`v << 1`) to write into bits 1-30 without affecting the interrupt bit
-      *   - addRuntime always produces a positive (non-preempting) state, since runtime is added after task execution when preemption is no
-      *     longer relevant
+      * `state` is mutated by non-atomic read-modify-writes from two threads — the worker (addRuntime) and the coordinator (doPreempt, via
+      * Worker.checkStalling). A lost update can only drop a best-effort time-slice preemption (retried on the next checkStalling pass) or a
+      * runtime increment (a priority heuristic), so plain @volatile is sufficient. Fiber interruption is intentionally NOT tracked here: it
+      * is observed from IOPromise's CAS-updated state, so no cross-thread interrupt write exists to be lost.
       */
     private[scheduler] type State = Int
 
     private[scheduler] object State {
-        private val InterruptMask: Int = 1
 
-        /** Initial state: runtime = 1, no interrupt, not preempting. */
-        def init: State = 2
+        /** Initial state: runtime = 1, not preempting. */
+        def init: State = 1
 
         implicit class StateOps(private val s: State) extends AnyVal {
-            def preempting: Boolean     = s < 0
-            def needsInterrupt: Boolean = (s & InterruptMask) != 0
-            def runtime: Int            = (if (s < 0) -s else s) >>> 1
+            def preempting: Boolean = s < 0
+            def runtime: Int        = if (s < 0) -s else s
 
             /** Sets the preemption flag (negates). No-op if already preempting. */
             def preempt: State = -s
 
-            /** Sets both interrupt flag and preemption. */
-            def interrupt: State = {
-                val abs = if (s < 0) -s else s
-                -(abs | InterruptMask)
-            }
-
-            /** Adds execution time. Clears preemption (flips to positive) since runtime is added after task execution when preemption is no
-              * longer relevant.
+            /** Adds execution time, clearing the preemption flag (flips to positive): a time-slice preemption has been consumed by the time
+              * runtime is recorded.
               */
             def addRuntime(v: Int): State =
-                (if (s < 0) -s else s) + (v << 1)
+                (if (s < 0) -s else s) + v
         }
     }
 

@@ -31,12 +31,16 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     final override def removeFinalizer(f: Maybe[Error[Any]] => Unit) =
         finalizers = finalizers.remove(f)
 
-    // Bridges fiber-level interruption to thread-level interruption. When the promise is
-    // successfully interrupted (CAS from Pending to Error), sets the needsInterrupt flag
-    // and wakes the BlockingMonitor for immediate scan. If the worker thread is blocked
-    // (flat CPU time), Thread.interrupt() is dispatched within ~100μs.
+    // Fiber interruption is recorded by IOPromise.interrupt's CAS of the promise state to
+    // Error — the single source of truth. needsInterrupt and eval's stop check both read
+    // it, so an interrupt can never be lost to a racing scheduler-level state update.
+    final override def needsInterrupt(): Boolean =
+        !isPending()
+
+    // Wakes the BlockingMonitor for an immediate scan. If the worker thread is blocked
+    // (flat CPU time), Thread.interrupt() is dispatched once the monitor observes the
+    // interrupted promise.
     final override def preInterrupt(): Boolean =
-        requestInterrupt()
         Scheduler.get.notifyInterrupt()
         true
     end preInterrupt
@@ -51,7 +55,11 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                 Isolate.internal.restoring(trace, this) {
                     ArrowEffect.handlePartial(erasedAbortTag, Tag[Async.Join], curr, context)(
                         stop =
-                            shouldPreempt() || (deadline != Long.MaxValue && clock.currentMillis() > deadline),
+                            // !isPending() is the authoritative interrupt signal — IOPromise.interrupt
+                            // CAS-completes the promise, so checking it here stops an interrupted fiber even if
+                            // the racing scheduler preemption flag was lost. Ordered after shouldPreempt() and
+                            // the deadline check so a step that stops for either of those skips the read.
+                            shouldPreempt() || (deadline != Long.MaxValue && clock.currentMillis() > deadline) || !isPending(),
                         [C] =>
                             (input, cont) =>
                                 locally {
