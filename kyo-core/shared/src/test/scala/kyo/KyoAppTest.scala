@@ -112,6 +112,27 @@ class KyoAppTest extends Test:
             case _                                           => fail("Unexpected Success...")
     }
 
+    "non-throwable aborts" in runNotJS {
+        val app = new KyoApp:
+            run(Abort.fail("Aborts!"))
+
+        assert(Result.catching[KyoApp.FailureException](app.main(Array.empty)).isFailure)
+    }
+
+    "unsafe non-throwable aborts" in runNotJS {
+        def run: Unit < (Async & Scope & Abort[String]) =
+            for
+                _ <- Clock.now
+                _ <- Random.nextInt
+                _ <- Abort.fail("Aborts!")
+            yield ()
+
+        import AllowUnsafe.embrace.danger
+        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(run) match
+            case Result.Failure(exception: KyoApp.FailureException) => assert(exception.error.toString == "Aborts!")
+            case _                                                  => fail("Unexpected Success...")
+    }
+
     "effect mismatch" in {
         typeCheckFailure("""
             new KyoApp:
