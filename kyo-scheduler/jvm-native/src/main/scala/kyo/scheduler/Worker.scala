@@ -209,61 +209,52 @@ abstract private class Worker(
         setCurrent(this)
         var task: Task = null
 
-        while (true) {
-            // Mark worker as actively running
-            state.set(State.Running)
+        try
+            while (!shouldStop()) {
+                // Mark worker as actively running
+                state.set(State.Running)
 
-            if (task eq null)
-                // Try to get a task from our own queue first
-                task = queue.poll()
+                if (task eq null)
+                    // Try to get a task from our own queue first
+                    task = queue.poll()
 
-            if (task eq null) {
-                // If our queue is empty, try to steal work from another worker
-                task = stealTask(this)
-                if (task ne null)
-                    // Track number of stolen tasks including batch size
-                    stolenTasks += queue.size() + 1
-            }
+                if (task eq null) {
+                    // If our queue is empty, try to steal work from another worker
+                    task = stealTask(this)
+                    if (task ne null)
+                        // Track number of stolen tasks including batch size
+                        stolenTasks += queue.size() + 1
+                }
 
-            if (task ne null) {
-                // We have a task to execute
-                executions += 1
-                if (runTask(task) == Task.Preempted) {
-                    // Task was preempted - add it back to queue and get next task
-                    preemptions += 1
-                    task = queue.addAndPoll(task)
-                } else {
-                    // Task completed normally
-                    completions += 1
+                if (task ne null) {
+                    // We have a task to execute
+                    val current = task
                     task = null
-                }
-            } else {
-                // No tasks available - prepare to go idle
-                state.set(State.Idle)
-                if (queue.isEmpty() || !state.compareAndSet(State.Idle, State.Running)) {
-                    // Either queue is empty or another thread changed our state
-                    // Clean up and exit
-                    mountId = -1L
-                    blocked = false
-                    mount = null
-                    clearCurrent()
-                    return
+                    executions += 1
+                    if (runTask(current) == Task.Preempted) {
+                        // Task was preempted - add it back to queue and get next task
+                        preemptions += 1
+                        task = queue.addAndPoll(current)
+                    } else {
+                        // Task completed normally
+                        completions += 1
+                    }
+                } else {
+                    // No tasks available - prepare to go idle
+                    state.set(State.Idle)
+                    if (queue.isEmpty() || !state.compareAndSet(State.Idle, State.Running))
+                        return
                 }
             }
-
-            // Check if we should stop processing tasks
-            if (shouldStop()) {
-                state.set(State.Idle)
-                // Reschedule current task if we have one
-                if (task ne null) schedule(task)
-                // Drain remaining tasks from queue
-                drain()
-                mountId = -1L
-                blocked = false
-                mount = null
-                clearCurrent()
-                return
-            }
+        finally {
+            // Clean up on any exit path: idle, shouldStop, or fatal Throwable escaping runTask
+            state.set(State.Idle)
+            if (task ne null) queue.add(task)
+            drain()
+            mountId = -1L
+            blocked = false
+            mount = null
+            clearCurrent()
         }
     }
 
