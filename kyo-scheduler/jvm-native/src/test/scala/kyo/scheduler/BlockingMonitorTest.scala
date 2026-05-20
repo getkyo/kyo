@@ -532,8 +532,8 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             assert(started.await(5, TimeUnit.SECONDS))
             Thread.sleep(10)
 
-            task.requestInterrupt()
-            assert(task.needsInterrupt(), "needsInterrupt should be set after requestInterrupt")
+            task.interrupted = true
+            assert(task.needsInterrupt(), "needsInterrupt should reflect the interrupt flag")
 
             eventually(timeout(scaled(org.scalatest.time.Span(2, org.scalatest.time.Seconds)))) {
                 assert(interrupted.get(), "blocked thread should receive Thread.interrupt()")
@@ -591,7 +591,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             assert(started.await(5, TimeUnit.SECONDS))
             Thread.sleep(10)
 
-            task.requestInterrupt()
+            task.interrupted = true
 
             eventually(timeout(scaled(org.scalatest.time.Span(5, org.scalatest.time.Seconds)))) {
                 assert(interruptCount.get() >= 3, s"expected at least 3 interrupts, got ${interruptCount.get()}")
@@ -666,7 +666,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             assert(started.await(10, TimeUnit.SECONDS))
             Thread.sleep(10)
 
-            tasks.foreach(_.requestInterrupt())
+            tasks.foreach(t => t.interrupted = true)
 
             eventually(timeout(scaled(Span(5, Seconds)))) {
                 (0 until count).foreach { i =>
@@ -707,7 +707,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             Thread.sleep(20)
 
             // Request interrupt on all tasks simultaneously
-            tasks.foreach(_.requestInterrupt())
+            tasks.foreach(t => t.interrupted = true)
             scheduler.notifyInterrupt()
 
             // All tasks should eventually get interrupted. With blockThreshold=2 and
@@ -744,7 +744,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             assert(started.await(5, TimeUnit.SECONDS))
             Thread.sleep(10)
 
-            task.requestInterrupt()
+            task.interrupted = true
 
             // Monitor should re-interrupt on each cycle when thread re-blocks
             eventually(timeout(scaled(Span(10, Seconds)))) {
@@ -803,8 +803,8 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             Thread.sleep(30)
 
             // Request interrupt on ALL 4 tasks
-            blockingTasks.foreach(_.requestInterrupt())
-            activeTasks.foreach(_.requestInterrupt())
+            blockingTasks.foreach(t => t.interrupted = true)
+            activeTasks.foreach(t => t.interrupted = true)
             scheduler.notifyInterrupt()
 
             // Blocking tasks should get interrupted
@@ -857,7 +857,7 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             assert(firstStarted.await(60, TimeUnit.SECONDS))
 
             // Request interrupt while first task is blocking
-            firstTask.requestInterrupt()
+            firstTask.interrupted = true
             scheduler.notifyInterrupt()
 
             // Wait for first task to complete
@@ -1026,66 +1026,43 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "task bit-packing" - {
 
-        "requestInterrupt preserves runtime across preemption" in {
+        "runtime preserved across preemption" in {
             val task = new TaskTestHelper(10)
             assert(task.checkRuntime() == 11) // initial 1 + added 10
 
             task.doPreempt()
             assert(task.checkShouldPreempt())
             assert(task.checkRuntime() == 11, "doPreempt should not change runtime")
-
-            task.requestInterrupt()
-            assert(task.needsInterrupt())
-            assert(task.checkShouldPreempt(), "requestInterrupt should keep preemption")
-            assert(task.checkRuntime() == 11, "requestInterrupt should not change runtime")
         }
 
-        "addRuntime preserves interrupt bit" in {
+        "addRuntime accumulates runtime and clears preemption" in {
             val task = new TaskTestHelper(0)
-            task.requestInterrupt()
-            assert(task.needsInterrupt())
+            task.doPreempt()
+            assert(task.checkShouldPreempt())
 
             task.addRuntime(5)
-            assert(task.needsInterrupt(), "addRuntime should not clear interrupt bit")
             assert(task.checkRuntime() == 6, "runtime should be initial 1 + added 5")
             assert(!task.checkShouldPreempt(), "addRuntime should clear preemption (flip to positive)")
         }
 
-        "multiple requestInterrupt calls are idempotent" in {
+        "addRuntime accumulates runtime across preemption" in {
             val task = new TaskTestHelper(10)
-            task.requestInterrupt()
-            val r1 = task.checkRuntime()
-            val p1 = task.checkShouldPreempt()
-            task.requestInterrupt()
-            assert(task.checkRuntime() == r1, "repeated requestInterrupt should not change runtime")
-            assert(task.checkShouldPreempt() == p1, "repeated requestInterrupt should not change preemption")
-            assert(task.needsInterrupt())
+            task.doPreempt()
+            task.addRuntime(5)
+            assert(task.checkRuntime() == 16, "runtime accumulates regardless of the preemption flag")
         }
 
-        "ordering preserved with interrupt bit set" in {
+        "ordering preserved with preemption set" in {
             import scala.collection.mutable.PriorityQueue
             val t1 = Task((), 1)
             val t2 = Task((), 2)
             val t3 = Task((), 3)
-            t2.requestInterrupt()
+            t2.doPreempt()
             val q      = PriorityQueue(t2, t3, t1)
             val result = q.dequeueAll
             assert(result(0) eq t1, "lowest runtime first")
-            assert(result(1) eq t2, "middle runtime second (interrupt bit shouldn't affect order)")
+            assert(result(1) eq t2, "middle runtime second (preemption shouldn't affect order)")
             assert(result(2) eq t3, "highest runtime last")
-        }
-
-        "needsInterrupt works on both positive and negative state" in {
-            val task = new TaskTestHelper(5)
-            assert(!task.needsInterrupt(), "initially false")
-
-            task.requestInterrupt() // negates state
-            assert(task.needsInterrupt(), "true after requestInterrupt (negative state)")
-            assert(task.checkShouldPreempt(), "should be preempted")
-
-            task.addRuntime(1) // flips to positive
-            assert(task.needsInterrupt(), "true after addRuntime (positive state)")
-            assert(!task.checkShouldPreempt(), "should not be preempted after addRuntime")
         }
     }
 

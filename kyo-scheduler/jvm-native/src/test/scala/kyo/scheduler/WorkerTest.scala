@@ -605,7 +605,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         val task = TestTask()
         assert(!task.needsInterrupt())
 
-        task.requestInterrupt()
+        task.interrupted = true
         assert(task.needsInterrupt())
     }
 }
