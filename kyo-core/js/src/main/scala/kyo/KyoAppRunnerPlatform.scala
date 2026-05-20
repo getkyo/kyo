@@ -8,7 +8,7 @@ trait KyoAppRunnerPlatform:
     private var deferredRuns: Chunk[() => Unit]         = Chunk.empty
 
     /** Registers an effect to run when [[KyoAppRunner.runInitCode]] executes. */
-    final protected def registerEffect[A](effect: => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit =
+    final protected def registerEffect[A](effect: => A < (Async & Scope & Abort[Any]))(using Frame, Render[A]): Unit =
         import AllowUnsafe.embrace.danger
         deferredRuns = deferredRuns.appended { () =>
             val current: Unit < (Async & Abort[Throwable]) =

@@ -207,6 +207,37 @@ class WebSocketCodecTest extends kyo.Test:
                 }
             }
         }
+
+        "rejects frame larger than maxFrameSize" in run {
+            val payload = "hello".getBytes(Utf8)
+            val frame = Array[Byte](
+                (0x80 | 0x01).toByte,
+                payload.length.toByte
+            ) ++ payload
+            val conn = new MockConn(frame)
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, maxFrameSize = 4)((frame, _) => frame)).map { result =>
+                assert(result.isFailure)
+            }
+        }
+
+        "rejects 64-bit frame lengths before integer overflow" in run {
+            val frame = Array[Byte](
+                (0x80 | 0x01).toByte,
+                127.toByte,
+                0x00.toByte,
+                0x00.toByte,
+                0x00.toByte,
+                0x00.toByte,
+                0x80.toByte,
+                0x00.toByte,
+                0x00.toByte,
+                0x00.toByte
+            )
+            val conn = new MockConn(frame)
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn)((frame, _) => frame)).map { result =>
+                assert(result.isFailure)
+            }
+        }
     }
 
     // ── Upgrade handshake ───────────────────────────────────────

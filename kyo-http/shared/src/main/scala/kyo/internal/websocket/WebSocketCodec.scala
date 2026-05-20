@@ -38,19 +38,19 @@ private[kyo] object WebSocketCodec:
     // ── Public API ──────────────────────────────────────────────
 
     /** Read one complete frame, passing (frame, remainingStream) to f. Handles Ping by auto-sending Pong. On Close frame: Abort[Closed]. */
-    def readFrameWith[A, S](src: Stream[Span[Byte], Async], dst: TransportStream)(
+    def readFrameWith[A, S](src: Stream[Span[Byte], Async], dst: TransportStream, maxFrameSize: Int = Int.MaxValue)(
         f: (HttpWebSocket.Payload, Stream[Span[Byte], Async]) => A < S
     )(using Frame): A < (S & Async & Abort[Closed]) =
         Abort.recover[HttpException](_ => Abort.fail(new Closed("HttpWebSocket", summon[Frame]))) {
-            readRawFrameWith(src) { (opcode, payload, remaining) =>
+            readRawFrameWith(src, maxFrameSize) { (opcode, payload, remaining) =>
                 opcode match
                     case OpText   => f(HttpWebSocket.Payload.Text(new String(payload.toArrayUnsafe, Utf8)), remaining)
                     case OpBinary => f(HttpWebSocket.Payload.Binary(payload), remaining)
                     case OpClose  => Abort.fail(new Closed("HttpWebSocket", summon[Frame], "Close frame received"))
                     case OpPing =>
-                        writeRawFrame(dst, OpPong, payload, mask = false).andThen(readFrameWith(remaining, dst)(f))
+                        writeRawFrame(dst, OpPong, payload, mask = false).andThen(readFrameWith(remaining, dst, maxFrameSize)(f))
                     case OpPong =>
-                        readFrameWith(remaining, dst)(f)
+                        readFrameWith(remaining, dst, maxFrameSize)(f)
                     case other =>
                         Abort.fail(new Closed("HttpWebSocket", summon[Frame], s"Unknown opcode: $other"))
                 end match
@@ -216,7 +216,7 @@ private[kyo] object WebSocketCodec:
     // ── Internal I/O ────────────────────────────────────────────
 
     /** Read a single raw frame (handles extended length + masking). */
-    private inline def readRawFrameWith[A, S2](src: Stream[Span[Byte], Async])(
+    private inline def readRawFrameWith[A, S2](src: Stream[Span[Byte], Async], maxFrameSize: Int)(
         inline f: (Int, Span[Byte], Stream[Span[Byte], Async]) => A < S2
     )(using inline frame: Frame): A < (S2 & Async & Abort[HttpException]) =
         ByteStream.readExactWith(src, 2) { (header, rem1) =>
@@ -226,7 +226,9 @@ private[kyo] object WebSocketCodec:
 
             if extLenBytes == 0 then
                 val actualLen = payloadLen.toLong
-                if fh.masked then
+                if actualLen > maxFrameSize.toLong then
+                    Abort.fail(HttpProtocolException("HttpWebSocket frame exceeds max frame size"))
+                else if fh.masked then
                     ByteStream.readExactWith(rem1, 4) { (maskKey, rem2) =>
                         ByteStream.readExactWith(rem2, actualLen.toInt) { (payload, rem3) =>
                             f(fh.opcode, unmask(payload, maskKey), rem3)
@@ -245,7 +247,9 @@ private[kyo] object WebSocketCodec:
                             @tailrec def readLong(i: Int, acc: Long): Long =
                                 if i >= 8 then acc else readLong(i + 1, (acc << 8) | (ext(i) & 0xff))
                             readLong(0, 0L)
-                    if fh.masked then
+                    if actualLen < 0 || actualLen > maxFrameSize.toLong || actualLen > Int.MaxValue.toLong then
+                        Abort.fail(HttpProtocolException("HttpWebSocket frame exceeds max frame size"))
+                    else if fh.masked then
                         ByteStream.readExactWith(rem2, 4) { (maskKey, rem3) =>
                             ByteStream.readExactWith(rem3, actualLen.toInt) { (payload, rem4) =>
                                 f(fh.opcode, unmask(payload, maskKey), rem4)

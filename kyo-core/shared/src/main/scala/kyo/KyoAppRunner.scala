@@ -19,7 +19,7 @@ trait KyoAppRunner:
     protected def exitHook(code: Int)(using AllowUnsafe): Unit
 
     /** Wraps an effect for execution (interrupts, scope, etc.). */
-    protected def handle[A](v: A < (Async & Scope & Abort[Throwable]))(using Frame): A < (Async & Abort[Throwable])
+    protected def handle[A](v: A < (Async & Scope & Abort[Any]))(using Frame): A < (Async & Abort[Throwable])
 
     /** Runs all registered thunks in order. */
     final protected def runInitCode(): Unit =
@@ -39,7 +39,7 @@ end KyoAppRunner
 
 /** [[KyoAppRunner]] with SIGINT/SIGTERM handling on non-Windows platforms. */
 trait KyoAppRunnerWithInterrupts extends KyoAppRunner, KyoAppInterrupts:
-    final override protected def handle[A](v: A < (Async & Scope & Abort[Throwable]))(using Frame): A < (Async & Abort[Throwable]) =
-        handleWithInterrupts(v)
+    final override protected def handle[A](v: A < (Async & Scope & Abort[Any]))(using Frame): A < (Async & Abort[Throwable]) =
+        handleWithInterrupts(KyoApp.abortAnyToThrowable(Scope.run(v)))
     end handle
 end KyoAppRunnerWithInterrupts

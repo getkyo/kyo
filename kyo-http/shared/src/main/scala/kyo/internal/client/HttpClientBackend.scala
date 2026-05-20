@@ -739,7 +739,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
 
                     Fiber.initUnscoped {
                         Loop(wsStream) { stream =>
-                            WebSocketCodec.readFrameWith(stream, transportStream) { (frame, remaining) =>
+                            WebSocketCodec.readFrameWith(stream, transportStream, config.maxFrameSize) { (frame, remaining) =>
                                 inbound.put(frame).andThen(Loop.continue(remaining))
                             }
                         }

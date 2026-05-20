@@ -142,6 +142,25 @@ class AsyncTest extends Test:
                 _            <- done.await
             yield assert(interrupted1 && interrupted2 && interrupted3)
         }
+        "repeated — interrupt of a running fiber is never lost" in runNotJS {
+            // Regression: interrupting a fiber that is actively running (not suspended)
+            // must not be lost to a scheduler state update racing on another thread. The
+            // race is intermittent, so the single-fiber scenario is repeated; a lost
+            // interrupt leaves the Scope finalizer unrun and hangs on done.await.
+            def once =
+                for
+                    started     <- Latch.init(1)
+                    done        <- Latch.init(1)
+                    fiber       <- Fiber.initUnscoped(runLoop(started, done))
+                    _           <- started.await
+                    interrupted <- fiber.interrupt(panic)
+                    _           <- done.await
+                yield interrupted
+            def repeat(n: Int): Assertion < (Abort[Any] & Async & Scope) =
+                if n <= 0 then succeed
+                else once.map(i => if i then repeat(n - 1) else fail("interrupt returned false"))
+            repeat(50)
+        }
     }
 
     "race" - {

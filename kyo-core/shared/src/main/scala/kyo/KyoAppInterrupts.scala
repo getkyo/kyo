@@ -20,7 +20,7 @@ private[kyo] trait KyoAppInterrupts:
         promise.mask().safe
     end awaitInterrupt
 
-    protected def handleWithInterrupts[A](v: A < (Async & Scope & Abort[Throwable]))(using Frame): A < (Async & Abort[Throwable]) =
-        Async.raceFirst(Scope.run(v), awaitInterrupt.get)
+    protected def handleWithInterrupts[A](v: A < (Async & Abort[Throwable]))(using Frame): A < (Async & Abort[Throwable]) =
+        Async.raceFirst(v, awaitInterrupt.get)
     end handleWithInterrupts
 end KyoAppInterrupts

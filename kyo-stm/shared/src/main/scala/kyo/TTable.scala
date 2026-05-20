@@ -113,12 +113,12 @@ object TTable:
       */
     def init[F: Fields](using Frame): TTable[F] < Sync =
         for
-            nextId <- TRef.init(0)
+            nextId <- AtomicInt.init(0)
             store  <- TMap.init[Int, Record[F]]
         yield new Base(nextId, store)
 
     final private class Base[F](
-        private val nextId: TRef[Int],
+        private val nextId: AtomicInt,
         private val store: TMap[Int, Record[F]]
     ) extends TTable[F]:
         opaque type Id <: Int = Int
@@ -128,11 +128,18 @@ object TTable:
         def get(id: Id)(using Frame) = store.get(id)
 
         def insert(record: Record[F])(using Frame) =
-            for
-                id <- nextId.get
-                _  <- nextId.set(id + 1)
-                _  <- store.put(id, record)
-            yield id
+            // Ids are drawn from a lock-free atomic counter, so concurrent inserts never
+            // contend on a shared TRef. The loop skips any id an upsert already occupies, so
+            // an auto-assigned insert never overwrites a caller-upserted record; the
+            // contains/put pair commits atomically in the caller's transaction.
+            def loop: Id < STM =
+                for
+                    id       <- nextId.getAndIncrement
+                    occupied <- store.contains(id)
+                    result   <- if occupied then loop else store.put(id, record).andThen(id)
+                yield result
+            loop
+        end insert
 
         def update(id: Id, record: Record[F])(using Frame) =
             store.get(id).map {
@@ -186,7 +193,18 @@ object TTable:
             yield prev
 
         def upsert(id: Id, record: Record[F])(using Frame) =
-            store.upsert(id, record).andThen(updateIndexes(id, record))
+            for
+                prev <- store.get(id)
+                _    <- store.upsert(id, record)
+                _    <-
+                    // When overwriting an existing record, drop its stale index entries
+                    // before indexing the new record so changed indexed fields don't leak.
+                    if prev.isDefined then
+                        removeFromIndexes(id, prev.get)
+                            .andThen(updateIndexes(id, record))
+                    else
+                        updateIndexes(id, record)
+            yield ()
 
         def remove(id: Id)(using Frame) =
             for
