@@ -25,7 +25,7 @@ import scala.util.control.NonFatal
   *
   * ==Interrupt dispatch==
   *
-  * When a fiber is interrupted, the task's needsInterrupt flag is set and the monitor is woken for an immediate scan via wake(). If the
+  * When a fiber is interrupted, the task reports it via needsInterrupt() and the monitor is woken for an immediate scan via wake(). If the
   * worker's thread is blocked, Thread.interrupt() is dispatched to wake it from the blocking operation. The monitor re-interrupts on
   * subsequent cycles if the thread re-blocks (e.g., code that catches InterruptedException and retries).
   *
@@ -51,7 +51,7 @@ import scala.util.control.NonFatal
   * @see
   *   Worker for the blocked flag and checkAvailability
   * @see
-  *   Task for needsInterrupt/requestInterrupt
+  *   Task for needsInterrupt
   */
 private[scheduler] class BlockingMonitor(
     workers: Array[Worker],
@@ -144,7 +144,12 @@ private[scheduler] class BlockingMonitor(
 
     private var lastCount: Int = 0
 
+    // Scan counter — written only by the monitor thread, read cross-thread by tests to
+    // verify that a burst of wake() calls coalesces into few scans, not one scan per call.
+    @volatile private[scheduler] var cycles: Long = 0L
+
     private def cycle(): Unit = {
+        cycles += 1
         try {
             val n     = currentWorkers()
             val count = collect(n, 0, 0)

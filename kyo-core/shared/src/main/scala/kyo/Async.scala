@@ -176,9 +176,9 @@ object Async extends AsyncPlatformSpecific:
       * @return
       *   The result of the computation, or the custom error on timeout
       */
-    def timeoutWithError[E, A, S](
+    inline def timeoutWithError[E, A, S](
         using isolate: Isolate[S, Abort[E] & Async, S]
-    )(after: Duration, error: => Result.Error[E])(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E] & Async & S) =
+    )(after: Duration, inline error: => Result.Error[E])(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E] & Async & S) =
         _timeout(after, error)(v)
 
     private inline def _timeout[E, A, S](

@@ -17,7 +17,7 @@ import scala.annotation.nowarn
   * @see
   *   [[kyo.HttpRoute.RequestDef]] Uses HttpCodec for query/header/cookie extraction
   * @see
-  *   [[kyo.Json]] The separate codec for JSON body serialization
+  *   [[kyo.Schema]] The separate codec for JSON body serialization
   */
 abstract class HttpCodec[A]:
     def encode(value: A): String

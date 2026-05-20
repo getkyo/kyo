@@ -1,17 +1,26 @@
 package kyo
 
 import kyo.*
+import scala.annotation.tailrec
 
 /** HTTP response status code with category classification.
   *
-  * A sealed hierarchy covering all standard HTTP status codes organized into `Informational` (1xx), `Success` (2xx), `Redirect` (3xx),
-  * `ClientError` (4xx), and `ServerError` (5xx) enums, plus a `Custom` case for non-standard codes. Use the companion `apply` to resolve an
-  * integer code to its known case or wrap it in `Custom`.
+  * A sealed hierarchy covering all standard HTTP status codes, organized into five enums — `Informational` (1xx), `Success` (2xx),
+  * `Redirect` (3xx), `ClientError` (4xx), and `ServerError` (5xx) — plus a `Custom` case for non-standard codes. All standard cases are
+  * exported to the companion object so they can be referenced directly as `HttpStatus.OK`, `HttpStatus.NotFound`, etc.
+  *
+  * Use `HttpStatus(code)` to resolve an integer to its known enum case, or wrap it in `Custom` when no standard case matches. Use
+  * `HttpStatus.resolve(code)` when you want to express absence rather than fall back to `Custom`.
+  *
+  * The classification predicates (`isSuccess`, `isClientError`, etc.) are useful for writing retry policies and filter conditions without
+  * matching on concrete cases.
   *
   * @see
-  *   [[kyo.HttpResponse]]
+  *   [[kyo.HttpResponse]] Carries a status code
   * @see
-  *   [[kyo.HttpRoute]]
+  *   [[kyo.HttpRoute]] Maps error types to status codes via `.error[E](status)`
+  * @see
+  *   [[kyo.HttpClientConfig.retryOn]] Retry predicate that receives an `HttpStatus`
   */
 sealed abstract class HttpStatus(val code: Int) derives CanEqual:
     def isInformational: Boolean = code >= 100 && code < 200
@@ -28,13 +37,13 @@ sealed abstract class HttpStatus(val code: Int) derives CanEqual:
             val raw = other.toString
             // Insert space before each uppercase letter (except the first)
             val sb = new StringBuilder(raw.length + 4)
-            var i  = 0
-            while i < raw.length do
-                val c = raw.charAt(i)
-                if i > 0 && c.isUpper then sb.append(' ')
-                sb.append(c)
-                i += 1
-            end while
+            @tailrec def loop(i: Int): Unit =
+                if i < raw.length then
+                    val c = raw.charAt(i)
+                    if i > 0 && c.isUpper then sb.append(' ')
+                    sb.append(c)
+                    loop(i + 1)
+            loop(0)
             sb.toString
 end HttpStatus
 

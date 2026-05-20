@@ -50,25 +50,39 @@ class OTLPMetricsExporterTest extends Test:
 
     "periodic export" - {
 
-        "exports registered counter at interval" in run {
+        "exports registered counter at interval" in runJVM {
             withCollector { (config, metricCh) =>
                 val uniqueName = "test.export.counter." + java.util.UUID.randomUUID().toString.take(8)
                 val counter    = Stat.initScope("test", "export").initCounter(uniqueName, "test counter")
                 for
-                    _        <- counter.add(100)
-                    _        <- OTLPMetricsExporter.run(config)
-                    received <- metricCh.take
+                    _ <- counter.add(100)
+                    _ <- OTLPMetricsExporter.run(config)
+                    // Same Loop+reachability pattern as the histogram test below — the first export
+                    // may fire before the counter is fully registered with the global registry, and
+                    // the registry holds a WeakReference to the underlying UnsafeCounter so the JVM
+                    // is otherwise free to GC `counter` mid-test. Capture `counter` inside the Loop
+                    // closure to keep it strongly reachable.
+                    found <- Loop.indexed { i =>
+                        discard(counter)
+                        metricCh.take.map { received =>
+                            val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
+                            allMetrics.find(_.name == s"test.export.$uniqueName") match
+                                case Some(m)       => Loop.done(m)
+                                case None if i < 9 => Loop.continue
+                                case None => throw new AssertionError(
+                                        s"Counter test.export.$uniqueName not found after ${i + 1} exports"
+                                    )
+                            end match
+                        }
+                    }
                 yield
-                    val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
-                    val found      = allMetrics.find(_.name == s"test.export.$uniqueName")
-                    assert(found.isDefined)
-                    assert(found.get.sum.isDefined)
-                    assert(found.get.sum.get.dataPoints.head.asInt == Present("100"))
+                    assert(found.sum.isDefined)
+                    assert(found.sum.get.dataPoints.head.asInt == Present("100"))
                 end for
             }
         }
 
-        "exports registered histogram at interval" in run {
+        "exports registered histogram at interval" in runJVM {
             withCollector { (config, metricCh) =>
                 val uniqueName = "test.export.histogram." + java.util.UUID.randomUUID().toString.take(8)
                 val histogram  = Stat.initScope("test", "export").initHistogram(uniqueName, "test histogram")
@@ -76,14 +90,23 @@ class OTLPMetricsExporterTest extends Test:
                     _ <- histogram.observe(42.0)
                     _ <- histogram.observe(7.0)
                     _ <- OTLPMetricsExporter.run(config)
-                    // The first export may not include the histogram if it fires
-                    // before the metric is fully registered. Take up to 3 exports.
+                    // The first export may not include the histogram if it fires before the metric is
+                    // fully registered. Take up to 10 exports — arm64 runners are noticeably slower
+                    // and 3 attempts was sometimes too tight there.
+                    //
+                    // The registry holds a WeakReference to the underlying UnsafeHistogram, so the
+                    // JVM is otherwise free to GC `histogram` once the for-comprehension stops
+                    // using it (observed on JVM-arm64 in CI: WeakReference goes null mid-loop and
+                    // the histogram disappears from every exported batch). Capturing `histogram`
+                    // inside the Loop closure keeps it strongly reachable until the Loop completes,
+                    // and works on all platforms (vs `Reference.reachabilityFence` which is JVM-only).
                     found <- Loop.indexed { i =>
+                        discard(histogram)
                         metricCh.take.map { received =>
                             val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
                             allMetrics.find(_.name == s"test.export.$uniqueName") match
                                 case Some(m)       => Loop.done(m)
-                                case None if i < 2 => Loop.continue
+                                case None if i < 9 => Loop.continue
                                 case None => throw new AssertionError(
                                         s"Histogram test.export.$uniqueName not found after ${i + 1} exports"
                                     )
@@ -97,7 +120,7 @@ class OTLPMetricsExporterTest extends Test:
             }
         }
 
-        "exports registered gauge at interval" in run {
+        "exports registered gauge at interval" in runJVM {
             withCollector { (config, metricCh) =>
                 val uniqueName           = "test.export.gauge." + java.util.UUID.randomUUID().toString.take(8)
                 @volatile var gaugeValue = 99.5
@@ -115,7 +138,7 @@ class OTLPMetricsExporterTest extends Test:
             }
         }
 
-        "multiple intervals trigger multiple exports" in run {
+        "multiple intervals trigger multiple exports" in runJVM {
             withCollector { (config, metricCh) =>
                 val uniqueName = "test.export.multi." + java.util.UUID.randomUUID().toString.take(8)
                 val counter    = Stat.initScope("test", "export").initCounter(uniqueName, "test counter")

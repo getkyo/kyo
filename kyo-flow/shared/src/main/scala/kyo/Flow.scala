@@ -68,7 +68,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         name: N,
         description: String = "",
         tags: Seq[String] = Seq.empty
-    )(using Tag[V], Json[V]): Flow[In & (N ~ V), Out & (N ~ V), S] =
+    )(using Tag[V], Schema[V]): Flow[In & (N ~ V), Out & (N ~ V), S] =
         AndThen(this, Input[N, V](name, Meta(description, tags)))
 
     /** Compute a named value from the current context and persist it to the store.
@@ -83,7 +83,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         timeout: Duration = Duration.Infinity,
         retry: Maybe[Schedule] = Maybe.empty,
         tags: Seq[String] = Seq.empty
-    )(fn: Record[Out] => V < S2)(using Frame, Tag[V], Json[V]): Flow[In, Out & (N ~ V), S & S2] =
+    )(fn: Record[Out] => V < S2)(using Frame, Tag[V], Schema[V]): Flow[In, Out & (N ~ V), S & S2] =
         AndThen(this, Output[Out, Out & (N ~ V), N, V, S2](name, fn, Meta(description, tags, timeout, retry), Maybe.empty))
     end output
 
@@ -100,7 +100,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         tags: Seq[String] = Seq.empty
     )(fn: Record[Out] => V < S2)(
         compensate: Record[Out & (N ~ V)] => Unit < (Async & Abort[FlowException])
-    )(using Frame, Tag[V], Json[V]): Flow[In, Out & (N ~ V), S & S2] =
+    )(using Frame, Tag[V], Schema[V]): Flow[In, Out & (N ~ V), S & S2] =
         AndThen(
             this,
             Output[Out, Out & (N ~ V), N, V, S2](name, fn, Meta(description, tags, timeout, retry), Maybe(compensate))
@@ -158,7 +158,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
     /** Loop without state: execute `body` repeatedly. The body returns `Loop.continue` to iterate or `Loop.done(value)` to finish. The
       * final value is stored as the named output.
       */
-    def loop[N <: String & Singleton, V: Tag: Json, S2](
+    def loop[N <: String & Singleton, V: Tag: Schema, S2](
         name: N,
         description: String = "",
         timeout: Duration = Duration.Infinity,
@@ -166,7 +166,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         tags: Seq[String] = Seq.empty
     )(
         body: Record[Out] => Loop.Outcome[Unit, V] < S2
-    )(using Frame, Tag[Unit], Json[Unit]): Flow[In, Out & (N ~ V), S & S2] =
+    )(using Frame, Tag[Unit], Schema[Unit]): Flow[In, Out & (N ~ V), S & S2] =
         AndThen(
             this,
             LoopNode[Out, N, Unit, V, S2](
@@ -181,7 +181,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
     /** Loop with 1 state value: execute `body` repeatedly starting from `init`. The body returns `Loop.continue(newState)` to iterate or
       * `Loop.done(value)` to finish. The final value is stored as the named output.
       */
-    def loop[N <: String & Singleton, A: Tag: Json, V: Tag: Json, S2](
+    def loop[N <: String & Singleton, A: Tag: Schema, V: Tag: Schema, S2](
         name: N,
         init: A
     )(
@@ -195,13 +195,13 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
     /** Loop with 2 state values: execute `body` repeatedly starting from `init1` and `init2`. The body returns `Loop.continue(newA, newB)`
       * to iterate or `Loop.done(value)` to finish. The final value is stored as the named output.
       */
-    def loop[N <: String & Singleton, A: Tag: Json, B: Tag: Json, V: Tag: Json, S2](
+    def loop[N <: String & Singleton, A: Tag: Schema, B: Tag: Schema, V: Tag: Schema, S2](
         name: N,
         init1: A,
         init2: B
     )(
         body: (A, B, Record[Out]) => Loop.Outcome2[A, B, V] < S2
-    )(using Frame, Tag[(A, B)], Json[(A, B)]): Flow[In, Out & (N ~ V), S & S2] =
+    )(using Frame, Tag[(A, B)], Schema[(A, B)]): Flow[In, Out & (N ~ V), S & S2] =
         AndThen(
             this,
             LoopNode[Out, N, (A, B), V, S2](
@@ -225,7 +225,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         collection: Record[Out] => Seq[E] < S2
     )(
         body: E => V < S2
-    )(using Frame, Tag[V], Json[V]): Flow[In, Out & (N ~ Chunk[V]), S & S2] =
+    )(using Frame, Tag[V], Schema[V]): Flow[In, Out & (N ~ Chunk[V]), S & S2] =
         AndThen(this, ForEach(name, concurrency, collection, body, Meta(description, tags, timeout, retry)))
 
     /** Execute a child flow as a sub-workflow. The `inputMapper` transforms the current context into the child's input record. The child's
@@ -245,7 +245,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
     /** Loop on a schedule without state. Between iterations, the flow durably sleeps for the delay returned by `Schedule.next`. The body
       * returns `Loop.continue` to iterate or `Loop.done(value)` to finish.
       */
-    def loopOn[N <: String & Singleton, V: Tag: Json, S2](
+    def loopOn[N <: String & Singleton, V: Tag: Schema, S2](
         name: N,
         schedule: Schedule,
         description: String = "",
@@ -254,14 +254,14 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         tags: Seq[String] = Seq.empty
     )(
         body: Record[Out] => Loop.Outcome[Unit, V] < S2
-    )(using Frame, Tag[Unit], Json[Unit]): Flow[In, Out & (N ~ V), S & S2] =
+    )(using Frame, Tag[Unit], Schema[Unit]): Flow[In, Out & (N ~ V), S & S2] =
         AndThen(
             this,
             LoopNode[Out, N, Unit, V, S2](name, (_, ctx) => body(ctx), (), Maybe(schedule), Meta(description, tags, timeout, retry))
         )
 
     /** Loop on a schedule with 1 state value. Between iterations, the flow durably sleeps for the delay from `Schedule.next`. */
-    def loopOn[N <: String & Singleton, A: Tag: Json, V: Tag: Json, S2](
+    def loopOn[N <: String & Singleton, A: Tag: Schema, V: Tag: Schema, S2](
         name: N,
         schedule: Schedule,
         init: A
@@ -274,14 +274,14 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         )
 
     /** Loop on a schedule with 2 state values. Between iterations, the flow durably sleeps for the delay from `Schedule.next`. */
-    def loopOn[N <: String & Singleton, A: Tag: Json, B: Tag: Json, V: Tag: Json, S2](
+    def loopOn[N <: String & Singleton, A: Tag: Schema, B: Tag: Schema, V: Tag: Schema, S2](
         name: N,
         schedule: Schedule,
         init1: A,
         init2: B
     )(
         body: (A, B, Record[Out]) => Loop.Outcome2[A, B, V] < S2
-    )(using Frame, Tag[(A, B)], Json[(A, B)]): Flow[In, Out & (N ~ V), S & S2] =
+    )(using Frame, Tag[(A, B)], Schema[(A, B)]): Flow[In, Out & (N ~ V), S & S2] =
         AndThen(
             this,
             LoopNode[Out, N, (A, B), V, S2](name, (state, ctx) => body(state._1, state._2, ctx), (init1, init2), Maybe(schedule), Meta())
@@ -330,7 +330,7 @@ object Flow:
         name: N,
         description: String = "",
         tags: Seq[String] = Seq.empty
-    )(using Tag[V], Json[V]): Flow[N ~ V, N ~ V, Any] =
+    )(using Tag[V], Schema[V]): Flow[N ~ V, N ~ V, Any] =
         init(name).input[V](name, description, tags = tags)
 
     // --- Run ---
@@ -515,7 +515,7 @@ object Flow:
         opaque type Workflow = String
         object Workflow:
             def apply(s: String): Workflow             = s
-            given Json[Workflow]                       = Json[String]
+            given Schema[Workflow]                     = summon[Schema[String]]
             given CanEqual[Workflow, Workflow]         = CanEqual.derived
             extension (id: Workflow) def value: String = id
         end Workflow
@@ -525,7 +525,7 @@ object Flow:
             def apply(s: String): Execution = s
             def random(using Frame): Execution < Sync =
                 Random.uuid
-            given Json[Execution]                       = Json[String]
+            given Schema[Execution]                     = summon[Schema[String]]
             given CanEqual[Execution, Execution]        = CanEqual.derived
             extension (id: Execution) def value: String = id
         end Execution
@@ -535,7 +535,7 @@ object Flow:
             def apply(s: String): Executor = s
             def random(using Frame): Executor < Sync =
                 Random.uuid
-            given Json[Executor]                       = Json[String]
+            given Schema[Executor]                     = summon[Schema[String]]
             given CanEqual[Executor, Executor]         = CanEqual.derived
             extension (id: Executor) def value: String = id
         end Executor
@@ -556,7 +556,7 @@ object Flow:
         timeout: Duration = Duration.Infinity,
         retry: Maybe[Schedule] = Maybe.empty,
         version: String = ""
-    ) derives Json
+    ) derives Schema
     object Meta
 
     case class BranchInfo(name: String, frame: Frame, meta: Meta)
@@ -582,7 +582,7 @@ object Flow:
 
     // --- Status ---
 
-    enum Status derives CanEqual, Json:
+    enum Status derives CanEqual, Schema:
         case Running
         case WaitingForInput(name: String)
         case Sleeping(name: String, until: Instant)
@@ -615,14 +615,14 @@ object Flow:
 
     // --- Event ---
 
-    enum EventKind derives Json:
+    enum EventKind derives Schema:
         case Created, StepStarted, StepCompleted, StepRetried, StepTimedOut,
             InputWaiting, InputReceived, SleepStarted, SleepCompleted,
             ExecutionResumed, ExecutionClaimed, ExecutionReleased,
             Completed, Failed, CompensationStarted, CompensationCompleted, CompensationFailed, Cancelled
     end EventKind
 
-    enum Event derives Json:
+    enum Event derives Schema:
         def flowId: Flow.Id.Workflow
         def executionId: Flow.Id.Execution
         def timestamp: Instant
@@ -749,7 +749,7 @@ object Flow:
         def otherwise[S2](body: Record[Out] => V < S2, name: String, description: String = "")(
             using
             frame: Frame,
-            json: Json[V]
+            schema: Schema[V]
         ): Flow[In, Out & (N ~ V), Sf & Sc & S2] =
             val dispatch = internal.Dispatch[Out, N, V, S2, Sc](
                 this.name,
@@ -758,7 +758,7 @@ object Flow:
                 body,
                 frame,
                 meta
-            )(using dispatchFrame, vtag, json)
+            )(using dispatchFrame, vtag, schema)
             internal.AndThen(flow, dispatch)(using dispatchFrame)
         end otherwise
 
@@ -772,7 +772,7 @@ object Flow:
             )
         inline def step[S2](name: String, meta: Meta = Meta())(fn: Record[Out] => Unit < S2)(using Frame): Nothing =
             compiletime.error("dispatch requires .otherwise(...) before continuing the flow.")
-        inline def input[V2](using Frame)[N2 <: String & Singleton](name: N2, meta: Meta = Meta())(using Tag[V2], Json[V2]): Nothing =
+        inline def input[V2](using Frame)[N2 <: String & Singleton](name: N2, meta: Meta = Meta())(using Tag[V2], Schema[V2]): Nothing =
             compiletime.error("dispatch requires .otherwise(...) before continuing the flow.")
         inline def sleep(name: String, duration: Duration, meta: Meta = Meta())(using Frame): Nothing =
             compiletime.error("dispatch requires .otherwise(...) before continuing the flow.")
@@ -868,7 +868,7 @@ object Flow:
                                 case _                => ctx
                         else
                             val computation = Sync.defer(e.fn(ctx))
-                            interpreter.onOutput(n.name, computation, n.frame, n.meta)(using e.tag, e.json)
+                            interpreter.onOutput(n.name, computation, n.frame, n.meta)(using e.tag, e.schema)
                                 .map { v =>
                                     val result = addField(ctx, n.name, v)
                                     e.compensate match
@@ -896,7 +896,7 @@ object Flow:
                     case n: Input[?, ?] @unchecked =>
                         if fieldCompleted(ctx, n.name) then ctx
                         else
-                            interpreter.onInput(n.name, n.frame, n.meta)(using n.erased.tag, n.erased.json)
+                            interpreter.onInput(n.name, n.frame, n.meta)(using n.erased.tag, n.erased.schema)
                                 .map(v => addField(ctx, n.name, v))
 
                     case n: Sleep =>
@@ -921,7 +921,7 @@ object Flow:
                                 tryBranches(0)
                             end dispatchBody
                             val computation = Sync.defer(dispatchBody)
-                            interpreter.onOutput(n.name, computation, n.frame, n.meta)(using n.erased.tag, n.erased.json)
+                            interpreter.onOutput(n.name, computation, n.frame, n.meta)(using n.erased.tag, n.erased.schema)
                                 .map(v => addField(ctx, n.name, v))
 
                     case n: LoopNode[?, ?, ?, ?, ?] @unchecked =>
@@ -960,7 +960,7 @@ object Flow:
                                         iterate(r.initialState, ctx)
                                     end loopBody
                                     val computation = Sync.defer(loopBody)
-                                    interpreter.onOutput(nameStr, computation, n.frame, n.meta)(using r.tag, r.json)
+                                    interpreter.onOutput(nameStr, computation, n.frame, n.meta)(using r.tag, r.schema)
                                         .map(v => addField(ctx, nameStr, v))
 
                                 case Present(schedule) =>
@@ -980,7 +980,7 @@ object Flow:
                                                 if eventCompleted(iterName) then
                                                     // Resuming from checkpoint — this iteration was already recorded
                                                     // If a field was stored the iteration completed with a final value; otherwise it was a continue
-                                                    interpreter.getField[Any](iterName)(using r.tag, r.json).map {
+                                                    interpreter.getField[Any](iterName)(using r.tag, r.schema).map {
                                                         case Present(result) =>
                                                             // Done iteration — result is stored, this is the final value
                                                             addField(current, nameStr, result)
@@ -1035,19 +1035,19 @@ object Flow:
                                                                     val updated = addField(current, nameStr, ())
                                                                     interpreter.onOutput(nameStr, Kyo.unit, n.frame, n.meta)(using
                                                                         r.tag,
-                                                                        r.json
+                                                                        r.schema
                                                                     )
                                                                         .andThen(updated)
                                                         }
                                                     }
                                                 case _ =>
                                                     // Done — store final result
-                                                    interpreter.onOutput(iterName, rawOutcome, n.frame, n.meta)(using r.tag, r.json)
+                                                    interpreter.onOutput(iterName, rawOutcome, n.frame, n.meta)(using r.tag, r.schema)
                                                         .andThen {
                                                             val updated = addField(current, nameStr, rawOutcome)
                                                             interpreter.onOutput(nameStr, rawOutcome, n.frame, n.meta)(using
                                                                 r.tag,
-                                                                r.json
+                                                                r.schema
                                                             )
                                                                 .andThen(updated)
                                                         }
@@ -1069,10 +1069,10 @@ object Flow:
                                     }
                                 }
                             end foreachBody
-                            given Json[Any] = n.erased.json
-                            val seqJson     = summon[Json[Seq[Any]]].erased
-                            val computation = Sync.defer(foreachBody)
-                            interpreter.onOutput(nameStr, computation, n.frame, n.meta)(using Tag[Any], seqJson)
+                            given Schema[Any] = n.erased.schema
+                            val seqSchema     = summon[Schema[Seq[Any]]].asInstanceOf[Schema[Any]]
+                            val computation   = Sync.defer(foreachBody)
+                            interpreter.onOutput(nameStr, computation, n.frame, n.meta)(using Tag[Any], seqSchema)
                                 .map { stored =>
                                     val chunk = stored match
                                         case c: Chunk[?] => c
@@ -1160,7 +1160,7 @@ object Flow:
             fn: Record[Ctx] => V < S,
             meta: Meta,
             compensate: Maybe[Record[CompCtx] => Unit < (Async & Abort[FlowException])]
-        )(using val frame: Frame, val tag: Tag[V], val json: Json[V]) extends Flow[Any, N ~ V, S]:
+        )(using val frame: Frame, val tag: Tag[V], val schema: Schema[V]) extends Flow[Any, N ~ V, S]:
             private[kyo] def erased: Output[Any, Any, String, Any, Any] = this.asInstanceOf[Output[Any, Any, String, Any, Any]]
         end Output
 
@@ -1177,7 +1177,7 @@ object Flow:
             using
             val frame: Frame,
             val tag: Tag[V],
-            val json: Json[V]
+            val schema: Schema[V]
         ) extends Flow[N ~ V, N ~ V, Any]:
             private[kyo] def erased: Input[String, Any] = this.asInstanceOf[Input[String, Any]]
         end Input
@@ -1192,7 +1192,7 @@ object Flow:
             default: Record[Ctx] => V < S,
             defaultFrame: Frame,
             meta: Meta
-        )(using val frame: Frame, val tag: Tag[V], val json: Json[V]) extends Flow[Any, N ~ V, S & Sb]:
+        )(using val frame: Frame, val tag: Tag[V], val schema: Schema[V]) extends Flow[Any, N ~ V, S & Sb]:
             private[kyo] def erased: Dispatch[Any, String, Any, Any, Any] = this.asInstanceOf[Dispatch[Any, String, Any, Any, Any]]
         end Dispatch
 
@@ -1202,7 +1202,7 @@ object Flow:
             initialState: State,
             schedule: Maybe[Schedule],
             meta: Meta
-        )(using val frame: Frame, val tag: Tag[V], val json: Json[V], val stateTag: Tag[State], val stateJson: Json[State])
+        )(using val frame: Frame, val tag: Tag[V], val schema: Schema[V], val stateTag: Tag[State], val stateSchema: Schema[State])
             extends Flow[Any, N ~ V, S]:
             private[kyo] def erased: LoopNode[Any, String, Any, Any, Any] = this.asInstanceOf[LoopNode[Any, String, Any, Any, Any]]
         end LoopNode
@@ -1213,7 +1213,7 @@ object Flow:
             collection: Record[Ctx] => Seq[E] < S,
             body: E => V < S,
             meta: Meta
-        )(using val frame: Frame, val tag: Tag[V], val json: Json[V]) extends Flow[Any, N ~ Chunk[V], S]:
+        )(using val frame: Frame, val tag: Tag[V], val schema: Schema[V]) extends Flow[Any, N ~ Chunk[V], S]:
             private[kyo] def erased: ForEach[Any, String, Any, Any, Any] = this.asInstanceOf[ForEach[Any, String, Any, Any, Any]]
         end ForEach
 

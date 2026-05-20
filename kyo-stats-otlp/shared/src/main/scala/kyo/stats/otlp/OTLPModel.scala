@@ -1,13 +1,13 @@
 package kyo.stats.otlp
 
 import kyo.Absent
-import kyo.Json
 import kyo.Maybe
 import kyo.Present
+import kyo.Schema
 
 /** Data model types for the OTLP JSON protocol.
   *
-  * These case classes map directly to the OpenTelemetry Protocol protobuf messages, serialized as JSON via `derives Json`. Types are
+  * These case classes map directly to the OpenTelemetry Protocol protobuf messages, serialized as JSON via `derives Schema`. Types are
   * organized into three sections: metrics, traces, and common (resource, scope, key-value attributes).
   *
   * Response types (`ExportTraceResponse`, `ExportMetricsResponse`) are `private[otlp]` since they are only consumed internally by
@@ -17,11 +17,11 @@ import kyo.Present
 // === Metrics ===
 
 /** Top-level request payload for exporting metrics via OTLP. */
-case class ExportMetricsRequest(resourceMetrics: Seq[ResourceMetrics]) derives Json
+case class ExportMetricsRequest(resourceMetrics: Seq[ResourceMetrics]) derives Schema
 
-case class ResourceMetrics(resource: OTLPResource, scopeMetrics: Seq[ScopeMetrics]) derives Json
+case class ResourceMetrics(resource: OTLPResource, scopeMetrics: Seq[ScopeMetrics]) derives Schema
 
-case class ScopeMetrics(scope: InstrumentationScope, metrics: Seq[Metric]) derives Json
+case class ScopeMetrics(scope: InstrumentationScope, metrics: Seq[Metric]) derives Schema
 
 case class Metric(
     name: String,
@@ -30,20 +30,20 @@ case class Metric(
     histogram: Maybe[OTLPHistogram] = Absent,
     sum: Maybe[OTLPSum] = Absent,
     gauge: Maybe[OTLPGauge] = Absent
-) derives Json
+) derives Schema
 
 case class OTLPHistogram(
     dataPoints: Seq[HistogramDataPoint],
     aggregationTemporality: Int
-) derives Json
+) derives Schema
 
 case class OTLPSum(
     dataPoints: Seq[NumberDataPoint],
     aggregationTemporality: Int,
     isMonotonic: Boolean
-) derives Json
+) derives Schema
 
-case class OTLPGauge(dataPoints: Seq[NumberDataPoint]) derives Json
+case class OTLPGauge(dataPoints: Seq[NumberDataPoint]) derives Schema
 
 case class HistogramDataPoint(
     startTimeUnixNano: String,
@@ -54,7 +54,7 @@ case class HistogramDataPoint(
     min: Double,
     max: Double,
     attributes: Seq[KeyValue] = Seq.empty
-) derives Json
+) derives Schema
 
 case class NumberDataPoint(
     startTimeUnixNano: String,
@@ -62,16 +62,16 @@ case class NumberDataPoint(
     asInt: Maybe[String] = Absent,
     asDouble: Maybe[Double] = Absent,
     attributes: Seq[KeyValue] = Seq.empty
-) derives Json
+) derives Schema
 
 // === Traces ===
 
 /** Top-level request payload for exporting trace spans via OTLP. */
-case class ExportTraceRequest(resourceSpans: Seq[ResourceSpans]) derives Json
+case class ExportTraceRequest(resourceSpans: Seq[ResourceSpans]) derives Schema
 
-case class ResourceSpans(resource: OTLPResource, scopeSpans: Seq[ScopeSpans]) derives Json
+case class ResourceSpans(resource: OTLPResource, scopeSpans: Seq[ScopeSpans]) derives Schema
 
-case class ScopeSpans(scope: InstrumentationScope, spans: Seq[OTLPSpan]) derives Json
+case class ScopeSpans(scope: InstrumentationScope, spans: Seq[OTLPSpan]) derives Schema
 
 /** A single span in the OTLP trace model.
   *
@@ -99,49 +99,49 @@ case class OTLPSpan(
     attributes: Seq[KeyValue] = Seq.empty,
     events: Seq[SpanEvent] = Seq.empty,
     status: SpanStatus = SpanStatus()
-) derives Json
+) derives Schema
 
 case class SpanEvent(
     name: String,
     timeUnixNano: String,
     attributes: Seq[KeyValue] = Seq.empty
-) derives Json
+) derives Schema
 
 case class SpanStatus(
     code: Int = 0,
     message: String = ""
-) derives Json
+) derives Schema
 
 // === Responses ===
 
 private[otlp] case class ExportTraceResponse(
     partialSuccess: Maybe[TracePartialSuccess] = Absent
-) derives Json
+) derives Schema
 
 private[otlp] case class TracePartialSuccess(
     rejectedSpans: Long = 0,
     errorMessage: String = ""
-) derives Json
+) derives Schema
 
 private[otlp] case class ExportMetricsResponse(
     partialSuccess: Maybe[MetricsPartialSuccess] = Absent
-) derives Json
+) derives Schema
 
 private[otlp] case class MetricsPartialSuccess(
     rejectedDataPoints: Long = 0,
     errorMessage: String = ""
-) derives Json
+) derives Schema
 
 // === Common ===
 
-case class OTLPResource(attributes: Seq[KeyValue] = Seq.empty) derives Json
+case class OTLPResource(attributes: Seq[KeyValue] = Seq.empty) derives Schema
 
 case class InstrumentationScope(
     name: String,
     version: String = ""
-) derives Json
+) derives Schema
 
-case class KeyValue(key: String, value: AnyValue) derives Json
+case class KeyValue(key: String, value: AnyValue) derives Schema
 
 /** OTLP AnyValue union type. Each variant has exactly one field set. */
 case class AnyValue(
@@ -149,7 +149,7 @@ case class AnyValue(
     intValue: Maybe[String] = Absent,
     doubleValue: Maybe[Double] = Absent,
     boolValue: Maybe[Boolean] = Absent
-) derives Json
+) derives Schema
 
 object AnyValue:
     def string(v: String): AnyValue   = AnyValue(stringValue = Present(v))

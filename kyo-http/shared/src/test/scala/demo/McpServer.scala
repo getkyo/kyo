@@ -10,37 +10,37 @@ import kyo.*
 object McpServer extends KyoApp:
 
     // --- JSON-RPC types ---
-    case class JsonRpcRequest(jsonrpc: String, id: Option[Int], method: String, params: Option[RpcParams]) derives Json
+    case class JsonRpcRequest(jsonrpc: String, id: Option[Int], method: String, params: Option[RpcParams]) derives Schema
     case class RpcParams(
         protocolVersion: Option[String],
         capabilities: Option[Capabilities],
         clientInfo: Option[ClientInfo],
         name: Option[String],
         arguments: Option[Map[String, String]]
-    ) derives Json
-    case class Capabilities(tools: Option[ToolCapabilities]) derives Json
-    case class ToolCapabilities(listChanged: Option[Boolean]) derives Json
-    case class ClientInfo(name: String, version: String) derives Json
+    ) derives Schema
+    case class Capabilities(tools: Option[ToolCapabilities]) derives Schema
+    case class ToolCapabilities(listChanged: Option[Boolean]) derives Schema
+    case class ClientInfo(name: String, version: String) derives Schema
 
-    case class JsonRpcResponse(jsonrpc: String, id: Option[Int], result: Option[RpcResult], error: Option[RpcError]) derives Json
-    case class RpcError(code: Int, message: String) derives Json
+    case class JsonRpcResponse(jsonrpc: String, id: Option[Int], result: Option[RpcResult], error: Option[RpcError]) derives Schema
+    case class RpcError(code: Int, message: String) derives Schema
     case class RpcResult(
         protocolVersion: Option[String],
         capabilities: Option[ServerCapabilities],
         serverInfo: Option[ServerInfo],
         tools: Option[List[ToolDef]],
         content: Option[List[Content]]
-    ) derives Json
-    case class ServerCapabilities(tools: Option[ToolCapabilities]) derives Json
-    case class ServerInfo(name: String, version: String) derives Json
-    case class ToolDef(name: String, description: String, inputSchema: InputSchema) derives Json
-    case class InputSchema(`type`: String, properties: Map[String, PropDef], required: Option[List[String]]) derives Json
-    case class PropDef(`type`: String, description: String) derives Json
-    case class Content(`type`: String, text: String) derives Json
+    ) derives Schema
+    case class ServerCapabilities(tools: Option[ToolCapabilities]) derives Schema
+    case class ServerInfo(name: String, version: String) derives Schema
+    case class ToolDef(name: String, description: String, inputSchema: InputSchema) derives Schema
+    case class InputSchema(`type`: String, properties: Map[String, PropDef], required: Option[List[String]]) derives Schema
+    case class PropDef(`type`: String, description: String) derives Schema
+    case class Content(`type`: String, text: String) derives Schema
 
     // --- Weather client (calls Open-Meteo) ---
-    case class WeatherResponse(current: CurrentWeather) derives Json
-    case class CurrentWeather(temperature_2m: Double, wind_speed_10m: Double) derives Json
+    case class WeatherResponse(current: CurrentWeather) derives Schema
+    case class CurrentWeather(temperature_2m: Double, wind_speed_10m: Double) derives Schema
 
     def fetchWeather(city: String): String < (Async & Abort[HttpException]) =
         val (lat, lon) = city.toLowerCase match

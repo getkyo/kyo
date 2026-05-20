@@ -4,7 +4,7 @@ import kyo.*
 
 /** HTTP cookie with a typed value and configurable attributes (maxAge, domain, path, secure, httpOnly, sameSite).
   *
-  * Cookie values are serialized using `HttpCodec[A]`, not `Json[A]`. For typed cookies (e.g., `HttpCookie[Int]`), the codec handles
+  * Cookie values are serialized using `HttpCodec[A]`, not `Schema[A]`. For typed cookies (e.g., `HttpCookie[Int]`), the codec handles
   * conversion.
   *
   * On routes, request cookies are declared with `.request(_.cookie[A]("name"))` and response cookies with `.response(_.cookie[A]("name"))`.

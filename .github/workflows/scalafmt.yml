@@ -14,7 +14,7 @@ jobs:
       JVM_OPTS: -Xms2G -Xmx2G -Dfile.encoding=UTF-8
     steps:
       - uses: actions/checkout@v6.0.2
-      - uses: coursier/cache-action@v8.1.0
+      - uses: coursier/cache-action@v8.1.1
       - uses: coursier/setup-action@v3.0.0
         with:
           jvm: corretto:24

@@ -12,13 +12,13 @@ import kyo.*
   */
 object TaskBoard extends KyoApp:
 
-    case class Task(id: Int, title: String, column: String, assignee: Option[String]) derives Json
-    case class CreateTask(title: String, column: Option[String], assignee: Option[String]) derives Json
-    case class UpdateTask(title: String, column: String, assignee: Option[String]) derives Json
+    case class Task(id: Int, title: String, column: String, assignee: Option[String]) derives Schema
+    case class CreateTask(title: String, column: Option[String], assignee: Option[String]) derives Schema
+    case class UpdateTask(title: String, column: String, assignee: Option[String]) derives Schema
 
-    case class NotFound(error: String) derives Json
-    case class ValidationError(error: String, field: String) derives Json
-    case class ConflictError(error: String, existingId: Int) derives Json
+    case class NotFound(error: String) derives Schema
+    case class ValidationError(error: String, field: String) derives Schema
+    case class ConflictError(error: String, existingId: Int) derives Schema
 
     case class Store(tasks: Map[Int, Task], nextId: Int)
 

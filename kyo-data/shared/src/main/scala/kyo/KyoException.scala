@@ -20,14 +20,9 @@ import scala.util.control.NoStackTrace
   *   Implicit Frame providing context about where the exception was created
   */
 class KyoException private[kyo] (
-    message: Text = "",
+    message: => Text = "",
     cause: Text | Throwable = ""
-)(using val frame: Frame) extends Exception(
-        message.toString,
-        cause match
-            case cause: Throwable => cause
-            case _                => null
-    ) with NoStackTrace:
+)(using val frame: Frame) extends Exception with NoStackTrace:
 
     /** Returns the underlying cause of this exception. Overriding this method is important for performance since the method is synchronized
       * in the super classes.
@@ -50,7 +45,8 @@ class KyoException private[kyo] (
     override def getMessage(): String =
         val detail =
             cause match
-                case _: Throwable           => Absent
+                case t: Throwable =>
+                    Maybe(s"${t.getClass.getSimpleName}: ${Maybe(t.getMessage).getOrElse("")}".take(maxMessageLength))
                 case cause: Text @unchecked => Maybe(cause.take(maxMessageLength))
 
         if Environment.isDevelopment then

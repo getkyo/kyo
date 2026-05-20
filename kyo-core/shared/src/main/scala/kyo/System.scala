@@ -5,6 +5,7 @@ import java.lang.System as JSystem
 import java.net.MalformedURLException
 import java.net.URISyntaxException
 import java.time.format.DateTimeParseException
+import kyo.internal.SystemPlatformSpecific
 
 /** A platform-independent accessor for system environment and properties.
   *
@@ -42,6 +43,8 @@ abstract class System extends Serializable:
     def lineSeparator(using Frame): String < Sync
     def userName(using Frame): String < Sync
     def operatingSystem(using Frame): System.OS < Sync
+    def architecture(using Frame): System.Arch < Sync
+    def availableProcessors(using Frame): Int < Sync
 end System
 
 /** Companion object for System, containing utility methods and type classes. */
@@ -51,6 +54,10 @@ object System:
     enum OS derives CanEqual:
         case Linux, MacOS, Windows, BSD, Solaris, IBMI, AIX, Unknown
 
+    /** Enumeration of supported CPU architectures. */
+    enum Arch derives CanEqual:
+        case X86, X86_64, Arm, Aarch64, Unknown
+
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe extends Serializable:
         def env(name: String)(using AllowUnsafe): Maybe[String]
@@ -58,6 +65,8 @@ object System:
         def lineSeparator()(using AllowUnsafe): String
         def userName()(using AllowUnsafe): String
         def operatingSystem()(using AllowUnsafe): OS
+        def architecture()(using AllowUnsafe): Arch
+        def availableProcessors()(using AllowUnsafe): Int
         def safe: System = System(this)
     end Unsafe
 
@@ -75,10 +84,12 @@ object System:
                         case Absent     => Absent
                         case Present(v) => Abort.get(p(v).map(Maybe(_)))
                 }
-            def lineSeparator(using Frame): String < Sync = Sync.Unsafe.defer(u.lineSeparator())
-            def userName(using Frame): String < Sync      = Sync.Unsafe.defer(u.userName())
-            def operatingSystem(using Frame): OS < Sync   = Sync.Unsafe.defer(u.operatingSystem())
-            def unsafe: Unsafe                            = u
+            def lineSeparator(using Frame): String < Sync    = Sync.Unsafe.defer(u.lineSeparator())
+            def userName(using Frame): String < Sync         = Sync.Unsafe.defer(u.userName())
+            def operatingSystem(using Frame): OS < Sync      = Sync.Unsafe.defer(u.operatingSystem())
+            def architecture(using Frame): Arch < Sync       = Sync.Unsafe.defer(u.architecture())
+            def availableProcessors(using Frame): Int < Sync = Sync.Unsafe.defer(u.availableProcessors())
+            def unsafe: Unsafe                               = u
 
     private val local = Local.init(live)
 
@@ -93,18 +104,34 @@ object System:
                 def lineSeparator()(using AllowUnsafe): String = JSystem.lineSeparator()
                 def userName()(using AllowUnsafe): String      = JSystem.getProperty("user.name")
                 def operatingSystem()(using AllowUnsafe): OS =
-                    Maybe(JSystem.getProperty("os.name")).map { prop =>
-                        val osName = prop.toLowerCase
-                        if osName.contains("linux") then OS.Linux
-                        else if osName.contains("mac") then OS.MacOS
-                        else if osName.contains("windows") then OS.Windows
-                        else if osName.contains("bsd") then OS.BSD
-                        else if osName.contains("sunos") then OS.Solaris
-                        else if osName.contains("os/400") || osName.contains("os400") then OS.IBMI
-                        else if osName.contains("aix") then OS.AIX
-                        else OS.Unknown
-                        end if
-                    }.getOrElse(OS.Unknown)
+                    // Delegate raw `os.name` lookup to the platform-specific shim: on JVM/Native this goes through
+                    // `java.lang.System`; on Scala.js (which returns null for that property) it falls back to Node's
+                    // `process.platform`. The classification below stays shared.
+                    val osName = SystemPlatformSpecific.osName().toLowerCase
+                    if osName.isEmpty then OS.Unknown
+                    else if osName.contains("linux") then OS.Linux
+                    else if osName.contains("mac") then OS.MacOS
+                    else if osName.contains("windows") then OS.Windows
+                    else if osName.contains("bsd") then OS.BSD
+                    else if osName.contains("sunos") then OS.Solaris
+                    else if osName.contains("os/400") || osName.contains("os400") then OS.IBMI
+                    else if osName.contains("aix") then OS.AIX
+                    else OS.Unknown
+                    end if
+                end operatingSystem
+
+                def architecture()(using AllowUnsafe): Arch =
+                    val arch = SystemPlatformSpecific.osArch().toLowerCase
+                    if arch.isEmpty then Arch.Unknown
+                    else if arch == "aarch64" || arch == "arm64" then Arch.Aarch64
+                    else if arch == "x86_64" || arch == "amd64" || arch == "x64" then Arch.X86_64
+                    else if arch == "x86" || arch == "i386" || arch == "i686" then Arch.X86
+                    else if arch.startsWith("arm") then Arch.Arm
+                    else Arch.Unknown
+                    end if
+                end architecture
+
+                def availableProcessors()(using AllowUnsafe): Int = Runtime.getRuntime.availableProcessors()
         )
 
     /** Executes a computation with a custom System implementation.
@@ -201,6 +228,12 @@ object System:
 
     /** Retrieves the current operating system. */
     def operatingSystem(using Frame): OS < Sync = local.use(_.operatingSystem)
+
+    /** Retrieves the current CPU architecture. */
+    def architecture(using Frame): Arch < Sync = local.use(_.architecture)
+
+    /** Retrieves the number of processors available to the JVM. */
+    def availableProcessors(using Frame): Int < Sync = local.use(_.availableProcessors)
 
     /** Abstract class for parsing string values into specific types. */
     sealed abstract class Parser[E, A] extends Serializable:

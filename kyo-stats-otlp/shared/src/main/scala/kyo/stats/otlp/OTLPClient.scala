@@ -69,7 +69,7 @@ object OTLPClient:
                     ++ config.resourceAttributes.map { case (k, v) => KeyValue(k, AnyValue.string(v)) }
         )
 
-    private def send[A: Json, B: Json](
+    private def send[A: Schema, B: Schema](
         config: OTLPConfig,
         url: String,
         body: A,

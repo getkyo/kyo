@@ -8,9 +8,9 @@ import kyo.*
   */
 object FileLocker extends KyoApp:
 
-    case class FileInfo(name: String, size: Long) derives Json
-    case class FileList(files: List[FileInfo]) derives Json
-    case class ApiError(error: String) derives Json
+    case class FileInfo(name: String, size: Long) derives Schema
+    case class FileList(files: List[FileInfo]) derives Schema
+    case class ApiError(error: String) derives Schema
 
     val serverFilter = HttpFilter.server.logging
         .andThen(HttpFilter.server.cors())

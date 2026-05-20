@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.internal.server.*
 
 class RouteUtilTest extends kyo.Test:
 
@@ -8,7 +9,7 @@ class RouteUtilTest extends kyo.Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
-    case class User(name: String, age: Int) derives Json, CanEqual
+    case class User(name: String, age: Int) derives Schema, CanEqual
     case class LoginForm(username: String, password: String) derives HttpFormCodec
 
     // ==================== Route inspection ====================
@@ -229,7 +230,14 @@ class RouteUtilTest extends kyo.Test:
             val json  = """{"name":"Bob","age":25}"""
             val bytes = Span.fromUnsafe(json.getBytes("UTF-8"))
 
-            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, HttpHeaders.empty, bytes, route.method.name, "test") match
+            RouteUtil.decodeBufferedResponse(
+                route,
+                HttpStatus.OK,
+                HttpHeaders.empty,
+                bytes,
+                route.method.name,
+                HttpUrl.fromUri("/test")
+            ) match
                 case Result.Success(response) =>
                     assert(response.status == HttpStatus.OK)
                     val user = response.fields.body
@@ -243,7 +251,14 @@ class RouteUtilTest extends kyo.Test:
             val route = HttpRoute.getRaw("echo").response(_.bodyText)
             val bytes = Span.fromUnsafe("hello".getBytes("UTF-8"))
 
-            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, HttpHeaders.empty, bytes, route.method.name, "test") match
+            RouteUtil.decodeBufferedResponse(
+                route,
+                HttpStatus.OK,
+                HttpHeaders.empty,
+                bytes,
+                route.method.name,
+                HttpUrl.fromUri("/test")
+            ) match
                 case Result.Success(response) =>
                     assert(response.fields.body == "hello")
                 case Result.Failure(err) => fail(s"decode failed: $err")
@@ -256,7 +271,7 @@ class RouteUtilTest extends kyo.Test:
             val headers = HttpHeaders.empty.add("X-Request-Id", "req-123")
             val bytes   = Span.fromUnsafe("ok".getBytes("UTF-8"))
 
-            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, headers, bytes, route.method.name, "test") match
+            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, headers, bytes, route.method.name, HttpUrl.fromUri("/test")) match
                 case Result.Success(response) =>
                     assert(response.fields.body == "ok")
                     assert(response.fields.requestId == "req-123")
@@ -269,7 +284,14 @@ class RouteUtilTest extends kyo.Test:
             val route = HttpRoute.getRaw("data").response(_.header[String]("requestId", wireName = "X-Request-Id").bodyText)
             val bytes = Span.fromUnsafe("ok".getBytes("UTF-8"))
 
-            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, HttpHeaders.empty, bytes, route.method.name, "test") match
+            RouteUtil.decodeBufferedResponse(
+                route,
+                HttpStatus.OK,
+                HttpHeaders.empty,
+                bytes,
+                route.method.name,
+                HttpUrl.fromUri("/test")
+            ) match
                 case Result.Success(_)   => fail("expected failure")
                 case Result.Failure(err) => assert(err.getMessage.contains("Missing required header"))
                 case p: Result.Panic     => throw p.exception
@@ -279,7 +301,14 @@ class RouteUtilTest extends kyo.Test:
         "no body" in {
             val route = HttpRoute.getRaw("health")
 
-            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, HttpHeaders.empty, Span.empty[Byte], route.method.name, "test") match
+            RouteUtil.decodeBufferedResponse(
+                route,
+                HttpStatus.OK,
+                HttpHeaders.empty,
+                Span.empty[Byte],
+                route.method.name,
+                HttpUrl.fromUri("/test")
+            ) match
                 case Result.Success(response) =>
                     assert(response.status == HttpStatus.OK)
                 case Result.Failure(err) => fail(s"decode failed: $err")
@@ -759,6 +788,44 @@ class RouteUtilTest extends kyo.Test:
                 case p: Result.Panic     => throw p.exception
             end match
         }
+
+        // Unit body short-circuit: RouteUtil.decodeBufferedBodyValue short-circuits
+        // Unit-schema JSON handlers for empty body and JSON "null" body, replacing the
+        // tolerance that the old Json[Unit] typeclass override provided before the Json migration.
+        // bodyJson[Unit] cannot be expressed through the public route DSL (jsonSchema[Unit]
+        // fails at compile time), so the route is constructed by embedding Schema.unitSchema
+        // directly into ContentType.Json.
+        "Unit JSON body - empty body short-circuits to success" in {
+            val unitBodyField: HttpRoute.Field["body" ~ Unit] =
+                HttpRoute.Field.Body("body", HttpRoute.ContentType.Json(Schema.unitSchema, Json.JsonSchema.Bool), "")
+            val route = HttpRoute["body" ~ Unit, Any, Nothing](
+                HttpMethod.POST,
+                HttpRoute.RequestDef["body" ~ Unit](HttpPath.Literal("unit-action"), Chunk(unitBodyField))
+            )
+            val headers = HttpHeaders.empty.add("Content-Type", "application/json")
+
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, Span.empty[Byte]) match
+                case Result.Success(req) =>
+                    assert(req.fields.dict("body") == ())
+                case Result.Failure(err) => fail(s"expected success for empty body, got failure: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        // This test uses the public bodyJson[Unit] DSL (now that PrimitiveKind.Unit and
+        // JsonSchema.Null are in place), verifying the short-circuit for "null" body.
+        "Unit JSON body - null body short-circuits to success via public DSL" in {
+            val route     = HttpRoute.postRaw("unit-action").request(_.bodyJson[Unit])
+            val headers   = HttpHeaders.empty.add("Content-Type", "application/json")
+            val nullBytes = Span.fromUnsafe("null".getBytes("UTF-8"))
+
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, nullBytes) match
+                case Result.Success(req) =>
+                    assert(req.fields.dict("body") == ())
+                case Result.Failure(err) => fail(s"expected success for null body, got failure: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
     }
 
     // ==================== decodeBufferedResponse edge cases ====================
@@ -768,7 +835,14 @@ class RouteUtilTest extends kyo.Test:
             val route = HttpRoute.getRaw("users").response(_.bodyJson[User])
             val bytes = Span.fromUnsafe("{invalid".getBytes("UTF-8"))
 
-            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, HttpHeaders.empty, bytes, route.method.name, "test") match
+            RouteUtil.decodeBufferedResponse(
+                route,
+                HttpStatus.OK,
+                HttpHeaders.empty,
+                bytes,
+                route.method.name,
+                HttpUrl.fromUri("/test")
+            ) match
                 case Result.Success(_)   => fail("expected failure")
                 case Result.Failure(err) => assert(err.getMessage.contains("JSON decode failed"))
                 case p: Result.Panic     => throw p.exception
@@ -779,7 +853,14 @@ class RouteUtilTest extends kyo.Test:
             val route = HttpRoute.getRaw("download").response(_.bodyBinary)
             val data  = Span.fromUnsafe(Array[Byte](5, 6, 7))
 
-            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, HttpHeaders.empty, data, route.method.name, "test") match
+            RouteUtil.decodeBufferedResponse(
+                route,
+                HttpStatus.OK,
+                HttpHeaders.empty,
+                data,
+                route.method.name,
+                HttpUrl.fromUri("/test")
+            ) match
                 case Result.Success(resp) =>
                     val decoded = resp.fields.dict("body").asInstanceOf[Span[Byte]]
                     assert(decoded.toArrayUnsafe.asInstanceOf[Array[Byte]].toSeq == Seq[Byte](5, 6, 7))
@@ -792,7 +873,14 @@ class RouteUtilTest extends kyo.Test:
             val route   = HttpRoute.getRaw("data").response(_.headerOpt[String]("etag", wireName = "ETag"))
             val headers = HttpHeaders.empty.add("ETag", "abc")
 
-            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, headers, Span.empty[Byte], route.method.name, "test") match
+            RouteUtil.decodeBufferedResponse(
+                route,
+                HttpStatus.OK,
+                headers,
+                Span.empty[Byte],
+                route.method.name,
+                HttpUrl.fromUri("/test")
+            ) match
                 case Result.Success(resp) =>
                     assert(resp.fields.dict("etag") == Present("abc"))
                 case Result.Failure(err) => fail(s"decode failed: $err")
@@ -803,7 +891,14 @@ class RouteUtilTest extends kyo.Test:
         "optional response header absent" in {
             val route = HttpRoute.getRaw("data").response(_.headerOpt[String]("etag", wireName = "ETag"))
 
-            RouteUtil.decodeBufferedResponse(route, HttpStatus.OK, HttpHeaders.empty, Span.empty[Byte], route.method.name, "test") match
+            RouteUtil.decodeBufferedResponse(
+                route,
+                HttpStatus.OK,
+                HttpHeaders.empty,
+                Span.empty[Byte],
+                route.method.name,
+                HttpUrl.fromUri("/test")
+            ) match
                 case Result.Success(resp) =>
                     assert(resp.fields.dict("etag") == Absent)
                 case Result.Failure(err) => fail(s"decode failed: $err")
@@ -954,7 +1049,7 @@ class RouteUtilTest extends kyo.Test:
                 onEmpty = (_, _) => fail("expected buffered"),
                 onBuffered = (status, headers, bytes) =>
                     // Decode as client
-                    RouteUtil.decodeBufferedResponse(route, status, headers, bytes, route.method.name, "test") match
+                    RouteUtil.decodeBufferedResponse(route, status, headers, bytes, route.method.name, HttpUrl.fromUri("/test")) match
                         case Result.Success(decoded) =>
                             assert(decoded.status == HttpStatus.OK)
                             assert(decoded.fields.dict("requestId") == "req-789")
@@ -1044,7 +1139,14 @@ class RouteUtilTest extends kyo.Test:
                 Span.fromUnsafe(frame3.getBytes("UTF-8"))
             ))
 
-            RouteUtil.decodeStreamingResponse(route, HttpStatus.OK, HttpHeaders.empty, rawStream, route.method.name, "test") match
+            RouteUtil.decodeStreamingResponse(
+                route,
+                HttpStatus.OK,
+                HttpHeaders.empty,
+                rawStream,
+                route.method.name,
+                HttpUrl.fromUri("/test")
+            ) match
                 case Result.Success(response) =>
                     val eventStream = response.fields.body
                     eventStream.run.map { events =>
@@ -1101,7 +1203,14 @@ class RouteUtilTest extends kyo.Test:
                 Span.fromUnsafe(combined.getBytes("UTF-8"))
             ))
 
-            RouteUtil.decodeStreamingResponse(route, HttpStatus.OK, HttpHeaders.empty, rawStream, route.method.name, "test") match
+            RouteUtil.decodeStreamingResponse(
+                route,
+                HttpStatus.OK,
+                HttpHeaders.empty,
+                rawStream,
+                route.method.name,
+                HttpUrl.fromUri("/test")
+            ) match
                 case Result.Success(response) =>
                     val userStream = response.fields.body
                     userStream.run.map { users =>
@@ -1124,7 +1233,14 @@ class RouteUtilTest extends kyo.Test:
                 Span.fromUnsafe(part2.getBytes("UTF-8"))
             ))
 
-            RouteUtil.decodeStreamingResponse(route, HttpStatus.OK, HttpHeaders.empty, rawStream, route.method.name, "test") match
+            RouteUtil.decodeStreamingResponse(
+                route,
+                HttpStatus.OK,
+                HttpHeaders.empty,
+                rawStream,
+                route.method.name,
+                HttpUrl.fromUri("/test")
+            ) match
                 case Result.Success(response) =>
                     val userStream = response.fields.body
                     userStream.run.map { users =>

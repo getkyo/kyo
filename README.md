@@ -48,8 +48,6 @@ Kyo is structured as a monorepo, published to Maven Central:
 
 | Module               | JVM | JS  | Native | Description                                                          |
 | -------------------- | --- | --- | ------ | -------------------------------------------------------------------- |
-| kyo-sttp             | ✅   | ✅   | ✅      | HTTP client using Sttp with automatic effect management              |
-| kyo-tapir            | ✅   | ❌   | ❌      | HTTP server endpoints using Tapir with Netty backend                 |
 | kyo-caliban          | ✅   | ❌   | ❌      | GraphQL server using Caliban with schema derivation                  |
 | kyo-zio              | ✅   | ✅   | ❌      | Bidirectional ZIO interop with support for ZIO, ZLayer, and ZStream  |
 | kyo-zio-test         | ✅   | ✅   | ❌      | ZIO Test framework integration for testing Kyo effects               |
@@ -1208,16 +1206,13 @@ val fibonacci: Int => Int < Memo =
             yield a + b
     }
 
-val result: (Int, Int) < Memo = 
+val result: (Int, Int) < Any =
     Memo.run {
         for
             fib10 <- fibonacci(10)
             fib11 <- fibonacci(11)
         yield (fib10, fib11)
     }
-
-val result2: (Int, Int) < Any =
-    Memo.run(result)
 ```
 
 Key points about `Memo`:
@@ -2485,7 +2480,7 @@ val c: Boolean < Sync =
 
 > A `Promise` is basically a `Fiber` with all the regular functionality plus the `complete` and `become` methods to manually fulfill the promise.
 
-## Retry: Automatic Retries
+### Retry: Automatic Retries
 
 `Retry` provides a mechanism for retrying computations that may fail, with configurable policies for backoff and retry limits. This is particularly useful for operations that might fail due to transient issues, such as network requests or database operations.
 
@@ -3455,10 +3450,10 @@ The first integration is that you can use Kyo effects inside your Caliban schema
 
 ```scala
 import caliban.schema.*
-import kyo.*
+// exclude `kyo.Schema` (serialization) to use caliban's `Schema` (GraphQL)
+import kyo.{Schema as _, *}
 import kyo.given
 
-// this works by just importing kyo.*
 case class Query(k: Int < Abort[Throwable]) derives Schema.SemiAuto
 
 // for other effects, you need to extend `SchemaDerivation[Runner[YourCustomEffects]]`
@@ -3475,7 +3470,7 @@ You can then run this effect using `Resolvers.run` to get an `HttpServer`. This 
 ```scala
 import caliban.*
 import caliban.schema.*
-import kyo.*
+import kyo.{Schema as _, *}
 import kyo.given
 
 case class Query(k: Int < Abort[Throwable]) derives Schema.SemiAuto

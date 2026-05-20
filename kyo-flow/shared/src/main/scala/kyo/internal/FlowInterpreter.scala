@@ -5,12 +5,12 @@ import kyo.kernel.Isolate
 
 abstract private[kyo] class FlowInterpreter[S]:
 
-    def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]): V < S
+    def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]): V < S
 
-    def onOutput[V](name: String, computation: V < Sync, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]): V < S
+    def onOutput[V](name: String, computation: V < Sync, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]): V < S
 
     /** Read a stored field by name. Returns Absent if the field does not exist. */
-    def getField[V](name: String)(using Tag[V], Json[V]): Maybe[V] < S
+    def getField[V](name: String)(using Tag[V], Schema[V]): Maybe[V] < S
 
     def onStep(name: String, computation: Unit < Sync, frame: Frame, meta: Flow.Meta): Unit < S
 

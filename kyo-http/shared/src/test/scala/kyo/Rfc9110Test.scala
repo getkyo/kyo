@@ -14,7 +14,7 @@ class Rfc9110Test extends Test:
 
     import HttpPath.*
 
-    case class User(id: Int, name: String) derives Json, CanEqual
+    case class User(id: Int, name: String) derives Schema, CanEqual
 
     def withServer[A, S](handlers: HttpHandler[?, ?, ?]*)(
         test: Int => A < (S & Async & Abort[HttpException])
@@ -40,11 +40,11 @@ class Rfc9110Test extends Test:
 
     // rawRoute: use to observe raw response status/headers without type-safe body decoding
     val rawRoute  = HttpRoute.getRaw("raw").response(_.bodyText)
-    val noTimeout = HttpClientConfig(timeout = Maybe.empty)
+    val noTimeout = HttpClientConfig(timeout = Duration.Infinity)
 
     // ==================== Section 9.3.2: HEAD ====================
 
-    "Section 9.3.2 - HEAD response MUST NOT contain a message body" in run {
+    "Section 9.3.2 - HEAD response MUST NOT contain a message body" in runNotNative {
         val route = HttpRoute.getRaw("data").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("hello world"))
         withServer(ep) { port =>
@@ -57,7 +57,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 9.3.2 - HEAD response Content-Type MUST match GET" in run {
+    "Section 9.3.2 - HEAD response Content-Type MUST match GET" in runNotNative {
         val route = HttpRoute.getRaw("typed").response(_.bodyJson[User])
         val ep    = route.handler(_ => HttpResponse.ok(User(1, "Alice")))
         withServer(ep) { port =>
@@ -74,7 +74,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 9.3.2 - HEAD response Content-Length MUST match GET body size" in run {
+    "Section 9.3.2 - HEAD response Content-Length MUST match GET body size" in runNotNative {
         val route = HttpRoute.getRaw("sized").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("twelve chars"))
         withServer(ep) { port =>
@@ -93,7 +93,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 9.3.7: OPTIONS ====================
 
-    "Section 9.3.7 - OPTIONS MUST include Allow header" in run {
+    "Section 9.3.7 - OPTIONS MUST include Allow header" in runNotNative {
         val getRoute  = HttpRoute.getRaw("resource").response(_.bodyText)
         val postRoute = HttpRoute.postRaw("resource").request(_.bodyText).response(_.bodyText)
         val getEp     = getRoute.handler(_ => HttpResponse.ok("get"))
@@ -109,7 +109,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 9.3.7 - OPTIONS Allow lists HEAD when GET registered" in run {
+    "Section 9.3.7 - OPTIONS Allow lists HEAD when GET registered" in runNotNative {
         val route = HttpRoute.getRaw("resource").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
@@ -126,7 +126,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 9.3.4: POST ====================
 
-    "Section 9.3.4 - POST success with 201 and Location header" in run {
+    "Section 9.3.4 - POST success with 201 and Location header" in runNotNative {
         // RFC 9110 §9.3.3: "If one or more resources has been created [...] the origin server
         // SHOULD send a 201 (Created) response [...] and an identifier for the primary resource created"
         val route = HttpRoute.postRaw("users").request(_.bodyJson[User]).response(_.bodyJson[User])
@@ -150,7 +150,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 9.3.5: DELETE ====================
 
-    "Section 9.3.5 - DELETE returning 202 Accepted" in run {
+    "Section 9.3.5 - DELETE returning 202 Accepted" in runNotNative {
         val route = HttpRoute.deleteRaw("resource").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.accepted("queued"))
         withServer(ep) { port =>
@@ -161,7 +161,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 9.3.5 - DELETE returning 204 No Content" in run {
+    "Section 9.3.5 - DELETE returning 204 No Content" in runNotNative {
         // RFC 9110 §9.3.5: "If a DELETE method is successfully applied [...] a 204 (No Content) status code
         // if the action has been enacted and no further information is to be supplied."
         val route = HttpRoute.deleteRaw("resource").response(_.bodyText)
@@ -173,7 +173,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 9.3.5 - DELETE returning 200 OK with status body" in run {
+    "Section 9.3.5 - DELETE returning 200 OK with status body" in runNotNative {
         // RFC 9110 §9.3.5: "a 200 (OK) status code if the action has been enacted and the
         // response message includes a representation describing the status."
         val route = HttpRoute.deleteRaw("resource").response(_.bodyText)
@@ -188,7 +188,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.5.6: 405 Method Not Allowed ====================
 
-    "Section 15.5.6 - 405 MUST include Allow header" in run {
+    "Section 15.5.6 - 405 MUST include Allow header" in runNotNative {
         val getRoute = HttpRoute.getRaw("resource").response(_.bodyText)
         val ep       = getRoute.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
@@ -202,7 +202,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 15.5.6 - 405 Allow includes HEAD when GET registered" in run {
+    "Section 15.5.6 - 405 Allow includes HEAD when GET registered" in runNotNative {
         val route = HttpRoute.getRaw("resource").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
@@ -216,7 +216,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 15.5.6 - 405 Allow includes OPTIONS" in run {
+    "Section 15.5.6 - 405 Allow includes OPTIONS" in runNotNative {
         val route = HttpRoute.getRaw("resource").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
@@ -231,7 +231,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.3.5: 204 No Content ====================
 
-    "Section 15.3.5 - 204 MUST NOT contain body" in run {
+    "Section 15.3.5 - 204 MUST NOT contain body" in runNotNative {
         val route = HttpRoute.getRaw("empty").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.halt(HttpResponse.noContent))
         withServer(ep) { port =>
@@ -244,7 +244,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 15.3.5 - 204 MUST NOT contain Content-Type" in run {
+    "Section 15.3.5 - 204 MUST NOT contain Content-Type" in runNotNative {
         val route = HttpRoute.getRaw("empty").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.halt(HttpResponse.noContent))
         withServer(ep) { port =>
@@ -259,7 +259,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.4.5: 304 Not Modified ====================
 
-    "Section 15.4.5 - 304 MUST NOT contain body" in run {
+    "Section 15.4.5 - 304 MUST NOT contain body" in runNotNative {
         val route = HttpRoute.getRaw("cached").response(_.bodyText)
         val ep = route.handler(_ =>
             HttpResponse.halt(HttpResponse.notModified.etag("\"abc123\"").cacheControl("max-age=3600"))
@@ -274,7 +274,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 15.4.5 - 304 preserves ETag and Cache-Control" in run {
+    "Section 15.4.5 - 304 preserves ETag and Cache-Control" in runNotNative {
         val route = HttpRoute.getRaw("cached").response(_.bodyText)
         val ep = route.handler(_ =>
             HttpResponse.halt(HttpResponse.notModified.etag("\"abc123\"").cacheControl("max-age=3600"))
@@ -295,7 +295,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.5.16: 415 Unsupported Media Type ====================
 
-    "Section 15.5.16 - wrong Content-Type MUST return 415" in run {
+    "Section 15.5.16 - wrong Content-Type MUST return 415" in runNotNative {
         // RFC 9110 §15.5.16: "The 415 (Unsupported Media Type) status code indicates that the
         // origin server is refusing to service the request because the content is in a format
         // not supported by this method on the target resource."
@@ -325,7 +325,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 6.6.1: Date header ====================
 
-    "Section 6.6.1 - Server MUST send Date header" in run {
+    "Section 6.6.1 - Server MUST send Date header" in runNotNative {
         val route = HttpRoute.getRaw("date").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("hello"))
         withServer(ep) { port =>
@@ -341,7 +341,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 8.3: Content-Type ====================
 
-    "Section 8.3 - Content-Type text/plain for text body" in run {
+    "Section 8.3 - Content-Type text/plain for text body" in runNotNative {
         val route = HttpRoute.getRaw("text").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("hello"))
         withServer(ep) { port =>
@@ -352,7 +352,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 8.3 - Content-Type application/json for JSON body" in run {
+    "Section 8.3 - Content-Type application/json for JSON body" in runNotNative {
         val route = HttpRoute.getRaw("json").response(_.bodyJson[User])
         val ep    = route.handler(_ => HttpResponse.ok(User(1, "Alice")))
         withServer(ep) { port =>
@@ -365,7 +365,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 8.6: Content-Length ====================
 
-    "Section 8.6 - Content-Length present for buffered responses" in run {
+    "Section 8.6 - Content-Length present for buffered responses" in runNotNative {
         val route = HttpRoute.getRaw("sized").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("twelve chars"))
         withServer(ep) { port =>
@@ -379,7 +379,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.6.1: 500 Internal Server Error ====================
 
-    "Section 15.6.1 - 500 error MUST NOT leak internal details" in run {
+    "Section 15.6.1 - 500 error MUST NOT leak internal details" in runNotNative {
         val route = HttpRoute.getRaw("crash").response(_.bodyText)
         val ep    = route.handler(_ => throw new RuntimeException("secret internal error"))
         withServer(ep) { port =>
@@ -395,7 +395,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.4: Client redirect following ====================
 
-    "Section 15.4.4 - 303 See Other MUST change method to GET" in run {
+    "Section 15.4.4 - 303 See Other MUST change method to GET" in runNotNative {
         // RFC 9110 §15.4.4: "A client that makes an automatic redirection request to the new URI
         // MUST send a request with a method of GET (or HEAD)."
         // NOTE: Implementation currently preserves original method for ALL redirects.
@@ -425,7 +425,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 15.4.8 - 307 MUST preserve method and body" in run {
+    "Section 15.4.8 - 307 MUST preserve method and body" in runNotNative {
         // RFC 9110 §15.4.8: "The user agent MUST NOT change the request method if it performs
         // an automatic redirection to that URI."
         val postRoute1 = HttpRoute.postRaw("old").request(_.bodyText).response(_.bodyText)
@@ -448,7 +448,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 15.4.9 - 308 MUST preserve method and body" in run {
+    "Section 15.4.9 - 308 MUST preserve method and body" in runNotNative {
         // RFC 9110 §15.4.9: "This status code is similar to 301 (Moved Permanently), except that
         // it does not allow changing the request method from POST to GET."
         val postRoute1 = HttpRoute.postRaw("old").request(_.bodyText).response(_.bodyText)
@@ -471,7 +471,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 15.4 - Redirect loop hits maxRedirects" in run {
+    "Section 15.4 - Redirect loop hits maxRedirects" in runNotNative {
         val route = HttpRoute.getRaw("loop").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.halt(HttpResponse(HttpStatus.Found).setHeader("Location", "/loop")))
         withServer(ep) { port =>
@@ -486,7 +486,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 15.4 - Relative Location header resolved against request" in run {
+    "Section 15.4 - Relative Location header resolved against request" in runNotNative {
         // RFC 9110 §15.4: "the Location header field [...] MAY be a relative reference"
         val route1 = HttpRoute.getRaw("old").response(_.bodyText)
         val route2 = HttpRoute.getRaw("new").response(_.bodyText)
@@ -508,7 +508,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.3.1: 413 Content Too Large ====================
 
-    "Section 15.3.1 - 413 response body is readable" in run {
+    "Section 15.3.1 - 413 response body is readable" in runNotNative {
         // RFC 9110 §15.5.14: "The 413 (Content Too Large) status code indicates that the server is
         // refusing to process a request because the request content is larger than the server is
         // willing or able to process."
@@ -533,7 +533,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 9.3.1: GET ====================
 
-    "Section 9.3.1 - GET returns 200 with body" in run {
+    "Section 9.3.1 - GET returns 200 with body" in runNotNative {
         // RFC 9110 §9.3.1: "The GET method requests transfer of a current selected representation
         // for the target resource."
         val route = HttpRoute.getRaw("hello").response(_.bodyText)
@@ -546,7 +546,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 9.3.1 - GET with query parameters" in run {
+    "Section 9.3.1 - GET with query parameters" in runNotNative {
         val route = HttpRoute.getRaw("search")
             .request(_.query[String]("q"))
             .response(_.bodyText)
@@ -561,7 +561,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 9.3.2: HEAD (additional) ====================
 
-    "Section 9.3.2 - HEAD on non-existent resource returns 404" in run {
+    "Section 9.3.2 - HEAD on non-existent resource returns 404" in runNotNative {
         val route = HttpRoute.getRaw("exists").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
@@ -573,7 +573,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 9.3.4: POST (additional) ====================
 
-    "Section 9.3.4 - POST with JSON body round-trip" in run {
+    "Section 9.3.4 - POST with JSON body round-trip" in runNotNative {
         val route = HttpRoute.postRaw("echo")
             .request(_.bodyJson[User])
             .response(_.bodyJson[User])
@@ -590,7 +590,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 9.3.6: PUT ====================
 
-    "Section 9.3.6 - PUT returning 200 OK with body" in run {
+    "Section 9.3.6 - PUT returning 200 OK with body" in runNotNative {
         // RFC 9110 §9.3.6: "If the target resource does have a current representation and that
         // representation is successfully modified [...] the origin server MUST send [...] a 200 (OK)"
         val route = HttpRoute.putRaw("item")
@@ -607,7 +607,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 9.3.6 - PUT returning 201 Created" in run {
+    "Section 9.3.6 - PUT returning 201 Created" in runNotNative {
         // RFC 9110 §9.3.6: "If the target resource does not have a current representation
         // and the PUT successfully creates one, the origin server MUST [...] send a 201 (Created)"
         val route = HttpRoute.putRaw("item")
@@ -629,7 +629,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 9.3.7: OPTIONS (additional) ====================
 
-    "Section 9.3.7 - OPTIONS Allow lists all registered methods" in run {
+    "Section 9.3.7 - OPTIONS Allow lists all registered methods" in runNotNative {
         val getRoute    = HttpRoute.getRaw("multi").response(_.bodyText)
         val postRoute   = HttpRoute.postRaw("multi").request(_.bodyText).response(_.bodyText)
         val putRoute    = HttpRoute.putRaw("multi").request(_.bodyText).response(_.bodyText)
@@ -651,7 +651,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 9.3.7 - OPTIONS response has no body" in run {
+    "Section 9.3.7 - OPTIONS response has no body" in runNotNative {
         val route = HttpRoute.getRaw("res").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
@@ -665,7 +665,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 9.3.3: PATCH ====================
 
-    "Section 9.3.3 - PATCH with body" in run {
+    "Section 9.3.3 - PATCH with body" in runNotNative {
         val route = HttpRoute.patchRaw("item")
             .request(_.bodyJson[User])
             .response(_.bodyJson[User])
@@ -682,7 +682,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.4: Redirects (additional) ====================
 
-    "Section 15.4.2 - 301 Moved Permanently redirect followed" in run {
+    "Section 15.4.2 - 301 Moved Permanently redirect followed" in runNotNative {
         val route1 = HttpRoute.getRaw("old-path").response(_.bodyText)
         val route2 = HttpRoute.getRaw("new-path").response(_.bodyText)
         val ep1 = route1.handler(_ =>
@@ -701,7 +701,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 15.4.3 - 302 Found redirect followed" in run {
+    "Section 15.4.3 - 302 Found redirect followed" in runNotNative {
         val route1 = HttpRoute.getRaw("temp").response(_.bodyText)
         val route2 = HttpRoute.getRaw("target").response(_.bodyText)
         val ep1 = route1.handler(_ =>
@@ -720,7 +720,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 15.4 - Client followRedirects=false stops redirect" in run {
+    "Section 15.4 - Client followRedirects=false stops redirect" in runNotNative {
         val route1 = HttpRoute.getRaw("redir").response(_.bodyText)
         val route2 = HttpRoute.getRaw("dest").response(_.bodyText)
         val ep1    = route1.handler(_ => HttpResponse.halt(HttpResponse.redirect("/dest")))
@@ -739,7 +739,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 15.4 - maxRedirects=0 prevents any redirect" in run {
+    "Section 15.4 - maxRedirects=0 prevents any redirect" in runNotNative {
         val route1 = HttpRoute.getRaw("r").response(_.bodyText)
         val route2 = HttpRoute.getRaw("dest").response(_.bodyText)
         val ep1    = route1.handler(_ => HttpResponse.halt(HttpResponse.redirect("/dest")))
@@ -758,7 +758,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.5.5: 404 Not Found ====================
 
-    "Section 15.5.5 - 404 Not Found for unknown path" in run {
+    "Section 15.5.5 - 404 Not Found for unknown path" in runNotNative {
         val route = HttpRoute.getRaw("exists").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
@@ -770,7 +770,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.5.6: 405 (additional) ====================
 
-    "Section 15.5.6 - 405 Allow lists all registered methods for path" in run {
+    "Section 15.5.6 - 405 Allow lists all registered methods for path" in runNotNative {
         val getRoute  = HttpRoute.getRaw("resource2").response(_.bodyText)
         val postRoute = HttpRoute.postRaw("resource2").request(_.bodyText).response(_.bodyText)
         val getEp     = getRoute.handler(_ => HttpResponse.ok("get"))
@@ -789,7 +789,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 8.3: Content-Type (additional) ====================
 
-    "Section 8.3 - Content-Type application/octet-stream for binary body" in run {
+    "Section 8.3 - Content-Type application/octet-stream for binary body" in runNotNative {
         val route = HttpRoute.getRaw("bin").response(_.bodyBinary)
         val ep    = route.handler(_ => HttpResponse.ok(Span.fromUnsafe(Array[Byte](1, 2, 3))))
         withServer(ep) { port =>
@@ -800,7 +800,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 8.3 - Handler-set Content-Type preserved" in run {
+    "Section 8.3 - Handler-set Content-Type preserved" in runNotNative {
         val route = HttpRoute.getRaw("custom-ct").response(_.bodyText)
         val ep = route.handler(_ =>
             HttpResponse.ok("<html>hi</html>").setHeader("Content-Type", "text/html")
@@ -815,7 +815,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 6.6.1: Date (additional) ====================
 
-    "Section 6.6.1 - Date header present on error responses" in run {
+    "Section 6.6.1 - Date header present on error responses" in runNotNative {
         val route = HttpRoute.getRaw("exists2").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
@@ -829,7 +829,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 8.6: Content-Length (additional) ====================
 
-    "Section 8.6 - Content-Length is 0 for empty body" in run {
+    "Section 8.6 - Content-Length is 0 for empty body" in runNotNative {
         val route = HttpRoute.getRaw("empty-body").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok(""))
         withServer(ep) { port =>
@@ -841,7 +841,7 @@ class Rfc9110Test extends Test:
         }
     }
 
-    "Section 8.6 - Content-Length matches actual bytes for UTF-8" in run {
+    "Section 8.6 - Content-Length matches actual bytes for UTF-8" in runNotNative {
         // "café" = 5 chars but 6 bytes in UTF-8 (é = 2 bytes)
         val route = HttpRoute.getRaw("utf8").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("café"))
@@ -857,7 +857,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.6.1: 500 (additional) ====================
 
-    "Section 15.6.1 - 500 response has valid Content-Type" in run {
+    "Section 15.6.1 - 500 response has valid Content-Type" in runNotNative {
         val route = HttpRoute.getRaw("err").response(_.bodyText)
         val ep    = route.handler(_ => throw new RuntimeException("boom"))
         withServer(ep) { port =>
@@ -871,7 +871,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.5.16: 415 (additional) ====================
 
-    "Section 15.5.16 - text Content-Type to JSON endpoint returns 415" in run {
+    "Section 15.5.16 - text Content-Type to JSON endpoint returns 415" in runNotNative {
         val route = HttpRoute.postRaw("json-ep2")
             .request(_.bodyJson[User])
             .response(_.bodyText)
@@ -894,7 +894,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.5.1: 400 Bad Request ====================
 
-    "Section 15.5.1 - 400 for malformed path param" in run {
+    "Section 15.5.1 - 400 for malformed path param" in runNotNative {
         val route = HttpRoute.getRaw("items" / Capture[Int]("id")).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok(s"id=${req.fields.id}"))
         withServer(ep) { port =>
@@ -909,7 +909,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.2.1: 200 OK ====================
 
-    "Section 15.2.1 - 200 OK response with JSON body" in run {
+    "Section 15.2.1 - 200 OK response with JSON body" in runNotNative {
         val route = HttpRoute.getRaw("user").response(_.bodyJson[User])
         val ep    = route.handler(_ => HttpResponse.ok(User(1, "Alice")))
         withServer(ep) { port =>
@@ -922,7 +922,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.2.2: 201 Created ====================
 
-    "Section 15.2.2 - 201 Created with Location header" in run {
+    "Section 15.2.2 - 201 Created with Location header" in runNotNative {
         val route = HttpRoute.postRaw("items")
             .request(_.bodyText)
             .response(_.bodyText)
@@ -942,7 +942,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.2.3: 202 Accepted ====================
 
-    "Section 15.2.3 - 202 Accepted for async processing" in run {
+    "Section 15.2.3 - 202 Accepted for async processing" in runNotNative {
         val route = HttpRoute.postRaw("jobs")
             .request(_.bodyText)
             .response(_.bodyText)
@@ -958,7 +958,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.5.4: 403 Forbidden ====================
 
-    "Section 15.5.4 - 403 Forbidden response" in run {
+    "Section 15.5.4 - 403 Forbidden response" in runNotNative {
         val route = HttpRoute.getRaw("secret").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.halt(HttpResponse.forbidden))
         withServer(ep) { port =>
@@ -970,7 +970,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.5.10: 409 Conflict ====================
 
-    "Section 15.5.10 - 409 Conflict response" in run {
+    "Section 15.5.10 - 409 Conflict response" in runNotNative {
         val route = HttpRoute.getRaw("item-conflict").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.halt(HttpResponse.conflict))
         withServer(ep) { port =>
@@ -982,7 +982,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.6.4: 503 Service Unavailable ====================
 
-    "Section 15.6.4 - 503 Service Unavailable response" in run {
+    "Section 15.6.4 - 503 Service Unavailable response" in runNotNative {
         val route = HttpRoute.getRaw("down").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.halt(HttpResponse.serviceUnavailable))
         withServer(ep) { port =>
@@ -994,7 +994,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.3.4: 303 See Other (additional) ====================
 
-    "Section 15.4.4 - 303 from DELETE changes to GET" in run {
+    "Section 15.4.4 - 303 from DELETE changes to GET" in runNotNative {
         // RFC 9110 §15.4.4: applies to any method, not just POST
         val deleteRoute = HttpRoute.deleteRaw("item-del").response(_.bodyText)
         val getRoute    = HttpRoute.getRaw("item-status").response(_.bodyText)
@@ -1020,7 +1020,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Section 15.4 - Redirect with absolute URL ====================
 
-    "Section 15.4 - Redirect with absolute URL in Location" in run {
+    "Section 15.4 - Redirect with absolute URL in Location" in runNotNative {
         val route1 = HttpRoute.getRaw("abs-redir").response(_.bodyText)
         val route2 = HttpRoute.getRaw("abs-dest").response(_.bodyText)
         val ep2    = route2.handler(_ => HttpResponse.ok("absolute destination"))
@@ -1045,7 +1045,7 @@ class Rfc9110Test extends Test:
 
     // ==================== Custom response headers ====================
 
-    "Section 8.1 - Custom response headers preserved" in run {
+    "Section 8.1 - Custom response headers preserved" in runNotNative {
         val route = HttpRoute.getRaw("custom-hdr").response(_.bodyText)
         val ep = route.handler(_ =>
             HttpResponse.ok("ok")

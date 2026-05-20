@@ -9,8 +9,8 @@ import kyo.*
   */
 object WebhookRelay extends KyoApp:
 
-    case class Webhook(id: Int, source: String, event: String, payload: String, receivedAt: String) derives Json
-    case class WebhookInput(source: String, event: String, payload: String) derives Json
+    case class Webhook(id: Int, source: String, event: String, payload: String, receivedAt: String) derives Schema
+    case class WebhookInput(source: String, event: String, payload: String) derives Schema
 
     val serverFilter = HttpFilter.server.logging
         .andThen(HttpFilter.server.securityHeaders(

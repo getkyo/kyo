@@ -15,9 +15,9 @@ private[kyo] object FlowLint:
 
     def duplicateNames(flow: Flow[?, ?, ?]): Seq[Warning] =
         val visitor = new CollectVisitor[(String, String)]:
-            override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) =
+            override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                 Chunk((name, frame.snippetShort))
-            override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) =
+            override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                 Chunk((name, frame.snippetShort))
             override def onStep(name: String, frame: Frame, meta: Flow.Meta) =
                 Chunk((name, frame.snippetShort))
@@ -53,10 +53,10 @@ private[kyo] object FlowLint:
 
     def nodeNames(flow: Flow[?, ?, ?]): Seq[String] =
         val visitor = new CollectVisitor[String]:
-            override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V])  = Chunk(name)
-            override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) = Chunk(name)
-            override def onStep(name: String, frame: Frame, meta: Flow.Meta)                             = Chunk(name)
-            override def onSleep(name: String, duration: Duration, frame: Frame, meta: Flow.Meta)        = Chunk(name)
+            override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])  = Chunk(name)
+            override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = Chunk(name)
+            override def onStep(name: String, frame: Frame, meta: Flow.Meta)                               = Chunk(name)
+            override def onSleep(name: String, duration: Duration, frame: Frame, meta: Flow.Meta)          = Chunk(name)
             override def onDispatch(name: String, branches: Seq[Flow.BranchInfo], frame: Frame, meta: Flow.Meta) =
                 Chunk(name)
             override def onLoop(name: String, frame: Frame, meta: Flow.Meta)                              = Chunk(name)
@@ -67,20 +67,20 @@ private[kyo] object FlowLint:
 
     def inputNames(flow: Flow[?, ?, ?]): Seq[String] =
         val visitor = new CollectVisitor[String]:
-            override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) = Chunk(name)
+            override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = Chunk(name)
         FlowFold(flow)(visitor).toSeq
     end inputNames
 
     def inputMetas(flow: Flow[?, ?, ?]): Seq[InputMeta] =
         val visitor = new CollectVisitor[InputMeta]:
-            override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) =
-                Chunk(InputMeta(name, Tag[V].erased, summon[Json[V]].erased, frame))
+            override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
+                Chunk(InputMeta(name, Tag[V].erased, summon[Schema[V]].asInstanceOf[Schema[Any]], frame))
         FlowFold(flow)(visitor).toSeq
     end inputMetas
 
     def outputNames(flow: Flow[?, ?, ?]): Seq[String] =
         val visitor = new CollectVisitor[String]:
-            override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) = Chunk(name)
+            override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = Chunk(name)
             override def onDispatch(name: String, branches: Seq[Flow.BranchInfo], frame: Frame, meta: Flow.Meta) =
                 Chunk(name)
             override def onLoop(name: String, frame: Frame, meta: Flow.Meta)                              = Chunk(name)

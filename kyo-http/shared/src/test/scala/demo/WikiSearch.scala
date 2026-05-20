@@ -9,19 +9,19 @@ import kyo.*
 object WikiSearch extends KyoApp:
 
     // Wikipedia API response models
-    case class WikiSearchResponse(query: WikiQuery) derives Json
-    case class WikiQuery(search: List[WikiSearchResult]) derives Json
-    case class WikiSearchResult(title: String, snippet: String, wordcount: Int, pageid: Int) derives Json
+    case class WikiSearchResponse(query: WikiQuery) derives Schema
+    case class WikiQuery(search: List[WikiSearchResult]) derives Schema
+    case class WikiSearchResult(title: String, snippet: String, wordcount: Int, pageid: Int) derives Schema
 
     case class WikiSummaryResponse(title: String, extract: String, description: Option[String], thumbnail: Option[WikiThumbnail])
-        derives Json
-    case class WikiThumbnail(source: String, width: Int, height: Int) derives Json
+        derives Schema
+    case class WikiThumbnail(source: String, width: Int, height: Int) derives Schema
 
     // Our simplified response models
-    case class SearchResult(title: String, snippet: String, wordCount: Int, url: String) derives Json
-    case class SearchResponse(query: String, results: List[SearchResult]) derives Json
-    case class Summary(title: String, extract: String, description: String, thumbnailUrl: String) derives Json
-    case class ApiError(error: String) derives Json
+    case class SearchResult(title: String, snippet: String, wordCount: Int, url: String) derives Schema
+    case class SearchResponse(query: String, results: List[SearchResult]) derives Schema
+    case class Summary(title: String, extract: String, description: String, thumbnailUrl: String) derives Schema
+    case class ApiError(error: String) derives Schema
 
     def searchWikipedia(query: String, limit: Int): SearchResponse < (Async & Abort[HttpException]) =
         val url =

@@ -14,8 +14,8 @@ jobs:
   publish:
     if: |
       (github.event_name == 'push') ||
-      (github.event_name == 'issue_comment' && 
-       github.event.issue.pull_request && 
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
        github.event.comment.body == '/release')
     runs-on: ubuntu-latest
     env:
@@ -26,7 +26,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      - uses: coursier/cache-action@v8.1.0
+      - uses: coursier/cache-action@v8.1.1
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -36,33 +36,33 @@ jobs:
           jvm: corretto:24
           apps: sbt
       - name: Publish JVM
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           max_attempts: 3
-          timeout_minutes: 15
-          command: sbt -Dplatform=JVM "ci-release"
+          timeout_minutes: 30
+          command: rm -rf target/sona-staging && sbt -Dplatform=JVM "ci-release"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
       - name: Publish JS
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           max_attempts: 3
-          timeout_minutes: 15
-          command: sbt -Dplatform=JS "ci-release"
+          timeout_minutes: 30
+          command: rm -rf target/sona-staging && sbt -Dplatform=JS "ci-release"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
       - name: Publish Native
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           max_attempts: 3
-          timeout_minutes: 15
-          command: sbt -Dplatform=Native "ci-release"
+          timeout_minutes: 30
+          command: rm -rf target/sona-staging && sbt -Dplatform=Native "ci-release"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}

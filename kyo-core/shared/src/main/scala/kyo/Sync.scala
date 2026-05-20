@@ -67,6 +67,27 @@ object Sync:
     inline def ensure[A, S](inline f: => Any < (Sync & Abort[Throwable]))(v: => A < S)(using inline frame: Frame): A < (Sync & S) =
         ensure(_ => f)(v)
 
+    /** Acquires a resource, uses it, and releases it after use.
+      *
+      * This is a lightweight bracket-style operator for Sync resources. The release action is registered only after acquisition succeeds
+      * and is guaranteed to run after the use computation completes or panics.
+      *
+      * @param acquire
+      *   The resource acquisition computation.
+      * @param release
+      *   The release action for a successfully acquired resource.
+      * @param use
+      *   The computation that uses the acquired resource.
+      * @return
+      *   The result of the use computation.
+      */
+    def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
+        release: A => Any < (Sync & Abort[Throwable])
+    )[B, S2](use: A => B < S2)(using Frame): B < (Sync & S1 & S2) =
+        Sync.defer(acquire).map { resource =>
+            Sync.ensure(release(resource))(use(resource))
+        }
+
     /** Ensures that a finalizer is run after the computation, regardless of success or failure.
       *
       * This version provides the finalizer with information about whether the computation completed successfully or failed with an

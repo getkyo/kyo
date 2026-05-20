@@ -1,40 +1,38 @@
 package examples.ledger.api
 
 import examples.ledger.*
-import java.time.Instant
 import kyo.*
-import sttp.model.StatusCode
-import sttp.tapir.*
-import sttp.tapir.generic.auto.*
-import sttp.tapir.json.zio.*
-import zio.json.JsonEncoder
+import kyo.HttpPath.*
 
 object Endpoints:
 
-    val init: Unit < (Env[Handler] & Routes) = direct {
+    private val transactionRoute =
+        HttpRoute.postRaw("clientes" / Capture[Int]("id") / "transacoes")
+            .request(_.bodyJson[Transaction])
+            .response(_.bodyJson[Processed])
 
-        val handler = Env.get[Handler].now
+    private val statementRoute =
+        HttpRoute.getRaw("clientes" / Capture[Int]("id") / "extrato")
+            .response(_.bodyJson[Statement])
 
-        Routes.add(
-            _.post
-                .in("clientes" / path[Int]("id") / "transacoes")
-                .errorOut(statusCode)
-                .in(jsonBody[Transaction])
-                .out(jsonBody[Processed])
-        )(handler.transaction).now
+    private val healthRoute =
+        HttpRoute.getRaw("health").response(_.bodyText)
 
-        Routes.add(
-            _.get
-                .in("clientes" / path[Int]("id") / "extrato")
-                .errorOut(statusCode)
-                .out(jsonBody[Statement])
-        )(handler.statement).now
+    val init: Seq[HttpHandler[?, ?, ?]] < Env[Handler] =
+        Env.use[Handler] { handler =>
+            val transactionHandler = transactionRoute.handler { req =>
+                handler.transaction(req.fields.id, req.fields.body).map(HttpResponse.ok(_))
+            }
 
-        Routes.add(
-            _.get
-                .in("health")
-                .out(stringBody)
-        )(_ => "ok").now
-    }
+            val statementHandler = statementRoute.handler { req =>
+                handler.statement(req.fields.id).map(HttpResponse.ok(_))
+            }
+
+            val healthHandler = healthRoute.handler { _ =>
+                HttpResponse.ok("ok")
+            }
+
+            Seq(transactionHandler, statementHandler, healthHandler)
+        }
 
 end Endpoints

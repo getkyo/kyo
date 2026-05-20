@@ -9,8 +9,8 @@ import kyo.*
   */
 object UptimeMonitor extends KyoApp:
 
-    case class HealthCheck(url: String, status: Int, healthy: Boolean, latencyMs: Long) derives Json
-    case class CheckRound(timestamp: String, checks: List[HealthCheck]) derives Json
+    case class HealthCheck(url: String, status: Int, healthy: Boolean, latencyMs: Long) derives Schema
+    case class CheckRound(timestamp: String, checks: List[HealthCheck]) derives Schema
 
     val targets = Seq(
         "https://www.google.com",

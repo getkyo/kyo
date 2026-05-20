@@ -91,26 +91,29 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         removeInterruptLoop(this)
     end removeInterrupt
 
+    def preInterrupt(): Boolean = true
+
     final def mask(): IOPromise[E, A] =
         val p = new IOPromise[E, A]:
-            override def interrupt(error: Error[E]): Boolean = false
+            override def preInterrupt() = false
         onComplete(p.completeDiscard)
         p
     end mask
 
-    def interruptDiscard(error: Error[E]): Unit =
+    inline def interruptDiscard(inline error: => Error[E]): Unit =
         discard(interrupt(error))
 
-    def interrupt(error: Error[E]): Boolean =
-        @tailrec def interruptLoop(promise: IOPromise[E, A]): Boolean =
+    inline def interrupt(inline error: => Error[E]): Boolean =
+        @tailrec def interruptLoop(promise: IOPromise[E, A], _error: Maybe[Error[E]]): Boolean =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
-                    promise.interrupt(p, error) || interruptLoop(promise)
+                    val e = _error.getOrElse(error)
+                    promise.interrupt(p, e) || interruptLoop(promise, Present(e))
                 case l: Linked[E, A] @unchecked =>
-                    interruptLoop(l.p)
+                    interruptLoop(l.p, _error)
                 case _ =>
                     false
-        interruptLoop(this)
+        preInterrupt() && interruptLoop(this, Absent)
     end interrupt
 
     final private def compress(): IOPromise[E, A] =
@@ -179,6 +182,16 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
     end onInterrupt
 
     protected def onComplete(): Unit = {}
+
+    /** Resets a completed promise back to Pending.Empty for reuse. Returns true if successful, false if not completed or CAS fails. Only
+      * valid when no callbacks are registered (i.e., the promise was used as a single-owner notification, not with onComplete listeners).
+      * Protected — only subclasses (e.g., ReadPump, WritePump) should call this.
+      */
+    protected def becomeAvailable(): Boolean =
+        state match
+            case _: Pending[?, ?] => false
+            case _: Linked[?, ?]  => false
+            case v                => compareAndSet(v, Pending())
 
     final private def interrupt(p: Pending[E, A], v: Error[E]): Boolean =
         compareAndSet(p, v) && {

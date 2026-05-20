@@ -120,7 +120,7 @@ final class Scheduler(
 
     private val top = new Reporter(status, enableTopJMX, enableTopConsoleMs, timer)
 
-    private val blockingMonitor = new BlockingMonitor(workers, () => currentWorkers, maxWorkers, timerExecutor)
+    private[scheduler] val blockingMonitor = new BlockingMonitor(workers, () => currentWorkers, maxWorkers, timerExecutor)
 
     /** Notifies the blocking monitor that a fiber was interrupted, triggering an immediate scan. */
     def notifyInterrupt(): Unit = blockingMonitor.wake()

@@ -311,61 +311,67 @@ object Clock:
       *   The result of running the effect with controlled time
       */
     def withTimeControl[A, S](f: TimeControl => A < S)(using Frame): A < (Sync & S) =
-        Sync.Unsafe.defer {
-            val controlled =
-                new Unsafe with TimeControl:
-                    @volatile var current = Instant.Epoch
+        Sync.Unsafe.withLocal(local) { clock =>
+            clock.unsafe match
+                case control: TimeControl =>
+                    f(control)
+                case _ =>
+                    Sync.Unsafe.defer {
+                        val controlled =
+                            new Unsafe with TimeControl:
+                                @volatile var current = Instant.Epoch
 
-                    case class Task(deadline: Instant) extends IOPromise[Nothing, Unit < Any]
-                    val queue = new PriorityQueue[Task](using Ordering.fromLessThan((a, b) => b.deadline < a.deadline))
+                                case class Task(deadline: Instant) extends IOPromise[Nothing, Unit < Any]
+                                val queue = new PriorityQueue[Task](using Ordering.fromLessThan((a, b) => b.deadline < a.deadline))
 
-                    def now()(using AllowUnsafe) = current
+                                def now()(using AllowUnsafe) = current
 
-                    def nowMonotonic()(using AllowUnsafe) = current.toDuration
+                                def nowMonotonic()(using AllowUnsafe) = current.toDuration
 
-                    def sleep(duration: Duration): Fiber.Unsafe[Unit, Any] =
-                        val task = new Task(current + duration)
-                        queue.synchronized {
-                            queue.enqueue(task)
-                        }
-                        Promise.Unsafe.fromIOPromise(task)
-                    end sleep
+                                def sleep(duration: Duration): Fiber.Unsafe[Unit, Any] =
+                                    val task = new Task(current + duration)
+                                    queue.synchronized {
+                                        queue.enqueue(task)
+                                    }
+                                    Promise.Unsafe.fromIOPromise(task)
+                                end sleep
 
-                    def set(now: Instant) = set(now, 100.millis)
+                                def set(now: Instant) = set(now, 100.millis)
 
-                    def set(now: Instant, wallClockDelay: Duration) =
-                        Sync.defer {
-                            current = now
-                            tick()
-                            Clock.live.unsafe.sleep(wallClockDelay).safe.get
-                        }
+                                def set(now: Instant, wallClockDelay: Duration) =
+                                    Sync.defer {
+                                        current = now
+                                        tick()
+                                        Clock.live.unsafe.sleep(wallClockDelay).safe.get
+                                    }
 
-                    def advance(duration: Duration) = advance(duration, duration.min(100.millis))
+                                def advance(duration: Duration) = advance(duration, duration.min(100.millis))
 
-                    def advance(duration: Duration, wallClockDelay: Duration) =
-                        Sync.defer {
-                            current = current + duration
-                            tick()
-                            Clock.live.unsafe.sleep(wallClockDelay).safe.get
-                        }
+                                def advance(duration: Duration, wallClockDelay: Duration) =
+                                    Sync.defer {
+                                        current = current + duration
+                                        tick()
+                                        Clock.live.unsafe.sleep(wallClockDelay).safe.get
+                                    }
 
-                    def tick(): Unit =
-                        queue.synchronized {
-                            queue.headOption match
-                                case Some(task) if task.deadline <= current =>
-                                    Maybe(queue.dequeue())
-                                case Some(task) if task.done() =>
-                                    discard(queue.dequeue())
-                                    Maybe.empty
-                                case _ =>
-                                    Maybe.empty
-                        } match
-                            case Present(task) =>
-                                task.completeDiscard(Result.succeed(()))
-                                tick()
-                            case Absent =>
-                                ()
-            let(Clock(controlled))(f(controlled))
+                                def tick(): Unit =
+                                    queue.synchronized {
+                                        queue.headOption match
+                                            case Some(task) if task.deadline <= current =>
+                                                Maybe(queue.dequeue())
+                                            case Some(task) if task.done() =>
+                                                discard(queue.dequeue())
+                                                Maybe.empty
+                                            case _ =>
+                                                Maybe.empty
+                                    } match
+                                        case Present(task) =>
+                                            task.completeDiscard(Result.succeed(()))
+                                            tick()
+                                        case Absent =>
+                                            ()
+                        let(Clock(controlled))(f(controlled))
+                    }
         }
     end withTimeControl
 
@@ -724,9 +730,9 @@ object Clock:
                     Promise.Unsafe.fromIOPromise {
                         new IOPromise[Any, Unit < Any] with Callable[Unit]:
                             val task = executor.schedule(this, duration.toNanos, TimeUnit.NANOSECONDS)
-                            override def interrupt(error: Result.Error[Any]): Boolean =
+                            override def preInterrupt() =
                                 discard(task.cancel(true))
-                                super.interrupt(error)
+                                true
                             def call(): Unit = completeDiscard(Result.succeed(()))
                     }
                 end sleep

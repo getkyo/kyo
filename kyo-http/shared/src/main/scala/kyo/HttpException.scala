@@ -2,21 +2,28 @@ package kyo
 
 import kyo.*
 
-/** Base class for all HTTP-related errors, organized into four categories by failure mode.
+/** Base class for all HTTP-related errors, organized into four sealed subcategories by failure mode.
   *
-  * All exception constructors strip query parameters from URLs before storing them, ensuring sensitive data (API keys, tokens) is never
-  * retained in exception messages or stack traces.
+  * The four subcategories map to distinct failure modes:
+  *   - [[kyo.HttpConnectionException]] — transport-level failures before a response is received (connection refused, pool exhausted)
+  *   - [[kyo.HttpRequestException]] — protocol-level failures during request processing (timeout, redirect loop, non-success status)
+  *   - [[kyo.HttpServerException]] — server-side operational failures (bind error, unhandled handler error)
+  *   - [[kyo.HttpDecodeException]] — parsing and deserialization failures (URL parse, field decode, JSON decode)
   *
+  * All exception constructors strip query parameters from URLs before storing them, so sensitive data embedded in query strings (API keys,
+  * tokens, session identifiers) is never retained in exception messages or stack traces.
+  *
+  * Client operations fail with `Abort[HttpException]` as their error channel. Match on the specific subtype to distinguish recoverable
+  * transport failures (e.g., retry on `HttpConnectionException`) from unrecoverable protocol errors.
+  *
+  * @see
+  *   [[kyo.HttpClient]] Client operations that can abort with `HttpException`
   * @see
   *   [[kyo.HttpConnectionException]] Transport-level failures
   * @see
   *   [[kyo.HttpRequestException]] Protocol-level failures
   * @see
-  *   [[kyo.HttpServerException]] Server-side operational failures
-  * @see
   *   [[kyo.HttpDecodeException]] Parsing and deserialization failures
-  * @see
-  *   [[kyo.HttpClient]] Client operations abort with `Abort[HttpException]`
   */
 sealed abstract class HttpException(message: Text, cause: Text | Throwable = "")(using Frame)
     extends KyoException(message, cause)
@@ -49,6 +56,12 @@ case class HttpConnectException(host: String, port: Int, cause: Throwable)(using
            |
            |  Verify the server is running and reachable.""".stripMargin,
         cause
+    )
+
+/** TCP connect exceeded the configured timeout. */
+case class HttpConnectTimeoutException(host: String, port: Int, timeout: Duration)(using Frame)
+    extends HttpConnectionException(
+        s"""Connection to $host:$port timed out after $timeout."""
     )
 
 /** All connections to a host are in use. Includes the Frame where the client was created for debugging. */
@@ -109,15 +122,17 @@ object HttpRedirectLoopException:
 end HttpRedirectLoopException
 
 /** Non-success status code when the response body can't be decoded. */
-case class HttpStatusException private (status: HttpStatus, method: String, url: String)(using Frame)
+case class HttpStatusException private (status: HttpStatus, method: String, url: String, body: Maybe[String])(using Frame)
     extends HttpRequestException(
-        s"""${HttpException.showRequest(method, url)} returned ${status.code} (${status.name}).
-           |
-           |  The response body could not be decoded into the route's expected type.""".stripMargin
+        s"${HttpException.showRequest(method, url)} returned ${status.code} (${status.name})." +
+            body.map(b => s" Body: ${if b.length > 500 then b.take(500) + "..." else b}").getOrElse("")
     )
 object HttpStatusException:
     def apply(status: HttpStatus, method: String, url: String)(using Frame): HttpStatusException =
-        new HttpStatusException(status, method, HttpException.stripQuery(url))
+        new HttpStatusException(status, method, HttpException.stripQuery(url), Absent)
+    def apply(status: HttpStatus, method: String, url: String, body: String)(using Frame): HttpStatusException =
+        new HttpStatusException(status, method, HttpException.stripQuery(url), Present(body))
+end HttpStatusException
 
 // --- Server (server-side operational failures) ---
 
@@ -292,3 +307,42 @@ case class HttpMissingBoundaryException private (method: String, url: String)(us
 object HttpMissingBoundaryException:
     def apply(method: String, url: String)(using Frame): HttpMissingBoundaryException =
         new HttpMissingBoundaryException(method, HttpException.stripQuery(url))
+
+// --- HttpWebSocket failures ---
+
+/** HttpWebSocket-specific failures.
+  *
+  * @see
+  *   [[kyo.HttpWebSocketHandshakeException]] Server rejected the HttpWebSocket upgrade
+  */
+sealed abstract class HttpWebSocketException(message: Text, cause: Text | Throwable = "")(using Frame)
+    extends HttpException(message, cause)
+
+/** HttpWebSocket handshake rejected by the server. */
+case class HttpWebSocketHandshakeException private (url: String, status: Int)(using Frame)
+    extends HttpWebSocketException(
+        s"""HttpWebSocket handshake failed for $url.
+           |
+           |  Server responded with status $status.""".stripMargin
+    )
+object HttpWebSocketHandshakeException:
+    def apply(url: String, status: Int)(using Frame): HttpWebSocketHandshakeException =
+        new HttpWebSocketHandshakeException(HttpException.stripQuery(url), status)
+
+// --- Protocol wire-level failures ---
+
+/** HTTP wire protocol parse error (malformed request line, status line, headers, or body framing). */
+case class HttpProtocolException private[kyo] (detail: String)(using Frame)
+    extends HttpDecodeException(
+        s"HTTP protocol error: $detail"
+    )
+
+/** Request body exceeds the configured maximum size (RFC 9110 §15.5.14). */
+case class HttpPayloadTooLargeException private[kyo] (bodySize: Int, maxSize: Int)(using Frame)
+    extends HttpDecodeException(
+        s"Request body size $bodySize exceeds maximum allowed $maxSize"
+    )
+
+/** Connection closed cleanly (EOF). Not an error — normal keep-alive termination. */
+case class HttpConnectionClosedException private[kyo] ()(using Frame)
+    extends HttpDecodeException("Connection closed")

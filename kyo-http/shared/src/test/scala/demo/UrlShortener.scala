@@ -9,10 +9,10 @@ import kyo.*
   */
 object UrlShortener extends KyoApp:
 
-    case class ShortenRequest(url: String) derives Json
-    case class ShortenResponse(code: String, originalUrl: String) derives Json
-    case class LinkStats(code: String, url: String, visits: Int) derives Json
-    case class ApiError(error: String) derives Json
+    case class ShortenRequest(url: String) derives Schema
+    case class ShortenResponse(code: String, originalUrl: String) derives Schema
+    case class LinkStats(code: String, url: String, visits: Int) derives Schema
+    case class ApiError(error: String) derives Schema
 
     case class LinkEntry(url: String, visits: Int)
     case class Store(links: Map[String, LinkEntry], nextId: Int)

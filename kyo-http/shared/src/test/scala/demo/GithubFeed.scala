@@ -10,12 +10,12 @@ import kyo.*
 object GithubFeed extends KyoApp:
 
     // GitHub event model (subset of fields)
-    case class GithubEvent(id: String, `type`: String, actor: GithubActor, repo: GithubRepo, created_at: String) derives Json
-    case class GithubActor(login: String) derives Json
-    case class GithubRepo(name: String) derives Json
+    case class GithubEvent(id: String, `type`: String, actor: GithubActor, repo: GithubRepo, created_at: String) derives Schema
+    case class GithubActor(login: String) derives Schema
+    case class GithubRepo(name: String) derives Schema
 
     // Our simplified event for SSE output
-    case class FeedEvent(id: String, kind: String, actor: String, repo: String, time: String) derives Json
+    case class FeedEvent(id: String, kind: String, actor: String, repo: String, time: String) derives Schema
 
     def toFeed(e: GithubEvent): FeedEvent =
         FeedEvent(e.id, e.`type`, e.actor.login, e.repo.name, e.created_at)

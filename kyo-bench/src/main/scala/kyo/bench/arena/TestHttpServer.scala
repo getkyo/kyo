@@ -6,25 +6,41 @@ import io.vertx.core.Vertx
 import io.vertx.core.http.Http2Settings
 import io.vertx.core.http.HttpServer
 import io.vertx.core.http.HttpServerOptions
+import io.vertx.core.json.JsonObject
 import java.io.BufferedReader
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.PrintStream
 import java.io.PrintWriter
 import java.net.HttpURLConnection
+import java.net.ServerSocket
 import java.net.URL
 import scala.util.Success
 import scala.util.Try
 import scala.util.control.NonFatal
 
 object TestHttpServer:
-    val port         = 8888
-    val maxRetries   = 20
+    // Linux CI under load (high parallelism, GC pressure) can take >2s for vertx
+    // to fork the server process AND bind the port. The original 20×100ms = 2s budget
+    // hit Connection-refused failures (build-pr 25611709736 linux-x64/JVM); 100×100ms = 10s
+    // gives enough headroom while keeping fast-path startup snappy when the server is
+    // already responsive (waitForServer returns on the first 200 OK).
+    val maxRetries   = 100
     val retryDelayMs = 100
 
     def log(port: Int, msg: String) = println(s"TestHttpServer(port=$port): $msg")
 
-    def waitForServer(url: String): Boolean =
+    // Each HTTP benchmark forks its own server process; a hardcoded port made those
+    // processes collide (a second bind silently failed, then a process exit left the
+    // survivors' clients with Connection-refused). Allocate a fresh ephemeral port per
+    // server instead.
+    private def freePort(): Int =
+        val socket = new ServerSocket(0)
+        try socket.getLocalPort
+        finally socket.close()
+    end freePort
+
+    def waitForServer(url: String, port: Int): Boolean =
         def tryConnect(): Try[Boolean] = Try {
             val connection = new URL(url).openConnection().asInstanceOf[HttpURLConnection]
             connection.setRequestMethod("GET")
@@ -56,10 +72,12 @@ object TestHttpServer:
     end waitForServer
 
     def start(concurrency: Int): String =
+        val port      = freePort()
         val javaBin   = System.getProperty("java.home") + "/bin/java"
         val classpath = System.getProperty("java.class.path")
-        val command   = List(javaBin, "-cp", classpath, "kyo.bench.arena.TestHttpServer", concurrency.toString)
-        val builder   = new ProcessBuilder(command*)
+        val command =
+            List(javaBin, "-cp", classpath, "kyo.bench.arena.TestHttpServer", concurrency.toString, port.toString)
+        val builder = new ProcessBuilder(command*)
         try
             log(port, "forking")
             val process = builder.start()
@@ -71,7 +89,7 @@ object TestHttpServer:
             redirect(process.getErrorStream, System.err)
 
             val serverUrl = s"http://localhost:$port/ping"
-            if !waitForServer(serverUrl) then
+            if !waitForServer(serverUrl, port) then
                 throw new RuntimeException("Server failed to start")
 
             serverUrl
@@ -98,6 +116,7 @@ object TestHttpServer:
 
     class PingVerticle extends AbstractVerticle:
         override def start(): Unit =
+            val port = config().getInteger("port")
             val serverOptions = new HttpServerOptions()
                 .setMaxInitialLineLength(8192)
                 .setMaxHeaderSize(8192)
@@ -136,9 +155,13 @@ object TestHttpServer:
 
     def main(args: Array[String]): Unit =
         val concurrency = args(0).toInt
+        val port        = args(1).toInt
         log(port, "starting")
-        val vertx   = Vertx.vertx()
-        val options = new DeploymentOptions().setInstances(concurrency)
+        val vertx = Vertx.vertx()
+        val options =
+            new DeploymentOptions()
+                .setInstances(concurrency)
+                .setConfig(new JsonObject().put("port", port))
         vertx.deployVerticle(classOf[PingVerticle], options).andThen { result =>
             if result.succeeded then
                 log(port, s"Deployed ${result.result}")

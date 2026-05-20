@@ -30,7 +30,7 @@ object Log:
         case silent extends Level(60)
     end Level
 
-    val live: Log = Log(Unsafe.ConsoleLogger("kyo.logs", Level.debug))
+    val live: Log = Log(Unsafe.ConsoleLogger("kyo.logs", Level.warn))
 
     private val local = Local.init(live)
 
@@ -108,34 +108,34 @@ object Log:
     object Unsafe:
         case class ConsoleLogger(name: String, level: Level) extends Log.Unsafe:
             inline def trace(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                println(s"TRACE $name -- [${frame.position.show}] $msg")
+                if Level.trace.enabled(level) then println(s"TRACE $name -- [${frame.position.show}] $msg")
 
             inline def trace(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                println(s"TRACE $name -- [${frame.position.show}] $msg $t")
+                if Level.trace.enabled(level) then println(s"TRACE $name -- [${frame.position.show}] $msg $t")
 
             inline def debug(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                println(s"DEBUG $name -- [${frame.position.show}] $msg")
+                if Level.debug.enabled(level) then println(s"DEBUG $name -- [${frame.position.show}] $msg")
 
             inline def debug(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                println(s"DEBUG $name -- [${frame.position.show}] $msg $t")
+                if Level.debug.enabled(level) then println(s"DEBUG $name -- [${frame.position.show}] $msg $t")
 
             inline def info(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                println(s"INFO $name -- [${frame.position.show}] $msg")
+                if Level.info.enabled(level) then println(s"INFO $name -- [${frame.position.show}] $msg")
 
             inline def info(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                println(s"INFO $name -- [${frame.position.show}] $msg $t")
+                if Level.info.enabled(level) then println(s"INFO $name -- [${frame.position.show}] $msg $t")
 
             inline def warn(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                println(s"WARN $name -- [${frame.position.show}] $msg")
+                if Level.warn.enabled(level) then println(s"WARN $name -- [${frame.position.show}] $msg")
 
             inline def warn(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                println(s"WARN $name -- [${frame.position.show}] $msg $t")
+                if Level.warn.enabled(level) then println(s"WARN $name -- [${frame.position.show}] $msg $t")
 
             inline def error(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                println(s"ERROR $name -- [${frame.position.show}] $msg")
+                if Level.error.enabled(level) then println(s"ERROR $name -- [${frame.position.show}] $msg")
 
             inline def error(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                println(s"ERROR $name -- [${frame.position.show}] $msg $t")
+                if Level.error.enabled(level) then println(s"ERROR $name -- [${frame.position.show}] $msg $t")
         end ConsoleLogger
     end Unsafe
 

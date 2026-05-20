@@ -16,7 +16,8 @@ import Record.~
 case class Field[Name <: String, Value](
     name: Name,
     tag: Tag[Value],
-    nested: List[Field[?, ?]] = Nil
+    nested: List[Field[?, ?]] = Nil,
+    default: Maybe[Value] = Maybe.empty
 ):
     /** Extracts this field's value from a record. Requires evidence that `F` contains `Name ~ Value`. */
     def get[F](record: Record[F])(using F <:< (Name ~ Value)): Value =

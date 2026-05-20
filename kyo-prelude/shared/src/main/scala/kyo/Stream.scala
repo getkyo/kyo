@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Tag
+import kyo.debug.Debug
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
 import scala.annotation.publicInBinary
@@ -670,6 +671,76 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
                     end if
                 case (_, _) => Loop.done(curChunk -> Stream(Emit.value(Chunk.empty[VV])))
     end splitAt
+
+    /** Combine with another stream, emitting tuples of the two streams' values. Faster streams will be slowed down to emit with slower
+      * streams. A stream with more values to emit will be halted when the other stream stops emitting values.
+      *
+      * @param other
+      *   Second stream to combine with
+      * @return
+      *   A new stream that produces a tuple of the outputs of the source streams.
+      */
+    final def zip[VV >: V, V2, S2](other: Stream[V2, S2])(using
+        t1: Tag[Emit[Chunk[VV]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        t3: Tag[Emit[Chunk[(VV, V2)]]],
+        f: Frame
+    ): Stream[(VV, V2), S & S2] =
+        Stream:
+            Loop(emit: Unit < (Emit[Chunk[VV]] & S), Chunk.empty[VV], other.emit, Chunk.empty[V2]):
+                (emit1, leftovers1, emit2, leftovers2) =>
+                    ArrowEffect.handleFirst(t1, emit1)(
+                        handle = [C] =>
+                            (vals1: Chunk[VV], cont1) =>
+                                val allVals1 = leftovers1 ++ vals1
+                                ArrowEffect.handleFirst(t2, emit2)(
+                                    handle = [C] =>
+                                        (vals2: Chunk[V2], cont2) =>
+                                            val allVals2      = leftovers2 ++ vals2
+                                            val zippedVals    = allVals1.zip(allVals2)
+                                            val newLeftovers1 = allVals1.drop(zippedVals.length)
+                                            val newLeftovers2 = allVals2.drop(zippedVals.length)
+                                            if zippedVals.nonEmpty then
+                                                Emit.valueWith(zippedVals):
+                                                    Loop.continue(cont1(()), newLeftovers1, cont2(()), newLeftovers2)
+                                            else Loop.continue(cont1(()), newLeftovers1, cont2(()), newLeftovers2)
+                                            end if
+                                    ,
+                                    done = _ =>
+                                        if leftovers2.isEmpty then Loop.done(())
+                                        else
+                                            val zippedVals    = allVals1.zip(leftovers2)
+                                            val newLeftovers1 = allVals1.drop(zippedVals.length)
+                                            val newLeftovers2 = leftovers2.drop(zippedVals.length)
+                                            if zippedVals.nonEmpty then
+                                                Emit.valueWith(zippedVals):
+                                                    Loop.continue(cont1(()), newLeftovers1, emit2, newLeftovers2)
+                                            else Loop.continue(cont1(()), newLeftovers1, emit2, newLeftovers2)
+                                            end if
+                            )
+                        ,
+                        done = _ =>
+                            if leftovers1.isEmpty then Loop.done(())
+                            else
+                                ArrowEffect.handleFirst(t2, emit2)(
+                                    handle = [C] =>
+                                        (vals2: Chunk[V2], cont2) =>
+                                            val allVals2      = leftovers2 ++ vals2
+                                            val zippedVals    = leftovers1.zip(allVals2)
+                                            val newLeftovers1 = leftovers1.drop(zippedVals.length)
+                                            val newLeftovers2 = allVals2.drop(zippedVals.length)
+                                            if zippedVals.nonEmpty then
+                                                Emit.valueWith(zippedVals):
+                                                    Loop.continue(emit1, newLeftovers1, cont2(()), newLeftovers2)
+                                            else Loop.continue(emit1, newLeftovers1, cont2(()), newLeftovers2)
+                                            end if
+                                    ,
+                                    done = _ =>
+                                        Loop.done(())
+                                )
+                    )
+
+    end zip
 
     /** Transform with a [[Pipe]] of corresponding input streaming element type.
       *

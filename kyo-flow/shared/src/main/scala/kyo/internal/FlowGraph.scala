@@ -57,7 +57,7 @@ private[kyo] object FlowGraph:
 
     private def buildSub(flow: Flow[?, ?, ?]): Builder =
         FlowFold(flow)(new FlowVisitor[Builder]:
-            def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) =
+            def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                 (counter: Int) =>
                     val (id, c) = nextId(counter)
                     (
@@ -71,7 +71,7 @@ private[kyo] object FlowGraph:
                     )
             end onInput
 
-            def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Json[V]) =
+            def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                 (counter: Int) =>
                     val (id, c) = nextId(counter)
                     (

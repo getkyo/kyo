@@ -15,40 +15,58 @@ class TaskTest extends AnyFreeSpec with NonImplicitAssertions {
         def checkRuntime(): Int                                          = runtime()
     }
 
-    "needsInterrupt" - {
-        "returns false initially" in {
-            val t = new TestTask(5)
-            assert(!t.needsInterrupt())
-        }
-        "returns true after requestInterrupt" in {
-            val t = new TestTask(5)
-            t.requestInterrupt()
-            assert(t.needsInterrupt())
-        }
-        "requestInterrupt also preempts" in {
+    "preemption" - {
+        "not preempting initially" in {
             val t = new TestTask(5)
             assert(!t.checkShouldPreempt())
-            t.requestInterrupt()
+        }
+        "doPreempt sets preemption" in {
+            val t = new TestTask(5)
+            t.doPreempt()
             assert(t.checkShouldPreempt())
         }
-        "requestInterrupt on already-preempted task preserves runtime" in {
+        "addRuntime clears preemption" in {
             val t = new TestTask(10)
             t.doPreempt()
-            t.requestInterrupt()
-            assert(t.needsInterrupt())
             assert(t.checkShouldPreempt())
+            t.addRuntime(5)
+            assert(!t.checkShouldPreempt())
+        }
+    }
+
+    "runtime" - {
+        "starts at the initial value" in {
+            val t = new TestTask(10)
             assert(t.checkRuntime() == 11) // initial 1 + added 10
         }
-        "doPreempt preserves needsInterrupt flag" in {
-            val t = new TestTask(5)
-            t.requestInterrupt()
-            assert(t.needsInterrupt())
-            // addRuntime on negative state un-preempts but preserves bit 0
-            t.addRuntime(1)
-            assert(t.needsInterrupt())
+        "addRuntime accumulates" in {
+            val t = new TestTask(10)
+            t.addRuntime(5)
+            assert(t.checkRuntime() == 16)
+        }
+        "addRuntime accumulates while preempted" in {
+            val t = new TestTask(10)
             t.doPreempt()
-            assert(t.needsInterrupt())
-            assert(t.checkShouldPreempt())
+            t.addRuntime(5)
+            assert(t.checkRuntime() == 16)
+        }
+        "doPreempt does not change runtime" in {
+            val t = new TestTask(10)
+            t.doPreempt()
+            assert(t.checkRuntime() == 11)
+        }
+    }
+
+    "needsInterrupt" - {
+        // Interruption is no longer tracked on Task — IOTask derives it from its
+        // promise. A plain Task is never interrupted, so needsInterrupt stays false.
+        "false for a plain task, regardless of preemption or runtime" in {
+            val t = new TestTask(5)
+            assert(!t.needsInterrupt())
+            t.doPreempt()
+            assert(!t.needsInterrupt())
+            t.addRuntime(1)
+            assert(!t.needsInterrupt())
         }
     }
 

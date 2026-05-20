@@ -7,6 +7,9 @@ class HttpClientBench extends ArenaBench.ForkOnly("pong"):
     override lazy val zioRuntimeLayer = super.zioRuntimeLayer.merge(zio.http.Client.default)
 
     val url = TestHttpServer.start(1)
+    val parsedUrl =
+        import kyo.*
+        HttpUrl.parse(url).getOrThrow
 
     lazy val catsClient =
         import cats.effect.*
@@ -27,14 +30,10 @@ class HttpClientBench extends ArenaBench.ForkOnly("pong"):
         catsClient.expect[String](catsUrl)
     end catsBench
 
-    val kyoUrl =
-        import sttp.client3.*
-        uri"$url"
-
     override def kyoBenchFiber() =
         import kyo.*
 
-        Requests(_.get(kyoUrl))
+        HttpClient.getText(parsedUrl)
     end kyoBenchFiber
 
     val zioUrl =

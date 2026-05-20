@@ -12,8 +12,6 @@ import zio.ZLayer
 
 class ResolverTest extends Test:
 
-    val client = kyo.internal.HttpPlatformBackend.client
-
     case class Query(
         k1: Int < Abort[Throwable],
         k2: Int < Async,
@@ -33,15 +31,18 @@ class ResolverTest extends Test:
         for
             interpreter <- Resolvers.get(graphQL(RootResolver(defaultQuery)))
             server      <- Resolvers.run(interpreter)
+            _           <- Async.sleep(50.millis)
         yield server
 
     def send[In, Out](
         port: Int,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
-    )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        client.connectWith("localhost", port, ssl = false, Absent) { conn =>
-            client.sendWith(conn, route, request)(identity)
+    )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException] & Scope) =
+        HttpClient.init().map { httpClient =>
+            val base = HttpUrl.parse(s"http://localhost:$port").getOrThrow
+            val url  = HttpUrl(base.scheme, base.host, base.port, request.url.path, request.url.rawQuery)
+            httpClient.sendWith(route.asInstanceOf[HttpRoute[In, Out, Any]], request.copy(url = url))(identity)
         }
 
     val binaryRoute = HttpRoute.postRaw("api/graphql").request(_.bodyBinary).response(_.bodyBinary)

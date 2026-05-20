@@ -208,6 +208,70 @@ class SyncTest extends Test:
         }
     }
 
+    "acquireReleaseWith" - {
+        "success" in run {
+            var order = List.empty[String]
+
+            Sync.acquireReleaseWith(Sync.defer {
+                order = order :+ "acquire"
+                "resource"
+            }) { resource =>
+                Sync.defer {
+                    order = order :+ s"release:$resource"
+                }
+            } { resource =>
+                Sync.defer {
+                    order = order :+ s"use:$resource"
+                    resource.length
+                }
+            }.map { result =>
+                assert(result == 8)
+                assert(order == List("acquire", "use:resource", "release:resource"))
+            }
+        }
+
+        "release after panic in use" in run {
+            val ex        = new RuntimeException("boom")
+            var released  = false
+            var useCalled = false
+
+            Abort.run[Any] {
+                Sync.acquireReleaseWith(Sync.defer("resource")) { _ =>
+                    Sync.defer {
+                        released = true
+                    }
+                } { _ =>
+                    Sync.defer {
+                        useCalled = true
+                        throw ex
+                    }
+                }
+            }.map { result =>
+                assert(result == Result.panic(ex))
+                assert(useCalled)
+                assert(released)
+            }
+        }
+
+        "does not release when acquire panics" in run {
+            val ex       = new RuntimeException("boom")
+            var released = false
+
+            Abort.run[Any] {
+                Sync.acquireReleaseWith(Sync.defer[String, Any](throw ex)) { _ =>
+                    Sync.defer {
+                        released = true
+                    }
+                } { resource =>
+                    resource
+                }
+            }.map { result =>
+                assert(result == Result.panic(ex))
+                assert(!released)
+            }
+        }
+    }
+
     "evalOrThrow" - {
         import AllowUnsafe.embrace.danger
         "success" in run {
