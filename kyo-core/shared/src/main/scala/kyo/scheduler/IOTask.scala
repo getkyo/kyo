@@ -59,7 +59,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                             // CAS-completes the promise, so checking it here stops an interrupted fiber even if
                             // the racing scheduler preemption flag was lost. Ordered after shouldPreempt() and
                             // the deadline check so a step that stops for either of those skips the read.
-                            shouldPreempt() || (deadline != Long.MaxValue && clock.currentMillis() > deadline) || !isPending(),
+                            shouldPreempt() || (deadline != Long.MaxValue && clock.currentMillis() > deadline) || needsInterrupt(),
                         [C] =>
                             (input, cont) =>
                                 locally {
