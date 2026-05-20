@@ -359,6 +359,7 @@ class QueueTest extends Test:
                 )
                 closeFiber  <- Fiber.initUnscoped(latch.await.andThen(queue.close))
                 _           <- latch.release
+                _           <- Async.sleep(100.millis)
                 offered     <- offerFiber.get
                 backlog     <- closeFiber.get
                 closedQueue <- queue.close

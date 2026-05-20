@@ -312,7 +312,7 @@ private[kyo] object UnsafeServerDispatch:
 
                     Fiber.initUnscoped {
                         Loop(conn.read) { stream =>
-                            WebSocketCodec.readFrameWith(stream, conn) { (frame, remaining) =>
+                            WebSocketCodec.readFrameWith(stream, conn, wsHandler.wsConfig.maxFrameSize) { (frame, remaining) =>
                                 inbound.put(frame).andThen(Loop.continue(remaining))
                             }
                         }

@@ -48,10 +48,10 @@ private[kyo] object CommitBuffer:
             else
                 quickSort(self, size)
 
-        inline def lock(tick: STM.Tick, size: Int)(using AllowUnsafe): Int =
+        inline def lock(tick: STM.Tick, size: Int, barge: Boolean)(using AllowUnsafe): Int =
             @tailrec def loop(idx: Int): Int =
                 if idx == size then size
-                else if !self.ref(idx).lock(tick, self.entry(idx)) then idx
+                else if !self.ref(idx).lock(tick, self.entry(idx), barge) then idx
                 else loop(idx + 1)
             loop(0)
         end lock

@@ -50,7 +50,7 @@ class OTLPMetricsExporterTest extends Test:
 
     "periodic export" - {
 
-        "exports registered counter at interval" in run {
+        "exports registered counter at interval" in runJVM {
             withCollector { (config, metricCh) =>
                 val uniqueName = "test.export.counter." + java.util.UUID.randomUUID().toString.take(8)
                 val counter    = Stat.initScope("test", "export").initCounter(uniqueName, "test counter")
@@ -82,7 +82,7 @@ class OTLPMetricsExporterTest extends Test:
             }
         }
 
-        "exports registered histogram at interval" in run {
+        "exports registered histogram at interval" in runJVM {
             withCollector { (config, metricCh) =>
                 val uniqueName = "test.export.histogram." + java.util.UUID.randomUUID().toString.take(8)
                 val histogram  = Stat.initScope("test", "export").initHistogram(uniqueName, "test histogram")
@@ -120,7 +120,7 @@ class OTLPMetricsExporterTest extends Test:
             }
         }
 
-        "exports registered gauge at interval" in run {
+        "exports registered gauge at interval" in runJVM {
             withCollector { (config, metricCh) =>
                 val uniqueName           = "test.export.gauge." + java.util.UUID.randomUUID().toString.take(8)
                 @volatile var gaugeValue = 99.5
@@ -138,7 +138,7 @@ class OTLPMetricsExporterTest extends Test:
             }
         }
 
-        "multiple intervals trigger multiple exports" in run {
+        "multiple intervals trigger multiple exports" in runJVM {
             withCollector { (config, metricCh) =>
                 val uniqueName = "test.export.multi." + java.util.UUID.randomUUID().toString.take(8)
                 val counter    = Stat.initScope("test", "export").initCounter(uniqueName, "test counter")
