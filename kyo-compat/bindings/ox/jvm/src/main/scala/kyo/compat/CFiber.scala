@@ -14,7 +14,7 @@ opaque type CFiber[+A] = CancellableFork[? <: A]
 object CFiber:
 
     inline def init[A](inline c: CIO[A]): CIO[CFiber[A]] =
-        CIO.deferLift(ox.forkCancellable(CIO.unsafeRun(c)))
+        CIO.deferLift(ox.forkCancellable(c.lower))
 
     inline def lift[A](inline u: CancellableFork[A]): CFiber[A] = u
 
@@ -33,7 +33,7 @@ object CFiber:
                         case Right(a) => scala.util.Success(a)
                         case Left(e)  => scala.util.Failure(e)
                     ox.supervised {
-                        CIO.unsafeRun(cb(outcome))
+                        cb(outcome).lower
                     }
                 }
                 t.start()

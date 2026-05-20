@@ -51,9 +51,6 @@ object CIO:
     inline def fromScalaFuture[A](inline f: ScalaFuture[A]): CIO[A] =
         deferLift(Await.result(f, ScalaDuration.Inf))
 
-    /** Runs a `CIO` to its value within the given scope (the carrier applied at depth 0). */
-    inline def unsafeRun[A](inline c: CIO[A])(using ox: Ox): A = c(0, ox)
-
     inline def acquireReleaseWith[A, B](
         inline acquire: CIO[A]
     )(
@@ -62,11 +59,11 @@ object CIO:
         inline use: A => CIO[B]
     ): CIO[B] =
         deferLift {
-            val a = CIO.unsafeRun(acquire)
+            val a = acquire.lower
             val useResult: scala.util.Try[B] =
-                try scala.util.Success(CIO.unsafeRun(use(a)))
+                try scala.util.Success(use(a).lower)
                 catch case t: Throwable if NonFatal(t) => scala.util.Failure(t)
-            try CIO.unsafeRun(release(a))
+            try release(a).lower
             catch
                 case relT: Throwable if NonFatal(relT) =>
                     useResult match
@@ -92,7 +89,7 @@ object CIO:
 
         inline def liftToTry: CIO[scala.util.Try[A]] =
             (_: Int, ox: Ox) =>
-                try scala.util.Success(CIO.unsafeRun(self)(using ox))
+                try scala.util.Success(self.lower(using ox))
                 catch case t: Throwable if NonFatal(t) => scala.util.Failure(t)
 
         inline def recover[A2 >: A](inline handler: Throwable => CIO[A2]): CIO[A2] =
@@ -137,7 +134,7 @@ object CIO:
         inline def unsafeRun(using ec: scala.concurrent.ExecutionContext): ScalaFuture[A] =
             ScalaFuture {
                 ox.supervised {
-                    CIO.unsafeRun(self)(using summon[Ox])
+                    self.lower(using summon[Ox])
                 }
             }
     end extension
@@ -153,18 +150,18 @@ object CIO:
 
     inline def timeout[A](inline d: FiniteDuration)(inline c: CIO[A]): CIO[Option[A]] =
         deferLift {
-            ox.timeoutOption(d)(CIO.unsafeRun(c))
+            ox.timeoutOption(d)(c.lower)
         }
 
     inline def timeoutWithError[A](inline d: FiniteDuration)(inline e: Throwable)(inline c: CIO[A]): CIO[A] =
         deferLift {
-            ox.timeoutOption(d)(CIO.unsafeRun(c)).getOrElse(throw e)
+            ox.timeoutOption(d)(c.lower).getOrElse(throw e)
         }
 
     inline def delay[A](inline d: FiniteDuration)(inline c: CIO[A]): CIO[A] =
         deferLift {
             ox.sleep(d)
-            CIO.unsafeRun(c)
+            c.lower
         }
 
     inline def race[A](
@@ -172,7 +169,7 @@ object CIO:
         inline b: CIO[A]
     ): CIO[A] =
         deferLift {
-            ox.raceSuccess(CIO.unsafeRun(a), CIO.unsafeRun(b))
+            ox.raceSuccess(a.lower, b.lower)
         }
 
     inline def foreach[A, B](
@@ -182,7 +179,7 @@ object CIO:
         deferLift {
             val capturedOx = summon[Ox]
             val items      = coll.toList
-            val thunks     = items.map(a => () => CIO.unsafeRun(f(a))(using capturedOx))
+            val thunks     = items.map(a => () => f(a).lower(using capturedOx))
             val results =
                 if concurrency == Int.MaxValue then ox.par(thunks)
                 else ox.parLimit(concurrency)(thunks)
@@ -196,7 +193,7 @@ object CIO:
         deferLift {
             val capturedOx = summon[Ox]
             val items      = coll.toList.zipWithIndex
-            val thunks     = items.map { case (a, i) => () => CIO.unsafeRun(f(i, a))(using capturedOx) }
+            val thunks     = items.map { case (a, i) => () => f(i, a).lower(using capturedOx) }
             val results =
                 if concurrency == Int.MaxValue then ox.par(thunks)
                 else ox.parLimit(concurrency)(thunks)
@@ -209,7 +206,7 @@ object CIO:
     )(inline f: A => CIO[Any]): CIO[Unit] =
         deferLift {
             val capturedOx = summon[Ox]
-            val thunks     = coll.toList.map(a => () => CIO.unsafeRun(f(a))(using capturedOx))
+            val thunks     = coll.toList.map(a => () => f(a).lower(using capturedOx))
             val _ =
                 if concurrency == Int.MaxValue then ox.par(thunks)
                 else ox.parLimit(concurrency)(thunks)
@@ -222,7 +219,7 @@ object CIO:
         deferLift {
             val capturedOx = summon[Ox]
             val items      = coll.toList
-            val thunks     = items.map(a => () => CIO.unsafeRun(p(a))(using capturedOx))
+            val thunks     = items.map(a => () => p(a).lower(using capturedOx))
             val flags =
                 if concurrency == Int.MaxValue then ox.par(thunks)
                 else ox.parLimit(concurrency)(thunks)
@@ -235,7 +232,7 @@ object CIO:
     ): CIO[CChunk[A]] =
         deferLift {
             val capturedOx = summon[Ox]
-            val thunks     = coll.toList.map(c => () => CIO.unsafeRun(c)(using capturedOx))
+            val thunks     = coll.toList.map(c => () => c.lower(using capturedOx))
             val results =
                 if concurrency == Int.MaxValue then ox.par(thunks)
                 else ox.parLimit(concurrency)(thunks)
@@ -248,7 +245,7 @@ object CIO:
     ): CIO[Unit] =
         deferLift {
             val capturedOx = summon[Ox]
-            val thunks     = coll.toList.map(c => () => CIO.unsafeRun(c)(using capturedOx))
+            val thunks     = coll.toList.map(c => () => c.lower(using capturedOx))
             val _ =
                 if concurrency == Int.MaxValue then ox.par(thunks)
                 else ox.parLimit(concurrency)(thunks)
@@ -293,7 +290,7 @@ object CIO:
         inline a2: CIO[A2]
     ): CIO[(A1, A2)] =
         deferLift {
-            ox.par(CIO.unsafeRun(a1), CIO.unsafeRun(a2))
+            ox.par(a1.lower, a2.lower)
         }
 
     inline def zip[A1, A2, A3](
@@ -302,7 +299,7 @@ object CIO:
         inline a3: CIO[A3]
     ): CIO[(A1, A2, A3)] =
         deferLift {
-            ox.par(CIO.unsafeRun(a1), CIO.unsafeRun(a2), CIO.unsafeRun(a3))
+            ox.par(a1.lower, a2.lower, a3.lower)
         }
 
     inline def zip[A1, A2, A3, A4](
@@ -312,7 +309,7 @@ object CIO:
         inline a4: CIO[A4]
     ): CIO[(A1, A2, A3, A4)] =
         deferLift {
-            ox.par(CIO.unsafeRun(a1), CIO.unsafeRun(a2), CIO.unsafeRun(a3), CIO.unsafeRun(a4))
+            ox.par(a1.lower, a2.lower, a3.lower, a4.lower)
         }
 
     inline def zip[A1, A2, A3, A4, A5](
@@ -323,11 +320,11 @@ object CIO:
         inline a5: CIO[A5]
     ): CIO[(A1, A2, A3, A4, A5)] =
         deferLift {
-            val f1 = ox.fork(CIO.unsafeRun(a1))
-            val f2 = ox.fork(CIO.unsafeRun(a2))
-            val f3 = ox.fork(CIO.unsafeRun(a3))
-            val f4 = ox.fork(CIO.unsafeRun(a4))
-            val f5 = ox.fork(CIO.unsafeRun(a5))
+            val f1 = ox.fork(a1.lower)
+            val f2 = ox.fork(a2.lower)
+            val f3 = ox.fork(a3.lower)
+            val f4 = ox.fork(a4.lower)
+            val f5 = ox.fork(a5.lower)
             (f1.join(), f2.join(), f3.join(), f4.join(), f5.join())
         }
 
@@ -340,12 +337,12 @@ object CIO:
         inline a6: CIO[A6]
     ): CIO[(A1, A2, A3, A4, A5, A6)] =
         deferLift {
-            val f1 = ox.fork(CIO.unsafeRun(a1))
-            val f2 = ox.fork(CIO.unsafeRun(a2))
-            val f3 = ox.fork(CIO.unsafeRun(a3))
-            val f4 = ox.fork(CIO.unsafeRun(a4))
-            val f5 = ox.fork(CIO.unsafeRun(a5))
-            val f6 = ox.fork(CIO.unsafeRun(a6))
+            val f1 = ox.fork(a1.lower)
+            val f2 = ox.fork(a2.lower)
+            val f3 = ox.fork(a3.lower)
+            val f4 = ox.fork(a4.lower)
+            val f5 = ox.fork(a5.lower)
+            val f6 = ox.fork(a6.lower)
             (f1.join(), f2.join(), f3.join(), f4.join(), f5.join(), f6.join())
         }
 
@@ -359,13 +356,13 @@ object CIO:
         inline a7: CIO[A7]
     ): CIO[(A1, A2, A3, A4, A5, A6, A7)] =
         deferLift {
-            val f1 = ox.fork(CIO.unsafeRun(a1))
-            val f2 = ox.fork(CIO.unsafeRun(a2))
-            val f3 = ox.fork(CIO.unsafeRun(a3))
-            val f4 = ox.fork(CIO.unsafeRun(a4))
-            val f5 = ox.fork(CIO.unsafeRun(a5))
-            val f6 = ox.fork(CIO.unsafeRun(a6))
-            val f7 = ox.fork(CIO.unsafeRun(a7))
+            val f1 = ox.fork(a1.lower)
+            val f2 = ox.fork(a2.lower)
+            val f3 = ox.fork(a3.lower)
+            val f4 = ox.fork(a4.lower)
+            val f5 = ox.fork(a5.lower)
+            val f6 = ox.fork(a6.lower)
+            val f7 = ox.fork(a7.lower)
             (f1.join(), f2.join(), f3.join(), f4.join(), f5.join(), f6.join(), f7.join())
         }
 

@@ -25,12 +25,12 @@ object CLocal:
 
         inline def let[B](inline v: A)(inline c: CIO[B]): CIO[B] =
             CIO.deferLift {
-                self.supervisedWhere(v)(CIO.unsafeRun(c))
+                self.supervisedWhere(v)(c.lower)
             }
 
         inline def update[B](inline f: A => A)(inline c: CIO[B]): CIO[B] =
             CIO.deferLift {
-                self.supervisedWhere(f(self.get()))(CIO.unsafeRun(c))
+                self.supervisedWhere(f(self.get()))(c.lower)
             }
     end extension
 end CLocal

@@ -178,7 +178,7 @@ object CIO:
             p.future
 
     inline def delay[A](inline d: FiniteDuration)(inline c: CIO[A]): CIO[A] =
-        (ctx: LocalCtx) => CIO.sleep(d)(ctx).flatMap(_ => c(ctx))(parasiticEc)
+        (ctx: LocalCtx) => CIO.sleep(d).lower(using ctx).flatMap(_ => c(ctx))(parasiticEc)
 
     /** Winner returned; the loser keeps running orphaned. */
     inline def race[A](

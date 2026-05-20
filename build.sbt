@@ -702,6 +702,9 @@ lazy val `kyo-compat-future` =
         .in(file("kyo-compat/bindings/future"))
         .settings(
             `kyo-settings`,
+            scalaVersion       := scala3LTSVersion,
+            crossScalaVersions := List(scala3LTSVersion),
+            scalacOptions += "-Xmax-inlines:1024",
             // Cross-platform: shared sources use atomics + ConcurrentLinkedQueue
             // (both polyfilled on JS and natively supported on Native).
             // Platform-specific source dirs hold the blocking-pool / scheduler
@@ -745,9 +748,11 @@ lazy val `kyo-compat-zio` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/zio"))
-        .dependsOn(`kyo-data`)
         .settings(
             `kyo-settings`,
+            scalaVersion       := scala3LTSVersion,
+            crossScalaVersions := List(scala3LTSVersion),
+            scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += "dev.zio" %%% "zio"            % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-concurrent" % zioVersion,
             Test / unmanagedSourceDirectories += {
@@ -768,9 +773,11 @@ lazy val `kyo-compat-ce` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/ce"))
-        .dependsOn(`kyo-data`)
         .settings(
             `kyo-settings`,
+            scalaVersion       := scala3LTSVersion,
+            crossScalaVersions := List(scala3LTSVersion),
+            scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion,
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
@@ -789,9 +796,11 @@ lazy val `kyo-compat-ox` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/ox"))
-        .dependsOn(`kyo-data`)
         .settings(
             `kyo-settings`,
+            scalaVersion       := scala3LTSVersion,
+            crossScalaVersions := List(scala3LTSVersion),
+            scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += "com.softwaremill.ox" %% "core" % oxVersion,
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
@@ -811,6 +820,9 @@ lazy val `kyo-compat-twitter-future` =
         .in(file("kyo-compat/bindings/twitter-future"))
         .settings(
             `kyo-settings`,
+            scalaVersion       := scala3LTSVersion,
+            crossScalaVersions := List(scala3LTSVersion),
+            scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += ("com.twitter" %% "util-core" % "24.2.0")
                 .exclude("org.scala-lang.modules", "scala-collection-compat_2.13"),
             Test / unmanagedSourceDirectories += {
@@ -834,6 +846,9 @@ lazy val `kyo-compat-tests` =
         .dependsOn(`kyo-compat-future`.jvm)
         .settings(
             `kyo-settings`,
+            scalaVersion       := scala3LTSVersion,
+            crossScalaVersions := List(scala3LTSVersion),
+            scalacOptions += "-Xmax-inlines:1024",
             publish / skip := true,
             mimaCheck(false),
             Test / unmanagedSourceDirectories := Seq(

@@ -2,7 +2,6 @@ package kyo.compat
 
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
-import scala.annotation.publicInBinary
 import scala.concurrent.Future
 import scala.concurrent.Promise
 
@@ -11,7 +10,7 @@ import scala.concurrent.Promise
   * against a lost wakeup. `release` decrements the counter; when it reaches zero all waiters are drained and completed. No
   * platform-specific blocking primitives are used, so this links on JVM, JS, and Native.
   */
-final class CLatch @publicInBinary private[compat] (
+final class CLatch(
     count: AtomicInteger,
     waiters: ConcurrentLinkedQueue[Promise[Unit]]
 ):

@@ -2,7 +2,6 @@ package kyo.compat
 
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
-import scala.annotation.publicInBinary
 import scala.concurrent.Future
 import scala.concurrent.Promise
 
@@ -11,7 +10,7 @@ import scala.concurrent.Promise
   * holds onto its Promise indefinitely (use `CIO.timeout` to bound it, accepting that the underlying waiter is orphaned). `poll` is
   * non-blocking and always returns immediately.
   */
-final class CChannel[A] @publicInBinary private[compat] (
+final class CChannel[A](
     capacity: Int,
     items: ConcurrentLinkedQueue[A],
     takers: ConcurrentLinkedQueue[Promise[A]],

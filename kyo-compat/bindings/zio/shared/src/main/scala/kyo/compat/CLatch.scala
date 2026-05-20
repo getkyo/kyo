@@ -22,10 +22,10 @@ object CLatch:
         inline def lower: CountdownLatch = self
 
         inline def await(using inline trace: Trace): CIO[Unit] =
-            CIO.lift(self.await)
+            CIO.lift(self.await: UIO[Unit])
 
         inline def release(using inline trace: Trace): CIO[Unit] =
-            CIO.lift(self.countDown)
+            CIO.lift(self.countDown: UIO[Unit])
     end extension
 
 end CLatch

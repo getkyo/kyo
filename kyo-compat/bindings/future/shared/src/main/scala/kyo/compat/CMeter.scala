@@ -2,7 +2,6 @@ package kyo.compat
 
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
-import scala.annotation.publicInBinary
 import scala.concurrent.Future
 import scala.concurrent.Promise
 import scala.util.Failure
@@ -13,7 +12,7 @@ import scala.util.Success
   * is abandoned (e.g. via `CIO.timeout`) the permit is leaked until release is triggered by some other completion. `availablePermits` and
   * `tryRun` are non-blocking.
   */
-final class CMeter @publicInBinary private[compat] (
+final class CMeter(
     avail: AtomicInteger,
     waiters: ConcurrentLinkedQueue[Promise[Unit]]
 ):

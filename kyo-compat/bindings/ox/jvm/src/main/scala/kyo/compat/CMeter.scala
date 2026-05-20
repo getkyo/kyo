@@ -20,7 +20,7 @@ object CMeter:
         inline def run[A](inline c: CIO[A]): CIO[A] =
             CIO.deferLift {
                 self.acquire()
-                try CIO.unsafeRun(c)
+                try c.lower
                 finally self.release()
             }
 
@@ -28,7 +28,7 @@ object CMeter:
             CIO.deferLift {
                 if !self.tryAcquire() then None: Option[A]
                 else
-                    try Some(CIO.unsafeRun(c))
+                    try Some(c.lower)
                     finally self.release()
                 end if
             }

@@ -3,12 +3,11 @@ package kyo.compat
 import com.twitter.util.Promise
 import com.twitter.util.Return
 import java.util.concurrent.atomic.AtomicInteger
-import scala.annotation.publicInBinary
 
 /** A countdown latch backed by a `Promise[Unit]` gated by an `AtomicInteger` counter — no thread blocking. `release` decrements the counter
   * and resolves the promise when it hits zero; `await` returns the promise as a Future. `init(n <= 0)` produces an already-released latch.
   */
-final class CLatch @publicInBinary private[compat] (initial: Int):
+final class CLatch(initial: Int):
 
     private val remaining           = new AtomicInteger(math.max(initial, 0))
     private val gate: Promise[Unit] = new Promise[Unit]()

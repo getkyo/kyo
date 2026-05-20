@@ -4,13 +4,12 @@ import com.twitter.concurrent.AsyncQueue
 import com.twitter.concurrent.AsyncSemaphore
 import com.twitter.concurrent.Permit
 import com.twitter.util.Return
-import scala.annotation.publicInBinary
 
 /** A bounded FIFO channel built from `AsyncSemaphore` (capacity bound) + `AsyncQueue` (FIFO buffer). Producers acquire a permit, then
   * enqueue the item paired with its permit; consumers dequeue and release the permit. `put`/`take` compose natively with Twitter `Future`
   * and never block a thread. `poll` is a non-blocking peek that returns `None` when the buffer is empty.
   */
-final class CChannel[A] @publicInBinary private[compat] (capacity: Int):
+final class CChannel[A](capacity: Int):
 
     private val capacitySem                    = new AsyncSemaphore(capacity)
     private val queue: AsyncQueue[(A, Permit)] = new AsyncQueue[(A, Permit)]()
