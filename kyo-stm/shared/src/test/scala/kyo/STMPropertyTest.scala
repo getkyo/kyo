@@ -819,7 +819,7 @@ class STMPropertyTest extends Test:
                 for
                     table <- TTable.init["name" ~ String & "age" ~ Int]
                     ids   <- STM.run(Kyo.foreach(records)(r => table.insert(r)))
-                    rt    <- STM.run(Kyo.foreach(ids.zip(records)) { case (id, r) => table.get(id).map(_ == Maybe(r)) })
+                    rt    <- STM.run(Kyo.foreach(ids.zip(records)) { case (id, r) => table.get(id).map(_.exists(_.is(r))) })
                     n     <- STM.run(table.size)
                 yield
                     assert(ids.size == records.size)
@@ -852,8 +852,8 @@ class STMPropertyTest extends Test:
                     }
                 yield
                     val (prev, cur) = res
-                    assert(prev == Maybe(r1), s"update returned $prev, expected ${Maybe(r1)}")
-                    assert(cur == Maybe(r2), s"after update, get returned $cur, expected ${Maybe(r2)}")
+                    assert(prev.exists(_.is(r1)), s"update returned $prev, expected ${Maybe(r1)}")
+                    assert(cur.exists(_.is(r2)), s"after update, get returned $cur, expected ${Maybe(r2)}")
                 end for
             }.andThen(assertionSuccess)
         }

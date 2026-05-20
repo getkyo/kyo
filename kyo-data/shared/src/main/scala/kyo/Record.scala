@@ -28,8 +28,9 @@ import scala.language.implicitConversions
   * type ascription is needed. For field names that are not valid Scala identifiers (e.g., `"user-name"`, `"&"`), use `getField` instead.
   *
   * =Equality=
-  * A `CanEqual` given enables `==` and `!=` when `Fields.Comparable` is available (i.e., all value types have `CanEqual`). Field order does
-  * not affect equality. Without `Comparable` evidence, `==` will not compile, preventing accidental comparisons on non-comparable types.
+  * Records compare via the `is` extension method, not `==`. Because `Record[F]` is an opaque type alias for `Dict[String, Any]`, it cannot
+  * override `equals`, so `==` would silently fall through to the underlying Dict's reference-style equality. Use `record.is(other)` for
+  * content equality. Requires `Fields.Comparable[F]` (i.e., all value types have `CanEqual`). Field order does not affect equality.
   *
   * @tparam F
   *   Intersection of `Name ~ Value` field types describing the record's schema
@@ -127,6 +128,23 @@ object Record extends RecordDictSyntax:
                 discard(result.add(field.name, (toDict(field.name), other.toDict(field.name))))
             Record.from[f1.Zipped[f2.AsTuple]](result.result())
         end zip
+
+        /** Tests structural equality with another record: same field names and per-field value equality (via each value type's `equals`).
+          * This is the supported way to compare records — `==` cannot be used because `Record[F]` is an opaque type alias and cannot
+          * override `equals`. Requires `Fields.Comparable[F]` to ensure every field's value type is equality-safe.
+          */
+        def is(other: Record[F])(using Fields.Comparable[F]): Boolean =
+            // Inlined Dict.is — calling `record.toDict.is(other.toDict)` would dispatch back to this Record.is
+            // extension inside the `object Record` scope (where Impl[F] and Dict[String, Any] are the same type),
+            // causing infinite recursion.
+            val d1 = record.toDict
+            val d2 = other.toDict
+            d1.size == d2.size && d1.forall { (k, v) =>
+                d2.get(k) match
+                    case Present(v2) => v.equals(v2)
+                    case _           => false
+            }
+        end is
     end extension
 
     /** Conversion that allows access to fields by name. Requires only type-level `Fields.Structure` evidence — does not pull in the full
@@ -168,9 +186,10 @@ object Record extends RecordDictSyntax:
         def ~[Value](value: Value): Record[self.type ~ Value] =
             Dict[String, Any](self -> value)
 
-    /** Provides `CanEqual` for records whose field types are all comparable, enabling `==` and `!=`. */
-    given [F](using Fields.Comparable[F]): CanEqual[Record[F], Record[F]] =
-        CanEqual.derived
+    // Note: Records intentionally do not expose a CanEqual instance. Because `Record[F]` is an opaque type alias
+    // for `Dict[String, Any]`, it cannot override `equals` to provide field-wise structural equality — `==` would
+    // fall through to the underlying Dict's reference-style equality and silently return wrong results for two
+    // records with the same content. Use `record.is(other)` for content equality instead.
 
     /** Provides a `Render` instance for records, rendering each field as `"name ~ value"` joined by `" & "`. Requires `Render` instances
       * for all field value types.

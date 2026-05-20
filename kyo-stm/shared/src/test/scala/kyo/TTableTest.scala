@@ -129,7 +129,9 @@ class TTableTest extends Test:
                 _       <- STM.run(table.insert("name" ~ "Bob" & "age" ~ 25))
                 _       <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 35))
                 results <- STM.run(table.query("name" ~ "Alice"))
-            yield assert(results == Chunk("name" ~ "Alice" & "age" ~ 30, "name" ~ "Alice" & "age" ~ 35))
+            yield
+                val expected = Chunk("name" ~ "Alice" & "age" ~ 30, "name" ~ "Alice" & "age" ~ 35)
+                assert(results.size == expected.size && results.zip(expected).forall((a, b) => a.is(b)))
         }
 
         "query by multiple fields" in run {
@@ -1087,7 +1089,7 @@ class TTableTest extends Test:
                 _      <- STM.run(table.update(id, "name" ~ "A" & "age" ~ 7))
                 after  <- STM.run(table.query("age" ~ 7))
             yield
-                assert(before == after)
+                assert(before.size == after.size && before.zip(after).forall((a, b) => a.is(b)))
                 assert(after.size == 1)
         }
 

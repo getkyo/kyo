@@ -11,7 +11,7 @@ class HttpRequestTest extends Test:
             assert(req.method == HttpMethod.GET)
             assert(req.url == url)
             assert(req.headers.isEmpty)
-            assert(req.fields == Record.empty)
+            assert(req.fields.is(Record.empty))
         }
 
         "full constructor" in {
@@ -216,7 +216,7 @@ class HttpRequestTest extends Test:
         val req2 = req1.addHeader("X-Test", "value")
         val req3 = req1.addField("key", "val")
         assert(req1.headers.isEmpty)
-        assert(req1.fields == Record.empty)
+        assert(req1.fields.is(Record.empty))
         assert(req2.headers.get("X-Test") == Present("value"))
         assert(req3.fields.key == "val")
     }

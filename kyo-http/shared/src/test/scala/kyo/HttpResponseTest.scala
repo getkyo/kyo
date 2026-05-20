@@ -9,7 +9,7 @@ class HttpResponseTest extends Test:
             val res = HttpResponse.ok
             assert(res.status == HttpStatus.OK)
             assert(res.headers.isEmpty)
-            assert(res.fields == Record.empty)
+            assert(res.fields.is(Record.empty))
         }
 
         "full constructor" in {
@@ -349,7 +349,7 @@ class HttpResponseTest extends Test:
         val res2 = res1.addHeader("X-Test", "value")
         val res3 = res1.addField("key", "val")
         assert(res1.headers.isEmpty)
-        assert(res1.fields == Record.empty)
+        assert(res1.fields.is(Record.empty))
         assert(res2.headers.get("X-Test") == Present("value"))
         assert(res3.fields.key == "val")
     }
