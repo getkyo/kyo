@@ -67,21 +67,46 @@ jobs:
           key: deps-${{ inputs.os }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
           restore-keys: deps-${{ inputs.os }}-
 
+      # apt/brew package-mirror reachability is a recurring transient CI failure
+      # (e.g. ports.ubuntu.com Network unreachable). Retry only the dependency-install
+      # network operations — never compile/test steps.
       - name: Install Dependencies (Linux)
         if: contains(inputs.os, 'linux') && matrix.target == 'Native'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          timeout_minutes: 5
+          retry_wait_seconds: 15
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y -o Acquire::Retries=3 libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
 
       - name: Install Dependencies (macOS)
         if: contains(inputs.os, 'macos') && matrix.target == 'Native'
-        run: brew install h2o libidn2
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          timeout_minutes: 5
+          retry_wait_seconds: 15
+          command: brew install h2o libidn2
 
-      - name: Install + start Podman (Linux)
+      # Split from the podman start logic so only the apt install is retried — the
+      # Start step below is not idempotent (background service launch, GITHUB_ENV
+      # export) and must not be re-run.
+      - name: Install podman (Linux)
+        if: contains(inputs.os, 'linux')
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          timeout_minutes: 5
+          retry_wait_seconds: 15
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y -o Acquire::Retries=3 podman uidmap
+
+      - name: Start podman (Linux)
         if: contains(inputs.os, 'linux')
         run: |
-          sudo apt-get update
-          sudo apt-get install -y podman uidmap
           # Enable systemd lingering so podman uses the systemd cgroup manager
           # instead of falling back to cgroupfs. Without this:
           #   - podman emits cgroupv2 warnings to stderr on every command

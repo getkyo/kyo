@@ -144,7 +144,12 @@ private[scheduler] class BlockingMonitor(
 
     private var lastCount: Int = 0
 
+    // Scan counter — written only by the monitor thread, read cross-thread by tests to
+    // verify that a burst of wake() calls coalesces into few scans, not one scan per call.
+    @volatile private[scheduler] var cycles: Long = 0L
+
     private def cycle(): Unit = {
+        cycles += 1
         try {
             val n     = currentWorkers()
             val count = collect(n, 0, 0)
