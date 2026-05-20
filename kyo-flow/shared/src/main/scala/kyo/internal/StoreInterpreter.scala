@@ -194,7 +194,7 @@ private[kyo] class StoreInterpreter(
                         val rr = restored(1).asInstanceOf[R]
                         (lr, rr) match
                             case (Result.Success(Result.Success(l)), Result.Success(Result.Success(r))) =>
-                                new Record[Any](ctx.toDict ++ l.toDict ++ r.toDict)
+                                Record.from[Any](ctx.toDict ++ l.toDict ++ r.toDict)
                             case (Result.Failure(s), _)                 => Abort.fail[FlowSuspension](s)
                             case (_, Result.Failure(s))                 => Abort.fail[FlowSuspension](s)
                             case (Result.Success(Result.Failure(e)), _) => Abort.fail[FlowException](e)

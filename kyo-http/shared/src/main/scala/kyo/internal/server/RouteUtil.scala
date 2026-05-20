@@ -40,7 +40,7 @@ private[kyo] object RouteUtil:
         inline onStreaming: ( /* url */ String, HttpHeaders, Stream[Span[Byte], Async]) => A
     )(using Frame): A =
         val fields    = route.request.fields
-        val dict      = request.fields.dict
+        val dict      = request.fields.toDict
         val bodyField = findBodyField(fields)
         val hasParams = fields.size > (if bodyField.isDefined then 1 else 0)
 
@@ -132,18 +132,18 @@ private[kyo] object RouteUtil:
                         Result.succeed(HttpResponse(status, headers, Record.empty.asInstanceOf[Record[Out]]))
                     case Present(bf) =>
                         decodeBufferedBodyValue(bf.contentType, body, headers, method, url).map { value =>
-                            HttpResponse(status, headers, Record(Dict.empty[String, Any].update(bf.fieldName, value)))
+                            HttpResponse(status, headers, Record.from(Dict.empty[String, Any].update(bf.fieldName, value)))
                         }
             else
                 val builder = DictBuilder.init[String, Any]
                 decodeParamFields(fields, headers, Absent, builder, method, url, isResponse = true).flatMap { _ =>
                     bodyField match
                         case Absent =>
-                            Result.succeed(HttpResponse(status, headers, Record(builder.result())))
+                            Result.succeed(HttpResponse(status, headers, Record.from(builder.result())))
                         case Present(bf) =>
                             decodeBufferedBodyValue(bf.contentType, body, headers, method, url).map { value =>
                                 discard(builder.add(bf.fieldName, value))
-                                HttpResponse(status, headers, Record(builder.result()))
+                                HttpResponse(status, headers, Record.from(builder.result()))
                             }
                 }
             end if
@@ -197,13 +197,13 @@ private[kyo] object RouteUtil:
             bodyField.foreach(bf =>
                 discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream, headers, method, url)))
             )
-            Result.succeed(HttpResponse(status, headers, Record(builder.result())))
+            Result.succeed(HttpResponse(status, headers, Record.from(builder.result())))
         else
             decodeParamFields(fields, headers, Absent, builder, method, url, isResponse = true).map { _ =>
                 bodyField.foreach(bf =>
                     discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream, headers, method, url)))
                 )
-                HttpResponse(status, headers, Record(builder.result()))
+                HttpResponse(status, headers, Record.from(builder.result()))
             }
         end if
     end decodeStreamingResponse
@@ -301,9 +301,9 @@ private[kyo] object RouteUtil:
 
         // Fast path: no param headers to encode
         if !hasParams then
-            encodeResponseBody(bodyField, response.fields.dict, status, response.headers)(onEmpty, onBuffered, onStreaming)
+            encodeResponseBody(bodyField, response.fields.toDict, status, response.headers)(onEmpty, onBuffered, onStreaming)
         else
-            val dict          = response.fields.dict
+            val dict          = response.fields.toDict
             val headerBuilder = ChunkBuilder.init[String]
             encodeResponseParams(fields, dict, headerBuilder)
             val extraHeaders = HttpHeaders.fromChunk(headerBuilder.result())
@@ -1105,7 +1105,7 @@ private[kyo] object RouteUtil:
         val method = methodOverride match
             case Present(m) => m
             case Absent     => route.method
-        HttpRequest(method, url, headers, Record(builder.result()))
+        HttpRequest(method, url, headers, Record.from(builder.result()))
     end buildRequest
 
     /** Check that the request Content-Type matches the expected media type. Accepts if: header is absent (lenient), or starts with the

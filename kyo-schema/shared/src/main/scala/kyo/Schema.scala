@@ -989,7 +989,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
             acc.update(name, compute(value))
         }
 
-        new Record[Any](dict).asInstanceOf[Record[Focused]]
+        Record.from[Focused](dict)
     end resultOf
 
     /** Writes a value to a Writer (low-level serialization).

@@ -683,7 +683,7 @@ class FlowEngineTest extends Test:
                 for
                     _ <- engine.register(Flow.Id.Workflow("test-flow"), flow)
                     // Pass a String where Int is expected
-                    inputs = new Record[Any](Dict("x" -> "not-an-int"))
+                    inputs = Record.from[Any](Dict("x" -> "not-an-int"))
                     res <- Abort.run[FlowException](engine.workflows.start(wf1, inputs))
                 yield assert(res.isFailure)
                 end for

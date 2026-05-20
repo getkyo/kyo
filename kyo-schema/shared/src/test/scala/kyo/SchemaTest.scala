@@ -1959,7 +1959,7 @@ class SchemaTest extends Test:
         "empty case class result" in {
             val m      = Schema[MTEmpty]
             val record = m.toRecord(MTEmpty())
-            assert(record.dict.toMap.isEmpty)
+            assert(record.toDict.toMap.isEmpty)
         }
 
         "empty case class schema" in {
@@ -1984,8 +1984,8 @@ class SchemaTest extends Test:
             val m      = Schema[MTLarge]
             val large  = MTLarge(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
             val record = m.toRecord(large)
-            assert(record.dict("a") == 1)
-            assert(record.dict("j") == 10)
+            assert(record.toDict("a") == 1)
+            assert(record.toDict("j") == 10)
         }
 
         "large case class schema field count" in {
@@ -2045,13 +2045,13 @@ class SchemaTest extends Test:
         "fold produces record via result on different types" in {
             // MTPerson result
             val personRecord = Schema[MTPerson].toRecord(MTPerson("Alice", 30))
-            assert(personRecord.dict("name") == "Alice")
-            assert(personRecord.dict("age") == 30)
+            assert(personRecord.toDict("name") == "Alice")
+            assert(personRecord.toDict("age") == 30)
 
             // MTSmallTeam result
             val teamRecord = Schema[MTSmallTeam].toRecord(MTSmallTeam(alice, 5))
-            assert(teamRecord.dict("lead") == alice)
-            assert(teamRecord.dict("size") == 5)
+            assert(teamRecord.toDict("lead") == alice)
+            assert(teamRecord.toDict("size") == 5)
         }
 
         "fold iterates all fields and accumulates null/empty checks" in {
@@ -2116,7 +2116,7 @@ class SchemaTest extends Test:
                 .add("active")(_ => true)
             assert(m.fieldNames == Set("userName", "age", "email", "active"))
             val record = m.toRecord(user)
-            assert(record.dict("userName") == "Alice")
+            assert(record.toDict("userName") == "Alice")
         }
 
         "select fields from a type" in {
@@ -2136,7 +2136,7 @@ class SchemaTest extends Test:
         "add computed field with type inference" in {
             val m      = Schema[MTUser].add("greeting")(u => s"Hello, ${u.name}!")
             val record = m.toRecord(user)
-            assert(record.dict("greeting") == "Hello, Alice!")
+            assert(record.toDict("greeting") == "Hello, Alice!")
         }
 
         // === Detailed tests ===
@@ -2218,8 +2218,8 @@ class SchemaTest extends Test:
             // After rename, the new name should appear in result
             val m      = Schema[MTUser].rename("name", "userName")
             val record = m.toRecord(user)
-            assert(record.dict("userName") == "Alice")
-            assert(!record.dict.contains("name"))
+            assert(record.toDict("userName") == "Alice")
+            assert(!record.toDict.contains("name"))
         }
 
         "rename old name compile error" in {
@@ -2262,19 +2262,19 @@ class SchemaTest extends Test:
         "add then result" in {
             val m      = Schema[MTUser].add("active")(_ => true)
             val record = m.toRecord(user)
-            assert(record.dict("active") == true)
+            assert(record.toDict("active") == true)
         }
 
         "add then result get" in {
             val m      = Schema[MTUser].add("active")(_ => true)
             val record = m.toRecord(user)
-            assert(record.dict("active") == true)
+            assert(record.toDict("active") == true)
         }
 
         "add computed field" in {
             val m      = Schema[MTUser].add("greeting")(u => s"Hello, ${u.name}!")
             val record = m.toRecord(user)
-            assert(record.dict("greeting") == "Hello, Alice!")
+            assert(record.toDict("greeting") == "Hello, Alice!")
         }
 
         "add multiple fields" in {
@@ -2339,8 +2339,8 @@ class SchemaTest extends Test:
         "transform then result" in {
             val m      = Schema[MTUser].drop("ssn").rename("name", "userName")
             val record = m.toRecord(user)
-            assert(record.dict("userName") == "Alice")
-            assert(!record.dict.contains("ssn"))
+            assert(record.toDict("userName") == "Alice")
+            assert(!record.toDict.contains("ssn"))
         }
 
         // --- Compile-time errors (9 tests) ---
@@ -2750,8 +2750,8 @@ class SchemaTest extends Test:
                     .add("active")(_ => true)
                 assert(m.fieldNames == Set("userName", "age", "email", "active"))
                 val record = m.toRecord(user)
-                assert(record.dict("userName") == "Alice")
-                assert(record.dict("active") == true)
+                assert(record.toDict("userName") == "Alice")
+                assert(record.toDict("active") == true)
             }
 
             "lambda drop on multi-field chain" in {
@@ -3062,10 +3062,10 @@ class SchemaTest extends Test:
             val user = MTUser("Alice", 30, "alice@test.com", "123-45-6789")
             // Verify that result() excludes ssn
             val record = m.toRecord(user)
-            assert(!record.dict.contains("ssn"))
-            assert(record.dict("name") == "Alice")
-            assert(record.dict("age") == 30)
-            assert(record.dict("email") == "alice@test.com")
+            assert(!record.toDict.contains("ssn"))
+            assert(record.toDict("name") == "Alice")
+            assert(record.toDict("age") == 30)
+            assert(record.toDict("email") == "alice@test.com")
         }
 
         "transform drop - JSON via to[DTO] excludes dropped field" in {
@@ -3088,10 +3088,10 @@ class SchemaTest extends Test:
             val user   = MTUser("Alice", 30, "alice@test.com", "123-45-6789")
             val record = m.toRecord(user)
             // New name should be present, old name should be absent
-            assert(record.dict.contains("userName"))
-            assert(!record.dict.contains("name"))
-            assert(record.dict("userName") == "Alice")
-            assert(record.dict("age") == 30)
+            assert(record.toDict.contains("userName"))
+            assert(!record.toDict.contains("name"))
+            assert(record.toDict("userName") == "Alice")
+            assert(record.toDict("age") == 30)
         }
 
         "transform rename - JSON via to[DTO] has renamed key" in {
@@ -3110,11 +3110,11 @@ class SchemaTest extends Test:
             val m      = Schema[MTUser].add("active")(_ => true)
             val user   = MTUser("Alice", 30, "alice@test.com", "123-45-6789")
             val record = m.toRecord(user)
-            assert(record.dict.contains("active"))
-            assert(record.dict("active") == true)
+            assert(record.toDict.contains("active"))
+            assert(record.toDict("active") == true)
             // Original fields should still be present
-            assert(record.dict("name") == "Alice")
-            assert(record.dict("age") == 30)
+            assert(record.toDict("name") == "Alice")
+            assert(record.toDict("age") == 30)
         }
 
         "transform add - JSON via to[DTO] includes computed field" in {
@@ -5574,9 +5574,9 @@ class SchemaTest extends Test:
             val recString = byString.toRecord(alice)
             val recLambda = byLambda.toRecord(alice)
 
-            assert(recString.dict("id") == recLambda.dict("id"))
-            assert(recString.dict("name") == recLambda.dict("name"))
-            assert(recString.dict("email") == recLambda.dict("email"))
+            assert(recString.toDict("id") == recLambda.toDict("id"))
+            assert(recString.toDict("name") == recLambda.toDict("name"))
+            assert(recString.toDict("email") == recLambda.toDict("email"))
         }
 
         "lambda transforms + format: transform chain + Json round-trip recovers DTO" in {

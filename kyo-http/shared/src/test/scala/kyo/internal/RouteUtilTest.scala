@@ -658,7 +658,7 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, Span.empty[Byte]) match
                 case Result.Success(req) =>
-                    assert(req.fields.dict("auth") == "Bearer xyz")
+                    assert(req.fields.toDict("auth") == "Bearer xyz")
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
             end match
@@ -670,7 +670,7 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, Span.empty[Byte]) match
                 case Result.Success(req) =>
-                    assert(req.fields.dict("session") == "abc123")
+                    assert(req.fields.toDict("session") == "abc123")
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
             end match
@@ -682,7 +682,7 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, Span.empty[Byte]) match
                 case Result.Success(req) =>
-                    assert(req.fields.dict("auth") == Present("Bearer xyz"))
+                    assert(req.fields.toDict("auth") == Present("Bearer xyz"))
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
             end match
@@ -693,7 +693,7 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, HttpHeaders.empty, Span.empty[Byte]) match
                 case Result.Success(req) =>
-                    assert(req.fields.dict("auth") == Absent)
+                    assert(req.fields.toDict("auth") == Absent)
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
             end match
@@ -736,7 +736,7 @@ class RouteUtilTest extends kyo.Test:
                 Span.empty[Byte]
             ) match
                 case Result.Success(req) =>
-                    assert(req.fields.dict("page") == 5)
+                    assert(req.fields.toDict("page") == 5)
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
             end match
@@ -759,7 +759,7 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, HttpHeaders.empty, data) match
                 case Result.Success(req) =>
-                    val decoded = req.fields.dict("body").asInstanceOf[Span[Byte]]
+                    val decoded = req.fields.toDict("body").asInstanceOf[Span[Byte]]
                     assert(decoded.toArrayUnsafe.asInstanceOf[Array[Byte]].toSeq == Seq[Byte](10, 20, 30))
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
@@ -772,7 +772,7 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, HttpHeaders.empty, bytes) match
                 case Result.Success(req) =>
-                    assert(req.fields.dict("body") == LoginForm("alice", "secret"))
+                    assert(req.fields.toDict("body") == LoginForm("alice", "secret"))
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
             end match
@@ -783,7 +783,7 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, HttpHeaders.empty, Span.empty[Byte]) match
                 case Result.Success(req) =>
-                    assert(req.fields.dict.isEmpty)
+                    assert(req.fields.toDict.isEmpty)
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
             end match
@@ -806,7 +806,7 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, Span.empty[Byte]) match
                 case Result.Success(req) =>
-                    assert(req.fields.dict("body") == ())
+                    assert(req.fields.toDict("body") == ())
                 case Result.Failure(err) => fail(s"expected success for empty body, got failure: $err")
                 case p: Result.Panic     => throw p.exception
             end match
@@ -821,7 +821,7 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, nullBytes) match
                 case Result.Success(req) =>
-                    assert(req.fields.dict("body") == ())
+                    assert(req.fields.toDict("body") == ())
                 case Result.Failure(err) => fail(s"expected success for null body, got failure: $err")
                 case p: Result.Panic     => throw p.exception
             end match
@@ -862,7 +862,7 @@ class RouteUtilTest extends kyo.Test:
                 HttpUrl.fromUri("/test")
             ) match
                 case Result.Success(resp) =>
-                    val decoded = resp.fields.dict("body").asInstanceOf[Span[Byte]]
+                    val decoded = resp.fields.toDict("body").asInstanceOf[Span[Byte]]
                     assert(decoded.toArrayUnsafe.asInstanceOf[Array[Byte]].toSeq == Seq[Byte](5, 6, 7))
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
@@ -882,7 +882,7 @@ class RouteUtilTest extends kyo.Test:
                 HttpUrl.fromUri("/test")
             ) match
                 case Result.Success(resp) =>
-                    assert(resp.fields.dict("etag") == Present("abc"))
+                    assert(resp.fields.toDict("etag") == Present("abc"))
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
             end match
@@ -900,7 +900,7 @@ class RouteUtilTest extends kyo.Test:
                 HttpUrl.fromUri("/test")
             ) match
                 case Result.Success(resp) =>
-                    assert(resp.fields.dict("etag") == Absent)
+                    assert(resp.fields.toDict("etag") == Absent)
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
             end match
@@ -1024,10 +1024,10 @@ class RouteUtilTest extends kyo.Test:
                         bytes
                     ) match
                         case Result.Success(decoded) =>
-                            assert(decoded.fields.dict("userId") == 42)
-                            assert(decoded.fields.dict("action") == "create")
-                            assert(decoded.fields.dict("auth") == "Bearer token123")
-                            assert(decoded.fields.dict("body") == User("Alice", 30))
+                            assert(decoded.fields.toDict("userId") == 42)
+                            assert(decoded.fields.toDict("action") == "create")
+                            assert(decoded.fields.toDict("auth") == "Bearer token123")
+                            assert(decoded.fields.toDict("body") == User("Alice", 30))
                         case Result.Failure(err) => fail(s"decode failed: $err")
                         case p: Result.Panic     => throw p.exception
                     end match
@@ -1052,8 +1052,8 @@ class RouteUtilTest extends kyo.Test:
                     RouteUtil.decodeBufferedResponse(route, status, headers, bytes, route.method.name, HttpUrl.fromUri("/test")) match
                         case Result.Success(decoded) =>
                             assert(decoded.status == HttpStatus.OK)
-                            assert(decoded.fields.dict("requestId") == "req-789")
-                            assert(decoded.fields.dict("body") == User("Bob", 25))
+                            assert(decoded.fields.toDict("requestId") == "req-789")
+                            assert(decoded.fields.toDict("body") == User("Bob", 25))
                         case Result.Failure(err) => fail(s"decode failed: $err")
                         case p: Result.Panic     => throw p.exception
                 ,
@@ -1076,7 +1076,7 @@ class RouteUtilTest extends kyo.Test:
                 onBuffered = (_, _, bytes) =>
                     RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, HttpHeaders.empty, bytes) match
                         case Result.Success(decoded) =>
-                            assert(decoded.fields.dict("body") == form)
+                            assert(decoded.fields.toDict("body") == form)
                         case Result.Failure(err) => fail(s"decode failed: $err")
                         case p: Result.Panic     => throw p.exception
                 ,
@@ -1178,7 +1178,7 @@ class RouteUtilTest extends kyo.Test:
 
             RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, bytes) match
                 case Result.Success(request) =>
-                    val parts = request.fields.dict("body").asInstanceOf[Seq[HttpRequest.Part]]
+                    val parts = request.fields.toDict("body").asInstanceOf[Seq[HttpRequest.Part]]
                     assert(parts.size == 2)
                     assert(parts(0).name == "file")
                     assert(parts(0).filename == Present("test.txt"))

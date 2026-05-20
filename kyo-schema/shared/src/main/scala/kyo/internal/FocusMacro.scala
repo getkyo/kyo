@@ -1458,7 +1458,7 @@ import scala.quoted.*
 
         if !sym.isClassDef || !sym.flags.is(Flags.Case) then
             // Non-case-class: return empty Record
-            '{ new Record[Any](Dict.empty[String, Any]) }
+            '{ Record.from[Any](Dict.empty[String, Any]) }
         else
 
             val tildeType = TypeRepr.of[Record.~]
@@ -1473,7 +1473,7 @@ import scala.quoted.*
                     (fieldName, tildedType, defaultExpr)
 
             if fieldsWithDefaults.isEmpty then
-                '{ new Record[Any](Dict.empty[String, Any]) }
+                '{ Record.from[Any](Dict.empty[String, Any]) }
             else
 
                 // Build the Record type: intersection of "name" ~ Type for each field with a default
@@ -1498,7 +1498,7 @@ import scala.quoted.*
                                     '{ () }
                                 )
                             }
-                            new Record[r](Dict.fromArrayUnsafe(arr.asInstanceOf[Array[String | Any]]))
+                            Record.from[r](Dict.fromArrayUnsafe(arr.asInstanceOf[Array[Any]]))
                         }
                 end match
             end if

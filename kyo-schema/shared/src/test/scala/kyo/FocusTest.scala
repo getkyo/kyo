@@ -1113,10 +1113,10 @@ class FocusTest extends Test:
         "all evil fields round-trip via result" in {
             val evil   = MTEvil("hello", 42, "/tmp", true)
             val record = Schema[MTEvil].toRecord(evil)
-            assert(record.dict("get") == "hello")
-            assert(record.dict("set") == 42)
-            assert(record.dict("path") == "/tmp")
-            assert(record.dict("selectDynamic") == true)
+            assert(record.toDict("get") == "hello")
+            assert(record.toDict("set") == 42)
+            assert(record.toDict("path") == "/tmp")
+            assert(record.toDict("selectDynamic") == true)
         }
 
         "optional detects Option field" in {

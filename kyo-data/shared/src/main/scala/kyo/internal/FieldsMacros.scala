@@ -42,49 +42,66 @@ object FieldsMacros:
         end if
     end caseClassDefaults
 
+    /** Decomposes a field-intersection type into its individual `Name ~ Value` components.
+      *
+      * Walks AndType/OrType, dealiases case classes via `caseClassFields`, and follows type-bound aliases (e.g. opaque type aliases) to
+      * their upper bound when one is set.
+      */
+    private def decompose(using Quotes)(tpe: quotes.reflect.TypeRepr): Vector[quotes.reflect.TypeRepr] =
+        import quotes.reflect.*
+        tpe.dealias match
+            case AndType(l, r) => decompose(l) ++ decompose(r)
+            case OrType(l, r)  => decompose(l) ++ decompose(r)
+            case _ =>
+                if tpe =:= TypeRepr.of[Any] then Vector()
+                else
+                    caseClassFields(tpe).getOrElse:
+                        try
+                            tpe.typeSymbol.tree match
+                                case typeDef: TypeDef =>
+                                    typeDef.rhs match
+                                        case bounds: TypeBoundsTree =>
+                                            val hi = bounds.hi.tpe
+                                            if !(hi =:= TypeRepr.of[Any]) then decompose(hi)
+                                            else Vector(tpe)
+                                        case _ => Vector(tpe)
+                                case _ => Vector(tpe)
+                        catch case _: Exception => Vector(tpe)
+        end match
+    end decompose
+
+    /** Builds the tuple type `c1 *: c2 *: ... *: EmptyTuple` from a vector of component types. */
+    private def tupled(using Quotes)(typs: Vector[quotes.reflect.TypeRepr]): quotes.reflect.TypeRepr =
+        import quotes.reflect.*
+        typs match
+            case h +: t => TypeRepr.of[*:].appliedTo(List(h, tupled(t)))
+            case _      => TypeRepr.of[EmptyTuple]
+    end tupled
+
+    /** Builds the structural refinement type used by the implicit conversion from `Record[F]` to its structural surface — e.g.
+      * `Fields.Structural & { def a: Int; def b: String }`. Duplicate field names are merged into a union of their value types.
+      */
+    private def structural(using Quotes)(typs: Vector[quotes.reflect.TypeRepr]): quotes.reflect.TypeRepr =
+        import quotes.reflect.*
+        if typs.isEmpty then
+            TypeRepr.of[Fields.Structural]
+        else
+            val structType = typs.foldLeft(Map[String, TypeRepr]()) {
+                case (acc, AppliedType(_, List(ConstantType(StringConstant(name)), valueType))) =>
+                    acc.get(name) match
+                        case Some(x) => acc + (name -> OrType(x, valueType))
+                        case None    => acc + (name -> valueType)
+                case (acc, _) => acc
+            }.foldLeft(TypeRepr.of[Any]) {
+                case (acc, (name, valueType)) =>
+                    Refinement(acc, name, ByNameType(valueType))
+            }
+            AndType(TypeRepr.of[Fields.Structural], structType)
+        end if
+    end structural
+
     def deriveImpl[A: Type](using Quotes): Expr[Fields[A]] =
         import quotes.reflect.*
-
-        def decompose(tpe: TypeRepr): Vector[TypeRepr] =
-            tpe.dealias match
-                case AndType(l, r) => decompose(l) ++ decompose(r)
-                case OrType(l, r)  => decompose(l) ++ decompose(r)
-                case _ =>
-                    if tpe =:= TypeRepr.of[Any] then Vector()
-                    else
-                        caseClassFields(tpe).getOrElse:
-                            try
-                                tpe.typeSymbol.tree match
-                                    case typeDef: TypeDef =>
-                                        typeDef.rhs match
-                                            case bounds: TypeBoundsTree =>
-                                                val hi = bounds.hi.tpe
-                                                if !(hi =:= TypeRepr.of[Any]) then decompose(hi)
-                                                else Vector(tpe)
-                                            case _ => Vector(tpe)
-                                    case _ => Vector(tpe)
-                            catch case _: Exception => Vector(tpe)
-
-        def tupled(typs: Vector[TypeRepr]): TypeRepr =
-            typs match
-                case h +: t => TypeRepr.of[*:].appliedTo(List(h, tupled(t)))
-                case _      => TypeRepr.of[EmptyTuple]
-
-        def structural(typs: Vector[TypeRepr]): TypeRepr =
-            if typs.isEmpty then
-                TypeRepr.of[Fields.Structural]
-            else
-                val structType = typs.foldLeft(Map[String, TypeRepr]()) {
-                    case (acc, AppliedType(_, List(ConstantType(StringConstant(name)), valueType))) =>
-                        acc.get(name) match
-                            case Some(x) => acc + (name -> OrType(x, valueType))
-                            case None    => acc + (name -> valueType)
-                    case (acc, _) => acc
-                }.foldLeft(TypeRepr.of[Any]) {
-                    case (acc, (name, valueType)) =>
-                        Refinement(acc, name, ByNameType(valueType))
-                }
-                AndType(TypeRepr.of[Fields.Structural], structType)
 
         val tpeA       = TypeRepr.of[A].dealias
         val components = decompose(tpeA)
@@ -107,12 +124,18 @@ object FieldsMacros:
                             Expr.summon[Tag[v]].getOrElse(
                                 report.errorAndAbort(s"Cannot summon Tag for field '$name': ${valueType.show}")
                             )
-                    val nestedExpr = valueType.asType match
-                        case '[Record[f]] =>
-                            Expr.summon[Fields[f]] match
-                                case Some(fields) => '{ $fields.fields }
-                                case None         => '{ Nil: List[Field[?, ?]] }
-                        case _ => '{ Nil: List[Field[?, ?]] }
+                    val recordCtor = TypeRepr.of[Record[Any]] match
+                        case AppliedType(ctor, _) => ctor
+                        case other                => other
+                    val nestedExpr = valueType.dealias match
+                        case AppliedType(ctor, List(f)) if ctor =:= recordCtor =>
+                            f.asType match
+                                case '[ft] =>
+                                    Expr.summon[Fields[ft]] match
+                                        case Some(fields) => '{ $fields.fields }
+                                        case None         => '{ Nil: List[Field[?, ?]] }
+                        case _ =>
+                            '{ Nil: List[Field[?, ?]] }
                     val defaultExpr = defaults.get(name) match
                         case Some(defaultValue) => '{ Maybe(${ defaultValue }).asInstanceOf[Maybe[Any]] }
                         case None               => '{ Maybe.empty[Any] }
@@ -136,6 +159,19 @@ object FieldsMacros:
                 '{ Fields.createAux[A, x, s]($fieldsList) }
         end match
     end deriveImpl
+
+    /** Type-only structure derivation used by the implicit `Record[F] => S` conversion. Computes just the structural refinement `S` — no
+      * per-field `Tag` summoning, no runtime `Field` descriptors. This lets structural field access (e.g. `record.fieldName`) compile in
+      * generic contexts where `Tag[A]` for a field's value type isn't available.
+      */
+    def deriveStructureImpl[A: Type](using Quotes): Expr[Fields.Structure[A]] =
+        import quotes.reflect.*
+        val components = decompose(TypeRepr.of[A].dealias)
+        structural(components).asType match
+            case '[type s <: Fields.Structural; s] =>
+                '{ Fields.Structure.unsafe[A, s] }
+        end match
+    end deriveStructureImpl
 
     def haveImpl[F: Type, Name <: String: Type](using Quotes): Expr[Fields.Have[F, Name]] =
         import quotes.reflect.*
@@ -316,7 +352,7 @@ object FieldsMacros:
         end match
     end fromProductImpl
 
-    def toProductImpl[A <: Product: Type](record: Expr[Record[?]])(using Quotes): Expr[A] =
+    def toProductImpl[A <: Product: Type, F: Type](record: Expr[Record[F]])(using Quotes): Expr[A] =
         import quotes.reflect.*
 
         val tpe = TypeRepr.of[A].dealias
@@ -333,13 +369,13 @@ object FieldsMacros:
             case AppliedType(_, args) => args
             case _                    => List.empty
 
-        // Build constructor arguments: record.dict(fieldName).asInstanceOf[FieldType]
+        // Build constructor arguments: record.toDict(fieldName).asInstanceOf[FieldType]
         val args: List[Term] = fields.map: field =>
             val fieldName = Expr(field.name)
             val fieldType = tpe.memberType(field)
             fieldType.asType match
                 case '[t] =>
-                    '{ $record.dict($fieldName).asInstanceOf[t] }.asTerm
+                    '{ $record.toDict($fieldName).asInstanceOf[t] }.asTerm
 
         // Call the apply method on the companion object with type arguments
         Select.overloaded(companion, "apply", typeArgs, args).asExprOf[A]

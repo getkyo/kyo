@@ -463,7 +463,7 @@ final class FlowEngine private (
                         case _          => acc
                 case _ => acc
         }
-        new Record[Any](dict)
+        Record.from[Any](dict)
     end rebuildRecord
 
     private def deriveCompleted(history: FlowStore.HistoryPage): Set[String] =

@@ -173,7 +173,7 @@ import scala.quoted.*
                                 fieldMapF.get(fieldName) match
                                     case Some(_) =>
                                         // Field exists in F -- pull from record dict
-                                        '{ rec.dict(${ Expr(fieldName) }).asInstanceOf[ft] }.asTerm
+                                        '{ rec.toDict(${ Expr(fieldName) }).asInstanceOf[ft] }.asTerm
                                     case None =>
                                         // Field has default -- use it
                                         val defaultMethodName = s"$$lessinit$$greater$$default$$${idx + 1}"

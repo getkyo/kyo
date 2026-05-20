@@ -124,8 +124,8 @@ class ConvertTest extends Test:
         val m                    = Schema[MTPerson]
         val record               = m.toRecord(alice)
         given CanEqual[Any, Any] = CanEqual.derived
-        assert(record.dict("name") == "Alice")
-        assert(record.dict("age") == 30)
+        assert(record.toDict("name") == "Alice")
+        assert(record.toDict("age") == 30)
     }
 
     "result after drop" in {
@@ -133,18 +133,18 @@ class ConvertTest extends Test:
         val user                 = MTUser("Alice", 30, "alice@test.com", "123-45-6789")
         val record               = m.toRecord(user)
         given CanEqual[Any, Any] = CanEqual.derived
-        assert(record.dict("name") == "Alice")
-        assert(record.dict("age") == 30)
-        assert(record.dict("email") == "alice@test.com")
-        assert(!record.dict.contains("ssn"))
+        assert(record.toDict("name") == "Alice")
+        assert(record.toDict("age") == 30)
+        assert(record.toDict("email") == "alice@test.com")
+        assert(!record.toDict.contains("ssn"))
     }
 
     "result record fields" in {
         val m                    = Schema[MTSmallTeam]
         val record               = m.toRecord(team1)
         given CanEqual[Any, Any] = CanEqual.derived
-        assert(record.dict("lead") == alice)
-        assert(record.dict("size") == 5)
+        assert(record.toDict("lead") == alice)
+        assert(record.toDict("size") == 5)
     }
 
     // === result edge cases (after rename/add) (2 tests) ===
@@ -153,18 +153,18 @@ class ConvertTest extends Test:
         val m                    = Schema[MTPerson].rename("name", "fullName")
         val record               = m.toRecord(alice)
         given CanEqual[Any, Any] = CanEqual.derived
-        assert(record.dict("fullName") == "Alice")
-        assert(record.dict("age") == 30)
-        assert(!record.dict.contains("name"))
+        assert(record.toDict("fullName") == "Alice")
+        assert(record.toDict("age") == 30)
+        assert(!record.toDict.contains("name"))
     }
 
     "result after add" in {
         val m                    = Schema[MTPerson].add("greeting")((p: MTPerson) => s"Hi ${p.name}")
         val record               = m.toRecord(alice)
         given CanEqual[Any, Any] = CanEqual.derived
-        assert(record.dict("name") == "Alice")
-        assert(record.dict("age") == 30)
-        assert(record.dict("greeting") == "Hi Alice")
+        assert(record.toDict("name") == "Alice")
+        assert(record.toDict("age") == 30)
+        assert(record.toDict("greeting") == "Hi Alice")
     }
 
     // === instance convert (3 tests) ===
@@ -199,8 +199,8 @@ class ConvertTest extends Test:
         val fn                   = m.toRecord
         val record               = fn(alice)
         given CanEqual[Any, Any] = CanEqual.derived
-        assert(record.dict("name") == "Alice")
-        assert(record.dict("age") == 30)
+        assert(record.toDict("name") == "Alice")
+        assert(record.toDict("age") == 30)
     }
 
     "result function reusable" in {
@@ -209,8 +209,8 @@ class ConvertTest extends Test:
         val r1                   = fn(alice)
         val r2                   = fn(bob)
         given CanEqual[Any, Any] = CanEqual.derived
-        assert(r1.dict("name") == "Alice")
-        assert(r2.dict("name") == "Bob")
+        assert(r1.toDict("name") == "Alice")
+        assert(r2.toDict("name") == "Bob")
     }
 
     "result function fields" in {
@@ -219,9 +219,9 @@ class ConvertTest extends Test:
         val fn                   = m.toRecord
         val record               = fn(imTeam1)
         given CanEqual[Any, Any] = CanEqual.derived
-        assert(record.dict("name") == "Alpha")
-        assert(record.dict("lead") == alice)
-        assert(record.dict("size") == 5)
+        assert(record.toDict("name") == "Alpha")
+        assert(record.toDict("lead") == alice)
+        assert(record.toDict("size") == 5)
     }
 
     // === Convert[A, B] (auto-derived, one-directional) ===

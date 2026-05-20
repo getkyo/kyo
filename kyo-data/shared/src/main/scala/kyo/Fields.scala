@@ -171,11 +171,37 @@ object Fields:
 
         extension (s: Impl)
             def selectDynamic(name: String): Any =
-                s(name)
+                // Scala mangles operator/symbolic chars in JVM identifiers (e.g. `X-Custom` becomes `X$minusCustom`)
+                // and Selectable's selectDynamic receives the mangled form. Decode back to the source name so the
+                // dict lookup matches keys inserted with their original spelling. `decode` is identity for
+                // already-unmangled names, so this is correct in both cases.
+                s(scala.reflect.NameTransformer.decode(name))
+        end extension
 
         private[kyo] def from[A](dict: Dict[String, Any]): Structural & A =
             dict.asInstanceOf[Structural & A]
     end Structural
+
+    /** Type-only evidence carrying the structural refinement `Struct` derived from a field-intersection type `F`. Used by the
+      * `Record[F] => Struct` implicit conversion that enables structural field access. Distinct from `Fields[F]`, which also materializes
+      * runtime `Field` descriptors (and therefore needs a `Tag` for every field's value type) — `Structure[F]` is type-only and works in
+      * generic contexts where per-field `Tag`s aren't available.
+      */
+    sealed trait Structure[F]:
+        type Struct <: Fields.Structural
+
+    object Structure:
+        type Aux[F, S <: Fields.Structural] =
+            Structure[F]:
+                type Struct = S
+
+        private[kyo] def unsafe[F, S <: Structural]: Structure.Aux[F, S] =
+            new Structure[F]:
+                type Struct = S
+
+        transparent inline given derive[F]: Structure[F] =
+            ${ internal.FieldsMacros.deriveStructureImpl[F] }
+    end Structure
 
     /** Prevents Scala from merging field names when chaining field definitions.
       *

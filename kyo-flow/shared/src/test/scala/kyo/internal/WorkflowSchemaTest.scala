@@ -128,7 +128,7 @@ class WorkflowSchemaTest extends Test:
                         case _          => acc
                 case _ => acc
         }
-        new Record[Any](dict)
+        Record.from[Any](dict)
     end rebuildRecord
 
     // =========================================================================

@@ -426,7 +426,7 @@ object Flow:
                                                             case _          => acc
                                                     case _ => acc
                                             }
-                                            new Record[In & Out](dict)
+                                            Record.from[In & Out](dict)
                                         }
                                     case Present(state) =>
                                         state.status match
@@ -807,7 +807,7 @@ object Flow:
         case class Compensation(ctx: Record[Any], handler: Record[Any] => Any, branchId: Maybe[Int])
 
         def addField(ctx: Record[Any], name: String, value: Any): Record[Any] =
-            new Record[Any](ctx.toDict ++ Dict(name -> value))
+            Record.from[Any](ctx.toDict ++ Dict(name -> value))
 
         AtomicRef.init[Chunk[Compensation]](Chunk.empty).map { compsRef =>
 
@@ -1112,7 +1112,7 @@ object Flow:
                             n.flows.toSeq.map(f => loop(f, ctx, branchId, nextBranch))
                                 .reduce((l, r) => interpreter.onZip(l, r, ctx, n.erased.isolate))
 
-            val rawResult = loop(flow, new Record[Any](inputs.toDict))
+            val rawResult = loop(flow, Record.from[Any](inputs.toDict))
             Abort.run[Throwable](rawResult).map {
                 case Result.Success(record) =>
                     record.asInstanceOf[Record[In & Out]]

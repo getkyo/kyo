@@ -129,8 +129,11 @@ object Record extends RecordDictSyntax:
         end zip
     end extension
 
-    /** Conversion that allows access to fields by name. */
-    given [F, T, S](using c: Fields.Aux[F, T, S]): Conversion[Impl[F], S] =
+    /** Conversion that allows access to fields by name. Requires only type-level `Fields.Structure` evidence — does not pull in the full
+      * `Fields[F]` derivation (and its per-field `Tag` requirement), so structural access compiles in generic contexts where a `Tag` for
+      * each field's value type isn't available.
+      */
+    given [F, S <: Fields.Structural](using c: Fields.Structure.Aux[F, S]): Conversion[Impl[F], S] =
         new Conversion[Impl[F], S]:
             def apply(r: Impl[F]): S = Fields.Structural.from(r)
 
