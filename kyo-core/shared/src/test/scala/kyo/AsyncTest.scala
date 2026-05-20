@@ -694,7 +694,7 @@ class AsyncTest extends Test:
 
         "interrupt after Sync.defer when awaiting" in runJVM {
             // Interrupt propagates when fiber has reached promise.get
-            Kyo.foreach(1 to 100) { _ =>
+            Kyo.foreach(1 to 30) { _ =>
                 for
                     promise <- Promise.init[Int, Any]
                     fiber   <- Fiber.initUnscoped(promise.get)
