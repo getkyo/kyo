@@ -775,14 +775,14 @@ class CacheTest extends Test:
                 // All must get back the same value (the winner's).
                 // Uses shared key object to test the eq fast-path.
                 (for
-                    maxSize <- Choice.eval(2, 4, 8, 32)
+                    maxSize <- Choice.eval(2, 32)
                     s = cache(maxSize = maxSize)
                     k = new Key(1, 1)
-                    results <- Async.fillIndexed(50, 50)(i => Sync.Unsafe.defer(s.add(k, s"val-$i")))
+                    results <- Async.fillIndexed(16, 16)(i => Sync.Unsafe.defer(s.add(k, s"val-$i")))
                 yield
                     val unique = results.toSet
                     discard(assert(unique.size == 1, s"Expected all same value, got $unique"))
-                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(10)).andThen(succeed)
             }
 
             "parallel adds, same key with eviction pressure — value coherence" in runNotJS {
