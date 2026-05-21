@@ -629,6 +629,17 @@ lazy val `kyo-grpc` =
         )
         .jvmSettings(mimaCheck(false))
 
+lazy val `kyo-grpc-codegen` =
+    project
+        .in(file("kyo-grpc-codegen"))
+        .dependsOn(`kyo-grpc`.jvm)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies ++= Seq(
+                "com.thesamet.scalapb" %% "compilerplugin" % "0.11.17"
+            )
+        )
+
 lazy val `kyo-caliban` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)

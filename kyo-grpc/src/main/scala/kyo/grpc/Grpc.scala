@@ -32,7 +32,7 @@ object Grpcs:
     private def runEffect(effect: Unit < Async)(using Frame): Unit =
         import AllowUnsafe.embrace.danger
         discard(Sync.Unsafe.evalOrThrow(
-            KyoApp.runAndBlock(Duration.Infinity)(effect)
+            Fiber.initUnscoped(effect)
         ))
     end runEffect
 
@@ -223,5 +223,91 @@ object Grpcs:
             )
             Async.fromFuture(promise.future)
         }.map(resp => resp)
+
+    def serverStreamingCall[Req, Resp](
+        grpcChannel: io.grpc.Channel,
+        method: MethodDescriptor[Req, Resp],
+        request: Req
+    )(using Frame, Tag[Emit[Chunk[Resp]]]): Stream[Resp, Async] =
+        val ch = kyo.Channel.Unsafe.init[Resp](1024)
+        io.grpc.stub.ClientCalls.asyncServerStreamingCall(
+            grpcChannel.newCall(method, CallOptions.DEFAULT),
+            request,
+            new StreamObserver[Resp]:
+                override def onNext(value: Resp): Unit =
+                    import AllowUnsafe.embrace.danger
+                    discard(ch.offer(value))
+                override def onError(t: Throwable): Unit =
+                    import AllowUnsafe.embrace.danger
+                    discard(ch.close())
+                override def onCompleted(): Unit =
+                    import AllowUnsafe.embrace.danger
+                    discard(ch.close())
+        )
+        ch.safe.streamUntilClosed()
+
+    def clientStreamingCall[Req, Resp](
+        grpcChannel: io.grpc.Channel,
+        method: MethodDescriptor[Req, Resp],
+        requests: Stream[Req, Async]
+    )(using Frame, Tag[Emit[Chunk[Req]]]): Resp < (Abort[StatusException] & Async) =
+        Async.defer {
+            val promise = scala.concurrent.Promise[Resp]()
+            val responseObserver = new StreamObserver[Resp]:
+                override def onNext(value: Resp): Unit   = discard(promise.success(value))
+                override def onError(t: Throwable): Unit = discard(promise.failure(t))
+                override def onCompleted(): Unit         = ()
+
+            val requestObserver = io.grpc.stub.ClientCalls.asyncClientStreamingCall(
+                grpcChannel.newCall(method, CallOptions.DEFAULT),
+                responseObserver
+            )
+
+            import AllowUnsafe.embrace.danger
+            Sync.Unsafe.evalOrThrow(
+                Fiber.initUnscoped {
+                    requests.foreach { req =>
+                        Sync.defer(requestObserver.onNext(req))
+                    }.map { _ =>
+                        Sync.defer(requestObserver.onCompleted())
+                    }
+                }
+            )
+            Async.fromFuture(promise.future)
+        }
+
+    def bidiStreamingCall[Req, Resp](
+        grpcChannel: io.grpc.Channel,
+        method: MethodDescriptor[Req, Resp],
+        requests: Stream[Req, Async]
+    )(using Frame, Tag[Emit[Chunk[Req]]], Tag[Emit[Chunk[Resp]]]): Stream[Resp, Async] =
+        val ch = kyo.Channel.Unsafe.init[Resp](1024)
+        val responseObserver = new StreamObserver[Resp]:
+            override def onNext(value: Resp): Unit =
+                import AllowUnsafe.embrace.danger
+                discard(ch.offer(value))
+            override def onError(t: Throwable): Unit =
+                import AllowUnsafe.embrace.danger
+                discard(ch.close())
+            override def onCompleted(): Unit =
+                import AllowUnsafe.embrace.danger
+                discard(ch.close())
+
+        val requestObserver = io.grpc.stub.ClientCalls.asyncBidiStreamingCall(
+            grpcChannel.newCall(method, CallOptions.DEFAULT),
+            responseObserver
+        )
+
+        import AllowUnsafe.embrace.danger
+        Sync.Unsafe.evalOrThrow(
+            Fiber.initUnscoped {
+                requests.foreach { req =>
+                    Sync.defer(requestObserver.onNext(req))
+                }.map { _ =>
+                    Sync.defer(requestObserver.onCompleted())
+                }
+            }
+        )
+        ch.safe.streamUntilClosed()
 
 end Grpcs
