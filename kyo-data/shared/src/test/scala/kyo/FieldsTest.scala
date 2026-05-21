@@ -92,7 +92,12 @@ class FieldsTest extends Test:
         assert(renders.contains("age"))
     }
 
-    // // --- Large intersection types ---
+    // --- Large intersection types ---
+    //
+    // BLOCKED on upstream Scala 3 compiler bug: https://github.com/scala/scala3/issues/25352
+    // (severe compile-time slowdown / hang on large intersection types like 22-30 field records).
+    // Re-enable once the upstream fix lands. Verified locally: enabling these makes
+    // `kyo-data/Test/compile` not finish in 20 minutes.
 
     // "large intersection: 22 fields" in {
     //     type F = "f1" ~ Int & "f2" ~ Int & "f3" ~ Int & "f4" ~ Int & "f5" ~ Int &
