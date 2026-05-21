@@ -608,4 +608,34 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         task.interrupted = true
         assert(task.needsInterrupt())
     }
+
+    "fatal Throwable from a task wedges the worker (BUG REPRODUCER for FatalFiberTest cascade)" in {
+        // Repros the chain: FatalFiberTest throws LinkageError -> Worker.runTask's
+        // catch only matches NonFatal -> fatal escapes runTask -> escapes Worker.run's
+        // unguarded while(true) -> thread dies, Worker.state stays at Running, mount/
+        // mountId/blocked never cleared -> wakeup() can never re-arm this Worker ->
+        // subsequent enqueued tasks sit in the dead queue.
+        val worker = createWorker(executor = executor)
+
+        val fatalTask = TestTask(_run = () => throw new LinkageError("simulated NoClassDefFoundError"))
+        worker.enqueue(fatalTask)
+
+        // Worker thread picks it up and dies executing it.
+        eventually {
+            assert(fatalTask.executions == 1, "fatal task should have been executed once before the thread died")
+        }
+        Thread.sleep(200) // let any cleanup paths fire if they exist
+
+        // Now enqueue a trivial second task. A healthy Worker re-arms via wakeup() ->
+        // exec.execute(this) and runs it. A wedged Worker has state stuck at Running,
+        // so the CAS Idle->Running in wakeup() fails and the task never runs.
+        val task2 = TestTask()
+        worker.enqueue(task2)
+        Thread.sleep(500)
+
+        assert(
+            task2.executions == 1,
+            s"Worker should recover and execute the next task after fatal, but task2.executions=${task2.executions}"
+        )
+    }
 }
