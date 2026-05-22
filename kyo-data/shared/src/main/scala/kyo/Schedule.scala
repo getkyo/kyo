@@ -26,13 +26,13 @@ sealed abstract class Schedule extends Serializable derives CanEqual:
       */
     final infix def max(that: Schedule): Schedule =
         this match
-            case Never            => this
-            case Done | Immediate => that
+            case Never | Done => this
+            case Immediate    => that
             case _ =>
                 that match
-                    case Never            => that
-                    case Done | Immediate => this
-                    case _                => Max(this, that)
+                    case Never | Done => that
+                    case Immediate    => this
+                    case _            => Max(this, that)
 
     /** Combines this schedule with another, taking the minimum delay of both.
       *
@@ -78,8 +78,8 @@ sealed abstract class Schedule extends Serializable derives CanEqual:
             case Done  => that
             case _ =>
                 that match
-                    case Done | Never | Immediate => this
-                    case _                        => AndThen(this, that)
+                    case Done | Never => this
+                    case _            => AndThen(this, that)
 
     /** Repeats this schedule a specified number of times.
       *
@@ -90,11 +90,10 @@ sealed abstract class Schedule extends Serializable derives CanEqual:
       */
     final def repeat(n: Int): Schedule =
         if n <= 0 then Schedule.done
-        else if n == 1 then this
         else
             this match
                 case Never | Done => this
-                case _            => Repeat(this, n)
+                case _            => Repeat(this, this, n)
 
     /** Limits the total duration of this schedule.
       *
@@ -105,6 +104,7 @@ sealed abstract class Schedule extends Serializable derives CanEqual:
       */
     final def maxDuration(maxDuration: Duration): Schedule =
         if !maxDuration.isFinite then this
+        else if maxDuration == Duration.Zero then Schedule.done
         else
             this match
                 case Never | Done | Immediate => this
@@ -218,7 +218,7 @@ object Schedule:
       */
     def linear(base: Duration): Schedule =
         if base == Duration.Zero then immediate.forever
-        else Linear(base)
+        else Linear(base, base)
 
     /** Creates a schedule with intervals following the Fibonacci sequence.
       *
@@ -243,7 +243,7 @@ object Schedule:
       *   a new schedule with exponentially increasing intervals
       */
     def exponential(initial: Duration, factor: Double): Schedule =
-        if initial == Duration.Zero then immediate
+        if initial == Duration.Zero then immediate.forever
         else if factor == 1.0 then fixed(initial)
         else Exponential(initial, factor)
 
@@ -259,8 +259,8 @@ object Schedule:
       *   a new schedule with exponential backoff and a maximum delay
       */
     def exponentialBackoff(initial: Duration, factor: Double, maxBackoff: Duration): Schedule =
-        if initial == Duration.Zero then immediate
-        else if factor == 1.0 then fixed(initial)
+        if initial == Duration.Zero then immediate.forever
+        else if factor == 1.0 then fixed(initial.min(maxBackoff))
         else ExponentialBackoff(initial, factor, maxBackoff)
 
     /** Creates a schedule that executes at fixed points in time, aligned to a base period and offset.
@@ -323,17 +323,21 @@ object Schedule:
             def show = s"Schedule.exponentialBackoff(${initial.show}, ${formatDouble(factor)}, ${maxBackoff.show})"
         end ExponentialBackoff
 
-        final case class Linear(base: Duration) extends Schedule:
-            def next(now: Instant) = Maybe((base, linear(base + base)))
-            def show               = s"Schedule.linear(${base.show})"
+        final case class Linear(current: Duration, step: Duration) extends Schedule:
+            def next(now: Instant) = Maybe((current, Linear(current + step, step)))
+            def show               = s"Schedule.linear(${step.show})"
 
         final case class Anchored(period: Duration, offset: Duration, last: Maybe[Instant]) extends Schedule:
             def next(now: Instant): Maybe[(Duration, Schedule)] =
                 val reference   = last.getOrElse(now)
                 val periodNanos = period.toNanos.max(1)
 
+                val effectiveOffset = last match
+                    case Absent     => offset
+                    case Present(_) => (offset.toNanos % periodNanos).nanos
+
                 val elapsed  = (reference - Instant.Epoch).toNanos % periodNanos
-                val nextTime = reference - elapsed.nanos + offset
+                val nextTime = reference - elapsed.nanos + effectiveOffset
 
                 val finalTime =
                     if nextTime <= now then
@@ -386,15 +390,20 @@ object Schedule:
             def next(now: Instant) =
                 schedule.next(now).flatMap { (d, s) =>
                     if d > duration then Maybe.empty
+                    else if d == Duration.Zero && s == schedule then Maybe((d, Schedule.done))
                     else Maybe((d, s.maxDuration(duration - d)))
                 }
             def show = s"(${schedule.show}).maxDuration(${duration.show})"
         end MaxDuration
 
-        final case class Repeat(schedule: Schedule, remaining: Int) extends Schedule:
+        final case class Repeat(original: Schedule, current: Schedule, remaining: Int) extends Schedule:
             def next(now: Instant) =
-                schedule.next(now).map((d, s) => (d, s.andThen(schedule.repeat(remaining - 1))))
-            def show = s"(${schedule.show}).repeat($remaining)"
+                if remaining <= 0 then Maybe.empty
+                else
+                    current.next(now) match
+                        case Present((d, s)) => Maybe((d, Repeat(original, s, remaining - 1)))
+                        case Absent          => original.next(now).map((d, s) => (d, Repeat(original, s, remaining - 1)))
+            def show = s"(${original.show}).repeat($remaining)"
         end Repeat
 
         final case class Forever(schedule: Schedule) extends Schedule:
@@ -417,7 +426,8 @@ object Schedule:
                     val z    = y ^ (y >> 7)
                     val hash = z ^ (z << 17)
 
-                    val jitterFactor = (hash.toDouble / Int.MaxValue) * factor
+                    val rawJitter    = (hash.toDouble / Int.MaxValue) * factor
+                    val jitterFactor = Math.max(-1.0, Math.min(1.0, rawJitter))
                     val jittered     = duration * (1.0 + jitterFactor)
                     (jittered, Jitter(nextSchedule, factor))
                 }

@@ -17,6 +17,15 @@ class ScheduleTest extends Test:
             val (next, _) = Schedule.fixed(Duration.Zero).next(now).get
             assert(next == Duration.Zero)
         }
+
+        "preserves sub-millisecond precision (port of zio/zio#7214)" in {
+            val s = Schedule.fixed(500.micros)
+            val delays = List.unfold((s, 0)) { case (sched, i) =>
+                if i == 3 then None
+                else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
+            }
+            assert(delays == List(500.micros, 500.micros, 500.micros))
+        }
     }
 
     "exponential" - {
@@ -51,6 +60,15 @@ class ScheduleTest extends Test:
             assert(next1 == 1.second)
             assert(next2 == 1.second)
         }
+
+        "produces strict geometric progression over 6 iterations" in {
+            val schedule = Schedule.exponential(1.second, 2.0)
+            val delays = List.unfold((schedule, 0)) { case (s, i) =>
+                if i == 6 then None
+                else s.next(now).map((d, s2) => Some((d, (s2, i + 1)))).getOrElse(None)
+            }
+            assert(delays == List(1.second, 2.seconds, 4.seconds, 8.seconds, 16.seconds, 32.seconds))
+        }
     }
 
     "fibonacci" - {
@@ -82,6 +100,24 @@ class ScheduleTest extends Test:
             assert(next1 == Duration.Zero)
             assert(next2 == Duration.Zero)
             assert(next3 == Duration.Zero)
+        }
+
+        "produces strict fibonacci sequence over 8 iterations" in {
+            val schedule = Schedule.fibonacci(1.second, 1.second)
+            val delays = List.unfold((schedule, 0)) { case (s, i) =>
+                if i == 8 then None
+                else s.next(now).map((d, s2) => Some((d, (s2, i + 1)))).getOrElse(None)
+            }
+            assert(delays == List(1.second, 1.second, 2.seconds, 3.seconds, 5.seconds, 8.seconds, 13.seconds, 21.seconds))
+        }
+
+        "works with zero starting value (0,1,1,2,3,5,...)" in {
+            val schedule = Schedule.fibonacci(Duration.Zero, 1.second)
+            val delays = List.unfold((schedule, 0)) { case (s, i) =>
+                if i == 6 then None
+                else s.next(now).map((d, s2) => Some((d, (s2, i + 1)))).getOrElse(None)
+            }
+            assert(delays == List(Duration.Zero, 1.second, 1.second, 2.seconds, 3.seconds, 5.seconds))
         }
     }
 
@@ -141,6 +177,43 @@ class ScheduleTest extends Test:
             assert(next1 == 4.seconds)
             assert(next2 == 2.seconds)
         }
+
+        "stays at maxBackoff for many iterations past cap" in {
+            val s = Schedule.exponentialBackoff(1.second, 2.0, 4.seconds)
+            val delays = List.unfold((s, 0)) { case (sched, i) =>
+                if i == 10 then None
+                else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
+            }
+            assert(delays == List(
+                1.second,
+                2.seconds,
+                4.seconds,
+                4.seconds,
+                4.seconds,
+                4.seconds,
+                4.seconds,
+                4.seconds,
+                4.seconds,
+                4.seconds
+            ))
+        }
+
+        "caps initial delay larger than maxBackoff on first iteration" in {
+            val s           = Schedule.exponentialBackoff(10.seconds, 2.0, 4.seconds)
+            val (next1, s2) = s.next(now).get
+            val (next2, _)  = s2.next(now).get
+            assert(next1 == 4.seconds)
+            assert(next2 == 4.seconds)
+        }
+
+        "factor=1.0 with initial > maxBackoff respects the cap" in {
+            val s         = Schedule.exponentialBackoff(10.seconds, 1.0, 4.seconds)
+            val (next, _) = s.next(now).get
+            assert(
+                next == 4.seconds,
+                s"expected 4.s (capped), got $next — smart constructor reduces to fixed(initial), ignoring maxBackoff"
+            )
+        }
     }
 
     "repeat" - {
@@ -161,27 +234,67 @@ class ScheduleTest extends Test:
             assert(schedule.next(now).isEmpty)
         }
 
-        "works with finite inner schedule" in {
+        "emits N items total from finite inner (restarting from original when current exhausts)" in {
             val innerSchedule = Schedule.fixed(1.second).take(2)
             val s             = innerSchedule.repeat(3)
             val results = List.unfold(s) { schedule =>
                 schedule.next(now).map((next, newSchedule) => Some((next, newSchedule))).getOrElse(None)
             }
-            assert(results == List(1.second, 1.second, 1.second, 1.second, 1.second, 1.second))
+            assert(results == List(1.second, 1.second, 1.second))
         }
 
-        "repeats correct number of times with complex inner schedule" in {
+        "Schedule.fixed(X).repeat(N) emits at most N items" in {
+            val s = Schedule.fixed(1.second).repeat(2)
+            val delays = List.unfold((s, 0)) { case (sched, i) =>
+                if i == 10 then None
+                else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
+            }
+            assert(delays.size <= 2, s"repeat(2) of infinite inner emitted ${delays.size} items, expected at most 2")
+        }
+
+        "Schedule.linear(X).repeat(N) emits at most N items (bug also affects Linear)" in {
+            val s = Schedule.linear(1.second).repeat(2)
+            val delays = List.unfold((s, 0)) { case (sched, i) =>
+                if i == 10 then None
+                else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
+            }
+            assert(delays.size <= 2, s"linear(1.s).repeat(2) emitted ${delays.size} items, expected at most 2")
+        }
+
+        "Schedule.exponential(X, f).repeat(N) emits at most N items (bug also affects Exponential)" in {
+            val s = Schedule.exponential(1.second, 2.0).repeat(2)
+            val delays = List.unfold((s, 0)) { case (sched, i) =>
+                if i == 10 then None
+                else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
+            }
+            assert(delays.size <= 2, s"exponential.repeat(2) emitted ${delays.size} items, expected at most 2")
+        }
+
+        "Schedule.fibonacci(a, b).repeat(N) emits at most N items (bug also affects Fibonacci)" in {
+            val s = Schedule.fibonacci(1.second, 1.second).repeat(2)
+            val delays = List.unfold((s, 0)) { case (sched, i) =>
+                if i == 10 then None
+                else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
+            }
+            assert(delays.size <= 2, s"fibonacci.repeat(2) emitted ${delays.size} items, expected at most 2")
+        }
+
+        "nested repeat: outer M emissions regardless of inner count" in {
+            val s = Schedule.repeat(2).repeat(3)
+            val delays = List.unfold(s) { sched =>
+                sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(delays == List.fill(3)(Duration.Zero))
+        }
+
+        "emits N items total with complex inner schedule" in {
             val s           = Schedule.immediate.andThen(Schedule.fixed(1.second).take(1)).repeat(2)
             val (next1, s2) = s.next(now).get
             val (next2, s3) = s2.next(now).get
-            val (next3, s4) = s3.next(now).get
-            val (next4, s5) = s4.next(now).get
-            val next5       = s5.next(now)
+            val next3       = s3.next(now)
             assert(next1 == Duration.Zero)
             assert(next2 == 1.second)
-            assert(next3 == Duration.Zero)
-            assert(next4 == 1.second)
-            assert(next5.isEmpty)
+            assert(next3.isEmpty)
         }
 
         "Schedule.repeat" - {
@@ -220,14 +333,31 @@ class ScheduleTest extends Test:
 
     "linear" - {
         "increases interval linearly" in {
-            val base               = 1.second
-            val schedule           = Schedule.linear(base)
-            val (next1, schedule2) = schedule.next(now).get
-            val (next2, schedule3) = schedule2.next(now).get
-            val (next3, _)         = schedule3.next(now).get
-            assert(next1 == 1.second)
-            assert(next2 == 2.seconds)
-            assert(next3 == 4.seconds)
+            val base     = 1.second
+            val schedule = Schedule.linear(base)
+            val delays = List.unfold((schedule, 0)) { case (s, i) =>
+                if i == 5 then None
+                else s.next(now).map((d, s2) => Some((d, (s2, i + 1)))).getOrElse(None)
+            }
+            assert(delays == List(1.second, 2.seconds, 3.seconds, 4.seconds, 5.seconds))
+        }
+
+        "uses base as both initial delay and step (regression for #1623)" in {
+            val schedule = Schedule.linear(1.second)
+            val delays = List.unfold((schedule, 0)) { case (s, i) =>
+                if i == 5 then None
+                else s.next(now).map((d, s2) => Some((d.toMillis, (s2, i + 1)))).getOrElse(None)
+            }
+            assert(delays == List(1000L, 2000L, 3000L, 4000L, 5000L))
+        }
+
+        "works with sub-second base" in {
+            val schedule = Schedule.linear(500.millis)
+            val delays = List.unfold((schedule, 0)) { case (s, i) =>
+                if i == 4 then None
+                else s.next(now).map((d, s2) => Some((d, (s2, i + 1)))).getOrElse(None)
+            }
+            assert(delays == List(500.millis, 1.second, 1500.millis, 2.seconds))
         }
 
         "works with zero base" in {
@@ -236,6 +366,75 @@ class ScheduleTest extends Test:
             val (next2, _)         = schedule2.next(now).get
             assert(next1 == Duration.Zero)
             assert(next2 == Duration.Zero)
+        }
+
+        "show preserves step after iteration" in {
+            val schedule = Schedule.linear(1.second)
+            val (_, s2)  = schedule.next(now).get
+            val (_, s3)  = s2.next(now).get
+            assert(s3.show == s"Schedule.linear(${1.second.show})")
+        }
+
+        "overflow clamps to Duration.Infinity via Duration.+" in {
+            val huge        = Long.MaxValue.nanos
+            val s           = Schedule.linear(huge)
+            val (next1, s2) = s.next(now).get
+            val (next2, _)  = s2.next(now).get
+            assert(next1 == huge)
+            assert(next2 == Duration.Infinity)
+        }
+
+        "composes with take" in {
+            val s = Schedule.linear(1.second).take(3)
+            val delays = List.unfold(s) { schedule =>
+                schedule.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(delays == List(1.second, 2.seconds, 3.seconds))
+        }
+
+        "composes with maxDuration" in {
+            val s = Schedule.linear(1.second).maxDuration(7.seconds)
+            val delays = List.unfold(s) { schedule =>
+                schedule.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(delays == List(1.second, 2.seconds, 3.seconds))
+        }
+
+        "composes with andThen" in {
+            val s           = Schedule.linear(1.second).take(2).andThen(Schedule.fixed(10.seconds).take(1))
+            val (next1, s2) = s.next(now).get
+            val (next2, s3) = s2.next(now).get
+            val (next3, s4) = s3.next(now).get
+            val next4       = s4.next(now)
+            assert(next1 == 1.second)
+            assert(next2 == 2.seconds)
+            assert(next3 == 10.seconds)
+            assert(next4.isEmpty)
+        }
+
+        "composes with delay" in {
+            val s = Schedule.linear(1.second).delay(500.millis).take(3)
+            val delays = List.unfold(s) { schedule =>
+                schedule.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(delays == List(1500.millis, 2500.millis, 3500.millis))
+        }
+
+        "composes with forever and take" in {
+            val s = Schedule.linear(1.second).take(4).forever
+            val delays = List.unfold((s, 0)) { case (sched, i) =>
+                if i == 8 then None
+                else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
+            }
+            assert(delays == List(1.second, 2.seconds, 3.seconds, 4.seconds, 1.second, 2.seconds, 3.seconds, 4.seconds))
+        }
+
+        "composes with jitter" in {
+            val s           = Schedule.linear(1.second).jitter(0.5)
+            val (next1, s2) = s.next(now).get
+            val (next2, _)  = s2.next(now + next1).get
+            assert(next1 >= 500.millis && next1 <= 1500.millis)
+            assert(next2 >= 1.second && next2 <= 3.seconds)
         }
     }
 
@@ -257,6 +456,18 @@ class ScheduleTest extends Test:
         "handles both schedules being never" in {
             val combined = Schedule.never.max(Schedule.never)
             assert(combined.next(now).isEmpty)
+        }
+
+        "stops when either finite side exhausts (matches docstring 'maximum delay of both')" in {
+            val s1 = Schedule.fixed(1.second).take(2)
+            val s2 = Schedule.fixed(3.seconds).take(5)
+            val delays = List.unfold(s1.max(s2)) { sched =>
+                sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(
+                delays == List(3.seconds, 3.seconds),
+                s"max should stop when either side exhausts (per docstring), but smart constructor reduces Done.max(s) = s, so combined continues with surviving side. Got: $delays"
+            )
         }
     }
 
@@ -282,6 +493,24 @@ class ScheduleTest extends Test:
             val (next, _) = combined.next(now).get
             assert(next == Duration.Zero)
         }
+
+        "stops when either finite side exhausts" in {
+            val s1 = Schedule.fixed(1.second).take(2)
+            val s2 = Schedule.fixed(3.seconds).take(5)
+            val delays = List.unfold(s1.min(s2)) { sched =>
+                sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(delays == List(1.second, 1.second))
+        }
+
+        "collapses to surviving side when other becomes Absent at runtime (not eager Done)" in {
+            val a = Schedule.fixed(10.seconds).maxDuration(3.seconds)
+            val b = Schedule.fixed(1.second).take(4)
+            val delays = List.unfold(a.min(b)) { sched =>
+                sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(delays == List(1.second, 1.second, 1.second, 1.second))
+        }
     }
 
     "take" - {
@@ -298,6 +527,19 @@ class ScheduleTest extends Test:
         "returns never for non-positive count" in {
             val s = Schedule.fixed(1.second).take(0)
             assert(s == Schedule.done)
+        }
+
+        "nested take uses min count" in {
+            val a = Schedule.fixed(1.second).take(5).take(3)
+            val b = Schedule.fixed(1.second).take(3).take(5)
+            val delaysA = List.unfold(a) { sched =>
+                sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            val delaysB = List.unfold(b) { sched =>
+                sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(delaysA.size == 3)
+            assert(delaysB.size == 3)
         }
     }
 
@@ -342,6 +584,34 @@ class ScheduleTest extends Test:
             assert(next3 == 2.seconds)
             assert(next4.isEmpty)
         }
+
+        "does not duplicate handoff between exhausted left and right (port of zio/zio#3943)" in {
+            val s = Schedule.immediate.andThen(Schedule.exponential(1.second, 2.0).take(4))
+            val delays = List.unfold(s) { sched =>
+                sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(delays == List(Duration.Zero, 1.second, 2.seconds, 4.seconds, 8.seconds))
+        }
+
+        "falls through to right when left is immediately Absent (orElse branch coverage)" in {
+            val left  = Schedule.fixed(10.seconds).maxDuration(3.seconds)
+            val right = Schedule.fixed(1.second).take(3)
+            val delays = List.unfold(left.andThen(right)) { sched =>
+                sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(delays == List(1.second, 1.second, 1.second))
+        }
+
+        "finite-left andThen immediate emits one zero after left exhausts" in {
+            val s = Schedule.fixed(1.second).take(2).andThen(Schedule.immediate)
+            val delays = List.unfold(s) { sched =>
+                sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(
+                delays == List(1.second, 1.second, Duration.Zero),
+                s"smart constructor drops Immediate on right: s.andThen(immediate) == s loses the immediate's emission"
+            )
+        }
     }
 
     "maxDuration" - {
@@ -378,6 +648,53 @@ class ScheduleTest extends Test:
             assert(next2 == 1.second)
             assert(next3 == 2.seconds)
             assert(next4.isEmpty)
+        }
+
+        "single delay exceeding budget emits nothing (port of zio/zio#2957)" in {
+            val s = Schedule.fixed(10.seconds).maxDuration(3.seconds)
+            assert(s.next(now).isEmpty)
+        }
+
+        "nested maxDuration uses tightest budget" in {
+            val s = Schedule.fixed(1.second).maxDuration(5.seconds).maxDuration(3.seconds)
+            val delays = List.unfold(s) { sched =>
+                sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(delays == List(1.second, 1.second, 1.second))
+        }
+
+        "maxDuration(Zero) reduces to Done" in {
+            assert(Schedule.fixed(1.second).maxDuration(Duration.Zero) == Schedule.done)
+            assert(Schedule.linear(1.second).maxDuration(Duration.Zero) == Schedule.done)
+        }
+
+        "Schedule.fixed(Zero).maxDuration(d) terminates" in {
+            val s = Schedule.fixed(Duration.Zero).maxDuration(1.second)
+            val count = (1 to 1000).foldLeft((Maybe(s).asInstanceOf[Maybe[Schedule]], 0)) { case ((current, c), _) =>
+                current match
+                    case Present(sched) =>
+                        sched.next(now) match
+                            case Present((_, next)) => (Present(next), c + 1)
+                            case Absent             => (Absent, c)
+                    case Absent => (Absent, c)
+            }._2
+            assert(count < 1000, s"fixed(Zero).maxDuration(1.s) emitted $count zero-delay iterations without terminating")
+        }
+
+        "delay exactly equal to budget emits once then stops" in {
+            val s = Schedule.fixed(3.seconds).maxDuration(3.seconds)
+            val delays = List.unfold(s) { sched =>
+                sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(delays == List(3.seconds))
+        }
+
+        "budget exactly equal to sum of delays consumes them all" in {
+            val s = Schedule.fixed(1.second).maxDuration(3.seconds)
+            val delays = List.unfold(s) { sched =>
+                sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(delays == List(1.second, 1.second, 1.second))
         }
     }
 
@@ -435,6 +752,14 @@ class ScheduleTest extends Test:
             assert(next3 == Duration.Zero)
             assert(next4 == 1.second)
         }
+
+        "s.forever.take(N) yields exactly N delays" in {
+            val s = Schedule.fixed(1.second).forever.take(3)
+            val delays = List.unfold(s) { sched =>
+                sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
+            }
+            assert(delays == List(1.second, 1.second, 1.second))
+        }
     }
 
     "delay" - {
@@ -488,6 +813,14 @@ class ScheduleTest extends Test:
             assert(next4.isEmpty)
         }
 
+        "nested delays accumulate additively" in {
+            val s           = Schedule.fixed(1.second).delay(500.millis).delay(200.millis)
+            val (next1, s2) = s.next(now).get
+            val (next2, _)  = s2.next(now).get
+            assert(next1 == 1700.millis)
+            assert(next2 == 1700.millis)
+        }
+
         "Schedule.delay" - {
             "creates a delayed immediate schedule" in {
                 val s           = Schedule.delay(1.second)
@@ -530,6 +863,15 @@ class ScheduleTest extends Test:
                 assert(next3 == 3.seconds)
                 assert(next4 == 2.seconds)
                 assert(next5 == 4.seconds)
+            }
+
+            "forever emits the same delay every iteration" in {
+                val s = Schedule.delay(2.seconds).forever
+                val delays = List.unfold((s, 0)) { case (sched, i) =>
+                    if i == 5 then None
+                    else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
+                }
+                assert(delays == List(2.seconds, 2.seconds, 2.seconds, 2.seconds, 2.seconds))
             }
         }
     }
@@ -680,11 +1022,21 @@ class ScheduleTest extends Test:
             assert(s1 == s2)
         }
 
-        "reduces exponential schedule with zero initial to immediate" in {
+        "reduces exponential schedule with zero initial to immediate.forever" in {
             val s1 = Schedule.exponential(Duration.Zero, 2.0)
-            val s2 = Schedule.immediate
+            val s2 = Schedule.immediate.forever
 
             assert(s1 == s2)
+        }
+
+        "zero-initial reductions of infinite schedules are consistent" in {
+            val expZero = Schedule.exponential(Duration.Zero, 2.0)
+            val linZero = Schedule.linear(Duration.Zero)
+            val fibZero = Schedule.fibonacci(Duration.Zero, Duration.Zero)
+            assert(
+                expZero == linZero && linZero == fibZero,
+                s"inconsistent zero reductions — exponential=$expZero, linear=$linZero, fibonacci=$fibZero"
+            )
         }
 
         "reduces delay with zero duration to original schedule" in {
@@ -699,16 +1051,17 @@ class ScheduleTest extends Test:
             assert(limited == original)
         }
 
-        "reduces repeat with count 1 to original schedule" in {
-            val original = Schedule.fixed(1.second)
-            val repeated = original.repeat(1)
-            assert(repeated == original)
+        "repeat(1) emits exactly one item from inner (no longer reduces to original)" in {
+            val s           = Schedule.fixed(1.second).repeat(1)
+            val (next1, s2) = s.next(now).get
+            assert(next1 == 1.second)
+            assert(s2.next(now).isEmpty)
         }
 
-        "reduces andThen with immediate to original schedule" in {
+        "does not reduce andThen with immediate (Immediate emits one zero, not nothing)" in {
             val original = Schedule.fixed(1.second)
             val chained  = original.andThen(Schedule.immediate)
-            assert(chained == original)
+            assert(chained != original)
         }
 
         "reduces forever of forever to single forever" in {
@@ -751,10 +1104,10 @@ class ScheduleTest extends Test:
             assert(chained == original)
         }
 
-        "reduces max of done" in {
+        "reduces max of done to done (symmetric with min)" in {
             val s     = Schedule.fixed(1.second)
             val maxed = Schedule.done.max(s)
-            assert(maxed == s)
+            assert(maxed == Schedule.done)
         }
 
         "reduces min of never and any schedule to that schedule" in {
@@ -1022,6 +1375,16 @@ class ScheduleTest extends Test:
                     assert(next == 2.hours)
                 }
 
+                "offset divisible by period maintains period interval after first fire" in {
+                    val s           = Schedule.anchored(1.hour, 2.hours)
+                    val (next1, s2) = s.next(now).get
+                    val (next2, s3) = s2.next(now + next1).get
+                    val (next3, _)  = s3.next(now + next1 + next2).get
+                    assert(next1 == 2.hours)
+                    assert(next2 == 1.hour, s"after first fire at offset=2.h, subsequent gap should be period (1.h), got $next2")
+                    assert(next3 == 1.hour, s"subsequent gap should remain period (1.h), got $next3")
+                }
+
                 "maintains precision with subsecond periods" in {
                     val s     = Schedule.anchored(100.millis, 30.millis)
                     val start = Instant.parse("2024-01-01T00:00:00Z").getOrThrow
@@ -1176,6 +1539,34 @@ class ScheduleTest extends Test:
 
             assert(samples.min >= 500)
             assert(samples.max <= 1500)
+        }
+
+        "factor > 1 multi-sample stays in [0, 2*d] band after clamping (port of zio/zio#217)" in {
+            val jittered = Schedule.fixed(1.second).jitter(2.0)
+            val samples = (1 to 1000).map { i =>
+                val nowI = Instant.Epoch + i.seconds
+                jittered.next(nowI).get._1
+            }
+            assert(samples.forall(_ >= Duration.Zero))
+            assert(samples.forall(_ <= 2.seconds))
+            assert(samples.exists(_ >= 1500.millis), "factor > 1 should produce some samples beyond the factor=0.5 range")
+        }
+
+        "distribution mean stays close to base across factor settings" in {
+            def meanMillis(factor: Double): Double =
+                val jittered = Schedule.fixed(1.second).jitter(factor)
+                val samples = (1 to 10000).map { i =>
+                    val nowI = Instant.Epoch + i.seconds
+                    jittered.next(nowI).get._1.toMillis.toDouble
+                }
+                samples.sum / samples.size
+            end meanMillis
+            val mean05 = meanMillis(0.5)
+            val mean10 = meanMillis(1.0)
+            val mean20 = meanMillis(2.0)
+            assert(math.abs(mean05 - 1000.0) < 50.0, s"factor=0.5 mean=$mean05")
+            assert(math.abs(mean10 - 1000.0) < 50.0, s"factor=1.0 mean=$mean10")
+            assert(math.abs(mean20 - 1000.0) < 50.0, s"factor=2.0 mean=$mean20")
         }
 
         "handles negative jitter factors" in {
