@@ -468,6 +468,20 @@ object Channel:
                 require(takes.offer(promise), "reuseTake: unbounded queue offer must not fail")
                 flush()
             end reuseTake
+
+            /** Skip-if-cancelled poll: when the outer fiber that called Channel.put is interrupted while suspended on the put promise, the
+              * promise transitions to an Error state but the Put.Value stays in the puts queue. Naive consumers would deliver the cancelled
+              * producer's value to a future take — silently violating the interrupt-during-put-must-not-deliver contract honored by other
+              * concurrent Queue primitives (cats-effect, ZIO, Loom). Consume sites use this helper to drop cancelled Put.Value entries and
+              * recurse to the next live producer. Put.Batch entries are returned as-is; their per-element completion path handles partial
+              * cancellation differently.
+              */
+            @tailrec
+            final protected def pollNextLive()(using AllowUnsafe, Frame): Maybe[Put[A]] =
+                priorityPuts.poll().orElse(puts.poll()) match
+                    case Absent                                           => Absent
+                    case Present(Put.Value(_, promise)) if promise.done() => pollNextLive()
+                    case Present(p)                                       => Present(p)
         end BaseUnsafe
 
         final class ZeroCapacityUnsafe[A](val initFrame: Frame)(using allow: AllowUnsafe) extends BaseUnsafe[A]:
@@ -537,7 +551,7 @@ object Channel:
 
             def poll()(using AllowUnsafe, Frame) =
                 succeedIfOpen {
-                    priorityPuts.poll().orElse(puts.poll()) match
+                    pollNextLive() match
                         case Absent =>
                             Absent
                         case Present(Put.Value(value, promise)) =>
@@ -555,7 +569,7 @@ object Channel:
                 def loop(current: Chunk[A], i: Int): Result[Closed, Chunk[A]] =
                     if i <= 0 then Result.Success(current)
                     else
-                        priorityPuts.poll().orElse(puts.poll()) match
+                        pollNextLive() match
                             case Absent =>
                                 flush()
                                 succeedIfNonEmptyOrOpen(current)
@@ -576,7 +590,7 @@ object Channel:
             def drain()(using AllowUnsafe, Frame) =
                 @tailrec
                 def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
-                    priorityPuts.poll().orElse(puts.poll()) match
+                    pollNextLive() match
                         case Absent =>
                             succeedIfNonEmptyOrOpen(current)
                         case Present(Put.Value(value, promise)) =>
@@ -626,7 +640,7 @@ object Channel:
                                 pendingBatch = Absent
                                 Present(batch: Put[A])
                             case _ =>
-                                priorityPuts.poll().orElse(puts.poll())
+                                pollNextLive()
                         put.foreach {
                             case put @ Put.Value(value, promise) =>
                                 takes.poll() match
@@ -802,7 +816,7 @@ object Channel:
                     // Attempt to transfer a value from a waiting put operation to the queue.
                     // Only one thread processes puts at a time to prevent batch interleaving.
                     if batchInProgress.compareAndSet(false, true) then
-                        priorityPuts.poll().orElse(puts.poll()).foreach {
+                        pollNextLive().foreach {
                             case Put.Batch(chunk, promise) =>
                                 // NB: this is only efficient if chunk is effectively indexed
                                 // (i.e. Chunk.Indexed or Chunk.Drop with Chunk.Indexed underlying)
@@ -835,7 +849,7 @@ object Channel:
                     // Directly transfer a value from a producer to a consumer when the queue is empty.
                     // Only one thread processes puts at a time to prevent batch interleaving.
                     if batchInProgress.compareAndSet(false, true) then
-                        priorityPuts.poll().orElse(puts.poll()).foreach {
+                        pollNextLive().foreach {
                             case put @ Put.Value(value, promise) =>
                                 takes.poll() match
                                     case Present(takePromise) if takePromise.complete(Result.succeed(value)) =>

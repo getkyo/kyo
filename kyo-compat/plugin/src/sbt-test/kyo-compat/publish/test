@@ -1,0 +1,18 @@
+# Scripted test - end-to-end publishLocal flow.
+# 1. Publish the fake kyo-compat-<backend> stubs so update can resolve them.
+# 2. Publish my-lib's 7 cells (Future on JVM only; Kyo/Zio on JVM+JS+Native).
+# 3. Publish the cross-backend aggregator (which is publish/skip := true).
+# 4. Inspect the resulting artifacts in ivy-cache/local.
+# 5. publishLocal myOverride's 2 (Future/Kyo, JVM) cells and
+#    verify compatKyoVersion := "9.9.9" flows to every cell's POM dep version.
+> publishFakes
+> ;myLibFuture/publishLocal ;myLibKyo/publishLocal ;myLibZio/publishLocal
+> ;myLibKyoJS/publishLocal ;myLibZioJS/publishLocal
+> ;myLibKyoNative/publishLocal ;myLibZioNative/publishLocal
+> my-lib-all/publishLocal
+> checkPublishedJars
+> checkPomDeps
+> checkPomCrossVersionMarkers
+> checkAggregatorNotPublished
+> ;myOverrideFuture/publishLocal ;myOverrideKyo/publishLocal
+> checkVersionOverride

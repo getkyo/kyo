@@ -11,6 +11,7 @@ val scala213Version  = "2.13.18"
 
 val zioVersion       = "2.1.24"
 val catsVersion      = "3.7.0"
+val oxVersion        = "1.0.4"
 val scalaTestVersion = "3.2.19"
 
 val compilerOptionFailDiscard = "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error"
@@ -160,7 +161,14 @@ lazy val kyoJVM = project
         `kyo-playwright`.jvm,
         `kyo-pod`.jvm,
         `kyo-examples`.jvm,
-        `kyo-actor`.jvm
+        `kyo-actor`.jvm,
+        `kyo-compat-future`.jvm,
+        `kyo-compat-kyo`.jvm,
+        `kyo-compat-zio`.jvm,
+        `kyo-compat-ce`.jvm,
+        `kyo-compat-ox`.jvm,
+        `kyo-compat-twitter-future`.jvm,
+        `kyo-compat`
     )
 
 lazy val kyoJS = project
@@ -192,7 +200,11 @@ lazy val kyoJS = project
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
-        `kyo-pod`.js
+        `kyo-pod`.js,
+        `kyo-compat-future`.js,
+        `kyo-compat-kyo`.js,
+        `kyo-compat-zio`.js,
+        `kyo-compat-ce`.js
     )
 
 lazy val kyoNative = project
@@ -225,7 +237,10 @@ lazy val kyoNative = project
         `kyo-zio-test`.native,
         `kyo-stm`.native,
         `kyo-stats-otlp`.native,
-        `kyo-pod`.native
+        `kyo-pod`.native,
+        `kyo-compat-future`.native,
+        `kyo-compat-kyo`.native,
+        `kyo-compat-zio`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -683,6 +698,168 @@ lazy val `kyo-cats` =
         )
         .jvmSettings(mimaCheck(false))
 
+lazy val `kyo-compat-future` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-compat/bindings/future"))
+        .settings(
+            `kyo-settings`,
+            scalaVersion       := scala3LTSVersion,
+            crossScalaVersions := List(scala3LTSVersion),
+            scalacOptions += "-Xmax-inlines:1024",
+            // Cross-platform: shared sources use atomics + ConcurrentLinkedQueue
+            // (both polyfilled on JS and natively supported on Native).
+            // Platform-specific source dirs hold the blocking-pool / scheduler
+            // pieces that genuinely diverge per platform.
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
+            }
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
+            }
+        )
+        .jsSettings(`js-settings`, mimaCheck(false))
+        .nativeSettings(`native-settings`, mimaCheck(false))
+
+lazy val `kyo-compat-kyo` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-compat/bindings/kyo"))
+        .dependsOn(`kyo-core`, `kyo-data`)
+        .settings(
+            `kyo-settings`,
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
+            }
+        )
+        .jsSettings(`js-settings`)
+        .nativeSettings(`native-settings`)
+        .jvmSettings(
+            mimaCheck(false),
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
+            }
+        )
+
+lazy val `kyo-compat-zio` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-compat/bindings/zio"))
+        .settings(
+            `kyo-settings`,
+            scalaVersion       := scala3LTSVersion,
+            crossScalaVersions := List(scala3LTSVersion),
+            scalacOptions += "-Xmax-inlines:1024",
+            libraryDependencies += "dev.zio" %%% "zio"            % zioVersion,
+            libraryDependencies += "dev.zio" %%% "zio-concurrent" % zioVersion,
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
+            }
+        )
+        .jsSettings(`js-settings`)
+        .nativeSettings(`native-settings`)
+        .jvmSettings(
+            mimaCheck(false),
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
+            }
+        )
+
+lazy val `kyo-compat-ce` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-compat/bindings/ce"))
+        .settings(
+            `kyo-settings`,
+            scalaVersion       := scala3LTSVersion,
+            crossScalaVersions := List(scala3LTSVersion),
+            scalacOptions += "-Xmax-inlines:1024",
+            libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion,
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
+            }
+        )
+        .jsSettings(`js-settings`)
+        .jvmSettings(
+            mimaCheck(false),
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
+            }
+        )
+
+lazy val `kyo-compat-ox` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-compat/bindings/ox"))
+        .settings(
+            `kyo-settings`,
+            scalaVersion       := scala3LTSVersion,
+            crossScalaVersions := List(scala3LTSVersion),
+            scalacOptions += "-Xmax-inlines:1024",
+            libraryDependencies += "com.softwaremill.ox" %% "core" % oxVersion,
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
+            }
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
+            }
+        )
+
+lazy val `kyo-compat-twitter-future` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-compat/bindings/twitter-future"))
+        .settings(
+            `kyo-settings`,
+            scalaVersion       := scala3LTSVersion,
+            crossScalaVersions := List(scala3LTSVersion),
+            scalacOptions += "-Xmax-inlines:1024",
+            libraryDependencies += ("com.twitter" %% "util-core" % "24.2.0")
+                .exclude("org.scala-lang.modules", "scala-collection-compat_2.13"),
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
+            }
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
+            }
+        )
+
+// IDE/navigation anchor for the cross-binding test suite. The same shared+jvm
+// test sources are picked up by all 6 bindings via `unmanagedSourceDirectories`;
+// this project gives Metals/IntelliJ a single project to associate the folder
+// with, compiled against the Future binding by default.
+lazy val `kyo-compat-tests` =
+    project
+        .in(file("kyo-compat/test"))
+        .dependsOn(`kyo-compat-future`.jvm)
+        .settings(
+            `kyo-settings`,
+            scalaVersion       := scala3LTSVersion,
+            crossScalaVersions := List(scala3LTSVersion),
+            scalacOptions += "-Xmax-inlines:1024",
+            publish / skip := true,
+            mimaCheck(false),
+            Test / unmanagedSourceDirectories := Seq(
+                baseDirectory.value / "shared" / "src" / "test" / "scala",
+                baseDirectory.value / "jvm" / "src" / "test" / "scala"
+            )
+        )
+
 lazy val `kyo-combinators` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -1045,3 +1222,32 @@ lazy val `kyo-scalafix-test` = (project in file("scalafix/tests"))
     )
     .dependsOn(`kyo-rules`)
     .enablePlugins(ScalafixTestkitPlugin)
+
+// --- kyo-compat (in-tree sbt plugin; published as artifact `kyo-compat`)
+//
+// First SbtPlugin module in kyo. Scala 2.12 only (sbt 1.x runtime).
+// Aggregated into kyoJVM only (not kyoJS/kyoNative, since an sbt plugin
+// is a single JVM artifact) so the JVM `ci-release` pass publishes it.
+// Its behavioral tests are scripted tests, run in CI via `kyo-compat/scripted`.
+lazy val `kyo-compat` = (project in file("kyo-compat/plugin"))
+    .enablePlugins(SbtPlugin)
+    .settings(
+        moduleName         := "kyo-compat",
+        scalaVersion       := "2.12.20",
+        crossScalaVersions := Seq("2.12.20"),
+        sbtPlugin          := true,
+        // Plugin code adds rows to a `ProjectMatrix` programmatically, so
+        // it compiles against sbt-projectmatrix; it also references the
+        // %%% macro from sbt-scalajs-crossproject / sbt-scala-native-crossproject's
+        // platform-deps shim. Pinned to the same versions as kyo's own
+        // project/plugins.sbt so the runtime sbt classloader resolves
+        // exactly one copy of each.
+        addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % "0.10.1"),
+        addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.3.2"),
+        addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.3.2"),
+        scriptedLaunchOpts := Seq(
+            "-Xmx1024M",
+            "-Dplugin.version=" + version.value
+        ),
+        scriptedBufferLog := false
+    )

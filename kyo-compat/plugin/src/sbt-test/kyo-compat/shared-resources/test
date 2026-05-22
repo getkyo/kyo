@@ -1,0 +1,7 @@
+# Scripted test - shared-resources.
+> publishFakes
+> myLibFuture/publishLocal
+> myLibKyo/publishLocal
+> checkSharedResourceInAllJars
+> checkPerBackendResource
+> checkPerCellResource

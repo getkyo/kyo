@@ -1,0 +1,6 @@
+# Scripted - JVM-only, all 5 backends.
+> checkProjects
+> checkDeps
+> checkSharedSources
+> checkBackendBaseDirs
+> checkArtifactNames

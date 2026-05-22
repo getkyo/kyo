@@ -1,0 +1,7 @@
+# Scripted test - settings-passthrough.
+> publishFakes
+> checkCommonSettings
+> checkJvmSettings
+> checkJsSettings
+> checkNativeSettings
+> checkForkTest

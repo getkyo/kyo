@@ -1,0 +1,13 @@
+# Scripted test - aggregator-runs.
+# 1. Publish fake kyo-compat-{future,kyo} stubs so each cell's auto-injected
+#    libraryDependencies resolve at update time.
+# 2. Clear any leftover sentinels (deterministic re-runs).
+# 3. Run Test/test on the cross-backend aggregator. If aggregate(...) fans
+#    correctly, both myLibFuture and myLibKyo execute their forked tests,
+#    each writing a sentinel into <test-base>/sentinels/.
+# 4. checkAllCellsRan asserts the sentinels set is exactly
+#    {"my-lib-future", "my-lib-kyo"} — proving NO cell was skipped.
+> publishFakes
+> clearSentinels
+> my-lib-all/Test/test
+> checkAllCellsRan
