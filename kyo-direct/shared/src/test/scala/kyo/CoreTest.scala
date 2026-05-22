@@ -1,6 +1,39 @@
 package kyo
 
+import scala.util.Try
+
 class CoreTest extends Test:
+
+    "abort operations" - {
+        // Regression for issue #1617: a `val` binding whose RHS is an `Abort` effect's
+        // `.now` previously caused the macro to emit trees with mismatched owners
+        // (assertion only fires under -Xcheck-macros, but the wrong-owner trees are
+        // produced regardless).
+        "val binding with Abort[Throwable]" in run {
+            def divide(a: Int, b: Int)(using Frame): Int < Abort[Throwable] = Abort.get(Try(a / b))
+            def double(x: Int): Int                                         = x * 2
+
+            val computation: Int < Abort[Throwable] =
+                direct {
+                    val b = divide(10, 2).now
+                    double(b)
+                }
+
+            Abort.run(computation).map(r => assert(r.contains(10)))
+        }
+
+        "val binding with combined Sync & Abort" in run {
+            def divide(a: Int, b: Int)(using Frame): Int < Abort[Throwable] = Abort.get(Try(a / b))
+
+            Abort.run {
+                direct {
+                    val a = Sync.defer(20).now
+                    val b = divide(a, 4).now
+                    a + b
+                }
+            }.map(r => assert(r.contains(25)))
+        }
+    }
 
     "atomic operations" - {
         "AtomicInt" in run {
