@@ -3,17 +3,11 @@ package kyo.compat
 import cats.effect.IO
 import java.util.concurrent.CompletionStage
 
-/** JVM-only. CIO interruption propagates back to the source `CompletionStage` via `cf.cancel(false)` attached as an `onCancel` finalizer.
-  */
+/** JVM-only. Delegates to `IO.fromCompletionStage`, which propagates CIO interruption to the source via `cf.cancel(true)`. */
 object CompatFromCompletionStage:
 
     inline def fromCompletionStage[A](inline cs: CompletionStage[A]): CIO[A] =
-        CIO.lift {
-            IO.delay(cs.toCompletableFuture).flatMap { cf =>
-                IO.fromCompletableFuture(IO.pure(cf))
-                    .onCancel(IO.delay { val _ = cf.cancel(false) })
-            }
-        }
+        CIO.lift(IO.fromCompletionStage(IO.delay(cs)))
 
 end CompatFromCompletionStage
 
