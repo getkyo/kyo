@@ -55,6 +55,17 @@ class ShiftTest extends AnyFreeSpec with Assertions:
 
     }
 
+    "val binding inside async-shifted lambda body" in {
+        val x: Seq[Int < Any] = Seq[Int < Any](1, 2, 3)
+        val x2: Seq[Int] < Any = direct:
+            x.map { e =>
+                val v = e.now
+                v + 1
+            }
+
+        assert(x2.eval == Seq(2, 3, 4))
+    }
+
 end ShiftTest
 
 class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:

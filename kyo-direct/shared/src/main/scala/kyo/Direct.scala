@@ -136,36 +136,48 @@ private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
         genSym = genSym + 1
         s"${name}_N$genSym"
 
-    val preparedBody = Trees.transform(body.asTerm) {
-        case Apply(
-                Apply(
-                    TypeApply(
-                        Apply(
-                            ta: TypeApply,
-                            List(a @ Apply(TypeApply(Ident("now"), List(t, s)), List(_)))
-                        ),
-                        types0
-                    ),
-                    args0
-                ),
-                args1
-            ) if t.tpe.typeSymbol.flags.is(Flags.Opaque) =>
-
-            val newVal: Symbol = Symbol.newVal(
-                Symbol.spliceOwner,
-                freshName("opaqueAlias"),
-                t.tpe,
-                Flags.Private,
-                Symbol.noSymbol
-            )
-            Block(
-                List(ValDef(newVal, Some(a))),
-                Apply(
-                    Apply(TypeApply(Apply(ta, List(Ident(newVal.termRef))), types0), args0),
-                    args1
-                )
-            )
+    def containsAwait(term: Term): Boolean = Trees.exists(term) {
+        case Apply(TypeApply(Ident("now" | "later"), _), _) => true
     }
+
+    val hasOpaqueNow = Trees.exists(body.asTerm) {
+        case Apply(TypeApply(Ident("now"), List(t, _)), _) if t.tpe.typeSymbol.flags.is(Flags.Opaque) => true
+    }
+
+    val preparedBody =
+        if !hasOpaqueNow then body.asTerm
+        else
+            Trees.transform(body.asTerm) {
+                case Apply(
+                        Apply(
+                            TypeApply(
+                                Apply(
+                                    ta: TypeApply,
+                                    List(a @ Apply(TypeApply(Ident("now"), List(t, s)), List(_)))
+                                ),
+                                types0
+                            ),
+                            args0
+                        ),
+                        args1
+                    ) if t.tpe.typeSymbol.flags.is(Flags.Opaque) =>
+
+                    val newVal: Symbol = Symbol.newVal(
+                        Symbol.spliceOwner,
+                        freshName("opaqueAlias"),
+                        t.tpe,
+                        Flags.Private,
+                        Symbol.noSymbol
+                    )
+                    Block(
+                        List(ValDef(newVal, Some(a))),
+                        Apply(
+                            Apply(TypeApply(Apply(ta, List(Ident(newVal.termRef))), types0), args0),
+                            args1
+                        )
+                    )
+            }
+    end preparedBody
 
     pending.asType match
         case '[s] =>
@@ -174,7 +186,14 @@ private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
                     term match
                         case Apply(TypeApply(Ident("now"), List(t, s2)), List(qual)) =>
                             (t.tpe.asType, s2.tpe.asType) match
-                                case ('[t], '[s2]) => '{
+                                case ('[t], '[s2]) =>
+                                    // The cps.await quote is built with `owner.asQuotes` so the synthetic
+                                    // `given KyoCpsMonad[s2]` val ends up owned by the enclosing definition
+                                    // (e.g. a `val b = expr.now` binds b as owner). Without this, the macro
+                                    // emits trees whose synthetic given vals are owned by `val macro`,
+                                    // failing dotty's owner-consistency check (see issue #1617).
+                                    given Quotes = owner.asQuotes
+                                    '{
                                         given KyoCpsMonad[s2] = KyoCpsMonad[s2]
                                         cps.await[[A] =>> A < s2, t, [A] =>> A < s2](${
                                             transformTerm(qual)(owner).asExprOf[t < s2]
@@ -184,7 +203,11 @@ private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
                         case Apply(TypeApply(Ident("later"), List(t, s2)), List(qual)) =>
                             transformTerm(qual)(owner)
 
-                        case _ => super.transformTerm(term)(owner)
+                        // Skip recursion into subtrees with no `.now`/`.later` — nothing to rewrite,
+                        // and avoids re-copying Apply/Select nodes that the TreeMap would otherwise
+                        // route through xCheckMacro* assertions.
+                        case _ if !containsAwait(term) => term
+                        case _                         => super.transformTerm(term)(owner)
 
             val transformedBody: Tree = transformer.transformTree(preparedBody)(Symbol.spliceOwner)
 

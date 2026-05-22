@@ -20,7 +20,7 @@ class HygieneTest extends Test:
             Sync.defer(1).now
           }
         """)(
-            "Exception occurred while executing macro expansion"
+            "return outside method definition"
         )
     }
 
@@ -151,7 +151,7 @@ class HygieneTest extends Test:
               new A(Sync.defer("blah").now)
           }
         """)(
-            "Can't find AsyncShift (Found:    cps.runtime.CpsMonadSelfAsyncShift[[A] =>> A < kyo.Sync"
+            ".now cannot appear inside a by-name parameter."
         )
     }
 
@@ -322,5 +322,37 @@ class HygieneTest extends Test:
             g.now
 
         assertResult(2)(res.eval)
+    }
+
+    // Tests below codify currently-broken behavior surfaced during coverage analysis.
+    // Each uses typeCheckFailure to capture the spurious error. When the bug is fixed,
+    // these tests will fail (the error message disappears), prompting cleanup —
+    // remove the typeCheckFailure assertion and move the snippet to a positive test
+    // in the appropriate file (BlockTest / IfTest / PatMatchTest / etc.).
+
+    // Scala 3 limitation: the .now extension's `A` type parameter is bound by both the
+    // receiver and the expected return type. When they conflict (e.g. expected Long but
+    // receiver returns Int < Sync), inference picks the expected type and fails.
+    // Workaround: type-ascribe the .now result, or extract to a separate val.
+    "implicit widening of .now result requires explicit type ascription" in {
+        typeCheckFailure(
+            """
+            direct {
+              val n: Long = Sync.defer(7).now
+              n
+            }
+            """
+        )("value now is not a member of Int < kyo.Sync")
+    }
+
+    ".now in by-name parameter is rejected with a clear error" in {
+        typeCheckFailure(
+            """
+            def lazyArg(x: => Int): Int = x + 1
+            direct {
+              lazyArg(Sync.defer(10).now)
+            }
+            """
+        )(".now cannot appear inside a by-name parameter.")
     }
 end HygieneTest

@@ -50,4 +50,26 @@ class IfTest extends AnyFreeSpec with Assertions:
             }
         }
     }
+    "val binding inside branch" - {
+        "then-branch" in {
+            runLiftTest(11) {
+                val cond = Sync.defer(true).now
+                if cond then
+                    val x = Sync.defer(10).now
+                    x + 1
+                else 0
+                end if
+            }
+        }
+        "else-branch" in {
+            runLiftTest(20) {
+                val cond = Sync.defer(false).now
+                if cond then 0
+                else
+                    val x = Sync.defer(20).now
+                    x
+                end if
+            }
+        }
+    }
 end IfTest
