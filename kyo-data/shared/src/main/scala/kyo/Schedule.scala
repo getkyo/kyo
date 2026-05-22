@@ -30,10 +30,9 @@ sealed abstract class Schedule extends Serializable derives CanEqual:
             case Immediate    => that
             case _ =>
                 that match
-                    case Never     => that
-                    case Done      => that
-                    case Immediate => this
-                    case _         => Max(this, that)
+                    case Never | Done => that
+                    case Immediate    => this
+                    case _            => Max(this, that)
 
     /** Combines this schedule with another, taking the minimum delay of both.
       *
