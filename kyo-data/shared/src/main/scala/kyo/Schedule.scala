@@ -26,9 +26,8 @@ sealed abstract class Schedule extends Serializable derives CanEqual:
       */
     final infix def max(that: Schedule): Schedule =
         this match
-            case Never     => this
-            case Done      => this
-            case Immediate => that
+            case Never | Done => this
+            case Immediate    => that
             case _ =>
                 that match
                     case Never     => that
