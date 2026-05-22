@@ -154,9 +154,14 @@ object FieldsMacros:
             }
         ).toList)
 
-        (tupled(components).asType, structural(components).asType) match
-            case ('[type x <: Tuple; x], '[type s <: Fields.Structural; s]) =>
-                '{ Fields.createAux[A, x, s]($fieldsList) }
+        // Use bare `Fields.Structural` as the Struct type — the full per-field refinement is computed lazily by
+        // `Fields.Structure.derive` only when the structural conversion is summoned. Building the refinement here
+        // would store a deep Refinement type on every `Fields[F]` instance, which the compiler then has to navigate
+        // at each summon site. For large intersections (25+ fields) this measurably bloats compile time; for
+        // smaller records the difference is negligible.
+        tupled(components).asType match
+            case '[type x <: Tuple; x] =>
+                '{ Fields.createAux[A, x, Fields.Structural]($fieldsList) }
         end match
     end deriveImpl
 
