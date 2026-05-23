@@ -714,12 +714,18 @@ lazy val `kyo-compat-future` =
             // pieces that genuinely diverge per platform.
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
+            },
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "shared" / "src" / "test" / "scala"
             }
         )
         .jvmSettings(
             mimaCheck(false),
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
+            },
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
             }
         )
         .jsSettings(`js-settings`, mimaCheck(false))
@@ -735,6 +741,9 @@ lazy val `kyo-compat-kyo` =
             `kyo-settings`,
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
+            },
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "shared" / "src" / "test" / "scala"
             }
         )
         .jsSettings(`js-settings`)
@@ -743,6 +752,9 @@ lazy val `kyo-compat-kyo` =
             mimaCheck(false),
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
+            },
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
             }
         )
 
@@ -758,8 +770,12 @@ lazy val `kyo-compat-zio` =
             scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += "dev.zio" %%% "zio"            % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-concurrent" % zioVersion,
+            libraryDependencies += "dev.zio" %%% "zio-streams"    % zioVersion,
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
+            },
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "shared" / "src" / "test" / "scala"
             }
         )
         .jsSettings(`js-settings`)
@@ -768,6 +784,9 @@ lazy val `kyo-compat-zio` =
             mimaCheck(false),
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
+            },
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
             }
         )
 
@@ -782,8 +801,12 @@ lazy val `kyo-compat-ce` =
             crossScalaVersions := List(scala3LTSVersion),
             scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion,
+            libraryDependencies += "co.fs2"        %%% "fs2-core"    % "3.12.2",
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
+            },
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "shared" / "src" / "test" / "scala"
             }
         )
         .jsSettings(`js-settings`)
@@ -791,6 +814,9 @@ lazy val `kyo-compat-ce` =
             mimaCheck(false),
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
+            },
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
             }
         )
 
@@ -807,12 +833,18 @@ lazy val `kyo-compat-ox` =
             libraryDependencies += "com.softwaremill.ox" %% "core" % oxVersion,
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
+            },
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "shared" / "src" / "test" / "scala"
             }
         )
         .jvmSettings(
             mimaCheck(false),
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
+            },
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
             }
         )
 
@@ -830,12 +862,18 @@ lazy val `kyo-compat-twitter-future` =
                 .exclude("org.scala-lang.modules", "scala-collection-compat_2.13"),
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
+            },
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "shared" / "src" / "test" / "scala"
             }
         )
         .jvmSettings(
             mimaCheck(false),
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
+            },
+            Test / unmanagedSourceDirectories += {
+                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
             }
         )
 

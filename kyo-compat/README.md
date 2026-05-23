@@ -258,7 +258,7 @@ Available operations: `CPromise.init[A]`, `p.succeed(a): CIO[Boolean]`, `p.fail(
 
 Use a channel when two concurrent fibers need to hand off a stream of values, e.g. a producer/consumer pipeline or a work queue. `CIO.zip` combines exactly two concurrent results; channels scale to any number of producers and consumers and continue across many rounds of data.
 
-Kyo, ZIO, Cats Effect, and Ox map `CChannel` to a bounded queue: `kyo.Channel`, `zio.Queue`, `cats.effect.std.Queue`, or `java.util.concurrent.LinkedBlockingQueue` (Ox). The Future and Twitter Future bindings implement `CChannel` as a plain `final class`: Future holds two `ConcurrentLinkedQueue`s (items and waiters) plus an `AtomicInteger` size counter, so `put`/`take` suspension reuses the binding's `Promise`-based wait machinery; Twitter combines `com.twitter.concurrent.AsyncSemaphore` (capacity bound) with `com.twitter.concurrent.AsyncQueue` (FIFO buffer). Neither blocks a thread. The surface intentionally omits `close`, `closed`, `size`, and `offer`, because their semantics differ enough across backends that a portable abstraction would swallow real differences.
+Kyo, ZIO, Cats Effect, and Ox map `CChannel` to a bounded queue: `kyo.Channel`, `zio.Queue`, `cats.effect.std.Queue`, or `java.util.concurrent.LinkedBlockingQueue` (Ox). The Future and Twitter Future bindings implement `CChannel` as a plain `final class`: Future holds three `ConcurrentLinkedQueue`s (items, takers, putters) plus an `AtomicInteger` size counter, so `put`/`take` suspension reuses the binding's `Promise`-based wait machinery; Twitter combines `com.twitter.concurrent.AsyncSemaphore` (capacity bound) with `com.twitter.concurrent.AsyncQueue` (FIFO buffer). Neither blocks a thread. The surface intentionally omits `close`, `closed`, `size`, and `offer`, because their semantics differ enough across backends that a portable abstraction would swallow real differences.
 
 ```scala
 val pipeline: CIO[Int] =
@@ -342,6 +342,57 @@ def fetchBounded(urls: Seq[String]): CIO[CChunk[String]] =
 
 Available operations: `CMeter.init(permits)`, `meter.run(c): CIO[A]`, `meter.tryRun(c): CIO[Option[A]]`, `meter.availablePermits: CIO[Int]`.
 
+## Streams
+
+`CStream[+A]` is a portable stream type alongside `CIO`. A library targeting the streams surface compiles unchanged against every binding; each backend wraps a native stream type where one exists, or supplies a hand-rolled implementation where the ecosystem lacks one.
+
+| Backend        | `CStream[+A]` resolves to                            |
+|----------------|------------------------------------------------------|
+| Kyo            | `kyo.Stream[A, Abort[Throwable] & Async]`            |
+| ZIO            | `zio.stream.ZStream[Any, Throwable, A]`              |
+| Cats Effect    | `fs2.Stream[cats.effect.IO, A]`                      |
+| Ox             | `ox.Ox ?=> ox.flow.Flow[A]`                          |
+| Twitter Future | `com.twitter.concurrent.AsyncStream[A]`              |
+| Future         | `LocalCtx => scala.concurrent.Future[Repr[A]]`       |
+
+Platform footprints match the existing CIO surface: Kyo and ZIO ship JVM / JS / Native; Cats Effect ships JVM / JS; Ox and Twitter Future are JVM-only; Future ships JVM / JS / Native.
+
+The kyo-named API tracks `kyo.Stream`: constructors `empty`, `init(seq)`, `init(c: CIO[Seq[A]])`, `range`, `unfold`; transforms `concat`, `mapPure` / `map`, `flatMap`, `tap`, `take`, `drop`, `takeWhilePure`, `filterPure` / `filter`, `collectPure`; and terminals `run: CIO[CChunk[A]]`, `foldPure`, `foreach`, `discard`. The pure/effectful split (`mapPure` vs. `map`, `filterPure` vs. `filter`, `foldPure`, `collectPure`, `takeWhilePure`) tracks the kyo convention; effectful variants take `A => CIO[B]`.
+
+On the four bindings that wrap a third-party stream library (Kyo, ZIO, Cats Effect, Ox), every method is an `inline def` that compiles to a single native call, with at most a trivial type adapter (`Option ⇆ Maybe`, `n.toLong` for fs2/ZIO long-arity takes/drops, `Function.unlift` for partial-function collects, `Stream.eval(c.lower).flatMap(Stream.emits)` for fs2 `init`). The Twitter binding's `unfold` is the only exception on those four — `AsyncStream` ships no native unfold, so the wrap is a small recursive helper built on `AsyncStream.mk(head, => tail)`. The Future binding is the only fully hand-rolled implementation: `scala.concurrent.Future` has no canonical async stream, so the binding supplies a cons-stream where `Repr[A]` is a binding-private ADT (`Empty | Cons(head, tail: LocalCtx => Future[Repr[A]])`) matching the `CIO` carrier shape. Transformations build cons cells with lazy tails; terminal walks use a nested `@tailrec def loop` so 100000-element sync-completed streams don't blow the stack.
+
+```scala
+import kyo.compat.*
+
+def doubled: CStream[Int] = CStream.init(Seq(1, 2, 3)).mapPure(_ * 2)
+def sum:     CIO[Int]     = doubled.foldPure(0)(_ + _)
+```
+
+This compiles and runs against every binding × supported platform.
+
+Constructors and terminals not in the surface compose from what is:
+
+- Failure stream: `CStream.init(CIO.fail(e))` — `init(c: CIO[Seq[A]])` propagates `c`'s failure.
+- Count: `s.foldPure(0L)((c, _) => c + 1L)`.
+
+### Known divergences (kyo binding)
+
+Three tests in `CStreamTest` are marked `pending` because they expose limitations
+of `kyo.Stream` that the other five bindings (zio, ce, ox, twitter-future, future)
+don't have. They are kept in the suite as the cross-binding contract; removing the
+`pending` markers once `kyo.Stream` is fixed will turn them green on every binding.
+
+- **Chunked-eager effectful map.** `kyo.Stream.map(f: A => B < S)` applies `f` eagerly
+  across each upstream chunk before emitting downstream. So
+  `init(largeSeq).map(effect).take(n)` runs `effect` once per upstream chunk element
+  on the kyo binding, not once per consumed element. Tests: `take(n) on an effectful
+  upstream invokes the upstream effect exactly n times` and `takeWhilePure stops
+  invoking upstream effects after the first false`.
+- **Deep flatMap stack safety.** `kyo.Stream` stack-overflows on a 10000-deep
+  flatMap chain (`Stream.handleLoopLoop` recursion). The shallower 1000-deep test
+  passes everywhere. Test: `deep flatMap chains do not stack-overflow (10000
+  levels)`.
+
 ## Backends
 
 The Kyo, ZIO, and Cats Effect backends are predominantly thin redirects to their host runtime: each operation lowers to one or two calls into `Sync.defer`/`Abort.fail`/`Async.race` (Kyo), `ZIO.attempt`/`Promise.await`/`Fiber.Runtime` (ZIO), or `IO.delay`/`Ref[IO, _]`/`Queue[IO, _]` (Cats Effect). Fiber-locals, scoped resources, and tracing all work as they would in hand-written code.
@@ -399,7 +450,7 @@ The carrier is `cats.effect.IO[A]`. `CIO.acquireReleaseWith` is `IO.bracket`; re
 |-------------------------------------------------------------------|----------------------------------------------|--------------------------------------|---------------------------------------------------|---------------------------------------------------|-------------------------------------------------|-----------------------------------------|
 | `CFiber[A]`                                                       | `kyo.Fiber[A, Abort[Throwable]]`             | `zio.Fiber.Runtime[Throwable, A]`    | `cats.effect.FiberIO[A]`                          | `scala.concurrent.Future[A]`                      | `ox.CancellableFork[A]`                         | `com.twitter.util.Future[A]`            |
 | `CPromise[A]`                                                     | `kyo.Promise[A, Abort[Throwable]]`           | `zio.Promise[Throwable, A]`          | `cats.effect.Deferred[IO, Try[A]]`                | `scala.concurrent.Promise[A]`                     | `java.util.concurrent.CompletableFuture[A]`     | `com.twitter.util.Promise[A]`           |
-| `CChannel[A]`                                                     | `kyo.Channel[A]`                             | `zio.Queue[A]`                       | `cats.effect.std.Queue[IO, A]`                    | `final class CChannel` (CLQ + AtomicInteger)       | `java.util.concurrent.LinkedBlockingQueue[A]`   | `final class CChannel` (`AsyncSemaphore` + `AsyncQueue`) |
+| `CChannel[A]`                                                     | `kyo.Channel[A]`                             | `zio.Queue[A]`                       | `cats.effect.std.Queue[IO, A]`                    | `final class CChannel` (3 CLQs + AtomicInteger)    | `java.util.concurrent.LinkedBlockingQueue[A]`   | `final class CChannel` (`AsyncSemaphore` + `AsyncQueue`) |
 | `CAtomicRef[A]` / `CAtomicInt` / `CAtomicLong` / `CAtomicBoolean` | `kyo.AtomicRef[A]` / `AtomicInt` / `AtomicLong` / `AtomicBoolean` | `zio.Ref[T]` per type | `cats.effect.kernel.Ref[IO, T]` per type | `java.util.concurrent.atomic.*` per type          | same as Future                                  | same as Future                          |
 | `CLatch`                                                          | `kyo.Latch`                                  | `zio.concurrent.CountdownLatch`      | `cats.effect.std.CountDownLatch[IO]`              | `final class CLatch` (Promise-queue)              | `java.util.concurrent.CountDownLatch`           | `final class CLatch` (`Promise[Unit]` + `AtomicInteger`) |
 | `CMeter`                                                          | `kyo.Meter`                                  | `zio.Semaphore`                      | `cats.effect.std.Semaphore[IO]`                   | `final class CMeter` (permits + waiter queue)     | `java.util.concurrent.Semaphore`                | `com.twitter.concurrent.AsyncSemaphore`                  |
@@ -416,7 +467,6 @@ The carrier is `cats.effect.IO[A]`. `CIO.acquireReleaseWith` is `IO.bracket`; re
 - **Partial error recovery.** `recover`, `fold`, `mapError`, `orElse` on `CIO` are total over `Throwable`. Backend-specific facilities (Kyo's `Abort.recover[A]` returning `Abort[B | C]` with a branch removed at the type level, ZIO's `catchSome`/`refineToOrDie`, Ox's `try`/`catch`) are reached via `lower`.
 - **Defect channels.** Only Kyo (`Abort.panic`, `Result.Panic`) and ZIO (`ZIO.die`, `Cause.Die`) separate defects from typed failures. The other backends collapse defects into the typed channel. To write or inspect a defect, use the native API per backend.
 - **Resource models.** `CIO.acquireReleaseWith` covers the lexical acquire-release case. Backend-specific resource types (Kyo's `Scope`, ZIO's `Scope`, Cats Effect's `Resource[IO, A]`, Ox's `useCloseableInScope`) have no cross-backend counterpart.
-- **Streams.** `fs2.Stream`, `zio.stream.ZStream`, and `kyo.Stream` are out of scope.
 
 ## How to publish a kyo-compat library
 
