@@ -638,7 +638,7 @@ lazy val `kyo-caliban` =
         .dependsOn(`kyo-zio-test`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr"                 %% "caliban"               % "3.0.0",
+            libraryDependencies += "com.github.ghostdogpr"                 %% "caliban"               % "3.1.0",
             libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.28.2" % "provided"
         )
         .jvmSettings(mimaCheck(false))

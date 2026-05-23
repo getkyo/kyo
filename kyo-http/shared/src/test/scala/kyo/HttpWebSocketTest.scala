@@ -1346,10 +1346,80 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
                 Abort.run[HttpException] {
                     HttpClient.webSocket("ws://192.0.2.1/ws") { _ => () }
                 }.map { result =>
-                    // The bug: webSocket ignores HttpClientConfig, so connectTimeout is never applied.
-                    // With the bug the call hangs indefinitely (or until the OS TCP timeout).
-                    // The fixed impl should fail fast with an HttpException.
+                    // webSocket must honor HttpClientConfig.connectTimeout — the call fails fast with an
+                    // HttpException rather than hanging until the OS TCP timeout.
                     discard(assert(result.isFailure || result.isPanic))
+                }
+            }.andThen(succeed)
+        }
+    }
+
+    "close lifecycle and subprotocol negotiation" - {
+
+        "server-side ws.closeReason reflects the code and reason the client sent" in runNotNative {
+            Fiber.Promise.init[Maybe[(Int, String)], Any].map { observed =>
+                val handler = HttpHandler.webSocket("ws/srv-close") { (_, ws) =>
+                    Abort.recover[Closed](_ => ()) {
+                        Loop.foreach {
+                            ws.take().andThen(Loop.continue)
+                        }
+                    }.andThen {
+                        ws.closeReason.map(cr => observed.completeDiscard(Result.succeed(cr)))
+                    }
+                }
+                withWsServer(handler) { url =>
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/srv-close") { ws =>
+                        ws.close(4321, "client-bye").andThen(Async.sleep(300.millis))
+                    }.andThen(observed.get).map { snapshot =>
+                        discard(assert(snapshot.exists(_._1 == 4321), s"expected 4321, got $snapshot"))
+                    }
+                }
+            }.andThen(succeed)
+        }
+
+        "outbound put observes Closed after a server-initiated close" in runNotNative {
+            // Server immediately closes; the client only sends frames. The next put after the close
+            // propagates must abort with Closed so a producer-only handler can exit promptly.
+            val handler = HttpHandler.webSocket("ws/srv-fast-close") { (_, ws) =>
+                ws.close(4002, "go away")
+            }
+            withWsServer(handler) { url =>
+                Async.timeout(2.seconds) {
+                    HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/srv-fast-close") { ws =>
+                        Async.sleep(150.millis).andThen {
+                            Abort.run[Closed](ws.put(HttpWebSocket.Payload.Text("hi"))).map { r =>
+                                discard(assert(r.isFailure, s"expected Closed, got: $r"))
+                            }
+                        }
+                    }
+                }.andThen(succeed)
+            }
+        }
+
+        "client emits a single Sec-WebSocket-Protocol when both headers and config.subprotocols are set" in runNotNative {
+            // Caller-supplied header takes precedence over config.subprotocols. The server echoes back what it
+            // saw in the upgrade request; we assert that value is the single header value the user provided and
+            // not a comma-joined duplicate.
+            val srvConfig = HttpWebSocket.Config(subprotocols = Seq("chat"))
+            val handler = HttpHandler.webSocket("ws/proto-dedup", srvConfig) { (req, ws) =>
+                val seen = req.headers.get("Sec-WebSocket-Protocol").toOption.getOrElse("ABSENT")
+                ws.put(HttpWebSocket.Payload.Text(seen))
+                    .andThen(Abort.recover[Closed](_ => ()) {
+                        Loop.foreach(ws.take().andThen(Loop.continue))
+                    }) // hold the WS open until the peer closes (so the client can take)
+            }
+            withWsServer(handler) { url =>
+                HttpClient.webSocket(
+                    s"ws://${url.host}:${url.port}/ws/proto-dedup",
+                    headers = HttpHeaders.empty.add("Sec-WebSocket-Protocol", "chat"),
+                    config = HttpWebSocket.Config(subprotocols = Seq("other"))
+                ) { ws =>
+                    ws.take().map { f =>
+                        f match
+                            case HttpWebSocket.Payload.Text(v) =>
+                                discard(assert(v == "chat", s"expected exactly one Sec-WebSocket-Protocol value 'chat', got: $v"))
+                            case other => fail(s"expected text frame, got $other")
+                    }
                 }
             }.andThen(succeed)
         }

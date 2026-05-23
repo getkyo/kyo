@@ -41,16 +41,31 @@ private[kyo] object WebSocketCodec:
     def readFrameWith[A, S](src: Stream[Span[Byte], Async], dst: TransportStream, maxFrameSize: Int = Int.MaxValue)(
         f: (HttpWebSocket.Payload, Stream[Span[Byte], Async]) => A < S
     )(using Frame): A < (S & Async & Abort[Closed]) =
+        readFrameWith(src, dst, maxFrameSize, _ => Kyo.unit)(f)
+
+    /** Read one complete frame; on receipt of a Close frame, invoke `onClose` with the parsed (code, reason) before aborting. */
+    def readFrameWith[A, S](
+        src: Stream[Span[Byte], Async],
+        dst: TransportStream,
+        maxFrameSize: Int,
+        onClose: ((Int, String)) => Unit < (S & Async)
+    )(
+        f: (HttpWebSocket.Payload, Stream[Span[Byte], Async]) => A < S
+    )(using Frame): A < (S & Async & Abort[Closed]) =
         Abort.recover[HttpException](_ => Abort.fail(new Closed("HttpWebSocket", summon[Frame]))) {
             readRawFrameWith(src, maxFrameSize) { (opcode, payload, remaining) =>
                 opcode match
                     case OpText   => f(HttpWebSocket.Payload.Text(new String(payload.toArrayUnsafe, Utf8)), remaining)
                     case OpBinary => f(HttpWebSocket.Payload.Binary(payload), remaining)
-                    case OpClose  => Abort.fail(new Closed("HttpWebSocket", summon[Frame], "Close frame received"))
+                    case OpClose =>
+                        val (code, reason) = decodeClosePayload(payload)
+                        onClose((code, reason)).andThen(
+                            Abort.fail(new Closed("HttpWebSocket", summon[Frame], s"Close frame received: $code $reason"))
+                        )
                     case OpPing =>
-                        writeRawFrame(dst, OpPong, payload, mask = false).andThen(readFrameWith(remaining, dst, maxFrameSize)(f))
+                        writeRawFrame(dst, OpPong, payload, mask = false).andThen(readFrameWith(remaining, dst, maxFrameSize, onClose)(f))
                     case OpPong =>
-                        readFrameWith(remaining, dst, maxFrameSize)(f)
+                        readFrameWith(remaining, dst, maxFrameSize, onClose)(f)
                     case other =>
                         Abort.fail(new Closed("HttpWebSocket", summon[Frame], s"Unknown opcode: $other"))
                 end match
@@ -125,6 +140,11 @@ private[kyo] object WebSocketCodec:
             discard(request.append("Connection: Upgrade\r\n"))
             discard(request.append("Sec-WebSocket-Version: 13\r\n"))
             discard(request.append("Sec-WebSocket-Key: ").append(clientKey).append("\r\n"))
+            // Advertise configured subprotocols (RFC 6455 §1.9 / §4.2.2). When the caller's `headers` parameter also carries
+            // Sec-WebSocket-Protocol we suppress the duplicate so the upgrade request has exactly one such header.
+            val callerSuppliedProtocol = headers.get("Sec-WebSocket-Protocol")
+            if config.subprotocols.nonEmpty && callerSuppliedProtocol.isEmpty then
+                discard(request.append("Sec-WebSocket-Protocol: ").append(config.subprotocols.mkString(", ")).append("\r\n"))
             headers.foreach { (name, value) =>
                 discard(request.append(name).append(": ").append(value).append("\r\n"))
             }
@@ -139,7 +159,21 @@ private[kyo] object WebSocketCodec:
                         if !responseStr.contains(expectedAccept) then
                             Abort.fail(HttpProtocolException("HttpWebSocket upgrade: invalid Sec-WebSocket-Accept"))
                         else
-                            f(remaining)
+                            // RFC 6455 §4.1: if the client offered subprotocols, the server's selected subprotocol (if any)
+                            // MUST be one of them. Fail the connection on a mismatched echo. The "offered" list is whatever
+                            // we put on the wire — caller-supplied header takes precedence over config.subprotocols.
+                            val offered =
+                                callerSuppliedProtocol match
+                                    case Present(v) => v.split(',').iterator.map(_.trim).toList
+                                    case Absent     => config.subprotocols.toList
+                            val selected = parseResponseSubprotocol(responseStr)
+                            selected match
+                                case Some(s) if offered.nonEmpty && !offered.contains(s) =>
+                                    Abort.fail(HttpProtocolException(
+                                        s"HttpWebSocket upgrade: server selected subprotocol '$s' that was not offered"
+                                    ))
+                                case _ => f(remaining)
+                            end match
                         end if
                     end if
                 }
@@ -200,6 +234,31 @@ private[kyo] object WebSocketCodec:
         end if
         Span.fromUnsafe(headerBuf.toByteArray)
     end encodeFrameHeader
+
+    /** Extract the value of the `Sec-WebSocket-Protocol` response header from a raw HTTP/1.1 upgrade response, if present. Case-insensitive
+      * header-name match per RFC 7230 §3.2.
+      */
+    private[internal] def parseResponseSubprotocol(responseStr: String): Option[String] =
+        val needle = "sec-websocket-protocol:"
+        responseStr.linesIterator.drop(1).collectFirst {
+            case line if line.toLowerCase.startsWith(needle) =>
+                line.substring(needle.length).trim
+        }
+    end parseResponseSubprotocol
+
+    /** Decode the payload of a Close frame (opcode 0x8): first 2 bytes big-endian code, remaining bytes UTF-8 reason. Returns (1005, "") if
+      * the frame had no payload (per RFC 6455 section 7.1.5, "no status received").
+      */
+    private[internal] def decodeClosePayload(payload: Span[Byte]): (Int, String) =
+        if payload.size < 2 then (1005, "")
+        else
+            val code      = ((payload(0) & 0xff) << 8) | (payload(1) & 0xff)
+            val reasonLen = payload.size - 2
+            val reason =
+                if reasonLen <= 0 then ""
+                else new String(payload.toArrayUnsafe, 2, reasonLen, Utf8)
+            (code, reason)
+    end decodeClosePayload
 
     private[internal] def encodeClosePayload(code: Int, reason: String): Span[Byte] =
         val reasonBytes  = reason.getBytes(Utf8)
