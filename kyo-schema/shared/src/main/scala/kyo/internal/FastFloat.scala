@@ -5,13 +5,13 @@ import scala.annotation.tailrec
 /** Fast double/float parsing via the Eisel-Lemire algorithm.
   *
   * Algorithm: Daniel Lemire, "Number Parsing at a Gigabyte per Second", Software: Practice and Experience, 2021
-  * ([[https://arxiv.org/abs/2101.11408 arXiv:2101.11408]]).
+  * ([arXiv:2101.11408](https://arxiv.org/abs/2101.11408)).
   *
   * Scala port derived from the reference implementation in Go's `strconv` package
-  * ([[https://github.com/golang/go/blob/master/src/internal/strconv/atofeisel.go atofeisel.go]] and
-  * [[https://github.com/golang/go/blob/master/src/internal/strconv/atof.go atof.go]], BSD-3-Clause). The original C++ reference is Daniel
+  * ([atofeisel.go](https://github.com/golang/go/blob/master/src/internal/strconv/atofeisel.go) and
+  * [atof.go](https://github.com/golang/go/blob/master/src/internal/strconv/atof.go), BSD-3-Clause). The original C++ reference is Daniel
   * Lemire's fast_double_parser; a detailed exposition of the algorithm appears at
-  * [[https://nigeltao.github.io/blog/2020/eisel-lemire.html Nigel Tao's blog]].
+  * [Nigel Tao's blog](https://nigeltao.github.io/blog/2020/eisel-lemire.html).
   *
   * Structure and branch-level semantics mirror the Go version; any divergence is documented inline.
   *

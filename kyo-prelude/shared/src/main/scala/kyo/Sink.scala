@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Tag
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
 

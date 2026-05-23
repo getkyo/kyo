@@ -11,26 +11,26 @@ import scala.util.control.NonFatal
 /** A self-tuning regulator that dynamically adjusts scheduler behavior based on system performance metrics. This base class provides
   * automatic adjustment of scheduler parameters based on real-time performance measurements and statistical analysis of timing variations.
   *
-  * ==Measurement Collection==
+  * #### Measurement Collection
   *
   * The regulator collects timing measurements through periodic probes at configured intervals. These measurements are stored in a moving
   * window, which provides an efficient way to maintain recent performance history while automatically discarding old data. This approach
   * enables quick detection of emerging performance trends while smoothing out momentary irregularities.
   *
-  * ==Jitter Analysis==
+  * #### Jitter Analysis
   *
   * Collected measurements are analyzed using a moving standard deviation calculation to determine system stability. This "jitter" metric
   * reveals performance characteristics such as sudden instability, ongoing systemic issues, and recovery patterns. The analysis focuses on
   * detecting significant deviations that indicate potential performance problems.
   *
-  * ==Adjustment Mechanism==
+  * #### Adjustment Mechanism
   *
   * Based on the jitter analysis, the regulator makes incremental adjustments to maintain system stability. When jitter exceeds the upper
   * threshold, the regulator adjusts using negative steps. Conversely, when jitter falls below the lower threshold and load meets the
   * target, it adjusts with positive steps. Step sizes increase exponentially with consecutive adjustments in the same direction but reset
   * when the direction changes, providing both responsiveness and stability.
   *
-  * ==Configuration==
+  * #### Configuration
   *
   * The regulator's behavior is controlled through configuration parameters that define the measurement window size, collection and
   * regulation intervals, jitter thresholds, target load, and step escalation rate. These parameters can be tuned to match specific system
@@ -79,20 +79,21 @@ abstract class Regulator(
     /** Apply a regulation adjustment.
       *
       * @param diff
-      *   The size and direction of adjustment to apply Positive values indicate increase Negative values indicate decrease Magnitude
-      *   increases with consecutive adjustments
+      *   The size and direction of adjustment to apply. Positive values indicate increase, negative values indicate decrease. Magnitude
+      *   increases with consecutive adjustments.
       */
     protected def update(diff: Int): Unit
 
     /** Record a measurement value for regulation.
       *
-      * @param v
-      *   The measurement value in nanoseconds
-      *
       * Measurements are used to:
+      *
       *   - Calculate jitter (standard deviation)
       *   - Detect performance anomalies
       *   - Guide adjustment decisions
+      *
+      * @param v
+      *   The measurement value in nanoseconds
       */
     protected def measure(v: Long): Unit = {
         probesCompleted.increment()

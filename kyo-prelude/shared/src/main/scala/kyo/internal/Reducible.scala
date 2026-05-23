@@ -1,4 +1,6 @@
-package kyo
+package kyo.internal
+
+import kyo.<
 
 /** Represents Kyo's mechanism for safely eliding effects in specific situations.
   *
@@ -15,13 +17,7 @@ sealed trait Reducible[S]:
     private[kyo] def apply[A, S1](value: A < (S1 & S)): A < (S1 & SReduced)
 end Reducible
 
-sealed trait LowPriorityReducibles:
-    /** Default instance for effects that cannot be reduced. */
-    inline given irreducible[S]: Reducible.Aux[S, S] =
-        Reducible.cached.asInstanceOf[Reducible.Aux[S, S]]
-end LowPriorityReducibles
-
-object Reducible extends LowPriorityReducibles:
+object Reducible extends kyo.internal.LowPriorityReducibles:
     /** Marker trait indicating an effect can be safely eliminated. */
     trait Eliminable[S]
 

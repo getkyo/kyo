@@ -1,7 +1,6 @@
 package kyo
 
 import Schedule.internal.*
-import kyo.Duration
 
 /** An immutable, composable scheduling policy.
   *
@@ -266,11 +265,13 @@ object Schedule:
     /** Creates a schedule that executes at fixed points in time, aligned to a base period and offset.
       *
       * Anchored schedules maintain alignment with specific points in time, regardless of when executions complete. This means:
+      *
       *   - Executions align to consistent time boundaries (e.g., every hour on the hour)
       *   - If an execution is delayed, the next execution time adjusts to maintain alignment
       *   - Multiple missed periods will be caught up with a single execution
       *
       * Examples:
+      *
       *   - Schedule.anchored(1.hour) // Hourly on the hour
       *   - Schedule.anchored(1.day, 2.hours) // Daily at 2am
       *   - Schedule.anchored(15.minutes, 5.minutes) // Every 15 minutes, offset by 5 minutes

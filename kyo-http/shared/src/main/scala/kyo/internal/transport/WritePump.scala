@@ -5,7 +5,7 @@ import kyo.scheduler.IOPromise
 
 /** Pump that drains an outbound channel and writes bytes to the socket via the driver.
   *
-  * ## Lifecycle
+  * #### Lifecycle
   *
   *   1. `start()` registers as taker on the outbound channel
   *   2. Channel delivers a span, `onComplete` fires
@@ -14,14 +14,14 @@ import kyo.scheduler.IOPromise
   *   5. If Partial: call `driver.awaitWritable`, retry remaining bytes when writable
   *   6. If Error: teardown
   *
-  * ## Two modes
+  * #### Two modes
   *
   *   - **Normal mode**: waiting for channel to produce data
   *   - **Awaiting writable mode**: partial write happened, waiting for socket to become writable
   *
   * The pump switches between modes based on write results.
   *
-  * ## Promise reuse
+  * #### Promise reuse
   *
   * The pump extends `IOPromise[Closed, Span[Byte]]` for channel takes. A separate `writablePromise` (also reused) handles writable
   * notifications.

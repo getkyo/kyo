@@ -1,8 +1,9 @@
-package kyo
+package kyo.internal
 
-import Result.Error
+import kyo.*
+import kyo.Result.Error
 
-/** Shared runner for Kyo application entrypoints (see [[KyoApp]] and case-app `KyoCaseApp`).
+/** Shared runner for Kyo application entrypoints (see [[kyo.KyoApp]] and case-app `KyoCaseApp`).
   *
   * Integrations mix this trait with [[KyoAppRunnerPlatform]] and implement [[exitHook]]. Register effects via
   * [[KyoAppRunnerPlatform.registerEffect]] (or a module-specific wrapper such as `registerRun`).

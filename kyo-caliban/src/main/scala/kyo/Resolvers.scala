@@ -66,47 +66,47 @@ object Resolvers:
         HttpServer.init(buildHandlers(wrapped, config.path, ZEnvironment.empty, config.filter, config.graphiql)*)
     end run
 
-    /** Runs a GraphQL server with a custom Runner for arbitrary kyo effects.
+    /** Runs a GraphQL server with a custom CalibanRunner for arbitrary kyo effects.
       *
       * @param interpreter
       *   The GraphQL interpreter to serve
       * @param runner
-      *   The custom Runner to handle arbitrary effects
+      *   The custom CalibanRunner to handle arbitrary effects
       * @param config
       *   The server configuration
       * @param tag
-      *   Implicit Tag for Runner[R]
+      *   Implicit Tag for CalibanRunner[R]
       * @param Frame
       *   Implicit Frame parameter
       * @return
       *   An HttpServer wrapped in Async and Scope effects
       */
     def run[R](
-        interpreter: GraphQLInterpreter[Runner[R], CalibanError],
-        runner: Runner[R],
+        interpreter: GraphQLInterpreter[CalibanRunner[R], CalibanError],
+        runner: CalibanRunner[R],
         config: Config
-    )(using zio.Tag[Runner[R]], Frame): HttpServer < (Async & Scope) =
+    )(using zio.Tag[CalibanRunner[R]], Frame): HttpServer < (Async & Scope) =
         val wrapped = CalibanHttpUtils.configuredInterpreter(interpreter, toExecutionConfig(config))
         HttpServer.init(buildHandlers(wrapped, config.path, ZEnvironment(runner), config.filter, config.graphiql)*)
     end run
 
-    /** Runs a GraphQL server with a custom Runner using default configuration.
+    /** Runs a GraphQL server with a custom CalibanRunner using default configuration.
       *
       * @param interpreter
       *   The GraphQL interpreter to serve
       * @param runner
-      *   The custom Runner to handle arbitrary effects
+      *   The custom CalibanRunner to handle arbitrary effects
       * @param tag
-      *   Implicit Tag for Runner[R]
+      *   Implicit Tag for CalibanRunner[R]
       * @param Frame
       *   Implicit Frame parameter
       * @return
       *   An HttpServer wrapped in Async and Scope effects
       */
     def run[R](
-        interpreter: GraphQLInterpreter[Runner[R], CalibanError],
-        runner: Runner[R]
-    )(using zio.Tag[Runner[R]], Frame): HttpServer < (Async & Scope) =
+        interpreter: GraphQLInterpreter[CalibanRunner[R], CalibanError],
+        runner: CalibanRunner[R]
+    )(using zio.Tag[CalibanRunner[R]], Frame): HttpServer < (Async & Scope) =
         run(interpreter, runner, Config.default)
     end run
 

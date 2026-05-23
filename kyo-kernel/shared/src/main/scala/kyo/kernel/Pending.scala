@@ -161,11 +161,14 @@ object `<`:
           * function.
           *
           * For example, instead of:
-          * ```
+          *
+          * ```scala
           * Env.run(1)(Abort.run(computation))
           * ```
+          *
           * You can write:
-          * ```
+          *
+          * ```scala
           * computation.handle(Abort.run, Env.run(1))
           * ```
           *
@@ -376,7 +379,7 @@ object `<`:
           *
           * @return
           *   The final result of type `A` after evaluating the computation
-          * @throws IllegalStateException
+          * @throws java.lang.IllegalStateException
           *   if unhandled effects remain in the computation
           */
         inline def eval(using inline frame: Frame): A =

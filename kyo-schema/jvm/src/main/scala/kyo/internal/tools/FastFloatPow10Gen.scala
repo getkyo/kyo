@@ -7,11 +7,12 @@ import java.nio.file.Paths
 
 /** Standalone generator that emits [[kyo.internal.FastFloatPow10Table]].
   *
-  * Ported from Go's `strconv/atofeisel_pow10_gen.go` ([[https://github.com/golang/go/blob/master/src/strconv/atofeisel_pow10_gen.go
-  * pow10gen.go]], BSD-3-Clause) to produce the same 128-bit powers-of-ten table used by the Eisel-Lemire algorithm.
+  * Ported from Go's `strconv/atofeisel_pow10_gen.go`
+  * ([pow10gen.go](https://github.com/golang/go/blob/master/src/strconv/atofeisel_pow10_gen.go), BSD-3-Clause) to produce the same 128-bit
+  * powers-of-ten table used by the Eisel-Lemire algorithm.
   *
   * Algorithm reference: Daniel Lemire, "Number Parsing at a Gigabyte per Second", Software: Practice and Experience, 2021
-  * ([[https://arxiv.org/abs/2101.11408 arXiv:2101.11408]]).
+  * ([arXiv:2101.11408](https://arxiv.org/abs/2101.11408)).
   *
   * Run via `sbt "kyo-schemaJVM/runMain kyo.internal.tools.FastFloatPow10Gen"` whenever the table needs regeneration; the emitted file is
   * checked in for build reproducibility.

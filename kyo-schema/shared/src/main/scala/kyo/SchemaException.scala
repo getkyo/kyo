@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.Codec
-
 /** Base class for all exceptions raised by the kyo-schema module.
   *
   * Subtypes are grouped by the operation that raised them: DecodeException for deserialization failures, ValidationException for constraint

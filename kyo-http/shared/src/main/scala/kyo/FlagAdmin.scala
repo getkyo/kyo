@@ -9,6 +9,7 @@ import kyo.AllowUnsafe.embrace.danger
   * are returned as a `Seq` to mount on any server -- dedicated admin port, behind auth middleware, or under a prefix.
   *
   * Endpoints:
+  *
   *   - `GET /{prefix}` -- list all flags (optional `?filter=glob`)
   *   - `GET /{prefix}/:name` -- single flag detail (JSON)
   *   - `PUT /{prefix}/:name` -- update a [[DynamicFlag]] expression

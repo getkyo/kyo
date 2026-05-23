@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Result.Panic
-import kyo.Tag
 import kyo.internal.AsyncPlatformSpecific
 import kyo.kernel.*
 import kyo.scheduler.*
@@ -55,15 +54,18 @@ object Async extends AsyncPlatformSpecific:
       * foreach, collect, and their variants. It defaults to twice the number of available processors.
       *
       * This default can be overridden in two ways:
+      *
       *   1. Per operation by passing an explicit concurrency parameter
       *   2. Globally by setting the "kyo.async.concurrency.default" system property
       *
       * Example of setting the system property:
-      * ```
+      *
+      * ```sh
       * java -Dkyo.async.concurrency.default=4 MyApp
       * ```
       *
       * Consider adjusting this based on:
+      *
       *   - Nature of operations (CPU vs Sync bound)
       *   - Available system resources
       *   - Specific performance requirements

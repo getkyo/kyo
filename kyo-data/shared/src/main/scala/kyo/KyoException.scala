@@ -9,6 +9,7 @@ import scala.util.control.NoStackTrace
 /** Kyo's base exception class that provides enhanced error reporting and context.
   *
   * The exception's behavior changes based on the environment:
+  *
   *   - In development: Provides detailed, ANSI-colored error messages with context
   *   - In production: Returns minimal error messages for cleaner logs
   *

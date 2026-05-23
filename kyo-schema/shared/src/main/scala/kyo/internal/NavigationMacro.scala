@@ -14,7 +14,7 @@ import scala.quoted.*
   *
   * This object factors out steps 1-3 so each navigator macro only implements step 4.
   *
-  * =Relationship to Record.stage=
+  * #### Relationship to Record.stage
   *
   * Conceptually, every navigable type is a "staged Record" where the interpretation function G determines the navigator type:
   *   - Schema: G[V] = Schema[expanded_V]
@@ -25,12 +25,12 @@ import scala.quoted.*
   * Record.stage[A]([v] => field => G[v](field)) materializes this pattern for first-level navigation. However, the per-type selectDynamic
   * macros remain necessary because:
   *
-  *   1. '''Return type computation''': Each selectDynamic returns a type-specific wrapper (Schema[expanded_V], Path[Root, V], etc.) that
+  *   1. **Return type computation**: Each selectDynamic returns a type-specific wrapper (Schema[expanded_V], Path[Root, V], etc.) that
   *      requires compile-time type expansion via ExpandMacro. Record's selectDynamic returns Fields.Have#Value (the raw type), not the
   *      wrapped form.
-  *   2. '''Stateful composition''': Most navigators compose per-instance state (getters, setters, paths, rules) across levels. The child
+  *   2. **Stateful composition**: Most navigators compose per-instance state (getters, setters, paths, rules) across levels. The child
   *      value depends on the parent's state, which doesn't exist at staging time.
-  *   3. '''Type-level effects''': Some navigators (Builder, Select) grow or shrink type parameters across navigation steps, which
+  *   3. **Type-level effects**: Some navigators (Builder, Select) grow or shrink type parameters across navigation steps, which
   *      Record.selectDynamic cannot express.
   *
   * The shared NavigationMacro captures the REAL duplication (field resolution), while Record.stage captures the CONCEPTUAL model.

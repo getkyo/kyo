@@ -17,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
   * background reader fiber drains the `receive` stream and routes each decoded message by ID. Callers never see IDs.
   *
   * Callbacks supplied at construction:
+  *
   *   - `nextId`: produces a fresh request ID, re-evaluated on every `apply` call. Callers control the strategy (sequential counter,
   *     odd-only for HTTP/2, UUIDs, etc.). `Sync` — may use mutable counters but must not park.
   *   - `encode`: stamps the ID into the request and serializes to the wire format. `Sync` — serialization may mutate shared state (e.g.
@@ -38,6 +39,7 @@ import java.util.concurrent.ConcurrentHashMap
   * `Event = Nothing` when the protocol has no unsolicited messages.
   *
   * Factory methods:
+  *
   *   - `init(encode, send, receive, decode)`: sequential `Int` IDs, scoped. The simplest entry point.
   *   - `init(nextId, encode, send, receive, decode, eventCapacity)`: custom ID type, with unsolicited events, scoped.
   *   - `initUnscoped(...)`: same variants as above but without Scope management — caller must call `close()` manually.
@@ -421,6 +423,7 @@ object Exchange:
         /** Creates an Exchange for use with the Unsafe API (no reader fiber, no send, no receive).
           *
           * The caller drives the I/O loop manually:
+          *
           *   - Call `apply(req)` to assign an ID, encode the request, and get a promise.
           *   - Send the returned wire message yourself.
           *   - Call `feed(wire)` for each incoming wire message to route responses to pending promises.

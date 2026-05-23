@@ -5,6 +5,7 @@ import java.lang.System as JSystem
 import java.net.MalformedURLException
 import java.net.URISyntaxException
 import java.time.format.DateTimeParseException
+import kyo.internal.Reducible
 import kyo.internal.SystemPlatformSpecific
 
 /** A platform-independent accessor for system environment and properties.
@@ -16,6 +17,7 @@ import kyo.internal.SystemPlatformSpecific
   * class. This allows for safe, composable interactions with the system environment while maintaining proper effect tracking.
   *
   * Key features:
+  *
   *   - Type-safe access to environment variables via `env[Type](name)`
   *   - Strongly-typed system property retrieval with `property[Type](name)`
   *   - Platform information including line separators, user names, and OS detection

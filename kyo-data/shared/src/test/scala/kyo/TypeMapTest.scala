@@ -1,8 +1,5 @@
 package kyo
 
-import kyo.Tag
-import kyo.TypeMap
-
 class TypeMapTest extends Test:
     "empty" - {
         "TypeMap.empty" in {

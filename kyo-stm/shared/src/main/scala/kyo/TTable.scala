@@ -6,10 +6,12 @@ import scala.annotation.implicitNotFound
   * operations (Create, Read, Update, Delete) with strong consistency guarantees and optional indexing for efficient querying.
   *
   * TTable provides two main implementations:
+  *
   *   - Basic tables with primary key access
   *   - Indexed tables that maintain secondary indexes for efficient querying on specified fields
   *
   * All operations are performed within STM transactions to ensure consistency. The table guarantees that:
+  *
   *   - Records are uniquely identified by an auto-incrementing ID
   *   - Updates are atomic - either all fields are updated or none
   *   - Indexes (if configured) are automatically maintained in sync with record changes

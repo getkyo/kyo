@@ -3,18 +3,19 @@ package kyo
 /** A static, resolve-once configuration flag.
   *
   * Flags are declared as Scala objects in a package -- the fully-qualified object name becomes the system property key:
-  * {{{
+  *
+  * ```scala
   * package myapp.db
   * object poolSize   extends StaticFlag[Int](10)         // -Dmyapp.db.poolSize=20
   * object maxRetries extends StaticFlag[Int](3, n => Right(n max 0)) // -Dmyapp.db.maxRetries=5 (clamped >= 0)
-  * }}}
+  * ```
   *
-  * ==Choosing between StaticFlag and DynamicFlag==
+  * #### Choosing between StaticFlag and DynamicFlag
   *
   * Both types share the same declaration style, [[Rollout]] DSL, typed parsing, and validation. They differ in lifecycle:
-  *   - '''StaticFlag''': resolves once at class load into a `val`. Use for infrastructure config that must not change at runtime (pool
+  *   - **StaticFlag**: resolves once at class load into a `val`. Use for infrastructure config that must not change at runtime (pool
   *     sizes, timeouts, codecs, feature kill switches). Just a field read on access.
-  *   - '''[[DynamicFlag]]''': evaluates per call with a caller-provided key. Use when the value must vary per request or change without
+  *   - **[[DynamicFlag]]**: evaluates per call with a caller-provided key. Use when the value must vary per request or change without
   *     restart (feature gates, A/B tests, per-tenant rate limits). Supports `update()`/`reload()` for live changes.
   *
   * IMPORTANT: Values are read ONCE at class load. Changes to system properties or rollout expressions after initialization are NOT picked

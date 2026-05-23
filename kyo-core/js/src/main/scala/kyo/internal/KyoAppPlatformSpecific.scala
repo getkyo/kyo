@@ -1,4 +1,6 @@
-package kyo
+package kyo.internal
+
+import kyo.*
 
 abstract class KyoAppPlatformSpecific
     extends KyoApp.Base[Async & Scope & Abort[Any]]

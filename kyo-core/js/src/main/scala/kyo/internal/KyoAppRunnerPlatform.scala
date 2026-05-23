@@ -1,4 +1,6 @@
-package kyo
+package kyo.internal
+
+import kyo.*
 
 /** Scala.js registration of [[KyoAppRunner]] effects via a long-lived fiber. */
 trait KyoAppRunnerPlatform:

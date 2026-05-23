@@ -18,26 +18,26 @@ import scala.util.control.NonFatal
   *   - Thread state monitoring and stall detection
   *   - Performance metrics collection
   *
-  * ==Task Execution==
+  * #### Task Execution
   *
   * Workers maintain a priority queue of pending tasks and execute them according to their priority ordering. Each task runs until either:
   *   - It completes naturally
   *   - It exceeds its time slice and is preempted
   *   - The worker is instructed to stop
   *
-  * ==Preemption==
+  * #### Preemption
   *
   * The worker monitors task execution time and preempts long-running tasks that exceed the configured time slice. Preempted tasks are
   * re-queued to allow other tasks to execute, implementing fair scheduling. This prevents individual tasks from monopolizing the worker
   * thread.
   *
-  * ==Work Stealing==
+  * #### Work Stealing
   *
   * When a worker's queue is empty, it attempts to steal tasks from other workers that have higher load. The stealing mechanism uses atomic
   * batch transfers to move multiple tasks at once, maintaining priority ordering while balancing load across workers. This improves overall
   * scheduler throughput by keeping workers busy.
   *
-  * ==State Management==
+  * #### State Management
   *
   * The worker transitions between three states:
   *   - Idle: No tasks to execute
@@ -47,7 +47,7 @@ import scala.util.control.NonFatal
   * Thread state monitoring detects when workers become blocked on I/O or synchronization, allowing the scheduler to compensate by not
   * scheduling new tasks to blocked workers.
   *
-  * ==Thread Management==
+  * #### Thread Management
   *
   * Workers use an ephemeral thread model where they acquire threads from the executor only when actively processing tasks:
   *   - Thread is mounted when the worker begins processing tasks

@@ -834,9 +834,9 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     /** Navigates via a lambda on Focus, auto-detecting product vs sum navigation.
       *
-      * For product-only navigation (case class fields), returns `Focus[Root, Value, Focus.Id]` with direct `get`/`set`/`update`. For
-      * navigation that crosses a sum type (sealed trait variant), returns `Focus[Root, Value, Maybe]` with Maybe-wrapped
-      * `get`/`set`/`update`.
+      * For product-only navigation (case class fields), returns `Focus[Root, Value, Focus.Id]` with direct
+      * `get`/`set`/`update`. For navigation that crosses a sum type (sealed trait variant), returns `Focus[Root, Value, Maybe]` with
+      * Maybe-wrapped `get`/`set`/`update`.
       *
       * Usage:
       * {{{
@@ -851,8 +851,8 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     /** Navigates into a collection-typed field, providing bulk operations on all elements.
       *
-      * Uses a Focus lambda to identify the collection field. Returns `Focus[Root, E, Chunk]` for get/set/update operations on all elements.
-      * For element validation, use `Schema.check` with a predicate over the collection.
+      * Uses a Focus lambda to identify the collection field. Returns `Focus[Root, E, Chunk]` for get/set/update operations on all
+      * elements. For element validation, use `Schema.check` with a predicate over the collection.
       *
       * {{{
       * val each = Schema[Order].foreach(_.items)
@@ -1579,9 +1579,9 @@ object Schema:
                 val (typeName, captured) = loop(Maybe.empty, Maybe.empty)
                 reader.objectEnd()
                 if typeName.isEmpty then
-                    throw kyo.MissingFieldException(Seq.empty, "$type")(using reader.frame)
+                    throw MissingFieldException(Seq.empty, "$type")(using reader.frame)
                 if captured.isEmpty then
-                    throw kyo.MissingFieldException(Seq.empty, "value")(using reader.frame)
+                    throw MissingFieldException(Seq.empty, "value")(using reader.frame)
                 val capturedReader = captured.get
                 typeName.get match
                     case "success" => Result.succeed(aSchema.serializeRead(capturedReader))
@@ -1591,7 +1591,7 @@ object Schema:
                             if capturedReader.isNil() then Maybe.empty
                             else Maybe(capturedReader.string())
                         Result.panic(new RuntimeException(msg.getOrElse(null: String))) // RuntimeException accepts null message
-                    case other => throw kyo.UnknownVariantException(Seq.empty, other)(using reader.frame)
+                    case other => throw UnknownVariantException(Seq.empty, other)(using reader.frame)
                 end match
         )
 
@@ -1628,14 +1628,14 @@ object Schema:
                 val (typeName, captured) = loop(Maybe.empty, Maybe.empty)
                 reader.objectEnd()
                 if typeName.isEmpty then
-                    throw kyo.MissingFieldException(Seq.empty, "$type")(using reader.frame)
+                    throw MissingFieldException(Seq.empty, "$type")(using reader.frame)
                 if captured.isEmpty then
-                    throw kyo.MissingFieldException(Seq.empty, "value")(using reader.frame)
+                    throw MissingFieldException(Seq.empty, "value")(using reader.frame)
                 val capturedReader = captured.get
                 typeName.get match
                     case "Left"  => Left(aSchema.serializeRead(capturedReader))
                     case "Right" => Right(bSchema.serializeRead(capturedReader))
-                    case other   => throw kyo.UnknownVariantException(Seq.empty, other)(using reader.frame)
+                    case other   => throw UnknownVariantException(Seq.empty, other)(using reader.frame)
                 end match
         )
 

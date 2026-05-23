@@ -2,7 +2,6 @@ package kyo.scheduler
 
 import kyo.*
 import kyo.Result.Error
-import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.ArrowEffect
 import kyo.kernel.internal.*

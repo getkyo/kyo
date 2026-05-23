@@ -297,7 +297,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             case _: NoSuchFileException                      => FileNotFoundException(path)
             case _: AccessDeniedException                    => FileAccessDeniedException(path)
             case _: NotDirectoryException                    => FileNotADirectoryException(path)
-            case _: java.nio.file.FileAlreadyExistsException => kyo.FileAlreadyExistsException(path)
+            case _: java.nio.file.FileAlreadyExistsException => FileAlreadyExistsException(path)
             case _: DirectoryNotEmptyException               => FileDirectoryNotEmptyException(path)
             case _                                           => FileIOException(path, e)
 
@@ -345,7 +345,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
         catch
             case e: IOException if isFileNotFound(e)         => Result.fail(FileNotFoundException(safe))
             case e: AccessDeniedException                    => Result.fail(FileAccessDeniedException(safe))
-            case e: java.nio.file.FileAlreadyExistsException => Result.fail(kyo.FileAlreadyExistsException(safe))
+            case e: java.nio.file.FileAlreadyExistsException => Result.fail(FileAlreadyExistsException(safe))
             case e: DirectoryNotEmptyException               => Result.fail(FileDirectoryNotEmptyException(safe))
             case e: IOException if isNotDirectory(e)         => Result.fail(FileNotADirectoryException(safe))
             case e: IOException                              => Result.fail(FileIOException(safe, e))

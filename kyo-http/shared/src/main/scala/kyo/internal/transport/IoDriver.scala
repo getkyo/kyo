@@ -5,17 +5,17 @@ import kyo.*
 /** Completion-based I/O driver. The driver performs reads internally and delivers results via promise completion. This model unifies
   * poll-based platforms (Native epoll/kqueue, JVM NIO Selector) with callback-based platforms (JS Node.js).
   *
-  * ## Completion model
+  * #### Completion model
   *
   * Unlike readiness-based APIs (epoll, kqueue) where the caller is notified "fd is readable" and then calls read(), this driver does the
   * read internally and completes the caller's promise with the actual bytes. This matches how libuv, Netty, and Node.js work.
   *
-  * ## Promise passing
+  * #### Promise passing
   *
   * Callers pass a `Promise.Unsafe` to `awaitRead`/`awaitWritable`. The driver stores the promise and completes it when the operation
   * finishes. This avoids allocation per operation when the caller reuses a promise (e.g., pumps extend IOPromise and pass themselves).
   *
-  * ## Platform implementations
+  * #### Platform implementations
   *
   *   - Native (NativeIoDriver): epoll/kqueue poll loop does the read, completes promise
   *   - JVM (NioIoDriver): NIO Selector poll loop does the read, completes promise

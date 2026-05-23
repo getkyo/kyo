@@ -3457,9 +3457,9 @@ import kyo.given
 
 case class Query(k: Int < Abort[Throwable]) derives Schema.SemiAuto
 
-// for other effects, you need to extend `SchemaDerivation[Runner[YourCustomEffects]]`
+// for other effects, you need to extend `SchemaDerivation[CalibanRunner[YourCustomEffects]]`
 type CustomEffects = Var[Int] & Env[String]
-object schema extends SchemaDerivation[Runner[CustomEffects]]
+object schema extends SchemaDerivation[CalibanRunner[CustomEffects]]
 
 case class Query2(k: Int < CustomEffects) derives schema.SemiAuto
 ```
@@ -3499,13 +3499,13 @@ import kyo.*
 import kyo.given
 
 type CustomEffects = Var[Int] & Env[String]
-object schema extends SchemaDerivation[Runner[CustomEffects]]
+object schema extends SchemaDerivation[CalibanRunner[CustomEffects]]
 case class Query(k: Int < CustomEffects) derives schema.SemiAuto
 
 val api = graphQL(RootResolver(Query(42)))
 
 // runner for our CustomEffects
-val runner = new Runner[CustomEffects]:
+val runner = new CalibanRunner[CustomEffects]:
     def apply[A](v: A < CustomEffects): A < (Abort[Throwable] & Async) = Env.run("kyo")(Var.run(0)(v))
 
 val d: HttpServer < (Async & Scope & Abort[CalibanError]) =

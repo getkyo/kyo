@@ -33,6 +33,7 @@ object Admission:
       * will receive the same admission decision at any given admission percentage, creating stable and predictable load shedding patterns.
       *
       * This consistency is particularly valuable for:
+      *
       *   - User IDs or session identifiers to maintain consistent user experience
       *   - Transaction or operation IDs for related task sets
       *   - Service names or endpoints for targeted load shedding
@@ -58,6 +59,7 @@ object Admission:
       * operations.
       *
       * This method is particularly useful for:
+      *
       *   - Numeric identifiers like user IDs or request sequence numbers
       *   - Hash values from other sources
       *   - Cases where the caller has already computed a suitable numeric key
@@ -83,6 +85,7 @@ object Admission:
       * admission decisions aren't required.
       *
       * This approach works well for:
+      *
       *   - One-off tasks with no related operations
       *   - Tasks where consistent rejection isn't critical
       *   - High-volume scenarios where perfect distribution isn't necessary
@@ -106,6 +109,7 @@ object Admission:
       * admission decisions aren't required.
       *
       * This approach works well for:
+      *
       *   - One-off tasks with no related operations
       *   - Tasks where consistent rejection isn't critical
       *   - High-volume scenarios where perfect distribution isn't necessary
@@ -127,12 +131,14 @@ object Admission:
       * patterns.
       *
       * This consistency is particularly valuable for:
+      *
       *   - User IDs or session identifiers to maintain consistent user experience
       *   - Transaction or operation IDs for related task sets
       *   - Service names or endpoints for targeted load shedding
       *   - Any scenario requiring deterministic admission control
       *
       * The string-based rejection provides several benefits:
+      *
       *   - Related requests from the same user/session get uniform treatment
       *   - Retries of rejected tasks won't add load since they'll stay rejected
       *   - System stabilizes with a consistent subset of flowing traffic
@@ -153,12 +159,14 @@ object Admission:
       * operations.
       *
       * This method is particularly useful for:
+      *
       *   - Numeric identifiers like user IDs or request sequence numbers
       *   - Hash values from other sources
       *   - Cases where the caller has already computed a suitable numeric key
       *   - Performance-critical scenarios needing minimal overhead
       *
       * The integer-based rejection maintains the same consistency benefits as string-based rejection:
+      *
       *   - Deterministic decisions for identical keys
       *   - Stable load shedding patterns
       *   - Efficient handling of related operations

@@ -7,7 +7,7 @@ package kyo
   *
   * Note: This class and its methods are unsafe and should only be used as the entrypoint of an application.
   */
-abstract class KyoApp extends KyoAppPlatformSpecific
+abstract class KyoApp extends kyo.internal.KyoAppPlatformSpecific
 
 object KyoApp:
     final case class FailureException private[kyo] (error: Any)(using Frame)
@@ -43,7 +43,7 @@ object KyoApp:
       *   The effect type used by the application.
       */
     abstract class Base[S]:
-        self: KyoAppRunner =>
+        self: kyo.internal.KyoAppRunner =>
 
         private var _args: Array[String] = null
 

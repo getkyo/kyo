@@ -8,11 +8,7 @@ abstract class Render[A] extends Serializable:
     def asText(value: A): Text
     final def asString(value: A): String = asText(value).show
 
-sealed trait LowPriorityRenders:
-    given [A]: Render[A] with
-        def asText(value: A): Text = value.toString
-
-object Render extends LowPriorityRenders:
+object Render extends kyo.internal.LowPriorityRenders:
     inline def apply[A](using r: Render[A]): Render[A] = r
 
     def from[A](impl: A => Text): Render[A] =
@@ -69,18 +65,18 @@ object Render extends LowPriorityRenders:
                             sumRender[A, prodMir.type](label, prodMir)
                     end match
 
+    type Rendered = Rendered.Value
+
+    object Rendered:
+        opaque type Value <: Text = Text
+        implicit def apply[A](value: A)(using render: Render[A]): Rendered =
+            render.asText(value)
+    end Rendered
+
 end Render
 
-type Rendered = Rendered.Value
-
-object Rendered:
-    opaque type Value <: Text = Text
-    implicit def apply[A](value: A)(using render: Render[A]): Rendered =
-        render.asText(value)
-end Rendered
-
 extension (sc: StringContext)
-    def t(args: Rendered*): Text =
+    def t(args: Render.Rendered*): Text =
         StringContext.checkLengths(args, sc.parts)
         val pi         = sc.parts.iterator
         val ai         = args.iterator

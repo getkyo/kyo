@@ -1,6 +1,8 @@
-package kyo
+package kyo.internal
 
-/** JVM / Native registration of [[KyoAppRunner]] effects via [[KyoApp.runAndBlock]]. */
+import kyo.*
+
+/** JVM / Native registration of [[KyoAppRunner]] effects via [[kyo.KyoApp.runAndBlock]]. */
 trait KyoAppRunnerPlatform:
     self: KyoAppRunnerWithInterrupts =>
 

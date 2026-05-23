@@ -622,6 +622,7 @@ object Gate:
     /** Packed AtomicLong layout for Gate/Dynamic.
       *
       * A single Long packs all gate state for single-CAS atomic updates:
+      *
       *   - bit 63: closed flag (state < 0 = closed)
       *   - bits 62-32: pass number (31 bits, ~2 billion passes)
       *   - bits 31-16: registered parties (16 bits, max 65535)
