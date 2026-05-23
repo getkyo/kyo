@@ -2,36 +2,40 @@ package kyo.compat
 
 import zio.*
 
-/** Backed by `zio.Promise[Throwable, A]`.
-  *
-  * E is invariant in `zio.Promise[Throwable, A]`; the surface declares `+E` for uniformity across backends. The covariant view is sound
-  * because CPromise never widens E observably (opacity hides the invariance).
-  *
-  * `poll` performs a non-trivial adaptation: ZIO's `Promise.poll` returns `UIO[Option[IO[E, A]]]`. The inner `IO[E, A]` is flattened to
-  * `Try[A]` via `.foldZIO` before wrapping in `Some`, so the returned value is `Option[Try[A]]` as the surface promises.
+/** Underlying carrier is `zio.Promise[Throwable, A]`, a single-shot completable cell. Operations propagate ZIO `Trace` through
+  * `(using inline trace: Trace)` on every entry point. `lift` and `lower` are identity since the carrier is already a native ZIO promise.
+  * `succeed` and `fail` return `true` on first completion and `false` on subsequent attempts (first-wins). `poll` flattens ZIO's
+  * `Option[IO[Throwable, A]]` into `Option[scala.util.Try[A]]`.
   */
 opaque type CPromise[A] = Promise[Throwable, A]
 
 object CPromise:
 
+    /** Allocates a fresh single-shot promise. */
     inline def init[A](using inline trace: Trace): CIO[CPromise[A]] =
         CIO.lift(Promise.make[Throwable, A])
 
+    /** Wraps a native `zio.Promise` as a `CPromise`. Identity on the carrier. */
     inline def lift[A](inline u: Promise[Throwable, A]): CPromise[A] = u
 
     extension [A](inline self: CPromise[A])
 
+        /** Unwraps to the native `zio.Promise`. Identity on the carrier. */
         inline def lower: Promise[Throwable, A] = self
 
+        /** Attempts to complete the promise with `a`; returns `true` if this is the first completion. */
         inline def succeed(inline a: A)(using inline trace: Trace): CIO[Boolean] =
             CIO.lift(self.succeed(a))
 
+        /** Attempts to complete the promise with failure `e`; returns `true` if this is the first completion. */
         inline def fail(inline e: Throwable)(using inline trace: Trace): CIO[Boolean] =
             CIO.lift(self.fail(e))
 
+        /** Suspends until the promise is completed and returns its value. */
         inline def get(using inline trace: Trace): CIO[A] =
             CIO.lift(self.await)
 
+        /** Returns the current state without blocking: `None` if pending, `Some(Try)` if completed. */
         inline def poll(using inline trace: Trace): CIO[Option[scala.util.Try[A]]] =
             CIO.lift(
                 self.poll.flatMap {
@@ -43,6 +47,7 @@ object CPromise:
                 }
             )
 
+        /** `true` if the promise has been completed. */
         inline def done(using inline trace: Trace): CIO[Boolean] =
             CIO.lift(self.isDone)
 

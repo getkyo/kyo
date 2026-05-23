@@ -5,10 +5,12 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.Future
 import scala.concurrent.Promise
 
-/** Backed by an `AtomicInteger` size counter plus three `ConcurrentLinkedQueue`s (items, takers, putters). `put` and `take` use
-  * Promise-queue coordination — no OS-thread blocking. Cancellation isn't part of the CIO surface; a `put`/`take` that can't be satisfied
-  * holds onto its Promise indefinitely (use `CIO.timeout` to bound it, accepting that the underlying waiter is orphaned). `poll` is
-  * non-blocking and always returns immediately.
+/** Custom `final class` backing the Future binding's bounded FIFO channel — Scala's standard library has no async queue, so this binding
+  * supplies its own. The Future ecosystem has no `Frame` / `Trace` to propagate. `lift` and `lower` are identity on this `final class`.
+  * Holds an `AtomicInteger` size counter plus three `ConcurrentLinkedQueue`s (items, takers, putters); `put` and `take` use Promise-queue
+  * coordination — no OS-thread blocking. The compat surface exposes only `put`/`take`/`poll`: no `close`/`closed`/`size`/`offer`.
+  * Cancellation isn't part of the CIO surface; a `put`/`take` that can't be satisfied holds onto its Promise indefinitely (use
+  * `CIO.timeout` to bound it, accepting that the underlying waiter is orphaned). `poll` is non-blocking and always returns immediately.
   */
 final class CChannel[A](
     capacity: Int,
@@ -18,11 +20,17 @@ final class CChannel[A](
     size: AtomicInteger
 ):
 
+    /** Returns this channel. Identity on the carrier. */
     inline def lower: CChannel[A] = this
 
+    /** Enqueues `v`; suspends when the channel is full. */
     inline def put(inline v: A): CIO[Unit] = CIO.deferLift(doPut(v))
-    inline def take: CIO[A]                = CIO.deferLift(doTake())
-    inline def poll: CIO[Option[A]]        = CIO.defer(doPoll())
+
+    /** Dequeues the next element; suspends when the channel is empty. */
+    inline def take: CIO[A] = CIO.deferLift(doTake())
+
+    /** Non-blocking dequeue: `Some(a)` if an element is available, `None` otherwise. */
+    inline def poll: CIO[Option[A]] = CIO.defer(doPoll())
 
     private def doPut(v: A): Future[Unit] =
         if size.get() < capacity then
@@ -125,6 +133,7 @@ end CChannel
 
 object CChannel:
 
+    /** Allocates a bounded FIFO channel of the given capacity. */
     inline def init[A](inline capacity: Int): CIO[CChannel[A]] =
         CIO.defer(new CChannel[A](
             capacity,
@@ -134,6 +143,7 @@ object CChannel:
             new AtomicInteger(0)
         ))
 
+    /** Wraps a native `CChannel` as a `CChannel`. Identity on the carrier. */
     inline def lift[A](inline u: CChannel[A]): CChannel[A] = u
 
 end CChannel

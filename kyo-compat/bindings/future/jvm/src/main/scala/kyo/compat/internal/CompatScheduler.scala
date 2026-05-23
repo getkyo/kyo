@@ -6,7 +6,10 @@ import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Public on purpose: `private[kyo]` triggers a `NoClassDefFoundError` at runtime when `sleep`/`timeout` inline at user-package call sites
+/** JVM scheduling backend for `CIO.sleep`, `CIO.timeout`, and `CIO.cede`. Backed by a two-thread daemon `ScheduledExecutorService`; tasks
+  * dispatched from `CompatScheduler.schedule` run on a `compat-scheduler-N` daemon thread.
+  *
+  * Public on purpose: `private[kyo]` triggers a `NoClassDefFoundError` at runtime when `sleep`/`timeout` inline at user-package call sites
   * (Scala 3 synthesizes an inline accessor typed against a package-as-class symbol that does not exist at runtime).
   */
 object CompatScheduler:
@@ -22,6 +25,7 @@ object CompatScheduler:
         Executors.newScheduledThreadPool(2, tf)
     end executor
 
+    /** Schedules `action` to run after `delay` (interpreted with `unit`); returns immediately. */
     def schedule(action: () => Unit, delay: Long, unit: TimeUnit): Unit =
         val _ = executor.schedule(
             new Runnable:

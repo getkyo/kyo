@@ -14,33 +14,42 @@ import scala.util.Success
 import scala.util.Try
 import scala.util.control.NonFatal
 
-/** Underlying carrier is `() => Future[A]` — a cold thunk. Future.apply is eager, so the thunk defers execution; each call to `lower()`
-  * invokes a fresh execution. Twitter Local propagation is automatic across async boundaries. cede forks an empty task on the unbounded
-  * FuturePool. zip uses Future.join for all arities. race raises a CancellationException on the loser. timeout / timeoutWithError use
-  * Future.raiseWithin, which propagates an interrupt to the inner.
+/** Underlying carrier is `() => com.twitter.util.Future[A]` — a cold thunk. `com.twitter.util.Future.apply` is eager, so the thunk defers
+  * execution; each materialization re-runs the thunk for a fresh `Future`. The Twitter Future ecosystem has no `Frame` / `Trace` to
+  * propagate. `lift` wraps an already-constructed `Future` and `lower` exposes the carrier thunk. `acquireReleaseWith`, `timeout`, and
+  * `race` are hand-rolled — Twitter Future has no native acquire-release primitive — and release failures propagate as `Throw(t)`; `race`
+  * interrupts the losing leg via `raise(CancellationException)`, while `timeout` uses `Future.raiseWithin` to propagate the same `raise`
+  * signal on expiry. `cede` schedules a "run now" task via `twitterTimer.doLater(Duration.Zero)` (a real async boundary, since
+  * `Future.sleep(Zero)` would short-circuit); `blocking` runs on `FuturePool.unboundedPool`; `unsafeRun` bridges the underlying
+  * `com.twitter.util.Future[A]` to a `scala.concurrent.Future[A]`.
   */
 opaque type CIO[+A] = () => Future[A]
 
 object CIO:
 
-    /** Wrap an already-constructed, pure `Future` value (no side effects in building the argument). */
+    /** Wraps an already-constructed, pure `Future` value (no side effects in building the argument) as a `CIO`. Identity on the carrier. */
     inline def lift[A](inline f: Future[A]): CIO[A] = () => f
 
-    /** Suspend side-effecting code that produces a `Future`; the body runs fresh on each execution. */
+    /** Suspends side-effecting code that produces a `Future`; the body runs fresh on each materialization. */
     inline def deferLift[A](inline f: => Future[A]): CIO[A] = () => f
 
+    /** Successful `CIO` carrying the given value. */
     inline def value[A](inline a: A): CIO[A] = lift(Future.value(a))
 
+    /** Successful `CIO[Unit]`. */
     inline def unit: CIO[Unit] = lift(Future.Done)
 
+    /** Failed `CIO` carrying `e` in the failure channel. */
     inline def fail(inline e: Throwable): CIO[Nothing] = lift(Future.exception(e))
 
+    /** Suspends a side-effecting thunk that produces a plain value, deferring its execution to effect-evaluation time. */
     inline def defer[A](inline thunk: => A): CIO[A] =
         deferLift {
             try Future.value(thunk)
             catch case t: Throwable if NonFatal(t) => Future.exception(t)
         }
 
+    /** Lifts a `Try[A]`: `Success` succeeds with the value, `Failure` fails with the throwable. */
     inline def get[A](inline t: Try[A]): CIO[A] =
         lift {
             t match
@@ -48,9 +57,13 @@ object CIO:
                 case Failure(e) => Future.exception(e)
         }
 
+    /** Lifts a `scala.concurrent.Future[A]`; observes the future's eventual completion. */
     inline def fromScalaFuture[A](inline f: scala.concurrent.Future[A]): CIO[A] =
         CompatFromCompletionStage.fromCompletionStage(f.asJava)
 
+    /** Pairs an acquisition with a release that runs on success and failure of `use`; a release failure surfaces as `acquireReleaseWith`'s
+      * `Throw(t)`.
+      */
     inline def acquireReleaseWith[A, B](
         inline acquire: CIO[A]
     )(
@@ -82,6 +95,7 @@ object CIO:
             }
         }
 
+    /** Runs `c` and guarantees `cleanup` executes on every exit path. */
     inline def ensure[A](
         inline cleanup: CIO[Unit]
     )(
@@ -89,12 +103,15 @@ object CIO:
     ): CIO[A] =
         acquireReleaseWith(CIO.unit)(_ => cleanup)(_ => c)
 
+    /** `CIO` that never completes. */
     inline def never: CIO[Nothing] = deferLift(new Promise[Nothing]())
 
     extension [A](inline self: CIO[A])
 
+        /** Unwraps to the underlying `() => Future[A]` carrier thunk. */
         inline def lower: () => Future[A] = self
 
+        /** Runs `handler` on failure to produce a recovery `CIO`. */
         inline def recover[A2 >: A](inline handler: Throwable => CIO[A2]): CIO[A2] =
             deferLift {
                 self.lower().rescue {
@@ -102,6 +119,7 @@ object CIO:
                 }
             }
 
+        /** Collapses success and failure into a single `CIO[B]` via the respective handlers. */
         inline def fold[B](
             inline onSuccess: A => CIO[B],
             inline onFail: Throwable => CIO[B]
@@ -117,6 +135,7 @@ object CIO:
                 }
             }
 
+        /** Reifies failure as `Try`; the resulting `CIO` always succeeds. */
         inline def liftToTry: CIO[Try[A]] =
             deferLift {
                 self.lower().transform {
@@ -125,9 +144,11 @@ object CIO:
                 }
             }
 
+        /** Discards the success value; failure propagates. */
         inline def unit: CIO[Unit] =
             deferLift(self.lower().unit)
 
+        /** Falls back to `that` on any failure of `self`. */
         inline def orElse[A2 >: A](inline that: CIO[A2]): CIO[A2] =
             deferLift {
                 self.lower().rescue {
@@ -135,6 +156,7 @@ object CIO:
                 }
             }
 
+        /** Rewrites the error value through `f`. */
         inline def mapError(inline f: Throwable => Throwable): CIO[A] =
             deferLift {
                 self.lower().transform {
@@ -145,12 +167,15 @@ object CIO:
                 }
             }
 
+        /** Transforms the success value with a pure function. */
         inline def map[B](inline f: A => B): CIO[B] =
             deferLift(self.lower().map(f))
 
+        /** Chains another `CIO` whose construction depends on the success value. */
         inline def flatMap[B](inline f: A => CIO[B]): CIO[B] =
             deferLift(self.lower().flatMap(a => f(a).lower()))
 
+        /** Materializes this `CIO` into a `scala.concurrent.Future[A]` bridged from the underlying `com.twitter.util.Future[A]`. */
         inline def unsafeRun: scala.concurrent.Future[A] =
             val p = scala.concurrent.Promise[A]()
             val _ = self.lower().respond {
@@ -165,14 +190,19 @@ object CIO:
     private inline def toTwitterDuration(inline d: FiniteDuration): com.twitter.util.Duration =
         com.twitter.util.Duration.fromNanoseconds(d.toNanos)
 
+    /** Suspends the calling computation for `d`. */
     inline def sleep(inline d: FiniteDuration): CIO[Unit] =
         deferLift(Future.sleep(toTwitterDuration(d))(using twitterTimer))
 
+    /** Wall-clock instant. */
     inline def now: CIO[java.time.Instant] = defer(java.time.Instant.now())
 
+    /** Monotonic timestamp expressed as a `FiniteDuration` since a backend-defined origin; use for intervals, not wall-clock time. */
     inline def nowMonotonic: CIO[FiniteDuration] =
         defer(FiniteDuration(java.lang.System.nanoTime(), NANOSECONDS))
 
+    /** Runs `c` with a deadline; resolves to `None` if `d` elapses first and propagates an interrupt to the inner Future via raiseWithin.
+      */
     inline def timeout[A](inline d: FiniteDuration)(inline c: CIO[A]): CIO[Option[A]] =
         deferLift {
             c.lower().raiseWithin(toTwitterDuration(d))(using twitterTimer).transform {
@@ -182,12 +212,15 @@ object CIO:
             }
         }
 
+    /** Runs `c` with a deadline; on expiry raises `e` and propagates an interrupt to the inner Future via raiseWithin. */
     inline def timeoutWithError[A](inline d: FiniteDuration)(inline e: Throwable)(inline c: CIO[A]): CIO[A] =
         deferLift(c.lower().raiseWithin(toTwitterDuration(d), e)(using twitterTimer))
 
+    /** Sleeps for `d` and then runs `c`. */
     inline def delay[A](inline d: FiniteDuration)(inline c: CIO[A]): CIO[A] =
         deferLift(Future.sleep(toTwitterDuration(d))(using twitterTimer).flatMap(_ => c.lower()))
 
+    /** Races `a` and `b`; the loser is interrupted via raise(CancellationException). */
     inline def race[A](
         inline a: CIO[A],
         inline b: CIO[A]
@@ -230,6 +263,7 @@ object CIO:
         p
     end parWithRaiseCascade
 
+    /** Parallel map; `concurrency` caps in-flight items (unbounded by default, via `AsyncSemaphore`). */
     inline def foreach[A, B](
         inline coll: Iterable[A],
         inline concurrency: Int = Int.MaxValue
@@ -244,6 +278,7 @@ object CIO:
             parWithRaiseCascade(futs).map(s => CChunk.lift(s.toVector))
         }
 
+    /** Parallel map that passes the element index to `f`; same concurrency semantics as `foreach`. */
     inline def foreachIndexed[A, B](
         inline coll: Iterable[A],
         inline concurrency: Int = Int.MaxValue
@@ -258,6 +293,7 @@ object CIO:
             parWithRaiseCascade(futs).map(s => CChunk.lift(s.toVector))
         }
 
+    /** Runs `f` for its effects on each element and discards the results; same concurrency semantics as `foreach`. */
     inline def foreachDiscard[A](
         inline coll: Iterable[A],
         inline concurrency: Int = Int.MaxValue
@@ -272,6 +308,7 @@ object CIO:
             parWithRaiseCascade(futs).map(_ => ())
         }
 
+    /** Concurrent predicate filtering; same concurrency semantics as `foreach`. */
     inline def filter[A](
         inline coll: Iterable[A],
         inline concurrency: Int = Int.MaxValue
@@ -288,6 +325,7 @@ object CIO:
             )
         }
 
+    /** Sequences an `Iterable[CIO[A]]`; same concurrency semantics as `foreach`. */
     inline def collectAll[A](
         inline coll: Iterable[CIO[A]],
         inline concurrency: Int = Int.MaxValue
@@ -302,6 +340,7 @@ object CIO:
             parWithRaiseCascade(futs).map(s => CChunk.lift(s.toVector))
         }
 
+    /** Sequences and discards the results; same concurrency semantics as `foreach`. */
     inline def collectAllDiscard(
         inline coll: Iterable[CIO[Any]],
         inline concurrency: Int = Int.MaxValue
@@ -316,6 +355,7 @@ object CIO:
             parWithRaiseCascade(futs).map(_ => ())
         }
 
+    /** Bridges a one-shot completion callback into `CIO`; `register` receives a `Try[A] => Unit`. */
     inline def async[A](inline register: ((Try[A] => Unit) => Unit)): CIO[A] =
         deferLift {
             val p = new Promise[A]()
@@ -335,21 +375,25 @@ object CIO:
             p
         }
 
+    /** Runs the thunk on `FuturePool.unboundedPool`. */
     inline def blocking[A](inline thunk: => A): CIO[A] =
         deferLift(blockingFuturePool(thunk))
 
+    /** Yields the calling fiber (twitterTimer.doLater(Duration.Zero) — Future.sleep(Zero) would short-circuit). */
     inline def cede: CIO[Unit] =
         // doLater(Zero) schedules a real "run now" task on the timer thread — a genuine async
         // boundary that lets the current fiber suspend. (Future.sleep(Zero) short-circuits to an
         // already-completed future and would not yield.)
         deferLift(twitterTimer.doLater(com.twitter.util.Duration.Zero)(()))
 
+    /** Runs two computations in parallel and returns their results as a tuple. */
     inline def zip[A, B](
         inline a: CIO[A],
         inline b: CIO[B]
     ): CIO[(A, B)] =
         deferLift(a.lower().join(b.lower()))
 
+    /** Runs three computations in parallel and returns their results as a tuple. */
     inline def zip[A, B, C](
         inline a: CIO[A],
         inline b: CIO[B],
@@ -357,6 +401,7 @@ object CIO:
     ): CIO[(A, B, C)] =
         deferLift(Future.join(a.lower(), b.lower(), c.lower()))
 
+    /** Runs four computations in parallel and returns their results as a tuple. */
     inline def zip[A, B, C, D](
         inline a: CIO[A],
         inline b: CIO[B],
@@ -365,6 +410,7 @@ object CIO:
     ): CIO[(A, B, C, D)] =
         deferLift(Future.join(a.lower(), b.lower(), c.lower(), d.lower()))
 
+    /** Runs five computations in parallel and returns their results as a tuple. */
     inline def zip[A, B, C, D, E1](
         inline a: CIO[A],
         inline b: CIO[B],
@@ -374,6 +420,7 @@ object CIO:
     ): CIO[(A, B, C, D, E1)] =
         deferLift(Future.join(a.lower(), b.lower(), c.lower(), d.lower(), e.lower()))
 
+    /** Runs six computations in parallel and returns their results as a tuple. */
     inline def zip[A, B, C, D, E1, F](
         inline a: CIO[A],
         inline b: CIO[B],
@@ -384,6 +431,7 @@ object CIO:
     ): CIO[(A, B, C, D, E1, F)] =
         deferLift(Future.join(a.lower(), b.lower(), c.lower(), d.lower(), e.lower(), f.lower()))
 
+    /** Runs seven computations in parallel and returns their results as a tuple. */
     inline def zip[A, B, C, D, E1, F, G](
         inline a: CIO[A],
         inline b: CIO[B],
