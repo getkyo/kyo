@@ -12,7 +12,7 @@ import kyo.stats.internal.UnsafeTraceSpan
   * are linked to the caller's trace.
   *
   * @see
-  *   [[https://www.w3.org/TR/trace-context/ W3C Trace Context specification]]
+  *   [W3C Trace Context specification](https://www.w3.org/TR/trace-context/)
   */
 object OTLPTraceContextFilter:
 

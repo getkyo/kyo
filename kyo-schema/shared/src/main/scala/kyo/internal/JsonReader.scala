@@ -3,8 +3,6 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.Codec.Reader
-import kyo.Maybe
-import kyo.Span
 import scala.annotation.tailrec
 
 // Parses UTF-8 byte input directly, avoiding String intermediary on the decode path.

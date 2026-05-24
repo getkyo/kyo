@@ -14,11 +14,11 @@ import scala.scalanative.unsigned.*
   * exposed by the Thread API. The Worker captures its pthread handle via currentThreadId() during mount, storing it as mountId. The
   * BlockingMonitor then passes these handles to userTimes() for cross-thread CPU time queries.
   *
-  * ==Platform-specific implementations==
+  * #### Platform-specific implementations
   *
-  *   - '''macOS''': Uses Mach `thread_info(THREAD_BASIC_INFO)` via `pthread_mach_thread_np` to convert the pthread handle to a Mach port.
+  *   - **macOS**: Uses Mach `thread_info(THREAD_BASIC_INFO)` via `pthread_mach_thread_np` to convert the pthread handle to a Mach port.
   *     Returns user CPU time only (excludes kernel time), matching JVM behavior. Correctly detects kernel-level spinning as blocked.
-  *   - '''Linux''': Uses `pthread_getcpuclockid` + `clock_gettime` with clock ID bit manipulation to get user-only CPU time. The clock ID
+  *   - **Linux**: Uses `pthread_getcpuclockid` + `clock_gettime` with clock ID bit manipulation to get user-only CPU time. The clock ID
   *     from `pthread_getcpuclockid` defaults to CPUCLOCK_SCHED (total time); flipping bits 0-1 to CPUCLOCK_VIRT (01) switches to user-only
   *     time. This is the same technique used by OpenJDK's ThreadMXBean.getThreadUserTime (JDK-8372584). Correctly detects kernel-level
   *     spinning as blocked, matching JVM and macOS behavior.

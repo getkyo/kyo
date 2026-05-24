@@ -1,6 +1,4 @@
-package kyo
-
-import kyo.internal.NotIntersectionMacro
+package kyo.internal
 
 /** Compile-time evidence that a type is not an intersection type.
   *

@@ -13,6 +13,7 @@ import kyo.kernel.*
   * occurred. This rich error context makes debugging easier by providing precise information about what failed and where.
   *
   * Three handling strategies give flexibility in how validation failures are processed:
+  *
   *   - Collecting all failures for later inspection
   *   - Converting failures to the `Abort` effect for immediate error propagation
   *   - Discarding failures for non-critical validations

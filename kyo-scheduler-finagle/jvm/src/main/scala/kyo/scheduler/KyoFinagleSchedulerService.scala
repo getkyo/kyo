@@ -112,6 +112,7 @@ class KyoFinagleSchedulerService extends FinagleSchedulerService {
     }
 
     /** Provides the parameter format string for service configuration.
+      *
       * @return
       *   Parameter format string
       */

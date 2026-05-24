@@ -95,7 +95,7 @@ object LogAggregator extends KyoApp:
                             }.map { sources =>
                                 Console.printLine("[aggregator] streaming logs for 5 seconds (grep=ERROR only)...").andThen {
                                     val tagged = aggregate(sources, grep = Present("ERROR"))
-                                    // Accumulate lines as they stream so the result survives a Timeout interrupt —
+                                    // Accumulate lines as they stream so the result survives an Timeout interrupt —
                                     // `.run` would block until the (infinite) stream ends, then yield nothing back
                                     // when the timeout fires.
                                     AtomicRef.init(Chunk.empty[String]).map { acc =>

@@ -1,6 +1,7 @@
 package kyo
 
 import java.util.concurrent.atomic.AtomicInteger
+import kyo.Actor.Subject
 import org.scalatest.compatible.Assertion
 
 class ActorTest extends Test:

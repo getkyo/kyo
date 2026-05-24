@@ -5,11 +5,11 @@ import java.io.IOException
 
 /** Represents a console for input and output operations.
   *
-  * The methods that print to the console output and error streams ([[print]], [[printErr]], [[printLine]], [[printLineErr]]) don't return
-  * an [[Abort]] effect because they don't throw exceptions. The behavior is the same as the standard Scala `scala.Console` methods, which
+  * The methods that print to the console output and error streams ([[print]], [[printErr]], [[println]], [[printLineErr]]) don't return an
+  * [[Abort]] effect because they don't throw exceptions. The behavior is the same as the standard Scala `scala.Console` methods, which
   * don't throw exceptions either. The cause is the underlying Java `PrintStream` class implementation, which doesn't throw exceptions when
   * writing to the console output or error streams (see
-  * [[https://stackoverflow.com/questions/297303/printwriter-and-printstream-never-throw-ioexceptions PrintWriter and PrintStream never throw IOExceptions]]
+  * [PrintWriter and PrintStream never throw IOExceptions](https://stackoverflow.com/questions/297303/printwriter-and-printstream-never-throw-ioexceptions)
   * for more details).
   *
   * To check if an error occurred in the console output or error streams, use the [[checkErrors]], which returns a boolean indicating if an

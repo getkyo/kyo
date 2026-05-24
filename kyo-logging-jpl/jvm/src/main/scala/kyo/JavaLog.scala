@@ -2,10 +2,6 @@ package kyo
 
 import java.lang.System.Logger
 import java.lang.System.Logger.Level
-import kyo.AllowUnsafe
-import kyo.Frame
-import kyo.Log
-import kyo.Text
 
 object JavaLog:
 

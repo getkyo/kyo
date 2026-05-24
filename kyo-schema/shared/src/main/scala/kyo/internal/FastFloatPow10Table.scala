@@ -6,10 +6,10 @@ package kyo.internal
   * 10^(pow10Min + i), split into two 64-bit halves with the high bit of `pow10Hi` always set.
   *
   * Ported from the same approximation table used by Go's `strconv` package
-  * ([[https://github.com/golang/go/blob/master/src/strconv/atofeisel.go atofeisel.go]], BSD-3-Clause).
+  * ([atofeisel.go](https://github.com/golang/go/blob/master/src/strconv/atofeisel.go), BSD-3-Clause).
   *
   * Algorithm reference: Daniel Lemire, "Number Parsing at a Gigabyte per Second", Software: Practice and Experience, 2021
-  * ([[https://arxiv.org/abs/2101.11408 arXiv:2101.11408]]).
+  * ([arXiv:2101.11408](https://arxiv.org/abs/2101.11408)).
   *
   * Do not edit by hand — regenerate via [[FastFloatPow10Gen]].
   */

@@ -238,8 +238,8 @@ final class Container private[kyo] (
         backend.exec(id, Command(command*))
     end exec
 
-    /** Run a command and stream its output incrementally. Each emitted [[LogEntry]] carries a `source` flag distinguishing stdout from
-      * stderr. The stream completes when the exec process exits.
+    /** Run a command and stream its output incrementally. Each emitted [[Container.LogEntry]] carries a `source` flag distinguishing stdout
+      * from stderr. The stream completes when the exec process exits.
       */
     def execStream(command: Command)(using Frame): Stream[LogEntry, Async & Abort[ContainerException]] =
         backend.execStream(id, command)
@@ -248,8 +248,8 @@ final class Container private[kyo] (
     def execStream(command: String*)(using Frame): Stream[LogEntry, Async & Abort[ContainerException]] =
         backend.execStream(id, Command(command*))
 
-    /** Interactive exec with bidirectional stdin/stdout and terminal resize support. The returned [[AttachSession]] is registered with the
-      * enclosing [[Scope]]; the underlying connection closes on scope exit.
+    /** Interactive exec with bidirectional stdin/stdout and terminal resize support. The returned [[Container.AttachSession]] is registered
+      * with the enclosing [[Scope]]; the underlying connection closes on scope exit.
       */
     def execInteractive(command: Command)(using Frame): AttachSession < (Async & Abort[ContainerException] & Scope) =
         backend.execInteractive(id, command)
@@ -2161,10 +2161,10 @@ object Container:
     /** After the daemon reports that all ports are bound (via [[waitForPortMappings]]), verify that no other running container claims the
       * same host port via inspect.
       *
-      * On Linux / Podman, a conflicting bind is rejected at `/start` (HTTP 500 "port is already allocated"), which
-      * [[kyo.internal.HttpContainerBackend]] maps to [[ContainerPortConflictException]] before this probe is ever reached. Docker Desktop
-      * on macOS, however, silently accepts duplicate host-port binds: `/start` returns 204 and `inspect` reports the port as bound for
-      * multiple containers — but only the first container actually receives traffic.
+      * On Linux / Podman, a conflicting bind is rejected at `/start` (HTTP 500 "port is already allocated"), which the internal
+      * `HttpContainerBackend` maps to [[ContainerPortConflictException]] before this probe is ever reached. Docker Desktop on macOS,
+      * however, silently accepts duplicate host-port binds: `/start` returns 204 and `inspect` reports the port as bound for multiple
+      * containers — but only the first container actually receives traffic.
       *
       * Detection strategy: list all running containers, then inspect each one and compare its inspect-level host ports against the
       * configured explicit host ports of the container being started. This relies on inspect rather than the list summary because Docker

@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Tag
 import kyo.debug.Debug
 import kyo.kernel.*
 
@@ -13,14 +12,14 @@ import kyo.kernel.*
   * or any computation where you need to model decisions with multiple valid options. When combined with other effects like `Parse`, it
   * becomes especially powerful for expressing complex branching logic.
   *
-  * The primary operations include introducing choice points with `get`, evaluating functions across alternatives with `eval`, and pruning
-  * invalid paths with `drop`. Computations using Choice can be collected with `run`, which gathers all successful outcomes into a single
-  * sequence, or streamed with `runStream`, which produces results incrementally as a stream.
+  * The primary operations include introducing choice points with `eval`, evaluating functions across alternatives with `evalWith`, and
+  * pruning invalid paths with `drop`. Computations using Choice can be collected with `run`, which gathers all successful outcomes into a
+  * single sequence, or streamed with `runStream`, which produces results incrementally as a stream.
   *
   * @see
-  *   [[kyo.Choice.get]] for introducing choice points from sequences
+  *   [[kyo.Choice.eval]] and [[kyo.Choice.evalSeq]] for introducing choice points from values or sequences
   * @see
-  *   [[kyo.Choice.eval]] for applying functions to multiple alternatives
+  *   [[kyo.Choice.evalWith]] for applying functions to multiple alternatives
   * @see
   *   [[kyo.Choice.drop]] for terminating unsuccessful computation branches
   * @see

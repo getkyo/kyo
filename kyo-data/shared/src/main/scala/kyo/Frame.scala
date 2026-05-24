@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Maybe
 import kyo.internal.FindEnclosing
 import scala.annotation.tailrec
 import scala.quoted.*

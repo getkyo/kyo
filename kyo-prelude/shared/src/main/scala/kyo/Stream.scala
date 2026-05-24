@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Tag
 import kyo.debug.Debug
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
@@ -530,6 +529,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       *
       * This operation maintains the order of elements while potentially redistributing them into new chunks. Smaller chunks may occur in
       * two cases:
+      *
       *   - When there aren't enough remaining elements to form a complete chunk
       *   - When the input stream emits an empty chunk
       *
@@ -778,7 +778,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       * stream.
       *
       * For example, to ensure all resources close when the stream is evaluated:
-      * ```
+      * ```scala
       * val original: Stream[Int, Scope & Async] = ???
       * val withCleanup = original.handle(Scope.run)
       * ```
@@ -787,7 +787,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       * and composition of multiple handlers. The multi-parameter versions of `handle` enable chaining transformations in a readable
       * sequential style.
       *
-      * ```
+      * ```scala
       * val original: Stream[Int, Scope & Abort[String] & Var[Int]] = ???
       * val handled: Stream[Int, Any] = original.handle(
       *   Scope.run,

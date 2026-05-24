@@ -2,7 +2,7 @@ package kyo
 
 import kyo.internal.OsSignal
 
-/** Signal handling for Kyo application entrypoints. Mixed into [[KyoAppRunnerWithInterrupts]]. */
+/** Signal handling for Kyo application entrypoints. Mixed into `KyoAppRunnerWithInterrupts`. */
 private[kyo] trait KyoAppInterrupts:
     private val awaitInterrupt =
         given AllowUnsafe = AllowUnsafe.embrace.danger

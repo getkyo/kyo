@@ -2,7 +2,6 @@ package kyo.test
 
 import com.microsoft.playwright.Playwright
 import kyo.*
-import kyo.Browser
 import scala.util.Try
 
 class BrowserTest extends Test:

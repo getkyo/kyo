@@ -13,10 +13,12 @@ import scala.annotation.tailrec
   *
   * Synchronous operations (offer/poll) immediately succeed or fail without parking fibers. These are useful when you want to attempt
   * communication without blocking execution:
+  *
   *   - `offer` attempts to add an element, returning true if successful or false if the channel is full
   *   - `poll` attempts to retrieve an element, returning Maybe.empty if the channel is empty
   *
   * Asynchronous operations (put/take) will suspend the current fiber until the operation can complete:
+  *
   *   - `put` adds an element, suspending if the channel is full until space becomes available
   *   - `take` retrieves an element, suspending if the channel is empty until an element arrives
   *
@@ -44,15 +46,14 @@ import scala.annotation.tailrec
   * WARNING: On the JVM, the actual capacity of a Channel is rounded up to the next power of two for performance reasons. For example, if
   * you specify a capacity of 10, the actual capacity will be 16.
   *
+  * @tparam A
+  *   The type of elements that can be sent through the channel
   * @see
   *   [[kyo.Queue]] A similar structure without the fiber-aware asynchronous operations
   * @see
   *   [[kyo.Hub]] A multi-producer, multi-consumer broadcast primitive for one-to-many communication
   * @see
   *   [[kyo.Access]] For available producer-consumer access patterns
-  *
-  * @tparam A
-  *   The type of elements that can be sent through the channel
   */
 opaque type Channel[A] = Channel.Unsafe[A]
 
@@ -173,11 +174,11 @@ object Channel:
             }
         end takeWith
 
-        /** Takes [[n]] elements from the channel, semantically blocking until enough elements are present. Note that if enough elements are
+        /** Takes `n` elements from the channel, semantically blocking until enough elements are present. Note that if enough elements are
           * not added to the channel it can block indefinitely.
           *
           * @return
-          *   Chunk of [[n]] elements
+          *   Chunk of `n` elements
           */
         def takeExactly(n: Int)(using Frame): Chunk[A] < (Abort[Closed] & Async) =
             if n <= 0 then Chunk.empty
@@ -202,10 +203,10 @@ object Channel:
           */
         def drain(using Frame): Chunk[A] < (Abort[Closed] & Sync) = Sync.Unsafe.defer(Abort.get(self.drain()))
 
-        /** Takes up to [[max]] elements from the channel.
+        /** Takes up to `max` elements from the channel.
           *
           * @return
-          *   a sequence of up to [[max]] elements that were in the channel.
+          *   a sequence of up to `max` elements that were in the channel.
           */
         def drainUpTo(max: Int)(using Frame): Chunk[A] < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.drainUpTo(max)))
 
@@ -274,8 +275,8 @@ object Channel:
                                     )
                             }
 
-        /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]], chunk sizes will
-          * be limited only by channel capacity or the number of elements in the channel at a given time. (Chunks can still be larger than
+        /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of `maxChunkSize`, chunk sizes will be
+          * limited only by channel capacity or the number of elements in the channel at a given time. (Chunks can still be larger than
           * channel capacity.) Consumes elements from channel. Fails on channel closure.
           *
           * @param maxChunkSize
