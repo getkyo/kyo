@@ -195,6 +195,7 @@ class FiberTest extends Test:
                         startLatch.release.andThen(promise3.get)
                     ))
                     _      <- startLatch.await
+                    _      <- Async.sleep(50.millis)
                     _      <- promise1.complete(Result.succeed(1))
                     _      <- Async.sleep(100.millis)
                     result <- fiber.get
