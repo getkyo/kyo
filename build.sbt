@@ -163,6 +163,7 @@ lazy val kyoJVM = project
         `kyo-examples`.jvm,
         `kyo-actor`.jvm,
         `kyo-reflect`.jvm,
+        `kyo-reflect-fixtures`.jvm,
         `kyo-compat-future`.jvm,
         `kyo-compat-kyo`.jvm,
         `kyo-compat-zio`.jvm,
@@ -199,6 +200,7 @@ lazy val kyoJS = project
         `kyo-case-app`.js,
         `kyo-actor`.js,
         `kyo-reflect`.js,
+        `kyo-reflect-fixtures`.js,
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
@@ -232,6 +234,7 @@ lazy val kyoNative = project
         `kyo-reactive-streams`.native,
         `kyo-actor`.native,
         `kyo-reflect`.native,
+        `kyo-reflect-fixtures`.native,
         `kyo-schema`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
@@ -490,6 +493,17 @@ lazy val `kyo-reflect` =
         .crossType(CrossType.Full)
         .in(file("kyo-reflect"))
         .dependsOn(`kyo-core`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+        .dependsOn(`kyo-reflect-fixtures` % Test)
+
+lazy val `kyo-reflect-fixtures` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-reflect-fixtures"))
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)

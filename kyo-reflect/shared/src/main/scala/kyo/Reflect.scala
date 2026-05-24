@@ -19,7 +19,7 @@ object Reflect:
         def show: String = s"$major.$minor.$experimental"
 
     // The Scala 3 TASTy version this kyo-reflect release targets. Updated per release.
-    val supportedTastyVersion: Version = Version(28, 9, 1)
+    val supportedTastyVersion: Version = Version(28, 8, 0)
 
     // ── Names and flags ─────────────────────────────────────────────────────
 
