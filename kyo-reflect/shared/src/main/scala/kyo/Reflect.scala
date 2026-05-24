@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.internal.reflect.binary.Utf8
+import kyo.internal.reflect.query.ClasspathRef
 import kyo.internal.reflect.symbol.Interner
 
 /** kyo-reflect public entry object.
@@ -64,7 +65,7 @@ object Reflect:
         override def toString: String = name
 
     object Flag:
-        // ~42 flags per DESIGN.md Section 7. Phase 0 stubs a subset; full list lands with Phase 3.
+        // Phase 0 flags (bits 0-15)
         val Inline: Flag      = Flag(1L << 0, "Inline")
         val Private: Flag     = Flag(1L << 1, "Private")
         val Protected: Flag   = Flag(1L << 2, "Protected")
@@ -81,6 +82,34 @@ object Reflect:
         val JavaDefined: Flag = Flag(1L << 13, "JavaDefined")
         val Enum: Flag        = Flag(1L << 14, "Enum")
         val JavaRecord: Flag  = Flag(1L << 15, "JavaRecord")
+        // Phase 3 flags (bits 16+)
+        val Open: Flag          = Flag(1L << 16, "Open")
+        val ParamAccessor: Flag = Flag(1L << 17, "ParamAccessor")
+        val Lazy: Flag          = Flag(1L << 18, "Lazy")
+        val Override: Flag      = Flag(1L << 19, "Override")
+        val Mutable: Flag       = Flag(1L << 20, "Mutable")
+        val Erased: Flag        = Flag(1L << 21, "Erased")
+        val Tracked: Flag       = Flag(1L << 22, "Tracked")
+        val Tailrec: Flag       = Flag(1L << 23, "Tailrec")
+        val Infix: Flag         = Flag(1L << 24, "Infix")
+        val Transparent: Flag   = Flag(1L << 25, "Transparent")
+        val Trait: Flag         = Flag(1L << 26, "Trait")
+        val CaseAccessor: Flag  = Flag(1L << 27, "CaseAccessor")
+        val FieldAccessor: Flag = Flag(1L << 28, "FieldAccessor")
+        val Macro: Flag         = Flag(1L << 29, "Macro")
+        val InlineProxy: Flag   = Flag(1L << 30, "InlineProxy")
+        val Extension: Flag     = Flag(1L << 31, "Extension")
+        val Exported: Flag      = Flag(1L << 32, "Exported")
+        val CoVariant: Flag     = Flag(1L << 33, "CoVariant")
+        val ContraVariant: Flag = Flag(1L << 34, "ContraVariant")
+        val HasDefault: Flag    = Flag(1L << 35, "HasDefault")
+        val Stable: Flag        = Flag(1L << 36, "Stable")
+        val Local: Flag         = Flag(1L << 37, "Local")
+        val Artifact: Flag      = Flag(1L << 38, "Artifact")
+        val Invisible: Flag     = Flag(1L << 39, "Invisible")
+        val Into: Flag          = Flag(1L << 40, "Into")
+        val PARAMsetter: Flag   = Flag(1L << 41, "PARAMsetter")
+        val PARAMalias: Flag    = Flag(1L << 42, "PARAMalias")
     end Flag
 
     // ── Symbol kinds ────────────────────────────────────────────────────────
@@ -175,7 +204,8 @@ object Reflect:
         val flags: Flags,
         val name: Name,
         val owner: Symbol,
-        private[Reflect] val home: Classpath
+        private[Reflect] val home: ClasspathRef,
+        private[kyo] val origin: Symbol.Origin
     ):
         // Pure accessors (no effect, always present even after classpath close).
         def fullName: Name           = Symbol.computeFullName(this)
@@ -183,7 +213,7 @@ object Reflect:
         def isInline: Boolean        = flags.contains(Flag.Inline)
         def isContextual: Boolean    = flags.contains(Flag.Given)
         def isOpaque: Boolean        = flags.contains(Flag.Opaque)
-        def isPackageObject: Boolean = false // Phase 3 wires this from TASTy metadata
+        def isPackageObject: Boolean = flags.contains(Flag.Module) && name.string.get() == "package"
         def isModule: Boolean        = flags.contains(Flag.Module)
         def isJava: Boolean          = flags.contains(Flag.JavaDefined)
 
@@ -199,9 +229,71 @@ object Reflect:
     end Symbol
 
     object Symbol:
-        // Sentinel root for ownership chains. Phase 3 replaces with a real package-symbol root.
-        private[Reflect] def computeFullName(s: Symbol): Name     = s.name
-        private[Reflect] def computeBinaryName(s: Symbol): String = s.name.toString
+        /** Walk the owner chain to build the fully-qualified dotted name.
+          *
+          * The root sentinel symbol owns itself. Package/class separators are all dots. Binary name uses '$' for nested classes and is
+          * computed separately via computeBinaryName.
+          */
+        private[Reflect] def computeFullName(s: Symbol): Name =
+            val parts = new scala.collection.mutable.ArrayBuffer[String]()
+            var cur   = s
+            while (cur ne null) && (cur.owner ne cur) && cur.owner != null do
+                parts.prepend(Name.asString(cur.name))
+                cur = cur.owner
+            parts.prepend(Name.asString(cur.name))
+            // Filter empty segments (root sentinel name may be empty)
+            val filtered = parts.filter(_.nonEmpty)
+            val full     = filtered.mkString(".")
+            Name(full)
+        end computeFullName
+
+        private[Reflect] def computeBinaryName(s: Symbol): String =
+            // Walk owner chain: packages separated by '.', nested classes by '$'
+            val parts = new scala.collection.mutable.ArrayBuffer[String]()
+            var cur   = s
+            while (cur ne null) && (cur.owner ne cur) && cur.owner != null do
+                parts.prepend(Name.asString(cur.name))
+                cur = cur.owner
+            parts.prepend(Name.asString(cur.name))
+            val filtered = parts.filter(_.nonEmpty)
+            if filtered.isEmpty then ""
+            else
+                val sb = new StringBuilder()
+                var i  = 0
+                while i < filtered.length do
+                    if i > 0 then
+                        sb.append('.')
+                    end if
+                    sb.append(filtered(i))
+                    i += 1
+                end while
+                sb.toString
+            end if
+        end computeBinaryName
+
+        /** Internal factory used by kyo.internal.reflect.symbol.Symbol to construct Symbol instances.
+          *
+          * The Symbol constructor is private[Reflect] so only code inside object Reflect can call it. This factory bridges that access
+          * boundary for internal unpickler code.
+          */
+        private[kyo] def make(
+            kind: SymbolKind,
+            flags: Flags,
+            name: Name,
+            owner: Symbol,
+            home: ClasspathRef,
+            origin: Origin
+        ): Symbol =
+            new Symbol(kind, flags, name, owner, home, origin)
+
+        /** The complete Symbol.Origin ADT. Phase 5 adds JavaOrigin construction sites; the ADT itself is sealed here. */
+        sealed trait Origin derives CanEqual
+        final case class TastyOrigin(
+            addrMap: Map[Int, Reflect.Symbol],
+            bodyStart: Int,
+            bodyEnd: Int
+        ) extends Origin
+        case object JavaOrigin extends Origin
     end Symbol
 
     // ── Pickle (in-memory TASTy + classfile bytes) ──────────────────────────

@@ -52,3 +52,25 @@ After Phase 2 lands and tests pass, this directive can be cleared.
 The earlier directive (insisting 1-based per dotty `TastyFormat.scala` spec block "starting from 1") was based on an ambiguous spec line. The Phase 2 impl verified empirically against a real scalac-compiled TASTy file (`PlainClass.tasty` fixture): section header `0x80` decodes to NAT=0, resolving to `names[0]='ASTs'`. Real TASTy emitters use 0-based array indices for NameRef encoding; the spec's "starting from 1" appears to refer to human ordinal counting, not the on-wire encoding. Tests on the real fixture pass with 29 expected names. RESOLVED: 0-based is correct.
 
 If Phase 3+ surfaces a NameRef-related decoding bug on real TASTy, revisit; otherwise cleared.
+
+### Phase 3 TYPEDEF discrimination (CRITICAL from PHASE-3-PREP.md, COMPLIED per pulse 1)
+
+`TYPEDEF` tag discrimination via TEMPLATE peek is implemented in `AstUnpickler.scala` per the directive. Cleared after Phase 3 commits.
+
+### Phase 3 qualified-modifier sub-tree skip (CRITICAL from PHASE-3-PREP.md, COMPLIED per pulse 1)
+
+PRIVATEqualified/PROTECTEDqualified sub-tree skip is implemented per the directive. Cleared after Phase 3 commits.
+
+### Phase 3 pulse 1 critical fixes (BLOCKING before commit)
+
+In-flight pulse 1 surfaced four real issues confirmed by supervisor inspection. Apply ALL before re-running tests:
+
+1. **`Pass1Result.placeholders` field MISSING**. The plan (execution-plan.md line 202) requires `Pass1Result(symbols: Chunk[Reflect.Symbol], addrMap: Map[Int, Reflect.Symbol], placeholders: Chunk[UnresolvedRef])`. Current impl has `(symbols, addrMap, rootSymbol)`. ADD `placeholders` (UnresolvedRef may be a Phase 4 type; for Phase 3 add a forward-declared internal `UnresolvedRef` sentinel type, OR use `placeholders: Chunk[(Int, kyo.Reflect.Name)]` if UnresolvedRef can't be declared until Phase 4 — the plan calls for the field's existence so Phase 4 can fill it in). `rootSymbol` may stay if needed by Phase 3 internally, but `placeholders` is non-negotiable per plan and per Phase 4 dependency declaration (line 267).
+
+2. **`null.asInstanceOf[Reflect.Symbol]` at `Constant.scala:73`** violates `feedback_no_casts`. The `Reflect.Constant.ClassConst(Reflect.Type.Named(...))` line uses a null cast as a Symbol placeholder. Replace with: (a) `Reflect.Type.Named(unresolvedSentinel)` where `unresolvedSentinel` is a constant `Reflect.Symbol` with `kind = SymbolKind.Unresolved`, OR (b) introduce a `Constant.ClassConst(typeRef: Reflect.Type)` wrapper that does not require a Symbol at Phase 3 (delegate resolution to Phase 4). Pick the cleaner approach but NO `asInstanceOf` and NO `null`.
+
+3. **`fromTagAndFlags(tag: Int, flags: Long): SymbolKind`** is REQUIRED by plan line 196 as the SymbolKind companion's dispatch function. Current impl replaced it with three narrower helpers (`fromTypedefTemplateFlags`, `fromTypedefTypeFlags`, `fromValdefFlags`) without escalation. ADD the top-level `fromTagAndFlags` that internally dispatches to the three narrower helpers based on the `tag` parameter. The narrower helpers may stay as private internal optimizations, but the plan-mandated public surface must exist.
+
+4. **Test 23 (CAS-swap visibility) latch ordering is broken**. As written, `latch.release` fires BEFORE `table.populate`, so the reader fiber observes an empty table and the race scenario the plan requires cannot manifest. Restructure: reader fiber awaits the latch, writer fiber calls `table.populate(...)` AND THEN `latch.release`, so the reader is unblocked only after the populate completes. The point of the test is to verify the AtomicRef CAS-swap is visible across fibers; the current order verifies nothing.
+
+After ALL four are applied, re-run targeted tests AND cross-platform compile. Do not commit until verified green.

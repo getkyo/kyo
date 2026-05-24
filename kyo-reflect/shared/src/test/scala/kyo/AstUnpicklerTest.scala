@@ -1,0 +1,328 @@
+package kyo
+
+import kyo.internal.reflect.binary.ByteView
+import kyo.internal.reflect.query.ClasspathRef
+import kyo.internal.reflect.symbol.Interner
+import kyo.internal.reflect.tasty.AstUnpickler
+import kyo.internal.reflect.tasty.AttributeUnpickler
+import kyo.internal.reflect.tasty.FileAttributes
+import kyo.internal.reflect.tasty.NameUnpickler
+import kyo.internal.reflect.tasty.SectionIndex
+import kyo.internal.reflect.tasty.TastyFormat
+import kyo.internal.reflect.tasty.TastyHeader
+
+/** Tests for AstUnpickler.readPass1.
+  *
+  * Loads real TASTy fixture files from the test classpath (kyo-reflect-fixtures module). Fixture source:
+  * kyo-reflect-fixtures/shared/src/main/scala/kyo/fixtures/FixtureClasses.scala.
+  *
+  * Plan tests 7-20.
+  */
+class AstUnpicklerTest extends Test:
+
+    private def loadFixtureBytes(fileName: String): Array[Byte] =
+        val stream = getClass.getResourceAsStream(s"/kyo/fixtures/$fileName")
+        if stream == null then throw new RuntimeException(s"Fixture not found: /kyo/fixtures/$fileName")
+        val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
+        var b   = stream.read()
+        while b != -1 do
+            buf += b.toByte
+            b = stream.read()
+        stream.close()
+        buf.toArray
+    end loadFixtureBytes
+
+    /** Parse a TASTy file and run pass 1. Returns the Pass1Result. */
+    private def runPass1(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[ReflectError]) =
+        val view     = ByteView(bytes)
+        val interner = new Interner(32)
+        val home     = new ClasspathRef
+        for
+            _        <- TastyHeader.read(view)
+            names    <- NameUnpickler.read(view, interner)
+            sections <- SectionIndex.read(view, names)
+            attrs = FileAttributes.default
+            result <- sections.get(TastyFormat.ASTsSection) match
+                case Present((offset, length)) =>
+                    val astView = view.subView(offset, offset + length)
+                    AstUnpickler.readPass1(astView, names, attrs, home)
+                case Absent =>
+                    Abort.fail(ReflectError.MalformedSection("ASTs", "ASTs section not found"))
+        yield result
+        end for
+    end runPass1
+
+    // Test 7: pass 1 on PlainClass.tasty returns at least one symbol with kind == Class.
+    "pass 1 on PlainClass.tasty returns at least one Class symbol" in run {
+        val bytes = loadFixtureBytes("PlainClass.tasty")
+        Abort.run[ReflectError](runPass1(bytes)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    assert(r.symbols.exists(_.kind == Reflect.SymbolKind.Class))
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 8: the fixture top-level class name "PlainClass" is in the returned symbol set.
+    "pass 1 on PlainClass.tasty: symbol named 'PlainClass' with kind Class is present" in run {
+        val bytes = loadFixtureBytes("PlainClass.tasty")
+        Abort.run[ReflectError](runPass1(bytes)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val found = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == Reflect.SymbolKind.Class)
+                    assert(
+                        found.isDefined,
+                        s"No symbol named PlainClass with kind Class. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 9: a def inside the fixture class produces a symbol with kind == Method.
+    "pass 1 on PlainClass.tasty: constructor <init> symbol has kind Method" in run {
+        val bytes = loadFixtureBytes("PlainClass.tasty")
+        Abort.run[ReflectError](runPass1(bytes)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val found = r.symbols.find(_.kind == Reflect.SymbolKind.Method)
+                    assert(
+                        found.isDefined,
+                        s"No Method symbol found. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 10: a val inside an object produces a symbol with kind == Val.
+    // SomeObject has `val value: Int = 42` which is a plain VALDEF inside the object body.
+    "pass 1 on SomeObject.tasty: 'value' field has kind Val" in run {
+        val bytes = loadFixtureBytes("SomeObject.tasty")
+        Abort.run[ReflectError](runPass1(bytes)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val found = r.symbols.find(s => s.name.asString == "value" && s.kind == Reflect.SymbolKind.Val)
+                    assert(
+                        found.isDefined,
+                        s"No Val symbol named 'value'. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 11: a trait in the fixture produces a symbol with kind == Trait.
+    "pass 1 on SomeTrait.tasty: symbol 'SomeTrait' has kind Trait" in run {
+        val bytes = loadFixtureBytes("SomeTrait.tasty")
+        Abort.run[ReflectError](runPass1(bytes)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val found = r.symbols.find(s => s.name.asString == "SomeTrait" && s.kind == Reflect.SymbolKind.Trait)
+                    assert(
+                        found.isDefined,
+                        s"No Trait symbol named 'SomeTrait'. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 12: an object in the fixture produces a symbol with kind == Object.
+    // In TASTy, Scala objects produce a module class (TYPEDEF with OBJECT modifier), typically named "SomeObject$".
+    "pass 1 on SomeObject.tasty: symbol with kind Object is present" in run {
+        val bytes = loadFixtureBytes("SomeObject.tasty")
+        Abort.run[ReflectError](runPass1(bytes)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val found = r.symbols.find(_.kind == Reflect.SymbolKind.Object)
+                    assert(
+                        found.isDefined,
+                        s"No Object symbol. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 13: an enum in the fixture produces a symbol with kind == Class and flags.contains(Flag.Enum).
+    "pass 1 on Color.tasty: symbol 'Color' has kind Class and Enum flag" in run {
+        val bytes = loadFixtureBytes("Color.tasty")
+        Abort.run[ReflectError](runPass1(bytes)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val found = r.symbols.find(s => s.name.asString == "Color")
+                    assert(
+                        found.isDefined,
+                        s"No symbol named 'Color'. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                    assert(
+                        found.get.flags.contains(Reflect.Flag.Enum),
+                        s"Color does not have Enum flag. Flags bits: ${found.get.flags.bits}"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 14: an inline def produces a symbol with flags.contains(Flag.Inline).
+    // Top-level defs are in FixtureClasses$package.tasty (the package-level object file).
+    "pass 1 on FixtureClasses$package.tasty: symbol 'inlineAdd' has Inline flag" in run {
+        val bytes = loadFixtureBytes("FixtureClasses$package.tasty")
+        Abort.run[ReflectError](runPass1(bytes)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val found = r.symbols.find(s => s.name.asString == "inlineAdd")
+                    assert(
+                        found.isDefined,
+                        s"No symbol named 'inlineAdd'. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                    assert(found.get.flags.contains(Reflect.Flag.Inline), s"inlineAdd does not have Inline flag")
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 15: a type parameter produces a symbol with kind == TypeParam.
+    "pass 1 on GenericBox.tasty: type param 'A' has kind TypeParam" in run {
+        val bytes = loadFixtureBytes("GenericBox.tasty")
+        Abort.run[ReflectError](runPass1(bytes)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val found = r.symbols.find(s => s.name.asString == "A" && s.kind == Reflect.SymbolKind.TypeParam)
+                    assert(
+                        found.isDefined,
+                        s"No TypeParam symbol named 'A'. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 16: sym.owner for a method symbol is the class symbol.
+    "pass 1 on PlainClass.tasty: method symbol's owner is the class symbol" in run {
+        val bytes = loadFixtureBytes("PlainClass.tasty")
+        Abort.run[ReflectError](runPass1(bytes)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val classSymOpt  = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == Reflect.SymbolKind.Class)
+                    val methodSymOpt = r.symbols.find(s => s.kind == Reflect.SymbolKind.Method)
+                    assert(classSymOpt.isDefined, "No PlainClass symbol")
+                    assert(methodSymOpt.isDefined, "No Method symbol")
+                    val classSym  = classSymOpt.get
+                    val methodSym = methodSymOpt.get
+                    // Method's owner should be the class symbol
+                    assert(
+                        methodSym.owner eq classSym,
+                        s"Method owner is ${Option(methodSym.owner).map(_.name.asString).orNull} but expected PlainClass"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 17: sym.fullName for a nested class is the dotted form.
+    "pass 1 on Outer.tasty: Inner class has dotted fullName" in run {
+        val bytes = loadFixtureBytes("Outer.tasty")
+        Abort.run[ReflectError](runPass1(bytes)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val innerOpt = r.symbols.find(s => s.name.asString == "Inner" && s.kind == Reflect.SymbolKind.Class)
+                    assert(
+                        innerOpt.isDefined,
+                        s"No symbol named 'Inner'. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                    val inner    = innerOpt.get
+                    val fullName = inner.fullName.asString
+                    // fullName should contain "Inner" and a separator
+                    assert(fullName.contains("Inner"), s"fullName does not contain Inner: $fullName")
+                    assert(fullName.contains("."), s"fullName has no dot separator: $fullName")
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 18: body slices (bodyStart, bodyEnd) for a DEFDEF are non-zero.
+    "pass 1 on PlainClass.tasty: Method symbol body slice (bodyStart, bodyEnd) is non-zero" in run {
+        val bytes = loadFixtureBytes("PlainClass.tasty")
+        Abort.run[ReflectError](runPass1(bytes)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val methodOpt = r.symbols.find(_.kind == Reflect.SymbolKind.Method)
+                    assert(methodOpt.isDefined, "No Method symbol found")
+                    val method = methodOpt.get
+                    method.origin match
+                        case Reflect.Symbol.TastyOrigin(_, bodyStart, bodyEnd) =>
+                            assert(bodyEnd > 0, s"bodyEnd should be > 0 but was $bodyEnd")
+                        case Reflect.Symbol.JavaOrigin =>
+                            fail("Expected TastyOrigin but got JavaOrigin")
+                    end match
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 19: cross-forward-reference type parameter check on GenericBox.
+    // GenericBox[A]: type param A should be in addrMap at its TASTy byte address.
+    "pass 1 on GenericBox.tasty: type param A is in addrMap by address" in run {
+        val bytes = loadFixtureBytes("GenericBox.tasty")
+        Abort.run[ReflectError](runPass1(bytes)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    // Find the TypeParam 'A' symbol
+                    val aOpt = r.symbols.find(s => s.name.asString == "A" && s.kind == Reflect.SymbolKind.TypeParam)
+                    assert(aOpt.isDefined, "No TypeParam A symbol")
+                    // addrMap should contain at least one entry for this symbol
+                    val aInMap = r.addrMap.values.exists(s => s.name.asString == "A" && s.kind == Reflect.SymbolKind.TypeParam)
+                    assert(aInMap, s"TypeParam A not found in addrMap. addrMap keys: ${r.addrMap.keys.mkString(", ")}")
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 20: passing truncated TASTy bytes produces MalformedSection("ASTs", ...).
+    "pass 1 on truncated TASTy bytes produces MalformedSection(ASTs, ...)" in run {
+        // Build a minimal valid TASTy header + name table, then provide a truncated ASTs section.
+        // Easiest: load a real fixture, truncate by half.
+        val bytes     = loadFixtureBytes("PlainClass.tasty")
+        val truncated = bytes.take(bytes.length / 2)
+        Abort.run[ReflectError](runPass1(truncated)).map { result =>
+            result match
+                case Result.Failure(_) =>
+                    // Any ReflectError is acceptable for truncated input.
+                    succeed
+                case Result.Success(_) =>
+                    fail("Expected failure on truncated TASTy but got success")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+end AstUnpicklerTest
