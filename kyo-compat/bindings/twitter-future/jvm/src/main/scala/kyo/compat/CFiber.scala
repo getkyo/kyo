@@ -4,6 +4,7 @@ import com.twitter.util.Future
 import com.twitter.util.Promise
 import com.twitter.util.Return
 import com.twitter.util.Throw
+import scala.annotation.nowarn
 
 /** Backed by a `com.twitter.util.Future[A]` wired to a `Promise[A]` with an interrupt handler.
   *
@@ -16,6 +17,7 @@ opaque type CFiber[+A] = Future[A]
 
 object CFiber:
 
+    @nowarn("msg=anonymous")
     inline def init[A](inline c: CIO[A]): CIO[CFiber[A]] =
         CIO.defer {
             val result = new Promise[A]()

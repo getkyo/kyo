@@ -253,7 +253,7 @@ class FiberTest extends CompatTest:
         val ctr  = new AtomicInteger(0)
         val gate = Promise[Int]()
         val body = CIO.async[Int] { cb =>
-            gate.future.onComplete(t => cb(t))(scala.concurrent.ExecutionContext.parasitic)
+            gate.future.onComplete(t => cb(t))(using scala.concurrent.ExecutionContext.parasitic)
         }
         val c = CFiber.init(body).flatMap { fib =>
             val onCompleteCIO = fib.onComplete(_ => CIO.defer { val _ = ctr.incrementAndGet() })

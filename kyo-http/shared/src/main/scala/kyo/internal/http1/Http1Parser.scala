@@ -153,9 +153,6 @@ final private[kyo] class Http1Parser(
                 end match
             case Result.Failure(_: Closed) =>
                 onClosed()
-            case Result.Failure(e) =>
-                Log.live.unsafe.error("Http1Parser poll failure", e)
-                onClosed()
             case Result.Panic(t) =>
                 Log.live.unsafe.error("Http1Parser poll panic", t)
                 onClosed()

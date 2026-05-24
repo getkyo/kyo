@@ -550,7 +550,7 @@ private[internal] object SerializationMacro:
     ): Expr[Unit] =
         import quotes.reflect.*
         val resultExpr = valueTerm.asExprOf[kyo.Result[Any, Any]]
-        (errTpe.asType, okTpe.asType) match
+        ((errTpe.asType, okTpe.asType): @unchecked) match
             case ('[e], '[a]) =>
                 val writeOk: quotes.reflect.Term => Expr[Unit]  = t => primitiveWriteExpr(okTpe, writer, t)
                 val writeErr: quotes.reflect.Term => Expr[Unit] = t => primitiveWriteExpr(errTpe, writer, t)
@@ -603,7 +603,7 @@ private[internal] object SerializationMacro:
         // inside the emitted code; the returned `Expr` is spliced into that same scope.
         val readOk: Expr[Reader] => Expr[Any]  = r => primitiveReadExpr(okTpe, r)
         val readErr: Expr[Reader] => Expr[Any] = r => primitiveReadExpr(errTpe, r)
-        (errTpe.asType, okTpe.asType) match
+        ((errTpe.asType, okTpe.asType): @unchecked) match
             case ('[e], '[a]) =>
                 '{
                     kyo.discard($reader.objectStart())

@@ -3,6 +3,7 @@ package kyo.compat
 import cats.effect.IO
 import cats.effect.syntax.all.*
 import cats.syntax.parallel.*
+import scala.annotation.nowarn
 import scala.concurrent.Future as ScalaFuture
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.duration.NANOSECONDS
@@ -87,6 +88,7 @@ object CIO:
         inline def orElse[A2 >: A](inline that: CIO[A2]): CIO[A2] =
             lift(self.lower.handleErrorWith(_ => that.lower))
 
+        @nowarn("msg=anonymous")
         inline def mapError(inline f: Throwable => Throwable): CIO[A] =
             lift(self.lower.adaptError {
                 case t => f(t)
@@ -161,6 +163,7 @@ object CIO:
             else IO.parTraverseN_(concurrency)(list)(a => f(a).lower)
         }
 
+    @nowarn("msg=anonymous")
     inline def filter[A](
         inline coll: Iterable[A],
         inline concurrency: Int = Int.MaxValue
