@@ -1014,7 +1014,6 @@ lazy val `kyo-examples` =
             ),
             Compile / doc / sources := Seq.empty
         )
-        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-bench` =
     crossProject(JVMPlatform)

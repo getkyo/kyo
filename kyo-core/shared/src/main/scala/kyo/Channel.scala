@@ -478,7 +478,7 @@ object Channel:
               */
             @tailrec
             final protected def pollNextLive()(using AllowUnsafe, Frame): Maybe[Put[A]] =
-                priorityPuts.poll().orElse(puts.poll()) match
+                (priorityPuts.poll().orElse(puts.poll()): @unchecked) match
                     case Absent                                           => Absent
                     case Present(Put.Value(_, promise)) if promise.done() => pollNextLive()
                     case Present(p)                                       => Present(p)

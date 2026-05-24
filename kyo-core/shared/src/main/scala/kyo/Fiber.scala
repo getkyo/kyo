@@ -931,7 +931,7 @@ object Fiber:
 
         private inline def foreach[A](l: Iterable[A])(inline f: (Int, A) => Unit): Unit =
             l match
-                case l: IndexedSeq[A] =>
+                case l: IndexedSeq[A] @unchecked =>
                     val s = l.size
                     @tailrec def loop(i: Int): Unit =
                         if i < s then

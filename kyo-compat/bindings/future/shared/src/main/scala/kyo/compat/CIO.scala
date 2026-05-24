@@ -3,6 +3,7 @@ package kyo.compat
 import java.util.concurrent.TimeUnit
 import kyo.compat.internal.CompatScheduler
 import kyo.compat.internal.LocalCtx
+import scala.annotation.nowarn
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.Promise
@@ -81,9 +82,10 @@ object CIO:
         inline def lower: LocalCtx ?=> Future[A] =
             (ctx: LocalCtx) ?=> self(ctx)
 
+        @nowarn("msg=anonymous")
         inline def recover[A2 >: A](inline handler: Throwable => CIO[A2]): CIO[A2] =
             (ctx: LocalCtx) =>
-                self(ctx).recoverWith { case t => handler(t)(ctx) }(parasiticEc)
+                self(ctx).recoverWith { case t => handler(t)(ctx) }(using parasiticEc)
 
         inline def fold[B](
             inline onSuccess: A => CIO[B],
@@ -105,9 +107,10 @@ object CIO:
         inline def unit: CIO[Unit] =
             (ctx: LocalCtx) => self(ctx).map(_ => ())(parasiticEc)
 
+        @nowarn("msg=anonymous")
         inline def orElse[A2 >: A](inline that: CIO[A2]): CIO[A2] =
             (ctx: LocalCtx) =>
-                self(ctx).recoverWith { case t: Throwable if NonFatal(t) => that(ctx) }(parasiticEc)
+                self(ctx).recoverWith { case t: Throwable if NonFatal(t) => that(ctx) }(using parasiticEc)
 
         inline def mapError(inline f: Throwable => Throwable): CIO[A] =
             (ctx: LocalCtx) =>
@@ -270,6 +273,7 @@ object CIO:
                 Future.sequence(futs).map(_ => ())
             end if
 
+    @nowarn("msg=anonymous")
     inline def filter[A](
         inline coll: Iterable[A],
         inline concurrency: Int = Int.MaxValue

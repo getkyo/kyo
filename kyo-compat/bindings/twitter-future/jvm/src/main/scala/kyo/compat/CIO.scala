@@ -5,6 +5,7 @@ import com.twitter.util.Promise
 import com.twitter.util.Return
 import com.twitter.util.Throw
 import com.twitter.util.TimeoutException as TwTimeoutException
+import scala.annotation.nowarn
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.duration.NANOSECONDS
 import scala.jdk.FutureConverters.*
@@ -95,6 +96,7 @@ object CIO:
 
         inline def lower: () => Future[A] = self
 
+        @nowarn("msg=anonymous")
         inline def recover[A2 >: A](inline handler: Throwable => CIO[A2]): CIO[A2] =
             deferLift {
                 self.lower().rescue {
@@ -128,6 +130,7 @@ object CIO:
         inline def unit: CIO[Unit] =
             deferLift(self.lower().unit)
 
+        @nowarn("msg=anonymous")
         inline def orElse[A2 >: A](inline that: CIO[A2]): CIO[A2] =
             deferLift {
                 self.lower().rescue {
@@ -188,6 +191,7 @@ object CIO:
     inline def delay[A](inline d: FiniteDuration)(inline c: CIO[A]): CIO[A] =
         deferLift(Future.sleep(toTwitterDuration(d))(using twitterTimer).flatMap(_ => c.lower()))
 
+    @nowarn("msg=anonymous")
     inline def race[A](
         inline a: CIO[A],
         inline b: CIO[A]
@@ -272,6 +276,7 @@ object CIO:
             parWithRaiseCascade(futs).map(_ => ())
         }
 
+    @nowarn("msg=anonymous")
     inline def filter[A](
         inline coll: Iterable[A],
         inline concurrency: Int = Int.MaxValue

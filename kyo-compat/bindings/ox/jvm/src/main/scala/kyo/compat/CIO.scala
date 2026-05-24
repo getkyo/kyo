@@ -1,6 +1,7 @@
 package kyo.compat
 
 import ox.Ox
+import scala.annotation.nowarn
 import scala.concurrent.Await
 import scala.concurrent.Future as ScalaFuture
 import scala.concurrent.duration.Duration as ScalaDuration
@@ -212,6 +213,7 @@ object CIO:
                 else ox.parLimit(concurrency)(thunks)
         }
 
+    @nowarn("msg=anonymous")
     inline def filter[A](
         inline coll: Iterable[A],
         inline concurrency: Int = Int.MaxValue
