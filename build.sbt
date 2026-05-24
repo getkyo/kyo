@@ -162,6 +162,7 @@ lazy val kyoJVM = project
         `kyo-pod`.jvm,
         `kyo-examples`.jvm,
         `kyo-actor`.jvm,
+        `kyo-reflect`.jvm,
         `kyo-compat-future`.jvm,
         `kyo-compat-kyo`.jvm,
         `kyo-compat-zio`.jvm,
@@ -197,6 +198,7 @@ lazy val kyoJS = project
         `kyo-combinators`.js,
         `kyo-case-app`.js,
         `kyo-actor`.js,
+        `kyo-reflect`.js,
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
@@ -229,6 +231,7 @@ lazy val kyoNative = project
         `kyo-case-app`.native,
         `kyo-reactive-streams`.native,
         `kyo-actor`.native,
+        `kyo-reflect`.native,
         `kyo-schema`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
@@ -475,6 +478,17 @@ lazy val `kyo-actor` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-actor"))
+        .dependsOn(`kyo-core`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-reflect` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-reflect"))
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
