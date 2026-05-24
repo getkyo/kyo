@@ -12,7 +12,7 @@ class STMStressTest extends Test:
     "every transaction under heavy single-ref contention commits, none starves" in runNotJS {
         // 64 reader-writer fibers plus one writer all contend the same TRef. Barging bounds the
         // politeness yield a writer makes to fresher readers, so every contended transaction
-        // commits within its retry budget — none is starved into a FailedTransaction.
+        // commits within its retry budget — none is starved into an FailedTransaction.
         for
             ref       <- TRef.init(0)
             committed <- AtomicInt.init(0)

@@ -1,7 +1,6 @@
 package kyo.internal
 
 import kyo.*
-import kyo.AtomicLong
 import scala.scalanative.libc.stdlib
 import scala.scalanative.unsafe.*
 

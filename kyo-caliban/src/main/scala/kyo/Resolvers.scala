@@ -81,71 +81,71 @@ object Resolvers:
         HttpServer.init(buildHandlers(wrapped, config, ZEnvironment.empty, webSocketHooks)*)
     end run
 
-    /** Runs a GraphQL server with a custom Runner using default configuration.
+    /** Runs a GraphQL server with a custom CalibanRunner using default configuration.
       *
       * @param interpreter
       *   The GraphQL interpreter to serve
       * @param runner
-      *   The custom Runner to handle arbitrary effects
+      *   The custom CalibanRunner to handle arbitrary effects
       * @param tag
-      *   Implicit Tag for Runner[R]
+      *   Implicit Tag for CalibanRunner[R]
       * @param Frame
       *   Implicit Frame parameter
       * @return
       *   An HttpServer wrapped in Async and Scope effects
       */
     def run[R](
-        interpreter: GraphQLInterpreter[Runner[R], CalibanError],
-        runner: Runner[R]
-    )(using zio.Tag[Runner[R]], Frame): HttpServer < (Async & Scope) =
-        run(interpreter, runner, Config.default, WebSocketHooks.empty[Runner[R], CalibanError])
+        interpreter: GraphQLInterpreter[CalibanRunner[R], CalibanError],
+        runner: CalibanRunner[R]
+    )(using zio.Tag[CalibanRunner[R]], Frame): HttpServer < (Async & Scope) =
+        run(interpreter, runner, Config.default, WebSocketHooks.empty[CalibanRunner[R], CalibanError])
 
-    /** Runs a GraphQL server with a custom Runner and a custom configuration.
+    /** Runs a GraphQL server with a custom CalibanRunner and a custom configuration.
       *
       * @param interpreter
       *   The GraphQL interpreter to serve
       * @param runner
-      *   The custom Runner to handle arbitrary effects
+      *   The custom CalibanRunner to handle arbitrary effects
       * @param config
       *   The server configuration
       * @param tag
-      *   Implicit Tag for Runner[R]
+      *   Implicit Tag for CalibanRunner[R]
       * @param Frame
       *   Implicit Frame parameter
       * @return
       *   An HttpServer wrapped in Async and Scope effects
       */
     def run[R](
-        interpreter: GraphQLInterpreter[Runner[R], CalibanError],
-        runner: Runner[R],
+        interpreter: GraphQLInterpreter[CalibanRunner[R], CalibanError],
+        runner: CalibanRunner[R],
         config: Config
-    )(using zio.Tag[Runner[R]], Frame): HttpServer < (Async & Scope) =
-        run(interpreter, runner, config, WebSocketHooks.empty[Runner[R], CalibanError])
+    )(using zio.Tag[CalibanRunner[R]], Frame): HttpServer < (Async & Scope) =
+        run(interpreter, runner, config, WebSocketHooks.empty[CalibanRunner[R], CalibanError])
 
-    /** Runs a GraphQL server with a custom Runner, configuration, and WebSocket hooks.
+    /** Runs a GraphQL server with a custom CalibanRunner, configuration, and WebSocket hooks.
       *
       * @param interpreter
       *   The GraphQL interpreter to serve
       * @param runner
-      *   The custom Runner to handle arbitrary effects
+      *   The custom CalibanRunner to handle arbitrary effects
       * @param config
       *   The server configuration
       * @param webSocketHooks
       *   Lifecycle hooks invoked during the WebSocket subscription flow: beforeInit / afterInit (auth), onAck (init response payload),
       *   onPing / onPong (keep-alive interplay), onMessage (transform outbound subscription messages).
       * @param tag
-      *   Implicit Tag for Runner[R]
+      *   Implicit Tag for CalibanRunner[R]
       * @param Frame
       *   Implicit Frame parameter
       * @return
       *   An HttpServer wrapped in Async and Scope effects
       */
     def run[R](
-        interpreter: GraphQLInterpreter[Runner[R], CalibanError],
-        runner: Runner[R],
+        interpreter: GraphQLInterpreter[CalibanRunner[R], CalibanError],
+        runner: CalibanRunner[R],
         config: Config,
-        webSocketHooks: WebSocketHooks[Runner[R], CalibanError]
-    )(using zio.Tag[Runner[R]], Frame): HttpServer < (Async & Scope) =
+        webSocketHooks: WebSocketHooks[CalibanRunner[R], CalibanError]
+    )(using zio.Tag[CalibanRunner[R]], Frame): HttpServer < (Async & Scope) =
         val wrapped = interpreter.wrapExecutionWith(Configurator.locally(toExecutionConfig(config))(_))
         HttpServer.init(buildHandlers(wrapped, config, ZEnvironment(runner), webSocketHooks)*)
     end run

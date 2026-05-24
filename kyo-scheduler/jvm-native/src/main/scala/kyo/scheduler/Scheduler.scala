@@ -29,25 +29,25 @@ import scala.util.control.NonFatal
   * The scheduler provides a foundation for concurrent task execution with features including dynamic worker pool sizing, admission control
   * to prevent overload, work stealing for load balancing, task preemption, and comprehensive performance monitoring.
   *
-  * ==Worker Management==
+  * #### Worker Management
   *
   * The scheduler maintains a pool of worker threads that execute tasks. The number of workers adjusts dynamically between configured
   * minimum and maximum bounds based on system load and performance metrics. Workers can steal tasks from each other to balance load across
   * the pool, ensuring efficient resource utilization.
   *
-  * ==Admission Control==
+  * #### Admission Control
   *
   * An admission regulator prevents system overload by selectively rejecting tasks when the system shows signs of congestion. The admission
   * rate adjusts automatically based on measured queuing delays, providing natural backpressure that helps maintain system stability under
   * varying loads.
   *
-  * ==Concurrency Control==
+  * #### Concurrency Control
   *
   * A concurrency regulator continuously monitors system scheduling efficiency through sophisticated timing measurements. By analyzing
   * scheduling delays and system load, it dynamically adjusts the worker pool size to maintain optimal performance. The regulator detects
   * both under-utilization and thread interference, scaling the thread count up or down accordingly.
   *
-  * ==Thread Blocking and Adaptive Concurrency==
+  * #### Thread Blocking and Adaptive Concurrency
   *
   * The scheduler employs a sophisticated approach to handle thread blocking that requires no explicit signaling or special handling from
   * tasks. Instead of treating blocking as an exceptional case, the system embraces it as a natural part of task execution through its
@@ -63,14 +63,14 @@ import scala.util.control.NonFatal
   * worker pool if possible and necessary. As blocked threads resume, the improved scheduling efficiency triggers a gradual reduction in
   * worker count.
   *
-  * ==Loom Integration==
+  * #### Loom Integration
   *
   * The scheduler seamlessly integrates with Java's Project Loom virtual threads when available, providing enhanced scalability for
   * I/O-bound workloads. To enable virtual threads, add the JVM argument '--add-opens=java.base/java.lang=ALL-UNNAMED' and set
   * '-Dkyo.scheduler.virtualizeWorkers=true'. The scheduler transparently manages virtual thread creation and scheduling through the worker
   * executor.
   *
-  * ==Monitoring==
+  * #### Monitoring
   *
   * Comprehensive metrics about scheduler operation are exposed through JMX and optional console reporting, providing detailed insight into
   * worker utilization, task execution, regulation decisions, and system load.

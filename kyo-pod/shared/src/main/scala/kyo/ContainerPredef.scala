@@ -7,11 +7,12 @@ import kyo.*
   * are container fixtures only — connect with whichever client library you prefer.
   *
   * Usage:
-  * {{{
+  *
+  * ```scala
   * ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
   *   pg.jdbcUrl.map(url => /* … */)
   * }
-  * }}}
+  * ```
   *
   * @see
   *   [[ContainerPredef.Postgres]] PostgreSQL fixture
@@ -27,7 +28,7 @@ object ContainerPredef:
     // =============================================================================================
 
     /** PostgreSQL container fixture for tests. Based on Testcontainers Java's
-      * [[https://github.com/testcontainers/testcontainers-java/blob/main/modules/postgresql/src/main/java/org/testcontainers/containers/PostgreSQLContainer.java PostgreSQLContainer]]
+      * [PostgreSQLContainer](https://github.com/testcontainers/testcontainers-java/blob/main/modules/postgresql/src/main/java/org/testcontainers/containers/PostgreSQLContainer.java)
       * (Apache 2.0).
       *
       * Defaults to `postgres:16-alpine` with user/password/database = `"test"` / `"test"` / `"test"`. The container runs
@@ -36,7 +37,7 @@ object ContainerPredef:
       * before init scripts run.
       *
       * @see
-      *   [[https://hub.docker.com/_/postgres Docker postgres image]]
+      *   [Docker postgres image](https://hub.docker.com/_/postgres)
       */
     final class Postgres private[kyo] (
         /** The underlying container handle for direct lifecycle and exec operations. */
@@ -149,7 +150,7 @@ object ContainerPredef:
     // =============================================================================================
 
     /** MySQL container fixture for tests. Based on Testcontainers Java's
-      * [[https://github.com/testcontainers/testcontainers-java/blob/main/modules/mysql/src/main/java/org/testcontainers/containers/MySQLContainer.java MySQLContainer]]
+      * [MySQLContainer](https://github.com/testcontainers/testcontainers-java/blob/main/modules/mysql/src/main/java/org/testcontainers/containers/MySQLContainer.java)
       * (Apache 2.0).
       *
       * Defaults to `mysql:8.0` with user/password/database = `"test"` / `"test"` / `"test"` (and `rootPassword = "test"`). Healthcheck
@@ -161,7 +162,7 @@ object ContainerPredef:
       * [[ContainerOperationException]].
       *
       * @see
-      *   [[https://hub.docker.com/_/mysql Docker mysql image]]
+      *   [Docker mysql image](https://hub.docker.com/_/mysql)
       */
     final class MySQL private[kyo] (
         /** The underlying container handle for direct lifecycle and exec operations. */
@@ -307,7 +308,7 @@ object ContainerPredef:
     // =============================================================================================
 
     /** MongoDB container fixture for tests. Based on Testcontainers Java's
-      * [[https://github.com/testcontainers/testcontainers-java/blob/main/modules/mongodb/src/main/java/org/testcontainers/mongodb/MongoDBContainer.java MongoDBContainer]]
+      * [MongoDBContainer](https://github.com/testcontainers/testcontainers-java/blob/main/modules/mongodb/src/main/java/org/testcontainers/mongodb/MongoDBContainer.java)
       * (Apache 2.0).
       *
       * Defaults to `mongo:7`. Healthcheck issues `mongosh --quiet --eval "db.adminCommand('ping').ok"` and asserts the result is `"1"`.
@@ -316,7 +317,7 @@ object ContainerPredef:
       * and exec `rs.initiate()` yourself.
       *
       * @see
-      *   [[https://hub.docker.com/_/mongo Docker mongo image]]
+      *   [Docker mongo image](https://hub.docker.com/_/mongo)
       */
     final class MongoDB private[kyo] (
         /** The underlying container handle for direct lifecycle and exec operations. */

@@ -398,7 +398,7 @@ You must not use an intersection type, yet have provided scala.Int & scala.Doubl
         "Interrupt" in runKyo {
             Cause.interrupt(zio.FiberId.None).toError match
                 case Result.Panic(e: Interrupted) => succeed
-                case _                            => fail("Expected Result.Panic with Fiber.Interrupted")
+                case _                            => fail("Expected Result.Panic with Interrupted")
             end match
         }
 

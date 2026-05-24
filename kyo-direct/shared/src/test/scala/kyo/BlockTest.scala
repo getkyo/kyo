@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.TestSupport.*
+import kyo.internal.TestSupport.*
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 

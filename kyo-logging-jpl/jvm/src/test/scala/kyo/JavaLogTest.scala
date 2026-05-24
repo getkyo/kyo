@@ -5,9 +5,6 @@ import java.util.logging.Level as jul
 import java.util.logging.Logger
 import java.util.logging.SimpleFormatter
 import java.util.logging.StreamHandler
-import kyo.Log
-import kyo.Test
-import kyo.Text
 import scala.util.control.NoStackTrace
 
 class JavaLogTest extends Test:

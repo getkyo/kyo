@@ -1,7 +1,7 @@
 package kyo
 
 import Layer.internal.*
-import kyo.Tag
+import kyo.internal.Reducible
 
 /** Represents a composable layer of functionality for dependency management.
   *

@@ -15,11 +15,13 @@ import scala.annotation.tailrec
   * This provides good hit rates with minimal bookkeeping overhead compared to true LRU.
   *
   * The primary use cases are:
+  *
   *   - Direct key-value caching via `get`, `add`, and `getOrElse`
   *   - Function memoization via `Cache.memo`, which creates a self-contained cache for a function's results and handles concurrent callers
   *     by deduplicating in-flight computations so only one fiber computes while others wait on the result
   *
   * Expiration policies can be configured independently:
+  *
   *   - `expireAfterAccess`: evicts entries not read within a time window
   *   - `expireAfterWrite`: evicts entries after a fixed time since insertion, regardless of access
   *
@@ -30,7 +32,6 @@ import scala.annotation.tailrec
   *   the key type
   * @tparam V
   *   the value type
-  *
   * @see
   *   [[Cache.Unsafe]] for the low-level API
   */

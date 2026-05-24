@@ -537,7 +537,7 @@ class MaybeTest extends Test:
 
         "should return 'Present(value)' for Present" in {
             assert(Present(1).show == "Present(1)")
-            val somat: Rendered = Present(1)
+            val somat: Render.Rendered = Present(1)
             assert(t"${Present(1): Present[Int]}".show == "Present(1)")
             assert(Present("hello").show == "Present(hello)")
             assert(t"${Present("hello")}".show == "Present(hello)")

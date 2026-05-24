@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.TestSupport.*
+import kyo.internal.TestSupport.*
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 
@@ -47,6 +47,28 @@ class IfTest extends AnyFreeSpec with Assertions:
         "impure / impure" in {
             runLiftTest(3) {
                 if 1 == 2 then Sync.defer(2).now else Sync.defer(3).now
+            }
+        }
+    }
+    "val binding inside branch" - {
+        "then-branch" in {
+            runLiftTest(11) {
+                val cond = Sync.defer(true).now
+                if cond then
+                    val x = Sync.defer(10).now
+                    x + 1
+                else 0
+                end if
+            }
+        }
+        "else-branch" in {
+            runLiftTest(20) {
+                val cond = Sync.defer(false).now
+                if cond then 0
+                else
+                    val x = Sync.defer(20).now
+                    x
+                end if
             }
         }
     }

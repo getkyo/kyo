@@ -3,7 +3,6 @@ package kyo.kernel.internal
 import kyo.*
 import kyo.Result.Error
 import kyo.Result.Panic
-import kyo.Tag
 import kyo.Tagged.*
 import kyo.kernel.*
 import scala.concurrent.Await

@@ -1,10 +1,6 @@
 package kyo
 
-import kyo.AllowUnsafe
-import kyo.Frame
-import kyo.Log
 import kyo.Log.Level
-import kyo.Text
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 

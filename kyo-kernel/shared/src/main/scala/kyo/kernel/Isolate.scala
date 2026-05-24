@@ -31,7 +31,7 @@ import scala.quoted.*
   *   2. Transforms that state during isolated execution
   *   3. Restores the transformed state when the fork completes
   *
-  * ==Operations==
+  * #### Operations
   *
   * Operations specify their isolation requirements through the type parameters. For example:
   *   - `Fiber.init` requires `Isolate[S, Sync, S2]` - only Sync effects available during initialization
@@ -46,7 +46,7 @@ import scala.quoted.*
   *
   * For effect intersections like (Env[Config] & Var[State]), instances are automatically derived if each component effect has an instance.
   *
-  * ==Explicit Composition==
+  * #### Explicit Composition
   *
   * While automatic derivation works for most cases, you can explicitly compose isolate instances for precise control over state handling:
   * {{{

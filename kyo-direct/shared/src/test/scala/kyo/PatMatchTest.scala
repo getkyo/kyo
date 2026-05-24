@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.TestSupport.*
+import kyo.internal.TestSupport.*
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 
@@ -114,6 +114,25 @@ class PatMatchTest extends AnyFreeSpec with Assertions:
             runLiftTest(1) {
                 val Some(a) = Sync.defer(Some(1)).now
                 a
+            }
+        }
+        "val binding inside case body" in {
+            runLiftTest(10) {
+                val opt = Sync.defer(Option(5)).now
+                opt match
+                    case Some(v) =>
+                        val doubled = Sync.defer(v * 2).now
+                        doubled
+                    case None => 0
+                end match
+            }
+        }
+        "pattern-bound effect-typed identifier used via .now" in {
+            runLiftTest(14) {
+                val opt: Option[Int < Sync] = Option(Sync.defer(7).later)
+                opt match
+                    case Some(inner) => inner.now * 2
+                    case None        => 0
             }
         }
     }

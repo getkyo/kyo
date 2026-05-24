@@ -1,6 +1,7 @@
 package kyo
 
 import java.io.IOException
+import kyo.internal.Reducible
 import scala.concurrent.Future
 import scala.util.Failure
 import scala.util.NotGiven

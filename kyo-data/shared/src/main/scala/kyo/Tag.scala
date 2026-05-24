@@ -19,6 +19,7 @@ import scala.util.hashing.MurmurHash3
   * time, the derivation has a fallback that constructs type information at runtime.
   *
   * Tag supports a rich set of operations:
+  *
   *   - Type equality testing with =:= and =!=
   *   - Subtype relationship testing with <:< and >:>
   *   - Type composition with & (intersection) and | (union)

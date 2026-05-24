@@ -2,7 +2,6 @@ package kyo.internal
 
 import kyo.*
 import kyo.Codec.Reader
-import kyo.Span
 import scala.annotation.tailrec
 
 /** Reads values from Protocol Buffers wire format.

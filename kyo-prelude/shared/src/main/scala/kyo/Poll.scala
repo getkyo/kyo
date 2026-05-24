@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.Reducible
 import kyo.kernel.ArrowEffect
 
 /** Represents polling values from a data source with backpressure control.
@@ -8,6 +9,7 @@ import kyo.kernel.ArrowEffect
   * provides natural backpressure, as values are only produced in response to explicit requests, preventing overwhelmed consumers.
   *
   * Key behaviors:
+  *
   *   - Poll returns Maybe[V], where:
   *     - Present(v) indicates a successful poll with value v
   *     - Absent indicates the end of the stream (no more values will be available)
@@ -183,6 +185,7 @@ object Poll:
       * backpressure.
       *
       * The flow continues until either:
+      *
       *   - The emitter completes, signaling end-of-stream to the consumer via Maybe.Absent
       *   - The consumer completes, terminating consumption
       *   - Both sides complete naturally

@@ -70,19 +70,29 @@ private[kyo] object Validate:
             validType && validName
         end validAsyncShift
 
+        // Multi-statement lambdas like `xs.map { i => val v = ...; v + 1 }` are typed as
+        // `Block(Nil, Block(List(DefDef(...)), Closure(...)))` — an empty outer Block wraps
+        // the actual lambda Block. Peel any leading empty-stat Blocks to find the lambda's
+        // synthetic DefDef so we can route the traversal into the lambda body (and skip the
+        // DefDef-rejection that's meant for user-written method defs).
         @tailrec
-        def asyncShiftDive(qualifiers: List[Tree])(using Trees.Step): Unit =
-            qualifiers match
-                case Block(List(DefDef(_, _, _, Some(body))), _) :: xs =>
-                    body match
-                        case Match(_, cases) =>
-                            cases.foreach:
-                                case CaseDef(_, _, body) => Trees.Step.goto(body)
-                        case _ => Trees.Step.goto(body)
-                    end match
-                    asyncShiftDive(xs)
+        def unwrapLambda(t: Tree): Option[Tree] = t match
+            case Block(List(DefDef(_, _, _, Some(body))), _) => Some(body)
+            case Block(Nil, expr)                            => unwrapLambda(expr)
+            case _                                           => None
 
-                case _ => qualifiers.foreach(qual => Trees.Step.goto(qual))
+        def asyncShiftDive(qualifiers: List[Tree])(using Trees.Step): Unit =
+            qualifiers.foreach { qual =>
+                unwrapLambda(qual) match
+                    case Some(body) =>
+                        body match
+                            case Match(_, cases) =>
+                                cases.foreach:
+                                    case CaseDef(_, _, body) => Trees.Step.goto(body)
+                            case _ => Trees.Step.goto(body)
+                    case None =>
+                        Trees.Step.goto(qual)
+            }
 
         extension (term: Term)
             def children: List[Tree] =
@@ -104,6 +114,21 @@ private[kyo] object Validate:
                     case Inlined(Some(Apply(TypeApply(Ident("direct"), _), _)), _, _) => true
                     case _                                                            => false
         end DirectBlock
+
+        object ByNameArgWithNow:
+            def unapply(t: Term): Option[Term] = t match
+                case Apply(fun, args) =>
+                    fun.tpe.widen match
+                        case mt: MethodType =>
+                            mt.paramTypes.zip(args).collectFirst {
+                                case (_: ByNameType, arg) if Trees.exists(arg) {
+                                        case Apply(TypeApply(Ident("now"), _), _) => true
+                                    } =>
+                                    arg
+                            }
+                        case _ => None
+                case _ => None
+        end ByNameArgWithNow
 
         def statementsDive(tree: Tree)(using Trees.Step): Unit =
             @tailrec
@@ -203,6 +228,19 @@ private[kyo] object Validate:
 
             // direct: in direct:
             case DirectBlock() =>
+
+            // Match expressions: route into scrutinee + each case body, skipping the
+            // patterns themselves. Pattern internals (Bind, Wildcard) can carry effect
+            // types from generic destructuring (e.g. `case Some(inner) => ...` where
+            // `inner: Int < Sync` from `Option[Int < Sync]`); those bindings aren't
+            // "uses" of the effect — the actual use is in the case body where .now/.later
+            // will be checked normally.
+            case Match(scrutinee, cases) =>
+                Trees.Step.goto(scrutinee)
+                cases.foreach { c =>
+                    c.guard.foreach(Trees.Step.goto)
+                    Trees.Step.goto(c.rhs)
+                }
 
             case Apply(TypeApply(Ident("now"), _), List(qual)) =>
                 statementsDive(qual)
@@ -431,6 +469,33 @@ private[kyo] object Validate:
                     |• Most common: Atomic* classes (kyo-core)
                     |• With transactional behavior: TRef and derivatives (kyo-stm)
                     |• Advanced pure state management: Var (kyo-prelude)""".stripMargin
+                )
+
+            // By-name (lazy) arguments containing `.now` produce confusing
+            // "Can't determinate qual ... during search of AsyncShift" errors from
+            // dotty-cps-async. Catch them up-front with a clear message. CPS sequencing
+            // doesn't compose with by-name semantics: the effect would be captured in
+            // the by-name thunk rather than sequenced at the call site.
+            case ByNameArgWithNow(arg) =>
+                fail(
+                    arg,
+                    s"""${".now".cyan} cannot appear inside a ${"by-name".yellow} parameter.
+                       |
+                       |By-name parameters capture the expression lazily, which is incompatible with
+                       |effect sequencing. Extract the effect to a ${"`val`".yellow} first:
+                       |
+                       |${highlight("""
+                       |// Instead of:
+                       |def lazyArg(x: => Int): Int = x
+                       |direct {
+                       |  lazyArg(Sync.defer(10).now)   // NOT OK - .now in by-name arg
+                       |}
+                       |
+                       |// Extract first:
+                       |direct {
+                       |  val x = Sync.defer(10).now    // OK - sequence the effect
+                       |  lazyArg(x)
+                       |}""".stripMargin)}""".stripMargin
                 )
         }
     end apply

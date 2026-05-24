@@ -88,7 +88,7 @@ class ResolverTest extends Test:
 
     "arbitrary kyo effects" in runZIO {
         type Environment = Var[Int] & Env[String]
-        object schema extends SchemaDerivation[Runner[Environment]]
+        object schema extends SchemaDerivation[CalibanRunner[Environment]]
 
         case class Query(k: Int < Environment) derives schema.SemiAuto
 
@@ -99,7 +99,7 @@ class ResolverTest extends Test:
                 s <- Env.get[String]
             yield v + s.length
         )))
-        val layer = ZLayer.succeed(new Runner[Environment]:
+        val layer = ZLayer.succeed(new CalibanRunner[Environment]:
             def apply[A](v: A < Environment): A < (Abort[Throwable] & Async) = Env.run("kyo")(Var.run(0)(v)))
         for
             interpreter <- api.interpreter
@@ -241,9 +241,9 @@ class ResolverTest extends Test:
         end for
     }
 
-    "Config - Runner with default config" in run {
+    "Config - CalibanRunner with default config" in run {
         type Environment = Var[Int] & Env[String]
-        object schema extends SchemaDerivation[Runner[Environment]]
+        object schema extends SchemaDerivation[CalibanRunner[Environment]]
 
         case class Query(k: Int < Environment) derives schema.SemiAuto
 
@@ -254,7 +254,7 @@ class ResolverTest extends Test:
                 s <- Env.get[String]
             yield v + s.length
         )))
-        val runner = new Runner[Environment]:
+        val runner = new CalibanRunner[Environment]:
             def apply[A](v: A < Environment): A < (Abort[Throwable] & Async) = Env.run("kyo")(Var.run(0)(v))
 
         for
@@ -265,14 +265,14 @@ class ResolverTest extends Test:
         end for
     }
 
-    "Config - Runner with custom config" in run {
+    "Config - CalibanRunner with custom config" in run {
         type Environment = Var[Int] & Env[String]
-        object schema extends SchemaDerivation[Runner[Environment]]
+        object schema extends SchemaDerivation[CalibanRunner[Environment]]
 
         case class Query(k: Int < Environment) derives schema.SemiAuto
 
         val api = graphQL(RootResolver(Query(Env.get[String].map(_.length))))
-        val runner = new Runner[Environment]:
+        val runner = new CalibanRunner[Environment]:
             def apply[A](v: A < Environment): A < (Abort[Throwable] & Async) = Env.run("kyo")(Var.run(0)(v))
         val config = Resolvers.Config.default.path("gql")
 
@@ -974,9 +974,9 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - Runner with default config" in run {
+    "WS - CalibanRunner with default config" in run {
         type Environment = Var[Int] & Env[String]
-        object schema extends caliban.schema.SchemaDerivation[Runner[Environment]]
+        object schema extends caliban.schema.SchemaDerivation[CalibanRunner[Environment]]
         case class RunnerQuery(k: Int < Environment) derives schema.SemiAuto
         case class RunnerSubscriptions(values: zio.stream.ZStream[Any, Nothing, Int]) derives schema.SemiAuto
 
@@ -985,7 +985,7 @@ class ResolverTest extends Test:
             Mutation(0),
             RunnerSubscriptions(zio.stream.ZStream(1, 2))
         ))
-        val runner = new Runner[Environment]:
+        val runner = new CalibanRunner[Environment]:
             def apply[A](v: A < Environment): A < (Abort[Throwable] & Async) = Env.run("kyo")(Var.run(0)(v))
 
         for

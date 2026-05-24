@@ -25,8 +25,8 @@ final class CMeter(
                 c.lower.transform { t =>
                     release()
                     t
-                }(CMeter.parasiticEc)
-            }(CMeter.parasiticEc)
+                }(using CMeter.parasiticEc)
+            }(using CMeter.parasiticEc)
         }
 
     inline def tryRun[A](inline c: CIO[A]): CIO[Option[A]] =
@@ -40,7 +40,7 @@ final class CMeter(
                     case Failure(t) =>
                         release()
                         Failure(t)
-                }(CMeter.parasiticEc)
+                }(using CMeter.parasiticEc)
         }
 
     inline def availablePermits: CIO[Int] =

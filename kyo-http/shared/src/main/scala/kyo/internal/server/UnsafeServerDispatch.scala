@@ -691,8 +691,6 @@ private[kyo] object UnsafeServerDispatch:
         streamCtx.outbound.offer(Span.fromUnsafe(continueBytes)) match
             case Result.Success(_)         => ()
             case Result.Failure(_: Closed) => ()
-            case Result.Failure(e) =>
-                Log.live.unsafe.error("UnsafeServerDispatch: unexpected failure writing 100 Continue", e)
             case Result.Panic(t) =>
                 Log.live.unsafe.error("UnsafeServerDispatch: panic writing 100 Continue", t)
         end match

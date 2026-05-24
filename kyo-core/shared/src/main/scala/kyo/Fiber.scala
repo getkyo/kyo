@@ -3,6 +3,7 @@ package kyo
 import java.lang.invoke.VarHandle
 import java.util.Arrays
 import kyo.Result.Panic
+import kyo.internal.Reducible
 import kyo.kernel.internal.Safepoint
 import kyo.scheduler.IOPromise
 import kyo.scheduler.IOPromiseBase
@@ -21,6 +22,7 @@ import scala.util.NotGiven
   * computations, including lifecycle management, interruption handling, and completion callbacks.
   *
   * Key capabilities:
+  *
   *   - Lifecycle control (completion, interruption)
   *   - Callback registration for completion and interruption
   *   - Result transformation and composition
@@ -30,7 +32,6 @@ import scala.util.NotGiven
   *   The type of the successful result
   * @tparam S
   *   The effect type that the Fiber computation may perform
-  *
   * @see
   *   [[Async]] for the high-level, structured concurrency API
   * @see
@@ -872,6 +873,7 @@ object Fiber:
         /** Busy waits until all results are present in the `_gather` array.
           *
           * This is necessary because there's a race condition between:
+          *
           *   - One fiber successfully incrementing the counter via CAS
           *   - Another fiber seeing the updated counter and trying to complete the gather
           *   - The first fiber hasn't written its result to the array yet
@@ -931,7 +933,7 @@ object Fiber:
 
         private inline def foreach[A](l: Iterable[A])(inline f: (Int, A) => Unit): Unit =
             l match
-                case l: IndexedSeq[A] =>
+                case l: IndexedSeq[A] @unchecked =>
                     val s = l.size
                     @tailrec def loop(i: Int): Unit =
                         if i < s then

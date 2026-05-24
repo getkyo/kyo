@@ -172,22 +172,22 @@ private[kyo] object SchemaSerializer:
         if isNull(value) then Structure.Value.Null
         else
             value match
-                case s: String           => Structure.Value.Str(s)
-                case b: Boolean          => Structure.Value.Bool(b)
-                case i: Int              => Structure.Value.Integer(i.toLong)
-                case l: Long             => Structure.Value.Integer(l)
-                case d: Double           => Structure.Value.Decimal(d)
-                case f: Float            => Structure.Value.Decimal(f.toDouble)
-                case s: Short            => Structure.Value.Integer(s.toLong)
-                case b: Byte             => Structure.Value.Integer(b.toLong)
-                case c: Char             => Structure.Value.Str(c.toString)
-                case bd: BigDecimal      => Structure.Value.BigNum(bd)
-                case bi: BigInt          => Structure.Value.BigNum(BigDecimal(bi))
-                case m: Maybe[?]         => m.fold(Structure.Value.Null)(v => anyToStructureValue(v))
-                case o: Option[?]        => o.fold(Structure.Value.Null)(v => anyToStructureValue(v))
-                case sv: Structure.Value => sv
-                case s: Iterable[?]      => Structure.Value.Sequence(Chunk.from(s.map(anyToStructureValue)))
-                case other               => Structure.Value.Str(other.toString)
+                case s: String                => Structure.Value.Str(s)
+                case b: Boolean               => Structure.Value.Bool(b)
+                case i: Int                   => Structure.Value.Integer(i.toLong)
+                case l: Long                  => Structure.Value.Integer(l)
+                case d: Double                => Structure.Value.Decimal(d)
+                case f: Float                 => Structure.Value.Decimal(f.toDouble)
+                case s: Short                 => Structure.Value.Integer(s.toLong)
+                case b: Byte                  => Structure.Value.Integer(b.toLong)
+                case c: Char                  => Structure.Value.Str(c.toString)
+                case bd: BigDecimal           => Structure.Value.BigNum(bd)
+                case bi: BigInt               => Structure.Value.BigNum(BigDecimal(bi))
+                case m: (Maybe[?] @unchecked) => m.fold(Structure.Value.Null)(v => anyToStructureValue(v))
+                case o: Option[?]             => o.fold(Structure.Value.Null)(v => anyToStructureValue(v))
+                case sv: Structure.Value      => sv
+                case s: Iterable[?]           => Structure.Value.Sequence(Chunk.from(s.map(anyToStructureValue)))
+                case other                    => Structure.Value.Str(other.toString)
             end match
     end anyToStructureValue
 

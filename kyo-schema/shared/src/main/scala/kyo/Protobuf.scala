@@ -1,11 +1,5 @@
 package kyo
 
-import kyo.DecodeException
-import kyo.Frame
-import kyo.Result
-import kyo.Schema
-import kyo.Span
-
 final class Protobuf extends Codec:
     def newWriter(): Codec.Writer = new kyo.internal.ProtobufWriter()
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =

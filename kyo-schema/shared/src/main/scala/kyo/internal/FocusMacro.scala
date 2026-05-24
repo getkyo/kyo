@@ -1002,7 +1002,7 @@ import scala.quoted.*
             case AppliedType(tycon, List(arg1, arg2)) if tycon.typeSymbol == TypeRepr.of[Tuple2[Any, Any]].typeSymbol =>
                 val r1ContainsRecursive = containsRecursiveType(arg1, parentType)
                 val r2ContainsRecursive = containsRecursiveType(arg2, parentType)
-                (arg1.asType, arg2.asType) match
+                ((arg1.asType, arg2.asType): @unchecked) match
                     case ('[t1], '[t2]) =>
                         (r1ContainsRecursive, r2ContainsRecursive) match
                             case (true, true) =>

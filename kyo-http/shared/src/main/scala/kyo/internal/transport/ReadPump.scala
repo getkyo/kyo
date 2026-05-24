@@ -5,7 +5,7 @@ import kyo.scheduler.IOPromise
 
 /** Pump that receives completed reads from the driver and forwards bytes to a channel.
   *
-  * ## Lifecycle
+  * #### Lifecycle
   *
   *   1. `start()` registers with driver via `awaitRead`
   *   2. Driver completes this promise with bytes (or EOF/error)
@@ -14,12 +14,12 @@ import kyo.scheduler.IOPromise
   *   5. If channel full: wait for channel drain, then re-register
   *   6. On EOF or error: close channel
   *
-  * ## Backpressure
+  * #### Backpressure
   *
   * When the inbound channel is full, the pump stops requesting reads from the driver. This causes the kernel's receive buffer to fill,
   * which triggers TCP flow control (stop ACKing, sender slows down). When the channel drains, the pump re-registers for reads.
   *
-  * ## Promise reuse
+  * #### Promise reuse
   *
   * The pump extends `IOPromise` and passes itself to `awaitRead`. This avoids per-read allocation. After each completion, `becomeAvailable`
   * resets the promise state for reuse.

@@ -34,8 +34,8 @@ object Task {
 
     /** Bit-packed task state encoding preemption and runtime priority in a single Int.
       *
-      *   - '''bits 0-30''': runtime — accumulated execution time, used for priority ordering (lower = higher priority)
-      *   - '''bit 31 (sign)''': preempting — when negative, the task should yield at the next effect boundary so the worker can serve other
+      *   - **bits 0-30**: runtime — accumulated execution time, used for priority ordering (lower = higher priority)
+      *   - **bit 31 (sign)**: preempting — when negative, the task should yield at the next effect boundary so the worker can serve other
       *     queued tasks (time-slice fairness)
       *
       * `state` is mutated by non-atomic read-modify-writes from two threads — the worker (addRuntime) and the coordinator (doPreempt, via

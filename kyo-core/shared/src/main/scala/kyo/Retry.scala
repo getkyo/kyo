@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Tag
 import scala.util.*
 
 /** A utility for retrying operations with configurable backoff strategies and failure handling.
@@ -9,6 +8,7 @@ import scala.util.*
   * on sophisticated scheduling policies.
   *
   * Common usage patterns:
+  *
   *   - Use `Retry[ErrorType](operation)` for simple retries with the default exponential backoff strategy
   *   - Use `Retry[ErrorType](customSchedule)(operation)` for operations requiring specialized retry behavior
   *   - Combine with `Schedule` combinators for advanced policies like "retry exponentially up to 5 times with randomized delays"

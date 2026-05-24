@@ -17,35 +17,40 @@ import scala.reflect.ClassTag
   * Operations are designed to avoid tuple allocations for key-value pairs. Iteration, transformation, and lookup methods accept separate
   * key and value parameters rather than `(K, V)` tuples, eliminating boxing overhead in hot paths.
   *
-  * =Creation=
-  * {{{
+  * #### Creation
+  *
+  * ```scala
   * val empty = Dict.empty[String, Int]
   * val dict  = Dict("a" -> 1, "b" -> 2, "c" -> 3)
   * val fromMap = Dict.from(Map("x" -> 10))
-  * }}}
+  * ```
   *
-  * =Access=
-  * {{{
+  * #### Access
+  *
+  * ```scala
   * dict("a")          // 1
   * dict.get("z")      // Maybe.empty
   * dict.contains("b") // true
-  * }}}
+  * ```
   *
-  * =Modification=
+  * #### Modification
+  *
   * All modifications return a new Dict, leaving the original unchanged:
-  * {{{
+  *
+  * ```scala
   * dict.update("a", 10)  // Dict("a" -> 10, "b" -> 2, "c" -> 3)
   * dict.remove("b")      // Dict("a" -> 1, "c" -> 3)
   * dict ++ Dict("d" -> 4)
-  * }}}
+  * ```
   *
-  * =Iteration and Transformation=
-  * {{{
+  * #### Iteration and Transformation
+  *
+  * ```scala
   * dict.foreach((k, v) => println(s"$k -> $v"))
   * dict.map((k, v) => (k.toUpperCase, v * 2))
   * dict.filter((k, v) => v > 1)
   * dict.foldLeft(0)((acc, k, v) => acc + v)
-  * }}}
+  * ```
   *
   * Because Dict is an opaque type, it does not provide a `CanEqual` instance. Use the `is` method for structural equality comparison.
   *

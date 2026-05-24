@@ -1,7 +1,6 @@
 package kyo.kernel
 
 import kyo.*
-import kyo.Frame
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.annotation.tailrec

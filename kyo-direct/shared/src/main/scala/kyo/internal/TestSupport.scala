@@ -1,5 +1,6 @@
-package kyo
+package kyo.internal
 
+import kyo.*
 import scala.language.experimental.macros
 
 object TestSupport:

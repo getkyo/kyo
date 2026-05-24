@@ -959,7 +959,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
         // Client-side filters (e.g. basicAuth, bearerAuth) are Passthrough — they transform the request
         // and forward next's result unchanged.
         // Auto-discovered filters (e.g. W3C trace context from kyo-stats-otlp) are composed first.
-        val clientFilter = HttpFilterFactory.composedClient
+        val clientFilter = HttpFilter.Factory.composedClient
         val routeFilter  = route.filter
         if (clientFilter eq HttpFilter.noop) && (routeFilter eq HttpFilter.noop) then
             // Fast path: no filters configured — call impl directly without filter closure

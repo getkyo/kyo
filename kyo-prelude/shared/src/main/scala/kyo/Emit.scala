@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.Tag
+import kyo.internal.Reducible
 import kyo.kernel.*
 
 /** The Emit effect allows producing multiple values alongside the main result of a computation.
@@ -188,6 +188,7 @@ object Emit:
       *   The computation with Emit effect
       * @return
       *   A tuple containing:
+      *
       *   - Maybe[V]: The first emitted value if any (None if no values were emitted)
       *   - A continuation function that returns the remaining computation
       */

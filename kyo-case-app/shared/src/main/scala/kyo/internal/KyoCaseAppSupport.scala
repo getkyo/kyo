@@ -1,7 +1,8 @@
-package kyo
+package kyo.internal
 
 import caseapp.core.RemainingArgs
 import caseapp.core.app.CaseApp
+import kyo.*
 
 /** Shared machinery for Kyo + case-app entrypoints. */
 trait KyoCaseAppSupport[T]:
@@ -42,11 +43,11 @@ trait KyoCaseAppSupport[T]:
     end cliArgs
 
     override protected def exitHook(code: Int)(using AllowUnsafe): Unit =
-        internal.Platform.exit(code)
+        Platform.exit(code)
 
     /** Registers a Kyo effect to run after case-app parsing completes.
       *
-      * '''Recommended''' for typical CLIs: most commands only need parsed flags and options, not leftover positionals.
+      * **Recommended** for typical CLIs: most commands only need parsed flags and options, not leftover positionals.
       */
     final protected def run[A](v: T => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit =
         registerRun((options, _) => v(options))

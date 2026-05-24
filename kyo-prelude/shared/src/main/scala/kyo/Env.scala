@@ -1,7 +1,8 @@
 package kyo
 
 import kyo.*
-import kyo.Tag
+import kyo.internal.NotIntersection
+import kyo.internal.Reducible
 import kyo.kernel.*
 import scala.util.NotGiven
 

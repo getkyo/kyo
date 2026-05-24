@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.debug.Debug
+import kyo.internal.Reducible
 import kyo.internal.Zippable
 import kyo.kernel.ArrowEffect
 import scala.annotation.tailrec
@@ -22,12 +23,12 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
         Fiber.init(effect)
 
-    /** Forks this computation and uses the resulting fiber within a scoped function [[f]]. Guarantees fiber interruption after usage.
+    /** Forks this computation and uses the resulting fiber within a scoped function `f`. Guarantees fiber interruption after usage.
       *
       * @param f
       *   A function using the forked fiber to produce a new effect
       * @return
-      *   A computation that produces the result of [[f]] when applied to the forked fiber
+      *   A computation that produces the result of `f` when applied to the forked fiber
       */
     def forkUsing[S2](
         using

@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.NotIntersection
 import scala.collection.immutable.TreeSeqMap
 
 /** `TypeMap` provides a type-safe heterogeneous map implementation, allowing you to store and retrieve values of different types using

@@ -19,6 +19,10 @@ Thank you for considering contributing to this project! We welcome all contribut
   - [Pending Type (A < S)](#pending-type-a--s)
   - [Scala Conventions](#scala-conventions)
   - [Documentation](#documentation)
+    - [Type-Level Scaladoc](#type-level-scaladoc)
+    - [Method-Level Scaladoc](#method-level-scaladoc)
+    - [Markdown Formatting](#markdown-formatting)
+    - [Inline Comments](#inline-comments)
   - [File Organization](#file-organization)
 - [Optimization](#optimization)
   - [Performance](#performance)
@@ -443,6 +447,69 @@ WARNING/IMPORTANT/Note decision:
 - Brief description (1-3 lines)
 - `@param` / `@return` only when name and type aren't enough
 - Skip for truly trivially obvious methods (`capacity: Int`, `size: Int`)
+
+#### Markdown Formatting
+
+Scaladoc parses comments as CommonMark markdown (the Scala 3 default). Scala 2 wiki syntax (`=Heading=`, `'''bold'''`, `''italic''`, `[[url text]]`) renders as literal text and must not be used.
+
+Heading levels map to CSS classes that determine visual size:
+
+| Source       | HTML | Size |
+|--------------|------|------|
+| `#` / `##`   | h1 / h2 | very large (page-level) |
+| `###`        | h3 | large |
+| `####`       | h4 | moderate — **use for in-class sub-sections** |
+| `#####` / `######` | h5 / h6 | small |
+
+Use `####` for sub-sections inside a class/object/trait docstring. `#` and `##` compete visually with the type's own title. For light visual grouping where no anchor or sidebar entry is wanted, use `**bold**` inline labels instead of a heading.
+
+Code blocks: prefer markdown fenced blocks with a language tag for syntax highlighting:
+
+````
+```scala
+val x: Int < Async = 42
+```
+````
+
+Scala 2 `{{{ }}}` blocks render correctly (backward-compat) but get no syntax highlight; prefer fenced form for new code. **Indented (4-space) code blocks do not work** — they render as plain paragraphs.
+
+Links:
+
+- External URLs: `[text](https://…)` markdown form. Never `[[https://… text]]` (Scala 2 wiki).
+- Internal type / member references: `[[kyo.Foo]]` or `[[Foo]]` (wiki-style member-link, kept for backward-compat and preferred for cross-references).
+- `[[Foo custom label]]` for a renamed link target.
+
+Emphasis: `**bold**` and `*italic*`. Never `'''bold'''` / `''italic''`.
+
+Other supported markdown: GFM tables (`| col |`), block quotes (`>`), horizontal rules (`---` / `***`), ordered/unordered lists with nesting, strikethrough (`~~`), inline HTML (`<em>`, `<sub>`, etc.).
+
+Scaladoc tags (`@param`, `@tparam`, `@return`, `@throws`, `@note`, `@see`, `@example`, `@since`) render in a structured "Attributes" section below the description. For `@throws`, always use a resolvable type name (e.g. `@throws java.lang.IllegalArgumentException`) — bare type-parameter names like `@throws E` emit unresolvable-link warnings.
+
+**scalafmt interaction (critical)**: the repo `.scalafmt.conf` sets `docstrings.wrap = keep` so scalafmt preserves docstring line structure. Even with that setting, markdown still requires blank `* ` lines between blocks — heading + paragraph, paragraph + list, paragraph + code block all need a blank separator line. Otherwise markdown joins them into a single paragraph.
+
+Example of correct structure:
+
+````
+/** Single-sentence summary on the line right after the slash-star-star.
+  *
+  * Longer paragraph describing the type. Spans as many sentences as needed.
+  *
+  * #### Sub-section heading
+  *
+  * Paragraph that follows the heading. The blank `*` lines above and below
+  * the heading are mandatory.
+  *
+  *   - List items go here
+  *   - With a blank line above and below the list
+  *
+  * ```scala
+  * val example = …
+  * ```
+  *
+  * @tparam A summary
+  * @param input summary
+  */
+````
 
 #### Inline Comments
 
