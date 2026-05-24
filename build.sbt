@@ -120,11 +120,57 @@ Global / onLoad := {
     }
 }
 
-lazy val kyoJVM = project
+lazy val kyoJVM: Project = project
     .in(file("."))
+    .enablePlugins(ScalaUnidocPlugin)
     .settings(
         name := "kyoJVM",
-        `kyo-settings`
+        `kyo-settings`,
+        // Document everything kyoJVM aggregates, minus the projects that have
+        // no public API surface or cannot produce Scala 3 scaladoc:
+        //   - kyo-bench:    benchmarks, not public API
+        //   - kyo-examples: examples, not public API
+        //   - kyo-compat:   meta-aggregator; individual kyo-compat-*
+        //                   bindings are included via the aggregate set
+        ScalaUnidoc / unidoc / unidocProjectFilter :=
+            inAggregates(kyoJVM) -- inProjects(
+                `kyo-bench`.jvm,
+                `kyo-examples`.jvm,
+                `kyo-compat`
+            ),
+        ScalaUnidoc / unidoc / scalacOptions ++= Seq(
+            "-project",
+            "Kyo",
+            "-project-version",
+            version.value,
+            "-source-links:github://getkyo/kyo/" + git.gitHeadCommit.value.getOrElse("main"),
+            // Hide any package named `internal` or nested under one, anywhere in the
+            // namespace tree (kyo.internal, kyo.stats.internal, kyo.compat.internal,
+            // kyo.kernel.internal, ...). Public-API only.
+            "-skip-by-regex:.*\\.internal(\\..*)?",
+            // CalibanHttpUtils is declared `package caliban` only to reach
+            // caliban's package-private types: internal plumbing, not public
+            // API. Strip the resulting top-level `caliban` namespace.
+            "-skip-by-id:caliban"
+        )
+        // Known limitations of Scala 3 scaladoc (no upstream issue filed yet):
+        //
+        //   1. opaque-type class-level docstrings are dropped from the rendered
+        //      site whenever a companion object exists. Opaque types do not
+        //      get a dedicated `.html` page (the companion's `Foo$.html` is
+        //      the only landing page), and the companion-page emitter never
+        //      folds in the type's docstring. Docs are kept on the type for
+        //      source readability; users see them in IDE hover and ScalaDex
+        //      source view, just not on the unidoc site.
+        //
+        //   2. `-skip-by-id` and `-skip-by-regex` only match packages and
+        //      top-level classes, so `Var.internal`, `Local.internal`, and
+        //      `Batch.internal` (nested objects holding effect Op types) still
+        //      appear in the unidoc index. Relocating them to actual
+        //      `kyo.internal.*` top-level objects would hide them.
+        //
+        //   3. The unidoc sidebar has no per-artifact / per-module grouping.
+        //      The flat alphabetical index is the only layout scaladoc emits.
     )
     .disablePlugins(MimaPlugin)
     .aggregate(
@@ -705,8 +751,10 @@ lazy val `kyo-compat-future` =
         .in(file("kyo-compat/bindings/future"))
         .settings(
             `kyo-settings`,
-            scalaVersion       := scala3LTSVersion,
+            // Default compile under scala3Version so unidoc reads consistent TASTy with the rest of the build.
+            // `+publish` still only emits LTS artifacts (crossScalaVersions + publish/skip guard).
             crossScalaVersions := List(scala3LTSVersion),
+            publish / skip     := scalaVersion.value != scala3LTSVersion,
             scalacOptions += "-Xmax-inlines:1024",
             // Cross-platform: shared sources use atomics + ConcurrentLinkedQueue
             // (both polyfilled on JS and natively supported on Native).
@@ -765,8 +813,8 @@ lazy val `kyo-compat-zio` =
         .in(file("kyo-compat/bindings/zio"))
         .settings(
             `kyo-settings`,
-            scalaVersion       := scala3LTSVersion,
             crossScalaVersions := List(scala3LTSVersion),
+            publish / skip     := scalaVersion.value != scala3LTSVersion,
             scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += "dev.zio" %%% "zio"            % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-concurrent" % zioVersion,
@@ -797,8 +845,8 @@ lazy val `kyo-compat-ce` =
         .in(file("kyo-compat/bindings/ce"))
         .settings(
             `kyo-settings`,
-            scalaVersion       := scala3LTSVersion,
             crossScalaVersions := List(scala3LTSVersion),
+            publish / skip     := scalaVersion.value != scala3LTSVersion,
             scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion,
             libraryDependencies += "co.fs2"        %%% "fs2-core"    % "3.12.2",
@@ -827,8 +875,8 @@ lazy val `kyo-compat-ox` =
         .in(file("kyo-compat/bindings/ox"))
         .settings(
             `kyo-settings`,
-            scalaVersion       := scala3LTSVersion,
             crossScalaVersions := List(scala3LTSVersion),
+            publish / skip     := scalaVersion.value != scala3LTSVersion,
             scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += "com.softwaremill.ox" %% "core" % oxVersion,
             Test / unmanagedSourceDirectories += {
@@ -855,8 +903,8 @@ lazy val `kyo-compat-twitter-future` =
         .in(file("kyo-compat/bindings/twitter-future"))
         .settings(
             `kyo-settings`,
-            scalaVersion       := scala3LTSVersion,
             crossScalaVersions := List(scala3LTSVersion),
+            publish / skip     := scalaVersion.value != scala3LTSVersion,
             scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += ("com.twitter" %% "util-core" % "24.2.0")
                 .exclude("org.scala-lang.modules", "scala-collection-compat_2.13"),
@@ -1052,7 +1100,6 @@ lazy val `kyo-examples` =
             ),
             Compile / doc / sources := Seq.empty
         )
-        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-bench` =
     crossProject(JVMPlatform)

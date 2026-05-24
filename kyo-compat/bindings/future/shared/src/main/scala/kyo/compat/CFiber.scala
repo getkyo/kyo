@@ -34,7 +34,7 @@ object CFiber:
                 self.lower.onComplete { t =>
                     val _ = cb(t).unsafeRun
                     ()
-                }(scala.concurrent.ExecutionContext.parasitic)
+                }(using scala.concurrent.ExecutionContext.parasitic)
             }
     end extension
 

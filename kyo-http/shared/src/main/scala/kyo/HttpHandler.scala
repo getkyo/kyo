@@ -5,7 +5,7 @@ import kyo.*
 /** An executable endpoint that pairs an [[kyo.HttpRoute]] with a request handler function.
   *
   * `HttpHandler` is what the server dispatches to when an incoming request matches the route's method and path. It wraps the route's filter
-  * chain so that server-side filters (contributed via [[kyo.HttpFilterFactory]]) and route-level filters are applied automatically on every
+  * chain so that server-side filters (contributed via [[kyo.HttpFilter.Factory]]) and route-level filters are applied automatically on every
   * request. The handler function receives a typed `HttpRequest[In]` with all declared fields accessible via `req.fields`.
   *
   * For common use cases, use the convenience methods on the companion object (`getJson`, `postText`, `getSseJson`, etc.). These create both
@@ -29,7 +29,7 @@ import kyo.*
   * @see
   *   [[kyo.HttpResponse.Halt]] Short-circuit mechanism for early response exits
   * @see
-  *   [[kyo.HttpFilterFactory]] SPI for contributing server-wide filters
+  *   [[kyo.HttpFilter.Factory]] SPI for contributing server-wide filters
   */
 sealed abstract class HttpHandler[In, Out, +E](val route: HttpRoute[In, Out, E]):
 
@@ -107,7 +107,7 @@ object HttpHandler:
     )(
         handler: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])
     ): HttpHandler[In, Out, E] =
-        val f = HttpFilterFactory.composedServer.andThen(route.filter)
+        val f = HttpFilter.Factory.composedServer.andThen(route.filter)
             .asInstanceOf[HttpFilter[Any, Any, Any, Any, E]]
         new HttpHandler[In, Out, E](route):
             def apply(request: HttpRequest[In])(using Frame) =

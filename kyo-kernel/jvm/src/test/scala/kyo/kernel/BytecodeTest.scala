@@ -1,7 +1,6 @@
 package kyo.kernel
 
 import kyo.*
-import kyo.Tag
 import scala.reflect.ClassTag
 
 class BytecodeTest extends Test:

@@ -4,7 +4,7 @@ import kyo.*
 
 /** Transport abstraction for TCP and Unix domain socket connections.
   *
-  * ## Lifecycle
+  * #### Lifecycle
   *
   * **Client:**
   *   1. `connect(host, port)` / `connectUnix(path)` returns fiber that completes with connection
@@ -16,7 +16,7 @@ import kyo.*
   *   2. Each accepted connection passed to handler in its own fiber
   *   3. Close listener to stop accepting
   *
-  * ## Platform Implementations
+  * #### Platform Implementations
   *
   *   - Native: `NativeTransport` using epoll/kqueue
   *   - JVM: `NioTransport` using NIO Selector

@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Result.Error
-import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.internal.Safepoint
 

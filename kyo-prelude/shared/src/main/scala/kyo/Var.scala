@@ -1,7 +1,6 @@
 package kyo
 
 import Var.internal.*
-import kyo.Tag
 import kyo.kernel.*
 import scala.annotation.nowarn
 
@@ -12,6 +11,7 @@ import scala.annotation.nowarn
   * operations.
   *
   * The effect encapsulates three fundamental operations:
+  *
   *   - Reading the current state via `get` and `use` methods
   *   - Setting a new state via `set` and `setDiscard` methods
   *   - Updating the state based on its current value via `update` and `updateDiscard` methods

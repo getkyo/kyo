@@ -3,7 +3,6 @@ package kyo
 import Batch.internal.*
 import Batch.internal.Pending.Expanded
 import Batch.internal.Pending.ToExpand
-import kyo.Tag
 import kyo.kernel.*
 
 /** The Batch effect provides a mechanism for efficiently grouping and executing operations together.
@@ -40,6 +39,7 @@ object Batch:
       *
       * @param f
       *   The source function with the following signature:
+      *
       *   - Input: `Seq[A]` - A sequence of input values to be processed in batch
       *   - Output: `(A => B < S) < S` - A function that, when evaluated, produces another function:
       *     - This inner function takes a single input `A` and returns a value `B` with effects `S`, allowing effects on each element

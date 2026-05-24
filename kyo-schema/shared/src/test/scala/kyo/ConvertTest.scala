@@ -1,5 +1,7 @@
 package kyo
 
+import scala.language.implicitConversions
+
 // Test data types for Convert tests — at package level for typeCheckFailure references
 case class BMUserFull(id: Int, name: String, email: String, password: String) derives CanEqual
 case class BMUserDTO(name: String, email: String) derives CanEqual

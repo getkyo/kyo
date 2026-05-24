@@ -3,19 +3,20 @@ package kyo
 /** A runtime-mutable, per-entity configuration flag.
   *
   * Flags are declared as Scala objects in a package -- the fully-qualified object name becomes the system property key:
-  * {{{
+  *
+  * ```scala
   * package myapp.features
   * object newCheckout extends DynamicFlag[Boolean](false)
   * // -Dmyapp.features.newCheckout="true@premium/50%"
   * // newCheckout(userId, "premium") => true for 50% of premium users
-  * }}}
+  * ```
   *
-  * ==Choosing between StaticFlag and DynamicFlag==
+  * #### Choosing between StaticFlag and DynamicFlag
   *
   * Both types share the same declaration style, [[Rollout]] DSL, typed parsing, and validation. They differ in lifecycle:
-  *   - '''[[StaticFlag]]''': resolves once at class load into a `val`. Use for infrastructure config that must not change at runtime (pool
+  *   - **[[StaticFlag]]**: resolves once at class load into a `val`. Use for infrastructure config that must not change at runtime (pool
   *     sizes, timeouts, codecs, feature kill switches). Just a field read on access.
-  *   - '''DynamicFlag''': evaluates per call with a caller-provided key. Use when the value must vary per request or change without
+  *   - **DynamicFlag**: evaluates per call with a caller-provided key. Use when the value must vary per request or change without
   *     restart (feature gates, A/B tests, per-tenant rate limits). Supports `update()`/`reload()` for live changes.
   *
   * IMPORTANT: Two-tier validation. At init: strict -- weights > 100% throw. At `update()`: lenient -- weights > 100% are normalized. Init

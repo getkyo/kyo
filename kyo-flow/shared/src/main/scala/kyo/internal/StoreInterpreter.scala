@@ -149,7 +149,7 @@ private[kyo] class StoreInterpreter(
             case _ =>
                 store.getExecution(eid).map {
                     case Present(s) if s.status == Flow.Status.Cancelled =>
-                        Abort.fail[FlowException](FlowCancelledException(eid.value))
+                        Abort.fail(FlowCancelledException(eid.value))
                     case _ =>
                         Clock.nowWith { now =>
                             store.updateStatus(
@@ -197,8 +197,8 @@ private[kyo] class StoreInterpreter(
                                 new Record[Any](ctx.toDict ++ l.toDict ++ r.toDict)
                             case (Result.Failure(s), _)                 => Abort.fail[FlowSuspension](s)
                             case (_, Result.Failure(s))                 => Abort.fail[FlowSuspension](s)
-                            case (Result.Success(Result.Failure(e)), _) => Abort.fail[FlowException](e)
-                            case (_, Result.Success(Result.Failure(e))) => Abort.fail[FlowException](e)
+                            case (Result.Success(Result.Failure(e)), _) => Abort.fail(e)
+                            case (_, Result.Success(Result.Failure(e))) => Abort.fail(e)
                             case (Result.Panic(e), _)                   => Abort.panic(e)
                             case (_, Result.Panic(e))                   => Abort.panic(e)
                             case (Result.Success(Result.Panic(e)), _)   => Abort.panic(e)

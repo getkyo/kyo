@@ -5,6 +5,7 @@ import com.twitter.util.Promise
 import com.twitter.util.Return
 import com.twitter.util.Throw
 import com.twitter.util.TimeoutException as TwTimeoutException
+import scala.annotation.nowarn
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.duration.NANOSECONDS
 import scala.jdk.FutureConverters.*
@@ -112,6 +113,7 @@ object CIO:
         inline def lower: () => Future[A] = self
 
         /** Runs `handler` on failure to produce a recovery `CIO`. */
+        @nowarn("msg=anonymous")
         inline def recover[A2 >: A](inline handler: Throwable => CIO[A2]): CIO[A2] =
             deferLift {
                 self.lower().rescue {
@@ -149,6 +151,7 @@ object CIO:
             deferLift(self.lower().unit)
 
         /** Falls back to `that` on any failure of `self`. */
+        @nowarn("msg=anonymous")
         inline def orElse[A2 >: A](inline that: CIO[A2]): CIO[A2] =
             deferLift {
                 self.lower().rescue {
@@ -221,6 +224,7 @@ object CIO:
         deferLift(Future.sleep(toTwitterDuration(d))(using twitterTimer).flatMap(_ => c.lower()))
 
     /** Races `a` and `b`; the loser is interrupted via raise(CancellationException). */
+    @nowarn("msg=anonymous")
     inline def race[A](
         inline a: CIO[A],
         inline b: CIO[A]
@@ -309,6 +313,7 @@ object CIO:
         }
 
     /** Concurrent predicate filtering; same concurrency semantics as `foreach`. */
+    @nowarn("msg=anonymous")
     inline def filter[A](
         inline coll: Iterable[A],
         inline concurrency: Int = Int.MaxValue

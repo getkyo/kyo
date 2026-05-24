@@ -51,6 +51,7 @@ final class Concurrency(
     /** Performs a probe measurement by executing a brief sleep operation.
       *
       * This method measures thread scheduling delays by:
+      *
       *   - Recording the start time
       *   - Performing a 1ms sleep
       *   - Measuring the actual delay beyond the requested sleep time
@@ -66,10 +67,8 @@ final class Concurrency(
     /** Updates the number of worker threads based on regulation decisions.
       *
       * @param diff
-      *   The change in thread count to apply:
-      *   - Positive values increase threads
-      *   - Negative values decrease threads
-      *   - Magnitude increases with consecutive adjustments
+      *   The change in thread count to apply. Positive values increase threads, negative values decrease threads. Magnitude increases with
+      *   consecutive adjustments.
       */
     protected def update(diff: Int): Unit =
         updateConcurrency(diff)

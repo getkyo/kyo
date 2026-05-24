@@ -1,0 +1,97 @@
+name: scaladoc
+# Builds the unified Scaladoc (sbt-unidoc) at a given tag and commits the
+# generated site into `docs/api/` on main so it is served by the existing
+# GitHub Pages config (main / docs).
+#
+# Triggers:
+#   - push of a release tag (v*): automatic publish on every release
+#   - manual workflow_dispatch: accepts an optional `tag` input so an
+#     existing tag (or a branch, for first-deploy validation) can be
+#     republished without cutting a new release.
+#
+# The commit is authored by github-actions[bot] with `[skip ci]` in the
+# message so build-main does not re-trigger on the bot's push.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag (or branch) to publish docs from. Defaults to the triggering ref.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scaladoc-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
+      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve target ref
+        id: target
+        run: |
+          ref='${{ inputs.tag }}'
+          if [ -z "$ref" ]; then
+            ref='${{ github.ref_name }}'
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "Publishing scaladoc from: $ref"
+
+      - name: Checkout target ref
+        run: git checkout "${{ steps.target.outputs.ref }}"
+
+      - uses: coursier/cache-action@v8.1.1
+
+      - uses: coursier/setup-action@v3.0.0
+        with:
+          jvm: corretto:24
+          apps: sbt
+
+      - name: Build unidoc
+        run: sbt -Dplatform=JVM 'kyoJVM/unidoc'
+
+      - name: Stage unidoc output
+        run: |
+          out_dir=$(find target -type d -path '*/scala-*/unidoc' -print -quit)
+          if [ -z "$out_dir" ]; then
+            echo "No unidoc output directory found under target/" >&2
+            exit 1
+          fi
+          if [ ! -f "$out_dir/index.html" ]; then
+            echo "Expected $out_dir/index.html, not found" >&2
+            exit 1
+          fi
+          mkdir -p /tmp/unidoc-out
+          cp -R "$out_dir"/. /tmp/unidoc-out/
+
+      - name: Publish to docs/api on main
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          git checkout main
+          rm -rf docs/api
+          mkdir -p docs/api
+          cp -R /tmp/unidoc-out/. docs/api/
+          git add docs/api
+          if git diff --cached --quiet; then
+            echo "No changes to docs/api — nothing to commit."
+            exit 0
+          fi
+          git commit -m "docs(scaladoc): publish unified scaladoc for ${{ steps.target.outputs.ref }} [skip ci]"
+          git push origin main

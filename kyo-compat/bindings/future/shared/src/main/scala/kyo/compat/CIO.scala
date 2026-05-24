@@ -3,6 +3,7 @@ package kyo.compat
 import java.util.concurrent.TimeUnit
 import kyo.compat.internal.CompatScheduler
 import kyo.compat.internal.LocalCtx
+import scala.annotation.nowarn
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.Promise
@@ -72,10 +73,10 @@ object CIO:
         (ctx: LocalCtx) =>
             acquire(ctx).flatMap { a =>
                 use(a)(ctx).transformWith {
-                    case Success(b) => release(a)(ctx).map(_ => b)(parasiticEc)
-                    case Failure(t) => release(a)(ctx).transformWith(_ => Future.failed(t))(parasiticEc)
-                }(parasiticEc)
-            }(parasiticEc)
+                    case Success(b) => release(a)(ctx).map(_ => b)(using parasiticEc)
+                    case Failure(t) => release(a)(ctx).transformWith(_ => Future.failed(t))(using parasiticEc)
+                }(using parasiticEc)
+            }(using parasiticEc)
 
     /** Runs `c` and guarantees `cleanup` executes on every exit path. */
     inline def ensure[A](
@@ -96,9 +97,10 @@ object CIO:
             (ctx: LocalCtx) ?=> self(ctx)
 
         /** Runs `handler` on failure to produce a recovery `CIO`. */
+        @nowarn("msg=anonymous")
         inline def recover[A2 >: A](inline handler: Throwable => CIO[A2]): CIO[A2] =
             (ctx: LocalCtx) =>
-                self(ctx).recoverWith { case t => handler(t)(ctx) }(parasiticEc)
+                self(ctx).recoverWith { case t => handler(t)(ctx) }(using parasiticEc)
 
         /** Collapses success and failure into a single `CIO[B]` via the respective handlers. */
         inline def fold[B](
@@ -109,7 +111,7 @@ object CIO:
                 self(ctx).transformWith {
                     case Success(a) => onSuccess(a)(ctx)
                     case Failure(t) => onFail(t)(ctx)
-                }(parasiticEc)
+                }(using parasiticEc)
 
         /** Reifies failure as `Try`; the resulting `CIO` always succeeds. */
         inline def liftToTry: CIO[Try[A]] =
@@ -117,16 +119,17 @@ object CIO:
                 self(ctx).transform {
                     case Success(a) => Success[Try[A]](Success(a))
                     case Failure(t) => Success[Try[A]](Failure(t))
-                }(parasiticEc)
+                }(using parasiticEc)
 
         /** Discards the success value; failure propagates. */
         inline def unit: CIO[Unit] =
-            (ctx: LocalCtx) => self(ctx).map(_ => ())(parasiticEc)
+            (ctx: LocalCtx) => self(ctx).map(_ => ())(using parasiticEc)
 
         /** Falls back to `that` on any failure of `self`. */
+        @nowarn("msg=anonymous")
         inline def orElse[A2 >: A](inline that: CIO[A2]): CIO[A2] =
             (ctx: LocalCtx) =>
-                self(ctx).recoverWith { case t: Throwable if NonFatal(t) => that(ctx) }(parasiticEc)
+                self(ctx).recoverWith { case t: Throwable if NonFatal(t) => that(ctx) }(using parasiticEc)
 
         /** Rewrites the error value through `f`. */
         inline def mapError(inline f: Throwable => Throwable): CIO[A] =
@@ -137,15 +140,15 @@ object CIO:
                         Try(f(t)) match
                             case Success(t2) => Failure(t2)
                             case Failure(t2) => Failure(t2)
-                }(parasiticEc)
+                }(using parasiticEc)
 
         /** Transforms the success value with a pure function. */
         inline def map[B](inline f: A => B): CIO[B] =
-            (ctx: LocalCtx) => self(ctx).map(f)(parasiticEc)
+            (ctx: LocalCtx) => self(ctx).map(f)(using parasiticEc)
 
         /** Chains another `CIO` whose construction depends on the success value. */
         inline def flatMap[B](inline f: A => CIO[B]): CIO[B] =
-            (ctx: LocalCtx) => self(ctx).flatMap(a => f(a)(ctx))(parasiticEc)
+            (ctx: LocalCtx) => self(ctx).flatMap(a => f(a)(ctx))(using parasiticEc)
 
         /** Materializes this `CIO` into a `scala.concurrent.Future[A]` by applying the carrier against an empty `LocalCtx`. */
         inline def unsafeRun: scala.concurrent.Future[A] = self(LocalCtx.empty)
@@ -188,7 +191,7 @@ object CIO:
             c(ctx).onComplete {
                 case Success(a) => val _ = p.trySuccess(Some(a))
                 case Failure(t) => val _ = p.tryFailure(t)
-            }(parasiticEc)
+            }(using parasiticEc)
             p.future
 
     /** Runs `c` with a deadline; fails with `e` if `d` elapses first. The inner computation keeps running orphaned (Future has no
@@ -204,12 +207,12 @@ object CIO:
                 d.toNanos,
                 TimeUnit.NANOSECONDS
             )
-            c(ctx).onComplete(p.tryComplete)(parasiticEc)
+            c(ctx).onComplete(p.tryComplete)(using parasiticEc)
             p.future
 
     /** Sleeps for `d` and then runs `c`. */
     inline def delay[A](inline d: FiniteDuration)(inline c: CIO[A]): CIO[A] =
-        (ctx: LocalCtx) => CIO.sleep(d).lower(using ctx).flatMap(_ => c(ctx))(parasiticEc)
+        (ctx: LocalCtx) => CIO.sleep(d).lower(using ctx).flatMap(_ => c(ctx))(using parasiticEc)
 
     /** Runs `a` and `b` in parallel and returns the first to complete; the loser keeps running orphaned (Future has no interrupt). */
     inline def race[A](
@@ -218,8 +221,8 @@ object CIO:
     ): CIO[A] =
         (ctx: LocalCtx) =>
             val p = Promise[A]()
-            a(ctx).onComplete(p.tryComplete)(parasiticEc)
-            b(ctx).onComplete(p.tryComplete)(parasiticEc)
+            a(ctx).onComplete(p.tryComplete)(using parasiticEc)
+            b(ctx).onComplete(p.tryComplete)(using parasiticEc)
             p.future
 
     /** Non-blocking semaphore that gates dispatch without starvation. */
@@ -250,8 +253,8 @@ object CIO:
             work.transform { r =>
                 sem.release()
                 r
-            }(parasiticEc)
-        }(parasiticEc)
+            }(using parasiticEc)
+        }(using parasiticEc)
 
     /** Parallel map; `concurrency` caps in-flight items (unbounded by default, via a non-blocking `FutureSemaphore`). */
     inline def foreach[A, B](
@@ -305,6 +308,7 @@ object CIO:
             end if
 
     /** Concurrent predicate filtering; same concurrency semantics as `foreach`. */
+    @nowarn("msg=anonymous")
     inline def filter[A](
         inline coll: Iterable[A],
         inline concurrency: Int = Int.MaxValue
@@ -413,7 +417,7 @@ object CIO:
             val fa = a(ctx)
             val fb = b(ctx)
             val fc = c(ctx)
-            fa.flatMap(x => fb.flatMap(y => fc.map(z => (x, y, z))(parasiticEc))(parasiticEc))(parasiticEc)
+            fa.flatMap(x => fb.flatMap(y => fc.map(z => (x, y, z))(using parasiticEc))(using parasiticEc))(using parasiticEc)
 
     /** Runs four computations in parallel and returns their results as a tuple. */
     inline def zip[A, B, C, D](
@@ -429,9 +433,9 @@ object CIO:
             val fd = d(ctx)
             fa.flatMap(x =>
                 fb.flatMap(y =>
-                    fc.flatMap(z => fd.map(w => (x, y, z, w))(parasiticEc))(parasiticEc)
-                )(parasiticEc)
-            )(parasiticEc)
+                    fc.flatMap(z => fd.map(w => (x, y, z, w))(using parasiticEc))(using parasiticEc)
+                )(using parasiticEc)
+            )(using parasiticEc)
 
     /** Runs five computations in parallel and returns their results as a tuple. */
     inline def zip[A, B, C, D, E1](
@@ -450,10 +454,10 @@ object CIO:
             fa.flatMap(x =>
                 fb.flatMap(y =>
                     fc.flatMap(z =>
-                        fd.flatMap(w => fe.map(v => (x, y, z, w, v))(parasiticEc))(parasiticEc)
-                    )(parasiticEc)
-                )(parasiticEc)
-            )(parasiticEc)
+                        fd.flatMap(w => fe.map(v => (x, y, z, w, v))(using parasiticEc))(using parasiticEc)
+                    )(using parasiticEc)
+                )(using parasiticEc)
+            )(using parasiticEc)
 
     /** Runs six computations in parallel and returns their results as a tuple. */
     inline def zip[A, B, C, D, E1, F](
@@ -475,11 +479,11 @@ object CIO:
                 fb.flatMap(y =>
                     fc.flatMap(z =>
                         fd.flatMap(w =>
-                            fe.flatMap(v => ff.map(u => (x, y, z, w, v, u))(parasiticEc))(parasiticEc)
-                        )(parasiticEc)
-                    )(parasiticEc)
-                )(parasiticEc)
-            )(parasiticEc)
+                            fe.flatMap(v => ff.map(u => (x, y, z, w, v, u))(using parasiticEc))(using parasiticEc)
+                        )(using parasiticEc)
+                    )(using parasiticEc)
+                )(using parasiticEc)
+            )(using parasiticEc)
 
     /** Runs seven computations in parallel and returns their results as a tuple. */
     inline def zip[A, B, C, D, E1, F, G](
@@ -504,11 +508,11 @@ object CIO:
                     fc.flatMap(z =>
                         fd.flatMap(w =>
                             fe.flatMap(v =>
-                                ff.flatMap(u => fg.map(s => (x, y, z, w, v, u, s))(parasiticEc))(parasiticEc)
-                            )(parasiticEc)
-                        )(parasiticEc)
-                    )(parasiticEc)
-                )(parasiticEc)
-            )(parasiticEc)
+                                ff.flatMap(u => fg.map(s => (x, y, z, w, v, u, s))(using parasiticEc))(using parasiticEc)
+                            )(using parasiticEc)
+                        )(using parasiticEc)
+                    )(using parasiticEc)
+                )(using parasiticEc)
+            )(using parasiticEc)
 
 end CIO

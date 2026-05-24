@@ -1,11 +1,6 @@
 package kyo
 
 import java.nio.charset.StandardCharsets
-import kyo.DecodeException
-import kyo.Frame
-import kyo.Result
-import kyo.Schema
-import kyo.Span
 
 /** A serialization format that pairs a [[Codec.Writer]] and [[Codec.Reader]] to encode and decode values.
   *
@@ -103,7 +98,7 @@ object Codec:
         /** Returns a bitmask of fields that should be considered pre-satisfied during required-field validation.
           *
           * The macro-generated case-class decoder OR-s this mask into its local `seen` bitmap before checking required fields, so transform
-          * wrappers (e.g. [[kyo.internal.SchemaSerializer.TransformAwareReader]]) can signal that fields dropped by the schema should not
+          * wrappers (e.g. the internal `SchemaSerializer.TransformAwareReader`) can signal that fields dropped by the schema should not
           * trigger [[MissingFieldException]].
           *
           * Default returns `0L` — no fields pre-satisfied. Overrides must return a mask with bit `i` set iff field index `i` is
@@ -128,8 +123,8 @@ object Codec:
 
         /** Returns a string representation of the last field parsed via [[fieldParse]].
           *
-          * Used for error reporting (e.g. [[UnknownVariantException]]) when [[matchField]] has rejected every known candidate and the
-          * decoder needs a human-readable name. Implementations should return the canonical field name when available, or a stable,
+          * Used for error reporting (e.g. [[UnknownVariantException]]) when [[matchField]] has rejected every known candidate and
+          * the decoder needs a human-readable name. Implementations should return the canonical field name when available, or a stable,
           * identifiable surrogate (e.g. a numeric field ID) when the underlying wire format does not carry names (as in Protobuf).
           */
         def lastFieldName(): String

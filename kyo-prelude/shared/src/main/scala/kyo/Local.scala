@@ -1,7 +1,6 @@
 package kyo
 
 import Local.internal.*
-import kyo.Tag
 import kyo.kernel.*
 import scala.annotation.nowarn
 

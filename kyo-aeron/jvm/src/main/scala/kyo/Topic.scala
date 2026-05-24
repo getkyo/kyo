@@ -27,9 +27,9 @@ import upickle.default.*
   * mitigate this, a runtime type check is performed on message receipt to ensure the received message type matches the expected type.
   *
   * @see
-  *   [[https://aeron.io/]] for documentation on Aeron URIs and more.
+  *   [https://aeron.io/](https://aeron.io/) for documentation on Aeron URIs and more.
   * @see
-  *   [[https://github.com/com-lihaoyi/upickle]] for documentation on serialization.
+  *   [https://github.com/com-lihaoyi/upickle](https://github.com/com-lihaoyi/upickle) for documentation on serialization.
   */
 opaque type Topic <: Env[Aeron] = Env[Aeron]
 
@@ -110,9 +110,11 @@ object Topic:
       *
       * @param uri
       *   The Aeron URI to publish to. Examples:
+      *
       *   - "aeron:ipc" for efficient inter-process communication on same machine
       *   - "aeron:udp?endpoint=localhost:40123" for UDP unicast
       *   - "aeron:udp?endpoint=224.1.1.1:40123|interface=192.168.1.1" for UDP multicast
+      *
       * @param retrySchedule
       *   Schedule for retrying on backpressure
       * @param stream
@@ -188,9 +190,11 @@ object Topic:
       *
       * @param uri
       *   The Aeron URI to subscribe to. Examples:
+      *
       *   - "aeron:ipc" for efficient inter-process communication on same machine
       *   - "aeron:udp?endpoint=localhost:40123" for UDP unicast
       *   - "aeron:udp?endpoint=224.1.1.1:40123|interface=192.168.1.1" for UDP multicast
+      *
       * @param retrySchedule
       *   Schedule for retrying on backpressure
       * @tparam A

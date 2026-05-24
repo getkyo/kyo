@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.Schema.*
 import kyo.internal.JsonReader
 import kyo.internal.JsonWriter
 import kyo.internal.ProtobufReader

@@ -13,6 +13,6 @@ import caseapp.core.parser.Parser
   */
 abstract class KyoCommand[T](using parser: Parser[T], help: Help[T])
     extends Command[T](using parser, help)
-    with KyoCaseAppSupport[T]
-    with KyoAppRunnerWithInterrupts
-    with KyoAppRunnerPlatform
+    with kyo.internal.KyoCaseAppSupport[T]
+    with kyo.internal.KyoAppRunnerWithInterrupts
+    with kyo.internal.KyoAppRunnerPlatform

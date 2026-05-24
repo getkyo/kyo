@@ -8,10 +8,12 @@ import scala.annotation.tailrec
   * changes.
   *
   * Signal provides two fundamental operations:
+  *
   *   - `current`: synchronous access to the current value
   *   - `next`: asynchronous notification of the next change
   *
   * Changes can be observed through streaming operations:
+  *
   *   - `streamCurrent`: emits the current value continuously
   *   - `streamChanges`: emits only when values change
   *
@@ -20,6 +22,7 @@ import scala.annotation.tailrec
   * is critical.
   *
   * The companion object provides these creation methods:
+  *
   *   - `Signal.initRef[A]`: creates a mutable `Signal.Ref[A]` initialized with a starting value
   *   - `Signal.initConst[A]`: creates an immutable `Signal[A]` that always returns the same value
   *   - `Signal.initRaw[A]`: (low-level API) creates a custom `Signal[A]` by directly implementing its fundamental operations, primarily
@@ -407,6 +410,7 @@ object Signal:
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details.
           *
           * The implementation uses two atomic references to manage state:
+          *
           *   - An `AtomicRef[A]` storing the current value
           *   - An `AtomicRef[Promise]` managing change notifications
           *

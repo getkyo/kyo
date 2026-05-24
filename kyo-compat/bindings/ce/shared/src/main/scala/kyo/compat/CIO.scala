@@ -3,6 +3,7 @@ package kyo.compat
 import cats.effect.IO
 import cats.effect.syntax.all.*
 import cats.syntax.parallel.*
+import scala.annotation.nowarn
 import scala.concurrent.Future as ScalaFuture
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.duration.NANOSECONDS
@@ -106,6 +107,7 @@ object CIO:
             lift(self.lower.handleErrorWith(_ => that.lower))
 
         /** Rewrites the error value through `f`. */
+        @nowarn("msg=anonymous")
         inline def mapError(inline f: Throwable => Throwable): CIO[A] =
             lift(self.lower.adaptError {
                 case t => f(t)
@@ -194,6 +196,7 @@ object CIO:
         }
 
     /** Concurrent predicate filtering; same concurrency semantics as `foreach`. */
+    @nowarn("msg=anonymous")
     inline def filter[A](
         inline coll: Iterable[A],
         inline concurrency: Int = Int.MaxValue

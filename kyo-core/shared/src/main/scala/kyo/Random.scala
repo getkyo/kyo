@@ -8,6 +8,7 @@ import scala.annotation.tailrec
   * offers both instance-based usage through object methods and context-based usage through companion object methods.
   *
   * Key features:
+  *
   *   - Generates primitive values with consistent distribution (`nextInt`, `nextLong`, `nextDouble`, `nextBoolean`, etc.)
   *   - Produces random collections with configurable constraints (`nextValues`, `nextStringAlphanumeric`, `nextBytes`)
   *   - Allows sampling from existing collections with uniform probability (`nextValue`)

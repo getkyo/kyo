@@ -19,12 +19,13 @@ import java.io.OutputStream
   * }
   * }}}
   *
-  * `waitFor` suspends the current ''fiber'' (not an OS thread) until the process exits, using the platform's async notification mechanism
+  * `waitFor` suspends the current *fiber* (not an OS thread) until the process exits, using the platform's async notification mechanism
   * (`Process.onExit()` on JVM/Native, `'exit'` event on Node.js). `exitCode` is a non-blocking poll that returns `Absent` if the process is
   * still running.
   *
-  * '''IMPORTANT:''' Reading both `stdout` and `stderr` sequentially can deadlock if the process produces more output than the OS pipe
+  * **IMPORTANT:** Reading both `stdout` and `stderr` sequentially can deadlock if the process produces more output than the OS pipe
   * buffer (~64 KB) on both streams. Use [[Process.collectOutput]] to drain both streams concurrently:
+  *
   * {{{
   * val (out, err) = proc.collectOutput  // safe — concurrent drain
   * }}}
@@ -120,6 +121,7 @@ object Process:
     /** The exit status of a completed process.
       *
       * An exit code is either:
+      *
       *   - `Success` (exit value 0)
       *   - `Failure(code)` — a non-zero exit value that does not encode a signal
       *   - `Signaled(number)` — the process was terminated by an OS signal (Unix convention: exit value = 128 + signal number)
@@ -160,6 +162,7 @@ object Process:
         /** Constructs an `ExitCode` from a raw integer exit value.
           *
           * Interpretation:
+          *
           *   - `0` → `Success`
           *   - `n >= 128` → `Signaled(n - 128)`
           *   - any other non-zero value → `Failure(n)`

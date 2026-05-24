@@ -1,6 +1,6 @@
 package kyo.stats.otlp
 
-import kyo.HttpFilterFactory
+import kyo.HttpFilter
 import kyo.stats.internal.ExporterFactory
 import kyo.stats.internal.JSServiceLoaderRegistry
 import scala.scalajs.js.annotation.JSExportTopLevel
@@ -15,7 +15,7 @@ object OTLPRegistration:
     @JSExportTopLevel("__kyo_otel_init")
     val init: Boolean =
         JSServiceLoaderRegistry.register(classOf[ExporterFactory], new OTLPExporterFactory())
-        JSServiceLoaderRegistry.register(classOf[HttpFilterFactory], new OTLPHttpFilterFactory())
+        JSServiceLoaderRegistry.register(classOf[HttpFilter.Factory], new OTLPHttpFilterFactory())
         true
     end init
 end OTLPRegistration

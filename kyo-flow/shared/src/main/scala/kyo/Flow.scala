@@ -32,14 +32,15 @@ import scala.compiletime.error
   * Error handling uses Kyo's `Abort.recover` inside step bodies. Compensation handlers (`.outputCompensated`) fire in reverse order when a
   * later step fails.
   *
-  * **Status transitions:**
-  * {{{
+  * #### Status transitions
+  *
+  * ```text
   *   Running ──→ Completed
   *   Running ──→ Failed (compensations run first if registered)
   *   Running ──→ WaitingForInput ──→ Running (on signal)
   *   Running ──→ Sleeping ──→ Running (on expiry)
   *   Any non-terminal ──→ Cancelled
-  * }}}
+  * ```
   *
   * @tparam In
   *   Intersection of required input types (accumulated via `.input`)
@@ -307,11 +308,11 @@ object Flow:
 
     /** Start building a named workflow. The name is the workflow's identity used for registration, lookup, and HTTP endpoints.
       *
-      * {{{
+      * ```scala
       * val order = Flow.init("order-processing", description = "Handles orders")
       *     .input[Order]("order")
       *     .output("total")(ctx => ctx.order.qty * ctx.order.price)
-      * }}}
+      * ```
       */
     def init(
         name: String,
@@ -338,9 +339,10 @@ object Flow:
     /** Start an HTTP server with REST endpoints for all given workflows, using an in-memory store.
       *
       * This is the fastest way to get a flow server running. For production use with a durable store, use `runServer(store, flows*)`.
-      * {{{
+      *
+      * ```scala
       * Flow.runServer(orderFlow, shippingFlow)
-      * }}}
+      * ```
       */
     def runServer(flows: Flow[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
         FlowStore.initMemory.map(store => runServer(store, flows*))
@@ -389,9 +391,9 @@ object Flow:
       * The runner wraps the entire flow execution, providing effect handlers that step bodies need. The compiler infers `S` from the flow,
       * then requires the runner to handle it.
       *
-      * {{{
+      * ```scala
       * Flow.runLocal(myFlow, "x" ~ 42)([v] => c => Env.run(config)(c))
-      * }}}
+      * ```
       */
     def runLocal[In, Out, S](
         flow: Flow[In, Out, S],
@@ -704,12 +706,12 @@ object Flow:
 
     /** Builder for conditional dispatch (branching). Chain `.when(cond)(body)` to add branches, then `.otherwise(body)` to complete.
       *
-      * {{{
+      * ```scala
       * flow.dispatch[String]("decision")
       *     .when(ctx => ctx.amount > 1000, name = "review")(ctx => "needs review")
       *     .when(ctx => ctx.amount > 100, name = "auto")(ctx => "auto-approved")
       *     .otherwise(ctx => "instant", name = "default")
-      * }}}
+      * ```
       */
     final class PartialDispatch[In, Out, Sf, Sc, N <: String, V] private[kyo] (
         private[kyo] val flow: Flow[In, Out, Sf],

@@ -29,8 +29,8 @@ final class CMeter(
                 c.lower.transform { t =>
                     release()
                     t
-                }(CMeter.parasiticEc)
-            }(CMeter.parasiticEc)
+                }(using CMeter.parasiticEc)
+            }(using CMeter.parasiticEc)
         }
 
     /** Attempts to acquire a permit without blocking; runs `c` if successful, otherwise returns `None`. */
@@ -45,7 +45,7 @@ final class CMeter(
                     case Failure(t) =>
                         release()
                         Failure(t)
-                }(CMeter.parasiticEc)
+                }(using CMeter.parasiticEc)
         }
 
     /** Current count of available permits. */

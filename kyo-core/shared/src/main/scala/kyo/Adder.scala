@@ -9,6 +9,7 @@ import java.util.concurrent.atomic as j
   * distributed across threads, which are then combined on read operations.
   *
   * This approach offers significant performance benefits in high-contention scenarios:
+  *
   *   - Write operations (add, increment) are extremely fast with minimal thread interference
   *   - Read operations (get) are slightly slower as they must sum across all internal counters
   *
@@ -16,6 +17,7 @@ import java.util.concurrent.atomic as j
   * implementations.
   *
   * Ideal for:
+  *
   *   - High-throughput statistics collection
   *   - Concurrent request counters
   *   - Performance monitoring systems
@@ -131,6 +133,7 @@ end LongAdder
   * operations.
   *
   * This approach significantly reduces thread contention:
+  *
   *   - Addition operations have minimal thread synchronization overhead
   *   - Read operations are relatively more expensive as they must combine values from all internal cells
   *
@@ -138,6 +141,7 @@ end LongAdder
   * implementations.
   *
   * Ideal for:
+  *
   *   - Accumulating floating-point measurements
   *   - Scientific computing with concurrent updates
   *   - Financial calculations requiring high throughput

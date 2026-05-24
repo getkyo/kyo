@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Maybe
 import kyo.internal.ConcreteTagMacro
 import scala.quoted.*
 
@@ -12,6 +11,7 @@ import scala.quoted.*
   * ClassTag.
   *
   * Limitations:
+  *
   *   - Does not support generic types (types with type parameters)
   *   - Cannot represent Null type
   *

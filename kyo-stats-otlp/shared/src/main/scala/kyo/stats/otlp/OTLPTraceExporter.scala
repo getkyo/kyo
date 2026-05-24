@@ -58,7 +58,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
       * @param attributes
       *   Initial span attributes
       * @return
-      *   An [[UnsafeTraceSpan]] handle — call `end()` to finalize and enqueue for export
+      *   An `UnsafeTraceSpan` handle — call `end()` to finalize and enqueue for export
       */
     def startSpan(
         scope: List[String],

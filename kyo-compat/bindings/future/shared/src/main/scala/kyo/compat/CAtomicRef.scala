@@ -1,6 +1,7 @@
 package kyo.compat
 
 import java.util.concurrent.atomic.AtomicReference
+import scala.annotation.nowarn
 import scala.concurrent.Future
 
 /** Underlying carrier is `java.util.concurrent.atomic.AtomicReference[A]`. The Future ecosystem has no `Frame` / `Trace` to propagate.
@@ -32,10 +33,12 @@ object CAtomicRef:
         inline def getAndSet(inline a: A): CIO[A] = CIO.defer(self.getAndSet(a))
 
         /** Atomically applies `f` and returns the new value. */
-        inline def updateAndGet(inline f: A => A): CIO[A] = CIO.defer(self.updateAndGet(a => f(a)))
+        @nowarn("msg=anonymous")
+        inline def updateAndGet(inline f: A => A): CIO[A] = CIO.defer(self.updateAndGet(f(_)))
 
         /** Atomically applies `f` and returns the previous value. */
-        inline def getAndUpdate(inline f: A => A): CIO[A] = CIO.defer(self.getAndUpdate(a => f(a)))
+        @nowarn("msg=anonymous")
+        inline def getAndUpdate(inline f: A => A): CIO[A] = CIO.defer(self.getAndUpdate(f(_)))
 
         /** Atomic compare-and-set: replaces `expected` with `updated` iff the current value equals `expected`. */
         inline def compareAndSet(inline expected: A, inline updated: A): CIO[Boolean] =

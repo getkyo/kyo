@@ -66,7 +66,7 @@ object Kyo:
       * @param ifTrue
       *   Effect to run if condition evaluates to true
       * @return
-      *   An effect that runs [[ifTrue]] if [[condition]] evaluates to true
+      *   An effect that runs `ifTrue` if `condition` evaluates to true
       */
     def when[S](condition: Boolean < S)[A, S1](ifTrue: => A < S1)(using Frame): Maybe[A] < (S & S1) =
         condition.map(if _ then ifTrue.map(Present(_)) else Absent)
@@ -79,7 +79,7 @@ object Kyo:
       * @param ifFalse
       *   Effect to run if condition evaluates to false
       * @return
-      *   An effect that runs [[ifFalse]] if [[condition]] evaluates to false
+      *   An effect that runs `ifFalse` if `condition` evaluates to false
       */
     def unless[S](condition: Boolean < S)[A, S1](ifFalse: => A < S1)(using Frame): Maybe[A] < (S & S1) =
         condition.map(if _ then Absent else ifFalse.map(Present(_)))

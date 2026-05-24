@@ -620,7 +620,7 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
                         case 1 => single(source.iterator.next())
                         case _ =>
                             other match
-                                case seq: IndexedSeq[A] => FromSeq(seq)
+                                case seq: IndexedSeq[A] @unchecked => FromSeq(seq)
                                 case _ =>
                                     val array = other.iterator.toArray(using erasedTag[A])
                                     array.length match

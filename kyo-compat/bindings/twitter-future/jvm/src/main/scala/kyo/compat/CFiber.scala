@@ -4,6 +4,7 @@ import com.twitter.util.Future
 import com.twitter.util.Promise
 import com.twitter.util.Return
 import com.twitter.util.Throw
+import scala.annotation.nowarn
 
 /** Underlying carrier is `com.twitter.util.Future[A]` wired to a `com.twitter.util.Promise[A]` with an `setInterruptHandler`. There is no
   * `Frame` / `Trace` to propagate. `lift` and `lower` are identity since the carrier is already a native Twitter Future. `init` wires
@@ -17,6 +18,7 @@ opaque type CFiber[+A] = Future[A]
 object CFiber:
 
     /** Forks `c` as a new fiber wired with an interrupt handler that raises the inner body and flips the result to `Throw(t)`. */
+    @nowarn("msg=anonymous")
     inline def init[A](inline c: CIO[A]): CIO[CFiber[A]] =
         CIO.defer {
             val result = new Promise[A]()

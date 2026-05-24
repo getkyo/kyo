@@ -140,8 +140,6 @@ final private[kyo] class Http1StreamContext(
                 // Channel full — queue via putFiber for backpressure (will complete when space available)
                 discard(outbound.putFiber(data))
             case Result.Failure(_: Closed) => () // channel closed, connection shutting down
-            case Result.Failure(e) =>
-                Log.live.unsafe.error(s"$context: unexpected failure", e)
             case Result.Panic(t) =>
                 Log.live.unsafe.error(s"$context: panic", t)
 

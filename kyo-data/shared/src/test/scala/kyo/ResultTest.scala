@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Result
 import kyo.Result.*
 import scala.util.Try
 

@@ -31,7 +31,7 @@ import scala.util.matching.Regex
   * @see
   *   [[kyo.Parse.attempt]], [[kyo.Parse.peek]] for parsers with look-ahead and backtracking
   * @see
-  *   [[kyo.Parse.run]] for executing parsers against input text
+  *   [[kyo.Parse.runResult]] and [[kyo.Parse.runOrAbort]] for executing parsers against input text
   */
 sealed trait Parse[In] extends ArrowEffect[[in] =>> Parse.Op[In, in], Id]
 

@@ -13,12 +13,12 @@ import org.apache.pekko.dispatch.ExecutorServiceFactory
   *
   * To use Kyo's scheduler in your Pekko application, configure it as the default dispatcher:
   *
-  * {{{
+  * ```hocon
   * pekko.actor.default-dispatcher {
   *   type = "Dispatcher"
   *   executor = "kyo.scheduler.KyoExecutorServiceConfigurator"
   * }
-  * }}}
+  * ```
   *
   * The configurator uses Kyo's scheduler singleton instance, allowing it to share resources and optimization decisions across the entire
   * application. By handling all actor executions, it can efficiently adapt to varying workloads and system conditions, optimizing thread
