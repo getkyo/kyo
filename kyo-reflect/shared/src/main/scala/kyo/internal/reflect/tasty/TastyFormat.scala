@@ -206,6 +206,24 @@ object TastyFormat:
         final val TARGETSIGNED: Int   = 62
     end NameTags
 
+    // ── Attribute tag constants (TastyFormat.scala, lines 635-654) ──────────────
+    // Category 1 (tags 1-32): boolean flags, no payload.
+    final val SCALA2STANDARDLIBRARYattr: Int = 1 // file is part of Scala 2 stdlib
+    final val EXPLICITNULLSattr: Int         = 2 // compiled with -Yexplicit-nulls
+    final val CAPTURECHECKEDattr: Int        = 3 // compiled with -Ycc
+    final val WITHPUREFUNSattr: Int          = 4 // compiled with -Ywith-pure-funs (internal, not surfaced)
+    final val JAVAattr: Int                  = 5 // Java-originated TASTy file
+    final val OUTLINEattr: Int               = 6 // outline TASTy (no bodies)
+
+    // Category 3 (tags 129-160): tag + Utf8Ref (one Nat payload).
+    final val SOURCEFILEattr: Int = 129 // source file name (Utf8Ref into name table)
+
+    /** Returns true for Category 1 attribute tags (boolean flags, tags 1-32). */
+    def isBooleanAttrTag(tag: Int): Boolean = tag >= 1 && tag <= 32
+
+    /** Returns true for Category 3 attribute tags (Utf8Ref payload, tags 129-160). */
+    def isStringAttrTag(tag: Int): Boolean = tag >= 129 && tag <= 160
+
     // ── Version compatibility (verbatim from TastyFormat.scala, lines 373-390) ──
     /** Returns true if the file version is readable by a compiler at the given version.
       *

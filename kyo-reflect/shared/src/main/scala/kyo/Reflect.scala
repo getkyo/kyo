@@ -1,5 +1,8 @@
 package kyo
 
+import kyo.internal.reflect.binary.Utf8
+import kyo.internal.reflect.symbol.Interner
+
 /** kyo-reflect public entry object.
   *
   * Reads Scala 3 TASTy files and Java classfiles through a unified Symbol/Type API. Cross-platform JVM, JS, Native.
@@ -23,12 +26,31 @@ object Reflect:
 
     // ── Names and flags ─────────────────────────────────────────────────────
 
-    opaque type Name = String
+    // A module-level interner used by Name.apply(String) so the public API stays unchanged.
+    private val globalInterner: Interner = new Interner(32)
+
+    /** An interned name backed by a byte sequence.
+      *
+      * The internal representation is `Interner.Entry`, which stores raw UTF-8 bytes and decodes to a `String` lazily via `Memo[String]`.
+      * Reference equality on two `Name` values implies byte-level equality because the interner guarantees a unique `Entry` per unique byte
+      * sequence. The `CanEqual` instance delegates to reference equality, which is therefore correct.
+      */
+    opaque type Name = Interner.Entry
     object Name:
-        def apply(s: String): Name = s
-        given CanEqual[Name, Name] = CanEqual.derived
+        /** Construct a `Name` from a `String` by encoding to UTF-8 and interning the bytes. */
+        def apply(s: String): Name =
+            val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            globalInterner.intern(bytes, 0, bytes.length)
+
+        /** Wrap an already-interned `Entry` as a `Name`. For use by kyo-internal unpicklers only. */
+        private[kyo] def wrap(entry: Interner.Entry): Name = entry
+
+        /** Reference equality is correct because the interner guarantees unique Entry per unique byte sequence. */
+        given CanEqual[Name, Name] = CanEqual.canEqualAny
+
         extension (n: Name)
-            def asString: String = n
+            /** Decode the interned bytes to a String (lazily cached). */
+            def asString: String = n.string.get()
     end Name
 
     final class Flags(val bits: Long) extends AnyVal:

@@ -41,4 +41,14 @@ If context is compacted or any interruption occurs:
 
 ## Active directives (cleared as agents comply)
 
-(none right now; Phase 1 LEB128 directive resolved; Phase 1 typo claim was a pulse hallucination, all occurrences in TastyHeaderTest verified as `Result.Failure`, no edit needed)
+### Phase 2 name-table delimiter (BLOCKING for NameUnpickler)
+
+PHASE-2-PREP.md surfaced this concern: the TASTy name table is **byte-count-delimited**, not entry-count-delimited. The header field after the section name is the byte length of the name table; the unpickler reads entries until the cursor reaches `start + byteLength`, not until it has consumed N entries. Implement this exactly as dotty does in `TastyUnpickler.scala` (cite the source). Tests must include: a name table whose entries do not align to a "round" count, and a name table with trailing padding bytes that the unpickler must NOT interpret as an extra entry.
+
+After Phase 2 lands and tests pass, this directive can be cleared.
+
+### Phase 2 NameRef indexing: RESOLVED 0-based empirically
+
+The earlier directive (insisting 1-based per dotty `TastyFormat.scala` spec block "starting from 1") was based on an ambiguous spec line. The Phase 2 impl verified empirically against a real scalac-compiled TASTy file (`PlainClass.tasty` fixture): section header `0x80` decodes to NAT=0, resolving to `names[0]='ASTs'`. Real TASTy emitters use 0-based array indices for NameRef encoding; the spec's "starting from 1" appears to refer to human ordinal counting, not the on-wire encoding. Tests on the real fixture pass with 29 expected names. RESOLVED: 0-based is correct.
+
+If Phase 3+ surfaces a NameRef-related decoding bug on real TASTy, revisit; otherwise cleared.
