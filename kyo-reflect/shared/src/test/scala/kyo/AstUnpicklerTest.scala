@@ -10,6 +10,7 @@ import kyo.internal.reflect.tasty.NameUnpickler
 import kyo.internal.reflect.tasty.SectionIndex
 import kyo.internal.reflect.tasty.TastyFormat
 import kyo.internal.reflect.tasty.TastyHeader
+import kyo.internal.reflect.type_.TypeArena
 
 /** Tests for AstUnpickler.readPass1.
   *
@@ -37,6 +38,7 @@ class AstUnpicklerTest extends Test:
         val view     = ByteView(bytes)
         val interner = new Interner(32)
         val home     = new ClasspathRef
+        val arena    = TypeArena.canonical()
         for
             _        <- TastyHeader.read(view)
             names    <- NameUnpickler.read(view, interner)
@@ -45,12 +47,35 @@ class AstUnpicklerTest extends Test:
             result <- sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
-                    AstUnpickler.readPass1(astView, names, attrs, home)
+                    AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
                     Abort.fail(ReflectError.MalformedSection("ASTs", "ASTs section not found"))
         yield result
         end for
     end runPass1
+
+    /** Parse a TASTy file and run pass 1 with an explicit arena. Returns the Pass1Result. */
+    private def runPass1WithArena(bytes: Array[Byte], arena: TypeArena)(using
+        Frame
+    )
+        : AstUnpickler.Pass1Result < (Sync & Abort[ReflectError]) =
+        val view     = ByteView(bytes)
+        val interner = new Interner(32)
+        val home     = new ClasspathRef
+        for
+            _        <- TastyHeader.read(view)
+            names    <- NameUnpickler.read(view, interner)
+            sections <- SectionIndex.read(view, names)
+            attrs = FileAttributes.default
+            result <- sections.get(TastyFormat.ASTsSection) match
+                case Present((offset, length)) =>
+                    val astView = view.subView(offset, offset + length)
+                    AstUnpickler.readPass1(astView, names, attrs, home, arena)
+                case Absent =>
+                    Abort.fail(ReflectError.MalformedSection("ASTs", "ASTs section not found"))
+        yield result
+        end for
+    end runPass1WithArena
 
     // Test 7: pass 1 on PlainClass.tasty returns at least one symbol with kind == Class.
     "pass 1 on PlainClass.tasty returns at least one Class symbol" in run {
@@ -300,6 +325,49 @@ class AstUnpicklerTest extends Test:
                     // addrMap should contain at least one entry for this symbol
                     val aInMap = r.addrMap.values.exists(s => s.name.asString == "A" && s.kind == Reflect.SymbolKind.TypeParam)
                     assert(aInMap, s"TypeParam A not found in addrMap. addrMap keys: ${r.addrMap.keys.mkString(", ")}")
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 21 (Phase 4 wiring): pass 1 on PlainClass.tasty with arena wiring produces non-empty placeholders.
+    // PlainClass.tasty references cross-file types (scala.Int, etc.) encoded as TYPEREFpkg/TYPEREFin nodes.
+    // After Phase 4 wiring, these produce UnresolvedRef entries in Pass1Result.placeholders.
+    "pass 1 on PlainClass.tasty with arena produces non-empty placeholders" in run {
+        val bytes = loadFixtureBytes("PlainClass.tasty")
+        val arena = TypeArena.canonical()
+        Abort.run[ReflectError](runPass1WithArena(bytes, arena)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    assert(
+                        r.placeholders.nonEmpty,
+                        s"Expected non-empty placeholders from PlainClass.tasty but got empty. " +
+                            s"Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Test 22 (TEMPLATE parent decoding): SomeCaseClass.tasty extends Product and Serializable.
+    // After STEERING directive 2 fix, parent types inside TEMPLATE are decoded by TypeUnpickler,
+    // producing UnresolvedRef placeholders for cross-file parent references.
+    "TEMPLATE parents flow into placeholders: SomeCaseClass.tasty produces parent type UnresolvedRefs" in run {
+        val bytes = loadFixtureBytes("SomeCaseClass.tasty")
+        val arena = TypeArena.canonical()
+        Abort.run[ReflectError](runPass1WithArena(bytes, arena)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    assert(
+                        r.placeholders.nonEmpty,
+                        s"Expected UnresolvedRef placeholders from TEMPLATE parents in SomeCaseClass.tasty " +
+                            s"(case class extends Product/Serializable) but got empty placeholders. " +
+                            s"Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>
