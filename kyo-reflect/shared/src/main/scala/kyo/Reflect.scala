@@ -205,7 +205,8 @@ object Reflect:
         val name: Name,
         val owner: Symbol,
         private[Reflect] val home: ClasspathRef,
-        private[kyo] val origin: Symbol.Origin
+        private[kyo] val origin: Symbol.Origin,
+        private[kyo] val javaMetadata: Maybe[JavaMetadata] = Absent
     ):
         // Pure accessors (no effect, always present even after classpath close).
         def fullName: Name           = Symbol.computeFullName(this)
@@ -225,7 +226,7 @@ object Reflect:
         def companion(using Frame): Maybe[Symbol] < (Sync & Abort[ReflectError])    = stub("Symbol.companion")
 
         // Java-specific side door.
-        def javaSpecific: Maybe[JavaMetadata] = Absent
+        def javaSpecific: Maybe[JavaMetadata] = javaMetadata
     end Symbol
 
     object Symbol:
@@ -282,9 +283,10 @@ object Reflect:
             name: Name,
             owner: Symbol,
             home: ClasspathRef,
-            origin: Origin
+            origin: Origin,
+            javaMetadata: Maybe[JavaMetadata] = Absent
         ): Symbol =
-            new Symbol(kind, flags, name, owner, home, origin)
+            new Symbol(kind, flags, name, owner, home, origin, javaMetadata)
 
         /** The complete Symbol.Origin ADT. Phase 5 adds JavaOrigin construction sites; the ADT itself is sealed here. */
         sealed trait Origin derives CanEqual

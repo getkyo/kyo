@@ -9,7 +9,7 @@ Stage 2 driving the 10-phase plan in `execution-plan.md`.
 | 1   | Binary primitives + TASTy header | committed | debd96e17 | 27 (3 extras vs plan's 24, all rigor) | LEB128 was zigzag in plan; corrected to dotty 2's-complement during impl |
 | 2   | Name table + section index + attributes | committed | 69e1354fa | 15 | NameRef empirically 0-based against real scalac-compiled fixture (overrode incorrect STEERING that read spec as 1-based) |
 | 3   | Symbol pass 1 + skeleton AST | committed | e29f81a34 | 23 (65 total cumulative) | Pulse 1 surfaced 5 CRITICALs (1 hallucination, 4 real); fix-up agent applied all 4 STEERING directives before commit |
-| 4   | Type model + arenas + Phase C merge | pending | - | 24 | - |
+| 4   | Type model + arenas + Phase C merge | committed | ad01c90b7 | 26 (+2 for TEMPLATE parents; 91 cumulative) | Pulse 1: 3 CRITICALs (1 hallucination, 1 valid, 1 necessary deviation); pulse 2 confirmed sig wiring but TEMPLATE skipped; fix-up agent applied TEMPLATE directive |
 | 5   | Classfile reader | pending | - | 20 | - |
 | 5b  | Java/Scala unification | pending | - | 18 | - |
 | 6   | Reflect.Reads derivation macro | pending | - | 18 | - |
@@ -24,6 +24,7 @@ Stage 2 driving the 10-phase plan in `execution-plan.md`.
 - **Phase 1** (PHASE-1-AUDIT.md): PROCEED. 0 BLOCKER, 3 WARN, 8 NOTE. WARNs queued as TaskCreate #73 for Phase 2 cleanup: try/catch in TastyHeader.read (use Abort); asInstanceOf[Heap] in ByteViewTest cast; early `return` from Abort-effected method. NOTEs cosmetic. Audit also documented 4 places where plan was wrong and impl correctly diverged (LEB128 byte order, leaf 23 minor=9, U+00E9 byte count, signed-integer encoding).
 - **Phase 2** (PHASE-2-AUDIT.md): PROCEED. 0 BLOCKER, 7 WARN, 8 NOTE. WARNs queued as TaskCreate #74. Most important: W4 cross-platform fixture resource embedding for JS/Native missing (tests pass JVM but will fail at JS/Native runtime); MUST be addressed before final green run. Also W5: trailing-padding-bytes test missing per STEERING; W6/W7: Memo/SingleAssign use asInstanceOf without Unsafe-tier convention. NOTEs cosmetic.
 - **Phase 3** (PHASE-3-AUDIT.md): PROCEED. 0 BLOCKER, 7 WARN, 8 NOTE. WARNs queued as TaskCreate #75. All 4 STEERING fixes confirmed applied. Most important WARN: Pass1Result.placeholders is structurally PRESENT but populated as Chunk.empty everywhere (Phase 4's job per plan line 279). Other WARNs: 9 weakened tests in AstUnpicklerTest (leaves 17-20) + DeclarationTableTest (21-22).
+- **Phase 4** (PHASE-4-AUDIT.md): PROCEED. 0 BLOCKER, 5 WARN, 8 NOTE. WARNs queued as TaskCreate #76. All 3 STEERING directives complied. 5 weakened tests: test 16 (SHAREDtype) substitutes intern roundtrip instead of decoder path; test 23 (RECtype) only validates byte layout; test 20 (ANDtype) too permissive; test 21 (MATCHtype) skips scrutinee assertion; TypeArenaTest test 3 trivial. Plus ERASEDMETHODtype/IMPLICITMETHODtype/SKOLEMtype untested.
 
 ## User deferrals
 

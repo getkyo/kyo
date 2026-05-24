@@ -72,6 +72,17 @@ object ByteView:
             b
         end readByte
 
+        /** Copy bytes from absolute positions [from, until) into a fresh array.
+          *
+          * Does not advance the cursor. Used for lazy UTF-8 decoding in the constant pool reader.
+          */
+        def copyBytes(from: Int, until: Int): Array[Byte] =
+            val len = until - from
+            val out = new Array[Byte](len)
+            java.lang.System.arraycopy(bytes, from, out, 0, len)
+            out
+        end copyBytes
+
         def readEnd(): Int =
             val len = Varint.readNat(this)
             cursor + len

@@ -65,16 +65,26 @@ PRIVATEqualified/PROTECTEDqualified sub-tree skip is implemented per the directi
 
 All 4 BLOCKING fixes from pulse 1 applied by the fix-up agent before commit: Pass1Result.placeholders added; null.asInstanceOf replaced with Unresolved sentinel; fromTagAndFlags top-level dispatch added; Test 23 latch order corrected. Cleared.
 
-### Phase 4 placeholders wiring (PARTIAL: signature wired, TEMPLATE parents not)
+### Phase 4 wiring (RESOLVED, applied in ad01c90b7)
 
-VALDEF/TYPEPARAM/PARAM type positions are now wired through TypeUnpickler (pulse 2 confirmed). However, AstUnpickler.scala lines 207-209 still skips the TEMPLATE payload entirely (`view.goto(templatePayloadEnd)`) with a comment "parents are decoded lazily". This contradicts plan line 279 which requires PARENT TYPE positions to flow through TypeUnpickler as well; class extends/implements chains currently do NOT produce UnresolvedRef placeholders.
+Both signature and TEMPLATE parent wiring completed. decodeTemplateParents walks Type nodes between TypeParam/Param and SELFDEF/VALDEF/DEFDEF/TYPEDEF/modifier. Cleared.
 
-Update the TEMPLATE handling block (around lines 200-220):
-- After consuming the TEMPLATE tag and reading `templatePayloadEnd`, do NOT immediately `view.goto(templatePayloadEnd)`.
-- Walk the TEMPLATE payload structure (TypeParam* Param* parent_Type* self_ValDef? Stat*) and at each `parent_Type` position call `TypeUnpickler.readTypeIntoSession` so parent types decode into Reflect.Type values and contribute UnresolvedRefs to `typeSession.placeholders`.
-- After the parent block, advance to `templatePayloadEnd` (the rest of the body is still decoded by the existing member walk).
-- Add a test that asserts a class fixture (e.g., FixtureClasses.SomeCaseClass which extends Product) produces parent type refs in `r.placeholders`.
+### Phase 5 fixes (BLOCKING before commit)
 
-Remove the misleading comment "Phase 4: skip the template payload (parents are decoded lazily)" — that contradicts the plan and was a scope substitution.
+In-flight pulse 1 surfaced 4 real issues confirmed against the plan. Apply ALL before re-running tests.
 
-After this lands and tests pass, this directive can be cleared.
+**1. `asInstanceOf` at `ConstantPool.scala:140`** violates `feedback_no_casts`. The line `val heap = view.asInstanceOf[ByteView.Heap]` casts a ByteView for raw byte access. Fix one of two ways:
+(a) Extend `ByteView` with a public `copyBytes(from: Int, until: Int): Array[Byte]` method that handles Heap and (future) Mapped variants uniformly. Use it from ConstantPool.
+(b) Eagerly copy the UTF-8 bytes at constant-pool-read time into `Array[Byte]` and store; defer only String materialization via `Interner`.
+Option (a) is more aligned with the design's lazy-decode philosophy.
+
+**2. Wire super/interfaces into Symbol parents (plan test 3 leaf)**. Plan test 3 says `java.lang.String` has `parents` containing a symbol whose name includes `"Object"`. ClassfileResult currently omits parents entirely; super_class and interface indices are read then discarded (see line 133 comment "Skip interfaces"). 
+- Add `parents: Chunk[Reflect.Type]` (or wire onto classSymbol via Symbol's accessor) constructed from the super_class CONSTANT_Class entry + each interface CONSTANT_Class entry, mapped to `Reflect.Type.Named(unresolvedSymbol)` placeholders (the unpickler doesn't yet know if those classes are in the classpath; Phase 7 resolver replaces with real symbols).
+- Update test 3 to actually exercise this: load a real `String.class` fixture and assert `classSymbol.parents` contains a `Type.Named(...)` whose `.name.asString` contains `"Object"`.
+
+**3. Wire javaSpecific on each Symbol (plan test 11 leaf)**. Plan calls for `populates JavaMetadata on each symbol`. Currently `ClassfileResult` returns symbols but they likely have `javaSpecific = Absent` everywhere. Build a `JavaMetadata` per symbol from the relevant attributes (throwsTypes, annotations, enclosingMethod, accessFlags, recordComponents) and pass it to the Symbol constructor.
+- Test 11 must assert: a Java-sourced symbol's `javaSpecific.isDefined == true` AND a TASTy-sourced symbol's `javaSpecific.isDefined == false`.
+
+**4. Wire throwsTypes (plan test 12 leaf)**. For each method symbol, parse the `Exceptions` attribute and populate `JavaMetadata.throwsTypes: Chunk[Reflect.Type]`. Test 12 must assert: a method declared `throws IOException` has non-empty `throwsTypes`.
+
+After all 4 fixes land and tests pass strictly (not weakened), commit. Re-test with `sbt 'project kyo-reflect; testOnly kyo.ClassfileReaderTest kyo.JavaSignaturesTest'` plus cross-platform compile.
