@@ -41,4 +41,4 @@ If context is compacted or any interruption occurs:
 
 ## Active directives (cleared as agents comply)
 
-(none right now)
+(none right now; Phase 1 LEB128 directive resolved; Phase 1 typo claim was a pulse hallucination, all occurrences in TastyHeaderTest verified as `Result.Failure`, no edit needed)
