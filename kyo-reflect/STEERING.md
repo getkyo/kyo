@@ -2,6 +2,21 @@
 
 The v1 plan (`execution-plan.md`) is complete and committed. The active plan is now `kyo-reflect/execution-plan-v2.md`. v1 references in older sections of this file are historical.
 
+## v2 Phase 1 Resolver wiring incomplete (BLOCKER — fixup queued before Phase 3)
+
+PHASE-1-V2-AUDIT.md found that Resolver.makeClassLookup and makePackageLookup are defined but never called from Classpath.lookupClass / lookupPackage. The lookups still read fqnIndex directly. The readyLatch (Building-state gate) works correctly, the Async expansion is correct, the AllowUnsafe comments are correct. Only the Cache.memo Promise dedup is missing.
+
+Functional impact: Test 19 still passes (sym1 eq sym2 via HashMap identity), but the Promise dedup machinery promised in the plan is dead code. The commit message inaccurately claims "Cache.memo is now wired".
+
+Resolution: a Phase 1 fixup commit must land BEFORE Phase 3 launches. The fixup:
+1. Build `classLookup` and `packageLookup` fields on `Classpath` during `allocate`.
+2. Update `lookupClass` and `lookupPackage` to call `classLookup(fqn)` / `packageLookup(fqn)` instead of reading `fqnIndex` directly.
+3. Verify Test 19 still passes; verify Test 2 still passes; add a more focused dedup test that proves Cache.memo's Promise dedup (e.g. count how many times the underlying resolution function is invoked under N concurrent callers — should be 1).
+
+After fixup commits: clear this section.
+
+Also fix the stale comment in Test 19 (line 101) saying "Resolver.scala was deleted" — Resolver is back.
+
 ## v2 Phase 1 Async deviation (supervisor-approved)
 
 The v2 plan Phase 1 says "Public API modifications: none" but wiring `Cache.memo` into `lookupClass`/`lookupPackage` fundamentally requires `Async` in the effect row (Promise dedup is intrinsically async; the only alternative is `Fiber.block` which STEERING forbids). The v1 final WARN drain deleted Resolver.scala citing exactly this constraint; v2 resurrected the wiring intent without resolving it.

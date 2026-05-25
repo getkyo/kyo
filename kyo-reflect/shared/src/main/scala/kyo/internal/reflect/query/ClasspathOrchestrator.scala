@@ -1,8 +1,10 @@
 package kyo.internal.reflect.query
 
 import kyo.*
+import kyo.Maybe.Absent
 import kyo.internal.reflect.binary.ByteView
 import kyo.internal.reflect.symbol.Interner
+import kyo.internal.reflect.symbol.Symbol as InternalSymbol
 import kyo.internal.reflect.tasty.AstUnpickler
 import kyo.internal.reflect.tasty.FileAttributes
 import kyo.internal.reflect.tasty.NameUnpickler
@@ -39,7 +41,8 @@ object ClasspathOrchestrator:
     final private case class FileResult(
         fqns: Seq[(String, Reflect.Symbol)],
         arena: TypeArena,
-        errors: Seq[ReflectError]
+        errors: Seq[ReflectError],
+        placeholders: Chunk[UnresolvedRef]
     )
 
     /** Open a new classpath from a set of root paths.
@@ -110,13 +113,13 @@ object ClasspathOrchestrator:
                 if strict then
                     Abort.fail(err)
                 else
-                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err))
+                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty)
             case Result.Panic(t) =>
                 val err = ReflectError.CorruptedFile(file, 0L, t.getMessage)
                 if strict then
                     Abort.fail(err)
                 else
-                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err))
+                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty)
                 end if
 
     /** Decode TASTy bytes into a FileResult (fqn-symbol pairs + arena). */
@@ -144,7 +147,7 @@ object ClasspathOrchestrator:
             val pairs = pass1Result.symbols.toSeq.flatMap: sym =>
                 val fqn = nameToString(sym.fullName)
                 if fqn.nonEmpty then Seq((fqn, sym)) else Seq.empty
-            FileResult(pairs, arena, Seq.empty)
+            FileResult(pairs, arena, Seq.empty, pass1Result.placeholders)
         end for
     end decodeTastyBytes
 
@@ -196,9 +199,21 @@ object ClasspathOrchestrator:
                 canonical.merge(fr.arena)
             end for
 
+            // Phase C: resolve all UnresolvedRef placeholders accumulated during Phase B decode.
+            // All arenas merged and fqnIndex fully populated above, so lookups are complete.
+            // Unsafe: replaceSlot.set uses AllowUnsafe (covered by the import below).
+            val allPlaceholders = fileResults.flatMap(_.placeholders)
+            import AllowUnsafe.embrace.danger
+            for placeholder <- allPlaceholders do
+                fqnIndex.get(placeholder.fqn) match
+                    case Some(sym) =>
+                        placeholder.replaceSlot.set(Reflect.Type.Named(sym))
+                    case None =>
+                        placeholder.replaceSlot.set(Reflect.Type.Named(makeUnresolvedSym(placeholder.fqn)))
+            end for
+
             // Add errors accumulated during Building state (e.g., from root validation)
             // Unsafe: stateRef.unsafe.get() read of Building state, single-threaded Phase C merge
-            import AllowUnsafe.embrace.danger
             cp.stateRef.unsafe.get() match
                 case b: Classpath.State.Building => accErrors ++= b.errors
                 case _                           => ()
@@ -218,5 +233,20 @@ object ClasspathOrchestrator:
     private def nameToString(n: Reflect.Name): String =
         import Reflect.Name.asString
         n.asString
+
+    /** Create a synthetic unresolved symbol for a FQN not found in fqnIndex.
+      *
+      * Mirrors TypeUnpickler.makeUnresolvedSym; duplicated here to avoid promoting a private method across package boundaries.
+      */
+    private def makeUnresolvedSym(fqn: String): Reflect.Symbol =
+        InternalSymbol.makeSymbol(
+            Reflect.SymbolKind.Unresolved,
+            Reflect.Flags.empty,
+            Reflect.Name(fqn),
+            null,
+            new ClasspathRef,
+            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Absent
+        )
 
 end ClasspathOrchestrator

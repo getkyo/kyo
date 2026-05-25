@@ -513,4 +513,26 @@ class QueryApiTest extends Test:
                 assert(finalCount == 0, s"Expected counter to be 0 after all reads complete, but got: $finalCount")
     }
 
+    // Phase 2 Test 3: classpath opened from two fixture TASTy files (one extending the other) reports no errors
+    // and no Result.Panic from unset SingleAssign slots. Verifies end-to-end Phase C placeholder resolution.
+    "two-file classpath (ChildClass extends BaseClass) opens with no errors and no panic" in run {
+        val src = MemoryFileSource()
+        src.add("root/BaseClass.tasty", kyo.fixtures.Embedded.baseClassTasty)
+        src.add("root/ChildClass.tasty", kyo.fixtures.Embedded.childClassTasty)
+        Scope.run:
+            Abort.run[ReflectError](openFixtureClasspath(src).flatMap: cp =>
+                cp.errors.flatMap: errs =>
+                    cp.findClass("kyo.fixtures.ChildClass").flatMap: childOpt =>
+                        cp.findClass("kyo.fixtures.BaseClass").map: baseOpt =>
+                            (errs, childOpt, baseOpt)).map:
+                case Result.Success((errs: Chunk[ReflectError], childOpt: Maybe[Reflect.Symbol], baseOpt: Maybe[Reflect.Symbol])) =>
+                    assert(errs.isEmpty, s"Expected no errors but got: $errs")
+                    assert(childOpt.isDefined, "Expected ChildClass to be found")
+                    assert(baseOpt.isDefined, "Expected BaseClass to be found")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
 end QueryApiTest
