@@ -1,6 +1,7 @@
 package kyo.internal.reflect.query
 
 import kyo.*
+import kyo.internal.reflect.symbol.SingleAssign
 import kyo.internal.reflect.type_.TypeArena
 import scala.collection.mutable
 
@@ -16,19 +17,17 @@ import scala.collection.mutable
   * and removes the need for callers to poll.
   *
   * `classLookup` and `packageLookup` are the Cache.memo-wrapped functions built by `Resolver.makeClassLookup` /
-  * `Resolver.makePackageLookup`. They are set once in `allocate` (before the Classpath is exposed to any concurrent callers) and are `null`
-  * only between `new Classpath(...)` and the end of `allocate`. Any call to `lookupClass`/`lookupPackage` before allocation completes is a
-  * programming error and will NPE rather than silently return wrong results.
+  * `Resolver.makePackageLookup`. They are set exactly once in `allocate` (before the Classpath is exposed to any concurrent callers). Using
+  * `SingleAssign` enforces the write-once invariant and eliminates the null sentinel.
   */
 final class Classpath private[reflect] (
     private[kyo] val stateRef: AtomicRef[Classpath.State],
     // Unsafe: Latch.Unsafe held as a plain field; initialized once at allocate time, released once at transitionToReady.
     private[kyo] val readyLatch: Latch.Unsafe
 ):
-    // Unsafe: single-write-before-read pattern. Set exactly once in Classpath.allocate under Sync,
-    // before the Classpath reference escapes to any concurrent caller. Read only after allocate returns.
-    private[kyo] var classLookup: String => Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError])   = null
-    private[kyo] var packageLookup: String => Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError]) = null
+    // Unsafe: SingleAssign enforces write-once; set in Classpath.allocate before the Classpath reference escapes.
+    private[kyo] val classLookup: SingleAssign[String => Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError])]   = new SingleAssign
+    private[kyo] val packageLookup: SingleAssign[String => Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError])] = new SingleAssign
 
     /** Guard used by resolving accessors. Fails with ClasspathClosed if state is Closed. Fails with ClasspathBuilding if state is Building
       * (defense-in-depth; user code cannot reach the classpath in Building state via non-lookup paths).
@@ -81,14 +80,20 @@ final class Classpath private[reflect] (
       * completes.
       */
     private[kyo] def lookupClass(fqn: String)(using Frame): Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError]) =
-        classLookup(fqn)
+        // Unsafe: SingleAssign.get() reads an AtomicReference; valid here because allocate completes before any caller can reach this.
+        import AllowUnsafe.embrace.danger
+        classLookup.get()(fqn)
+    end lookupClass
 
     /** Look up a package symbol by fully-qualified dotted name, with Cache.memo Promise deduplication.
       *
       * Delegates to the `packageLookup` field (the Cache.memo-wrapped form of `rawLookupPackage`).
       */
     private[kyo] def lookupPackage(fqn: String)(using Frame): Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError]) =
-        packageLookup(fqn)
+        // Unsafe: SingleAssign.get() reads an AtomicReference; valid here because allocate completes before any caller can reach this.
+        import AllowUnsafe.embrace.danger
+        packageLookup.get()(fqn)
+    end lookupPackage
 
     /** All top-level class symbols (not packages). */
     private[kyo] def allTopLevelClasses(using Frame): Chunk[Reflect.Symbol] < (Sync & Abort[ReflectError]) =
@@ -183,9 +188,11 @@ object Classpath:
             val cp = new Classpath(ref, latch)
             Resolver.makeClassLookup(cp, 1024).flatMap: cl =>
                 Resolver.makePackageLookup(cp, 1024).map: pl =>
-                    // Unsafe: single-write-before-read; cp has not escaped this allocate call yet.
-                    cp.classLookup = cl
-                    cp.packageLookup = pl
+                    // Unsafe: SingleAssign.set() writes an AtomicReference; cp has not escaped allocate yet,
+                    // so the write-once invariant is trivially maintained.
+                    import AllowUnsafe.embrace.danger
+                    cp.classLookup.set(cl)
+                    cp.packageLookup.set(pl)
                     cp
     end allocate
 

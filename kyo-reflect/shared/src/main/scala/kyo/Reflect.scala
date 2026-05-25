@@ -419,7 +419,7 @@ object Reflect:
         val flags: Flags,
         val name: Name,
         val owner: Symbol,
-        private[Reflect] val home: ClasspathRef,
+        private[kyo] val home: ClasspathRef,
         private[kyo] val origin: Symbol.Origin,
         private[kyo] val javaMetadata: Maybe[JavaMetadata]
     ):
@@ -891,15 +891,6 @@ object Reflect:
                 i += 1
             end while
         end assignHomes
-
-        /** For internal test helpers: assign homes for all symbols in `cp` to `cp`. */
-        private[kyo] def assignHomesForTest(cp: kyo.internal.reflect.query.Classpath): Unit =
-            assignHomes(cp, cp)
-
-        /** For internal test helpers: assign the given extra symbols' ClasspathRef slots to `cp`. */
-        private[kyo] def assignExtraHomes(cp: Classpath, extra: Seq[Symbol]): Unit =
-            for sym <- extra do
-                if !sym.home.isAssigned then sym.home.assign(cp)
 
     end Classpath
 

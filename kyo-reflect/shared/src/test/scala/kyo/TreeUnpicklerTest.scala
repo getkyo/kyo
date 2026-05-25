@@ -4,6 +4,7 @@ import kyo.internal.reflect.binary.ByteView
 import kyo.internal.reflect.query.Classpath as InternalClasspath
 import kyo.internal.reflect.query.ClasspathOrchestrator
 import kyo.internal.reflect.query.ClasspathRef
+import kyo.internal.reflect.query.ClasspathTestHelpers
 import kyo.internal.reflect.query.FileSource
 import kyo.internal.reflect.symbol.Interner
 import kyo.internal.reflect.tasty.AstUnpickler
@@ -58,7 +59,7 @@ class TreeUnpicklerTest extends Test:
             Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
                 ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: _ =>
                     val cp = Reflect.Classpath.wrap(rawCp)
-                    Reflect.Classpath.assignHomesForTest(rawCp)
+                    ClasspathTestHelpers.assignHomesForTest(rawCp)
                     cp
     end openPlainClassCp
 

@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.internal.reflect.binary.ByteView
 import kyo.internal.reflect.classfile.ClassfileUnpickler
 import kyo.internal.reflect.query.ClasspathRef
+import kyo.internal.reflect.query.ClasspathTestHelpers
 import kyo.internal.reflect.symbol.Interner
 import kyo.internal.reflect.tasty.CommentsUnpickler
 import kyo.internal.reflect.type_.TypeArena
@@ -217,7 +218,7 @@ class CommentsUnpicklerTest extends Test:
         Abort.run[ReflectError]:
             ClassfileUnpickler.read(classBytes, interner, arena, home).flatMap: result =>
                 Reflect.Classpath.fromPickles(Seq.empty).map: miniCp =>
-                    Reflect.Classpath.assignExtraHomes(
+                    ClasspathTestHelpers.assignExtraHomes(
                         miniCp,
                         Seq(result.classSymbol) ++ result.symbols.toSeq ++ result.typeParams.toSeq
                     )

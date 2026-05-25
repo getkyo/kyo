@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.reflect.query.Classpath as InternalClasspath
 import kyo.internal.reflect.query.ClasspathOrchestrator
+import kyo.internal.reflect.query.ClasspathTestHelpers
 import kyo.internal.reflect.query.FileSource
 import kyo.internal.reflect.query.PlatformFileSource
 import kyo.internal.reflect.snapshot.DigestComputer
@@ -402,7 +403,7 @@ class SnapshotRoundTripTest extends Test:
                         InternalClasspath.allocate.flatMap: rawCp =>
                             Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
                                 SnapshotReader.read(snapPath, cacheSrc, rawCp).andThen:
-                                    Reflect.Classpath.assignHomesForTest(rawCp)
+                                    ClasspathTestHelpers.assignHomesForTest(rawCp)
                                     // Use allSymbols (synchronous) to find a symbol with TastyOrigin and non-zero bodyStart
                                     val symWithBodyOpt = rawCp.allSymbols.toSeq.find: sym =>
                                         sym.origin match
@@ -510,7 +511,7 @@ class SnapshotRoundTripTest extends Test:
                                         InternalClasspath.allocate.flatMap: rawCp2 =>
                                             Scope.ensure(Sync.defer(InternalClasspath.close(rawCp2))).andThen:
                                                 SnapshotReader.readMapped(snapPath, platSrc, rawCp2).andThen:
-                                                    Reflect.Classpath.assignHomesForTest(rawCp2)
+                                                    ClasspathTestHelpers.assignHomesForTest(rawCp2)
                                                     rawCp2.allTopLevelClasses.map: warmClasses =>
                                                         (
                                                             origClasses.map(_.fullName.asString).toSet,
@@ -557,7 +558,7 @@ class SnapshotRoundTripTest extends Test:
                     Scope.run:
                         Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
                             SnapshotReader.readMapped(snapPath, platSrc, rawCp).andThen:
-                                Reflect.Classpath.assignHomesForTest(rawCp)
+                                ClasspathTestHelpers.assignHomesForTest(rawCp)
                                 Sync.defer:
                                     val symOpt = rawCp.allSymbols.toSeq.find: sym =>
                                         sym.origin match

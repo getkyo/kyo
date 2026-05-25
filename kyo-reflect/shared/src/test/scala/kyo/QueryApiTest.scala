@@ -4,6 +4,7 @@ import kyo.internal.reflect.classfile.ClassfileUnpickler
 import kyo.internal.reflect.query.Classpath as InternalClasspath
 import kyo.internal.reflect.query.ClasspathOrchestrator
 import kyo.internal.reflect.query.ClasspathRef
+import kyo.internal.reflect.query.ClasspathTestHelpers
 import kyo.internal.reflect.query.FileSource
 import kyo.internal.reflect.symbol.Interner
 import kyo.internal.reflect.type_.TypeArena
@@ -74,7 +75,7 @@ class QueryApiTest extends Test:
             Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
                 ClasspathOrchestrator.openInto(Seq("root"), strict, src, 1, rawCp).map: _ =>
                     val cp = Reflect.Classpath.wrap(rawCp)
-                    Reflect.Classpath.assignHomesForTest(rawCp)
+                    ClasspathTestHelpers.assignHomesForTest(rawCp)
                     cp
 
     // Test 1: fromPickles(Seq.empty) succeeds; findClass("anything") returns Absent
@@ -639,7 +640,7 @@ class QueryApiTest extends Test:
                 // assignExtraHomes covers the class symbol and all members; since all symbols share
                 // the same ClasspathRef instance, calling home.assign separately is redundant.
                 Reflect.Classpath.fromPickles(Seq.empty).map: miniCp =>
-                    Reflect.Classpath.assignExtraHomes(miniCp, cr.classSymbol +: cr.symbols.toSeq)
+                    ClasspathTestHelpers.assignExtraHomes(miniCp, cr.classSymbol +: cr.symbols.toSeq)
                     cr
         .flatMap:
             case Result.Success(cr) =>
@@ -893,7 +894,7 @@ class QueryApiTest extends Test:
         Abort.run[ReflectError]:
             ClassfileUnpickler.read(bytes, interner, new TypeArena, home).flatMap: cr =>
                 Reflect.Classpath.fromPickles(Seq.empty).map: miniCp =>
-                    Reflect.Classpath.assignExtraHomes(miniCp, cr.classSymbol +: cr.symbols.toSeq)
+                    ClasspathTestHelpers.assignExtraHomes(miniCp, cr.classSymbol +: cr.symbols.toSeq)
                     cr
         .flatMap:
             case Result.Success(cr) =>
