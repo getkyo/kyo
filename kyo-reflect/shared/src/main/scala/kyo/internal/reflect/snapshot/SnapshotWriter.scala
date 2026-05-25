@@ -44,7 +44,7 @@ object SnapshotWriter:
         val tmpName   = s"$cacheDir/$hexDigest-$unique.krfl"
         val finalName = s"$cacheDir/$hexDigest.krfl"
         Abort.run[ReflectError](
-            Sync.defer(serialize(cp)).flatMap: bytes =>
+            Sync.defer(serialize(cp, digest)).flatMap: bytes =>
                 source.mkdirs(cacheDir).andThen:
                     source.write(tmpName, bytes).andThen:
                         source.rename(tmpName, finalName)
@@ -55,16 +55,15 @@ object SnapshotWriter:
             case Result.Panic(t)                                 => Abort.fail(ReflectError.SnapshotIoError(t.getMessage))
     end write
 
-    /** Serialize a Classpath to KRFL bytes. */
-    private def serialize(cp: Classpath): Array[Byte] =
+    /** Serialize a Classpath to KRFL bytes, embedding the given input digest in the file header. */
+    private def serialize(cp: Classpath, digest: Array[Byte]): Array[Byte] =
         // Unsafe: stateRef.unsafe.get() non-effectful read of immutable Ready state for snapshot serialization
         import AllowUnsafe.embrace.danger
         val allSymbols = cp.stateRef.unsafe.get() match
             case s: Classpath.State.Ready => s.allSymbols
             case _                        => Chunk.empty
 
-        val symbolList  = allSymbols.toSeq
-        val symbolCount = symbolList.size
+        val symbolList = allSymbols.toSeq
 
         // Build name pool (all unique FQN strings)
         val namePool  = mutable.ArrayBuffer.empty[String]
@@ -91,6 +90,27 @@ object SnapshotWriter:
         val symFqns = symbolList.map: sym =>
             internName(nameToStr(sym.fullName))
 
+        // Collect body byte slices for TASTy-origin symbols.
+        // Each entry is (relativeBodyStart: Int, relativeBodyEnd: Int) into the BODY_BYTES section.
+        // Symbols without a valid body (Java, Package, zero-bodyStart) get (0, 0).
+        val bodyBytesBuffer = new java.io.ByteArrayOutputStream()
+        var runningOffset   = 0
+        val symBodyStarts   = new Array[Int](symbolList.size)
+        val symBodyEnds     = new Array[Int](symbolList.size)
+        for (sym, idx) <- symbolList.zipWithIndex do
+            sym.origin match
+                case o: Reflect.Symbol.TastyOrigin
+                    if o.bodyStart > 0 && o.bodyEnd > o.bodyStart && o.sectionBytes.nonEmpty =>
+                    val sliceLen = o.bodyEnd - o.bodyStart
+                    bodyBytesBuffer.write(o.sectionBytes, o.bodyStart, sliceLen)
+                    symBodyStarts(idx) = runningOffset
+                    symBodyEnds(idx) = runningOffset + sliceLen
+                    runningOffset += sliceLen
+                case _ =>
+                    symBodyStarts(idx) = 0
+                    symBodyEnds(idx) = 0
+        end for
+
         // Collect errors
         val errors = cp.stateRef.unsafe.get() match
             case s: Classpath.State.Ready => s.errors
@@ -101,8 +121,8 @@ object SnapshotWriter:
         // NAMES section: length-prefixed UTF-8 strings
         val namesBytes = serializeNamePool(namePool.toSeq)
 
-        // SYMBOLS section: fixed record per symbol
-        val symbolsBytes = serializeSymbols(symbolList, symNames, symFqns, symbolId)
+        // SYMBOLS section: fixed record per symbol (includes body offsets into BODY_BYTES)
+        val symbolsBytes = serializeSymbols(symbolList, symNames, symFqns, symbolId, symBodyStarts, symBodyEnds)
 
         // FILES section: empty (metadata not critical for cache load)
         val filesBytes = Array.empty[Byte]
@@ -110,12 +130,12 @@ object SnapshotWriter:
         // ERRORS section: length-prefixed error strings
         val errorsBytes = serializeErrors(errors)
 
-        // Empty sections for types (not serialized in v1.0; bodies re-decoded lazily)
+        // Empty sections for types (not serialized; bodies re-decoded lazily from BODY_BYTES)
         val typesBytes      = Array.empty[Byte]
         val typesExtraBytes = Array.empty[Byte]
         val parentsBytes    = Array.empty[Byte]
         val membersBytes    = Array.empty[Byte]
-        val bodyBytes       = Array.empty[Byte]
+        val bodyBytes       = bodyBytesBuffer.toByteArray
 
         val sections = Seq(
             (SnapshotFormat.sectionNAMES, namesBytes),
@@ -129,7 +149,7 @@ object SnapshotWriter:
             (SnapshotFormat.sectionERRORS, errorsBytes)
         )
 
-        assembleSections(sections, digest = Array.empty[Byte])
+        assembleSections(sections, digest)
     end serialize
 
     /** Assemble sections into a complete KRFL file. */
@@ -214,19 +234,24 @@ object SnapshotWriter:
       *   - nameId: 4 bytes LE (index into name pool)
       *   - fqnId: 4 bytes LE (index into name pool)
       *   - ownerId: 4 bytes LE (symbol index, -1 if no owner)
-      *   - reserved: 19 bytes (zero)
+      *   - bodyStart: 4 bytes LE (offset into BODY_BYTES section; 0 if no body)
+      *   - bodyEnd: 4 bytes LE (exclusive end offset into BODY_BYTES section; 0 if no body)
+      *   - reserved: 11 bytes (zero)
       */
     private def serializeSymbols(
         symbols: Seq[Reflect.Symbol],
         names: Seq[Int],
         fqns: Seq[Int],
-        symbolId: mutable.HashMap[Reflect.Symbol, Int]
+        symbolId: mutable.HashMap[Reflect.Symbol, Int],
+        bodyStarts: Array[Int],
+        bodyEnds: Array[Int]
     ): Array[Byte] =
         val count      = symbols.length
         val recordSize = 40
         val buf        = new Array[Byte](4 + count * recordSize)
         SnapshotFormat.writeInt32LE(buf, 0, count)
         var pos = 4
+        var idx = 0
         for (sym, nameId, fqnId) <- symbols.zip(names).zip(fqns).map { case ((s, n), f) => (s, n, f) } do
             buf(pos) = sym.kind.ordinal.toByte
             SnapshotFormat.writeInt64LE(buf, pos + 1, sym.flags.bits)
@@ -234,8 +259,11 @@ object SnapshotWriter:
             SnapshotFormat.writeInt32LE(buf, pos + 13, fqnId)
             val ownerId = if sym.owner != null then symbolId.getOrElse(sym.owner, -1) else -1
             SnapshotFormat.writeInt32LE(buf, pos + 17, ownerId)
-            // Remaining 19 bytes are zero (already initialized)
+            SnapshotFormat.writeInt32LE(buf, pos + 21, bodyStarts(idx))
+            SnapshotFormat.writeInt32LE(buf, pos + 25, bodyEnds(idx))
+            // Remaining 11 bytes at pos+29 are zero (already initialized)
             pos += recordSize
+            idx += 1
         end for
         buf
     end serializeSymbols

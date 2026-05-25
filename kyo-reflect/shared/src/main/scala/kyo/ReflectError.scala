@@ -8,7 +8,7 @@ enum ReflectError derives CanEqual:
     case FileNotFound(path: String)
     case CorruptedFile(path: String, at: Long, reason: String)
     case UnsupportedVersion(found: Reflect.Version, supported: Reflect.Version)
-    case InconsistentClasspath(file: String, expectedUuid: String, foundUuid: String)
+    case InconsistentClasspath(file: String, expectedUuid: java.util.UUID, foundUuid: java.util.UUID)
     case MalformedSection(name: String, reason: String)
     case SymbolNotFound(fqn: String)
     case ClassfileFormatError(path: String, reason: String)

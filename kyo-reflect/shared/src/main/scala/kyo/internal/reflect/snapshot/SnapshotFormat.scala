@@ -55,7 +55,7 @@ object SnapshotFormat:
 
     /** Current format version. Major bumps invalidate old snapshots. */
     val majorVersion: Int = 1
-    val minorVersion: Int = 0
+    val minorVersion: Int = 2
 
     /** Size of the fixed-length file header in bytes (magic + version + flags + digest + reserved). */
     val headerSize: Int = 4 + 4 + 8 + 8 + 8

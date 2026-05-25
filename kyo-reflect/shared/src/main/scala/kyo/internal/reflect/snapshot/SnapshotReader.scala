@@ -85,10 +85,19 @@ object SnapshotReader:
             case Some((offset, length)) => readNamePool(bytes, offset, length)
             case None                   => Array.empty[String]
 
+        // Read BODY_BYTES section: shared backing store for all TASTy body slices
+        val bodyBytesArray: Array[Byte] = sectionMap.get(SnapshotFormat.sectionBODYBYTES) match
+            case Some((offset, length)) if length > 0 =>
+                val arr = new Array[Byte](length)
+                java.lang.System.arraycopy(bytes, offset, arr, 0, length)
+                arr
+            case _ =>
+                Array.empty[Byte]
+
         // Read SYMBOLS section
         val (allSymbols, fqnIndex, packageIndex, topLevelCls, packages) =
             sectionMap.get(SnapshotFormat.sectionSYMBOLS) match
-                case Some((offset, length)) => readSymbols(bytes, offset, length, namePool)
+                case Some((offset, length)) => readSymbols(bytes, offset, length, namePool, bodyBytesArray)
                 case None =>
                     (
                         Chunk.empty[Reflect.Symbol],
@@ -139,7 +148,9 @@ object SnapshotReader:
         flagBits: Long,
         nameId: Int,
         fqnId: Int,
-        ownerId: Int
+        ownerId: Int,
+        bodyStart: Int,
+        bodyEnd: Int
     )
 
     /** Read SYMBOLS section and reconstruct symbol graph.
@@ -152,7 +163,8 @@ object SnapshotReader:
         bytes: Array[Byte],
         offset: Int,
         length: Int,
-        namePool: Array[String]
+        namePool: Array[String],
+        bodyBytesArray: Array[Byte]
     ): (Chunk[Reflect.Symbol], Map[String, Reflect.Symbol], Map[String, Reflect.Symbol], Chunk[Reflect.Symbol], Chunk[Reflect.Symbol]) =
         val count      = SnapshotFormat.readInt32LE(bytes, offset)
         val recordSize = 40
@@ -165,12 +177,14 @@ object SnapshotReader:
         var pos  = offset + 4
         var i    = 0
         while i < count do
-            val kindOrd  = bytes(pos) & 0xff
-            val flagBits = SnapshotFormat.readInt64LE(bytes, pos + 1)
-            val nameId   = SnapshotFormat.readInt32LE(bytes, pos + 9)
-            val fqnId    = SnapshotFormat.readInt32LE(bytes, pos + 13)
-            val ownerId  = SnapshotFormat.readInt32LE(bytes, pos + 17)
-            raws(i) = RawSymbol(kindOrd, flagBits, nameId, fqnId, ownerId)
+            val kindOrd   = bytes(pos) & 0xff
+            val flagBits  = SnapshotFormat.readInt64LE(bytes, pos + 1)
+            val nameId    = SnapshotFormat.readInt32LE(bytes, pos + 9)
+            val fqnId     = SnapshotFormat.readInt32LE(bytes, pos + 13)
+            val ownerId   = SnapshotFormat.readInt32LE(bytes, pos + 17)
+            val bodyStart = SnapshotFormat.readInt32LE(bytes, pos + 21)
+            val bodyEnd   = SnapshotFormat.readInt32LE(bytes, pos + 25)
+            raws(i) = RawSymbol(kindOrd, flagBits, nameId, fqnId, ownerId, bodyStart, bodyEnd)
             pos += recordSize
             i += 1
         end while
@@ -202,12 +216,21 @@ object SnapshotReader:
 
         for idx <- order do
             val raw   = raws(idx)
-            val kind  = kindFromOrdinal(raw.kindOrd)
+            val kind  = kindFromOrd(raw.kindOrd)
             val flags = new Reflect.Flags(raw.flagBits)
             val name  = if raw.nameId >= 0 && raw.nameId < namePool.length then Reflect.Name(namePool(raw.nameId)) else Reflect.Name("")
             val owner = if raw.ownerId >= 0 && raw.ownerId < count && created(raw.ownerId) != null then created(raw.ownerId) else null
             val home  = new ClasspathRef
-            created(idx) = InternalSymbol.makeSymbol(kind, flags, name, owner, home, Reflect.Symbol.JavaOrigin, Maybe.Absent)
+            val origin: Reflect.Symbol.Origin =
+                if raw.bodyStart > 0 && raw.bodyEnd > raw.bodyStart && bodyBytesArray.nonEmpty
+                    && raw.bodyEnd <= bodyBytesArray.length
+                then
+                    // Restore body origin: offsets are relative to the start of BODY_BYTES section.
+                    // sectionOffset is 0 because bodyStart is already absolute within bodyBytesArray.
+                    new Reflect.Symbol.TastyOrigin(raw.bodyStart, raw.bodyEnd, bodyBytesArray, Array.empty[Reflect.Name], 0)
+                else
+                    Reflect.Symbol.JavaOrigin
+            created(idx) = InternalSymbol.makeSymbol(kind, flags, name, owner, home, origin, Maybe.Absent)
         end for
 
         // Build indices
@@ -291,10 +314,10 @@ object SnapshotReader:
         if start >= 0 && end > start then s.substring(start + 1, end) else s
     end extractParenContent
 
-    /** Convert SymbolKind ordinal to enum case. */
-    private def kindFromOrdinal(ordinal: Int): Reflect.SymbolKind =
+    /** Convert SymbolKind ordinal integer to enum case. */
+    private def kindFromOrd(ord: Int): Reflect.SymbolKind =
         import Reflect.SymbolKind.*
-        ordinal match
+        ord match
             case 0  => Package
             case 1  => Class
             case 2  => Trait
@@ -311,6 +334,6 @@ object SnapshotReader:
             case 13 => Unresolved
             case _  => Unresolved
         end match
-    end kindFromOrdinal
+    end kindFromOrd
 
 end SnapshotReader

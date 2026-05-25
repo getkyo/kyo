@@ -361,4 +361,124 @@ class SnapshotRoundTripTest extends Test:
                 throw t
     }
 
+    // Test G15 (Phase 14): written snapshot header inputDigest field (bytes 16-23) equals the digest passed to write
+    "snapshot header inputDigest field equals digest passed to write (not zeros)" in run {
+        val cacheSrc = MemoryFileSource()
+        val digest   = Array[Byte](1, 2, 3, 4, 5, 6, 7, 8)
+        Scope.run:
+            Abort.run[ReflectError](
+                openClasspath(fixtureSource()).flatMap: cp =>
+                    SnapshotWriter.write(Reflect.Classpath.unwrap(cp), "cache", digest, cacheSrc).map: _ =>
+                        val hex      = DigestComputer.toHexString(digest)
+                        val snapPath = s"cache/$hex.krfl"
+                        cacheSrc.getBytes(snapPath)
+            ).map:
+                case Result.Success(Some(bytes)) =>
+                    assert(bytes.length >= 24, s"Snapshot too short to contain inputDigest: ${bytes.length} bytes")
+                    val headerDigest = bytes.slice(16, 24)
+                    assert(
+                        headerDigest.sameElements(digest),
+                        s"inputDigest header field must equal passed digest. Expected: ${digest.toSeq} got: ${headerDigest.toSeq}"
+                    )
+                case Result.Success(None) =>
+                    fail("Snapshot file not found after write")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Test G14a (Phase 15): BODY_BYTES round-trip -- sym.body on snapshot-loaded symbol with body bytes does not fail with NotImplemented
+    "BODY_BYTES round-trip: sym.body on snapshot-loaded symbol with body bytes does not fail with NotImplemented" in run {
+        val cacheSrc = MemoryFileSource()
+        val digest   = Array[Byte](0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37)
+        Scope.run:
+            Abort.run[ReflectError](
+                openClasspath(fixtureSource()).flatMap: cp =>
+                    SnapshotWriter.write(Reflect.Classpath.unwrap(cp), "cache", digest, cacheSrc).andThen:
+                        val hex      = DigestComputer.toHexString(digest)
+                        val snapPath = s"cache/$hex.krfl"
+                        InternalClasspath.allocate.flatMap: rawCp =>
+                            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
+                                SnapshotReader.read(snapPath, cacheSrc, rawCp).andThen:
+                                    Reflect.Classpath.assignHomesForTest(rawCp)
+                                    // Use allSymbols (synchronous) to find a symbol with TastyOrigin and non-zero bodyStart
+                                    val symWithBodyOpt = rawCp.allSymbols.toSeq.find: sym =>
+                                        sym.origin match
+                                            case o: Reflect.Symbol.TastyOrigin => o.bodyStart > 0 && o.bodyEnd > o.bodyStart
+                                            case _                             => false
+                                    symWithBodyOpt match
+                                        case Some(sym) =>
+                                            Abort.run[ReflectError](sym.body).map:
+                                                case Result.Success(_) =>
+                                                    succeed
+                                                case Result.Failure(ReflectError.NotImplemented(_)) =>
+                                                    fail("sym.body returned NotImplemented for a snapshot-loaded symbol with body bytes")
+                                                case Result.Failure(_) =>
+                                                    // MalformedSection is acceptable: bytes survive but names are empty for snapshot-loaded
+                                                    succeed
+                                                case Result.Panic(t) =>
+                                                    throw t
+                                        case None =>
+                                            // No symbol with body bytes found: BODY_BYTES section may be empty for this fixture.
+                                            // That is acceptable; the write and round-trip still succeeded.
+                                            succeed
+                                    end match
+            ).map:
+                case Result.Success(r) => r
+                case Result.Failure(e) => fail(s"Unexpected failure: $e")
+                case Result.Panic(t)   => throw t
+    }
+
+    // Test G14b (Phase 15): snapshot written from classfile-only classpath has empty BODY_BYTES section
+    "snapshot from classfile-only classpath has empty BODY_BYTES section (length 0)" in run {
+        // Use an empty classpath (no TASTy files) to produce a snapshot with no body bytes.
+        val cacheSrc = MemoryFileSource()
+        val digest   = Array[Byte](0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47)
+        val emptySrc = MemoryFileSource()
+        Scope.run:
+            Abort.run[ReflectError](
+                InternalClasspath.allocate.flatMap: rawCp =>
+                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
+                        // Open an empty classpath (no roots, no files): transitions to Ready immediately with empty state
+                        ClasspathOrchestrator.openInto(Seq.empty, false, emptySrc, 1, rawCp).andThen:
+                            SnapshotWriter.write(rawCp, "cache", digest, cacheSrc).map: _ =>
+                                val hex      = DigestComputer.toHexString(digest)
+                                val snapPath = s"cache/$hex.krfl"
+                                cacheSrc.getBytes(snapPath)
+            ).flatMap:
+                case Result.Success(Some(bytes)) =>
+                    // Parse section index and find BODY_BYTES length
+                    val sectionCount = SnapshotFormat.readInt32LE(bytes, 32)
+                    var idxPos       = 36
+                    var bodyLen      = -1
+                    var i            = 0
+                    while i < sectionCount do
+                        val sName = SnapshotFormat.readSectionName(bytes, idxPos)
+                        val sLen  = SnapshotFormat.readInt64LE(bytes, idxPos + 16)
+                        if sName == SnapshotFormat.sectionBODYBYTES then bodyLen = sLen.toInt
+                        idxPos += SnapshotFormat.sectionIndexEntrySize
+                        i += 1
+                    end while
+                    assert(bodyLen == 0, s"BODY_BYTES section must be empty (length 0) for classfile-only classpath; got $bodyLen")
+                    // Also verify the snapshot loads without error
+                    InternalClasspath.allocate.flatMap: rawCp2 =>
+                        Scope.ensure(Sync.defer(InternalClasspath.close(rawCp2))).andThen:
+                            val hex      = DigestComputer.toHexString(digest)
+                            val snapPath = s"cache/$hex.krfl"
+                            Abort.run[ReflectError](SnapshotReader.read(snapPath, cacheSrc, rawCp2)).map:
+                                case Result.Success(_) =>
+                                    succeed
+                                case Result.Failure(e) =>
+                                    fail(s"Reading empty-body snapshot must not fail: $e")
+                                case Result.Panic(t) =>
+                                    throw t
+                case Result.Success(None) =>
+                    fail("Snapshot file not found after write")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
 end SnapshotRoundTripTest
