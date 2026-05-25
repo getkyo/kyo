@@ -14,10 +14,19 @@ import scala.quoted.*
   * nodes that carry effect-tagged types resembling accessor calls.
   *
   * Hygiene rule 3: Block(Nil, ...) lambda wrapper peeling before entering the main traversal.
+  *
+  * Design note (dual-purpose path): ReflectMacro builds touchedFields at field-analysis time via field-name dispatch (directFieldTouched)
+  * and summoned-instance propagation (r.touchedFields). This is functionally equivalent to calling analyze on the generated body for the
+  * cases covered by direct-field dispatch and SummonField propagation. The analyze method is preserved as the testable extracted path:
+  * tests can call it directly on any function body to verify hygiene rule 2 (Match.pattern skipped) and rule 1 (cheap pre-check) without
+  * going through the full derivation pipeline.
   */
 object TouchedFields:
 
     /** Analyze a compiled read body Term and return the union of all FieldSet bits it touches.
+      *
+      * This is the testable extracted path. ReflectMacro builds touchedFields via field-name dispatch at derivation time; analyze can be
+      * called directly on any function body (including hand-written ones) to verify hygiene rule behavior.
       *
       * @param readBody
       *   the body Term of the read method override
@@ -51,6 +60,26 @@ object TouchedFields:
         }
         result
     end analyze
+
+    /** Inline macro entry point for testing: analyze the body of a `Reflect.Symbol => Any` function at compile time.
+      *
+      * Captures the lambda body as a quoted Term and delegates to analyze. Used by ReadsDerivationTest to verify hygiene rules without
+      * going through full derivation. Example usage:
+      * {{{
+      * val bits = TouchedFields.analyzeInline((sym: Reflect.Symbol) => sym.name)
+      * // bits.bits == Reflect.FieldSet.Name.bits
+      * }}}
+      */
+    inline def analyzeInline(inline f: Reflect.Symbol => Any): Reflect.FieldSet =
+        ${ analyzeInlineImpl('f) }
+
+    private def analyzeInlineImpl(using Quotes)(f: Expr[Reflect.Symbol => Any]): Expr[Reflect.FieldSet] =
+        import quotes.reflect.*
+        val body    = f.asTerm
+        val fs      = analyze(body)
+        val bitsVal = Expr(fs.bits)
+        '{ new Reflect.FieldSet($bitsVal) }
+    end analyzeInlineImpl
 
     /** Map a Symbol method name to the corresponding FieldSet bit. */
     private[reads] def fieldSetForAccessor(methodName: String): Reflect.FieldSet =

@@ -375,29 +375,4 @@ object ReflectMacro:
             case "companion"    => Some(Reflect.FieldSet.Companion)
             case _              => None
 
-    private def extractStaticTouchedByTypeRepr(
-        using q: Quotes
-    )(t: quotes.reflect.TypeRepr): Reflect.FieldSet =
-        import quotes.reflect.*
-        if t =:= TypeRepr.of[Reflect.Name] then Reflect.FieldSet.Name
-        else if t =:= TypeRepr.of[Reflect.Flags] then Reflect.FieldSet.Flags
-        else if t =:= TypeRepr.of[Reflect.SymbolKind] then Reflect.FieldSet.Kind
-        else if t =:= TypeRepr.of[Reflect.Type] then Reflect.FieldSet.DeclaredType
-        else if t =:= TypeRepr.of[Reflect.Symbol] then Reflect.FieldSet.Empty
-        else if t =:= TypeRepr.of[Boolean] then Reflect.FieldSet.Empty
-        else if t =:= TypeRepr.of[Int] then Reflect.FieldSet.Empty
-        else if t =:= TypeRepr.of[Long] then Reflect.FieldSet.Empty
-        else if t =:= TypeRepr.of[String] then Reflect.FieldSet.Name
-        else
-            t match
-                case AppliedType(tycon, List(inner))
-                    if tycon.typeSymbol.fullName == "kyo.Chunk" =>
-                    extractStaticTouchedByTypeRepr(inner) | Reflect.FieldSet.Members
-                case AppliedType(tycon, List(inner))
-                    if tycon.typeSymbol.fullName == "kyo.Maybe" =>
-                    extractStaticTouchedByTypeRepr(inner) | Reflect.FieldSet.Companion
-                case _ => Reflect.FieldSet.Empty
-        end if
-    end extractStaticTouchedByTypeRepr
-
 end ReflectMacro

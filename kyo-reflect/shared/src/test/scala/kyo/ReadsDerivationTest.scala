@@ -99,16 +99,7 @@ class ReadsDerivationTest extends Test:
     case class Inner(parents: Chunk[Reflect.Type]) derives Reflect.Reads
     case class Outer(inner: Inner, name: Reflect.Name) derives Reflect.Reads
 
-    // Test 16: hand-written Reads with a Match node containing Bind pattern
-    val matchReads: Reflect.Reads[Reflect.Name] = new Reflect.Reads[Reflect.Name]:
-        val symbolKinds   = Set(Reflect.SymbolKind.values*)
-        val needsBodies   = false
-        val touchedFields = Reflect.FieldSet.Name
-        def read(sym: Reflect.Symbol)(using Frame): Reflect.Name < (Sync & Abort[ReflectError]) =
-            sym.kind match
-                case k @ Reflect.SymbolKind.Class => Kyo.lift(sym.name)
-                case k @ Reflect.SymbolKind.Trait => Kyo.lift(sym.name)
-                case _                            => Kyo.lift(sym.name)
+    // Test 16: hygiene rule 2 -- TouchedFields.analyzeInline must skip Bind patterns in Match nodes
 
     // ── Test 1: Simple derives compiles ──────────────────────────────────────
     "Test 1: Simple derives Reflect.Reads compiles" in run {
@@ -204,14 +195,12 @@ class ReadsDerivationTest extends Test:
 
     // ── Test 9: sum type produces compile error with "hand-written" ───────────
     "Test 9: deriving Reads on a sealed trait produces compile error containing 'hand-written'" in run {
-        val err = scala.compiletime.testing.typeCheckErrors(
-            "sealed trait SumType; object ReadsDerivationTest_T9 { val r = compiletime.summonInline[kyo.Reflect.Reads[SumType]] }"
+        val errors = scala.compiletime.testing.typeCheckErrors(
+            "sealed trait MySeal; case class MySealR() extends MySeal; object T9b { val r: kyo.Reflect.Reads[MySeal] = kyo.Reflect.Reads.derived[MySeal] }"
         )
         assert(
-            err.nonEmpty || scala.compiletime.testing.typeCheckErrors(
-                "sealed trait MySeal; case class MySealR() extends MySeal; object T9b { val r: kyo.Reflect.Reads[MySeal] = kyo.Reflect.Reads.derived[MySeal] }"
-            ).exists(e => e.message.contains("hand-written") || e.message.contains("sum type") || e.message.contains("sealed")),
-            "Expected a compile error for sealed trait derivation"
+            errors.nonEmpty && errors.exists(e => e.message.contains("hand-written")),
+            s"Expected a compile error containing 'hand-written' for sealed trait derivation, got: ${errors.map(_.message)}"
         )
     }
 
@@ -238,11 +227,15 @@ class ReadsDerivationTest extends Test:
     "Test 11: derived Custom uses given Reads[Int] for 'special' field" in run {
         import Test11.given
         val stub = stubSymbol("hello", Reflect.SymbolKind.Class, Reflect.Flags(0L))
-        Abort.run[ReflectError](Test11.customIntReads.read(stub)).map {
-            case Result.Success(n) =>
-                assert(n == "hello".length, s"customIntReads.read should return name length ${n}")
+        // Use the derived Reads[Custom] (not customIntReads directly) to verify that derivation
+        // wires the given Reads[Int] for the 'special' field.
+        Abort.run[ReflectError](summon[Reflect.Reads[Test11.Custom]].read(stub)).map {
+            case Result.Success(custom) =>
+                // customIntReads returns sym.name.asString.length; "hello".length == 5
+                assert(custom.special == "hello".length, s"derived Custom.special should equal name length (5), got ${custom.special}")
+                assert(custom.name == stub.name, s"derived Custom.name mismatch: ${custom.name} != ${stub.name}")
             case Result.Failure(e) =>
-                fail(s"customIntReads failed: $e")
+                fail(s"derived Reads[Custom].read failed: $e")
             case Result.Panic(t) =>
                 throw t
         }
@@ -257,10 +250,7 @@ class ReadsDerivationTest extends Test:
         // Stub declarations is not implemented - verify we get a NotImplemented error (correct call path)
         Abort.run[ReflectError](r.read(stub)).map {
             case Result.Success(decls) =>
-                assert(
-                    decls.isEmpty || decls.nonEmpty,
-                    "any Chunk result is acceptable if declarations is implemented"
-                )
+                fail(s"Expected NotImplemented but declarations returned: $decls")
             case Result.Failure(ReflectError.NotImplemented(_)) =>
                 succeed // correct: stub.declarations is not implemented, proves chunkReads calls declarations
             case Result.Failure(e) =>
@@ -328,22 +318,30 @@ class ReadsDerivationTest extends Test:
         )
     }
 
-    // ── Test 16: Match node with Bind pattern does not trigger hygiene violation
-    "Test 16: hand-written Reads with Bind pattern in match does not cause macro hygiene issues" in run {
-        // The matchReads defined above has Match nodes with `k @ SymbolKind.Class` (Bind patterns).
-        // The TouchedFields analysis should NOT see 'k' as a Symbol accessor.
-        // The touchedFields should only contain Name (from sym.name), not Kind (from 'k' pattern binder).
-        val tf = matchReads.touchedFields
-        assert(
-            tf.contains(Reflect.FieldSet.Name),
-            s"matchReads touchedFields should contain Name, got bits=${tf.bits}"
+    // ── Test 16: hygiene rule 2 -- Bind pattern in Match is skipped by TouchedFields.analyzeInline ──
+    "Test 16: TouchedFields.analyzeInline skips Bind patterns in Match nodes (hygiene rule 2)" in run {
+        // Body: scrutinee = sym.kind (adds Kind), RHS = sym.name (adds Name), pattern `k @ _` is skipped.
+        // Without hygiene rule 2, traversing the Bind pattern could produce false positives.
+        val tfWithBind = kyo.internal.reflect.reads.TouchedFields.analyzeInline((sym: Reflect.Symbol) =>
+            sym.kind match
+                case k @ Reflect.SymbolKind.Class => sym.name
+                case k @ Reflect.SymbolKind.Trait => sym.name
+                case _                            => sym.name
         )
-        // The 'k' in `k @ SymbolKind.Class` is a Bind pattern - it should NOT add Kind to touchedFields
-        // (Kind is only added when sym.kind is accessed directly)
-        // This is a structural test: the touchedFields bits should only be Name (bit 0 = 1)
+        // scrutinee sym.kind => Kind; RHS sym.name => Name; bind patterns k@ => skipped
+        val expectedWithBind = Reflect.FieldSet.Kind | Reflect.FieldSet.Name
         assert(
-            tf.bits == Reflect.FieldSet.Name.bits,
-            s"matchReads touchedFields should be ONLY Name (no Kind from bind patterns), got bits=${tf.bits}"
+            tfWithBind.bits == expectedWithBind.bits,
+            s"analyzeInline with bind patterns should yield Kind|Name only, got bits=${tfWithBind.bits} (expected ${expectedWithBind.bits})"
+        )
+        // Body with scrutinee only (no Symbol access in RHS): only Kind expected, not Name
+        val tfScrutineeOnly = kyo.internal.reflect.reads.TouchedFields.analyzeInline((sym: Reflect.Symbol) =>
+            sym.kind match
+                case _ => 42
+        )
+        assert(
+            tfScrutineeOnly.bits == Reflect.FieldSet.Kind.bits,
+            s"analyzeInline with scrutinee-only match should yield Kind only, got bits=${tfScrutineeOnly.bits}"
         )
     }
 
