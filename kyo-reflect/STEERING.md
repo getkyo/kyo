@@ -146,6 +146,16 @@ For non-recursive products, emit the eager form without `readFieldsLazy` (the sa
 
 This design is supervisor-blessed; the impl agent must implement it verbatim.
 
+### Phase 6b Frame.internal violation (BLOCKING before commit)
+
+`SymbolToRecordMacro.scala` uses `kyo.Frame.internal` in 10+ emitted positions (lines 201, 203, 207, 209, 213, 215, 219, 221, 225, 227 etc). This violates `feedback_no_unsafe`: "never use AllowUnsafe or Frame.internal, use safe APIs, propagate Frame".
+
+Fix: modify `Reflect.symbolToRecord` in `Reflect.scala` to take `(using Frame)` on the inline def. Inside the macro, generate `'{ ${sym}.parents(using ${frameExpr}).flatMap(...) }` where `frameExpr: Expr[Frame]` is obtained via `Expr.summon[Frame]` (or by capturing the caller's Frame via the inline-def's using parameter and splicing it). The result: zero Frame.internal references.
+
+Acceptable variant: the inline def can be `inline def symbolToRecord[F](sym: Symbol)(using Frame): Record[F] < (Sync & Abort[ReflectError]) = ${ ... }`. The macro then references the `Frame` from the using parameter via standard quotes.reflect lookup or `quoted.runtime.Expr.summonOrPanic`. If the macro cannot synthesize the splice cleanly, use a small runtime helper in `ReflectRuntime` that accepts `(using Frame)` and bridges. The end state must have NO `Frame.internal` in any production source file.
+
+If the `asInstanceOf[Record[F]]` at line 76 (emitted in `'{ Record.empty.asInstanceOf[Record[F]] }`) is only reachable on the F = Any edge case, guard the macro to emit `Record.empty[F]` directly (typing the empty constructor) so the cast is unnecessary. If `Record.empty` is not generic, accept the emitted cast (it is runtime code, not macro source, per STEERING).
+
 ### Phase 6 missing tests (BLOCKING before commit)
 
 The impl agent stopped at 16/18 tests. The two missing tests are not optional; they are the core semantic checks:

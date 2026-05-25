@@ -364,6 +364,7 @@ object Reflect:
 
     object Reads extends kyo.internal.reflect.reads.ReadsInstances:
         inline def derived[A]: Reads[A] = ${ kyo.internal.ReflectMacro.derivedImpl[A] }
+        export kyo.internal.reflect.reads.RecordReads.recordReads
 
     // ── FieldSet (touched-fields hint) ─────────────────────────────────────
 
@@ -395,9 +396,8 @@ object Reflect:
 
     // ── symbolToRecord (compile-time projection into kyo.Record) ───────────
 
-    // Phase 6b implements the macro. In Phase 0 we expose the signature so examples compile.
-    inline def symbolToRecord[F](sym: Symbol): Any < (Sync & Abort[ReflectError]) =
-        scala.compiletime.error("Reflect.symbolToRecord not implemented in Phase 0; lands in Phase 6b")
+    inline def symbolToRecord[F: Fields](sym: Symbol)(using Frame): Record[F] < (Sync & Abort[ReflectError]) =
+        ${ kyo.internal.SymbolToRecordMacro.symbolToRecordImpl[F]('sym) }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
