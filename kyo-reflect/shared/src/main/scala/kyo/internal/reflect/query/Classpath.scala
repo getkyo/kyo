@@ -14,12 +14,21 @@ import scala.collection.mutable
   * `lookupClass`/`lookupPackage` that arrive during the Building phase await the latch (suspending asynchronously) and then re-attempt the
   * lookup once the classpath is Ready. This enables concurrent deduplication via `Cache.memo` (which carries `Async` in its return type)
   * and removes the need for callers to poll.
+  *
+  * `classLookup` and `packageLookup` are the Cache.memo-wrapped functions built by `Resolver.makeClassLookup` /
+  * `Resolver.makePackageLookup`. They are set once in `allocate` (before the Classpath is exposed to any concurrent callers) and are `null`
+  * only between `new Classpath(...)` and the end of `allocate`. Any call to `lookupClass`/`lookupPackage` before allocation completes is a
+  * programming error and will NPE rather than silently return wrong results.
   */
 final class Classpath private[reflect] (
     private[kyo] val stateRef: AtomicRef[Classpath.State],
     // Unsafe: Latch.Unsafe held as a plain field; initialized once at allocate time, released once at transitionToReady.
     private[kyo] val readyLatch: Latch.Unsafe
 ):
+    // Unsafe: single-write-before-read pattern. Set exactly once in Classpath.allocate under Sync,
+    // before the Classpath reference escapes to any concurrent caller. Read only after allocate returns.
+    private[kyo] var classLookup: String => Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError])   = null
+    private[kyo] var packageLookup: String => Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError]) = null
 
     /** Guard used by resolving accessors. Fails with ClasspathClosed if state is Closed. Fails with ClasspathBuilding if state is Building
       * (defense-in-depth; user code cannot reach the classpath in Building state via non-lookup paths).
@@ -30,13 +39,17 @@ final class Classpath private[reflect] (
             case _: Classpath.State.Ready    => Kyo.unit
             case Classpath.State.Closed      => Abort.fail(ReflectError.ClasspathClosed)
 
-    /** Look up a class symbol by fully-qualified dotted name. Returns Absent if not found (soft-fail).
+    /** Raw (un-memoized) class lookup by fully-qualified dotted name. Returns Absent if not found (soft-fail).
       *
       * When the classpath is in Building state, the caller suspends (via `Async`) until `transitionToReady` releases the `readyLatch`, then
       * performs the lookup. This provides the building-state gate needed for concurrent callers that may arrive before Phase C completes.
       * Fails with ClasspathClosed if closed after waiting.
+      *
+      * This method is the underlying implementation wrapped by `Resolver.makeClassLookup`. External callers must use `lookupClass` (which
+      * delegates to the Cache.memo-wrapped `classLookup` field) so that concurrent calls for the same FQN are deduplicated via Promise
+      * rather than racing independently.
       */
-    private[kyo] def lookupClass(fqn: String)(using Frame): Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError]) =
+    private[kyo] def rawLookupClass(fqn: String)(using Frame): Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError]) =
         stateRef.get.map:
             case _: Classpath.State.Building =>
                 readyLatch.safe.await.andThen:
@@ -46,11 +59,12 @@ final class Classpath private[reflect] (
             case s: Classpath.State.Ready => Maybe(s.fqnIndex.get(fqn).orNull)
             case Classpath.State.Closed   => Abort.fail(ReflectError.ClasspathClosed)
 
-    /** Look up a package symbol by fully-qualified dotted name.
+    /** Raw (un-memoized) package lookup by fully-qualified dotted name.
       *
-      * Same gate semantics as `lookupClass`: awaits `readyLatch` when Building.
+      * Same gate semantics as `rawLookupClass`: awaits `readyLatch` when Building. External callers must use `lookupPackage` (the
+      * Cache.memo-wrapped form).
       */
-    private[kyo] def lookupPackage(fqn: String)(using Frame): Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError]) =
+    private[kyo] def rawLookupPackage(fqn: String)(using Frame): Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError]) =
         stateRef.get.map:
             case _: Classpath.State.Building =>
                 readyLatch.safe.await.andThen:
@@ -59,6 +73,22 @@ final class Classpath private[reflect] (
                         case _                        => Abort.fail(ReflectError.ClasspathClosed)
             case s: Classpath.State.Ready => Maybe(s.packageIndex.get(fqn).orNull)
             case Classpath.State.Closed   => Abort.fail(ReflectError.ClasspathClosed)
+
+    /** Look up a class symbol by fully-qualified dotted name, with Cache.memo Promise deduplication.
+      *
+      * Delegates to the `classLookup` field, which is the Cache.memo-wrapped form of `rawLookupClass`. Concurrent calls for the same FQN
+      * collapse into a single underlying resolution via the Promise dedup machinery in Cache.memo. Must not be called before `allocate`
+      * completes.
+      */
+    private[kyo] def lookupClass(fqn: String)(using Frame): Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError]) =
+        classLookup(fqn)
+
+    /** Look up a package symbol by fully-qualified dotted name, with Cache.memo Promise deduplication.
+      *
+      * Delegates to the `packageLookup` field (the Cache.memo-wrapped form of `rawLookupPackage`).
+      */
+    private[kyo] def lookupPackage(fqn: String)(using Frame): Maybe[Reflect.Symbol] < (Sync & Async & Abort[ReflectError]) =
+        packageLookup(fqn)
 
     /** All top-level class symbols (not packages). */
     private[kyo] def allTopLevelClasses(using Frame): Chunk[Reflect.Symbol] < (Sync & Abort[ReflectError]) =
@@ -130,6 +160,10 @@ object Classpath:
       *
       * A `readyLatch` with count=1 is created here and released in `transitionToReady`. Any caller that invokes
       * `lookupClass`/`lookupPackage` before the classpath transitions to Ready will suspend on the latch.
+      *
+      * After creating the raw `Classpath` object, this method calls `Resolver.makeClassLookup` and `Resolver.makePackageLookup` to build
+      * the Cache.memo-wrapped lookup functions and stores them in the `classLookup` / `packageLookup` fields. The Classpath reference does
+      * not escape until `allocate` returns, so the single-write-before-read invariant on those fields is maintained.
       */
     private[kyo] def allocate(using Frame): Classpath < Sync =
         // Unsafe: Latch.Unsafe.init requires AllowUnsafe; safe here because this is the single
@@ -137,8 +171,14 @@ object Classpath:
         val latch =
             import AllowUnsafe.embrace.danger
             Latch.Unsafe.init(1)
-        AtomicRef.init[State](new State.Building(new mutable.ArrayBuffer[ReflectError]())).map: ref =>
-            new Classpath(ref, latch)
+        AtomicRef.init[State](new State.Building(new mutable.ArrayBuffer[ReflectError]())).flatMap: ref =>
+            val cp = new Classpath(ref, latch)
+            Resolver.makeClassLookup(cp, 1024).flatMap: cl =>
+                Resolver.makePackageLookup(cp, 1024).map: pl =>
+                    // Unsafe: single-write-before-read; cp has not escaped this allocate call yet.
+                    cp.classLookup = cl
+                    cp.packageLookup = pl
+                    cp
     end allocate
 
     /** Transition from Building to Ready after Phase C completes.

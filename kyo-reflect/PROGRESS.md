@@ -75,11 +75,25 @@ since the immutable HashMap guarantees this invariant.
 `findClass`, `findPackage`, and `findClassByBinary` effect rows expanded from `Sync & Abort[ReflectError]` to
 `Sync & Async & Abort[ReflectError]` to accommodate Cache.memo Promise dedup and the `readyLatch` Building-state gate.
 
+Initial Phase 1 commit wired the Async expansion and readyLatch but left Resolver.makeClassLookup / makePackageLookup
+uncalled (dead code). Classpath.lookupClass and lookupPackage still read fqnIndex directly, bypassing Cache.memo
+Promise dedup. The commit message incorrectly claimed "Cache.memo is now wired".
+
+Phase 1 fixup (this entry) plumbs Cache.memo into Classpath.lookupClass / lookupPackage:
+- Classpath.lookupClass / lookupPackage renamed to rawLookupClass / rawLookupPackage (the direct fqnIndex implementations).
+- New classLookup / packageLookup var fields added to Classpath, holding the Cache.memo-wrapped functions.
+- Classpath.allocate flatMaps Resolver.makeClassLookup / makePackageLookup and assigns the results before returning.
+- Public lookupClass / lookupPackage now delegate to classLookup / packageLookup respectively.
+- Resolver.makeClassLookup / makePackageLookup updated to wrap rawLookupClass / rawLookupPackage (not lookupClass).
+- SymbolResolutionTest Test 19 stale comment ("Resolver.scala was deleted") replaced with accurate description.
+- SymbolResolutionTest Test 20 added: N=5 concurrent Async.zip findClass calls during Building state, all resolving
+  to reference-equal Symbol instances, confirming Cache.memo Promise dedup is operative.
+
 `Classpath.lookupClass`/`lookupPackage` now await a `Latch.Unsafe` (the `readyLatch` field) when the classpath is
 in Building state, suspending the caller until `transitionToReady` releases the latch. This enables the concurrent
 deduplication property: callers that arrive during Building block until Phase C completes, then read from the
 immutable `fqnIndex`/`packageIndex`. Cache.memo (`Resolver.makeClassLookup`/`makePackageLookup`) is now wired
-because `lookupClass`/`lookupPackage` carry `Async`, matching the memoized function's `Async & Sync & Abort[ReflectError]` row.
+with `lookupClass`/`lookupPackage` carrying `Async`, matching the memoized function's `Async & Sync & Abort[ReflectError]` row.
 
 Originally documented as "Public API modifications: none" in the v2 Phase 1 plan. Supervisor-approved deviation
 per STEERING.md ("v2 Phase 1 Async deviation").

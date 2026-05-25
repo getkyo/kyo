@@ -4,39 +4,45 @@ import kyo.*
 
 /** Per-classpath FQN resolver with concurrent deduplication.
   *
-  * Uses `Cache.memo` from kyo-core to ensure that two concurrent `findClass(same fqn)` calls return the same `Symbol` instance
-  * (reference-equal). The extra `Async` in the memoized function's result type comes from callers waiting on the Promise when they lose the
+  * Uses `Cache.memo` from kyo-core to ensure that two concurrent `findClass(same fqn)` calls collapse into a single underlying resolution
+  * via Promise dedup. The extra `Async` in the memoized function's result type comes from callers waiting on the Promise when they lose the
   * Cache.memo race.
   *
   * Missing FQNs return `Absent` (not an error) in soft-fail mode. The only error is `ClasspathClosed`.
   *
-  * Wiring: `makeClassLookup`/`makePackageLookup` delegate to `Classpath.lookupClass`/`lookupPackage`, which now carry `Async` in their
-  * effect rows (supervisor-approved deviation, documented in PROGRESS.md under "v2 Phase 1 (Async expansion)"). The `readyLatch` in
-  * `Classpath` gates lookups during Building state; `Cache.memo` deduplicates concurrent calls on Ready state.
+  * Wiring: `makeClassLookup`/`makePackageLookup` wrap `Classpath.rawLookupClass`/`rawLookupPackage` (the direct fqnIndex readers). The
+  * resulting Cache.memo functions are stored on the Classpath as `classLookup`/`packageLookup` and are called from
+  * `Classpath.lookupClass`/`lookupPackage`. The `readyLatch` inside `rawLookupClass`/`rawLookupPackage` gates lookups during Building
+  * state; `Cache.memo` deduplicates concurrent calls on Ready state.
+  *
+  * Initialization is done in `Classpath.allocate` (supervisor-approved, documented in PROGRESS.md under "v2 Phase 1 (Async expansion)").
   */
 object Resolver:
 
     /** Build a per-classpath memoized class-lookup function.
       *
-      * The returned function is `String => Maybe[Reflect.Symbol] < (Async & Sync & Abort[ReflectError])`. It must be initialized once per
-      * `Classpath` instance (inside `ClasspathOrchestrator.open`), then stored on the classpath. However, to keep Classpath lean, we create
-      * the memoized fn inline in the orchestrator and wire lookups there.
+      * Wraps `cp.rawLookupClass` with `Cache.memo` so that concurrent calls for the same FQN collapse into a single underlying resolution.
+      * The returned function has type `String => Maybe[Reflect.Symbol] < (Async & Sync & Abort[ReflectError])`.
       *
-      * This factory method exists so tests can construct a resolver independently.
+      * Called once per Classpath instance during `Classpath.allocate`; the result is stored in `Classpath.classLookup` and delegated to by
+      * `Classpath.lookupClass`.
       */
     def makeClassLookup(
         cp: Classpath,
         maxSize: Int
     )(using Frame): (String => Maybe[Reflect.Symbol] < (Async & Sync & Abort[ReflectError])) < Sync =
         Cache.memo[String](maxSize): fqn =>
-            cp.lookupClass(fqn)
+            cp.rawLookupClass(fqn)
 
-    /** Build a per-classpath memoized package-lookup function. */
+    /** Build a per-classpath memoized package-lookup function.
+      *
+      * Wraps `cp.rawLookupPackage` with `Cache.memo`. Stored in `Classpath.packageLookup` and delegated to by `Classpath.lookupPackage`.
+      */
     def makePackageLookup(
         cp: Classpath,
         maxSize: Int
     )(using Frame): (String => Maybe[Reflect.Symbol] < (Async & Sync & Abort[ReflectError])) < Sync =
         Cache.memo[String](maxSize): fqn =>
-            cp.lookupPackage(fqn)
+            cp.rawLookupPackage(fqn)
 
 end Resolver
