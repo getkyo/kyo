@@ -3,6 +3,7 @@ package kyo.internal.reflect.query
 import kyo.*
 import kyo.Maybe.Absent
 import kyo.internal.reflect.binary.ByteView
+import kyo.internal.reflect.classfile.ModuleInfoReader
 import kyo.internal.reflect.symbol.Interner
 import kyo.internal.reflect.symbol.Symbol as InternalSymbol
 import kyo.internal.reflect.tasty.AstUnpickler
@@ -87,11 +88,13 @@ object ClasspathOrchestrator:
                 else Kyo.unit
         .andThen:
             collectTastyFiles(roots, source).flatMap: tastyFiles =>
-                runPhaseAB(tastyFiles, strict, source, concurrency, cp)
+                collectModuleInfoFiles(roots, source).flatMap: moduleFiles =>
+                    runPhaseAB(tastyFiles, moduleFiles, strict, source, concurrency, cp)
 
     /** Phase A: read all .tasty bytes concurrently; Phase B: decode each file concurrently. Returns merged FileResult list. */
     private def runPhaseAB(
         tastyFiles: Chunk[String],
+        moduleFiles: Chunk[String],
         strict: Boolean,
         source: FileSource,
         concurrency: Int,
@@ -103,8 +106,10 @@ object ClasspathOrchestrator:
             Scope.run:
                 readAndDecodeTastyFile(file, interner, source, cp, strict)
         .flatMap: fileResults =>
-            // Phase C: single-threaded merge
-            mergeResults(fileResults, cp)
+            // Read module-info.class files sequentially (typically few or none)
+            readModuleInfoFiles(moduleFiles, source, strict).flatMap: moduleIndex =>
+                // Phase C: single-threaded merge
+                mergeResults(fileResults, moduleIndex, cp)
     end runPhaseAB
 
     /** Read bytes and decode a single TASTy file. Returns FileResult. */
@@ -209,6 +214,45 @@ object ClasspathOrchestrator:
         end for
     end decodeTastyBytes
 
+    /** Collect all module-info.class files from the root paths. */
+    private def collectModuleInfoFiles(
+        roots: Seq[String],
+        source: FileSource
+    )(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
+        Kyo.foreach(Chunk.from(roots)): root =>
+            source.list(root, "module-info.class").flatMap: listed =>
+                if listed.isEmpty then
+                    source.exists(root).map: ex =>
+                        if ex && root.endsWith("module-info.class") then Chunk(root)
+                        else listed
+                else
+                    listed
+        .map(_.flatten)
+
+    /** Read and parse all module-info.class files, returning a map from module name to descriptor.
+      *
+      * In soft-fail mode, failed files are silently skipped. In strict mode, any failure propagates.
+      */
+    private def readModuleInfoFiles(
+        files: Chunk[String],
+        source: FileSource,
+        strict: Boolean
+    )(using Frame): Map[String, Reflect.ModuleDescriptor] < (Sync & Abort[ReflectError]) =
+        Kyo.foreach(files): file =>
+            Abort.run[ReflectError](
+                source.read(file).flatMap: bytes =>
+                    ModuleInfoReader.read(bytes)
+            ).map:
+                case Result.Success(desc) => Maybe((desc.name, desc))
+                case Result.Failure(err) =>
+                    if strict then Abort.fail(err)
+                    else Maybe.Absent
+                case Result.Panic(_) =>
+                    if strict then Maybe.Absent
+                    else Maybe.Absent
+        .map: results =>
+            results.collect { case Present((k, v)) => k -> v }.toMap
+
     /** Collect all .tasty files from the root paths. */
     private def collectTastyFiles(
         roots: Seq[String],
@@ -228,6 +272,7 @@ object ClasspathOrchestrator:
     /** Phase C: merge all per-file results into the Classpath. */
     private def mergeResults(
         fileResults: Chunk[FileResult],
+        moduleIndex: Map[String, Reflect.ModuleDescriptor],
         cp: Classpath
     )(using Frame): Unit < Sync =
         Sync.defer:
@@ -368,7 +413,8 @@ object ClasspathOrchestrator:
                 fqnIndex.toMap,
                 packageIndex.toMap,
                 canonical,
-                Chunk.from(accErrors.toSeq)
+                Chunk.from(accErrors.toSeq),
+                moduleIndex
             )
 
     /** Convert a Name (opaque Interner.Entry) to a String. */

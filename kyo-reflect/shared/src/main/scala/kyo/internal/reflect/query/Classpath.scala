@@ -117,6 +117,13 @@ final class Classpath private[reflect] (
         end match
     end accumulatedErrors
 
+    /** Look up a JPMS module descriptor by module name (e.g., "java.base"). */
+    private[kyo] def lookupModule(name: String)(using Frame): Maybe[Reflect.ModuleDescriptor] < (Sync & Abort[ReflectError]) =
+        checkOpen.andThen:
+            stateRef.get.map:
+                case s: Classpath.State.Ready => Maybe(s.moduleIndex.get(name).orNull)
+                case _                        => Maybe.Absent
+
     /** All symbols in the classpath (classes + packages). */
     private[kyo] def allSymbols: Chunk[Reflect.Symbol] =
         // Unsafe: allSymbols non-effectful read of immutable Ready state
@@ -149,7 +156,8 @@ object Classpath:
             val fqnIndex: Map[String, Reflect.Symbol],
             val packageIndex: Map[String, Reflect.Symbol],
             val canonical: TypeArena,
-            val errors: Chunk[ReflectError]
+            val errors: Chunk[ReflectError],
+            val moduleIndex: Map[String, Reflect.ModuleDescriptor]
         ) extends State
 
         /** Terminal state: scope has exited, all resolving accessors fail. */
@@ -195,11 +203,12 @@ object Classpath:
         fqnIndex: Map[String, Reflect.Symbol],
         packageIndex: Map[String, Reflect.Symbol],
         canonical: TypeArena,
-        errors: Chunk[ReflectError]
+        errors: Chunk[ReflectError],
+        moduleIndex: Map[String, Reflect.ModuleDescriptor]
     ): Unit =
         // Unsafe: atomic state write + latch release, called from single-threaded Phase C
         import AllowUnsafe.embrace.danger
-        val ready = new State.Ready(allSymbols, topLevelClasses, packages, fqnIndex, packageIndex, canonical, errors)
+        val ready = new State.Ready(allSymbols, topLevelClasses, packages, fqnIndex, packageIndex, canonical, errors, moduleIndex)
         cp.stateRef.unsafe.set(ready)
         cp.readyLatch.release()
     end transitionToReady

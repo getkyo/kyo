@@ -104,7 +104,7 @@ object SnapshotReader:
             case None                   => Chunk.empty[ReflectError]
 
         val canonical = TypeArena.canonical()
-        Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors)
+        Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors, Map.empty)
         // Populate _parents, _typeParams, _declarations with empty chunks for snapshot-restored symbols.
         // The snapshot format does not yet serialize parent/member data; symbols restored here return
         // empty chunks for these accessors. A future snapshot format version will add this data.

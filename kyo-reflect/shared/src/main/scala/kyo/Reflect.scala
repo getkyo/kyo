@@ -182,6 +182,91 @@ object Reflect:
         end Value
     end JavaAnnotation
 
+    // ── JPMS Module ADT ─────────────────────────────────────────────────────
+
+    /** Describes a JPMS `requires` directive (one dependency of a module).
+      *
+      * @param name
+      *   The required module name (e.g., "java.base").
+      * @param version
+      *   The required module version, if specified.
+      * @param isTransitive
+      *   True if the requires has `ACC_TRANSITIVE` (0x0020) set.
+      * @param isStaticPhase
+      *   True if the requires has `ACC_STATIC_PHASE` (0x0040) set.
+      */
+    final case class ModuleRequires(
+        name: String,
+        version: Maybe[String],
+        isTransitive: Boolean,
+        isStaticPhase: Boolean
+    )
+
+    /** Describes a JPMS `exports` directive (a package exported to zero or more modules).
+      *
+      * @param packageName
+      *   The exported package name in dotted form (e.g., "java.lang").
+      * @param targets
+      *   The module names this package is exported to. Empty chunk means exported unconditionally (unqualified export).
+      */
+    final case class ModuleExports(
+        packageName: String,
+        targets: Chunk[String]
+    )
+
+    /** Describes a JPMS `opens` directive (a package opened for deep reflection).
+      *
+      * @param packageName
+      *   The opened package name in dotted form.
+      * @param targets
+      *   The module names this package is opened to. Empty chunk means opened unconditionally.
+      */
+    final case class ModuleOpens(
+        packageName: String,
+        targets: Chunk[String]
+    )
+
+    /** Describes a JPMS `provides` directive (a service implementation).
+      *
+      * @param serviceName
+      *   The service interface class name in dotted form.
+      * @param implementations
+      *   The implementation class names in dotted form.
+      */
+    final case class ModuleProvides(
+        serviceName: String,
+        implementations: Chunk[String]
+    )
+
+    /** Parsed content of a module-info.class file.
+      *
+      * Produced by `ModuleInfoReader.read` and stored in the classpath `moduleIndex` after a successful parse.
+      *
+      * @param name
+      *   The module name (e.g., "java.base").
+      * @param version
+      *   The module version string, if present in the `module-info.class`.
+      * @param requires
+      *   All requires directives.
+      * @param exports
+      *   All exports directives.
+      * @param opens
+      *   All opens directives.
+      * @param uses
+      *   Service interfaces used by this module (dotted class names).
+      * @param provides
+      *   Service implementations provided by this module.
+      */
+    final case class ModuleDescriptor(
+        name: String,
+        version: Maybe[String],
+        requires: Chunk[ModuleRequires],
+        exports: Chunk[ModuleExports],
+        opens: Chunk[ModuleOpens],
+        uses: Chunk[String],
+        provides: Chunk[ModuleProvides]
+    )
+
     // ── Type ADT ────────────────────────────────────────────────────────────
 
     enum Type:
@@ -728,7 +813,8 @@ object Reflect:
                     fqnIndex = Map.empty,
                     packageIndex = Map.empty,
                     canonical = TypeArena.canonical(),
-                    errors = Chunk.empty
+                    errors = Chunk.empty,
+                    moduleIndex = Map.empty
                 )
                 assignHomes(cp, cp)
                 cp
@@ -815,6 +901,14 @@ object Reflect:
         def packages: Chunk[Symbol] < (Sync & Abort[ReflectError])                         = cp.allPackages
         def topLevelClasses: Chunk[Symbol] < (Sync & Abort[ReflectError])                  = cp.allTopLevelClasses
         def errors: Chunk[ReflectError] < Sync                                             = Sync.defer(cp.accumulatedErrors)
+
+        /** Look up a JPMS module descriptor by module name (e.g., "java.base").
+          *
+          * Returns `Present(descriptor)` if a `module-info.class` with the given module name was found in the classpath roots. Returns
+          * `Absent` if no matching module was found. Fails with `ReflectError.ClasspathClosed` if the classpath has been closed.
+          */
+        def findModule(name: String): Maybe[ModuleDescriptor] < (Sync & Abort[ReflectError]) =
+            cp.lookupModule(name)
 
         /** Find a class symbol by JVM binary name (e.g., "com/example/Foo$Inner").
           *

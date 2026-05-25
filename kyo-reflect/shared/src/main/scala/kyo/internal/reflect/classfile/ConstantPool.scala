@@ -132,6 +132,24 @@ final class ConstantPool(
                 case CpEntry.CpDouble(value) => value
                 case _                       => Abort.fail(ReflectError.ClassfileFormatError(path, s"Expected Double at pool[$idx]"))
 
+    /** Return the module name string (with '.' separators) for a CONSTANT_Module entry at `idx`. */
+    def moduleName(idx: Int)(using Frame): String < (Sync & Abort[ReflectError]) =
+        entry(idx).map: cpEntry =>
+            cpEntry match
+                case CpEntry.CpModule(nameIdx) =>
+                    utf8(nameIdx)
+                case _ =>
+                    Abort.fail(ReflectError.ClassfileFormatError(path, s"Expected Module at pool[$idx]"))
+
+    /** Return the package name string (with '/' separators) for a CONSTANT_Package entry at `idx`. */
+    def packageName(idx: Int)(using Frame): String < (Sync & Abort[ReflectError]) =
+        entry(idx).map: cpEntry =>
+            cpEntry match
+                case CpEntry.CpPackage(nameIdx) =>
+                    utf8(nameIdx)
+                case _ =>
+                    Abort.fail(ReflectError.ClassfileFormatError(path, s"Expected Package at pool[$idx]"))
+
     /** Return (name, descriptor) for a CONSTANT_NameAndType entry. */
     def nameAndType(idx: Int)(using Frame): (String, String) < (Sync & Abort[ReflectError]) =
         entry(idx).map: cpEntry =>
