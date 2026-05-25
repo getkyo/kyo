@@ -631,6 +631,9 @@ object Reflect:
                                                 "ASTs",
                                                 s"body truncated for '${name.asString}': ${ex.getMessage}"
                                             ))
+                                        case _: IllegalStateException =>
+                                            // Thrown when a mmap-backed ByteView is read after its arena was closed.
+                                            Left(ReflectError.ClasspathClosed)
                                 decoded match
                                     case Right(t) => Sync.defer(t)
                                     case Left(e)  => Abort.fail(e)
@@ -739,7 +742,12 @@ object Reflect:
             val bodyEnd: Int,
             val sectionBytes: Array[Byte],
             val names: Array[Reflect.Name],
-            val sectionOffset: Int
+            val sectionOffset: Int,
+            /** Non-null only for mmap-loaded snapshot origins. When set, TreeUnpickler reads from this view directly instead of
+              * constructing a ByteView from sectionBytes. After the backing arena is closed, reads from this view throw
+              * IllegalStateException which Symbol.body maps to ReflectError.ClasspathClosed.
+              */
+            val bodyView: kyo.internal.reflect.binary.ByteView | Null
         ) extends Origin:
             // Write-once: populated by AstUnpickler after pass1 completes. Unsafe: SingleAssign is unsafe-tier.
             private[kyo] val _addrMap: kyo.internal.reflect.symbol.SingleAssign[Map[Int, Reflect.Symbol]] =
@@ -758,7 +766,7 @@ object Reflect:
 
         object TastyOrigin:
             /** Convenience factory for synthetic symbols that have no file bytes or body. */
-            def empty: TastyOrigin = new TastyOrigin(0, 0, Array.empty[Byte], Array.empty[Reflect.Name], 0)
+            def empty: TastyOrigin = new TastyOrigin(0, 0, Array.empty[Byte], Array.empty[Reflect.Name], 0, null)
 
             /** Pattern match extractor: `case TastyOrigin(bodyStart, bodyEnd)`. */
             def unapply(o: TastyOrigin): Some[(Int, Int)] =
@@ -849,10 +857,10 @@ object Reflect:
                     val snapshotPath = s"$cacheDir/$hexDigest.krfl"
                     source.exists(snapshotPath).flatMap: exists =>
                         if exists then
-                            // Try to load from snapshot
+                            // Try to load from snapshot using mmap on JVM/Native, heap on JS.
                             kyo.internal.reflect.query.Classpath.allocate.flatMap: cp =>
                                 Scope.ensure(Sync.defer(kyo.internal.reflect.query.Classpath.close(cp))).andThen:
-                                    Abort.run[ReflectError](SnapshotReader.read(snapshotPath, source, cp)).flatMap:
+                                    Abort.run[ReflectError](SnapshotReader.readMapped(snapshotPath, source, cp)).flatMap:
                                         case Result.Success(_) =>
                                             assignHomes(cp, cp)
                                             cp

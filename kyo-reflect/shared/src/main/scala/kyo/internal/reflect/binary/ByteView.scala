@@ -104,8 +104,12 @@ object ByteView:
 
     end Heap
 
-    /** Stub for memory-mapped file support. Wired in Phase 7. */
-    sealed abstract class Mapped extends ByteView:
+    /** Base class for memory-mapped ByteView implementations.
+      *
+      * Platform-specific subclasses (MappedByteView in jvm/ and native/) extend this class. After the backing memory arena is closed, reads
+      * throw IllegalStateException, which Symbol.body catches and maps to ReflectError.ClasspathClosed.
+      */
+    abstract class Mapped extends ByteView:
         def allBytes: Array[Byte] = Array.empty[Byte]
 
 end ByteView

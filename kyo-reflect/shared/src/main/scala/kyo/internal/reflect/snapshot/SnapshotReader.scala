@@ -1,6 +1,7 @@
 package kyo.internal.reflect.snapshot
 
 import kyo.*
+import kyo.internal.reflect.binary.ByteView
 import kyo.internal.reflect.query.Classpath
 import kyo.internal.reflect.query.ClasspathRef
 import kyo.internal.reflect.query.FileSource
@@ -36,6 +37,57 @@ object SnapshotReader:
     )(using Frame): Unit < (Sync & Abort[ReflectError]) =
         source.read(path).flatMap: bytes =>
             readBytes(path, bytes, cp)
+
+    /** Read a snapshot preferring a memory-mapped path on JVM/Native; falls back to heap read on JS.
+      *
+      * On JVM, delegates to PlatformMmapReader which uses JvmMmapReader (java.lang.foreign.Arena). On Native, uses NativeMmapReader (POSIX
+      * mmap). On JS, falls back to the heap-based `read`. The Scope effect is required because the mmap arena lifetime is bounded by the
+      * enclosing Scope.
+      */
+    def readMapped(
+        path: String,
+        source: FileSource,
+        cp: Classpath
+    )(using Frame): Unit < (Sync & Abort[ReflectError] & Scope) =
+        PlatformMmapReader.readMapped(path, source, cp)
+
+    /** Deserialize a KRFL snapshot from an already-opened ByteView (mmap path).
+      *
+      * Called by platform-specific PlatformMmapReader implementations (JVM, Native). The `view` covers the entire snapshot file content
+      * mapped into memory. Symbols with body bytes get a TastyOrigin with `bodyView` set to a sub-view into the mapped region so that
+      * sym.body reads directly from mapped memory without an eager copy.
+      */
+    private[snapshot] def readMappedView(
+        path: String,
+        view: ByteView,
+        cp: Classpath
+    ): Unit =
+        // Extract bytes for header validation and section parsing.
+        // We read only the header bytes (32 + section count + section index) eagerly; BODY_BYTES is left in mapped memory.
+        // For simplicity, use the view's allBytes (empty for Mapped) and fall back to an array copy for header/names/symbols.
+        // The key optimization: body byte slices use sub-views into the mapped region, avoiding eager copy.
+        val magic0 = view.peekByte(0)
+        val magic1 = view.peekByte(1)
+        val magic2 = view.peekByte(2)
+        val magic3 = view.peekByte(3)
+        if magic0 != 'K' || magic1 != 'R' || magic2 != 'F' || magic3 != 'L' then
+            throw new java.io.IOException(s"wrong magic in $path")
+        val fileMajor = view.peekByte(4) & 0xff
+        val fileMinor = view.peekByte(5) & 0xff
+        if fileMajor != SnapshotFormat.majorVersion then
+            throw new VersionMismatchException(
+                Reflect.Version(fileMajor, fileMinor, 0),
+                Reflect.Version(SnapshotFormat.majorVersion, SnapshotFormat.minorVersion, 0)
+            )
+        end if
+        deserializeMapped(path, view, cp)
+    end readMappedView
+
+    /** Thrown by readMappedView when the snapshot major version doesn't match. */
+    final private[snapshot] class VersionMismatchException(
+        val found: Reflect.Version,
+        val supported: Reflect.Version
+    ) extends java.io.IOException(s"version mismatch: found=$found supported=$supported")
 
     /** Deserialize KRFL bytes into the Classpath. */
     private def readBytes(
@@ -125,6 +177,211 @@ object SnapshotReader:
             if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
         end for
     end deserialize
+
+    /** Deserialize from a memory-mapped ByteView.
+      *
+      * Reads header, section index, NAMES, SYMBOLS, and ERRORS into heap arrays (they are small). BODY_BYTES section is kept in mapped
+      * memory: TastyOrigin.bodyView for each symbol is a sub-view into the mapped region. After the backing Arena is closed, sym.body reads
+      * from the mapped view and throws IllegalStateException, which Symbol.body catches as ClasspathClosed.
+      */
+    private def deserializeMapped(path: String, view: ByteView, cp: Classpath): Unit =
+        // Read the section index from the view.
+        // SnapshotFormat.readInt32LE needs an Array[Byte]; copy 36+ bytes from the view for parsing.
+        // The section index starts at byte 32. Each entry is sectionIndexEntrySize (24) bytes.
+        // Read section count from offset 32, then copy all index entries.
+        val sectionCountOffset = 32
+        val sectionCount       = readInt32LEFromView(view, sectionCountOffset)
+        val indexEnd           = 36 + sectionCount * SnapshotFormat.sectionIndexEntrySize
+        // Copy the section index to a small heap array for parsing with existing SnapshotFormat helpers.
+        val indexBytes = copyViewRange(view, sectionCountOffset, indexEnd)
+
+        val sectionMap = mutable.HashMap.empty[String, (Int, Int)]
+        var idxPos     = 4 // offset within indexBytes (skip the 4-byte sectionCount at bytes [0..3])
+        var i          = 0
+        while i < sectionCount do
+            val name   = SnapshotFormat.readSectionName(indexBytes, idxPos)
+            val offset = SnapshotFormat.readInt64LE(indexBytes, idxPos + 8).toInt
+            val length = SnapshotFormat.readInt64LE(indexBytes, idxPos + 16).toInt
+            sectionMap(name) = (offset, length)
+            idxPos += SnapshotFormat.sectionIndexEntrySize
+            i += 1
+        end while
+
+        // Read NAMES section into heap (small).
+        val namesBytes = sectionMap.get(SnapshotFormat.sectionNAMES) match
+            case Some((off, len)) => copyViewRange(view, off, off + len)
+            case None             => Array.empty[Byte]
+        val namePool = if namesBytes.nonEmpty then readNamePool(namesBytes, 0, namesBytes.length) else Array.empty[String]
+
+        // Keep BODY_BYTES in mapped memory via a ByteView sub-view.
+        val bodyView: ByteView | Null = sectionMap.get(SnapshotFormat.sectionBODYBYTES) match
+            case Some((off, len)) if len > 0 => view.subView(off, off + len)
+            case _                           => null
+
+        // Read SYMBOLS section into heap (small to medium).
+        val (allSymbols, fqnIndex, packageIndex, topLevelCls, packages) =
+            sectionMap.get(SnapshotFormat.sectionSYMBOLS) match
+                case Some((off, len)) =>
+                    val symBytes = copyViewRange(view, off, off + len)
+                    readSymbolsMapped(symBytes, 0, len, namePool, bodyView)
+                case None =>
+                    (
+                        Chunk.empty[Reflect.Symbol],
+                        Map.empty[String, Reflect.Symbol],
+                        Map.empty[String, Reflect.Symbol],
+                        Chunk.empty[Reflect.Symbol],
+                        Chunk.empty[Reflect.Symbol]
+                    )
+
+        // Read ERRORS section into heap (tiny).
+        val errorsBytes = sectionMap.get(SnapshotFormat.sectionERRORS) match
+            case Some((off, len)) => copyViewRange(view, off, off + len)
+            case None             => Array.empty[Byte]
+        val errors = if errorsBytes.nonEmpty then readErrors(errorsBytes, 0, errorsBytes.length) else Chunk.empty[ReflectError]
+
+        val canonical = TypeArena.canonical()
+        Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors, Map.empty)
+        import AllowUnsafe.embrace.danger
+        for sym <- allSymbols do
+            if !sym._parents.isSet then sym._parents.set(Chunk.empty)
+            if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
+            if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
+        end for
+    end deserializeMapped
+
+    /** Read an Int32 LE from the ByteView at the given absolute byte offset, without advancing the cursor. */
+    private def readInt32LEFromView(view: ByteView, at: Int): Int =
+        (view.peekByte(at) & 0xff) |
+            ((view.peekByte(at + 1) & 0xff) << 8) |
+            ((view.peekByte(at + 2) & 0xff) << 16) |
+            ((view.peekByte(at + 3) & 0xff) << 24)
+
+    /** Copy bytes from a ByteView range [from, until) into a new heap Array[Byte]. Does not advance the view cursor. */
+    private def copyViewRange(view: ByteView, from: Int, until: Int): Array[Byte] =
+        val len = until - from
+        val arr = new Array[Byte](len)
+        var i   = 0
+        while i < len do
+            arr(i) = view.peekByte(from + i)
+            i += 1
+        end while
+        arr
+    end copyViewRange
+
+    /** readSymbols variant for the mmap path: body byte origins use ByteView sub-views instead of Array[Byte] slices.
+      *
+      * When `bodyView` is non-null, TastyOrigin.bodyView is set to a sub-view into the mapped region for symbols with body bytes. After
+      * arena close, sym.body reads from this view and throws IllegalStateException.
+      */
+    private def readSymbolsMapped(
+        bytes: Array[Byte],
+        offset: Int,
+        length: Int,
+        namePool: Array[String],
+        bodyViewOpt: ByteView | Null
+    ): (Chunk[Reflect.Symbol], Map[String, Reflect.Symbol], Map[String, Reflect.Symbol], Chunk[Reflect.Symbol], Chunk[Reflect.Symbol]) =
+        val count      = SnapshotFormat.readInt32LE(bytes, offset)
+        val recordSize = 40
+
+        if count <= 0 then
+            return (Chunk.empty, Map.empty, Map.empty, Chunk.empty, Chunk.empty)
+
+        val raws = new Array[RawSymbol](count)
+        var pos  = offset + 4
+        var i    = 0
+        while i < count do
+            val kindOrd   = bytes(pos) & 0xff
+            val flagBits  = SnapshotFormat.readInt64LE(bytes, pos + 1)
+            val nameId    = SnapshotFormat.readInt32LE(bytes, pos + 9)
+            val fqnId     = SnapshotFormat.readInt32LE(bytes, pos + 13)
+            val ownerId   = SnapshotFormat.readInt32LE(bytes, pos + 17)
+            val bodyStart = SnapshotFormat.readInt32LE(bytes, pos + 21)
+            val bodyEnd   = SnapshotFormat.readInt32LE(bytes, pos + 25)
+            raws(i) = RawSymbol(kindOrd, flagBits, nameId, fqnId, ownerId, bodyStart, bodyEnd)
+            pos += recordSize
+            i += 1
+        end while
+
+        val depth   = new Array[Int](count)
+        val visited = new Array[Boolean](count)
+        def computeDepth(idx: Int): Int =
+            if visited(idx) then depth(idx)
+            else
+                visited(idx) = true
+                val ownerId = raws(idx).ownerId
+                depth(idx) = if ownerId < 0 || ownerId >= count then 0
+                else computeDepth(ownerId) + 1
+                depth(idx)
+
+        i = 0
+        while i < count do
+            val _ = computeDepth(i)
+            i += 1
+
+        val order   = (0 until count).sortBy(depth).toArray
+        val created = new Array[Reflect.Symbol](count)
+
+        for idx <- order do
+            val raw   = raws(idx)
+            val kind  = kindFromOrd(raw.kindOrd)
+            val flags = new Reflect.Flags(raw.flagBits)
+            val name  = if raw.nameId >= 0 && raw.nameId < namePool.length then Reflect.Name(namePool(raw.nameId)) else Reflect.Name("")
+            val owner = if raw.ownerId >= 0 && raw.ownerId < count && created(raw.ownerId) != null then created(raw.ownerId) else null
+            val home  = new ClasspathRef
+            val origin: Reflect.Symbol.Origin =
+                if raw.bodyStart > 0 && raw.bodyEnd > raw.bodyStart && (bodyViewOpt ne null) then
+                    // Mmap path: bodyView is a sub-view into the mapped BODY_BYTES region.
+                    // sectionBytes is empty; body decode reads via bodyView, which fails with IllegalStateException after arena close.
+                    new Reflect.Symbol.TastyOrigin(
+                        raw.bodyStart,
+                        raw.bodyEnd,
+                        Array.empty[Byte],
+                        Array.empty[Reflect.Name],
+                        0,
+                        bodyViewOpt
+                    )
+                else
+                    Reflect.Symbol.JavaOrigin
+            created(idx) = InternalSymbol.makeSymbol(kind, flags, name, owner, home, origin, Maybe.Absent)
+        end for
+
+        val fqnIndex     = mutable.HashMap.empty[String, Reflect.Symbol]
+        val packageIndex = mutable.HashMap.empty[String, Reflect.Symbol]
+        val allSymbols   = mutable.ArrayBuffer.empty[Reflect.Symbol]
+        val topLevelCls  = mutable.ArrayBuffer.empty[Reflect.Symbol]
+        val packages     = mutable.ArrayBuffer.empty[Reflect.Symbol]
+
+        i = 0
+        while i < count do
+            val raw = raws(i)
+            val fqn = if raw.fqnId >= 0 && raw.fqnId < namePool.length then namePool(raw.fqnId) else ""
+            val sym = created(i)
+            if sym != null then
+                allSymbols += sym
+                if fqn.nonEmpty then
+                    fqnIndex(fqn) = sym
+                    sym.kind match
+                        case Reflect.SymbolKind.Package =>
+                            packages += sym
+                            packageIndex(fqn) = sym
+                        case Reflect.SymbolKind.Class | Reflect.SymbolKind.Trait | Reflect.SymbolKind.Object =>
+                            topLevelCls += sym
+                        case _ =>
+                            ()
+                    end match
+                end if
+            end if
+            i += 1
+        end while
+
+        (
+            Chunk.from(allSymbols.toSeq),
+            fqnIndex.toMap,
+            packageIndex.toMap,
+            Chunk.from(topLevelCls.toSeq),
+            Chunk.from(packages.toSeq)
+        )
+    end readSymbolsMapped
 
     /** Read the name pool from the NAMES section. */
     private def readNamePool(bytes: Array[Byte], offset: Int, length: Int): Array[String] =
@@ -227,7 +484,7 @@ object SnapshotReader:
                 then
                     // Restore body origin: offsets are relative to the start of BODY_BYTES section.
                     // sectionOffset is 0 because bodyStart is already absolute within bodyBytesArray.
-                    new Reflect.Symbol.TastyOrigin(raw.bodyStart, raw.bodyEnd, bodyBytesArray, Array.empty[Reflect.Name], 0)
+                    new Reflect.Symbol.TastyOrigin(raw.bodyStart, raw.bodyEnd, bodyBytesArray, Array.empty[Reflect.Name], 0, null)
                 else
                     Reflect.Symbol.JavaOrigin
             created(idx) = InternalSymbol.makeSymbol(kind, flags, name, owner, home, origin, Maybe.Absent)

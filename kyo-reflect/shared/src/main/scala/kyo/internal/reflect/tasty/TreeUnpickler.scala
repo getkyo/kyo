@@ -36,11 +36,18 @@ object TreeUnpickler:
         import AllowUnsafe.embrace.danger
         val addrMap = origin.addrMap
         val names   = origin.names
-        val bytes   = origin.sectionBytes
-        if bytes == null || bytes.isEmpty then
-            throw new DecodeException("body bytes not available (snapshot-loaded symbol)")
-        end if
-        val view          = ByteView(bytes, origin.bodyStart, origin.bodyEnd)
+        // Prefer the pre-constructed ByteView (mmap-backed) if present; otherwise build from sectionBytes.
+        // Reading from a closed mmap arena throws IllegalStateException, which Symbol.body maps to ClasspathClosed.
+        val (view, bytes) = origin.bodyView match
+            case bv: kyo.internal.reflect.binary.ByteView =>
+                val sub = bv.subView(origin.bodyStart, origin.bodyEnd)
+                (sub, origin.sectionBytes)
+            case null =>
+                val b = origin.sectionBytes
+                if b == null || b.isEmpty then
+                    throw new DecodeException("body bytes not available (snapshot-loaded symbol)")
+                end if
+                (ByteView(b, origin.bodyStart, origin.bodyEnd), b)
         val treeAddrCache = new mutable.HashMap[Int, Reflect.Tree]()
         val dummyHome     = new ClasspathRef
         val dummyArena    = TypeArena.canonical()

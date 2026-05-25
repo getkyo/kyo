@@ -323,7 +323,8 @@ class TreeUnpicklerTest extends Test:
                                     o.bodyStart + 1,
                                     o.sectionBytes,
                                     o.names,
-                                    o.sectionOffset
+                                    o.sectionOffset,
+                                    null
                                 )
                                 import AllowUnsafe.embrace.danger
                                 truncated._addrMap.set(Map.empty)

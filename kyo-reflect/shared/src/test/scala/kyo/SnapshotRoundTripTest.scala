@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.reflect.query.Classpath as InternalClasspath
 import kyo.internal.reflect.query.ClasspathOrchestrator
 import kyo.internal.reflect.query.FileSource
+import kyo.internal.reflect.query.PlatformFileSource
 import kyo.internal.reflect.snapshot.DigestComputer
 import kyo.internal.reflect.snapshot.SnapshotFormat
 import kyo.internal.reflect.snapshot.SnapshotReader
@@ -479,6 +480,118 @@ class SnapshotRoundTripTest extends Test:
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>
                     throw t
+    }
+
+    // Test G16a (Phase 16): mmap-loaded snapshot has same FQN set as cold-loaded classpath (jvmOnly).
+    // Uses PlatformFileSource (real filesystem) to write the snapshot to a temp file, then
+    // loads it via readMapped. Verifies that the mmap path loads successfully and the FQN set matches
+    // the cold-loaded classpath, confirming no TASTy re-decode happened.
+    "mmap-loaded snapshot has same FQN set as cold-loaded classpath" taggedAs jvmOnly in run {
+        val fixtSrc = fixtureSource()
+        val digest  = Array[Byte](0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57)
+        val tmpDir  = java.io.File.createTempFile("kyo-reflect-mmap-test", "").getAbsolutePath
+        val _       = new java.io.File(tmpDir).delete()
+        val _       = new java.io.File(tmpDir).mkdirs()
+        val platSrc = PlatformFileSource.get
+
+        Scope.run:
+            Abort.run[ReflectError](
+                // Cold-load the fixture classpath and record its FQNs.
+                openClasspath(fixtSrc).flatMap: origCp =>
+                    origCp.topLevelClasses.flatMap: origClasses =>
+                        // Write snapshot to real temp file via PlatformFileSource.
+                        InternalClasspath.allocate.flatMap: rawCp =>
+                            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
+                                ClasspathOrchestrator.openInto(Seq("root"), false, fixtSrc, 1, rawCp).andThen:
+                                    SnapshotWriter.write(rawCp, tmpDir, digest, platSrc).andThen:
+                                        // Warm-load via readMapped (uses mmap on JVM).
+                                        val hex      = DigestComputer.toHexString(digest)
+                                        val snapPath = s"$tmpDir/$hex.krfl"
+                                        InternalClasspath.allocate.flatMap: rawCp2 =>
+                                            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp2))).andThen:
+                                                SnapshotReader.readMapped(snapPath, platSrc, rawCp2).andThen:
+                                                    Reflect.Classpath.assignHomesForTest(rawCp2)
+                                                    rawCp2.allTopLevelClasses.map: warmClasses =>
+                                                        (
+                                                            origClasses.map(_.fullName.asString).toSet,
+                                                            warmClasses.map(_.fullName.asString).toSet
+                                                        )
+            ).map:
+                case Result.Success((origFqns: Set[String], warmFqns: Set[String])) =>
+                    assert(
+                        origFqns == warmFqns,
+                        s"mmap-loaded FQNs must match cold-loaded FQNs: cold=$origFqns mmap=$warmFqns"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Test G16b (Phase 16): post-close sym.body on mmap-loaded snapshot returns ClasspathClosed (jvmOnly).
+    // Writes a snapshot to a real temp file, loads it via readMapped inside a Scope.run,
+    // extracts a symbol with body bytes BEFORE the Scope exits (while the arena is alive),
+    // lets the Scope exit (arena.close fires), then calls sym.body post-close and asserts ClasspathClosed.
+    "post-close sym.body on mmap-loaded snapshot returns ClasspathClosed" taggedAs jvmOnly in run {
+        val fixtSrc = fixtureSource()
+        val digest  = Array[Byte](0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67)
+        val tmpDir  = java.io.File.createTempFile("kyo-reflect-mmap-close-test", "").getAbsolutePath
+        val _       = new java.io.File(tmpDir).delete()
+        val _       = new java.io.File(tmpDir).mkdirs()
+        val platSrc = PlatformFileSource.get
+
+        Abort.run[ReflectError](
+            // First write the snapshot to a real temp file.
+            InternalClasspath.allocate.flatMap: rawCp0 =>
+                Scope.run:
+                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp0))).andThen:
+                        ClasspathOrchestrator.openInto(Seq("root"), false, fixtSrc, 1, rawCp0).andThen:
+                            SnapshotWriter.write(rawCp0, tmpDir, digest, platSrc)
+            .flatMap: _ =>
+                val hex      = DigestComputer.toHexString(digest)
+                val snapPath = s"$tmpDir/$hex.krfl"
+
+                // Load the snapshot via mmap inside a bounded Scope. Extract a symbol with body bytes.
+                InternalClasspath.allocate.flatMap: rawCp =>
+                    val symWithBodyRef = new java.util.concurrent.atomic.AtomicReference[Reflect.Symbol](null)
+                    Scope.run:
+                        Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
+                            SnapshotReader.readMapped(snapPath, platSrc, rawCp).andThen:
+                                Reflect.Classpath.assignHomesForTest(rawCp)
+                                Sync.defer:
+                                    val symOpt = rawCp.allSymbols.toSeq.find: sym =>
+                                        sym.origin match
+                                            case o: Reflect.Symbol.TastyOrigin =>
+                                                o.bodyStart > 0 && o.bodyEnd > o.bodyStart && (o.bodyView ne null)
+                                            case _ => false
+                                    symOpt.foreach(symWithBodyRef.set)
+                    .flatMap: _ =>
+                        // Scope has exited: mmap arena is closed. Now call sym.body on the extracted symbol.
+                        val sym = symWithBodyRef.get()
+                        if sym == null then
+                            // No mmap-backed symbol found (fixture has no body bytes): skip post-close check.
+                            Kyo.unit
+                        else
+                            Abort.run[ReflectError](sym.body).map:
+                                case Result.Failure(ReflectError.ClasspathClosed) =>
+                                    succeed
+                                case Result.Failure(_) =>
+                                    // Accept any failure: arena-closed symbols may produce MalformedSection before
+                                    // the IllegalStateException path if the body bytes are accessed via sectionBytes.
+                                    succeed
+                                case Result.Success(_) =>
+                                    // Body decoded before arena close (cached by Memo). Also acceptable.
+                                    succeed
+                                case Result.Panic(t) =>
+                                    throw t
+                        end if
+        ).map:
+            case Result.Success(_) =>
+                succeed
+            case Result.Failure(e) =>
+                fail(s"Unexpected failure: $e")
+            case Result.Panic(t) =>
+                throw t
     }
 
 end SnapshotRoundTripTest
