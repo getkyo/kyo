@@ -334,7 +334,14 @@ object Scala2PickleReader:
         makePickleSym(Reflect.SymbolKind.Object, flags, symName, home, interner)
     end decodeModuleSym
 
-    /** VALsym data layout: nameRef(nat) ownerRef(nat) flags(longNat) [privateWithinRef(nat)] infoRef(nat) */
+    /** VALsym data layout: nameRef(nat) ownerRef(nat) flags(longNat) [privateWithinRef(nat)] infoRef(nat)
+      *
+      * Simplification: for method symbols (METH_FLAG set), the infoRef points to a NullaryMethodType or MethodType in the type table. Full
+      * parsing of the Scala 2 type table is out of scope (see decodeAliasSym for rationale). Instead, a synthetic
+      * `Type.Function(Chunk.empty, Named(sym), false)` placeholder is stored as `declaredType`, representing a zero-argument method
+      * returning an unknown type. This limitation is documented in PHASE-10-IMPL-NOTES.md and in PROGRESS.md under "Plan deviations during
+      * execution".
+      */
     private def decodeValSym(
         data: Array[Byte],
         idx: Int,
@@ -364,7 +371,15 @@ object Scala2PickleReader:
         sym
     end decodeValSym
 
-    /** ALIASsym data layout: nameRef(nat) ownerRef(nat) flags(longNat) infoRef(nat) */
+    /** ALIASsym data layout: nameRef(nat) ownerRef(nat) flags(longNat) infoRef(nat)
+      *
+      * Simplification: the infoRef field points into the pickle type table, which contains a full Scala 2 type expression (e.g. TypeRef,
+      * PolyType, NullaryMethodType). Fully parsing the Scala 2 type table requires a recursive descent over a separate encoding (distinct
+      * from the symbol table). This is out of scope because no Scala 2 compiler is available for fixture generation, and the primary use
+      * case of kyo-reflect is TASTy-based (Scala 3) introspection. Instead, a synthetic `Named("String")` placeholder is stored as
+      * `declaredType`. This means `sym.declaredType` for a Scala 2 type alias will return a placeholder rather than the real aliased type.
+      * This limitation is documented in PHASE-10-IMPL-NOTES.md and in PROGRESS.md under "Plan deviations during execution".
+      */
     private def decodeAliasSym(
         data: Array[Byte],
         idx: Int,

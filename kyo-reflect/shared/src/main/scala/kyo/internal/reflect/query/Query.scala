@@ -8,7 +8,8 @@ import kyo.Stream
   * Constructed via `cp.query[A](using Reads[A])` on a `Reflect.Classpath`. Terminal operations `.run` and `.stream` perform a single
   * traversal over the symbol cache, applying all accumulated predicates and the `Reads[A]` projection.
   *
-  * Effect row of terminal operations: `Sync & Async & Abort[ReflectError]`. No `Async` -- the query layer is synchronous after Phase C.
+  * Effect row of terminal operations: `Sync & Async & Abort[ReflectError]`. The Async effect is required because `findClass` and the
+  * underlying `lookupClass` calls carry `Async` (Cache.memo Promise dedup and the Building-state latch both require it).
   *
   * `map` is implemented by wrapping the `Reads[A]` in a derived `Reads[B]` that post-processes with the given function. This avoids unsafe
   * casts for the transformation chain.

@@ -102,6 +102,20 @@ per STEERING.md ("v2 Phase 1 Async deviation").
 two concurrent `findClass` fibers that await the latch; both return the same reference-equal Symbol from
 the immutable `fqnIndex`.
 
+**Phase 10 (v2 W2): Scala 2 type table decode is simplified**
+
+`Scala2PickleReader.decodeValSym` and `decodeAliasSym` use synthetic placeholder types rather than fully parsing the
+Scala 2 pickle type table. For method symbols (`NullaryMethodType`, `PolyType`, etc.) the placeholder is
+`Type.Function(Chunk.empty, Named(sym), false)`. For type alias symbols the placeholder is a synthetic `Named("String")`.
+
+Full type table parsing was out of scope because no Scala 2 compiler is available for fixture generation, and the primary
+use case of kyo-reflect is TASTy-based (Scala 3) introspection.
+
+Scaladoc explaining the simplification has been added to both `decodeValSym` and `decodeAliasSym` in `Scala2PickleReader.scala`.
+
+Decision: DEFERRED. If Scala 2 pickle type-table accuracy becomes required for a downstream use case, a dedicated
+follow-up phase can add full recursive type-table descent.
+
 ## User deferrals
 
 (populated only if the user explicitly accepts a deviation from the plan; nothing should land here without an explicit user message granting the deferral)

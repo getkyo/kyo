@@ -285,7 +285,7 @@ object ModuleInfoReader:
             val toCount      = readU2(view)
             resolvePackageName(pool, exportsIdx, path).flatMap: packageName =>
                 readModuleRefs(view, pool, path, toCount, 0, Chunk.empty).flatMap: targets =>
-                    val exp = Reflect.ModuleExports(packageName, targets)
+                    val exp = Reflect.ModuleExports(packageName, targets, exportsFlags.toLong)
                     readExports(view, pool, path, total, idx + 1, acc.appended(exp))
 
     /** Read `count` opens entries (same structure as exports). */
@@ -304,7 +304,7 @@ object ModuleInfoReader:
             val toCount    = readU2(view)
             resolvePackageName(pool, opensIdx, path).flatMap: packageName =>
                 readModuleRefs(view, pool, path, toCount, 0, Chunk.empty).flatMap: targets =>
-                    val op = Reflect.ModuleOpens(packageName, targets)
+                    val op = Reflect.ModuleOpens(packageName, targets, opensFlags.toLong)
                     readOpens(view, pool, path, total, idx + 1, acc.appended(op))
 
     /** Read `count` uses entries (each is a CONSTANT_Class index). */

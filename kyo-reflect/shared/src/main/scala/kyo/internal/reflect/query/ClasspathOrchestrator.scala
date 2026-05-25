@@ -46,7 +46,7 @@ object ClasspathOrchestrator:
       * `_typeParams`, and `_declarations` on each symbol after Phase C placeholder resolution completes.
       */
     final private case class FileResult(
-        fqns: Seq[(String, Reflect.Symbol)],
+        fqns: Chunk[(String, Reflect.Symbol)],
         arena: TypeArena,
         errors: Seq[ReflectError],
         placeholders: Chunk[UnresolvedRef],
@@ -130,7 +130,7 @@ object ClasspathOrchestrator:
                     Abort.fail(err)
                 else
                     FileResult(
-                        Seq.empty,
+                        Chunk.empty,
                         TypeArena.canonical(),
                         Seq(err),
                         Chunk.empty,
@@ -146,7 +146,7 @@ object ClasspathOrchestrator:
                     Abort.fail(err)
                 else
                     FileResult(
-                        Seq.empty,
+                        Chunk.empty,
                         TypeArena.canonical(),
                         Seq(err),
                         Chunk.empty,
@@ -197,9 +197,9 @@ object ClasspathOrchestrator:
                 case Absent =>
                     Sync.defer(Map.empty[Reflect.Symbol, Reflect.Position])
         yield
-            val pairs = pass1Result.symbols.toSeq.flatMap: sym =>
+            val pairs = pass1Result.symbols.flatMap: sym =>
                 val fqn = nameToString(sym.fullName)
-                if fqn.nonEmpty then Seq((fqn, sym)) else Seq.empty
+                if fqn.nonEmpty then Chunk((fqn, sym)) else Chunk.empty
             FileResult(
                 pairs,
                 arena,

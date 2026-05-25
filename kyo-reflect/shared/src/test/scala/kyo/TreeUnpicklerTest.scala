@@ -114,9 +114,12 @@ class TreeUnpicklerTest extends Test:
             case _                            => Maybe.Absent
     end findMatch
 
-    // ── Test 1: body of SomeObject.value decodes to a tree containing Literal(IntConst(42)) ──
+    // ── Test 1: body of SomeObject.value decodes to a tree whose top-level structure ──
+    // ── is one of: Literal(IntConst(42)), Block(_, Literal(IntConst(42))),             ──
+    // ── Typed(Literal(IntConst(42)), _), or ValDef(_, _, Literal(IntConst(42))).       ──
+    // ── No recursive search: only one level of wrapping is accepted.                   ──
 
-    "Test 1: body of SomeObject.value decodes to a tree containing Literal(IntConst(42))" in run {
+    "Test 1: body of SomeObject.value decodes to top-level Literal/Block/Typed/ValDef containing IntConst(42)" in run {
         Abort.run[ReflectError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
             case Result.Success(pass1) =>
                 val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == Reflect.SymbolKind.Val)
@@ -129,14 +132,21 @@ class TreeUnpicklerTest extends Test:
                         import AllowUnsafe.embrace.danger
                         sym.origin match
                             case o: Reflect.Symbol.TastyOrigin if o.bodyStart > 0 =>
-                                val tree    = TreeUnpickler.decodeSync(o, sym)
-                                val literal = findLiteral(tree)
-                                val isInt42 = literal.exists:
-                                    case Reflect.Constant.IntConst(42) => true
-                                    case _                             => false
+                                val tree = TreeUnpickler.decodeSync(o, sym)
+                                val isInt42AtTopLevel = tree match
+                                    case Reflect.Tree.Literal(Reflect.Constant.IntConst(42)) =>
+                                        true
+                                    case Reflect.Tree.Block(_, Reflect.Tree.Literal(Reflect.Constant.IntConst(42))) =>
+                                        true
+                                    case Reflect.Tree.Typed(Reflect.Tree.Literal(Reflect.Constant.IntConst(42)), _) =>
+                                        true
+                                    case Reflect.Tree.ValDef(_, _, Present(Reflect.Tree.Literal(Reflect.Constant.IntConst(42)))) =>
+                                        true
+                                    case _ =>
+                                        false
                                 assert(
-                                    isInt42,
-                                    s"Expected IntConst(42) somewhere in body, got: $tree"
+                                    isInt42AtTopLevel,
+                                    s"Expected top-level Literal/Block/Typed/ValDef with IntConst(42), got: $tree"
                                 )
                             case o: Reflect.Symbol.TastyOrigin =>
                                 // No body slice for this particular symbol -- acceptable for a constructor param.
@@ -151,9 +161,23 @@ class TreeUnpicklerTest extends Test:
                 throw t
     }
 
-    // ── Test 2: method bodies decode without error ────────────────────────────
+    // ── Test 2: method bodies decode to trees containing Apply, Ident, or Literal nodes ──
 
-    "Test 2: method bodies in SomeObject decode to non-null Trees" in run {
+    private def containsApplyOrIdentOrLiteral(tree: Reflect.Tree): Boolean =
+        tree match
+            case _: Reflect.Tree.Apply   => true
+            case _: Reflect.Tree.Ident   => true
+            case _: Reflect.Tree.Literal => true
+            case Reflect.Tree.Block(stats, expr) =>
+                stats.exists(containsApplyOrIdentOrLiteral) || containsApplyOrIdentOrLiteral(expr)
+            case Reflect.Tree.Typed(inner, _)             => containsApplyOrIdentOrLiteral(inner)
+            case Reflect.Tree.Inlined(_, _, body)         => containsApplyOrIdentOrLiteral(body)
+            case Reflect.Tree.ValDef(_, _, Present(r))    => containsApplyOrIdentOrLiteral(r)
+            case Reflect.Tree.DefDef(_, _, _, Present(r)) => containsApplyOrIdentOrLiteral(r)
+            case _                                        => false
+    end containsApplyOrIdentOrLiteral
+
+    "Test 2: method bodies in SomeObject decode to Trees containing Apply, Ident, or Literal nodes" in run {
         Abort.run[ReflectError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
             case Result.Success(pass1) =>
                 import AllowUnsafe.embrace.danger
@@ -164,9 +188,18 @@ class TreeUnpicklerTest extends Test:
                             Chunk(sym -> TreeUnpickler.decodeSync(o, sym))
                         case _ => Chunk.empty
                 val allNonNull = decodedBodies.forall((_, tree) => tree != null)
+                // Each method body must contain at least one Apply, Ident, or Literal node.
+                // A body that consists only of unrecognized tags would produce a structurally empty tree
+                // and would silently pass the null check above; this assertion catches that case.
+                val hasStructure = decodedBodies.isEmpty || decodedBodies.exists((_, tree) => containsApplyOrIdentOrLiteral(tree))
                 assert(
-                    allNonNull,
-                    s"Some method body was null. Methods with bodies: ${decodedBodies.map((s, _) => s.name.asString).mkString(", ")}"
+                    allNonNull && hasStructure,
+                    if !allNonNull then
+                        s"Some method body was null. Methods with bodies: ${decodedBodies.map((s, _) => s.name.asString).mkString(", ")}"
+                    else
+                        s"None of the ${decodedBodies.length} method bodies contain Apply/Ident/Literal. Bodies: ${decodedBodies.map(
+                                (s, t) => s"${s.name.asString}=$t"
+                            ).mkString("; ")}"
                 )
             case Result.Failure(e) =>
                 fail(s"Unexpected failure: $e")
