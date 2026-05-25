@@ -66,5 +66,8 @@ object ClassfileFormat:
     val AttrCode: String                        = "Code"
     val AttrRuntimeVisibleAnnotations: String   = "RuntimeVisibleAnnotations"
     val AttrRuntimeInvisibleAnnotations: String = "RuntimeInvisibleAnnotations"
+    // Scala 2 pickle attributes embedded in .class files
+    val AttrScalaSig: String = "ScalaSig"
+    val AttrScala: String    = "Scala"
 
 end ClassfileFormat

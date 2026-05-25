@@ -91,7 +91,8 @@ class FlagsTest extends Test:
             Reflect.Flag.Into,
             Reflect.Flag.PARAMsetter,
             Reflect.Flag.PARAMalias,
-            Reflect.Flag.Static
+            Reflect.Flag.Static,
+            Reflect.Flag.Scala2
         )
         val bits = allFlags.map(_.bit)
         assert(bits.distinct.size == bits.size, s"Duplicate bit found in flags: ${allFlags.map(f => s"${f.name}=${f.bit}").mkString(", ")}")

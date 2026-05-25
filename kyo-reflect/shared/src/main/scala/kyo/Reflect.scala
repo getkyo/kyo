@@ -119,6 +119,8 @@ object Reflect:
         val PARAMsetter: Flag   = Flag(1L << 41, "PARAMsetter")
         val PARAMalias: Flag    = Flag(1L << 42, "PARAMalias")
         val Static: Flag        = Flag(1L << 43, "Static")
+        // Phase 10 flag (bit 44): identifies symbols decoded from Scala 2 pickles embedded in classfiles.
+        val Scala2: Flag = Flag(1L << 44, "Scala2")
     end Flag
 
     // ── Symbol kinds ────────────────────────────────────────────────────────
