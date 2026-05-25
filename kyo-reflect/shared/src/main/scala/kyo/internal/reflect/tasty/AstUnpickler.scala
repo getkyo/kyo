@@ -61,7 +61,8 @@ object AstUnpickler:
         placeholders: Chunk[UnresolvedRef],
         rootSymbol: Reflect.Symbol,
         parentsBySymbol: Map[Reflect.Symbol, Chunk[Reflect.Type]],
-        childrenByOwner: Map[Reflect.Symbol, Chunk[Reflect.Symbol]]
+        childrenByOwner: Map[Reflect.Symbol, Chunk[Reflect.Symbol]],
+        typeBySymbol: Map[Reflect.Symbol, Reflect.Type]
     )
 
     /** Run pass 1 over the AST section.
@@ -114,6 +115,7 @@ object AstUnpickler:
         val allSymbols      = new mutable.ArrayBuffer[Reflect.Symbol]()
         val ownerStack      = new mutable.ArrayDeque[Reflect.Symbol]()
         val parentsBySymbol = new mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Type]]()
+        val typeBySymbol    = new mutable.HashMap[Reflect.Symbol, Reflect.Type]()
 
         // Synthetic root: a Package symbol with empty name; its owner is null (termination sentinel).
         val rootName   = Reflect.Name("")
@@ -126,7 +128,7 @@ object AstUnpickler:
         // Phase 1: collect symbols. The typeSession holds the live addrMap so type decode can find
         // locally-defined symbols as the walk progresses. Cross-file refs produce UnresolvedRef entries.
         val typeSession = new TypeUnpickler.DecodeSession(names, addrMap, arena, home)
-        walkStats(view, sectionEnd, names, attrs, home, addrMap, allSymbols, ownerStack, typeSession, parentsBySymbol)
+        walkStats(view, sectionEnd, names, attrs, home, addrMap, allSymbols, ownerStack, typeSession, parentsBySymbol, typeBySymbol)
 
         // Build childrenByOwner: group all non-root symbols by their owner.
         val childrenByOwner = new mutable.HashMap[Reflect.Symbol, mutable.ArrayBuffer[Reflect.Symbol]]()
@@ -143,7 +145,8 @@ object AstUnpickler:
             placeholders = Chunk.from(typeSession.placeholders),
             rootSymbol = root,
             parentsBySymbol = parentsBySymbol.view.mapValues(identity).toMap,
-            childrenByOwner = childrenByOwner.view.mapValues(buf => Chunk.from(buf.toSeq)).toMap
+            childrenByOwner = childrenByOwner.view.mapValues(buf => Chunk.from(buf.toSeq)).toMap,
+            typeBySymbol = typeBySymbol.view.mapValues(identity).toMap
         )
     end runPass1
 
@@ -161,7 +164,8 @@ object AstUnpickler:
         allSymbols: mutable.ArrayBuffer[Reflect.Symbol],
         ownerStack: mutable.ArrayDeque[Reflect.Symbol],
         typeSession: TypeUnpickler.DecodeSession,
-        parentsBySymbol: mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Type]]
+        parentsBySymbol: mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Type]],
+        typeBySymbol: mutable.HashMap[Reflect.Symbol, Reflect.Type]
     ): Unit =
         while view.position < end do
             val nodeAddr = view.position
@@ -188,7 +192,19 @@ object AstUnpickler:
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     ownerStack.append(sym)
-                    walkStats(view, payloadEnd, names, attrs, home, addrMap, allSymbols, ownerStack, typeSession, parentsBySymbol)
+                    walkStats(
+                        view,
+                        payloadEnd,
+                        names,
+                        attrs,
+                        home,
+                        addrMap,
+                        allSymbols,
+                        ownerStack,
+                        typeSession,
+                        parentsBySymbol,
+                        typeBySymbol
+                    )
                     discard(ownerStack.removeLast())
                     view.goto(payloadEnd)
 
@@ -200,7 +216,7 @@ object AstUnpickler:
                     val payloadBody = view.position
                     // Decode the VALDEF signature type (first type node after NameRef).
                     // This populates typeSession.placeholders with any cross-file refs.
-                    decodeOneTypeIfPresent(view, payloadEnd, typeSession)
+                    val valTpe   = decodeOneTypeIfPresent(view, payloadEnd, typeSession)
                     val flagBits = scanForwardAndCollectFlags(view, payloadEnd)
                     val kind     = InternalSymbolKind.fromValdefFlags(flagBits)
                     val flags    = new Reflect.Flags(flagBits)
@@ -208,6 +224,9 @@ object AstUnpickler:
                     val sym      = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
+                    valTpe match
+                        case Present(t) => typeBySymbol(sym) = t
+                        case Absent     => ()
                     view.goto(payloadEnd)
 
                 case TastyFormat.DEFDEF =>
@@ -226,8 +245,28 @@ object AstUnpickler:
                     // Use a forked sub-view of the payload body.
                     val innerView = view.subView(payloadBody, payloadEnd)
                     ownerStack.append(sym)
-                    walkStats(innerView, payloadEnd, names, attrs, home, addrMap, allSymbols, ownerStack, typeSession, parentsBySymbol)
+                    walkStats(
+                        innerView,
+                        payloadEnd,
+                        names,
+                        attrs,
+                        home,
+                        addrMap,
+                        allSymbols,
+                        ownerStack,
+                        typeSession,
+                        parentsBySymbol,
+                        typeBySymbol
+                    )
                     discard(ownerStack.removeLast())
+                    // Capture the DEFDEF return type by scanning a fresh sub-view:
+                    // layout is TYPEPARAM* PARAM* returnType RHS? modifier*.
+                    // We skip TYPEPARAM and PARAM nodes, then read one type node.
+                    val returnTypeScanView = view.subView(payloadBody, payloadEnd)
+                    val retTpe             = readDefDefReturnType(returnTypeScanView, payloadEnd, typeSession)
+                    retTpe match
+                        case Present(t) => typeBySymbol(sym) = t
+                        case Absent     => ()
                     view.goto(payloadEnd)
 
                 case TastyFormat.TYPEDEF =>
@@ -281,16 +320,24 @@ object AstUnpickler:
                             allSymbols,
                             ownerStack,
                             typeSession,
-                            parentsBySymbol
+                            parentsBySymbol,
+                            typeBySymbol
                         )
                         discard(ownerStack.removeLast())
+                        // Class-like TYPEDEF: declaredType is Type.Named(sym) assigned in mergeResults.
                         view.goto(payloadEnd)
                     else
-                        // Type-level TYPEDEF: skip type sub-tree, then read modifiers.
+                        // Type-level TYPEDEF: decode the type body instead of skipping it.
                         // nextTag is the type body tag (e.g. TYPEBOUNDS for abstract types, TYPEREF for aliases).
-                        // Pass it to fromTypedefTypeFlagsAndBody for reliable AbstractType detection.
-                        discard(view.readByte()) // consume the type sub-tree tag
-                        skipTreeBody(nextTag, view)
+                        // The position is already at the type tag byte; decode via readTypeIntoSession.
+                        val typeLevelTpe =
+                            try Present(TypeUnpickler.readTypeIntoSession(view, typeSession))
+                            catch
+                                case _: Exception =>
+                                    // On error, skip to the end of the type body and proceed with modifiers.
+                                    discard(view.readByte()) // consume the type sub-tree tag (already peeked)
+                                    skipTreeBody(nextTag, view)
+                                    Absent
                         val flagBits = readModifiers(view, payloadEnd)
                         val kind     = InternalSymbolKind.fromTypedefTypeFlagsAndBody(flagBits, nextTag)
                         val flags    = new Reflect.Flags(flagBits)
@@ -298,6 +345,9 @@ object AstUnpickler:
                         val sym      = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
                         addrMap(nodeAddr) = sym
                         allSymbols += sym
+                        typeLevelTpe match
+                            case Present(t) => typeBySymbol(sym) = t
+                            case _          => ()
                         view.goto(payloadEnd)
                     end if
 
@@ -307,13 +357,16 @@ object AstUnpickler:
                     val symName    = names(nameRef)
                     val owner      = currentOwner(ownerStack)
                     // Decode type bounds (first type node after NameRef), if present.
-                    decodeOneTypeIfPresent(view, payloadEnd, typeSession)
+                    val tpBounds = decodeOneTypeIfPresent(view, payloadEnd, typeSession)
                     val flagBits = readModifiers(view, payloadEnd)
                     val flags    = new Reflect.Flags(flagBits)
                     val origin   = Reflect.Symbol.TastyOrigin(Map.empty, payloadEnd, payloadEnd)
                     val sym      = InternalSymbol.makeSymbol(Reflect.SymbolKind.TypeParam, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
+                    tpBounds match
+                        case Present(t) => typeBySymbol(sym) = t
+                        case Absent     => ()
                     view.goto(payloadEnd)
 
                 case TastyFormat.PARAM =>
@@ -322,13 +375,16 @@ object AstUnpickler:
                     val symName    = names(nameRef)
                     val owner      = currentOwner(ownerStack)
                     // Decode parameter type (first type node after NameRef), if present.
-                    decodeOneTypeIfPresent(view, payloadEnd, typeSession)
+                    val paramTpe = decodeOneTypeIfPresent(view, payloadEnd, typeSession)
                     val flagBits = scanForwardAndCollectFlags(view, payloadEnd)
                     val flags    = new Reflect.Flags(flagBits)
                     val origin   = Reflect.Symbol.TastyOrigin(Map.empty, payloadEnd, payloadEnd)
                     val sym      = InternalSymbol.makeSymbol(Reflect.SymbolKind.Parameter, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
+                    paramTpe match
+                        case Present(t) => typeBySymbol(sym) = t
+                        case Absent     => ()
                     view.goto(payloadEnd)
 
                 case TastyFormat.EMPTYCLAUSE | TastyFormat.SPLITCLAUSE =>
@@ -350,18 +406,63 @@ object AstUnpickler:
       * Checks if the next byte is a type-tag (not a modifier tag). If so, calls TypeUnpickler.readTypeIntoSession to decode it, collecting
       * any cross-file UnresolvedRef placeholders. If decoding fails (malformed type tree), skips to `end` silently to avoid corrupting the
       * outer walk.
+      *
+      * Returns the decoded type if present and successful, Absent otherwise.
       */
-    private def decodeOneTypeIfPresent(view: ByteView, end: Int, typeSession: TypeUnpickler.DecodeSession): Unit =
+    private def decodeOneTypeIfPresent(view: ByteView, end: Int, typeSession: TypeUnpickler.DecodeSession): Maybe[Reflect.Type] =
         if view.position < end then
             val nextTag = view.peekByte(view.position) & 0xff
             if !isModifierTag(nextTag) then
                 try
-                    discard(TypeUnpickler.readTypeIntoSession(view, typeSession))
+                    Present(TypeUnpickler.readTypeIntoSession(view, typeSession))
                 catch
-                    case _: Exception => view.goto(end)
+                    case _: Exception =>
+                        view.goto(end)
+                        Absent
+            else Absent
             end if
-        end if
+        else Absent
     end decodeOneTypeIfPresent
+
+    /** Scan a DEFDEF payload sub-view to read the return type.
+      *
+      * DEFDEF layout (inside the payload): TYPEPARAM* PARAM* returnType RHS? modifier*
+      *
+      * This helper skips all leading TYPEPARAM and PARAM nodes (scanning their length-prefixed payloads), then reads the first non-param,
+      * non-modifier node as the return type via `decodeOneTypeIfPresent`.
+      *
+      * Uses a fresh sub-view (returnTypeScanView) that is independent of the outer view, so the outer walk is not affected.
+      *
+      * Returns the decoded return type if found and decodeable, Absent otherwise. On any exception the Absent path is taken silently.
+      */
+    private def readDefDefReturnType(
+        returnTypeScanView: ByteView,
+        end: Int,
+        typeSession: TypeUnpickler.DecodeSession
+    ): Maybe[Reflect.Type] =
+        try
+            // Skip TYPEPARAM and PARAM nodes that precede the return type.
+            var skip = true
+            while skip && returnTypeScanView.position < end do
+                val tag = returnTypeScanView.peekByte(returnTypeScanView.position) & 0xff
+                if tag == TastyFormat.TYPEPARAM || tag == TastyFormat.PARAM || tag == TastyFormat.EMPTYCLAUSE || tag == TastyFormat.SPLITCLAUSE
+                then
+                    discard(returnTypeScanView.readByte()) // consume tag
+                    if tag == TastyFormat.EMPTYCLAUSE || tag == TastyFormat.SPLITCLAUSE then
+                        () // no payload
+                    else
+                        val nodeEnd = returnTypeScanView.readEnd()
+                        returnTypeScanView.goto(nodeEnd)
+                    end if
+                else
+                    skip = false
+                end if
+            end while
+            // Read the return type node (the first non-param node).
+            decodeOneTypeIfPresent(returnTypeScanView, end, typeSession)
+        catch
+            case _: Exception => Absent
+    end readDefDefReturnType
 
     /** Scan the TEMPLATE body sub-view for parent_Type entries and call readTypeIntoSession on each.
       *

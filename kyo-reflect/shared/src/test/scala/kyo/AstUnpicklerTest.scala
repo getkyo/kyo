@@ -494,4 +494,72 @@ class AstUnpicklerTest extends Test:
         }
     }
 
+    // Phase 5 Test 6 (G20): Pass1Result.typeBySymbol for SomeTrait.compute (def compute: Int)
+    // contains an entry for the 'compute' symbol. The type is Type.Named (proxy, pre-Phase C).
+    // Assert on symbol presence and type constructor; do NOT assert on resolved FQN since this is
+    // raw Pass1Result before Phase C placeholder resolution.
+    "Phase 5: typeBySymbol for SomeTrait.compute contains entry with Named type" in run {
+        val bytes = loadFixtureBytes("SomeTrait.tasty")
+        val arena = TypeArena.canonical()
+        Abort.run[ReflectError](runPass1WithArena(bytes, arena)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val computeOpt = r.symbols.find(s => s.name.asString == "compute" && s.kind == Reflect.SymbolKind.Method)
+                    assert(
+                        computeOpt.isDefined,
+                        s"No 'compute' method symbol in SomeTrait. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                    val computeSym = computeOpt.get
+                    assert(
+                        r.typeBySymbol.contains(computeSym),
+                        s"typeBySymbol does not contain 'compute' symbol. Keys: ${r.typeBySymbol.keys.map(_.name.asString).mkString(", ")}"
+                    )
+                    r.typeBySymbol(computeSym) match
+                        case Reflect.Type.Named(_) =>
+                            succeed
+                        case other =>
+                            fail(s"Expected Type.Named for compute return type in typeBySymbol but got $other")
+                    end match
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Phase 5 Test 7 (G20): Pass1Result.typeBySymbol for GenericBox.content (val content: A)
+    // contains an entry for 'content'. In raw Pass1Result, the TYPEREFsym for A produces a
+    // Type.Named(unresolvedProxy) before Phase C resolves names. Assert that the entry exists
+    // and the type is Named (structure check only; the proxy symbol name is synthetic at this stage).
+    "Phase 5: typeBySymbol for GenericBox.content (val content: A) contains Named type" in run {
+        val bytes = loadFixtureBytes("GenericBox.tasty")
+        val arena = TypeArena.canonical()
+        Abort.run[ReflectError](runPass1WithArena(bytes, arena)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val contentOpt = r.symbols.find(s => s.name.asString == "content")
+                    assert(
+                        contentOpt.isDefined,
+                        s"No 'content' symbol in GenericBox. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                    val contentSym = contentOpt.get
+                    assert(
+                        r.typeBySymbol.contains(contentSym),
+                        s"typeBySymbol does not contain 'content' symbol. Keys: ${r.typeBySymbol.keys.map(_.name.asString).mkString(", ")}"
+                    )
+                    r.typeBySymbol(contentSym) match
+                        case Reflect.Type.Named(_) =>
+                            // Type is Named (a type-param or proxy symbol reference) -- correct
+                            // structure for val content: A in raw Pass1Result before Phase C.
+                            succeed
+                        case other =>
+                            fail(s"Expected Type.Named for content in typeBySymbol but got $other")
+                    end match
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
 end AstUnpicklerTest

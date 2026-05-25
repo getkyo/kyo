@@ -29,7 +29,8 @@ final case class ClassfileResult(
     innerClassTable: Map[String, (String, String)],
     symbols: Chunk[Reflect.Symbol],
     typeParams: Chunk[Reflect.Symbol],
-    arena: TypeArena
+    arena: TypeArena,
+    memberTypes: Map[Reflect.Symbol, Reflect.Type]
 )
 
 /** Reads a JVM .class file from raw bytes and produces a ClassfileResult.
@@ -64,17 +65,23 @@ object ClassfileUnpickler:
         path: String
     )(using Frame): ClassfileResult < (Sync & Abort[ReflectError]) =
         readFromRaw(view, interner, arena, home, path).map: result =>
-            // Populate _parents, _typeParams, _declarations on the class symbol and member symbols.
-            // Unsafe: SingleAssign.set() is an unsafe-tier helper; AllowUnsafe embraced here at the
+            // Populate _parents, _typeParams, _declarations, _declaredType on the class symbol and member symbols.
+            // Unsafe: SingleAssign.set() and isSet are unsafe-tier helpers; AllowUnsafe embraced here at the
             // ClassfileUnpickler boundary where all symbols are freshly allocated and not yet shared.
             import AllowUnsafe.embrace.danger
             result.classSymbol._parents.set(result.parents)
             result.classSymbol._typeParams.set(result.typeParams)
             result.classSymbol._declarations.set(result.symbols)
+            // Class symbol's declaredType is Type.Named(classSymbol) itself.
+            result.classSymbol._declaredType.set(Reflect.Type.Named(result.classSymbol))
             for memberSym <- result.symbols do
                 memberSym._parents.set(Chunk.empty)
                 memberSym._typeParams.set(Chunk.empty)
                 memberSym._declarations.set(Chunk.empty)
+                // Assign _declaredType from memberTypes map if available.
+                result.memberTypes.get(memberSym) match
+                    case Some(t) => memberSym._declaredType.set(t)
+                    case None    => ()
             end for
             for tpSym <- result.typeParams do
                 tpSym._parents.set(Chunk.empty)
@@ -137,7 +144,8 @@ object ClassfileUnpickler:
                         Map.empty,
                         Chunk.empty,
                         Chunk.empty,
-                        arena
+                        arena,
+                        Map.empty
                     )
                 else
                     readClassBody(view, pool, interner, arena, home, path, accessFlags, thisBinaryName, superIdx)
@@ -743,9 +751,9 @@ object ClassfileUnpickler:
 
                                 // Parse class-level Signature attribute to extract type parameters.
                                 parseClassTypeParams(pool, interner, classAttrs.signatureIdx).map: classTypeParams =>
-                                    // Build member symbols
+                                    // Build member symbols (returns pairs of (Symbol, DeclaredType))
                                     buildMemberSymbols(pool, interner, home, path, classSym, fieldInfos, isMethods = false).map:
-                                        fieldSyms =>
+                                        fieldPairs =>
                                             buildMemberSymbols(
                                                 pool,
                                                 interner,
@@ -754,9 +762,20 @@ object ClassfileUnpickler:
                                                 classSym,
                                                 methodInfos,
                                                 isMethods = true
-                                            ).map: methodSyms =>
-                                                val allSymbols = fieldSyms ++ methodSyms
-                                                ClassfileResult(classSym, parents, innerTable, allSymbols, classTypeParams, arena)
+                                            ).map: methodPairs =>
+                                                val allPairs   = fieldPairs ++ methodPairs
+                                                val allSymbols = allPairs.map(_._1)
+                                                val memberTypes = allPairs.foldLeft(Map.empty[Reflect.Symbol, Reflect.Type]):
+                                                    case (acc, (sym, tpe)) => acc + (sym -> tpe)
+                                                ClassfileResult(
+                                                    classSym,
+                                                    parents,
+                                                    innerTable,
+                                                    allSymbols,
+                                                    classTypeParams,
+                                                    arena,
+                                                    memberTypes
+                                                )
     end buildResult
 
     /** Parse the class-level Signature attribute to extract type parameter symbols.
@@ -1026,7 +1045,7 @@ object ClassfileUnpickler:
         owner: Reflect.Symbol,
         infos: Chunk[MemberInfo],
         isMethods: Boolean
-    )(using Frame): Chunk[Reflect.Symbol] < (Sync & Abort[ReflectError]) =
+    )(using Frame): Chunk[(Reflect.Symbol, Reflect.Type)] < (Sync & Abort[ReflectError]) =
         buildMemberList(pool, interner, home, path, owner, infos, 0, Chunk.empty, isMethods)
 
     private def buildMemberList(
@@ -1037,13 +1056,13 @@ object ClassfileUnpickler:
         owner: Reflect.Symbol,
         infos: Chunk[MemberInfo],
         idx: Int,
-        acc: Chunk[Reflect.Symbol],
+        acc: Chunk[(Reflect.Symbol, Reflect.Type)],
         isMethods: Boolean
-    )(using Frame): Chunk[Reflect.Symbol] < (Sync & Abort[ReflectError]) =
+    )(using Frame): Chunk[(Reflect.Symbol, Reflect.Type)] < (Sync & Abort[ReflectError]) =
         if idx >= infos.length then acc
         else
-            buildOneMemberSymbol(pool, interner, home, path, owner, infos(idx), isMethods).map: sym =>
-                buildMemberList(pool, interner, home, path, owner, infos, idx + 1, acc.appended(sym), isMethods)
+            buildOneMemberSymbol(pool, interner, home, path, owner, infos(idx), isMethods).map: pair =>
+                buildMemberList(pool, interner, home, path, owner, infos, idx + 1, acc.appended(pair), isMethods)
 
     private def buildOneMemberSymbol(
         pool: ConstantPool,
@@ -1053,7 +1072,7 @@ object ClassfileUnpickler:
         owner: Reflect.Symbol,
         info: MemberInfo,
         isMethod: Boolean
-    )(using Frame): Reflect.Symbol < (Sync & Abort[ReflectError]) =
+    )(using Frame): (Reflect.Symbol, Reflect.Type) < (Sync & Abort[ReflectError]) =
         pool.utf8(info.nameIdx).map: memberName =>
             val accessFlags = info.accessFlags
             val isStatic    = (accessFlags & ClassfileFormat.ACC_STATIC) != 0
@@ -1069,29 +1088,33 @@ object ClassfileUnpickler:
             val javaDefined = new Reflect.Flags(Reflect.Flag.JavaDefined.bit)
             val memberFlags = baseFlags | javaDefined
 
-            // Resolve throws types for JavaMetadata
-            resolveThrowsTypes(pool, path, info.exceptionIdxs).map: throwsTypes =>
-                decodeAnnotations(pool, interner, home, info.visibleAnnotationBytes, info.invisibleAnnotationBytes).map:
-                    memberAnnotations =>
-                        val metadata = Reflect.JavaMetadata(
-                            throwsTypes = throwsTypes,
-                            annotations = memberAnnotations,
-                            enclosingMethod = Absent,
-                            accessFlags = accessFlags,
-                            recordComponents = Chunk.empty
-                        )
+            // Resolve member declared type from descriptor or Signature attribute.
+            pool.utf8(info.descriptorIdx).map: descriptor =>
+                resolveComponentType(pool, interner, home, path, descriptor, info.signatureIdx).map: memberType =>
+                    // Resolve throws types for JavaMetadata
+                    resolveThrowsTypes(pool, path, info.exceptionIdxs).map: throwsTypes =>
+                        decodeAnnotations(pool, interner, home, info.visibleAnnotationBytes, info.invisibleAnnotationBytes).map:
+                            memberAnnotations =>
+                                val metadata = Reflect.JavaMetadata(
+                                    throwsTypes = throwsTypes,
+                                    annotations = memberAnnotations,
+                                    enclosingMethod = Absent,
+                                    accessFlags = accessFlags,
+                                    recordComponents = Chunk.empty
+                                )
 
-                        val nameBytes = memberName.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-                        val nameEntry = interner.intern(nameBytes, 0, nameBytes.length)
-                        SymbolFactory.makeSymbol(
-                            kind,
-                            memberFlags,
-                            Reflect.Name.wrap(nameEntry),
-                            owner,
-                            home,
-                            Reflect.Symbol.JavaOrigin,
-                            Present(metadata)
-                        )
+                                val nameBytes = memberName.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                                val nameEntry = interner.intern(nameBytes, 0, nameBytes.length)
+                                val sym = SymbolFactory.makeSymbol(
+                                    kind,
+                                    memberFlags,
+                                    Reflect.Name.wrap(nameEntry),
+                                    owner,
+                                    home,
+                                    Reflect.Symbol.JavaOrigin,
+                                    Present(metadata)
+                                )
+                                (sym, memberType)
 
     private def resolveThrowsTypes(
         pool: ConstantPool,

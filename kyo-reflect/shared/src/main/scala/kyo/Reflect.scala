@@ -219,12 +219,13 @@ object Reflect:
         private[kyo] val origin: Symbol.Origin,
         private[kyo] val javaMetadata: Maybe[JavaMetadata]
     ):
-        // Write-once slots populated during classpath orchestration (Phase 3).
+        // Write-once slots populated during classpath orchestration (Phase 3 / Phase 5).
         // Unsafe: SingleAssign is an unsafe-tier helper; callers in mergeResults / ClassfileUnpickler hold AllowUnsafe.
         private[kyo] val _parents: kyo.internal.reflect.symbol.SingleAssign[Chunk[Type]]      = new kyo.internal.reflect.symbol.SingleAssign
         private[kyo] val _typeParams: kyo.internal.reflect.symbol.SingleAssign[Chunk[Symbol]] = new kyo.internal.reflect.symbol.SingleAssign
         private[kyo] val _declarations: kyo.internal.reflect.symbol.SingleAssign[Chunk[Symbol]] =
             new kyo.internal.reflect.symbol.SingleAssign
+        private[kyo] val _declaredType: kyo.internal.reflect.symbol.SingleAssign[Type] = new kyo.internal.reflect.symbol.SingleAssign
 
         // Pure accessors (no effect, always present even after classpath close).
         def fullName: Name        = Symbol.computeFullName(this)
@@ -244,11 +245,32 @@ object Reflect:
 
         /** The declared type of this symbol.
           *
+          * Returns the type annotation decoded from the symbol's TASTy or classfile definition:
+          *   - For a VALDEF (val/var field): the declared type (e.g. Int, String).
+          *   - For a PARAM: the parameter type.
+          *   - For a TYPEPARAM: the type parameter bounds (Type.Wildcard or Type.Named).
+          *   - For a TYPEDEF (type alias or abstract type): the alias body or bounds type.
+          *   - For a class/trait/object TYPEDEF: Type.Named(sym) (the class type itself).
+          *   - For a DEFDEF: the return type (reconstructed in mergeResults from Pass 1 data).
+          *   - For Package symbols: fails with ReflectError.NotImplemented.
           * @note
-          *   Not implemented in v1. Always fails at runtime with `ReflectError.NotImplemented`. Deferred per DESIGN.md §24 ("Tree body
-          *   decode" is out of scope for v1).
+          *   Implemented in v2 Phase 5. Populated eagerly during Pass 1 / mergeResults.
           */
-        def declaredType(using Frame): Type < (Sync & Abort[ReflectError]) = stub("Symbol.declaredType")
+        def declaredType(using Frame): Type < (Sync & Abort[ReflectError]) =
+            if kind == SymbolKind.Package then
+                Abort.fail(ReflectError.NotImplemented("Symbol.declaredType is not available for Package symbols"))
+            else if !home.isAssigned then stub("Symbol.declaredType")
+            else
+                home.get().checkOpen.andThen:
+                    // Unsafe: SingleAssign.get() and isSet are unsafe-tier helpers; AllowUnsafe is embraced here at the public accessor boundary.
+                    import AllowUnsafe.embrace.danger
+                    if _declaredType.isSet then _declaredType.get()
+                    else
+                        import Reflect.Name.asString
+                        Abort.fail(
+                            ReflectError.NotImplemented(s"Symbol.declaredType not populated for symbol '${name.asString}' of kind $kind")
+                        )
+                    end if
 
         /** The parent types of this symbol (superclass and mixed-in traits). */
         def parents(using Frame): Chunk[Type] < (Sync & Abort[ReflectError]) =

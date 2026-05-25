@@ -2,6 +2,20 @@
 
 The v1 plan (`execution-plan.md`) is complete and committed. The active plan is now `kyo-reflect/execution-plan-v2.md`. v1 references in older sections of this file are historical.
 
+## v2 Phase 5 test scope cut (CRITICAL — finish before exit)
+
+PHASE-5-V2-INFLIGHT-REVIEW-1.md reports the production wiring is clean and compile passes, but ALL 7 plan-mandated tests for Phase 5 (G20 declaredType) are MISSING. `git diff HEAD -- kyo-reflect/shared/src/test/` is empty; QueryApiTest.scala has zero `declaredType` occurrences.
+
+This is the same scope-cut pattern Phase 3 exhibited. The plan calls for 7 tests for `Symbol.declaredType` in `kyo-reflect/execution-plan-v2.md` Phase 5 (around lines 215-228).
+
+REQUIRED before exit:
+1. Read execution-plan-v2.md Phase 5 lines 215-228 to extract the exact 7 test contracts.
+2. Add all 7 tests to QueryApiTest (or AstUnpicklerTest where the plan specifies). Each test must be strict (no tautology, no foreach-discards-assert), use existing fixtures (plainClassTasty, baseClassTasty, childClassTasty, genericBoxTasty, someCaseClassTasty, fixtureClassesPackageTasty, arrayRecordClass).
+3. Run `sbt 'kyo-reflect/test' 2>&1 | tail -10` AFTER the tests are written. Must report 226 passing (219 prior + 7 new).
+4. Quote the verbatim sbt test output in your final report.
+
+DO NOT EXIT until all 7 plan-mandated tests are present, strict, and passing.
+
 ## v2 Phase 3 test scope cut (CRITICAL — finish before exit)
 
 Pulse 1 (PHASE-3-V2-INFLIGHT-REVIEW-1.md) reports the production wiring is clean but the test enumeration is significantly incomplete. Plan calls for 7 tests; current state:

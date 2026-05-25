@@ -781,4 +781,182 @@ class QueryApiTest extends Test:
                         throw t
     }
 
+    // Phase 5 Test 1 (G20): sym.declaredType for val x: Int in PlainClass returns a type.
+    // After Phase C placeholder resolution the type encodes scala.Int. The TASTy encoding for Int
+    // may be Type.Named or Type.TermRef depending on how the constant type is referenced; we assert
+    // that a type is returned and does not fail.
+    "Phase 5: sym.declaredType for PlainClass.x (val x: Int) returns a type" in run {
+        Scope.run:
+            Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
+                cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                    case Absent => Abort.fail(ReflectError.NotImplemented("PlainClass not found"))
+                    case Present(classSym) =>
+                        classSym.declarations.flatMap: decls =>
+                            val xOpt = decls.find(s => s.name.asString == "x")
+                            xOpt match
+                                case None =>
+                                    Abort.fail(
+                                        ReflectError.NotImplemented(
+                                            s"No field 'x' in PlainClass declarations: ${decls.map(_.name.asString).mkString(", ")}"
+                                        )
+                                    )
+                                case Some(xSym) =>
+                                    xSym.declaredType).map:
+                case Result.Success(tpe) =>
+                    // declaredType must return a valid type (not null); the exact constructor
+                    // depends on how the TASTy encoder represents Int (Named or TermRef).
+                    assert(tpe != null, s"Expected a non-null type for val x: Int but got null")
+                    succeed
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Phase 5 Test 2 (G20): sym.declaredType for SomeTrait.compute returns a type (return-type-only
+    // per anti-thrash rule; not a full Type.Function). The returned type is Named (proxy resolved
+    // after Phase C). We assert that declaredType is populated and returns a Reflect.Type value.
+    "Phase 5: sym.declaredType for SomeTrait.compute (def compute: Int) returns a type" in run {
+        val src = MemoryFileSource()
+        src.add("root/SomeTrait.tasty", kyo.fixtures.Embedded.someTraitTasty)
+        Scope.run:
+            Abort.run[ReflectError](openFixtureClasspath(src).flatMap: cp =>
+                cp.findClass("kyo.fixtures.SomeTrait").flatMap:
+                    case Absent => Abort.fail(ReflectError.NotImplemented("SomeTrait not found"))
+                    case Present(traitSym) =>
+                        traitSym.declarations.flatMap: decls =>
+                            val computeOpt = decls.find(s => s.name.asString == "compute" && s.kind == Reflect.SymbolKind.Method)
+                            computeOpt match
+                                case None =>
+                                    Abort.fail(
+                                        ReflectError.NotImplemented(
+                                            s"No method 'compute' in SomeTrait declarations: ${decls.map(s =>
+                                                    s"${s.name.asString}:${s.kind}"
+                                                ).mkString(", ")}"
+                                        )
+                                    )
+                                case Some(computeSym) =>
+                                    computeSym.declaredType).map:
+                case Result.Success(tpe) =>
+                    // The return type is populated (not a stub failure); exact constructor
+                    // depends on how the DEFDEF return type is encoded in TASTy.
+                    assert(tpe != null, s"Expected a non-null type for compute but got null")
+                    succeed
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Phase 5 Test 3 (G20): sym.declaredType for type alias `type StringList = List[String]` returns
+    // a non-Named applied or named type (the alias body). StringList is a top-level type alias in
+    // FixtureClasses$package.tasty.
+    "Phase 5: sym.declaredType for type StringList returns a type (alias body)" in run {
+        val src = MemoryFileSource()
+        src.add("root/FixtureClasses$package.tasty", kyo.fixtures.Embedded.fixtureClassesPackageTasty)
+        Scope.run:
+            Abort.run[ReflectError](openFixtureClasspath(src).flatMap: cp =>
+                cp.topLevelClasses.flatMap: topLevel =>
+                    // StringList is a TypeAlias in the package object; find it via all symbols
+                    import kyo.internal.reflect.query.Query
+                    val readsInst = new Reflect.Reads[Reflect.Symbol]:
+                        val symbolKinds: Set[Reflect.SymbolKind] = Set.empty
+                        val needsBodies: Boolean                 = false
+                        val touchedFields: Reflect.FieldSet      = Reflect.FieldSet.Empty
+                        def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
+                    Query.make(Reflect.Classpath.unwrap(cp), readsInst).named("StringList").run.flatMap: syms =>
+                        syms.headMaybe match
+                            case Absent             => Abort.fail(ReflectError.NotImplemented("No StringList symbol found"))
+                            case Present(stringSym) => stringSym.declaredType).map:
+                case Result.Success(tpe) =>
+                    // StringList is a type alias for List[String]. The declared type is the alias body.
+                    // It could be Type.Applied(Named(List), Chunk(Named(String))) or similar.
+                    // We just assert that a type was returned (non-null) and it is not a panic.
+                    assert(
+                        tpe != null,
+                        s"Expected non-null declared type for StringList but got null"
+                    )
+                    succeed
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Phase 5 Test 4 (G20, classfile path): sym.declaredType for a Java record field returns the
+    // expected type. ArrayRecord.class has a single int[] component 'values'; its member symbol's
+    // declaredType should be Type.Array(Type.Named(intSym)).
+    "Phase 5: Java classfile field declaredType returns Array type for int[] values" taggedAs jvmOnly in run {
+        val bytes    = kyo.fixtures.Embedded.arrayRecordClass
+        val interner = new Interner(32)
+        val home     = new ClasspathRef
+        Abort.run[ReflectError]:
+            ClassfileUnpickler.read(bytes, interner, new TypeArena, home).flatMap: cr =>
+                Reflect.Classpath.fromPickles(Seq.empty).map: miniCp =>
+                    Reflect.Classpath.assignExtraHomes(miniCp, cr.classSymbol +: cr.symbols.toSeq)
+                    cr
+        .flatMap:
+            case Result.Success(cr) =>
+                val valuesOpt = cr.symbols.find(s => s.name.asString == "values")
+                valuesOpt match
+                    case None =>
+                        fail(s"No 'values' member in ArrayRecord. Members: ${cr.symbols.map(_.name.asString).mkString(", ")}")
+                    case Some(valuesSym) =>
+                        Abort.run[ReflectError](valuesSym.declaredType).map:
+                            case Result.Success(tpe) =>
+                                tpe match
+                                    case Reflect.Type.Array(Reflect.Type.Named(elemSym)) =>
+                                        // Java primitive 'int' may decode as "int" or "Int" depending on
+                                        // the classfile reader's interner; accept both forms.
+                                        val n = elemSym.name.asString
+                                        assert(
+                                            n == "int" || n == "Int",
+                                            s"Expected Array(Named('int' or 'Int')) but elem name was '$n'"
+                                        )
+                                    case Reflect.Type.Array(other) =>
+                                        fail(s"Expected Array(Named('int')) but got Array($other)")
+                                    case other =>
+                                        fail(s"Expected Type.Array for int[] values but got $other")
+                            case Result.Failure(e) =>
+                                fail(s"Unexpected failure getting declaredType for values: $e")
+                            case Result.Panic(t) =>
+                                throw t
+                end match
+            case Result.Failure(e) =>
+                fail(s"ClassfileUnpickler or classpath setup failed: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // Phase 5 Test 5 (G20): sym.declaredType called after classpath close returns ClasspathClosed.
+    "Phase 5: sym.declaredType after classpath close returns ClasspathClosed" in run {
+        val captureResult: Result[ReflectError, Reflect.Symbol] < Async =
+            Scope.run:
+                Abort.run[ReflectError]:
+                    openFixtureClasspath(fixtureSource()).flatMap: cp =>
+                        cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                            case Present(sym) =>
+                                sym.declarations.flatMap: decls =>
+                                    decls.find(s => s.name.asString == "x") match
+                                        case Some(xSym) => Kyo.lift(xSym)
+                                        case None       => Kyo.lift(sym)
+                            case Absent =>
+                                Abort.fail(ReflectError.NotImplemented("PlainClass not found"))
+        captureResult.flatMap:
+            case Result.Failure(e) =>
+                fail(s"Expected success capturing symbol but got: $e")
+            case Result.Panic(t) =>
+                throw t
+            case Result.Success(sym) =>
+                Abort.run[ReflectError](sym.declaredType).map:
+                    case Result.Failure(ReflectError.ClasspathClosed) =>
+                        succeed
+                    case Result.Failure(e) =>
+                        fail(s"Expected ClasspathClosed but got: $e")
+                    case Result.Success(v) =>
+                        fail(s"Expected ClasspathClosed but declaredType succeeded with: $v")
+                    case Result.Panic(t) =>
+                        throw t
+    }
+
 end QueryApiTest

@@ -47,7 +47,8 @@ object ClasspathOrchestrator:
         errors: Seq[ReflectError],
         placeholders: Chunk[UnresolvedRef],
         parentsBySymbol: Map[Reflect.Symbol, Chunk[Reflect.Type]],
-        childrenByOwner: Map[Reflect.Symbol, Chunk[Reflect.Symbol]]
+        childrenByOwner: Map[Reflect.Symbol, Chunk[Reflect.Symbol]],
+        typeBySymbol: Map[Reflect.Symbol, Reflect.Type]
     )
 
     /** Open a new classpath from a set of root paths.
@@ -118,13 +119,13 @@ object ClasspathOrchestrator:
                 if strict then
                     Abort.fail(err)
                 else
-                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty, Map.empty, Map.empty)
+                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty, Map.empty, Map.empty, Map.empty)
             case Result.Panic(t) =>
                 val err = ReflectError.CorruptedFile(file, 0L, t.getMessage)
                 if strict then
                     Abort.fail(err)
                 else
-                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty, Map.empty, Map.empty)
+                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty, Map.empty, Map.empty, Map.empty)
                 end if
 
     /** Decode TASTy bytes into a FileResult (fqn-symbol pairs + arena). */
@@ -152,7 +153,15 @@ object ClasspathOrchestrator:
             val pairs = pass1Result.symbols.toSeq.flatMap: sym =>
                 val fqn = nameToString(sym.fullName)
                 if fqn.nonEmpty then Seq((fqn, sym)) else Seq.empty
-            FileResult(pairs, arena, Seq.empty, pass1Result.placeholders, pass1Result.parentsBySymbol, pass1Result.childrenByOwner)
+            FileResult(
+                pairs,
+                arena,
+                Seq.empty,
+                pass1Result.placeholders,
+                pass1Result.parentsBySymbol,
+                pass1Result.childrenByOwner,
+                pass1Result.typeBySymbol
+            )
         end for
     end decodeTastyBytes
 
@@ -260,6 +269,24 @@ object ClasspathOrchestrator:
                 if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
                 if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
             end for
+
+            // Phase 5 (G20): assign _declaredType AFTER Phase C placeholder resolution.
+            // TASTy path: assign from typeBySymbol (VALDEF, PARAM, TYPEPARAM, type-level TYPEDEF, DEFDEF return types).
+            for fr <- fileResults do
+                for (sym, t) <- fr.typeBySymbol do
+                    if !sym._declaredType.isSet then sym._declaredType.set(t)
+                end for
+            end for
+            // Class-like TYPEDEF symbols (Class/Trait/Object) get Type.Named(sym) as their declaredType.
+            for sym <- allSyms do
+                if !sym._declaredType.isSet && (sym.kind == Reflect.SymbolKind.Class ||
+                        sym.kind == Reflect.SymbolKind.Trait ||
+                        sym.kind == Reflect.SymbolKind.Object)
+                then
+                    sym._declaredType.set(Reflect.Type.Named(sym))
+            end for
+            // Package and root symbols: leave _declaredType unset.
+            // The public accessor has a kind == Package guard that returns NotImplemented.
 
             // Add errors accumulated during Building state (e.g., from root validation)
             // Unsafe: stateRef.unsafe.get() read of Building state, single-threaded Phase C merge
