@@ -105,6 +105,16 @@ object SnapshotReader:
 
         val canonical = TypeArena.canonical()
         Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors)
+        // Populate _parents, _typeParams, _declarations with empty chunks for snapshot-restored symbols.
+        // The snapshot format does not yet serialize parent/member data; symbols restored here return
+        // empty chunks for these accessors. A future snapshot format version will add this data.
+        // Unsafe: SingleAssign.set() is an unsafe-tier helper; called here from single-threaded deserialize.
+        import AllowUnsafe.embrace.danger
+        for sym <- allSymbols do
+            if !sym._parents.isSet then sym._parents.set(Chunk.empty)
+            if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
+            if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
+        end for
     end deserialize
 
     /** Read the name pool from the NAMES section. */

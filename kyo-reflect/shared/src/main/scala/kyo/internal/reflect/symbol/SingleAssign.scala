@@ -39,6 +39,13 @@ final class SingleAssign[A]:
         end if
     end get
 
+    /** Returns true if the value has been assigned, false if still unset.
+      *
+      * Requires AllowUnsafe: this method reads an AtomicReference as a side effect.
+      */
+    def isSet(using AllowUnsafe): Boolean =
+        ref.get() ne SingleAssign.Unset
+
 end SingleAssign
 
 object SingleAssign:

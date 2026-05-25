@@ -1,8 +1,12 @@
 package kyo
 
+import kyo.internal.reflect.classfile.ClassfileUnpickler
 import kyo.internal.reflect.query.Classpath as InternalClasspath
 import kyo.internal.reflect.query.ClasspathOrchestrator
+import kyo.internal.reflect.query.ClasspathRef
 import kyo.internal.reflect.query.FileSource
+import kyo.internal.reflect.symbol.Interner
+import kyo.internal.reflect.type_.TypeArena
 import scala.collection.mutable
 
 /** Tests for Phase 7: Query API, classpath lifecycle, and Phase A/B/C orchestration.
@@ -69,7 +73,9 @@ class QueryApiTest extends Test:
         InternalClasspath.allocate.flatMap: rawCp =>
             Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
                 ClasspathOrchestrator.openInto(Seq("root"), strict, src, 1, rawCp).map: _ =>
-                    Reflect.Classpath.wrap(rawCp)
+                    val cp = Reflect.Classpath.wrap(rawCp)
+                    Reflect.Classpath.assignHomesForTest(rawCp)
+                    cp
 
     // Test 1: fromPickles(Seq.empty) succeeds; findClass("anything") returns Absent
     "fromPickles(Seq.empty) succeeds and findClass returns Absent" in run {
@@ -533,6 +539,136 @@ class QueryApiTest extends Test:
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>
                     throw t
+    }
+
+    // Phase 3 Test 1 (G21): sym.parents for PlainClass returns a non-empty Chunk[Type].
+    // PlainClass has no explicit superclass so its TASTy TEMPLATE parent is java.lang.Object (via AnyRef).
+    "Phase 3: sym.parents for PlainClass returns a non-empty Chunk[Type]" in run {
+        Scope.run:
+            Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
+                cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                    case Present(sym) => sym.parents
+                    case Absent       => Abort.fail(ReflectError.NotImplemented("PlainClass not found"))).map:
+                case Result.Success(parents) =>
+                    assert(
+                        parents.nonEmpty,
+                        s"Expected non-empty parents for PlainClass but got empty. PlainClass should have AnyRef/Object as parent."
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Phase 3 Test 2 (G22): sym.typeParams for GenericBox[A] returns a Chunk of length 1 with name "A".
+    "Phase 3: sym.typeParams for GenericBox[A] returns length 1 with name A" in run {
+        val src = MemoryFileSource()
+        src.add("root/GenericBox.tasty", kyo.fixtures.Embedded.genericBoxTasty)
+        Scope.run:
+            Abort.run[ReflectError](openFixtureClasspath(src).flatMap: cp =>
+                cp.findClass("kyo.fixtures.GenericBox").flatMap:
+                    case Present(sym) => sym.typeParams
+                    case Absent       => Abort.fail(ReflectError.NotImplemented("GenericBox not found"))).map:
+                case Result.Success(tps) =>
+                    assert(tps.length == 1, s"Expected 1 type param for GenericBox[A] but got ${tps.length}: ${tps.map(_.name.asString)}")
+                    assert(tps(0).name.asString == "A", s"Expected type param name 'A' but got '${tps(0).name.asString}'")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Phase 3 Test 3 (G23): sym.declarations for PlainClass includes known member 'x'.
+    "Phase 3: sym.declarations for PlainClass contains known field x" in run {
+        Scope.run:
+            Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
+                cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                    case Present(sym) => sym.declarations
+                    case Absent       => Abort.fail(ReflectError.NotImplemented("PlainClass not found"))).map:
+                case Result.Success(decls) =>
+                    assert(decls.nonEmpty, s"Expected non-empty declarations for PlainClass but got empty")
+                    val names = decls.map(_.name.asString).toSet
+                    assert(
+                        names.contains("x"),
+                        s"Expected declarations to contain field 'x' but names were: ${names.mkString(", ")}"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Phase 3 Test 4 (G21 closed): sym.parents called after classpath close returns ClasspathClosed.
+    "Phase 3: sym.parents after classpath close returns ClasspathClosed" in run {
+        // Capture the symbol from inside the scope, then check parents after scope exits.
+        // Scope.run returns Result[ReflectError, Symbol] after running finalizers (closing classpath).
+        val captureResult: Result[ReflectError, Reflect.Symbol] < Async =
+            Scope.run:
+                Abort.run[ReflectError]:
+                    openFixtureClasspath(fixtureSource()).flatMap: cp =>
+                        cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                            case Present(sym) => Kyo.lift(sym)
+                            case Absent       => Abort.fail(ReflectError.NotImplemented("PlainClass not found"))
+        captureResult.flatMap:
+            case Result.Failure(e) =>
+                fail(s"Expected success capturing PlainClass symbol but got: $e")
+            case Result.Panic(t) =>
+                throw t
+            case Result.Success(sym) =>
+                // Scope has exited; classpath is now closed. sym is captured.
+                Abort.run[ReflectError](sym.parents).map:
+                    case Result.Failure(ReflectError.ClasspathClosed) =>
+                        succeed
+                    case Result.Failure(e) =>
+                        fail(s"Expected ClasspathClosed but got: $e")
+                    case Result.Success(p) =>
+                        fail(s"Expected ClasspathClosed but parents succeeded with: $p")
+                    case Result.Panic(t) =>
+                        throw t
+    }
+
+    // Phase 3 Test 5 (G21/G22/G23 classfile): for ArrayRecord.class (Java record), sym.parents includes
+    // java.lang.Record; sym.typeParams is empty (non-generic); sym.declarations is non-empty.
+    "Phase 3: Java classfile symbol parents, typeParams, declarations are accessible" taggedAs jvmOnly in run {
+        val bytes    = kyo.fixtures.Embedded.arrayRecordClass
+        val interner = new Interner(32)
+        val home     = new ClasspathRef
+        Abort.run[ReflectError]:
+            ClassfileUnpickler.read(bytes, interner, new TypeArena, home).flatMap: cr =>
+                // Create a mini-classpath so home.isAssigned is true and checkOpen passes.
+                // assignExtraHomes covers the class symbol and all members; since all symbols share
+                // the same ClasspathRef instance, calling home.assign separately is redundant.
+                Reflect.Classpath.fromPickles(Seq.empty).map: miniCp =>
+                    Reflect.Classpath.assignExtraHomes(miniCp, cr.classSymbol +: cr.symbols.toSeq)
+                    cr
+        .flatMap:
+            case Result.Success(cr) =>
+                val sym = cr.classSymbol
+                Abort.run[ReflectError]:
+                    sym.parents.flatMap: parents =>
+                        sym.typeParams.flatMap: typeParams =>
+                            sym.declarations.map: decls =>
+                                (parents, typeParams, decls)
+                .map:
+                    case Result.Success((parents, typeParams, decls)) =>
+                        assert(parents.nonEmpty, s"Expected non-empty parents for ArrayRecord but got empty")
+                        val parentNames = parents.map:
+                            case Reflect.Type.Named(s) => s.name.asString
+                            case other                 => other.show
+                        assert(
+                            parentNames.exists(n => n.contains("Record") || n.contains("java")),
+                            s"Expected parents to include Record or java types but got: ${parentNames.mkString(", ")}"
+                        )
+                        assert(typeParams.isEmpty, s"Expected no type params for ArrayRecord but got: ${typeParams.map(_.name.asString)}")
+                        assert(decls.nonEmpty, s"Expected non-empty declarations for ArrayRecord but got empty")
+                    case Result.Failure(e) =>
+                        fail(s"Unexpected failure calling sym.parents/typeParams/declarations: $e")
+                    case Result.Panic(t) =>
+                        throw t
+            case Result.Failure(e) =>
+                fail(s"ClassfileUnpickler or classpath setup failed: $e")
+            case Result.Panic(t) =>
+                throw t
     }
 
 end QueryApiTest

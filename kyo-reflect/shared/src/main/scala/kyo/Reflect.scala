@@ -219,6 +219,13 @@ object Reflect:
         private[kyo] val origin: Symbol.Origin,
         private[kyo] val javaMetadata: Maybe[JavaMetadata]
     ):
+        // Write-once slots populated during classpath orchestration (Phase 3).
+        // Unsafe: SingleAssign is an unsafe-tier helper; callers in mergeResults / ClassfileUnpickler hold AllowUnsafe.
+        private[kyo] val _parents: kyo.internal.reflect.symbol.SingleAssign[Chunk[Type]]      = new kyo.internal.reflect.symbol.SingleAssign
+        private[kyo] val _typeParams: kyo.internal.reflect.symbol.SingleAssign[Chunk[Symbol]] = new kyo.internal.reflect.symbol.SingleAssign
+        private[kyo] val _declarations: kyo.internal.reflect.symbol.SingleAssign[Chunk[Symbol]] =
+            new kyo.internal.reflect.symbol.SingleAssign
+
         // Pure accessors (no effect, always present even after classpath close).
         def fullName: Name        = Symbol.computeFullName(this)
         def binaryName: String    = Symbol.computeBinaryName(this)
@@ -243,29 +250,32 @@ object Reflect:
           */
         def declaredType(using Frame): Type < (Sync & Abort[ReflectError]) = stub("Symbol.declaredType")
 
-        /** The parent types of this symbol (superclass and mixed-in traits).
-          *
-          * @note
-          *   Not implemented in v1. Always fails at runtime with `ReflectError.NotImplemented`. Deferred per DESIGN.md §24 ("Tree body
-          *   decode" is out of scope for v1).
-          */
-        def parents(using Frame): Chunk[Type] < (Sync & Abort[ReflectError]) = stub("Symbol.parents")
+        /** The parent types of this symbol (superclass and mixed-in traits). */
+        def parents(using Frame): Chunk[Type] < (Sync & Abort[ReflectError]) =
+            if !home.isAssigned then stub("Symbol.parents")
+            else
+                home.get().checkOpen.andThen:
+                    // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced at the public accessor boundary.
+                    import AllowUnsafe.embrace.danger
+                    _parents.get()
 
-        /** The type parameters of this symbol.
-          *
-          * @note
-          *   Not implemented in v1. Always fails at runtime with `ReflectError.NotImplemented`. Deferred per DESIGN.md §24 ("Tree body
-          *   decode" is out of scope for v1).
-          */
-        def typeParams(using Frame): Chunk[Symbol] < (Sync & Abort[ReflectError]) = stub("Symbol.typeParams")
+        /** The type parameters of this symbol. */
+        def typeParams(using Frame): Chunk[Symbol] < (Sync & Abort[ReflectError]) =
+            if !home.isAssigned then stub("Symbol.typeParams")
+            else
+                home.get().checkOpen.andThen:
+                    // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced at the public accessor boundary.
+                    import AllowUnsafe.embrace.danger
+                    _typeParams.get()
 
-        /** The member declarations of this symbol (methods, fields, nested types).
-          *
-          * @note
-          *   Not implemented in v1. Always fails at runtime with `ReflectError.NotImplemented`. Deferred per DESIGN.md §24 ("Tree body
-          *   decode" is out of scope for v1).
-          */
-        def declarations(using Frame): Chunk[Symbol] < (Sync & Abort[ReflectError]) = stub("Symbol.declarations")
+        /** The member declarations of this symbol (methods, fields, nested types). */
+        def declarations(using Frame): Chunk[Symbol] < (Sync & Abort[ReflectError]) =
+            if !home.isAssigned then stub("Symbol.declarations")
+            else
+                home.get().checkOpen.andThen:
+                    // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced at the public accessor boundary.
+                    import AllowUnsafe.embrace.danger
+                    _declarations.get()
 
         /** The companion object symbol of this class or trait, if one exists.
           *
@@ -461,17 +471,33 @@ object Reflect:
                                 Abort.run[ReflectError](SnapshotWriter.write(cp, cacheDir, digest, source)).andThen(cp)
         end openCachedImpl
 
-        /** Assign each symbol's `ClasspathRef` to this classpath. Called once, after the classpath transitions to Ready. */
+        /** Assign each symbol's `ClasspathRef` to this classpath. Called once, after the classpath transitions to Ready.
+          *
+          * Multiple symbols from the same TASTy file share a single `ClasspathRef` instance (one per file). The seen set deduplicates so
+          * each slot is assigned exactly once.
+          */
         private def assignHomes(cp: kyo.internal.reflect.query.Classpath, cpPublic: Classpath): Unit =
             // Inside object Reflect, Classpath is transparent: cp (internal) == cpPublic (opaque) at runtime.
             // We use AllowUnsafe to read allSymbols without an effect context.
             import AllowUnsafe.embrace.danger
             val syms = cp.allSymbols
+            val seen = new java.util.HashSet[kyo.internal.reflect.query.ClasspathRef]()
             var i    = 0
             while i < syms.length do
-                syms(i).home.assign(cpPublic)
+                val ref = syms(i).home
+                if seen.add(ref) then ref.assign(cpPublic)
                 i += 1
+            end while
         end assignHomes
+
+        /** For internal test helpers: assign homes for all symbols in `cp` to `cp`. */
+        private[kyo] def assignHomesForTest(cp: kyo.internal.reflect.query.Classpath): Unit =
+            assignHomes(cp, cp)
+
+        /** For internal test helpers: assign the given extra symbols' ClasspathRef slots to `cp`. */
+        private[kyo] def assignExtraHomes(cp: Classpath, extra: Seq[Symbol]): Unit =
+            for sym <- extra do
+                if !sym.home.isAssigned then sym.home.assign(cp)
 
     end Classpath
 

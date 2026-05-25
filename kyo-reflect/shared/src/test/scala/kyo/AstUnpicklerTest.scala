@@ -400,6 +400,71 @@ class AstUnpicklerTest extends Test:
         }
     }
 
+    // Phase 3 Test 6: Pass1Result.parentsBySymbol for PlainClass.tasty contains an entry for the
+    // PlainClass symbol with a non-empty parent list. PlainClass extends AnyRef (Object) in TASTy.
+    "Phase 3: Pass1Result.parentsBySymbol for PlainClass contains entry with non-empty parents" in run {
+        val bytes = loadFixtureBytes("PlainClass.tasty")
+        val arena = TypeArena.canonical()
+        Abort.run[ReflectError](runPass1WithArena(bytes, arena)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val classSymOpt = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == Reflect.SymbolKind.Class)
+                    assert(
+                        classSymOpt.isDefined,
+                        s"No PlainClass symbol found. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                    val classSym = classSymOpt.get
+                    assert(
+                        r.parentsBySymbol.contains(classSym),
+                        s"parentsBySymbol does not contain PlainClass. Keys: ${r.parentsBySymbol.keys.map(_.name.asString).mkString(", ")}"
+                    )
+                    assert(
+                        r.parentsBySymbol(classSym).nonEmpty,
+                        "parentsBySymbol(PlainClass) should be non-empty but was empty"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // Phase 3 Test 7: Pass1Result.childrenByOwner for PlainClass.tasty maps the PlainClass symbol
+    // to all its directly-owned members. At minimum, the field 'x' and the constructor '<init>'
+    // must be present.
+    "Phase 3: Pass1Result.childrenByOwner for PlainClass maps class symbol to members including x and <init>" in run {
+        val bytes = loadFixtureBytes("PlainClass.tasty")
+        val arena = TypeArena.canonical()
+        Abort.run[ReflectError](runPass1WithArena(bytes, arena)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val classSymOpt = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == Reflect.SymbolKind.Class)
+                    assert(
+                        classSymOpt.isDefined,
+                        s"No PlainClass symbol found. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                    val classSym = classSymOpt.get
+                    assert(
+                        r.childrenByOwner.contains(classSym),
+                        s"childrenByOwner does not contain PlainClass. Keys: ${r.childrenByOwner.keys.map(_.name.asString).mkString(", ")}"
+                    )
+                    val children   = r.childrenByOwner(classSym)
+                    val childNames = children.map(_.name.asString).toSeq
+                    assert(
+                        childNames.contains("x"),
+                        s"childrenByOwner(PlainClass) should contain 'x' but childNames were: ${childNames.mkString(", ")}"
+                    )
+                    assert(
+                        childNames.contains("<init>"),
+                        s"childrenByOwner(PlainClass) should contain '<init>' but childNames were: ${childNames.mkString(", ")}"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
     // Test 20: passing a corrupt ASTs section produces MalformedSection("ASTs", ...).
     // Directly calls AstUnpickler.readPass1 with a 3-byte view: PACKAGE tag (128), then a
     // Nat encoding a large payload length (127 = 0xff single-byte in dotty Nat), but no

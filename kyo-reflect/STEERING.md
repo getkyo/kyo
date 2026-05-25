@@ -2,7 +2,34 @@
 
 The v1 plan (`execution-plan.md`) is complete and committed. The active plan is now `kyo-reflect/execution-plan-v2.md`. v1 references in older sections of this file are historical.
 
-## v2 Phase 1 Resolver wiring incomplete (BLOCKER — fixup queued before Phase 3)
+## v2 Phase 3 test scope cut (CRITICAL — finish before exit)
+
+Pulse 1 (PHASE-3-V2-INFLIGHT-REVIEW-1.md) reports the production wiring is clean but the test enumeration is significantly incomplete. Plan calls for 7 tests; current state:
+
+- T1 QueryApiTest: `sym.parents` returns AnyRef for a fixture class — MISSING
+- T2 QueryApiTest: generic class `GenFoo[T, U]` typeParams length 2 with correct names — MISSING
+- T3 QueryApiTest: `sym.declarations` for class with known methods — MISSING
+- T4 QueryApiTest: `sym.parents` after classpath close returns ClasspathClosed — MISSING
+- T5 QueryApiTest: Java String proxy parents/typeParams/declarations — MISSING
+- T6 AstUnpicklerTest: `Pass1Result.parentsBySymbol` contains fixture class entry — WEAKENED (indirect placeholder proxy)
+- T7 AstUnpicklerTest: `Pass1Result.childrenByOwner` maps class symbol to members — MISSING
+
+The three ClassfileReaderTest tests added cover raw `ClassfileResult` fields, NOT the public `Symbol` accessors. They do not substitute for the plan tests.
+
+REQUIRED before exit:
+1. Add T1, T2, T3, T4, T5 to QueryApiTest, each strict and using existing fixtures (plainClassTasty, baseClassTasty, childClassTasty, etc., plus a new GenFoo fixture if needed for T2; reuse genericBoxTasty if it has type params).
+2. Add T7 to AstUnpicklerTest with a direct `parentsBySymbol` / `childrenByOwner` assertion.
+3. Strengthen T6 to assert `parentsBySymbol` directly (the same Pass1Result extension that pulse 1 confirmed exists).
+
+Run `sbt 'kyo-reflect/test' 2>&1 | tail -10` and confirm 215 passing (208 prior + 7 new). Re-read STEERING.md after each compile/test cycle.
+
+DO NOT EXIT until all 7 plan-mandated tests are present and strict.
+
+## v2 Phase 1 Resolver wiring (RESOLVED in commit 321724cb9)
+
+Cleanup batch task #121 tracks the null+var -> SingleAssign migration.
+
+## v2 Phase 1 Resolver wiring incomplete (was BLOCKER, now resolved 321724cb9)
 
 PHASE-1-V2-AUDIT.md found that Resolver.makeClassLookup and makePackageLookup are defined but never called from Classpath.lookupClass / lookupPackage. The lookups still read fqnIndex directly. The readyLatch (Building-state gate) works correctly, the Async expansion is correct, the AllowUnsafe comments are correct. Only the Cache.memo Promise dedup is missing.
 

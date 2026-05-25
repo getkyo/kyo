@@ -37,12 +37,17 @@ object ClasspathOrchestrator:
       *
       * On success: `Present(pairs)` where pairs are (fqn, symbol). On decode error in soft-fail mode: `Absent` (error already accumulated
       * in the classpath's Building state error list).
+      *
+      * `parentsBySymbol` and `childrenByOwner` are pre-indexed maps from Pass1Result used by `mergeResults` to assign `_parents`,
+      * `_typeParams`, and `_declarations` on each symbol after Phase C placeholder resolution completes.
       */
     final private case class FileResult(
         fqns: Seq[(String, Reflect.Symbol)],
         arena: TypeArena,
         errors: Seq[ReflectError],
-        placeholders: Chunk[UnresolvedRef]
+        placeholders: Chunk[UnresolvedRef],
+        parentsBySymbol: Map[Reflect.Symbol, Chunk[Reflect.Type]],
+        childrenByOwner: Map[Reflect.Symbol, Chunk[Reflect.Symbol]]
     )
 
     /** Open a new classpath from a set of root paths.
@@ -113,13 +118,13 @@ object ClasspathOrchestrator:
                 if strict then
                     Abort.fail(err)
                 else
-                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty)
+                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty, Map.empty, Map.empty)
             case Result.Panic(t) =>
                 val err = ReflectError.CorruptedFile(file, 0L, t.getMessage)
                 if strict then
                     Abort.fail(err)
                 else
-                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty)
+                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty, Map.empty, Map.empty)
                 end if
 
     /** Decode TASTy bytes into a FileResult (fqn-symbol pairs + arena). */
@@ -147,7 +152,7 @@ object ClasspathOrchestrator:
             val pairs = pass1Result.symbols.toSeq.flatMap: sym =>
                 val fqn = nameToString(sym.fullName)
                 if fqn.nonEmpty then Seq((fqn, sym)) else Seq.empty
-            FileResult(pairs, arena, Seq.empty, pass1Result.placeholders)
+            FileResult(pairs, arena, Seq.empty, pass1Result.placeholders, pass1Result.parentsBySymbol, pass1Result.childrenByOwner)
         end for
     end decodeTastyBytes
 
@@ -210,6 +215,32 @@ object ClasspathOrchestrator:
                         placeholder.replaceSlot.set(Reflect.Type.Named(sym))
                     case None =>
                         placeholder.replaceSlot.set(Reflect.Type.Named(makeUnresolvedSym(placeholder.fqn)))
+            end for
+
+            // After G13 placeholder resolution: assign _parents, _typeParams, _declarations on TASTy symbols.
+            // All parent type slots are now resolved; cross-file proxy types have their SingleAssign slots set.
+            // Each symbol appears in exactly one FileResult so no double-set can occur.
+            for fr <- fileResults do
+                for (sym, parents) <- fr.parentsBySymbol do
+                    sym._parents.set(parents)
+                end for
+            end for
+            for fr <- fileResults do
+                for (sym, children) <- fr.childrenByOwner do
+                    val typeParams   = children.filter(_.kind == Reflect.SymbolKind.TypeParam)
+                    val declarations = children.filter(_.kind != Reflect.SymbolKind.TypeParam)
+                    sym._typeParams.set(typeParams)
+                    sym._declarations.set(declarations)
+                end for
+            end for
+
+            // Set _parents, _typeParams, _declarations to empty for all symbols not covered by the above loops.
+            // This covers non-class-like symbols (methods, fields, type params, parameters, packages) which have
+            // no entry in parentsBySymbol or childrenByOwner, and any class symbol whose template had no parents or no children.
+            for sym <- allSyms do
+                if !sym._parents.isSet then sym._parents.set(Chunk.empty)
+                if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
+                if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
             end for
 
             // Add errors accumulated during Building state (e.g., from root validation)

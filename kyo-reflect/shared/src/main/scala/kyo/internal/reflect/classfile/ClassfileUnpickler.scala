@@ -63,6 +63,33 @@ object ClassfileUnpickler:
         home: ClasspathRef,
         path: String
     )(using Frame): ClassfileResult < (Sync & Abort[ReflectError]) =
+        readFromRaw(view, interner, arena, home, path).map: result =>
+            // Populate _parents, _typeParams, _declarations on the class symbol and member symbols.
+            // Unsafe: SingleAssign.set() is an unsafe-tier helper; AllowUnsafe embraced here at the
+            // ClassfileUnpickler boundary where all symbols are freshly allocated and not yet shared.
+            import AllowUnsafe.embrace.danger
+            result.classSymbol._parents.set(result.parents)
+            result.classSymbol._typeParams.set(result.typeParams)
+            result.classSymbol._declarations.set(result.symbols)
+            for memberSym <- result.symbols do
+                memberSym._parents.set(Chunk.empty)
+                memberSym._typeParams.set(Chunk.empty)
+                memberSym._declarations.set(Chunk.empty)
+            end for
+            for tpSym <- result.typeParams do
+                tpSym._parents.set(Chunk.empty)
+                tpSym._typeParams.set(Chunk.empty)
+                tpSym._declarations.set(Chunk.empty)
+            end for
+            result
+
+    private def readFromRaw(
+        view: ByteView,
+        interner: Interner,
+        arena: TypeArena,
+        home: ClasspathRef,
+        path: String
+    )(using Frame): ClassfileResult < (Sync & Abort[ReflectError]) =
 
         // Magic
         Sync.defer(readU4(view)).map: magic =>

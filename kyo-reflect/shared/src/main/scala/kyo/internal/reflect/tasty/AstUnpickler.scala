@@ -45,12 +45,23 @@ object AstUnpickler:
       *   The synthetic root Package sentinel (empty name, null owner). Used as the top-level owner for package-level definitions. Excluded
       *   from `symbols` (which only contains user-declared definitions) but retained here so downstream resolvers can walk the full owner
       *   chain back to root without needing to reconstruct it.
+      * @param parentsBySymbol
+      *   Pre-indexed map from each class-like symbol to its parent types, as decoded from TEMPLATE parent_Type entries during pass 1.
+      *   Parent types may be proxy types with unresolved SingleAssign slots for cross-file parents; slots are populated during Phase C
+      *   placeholder resolution in mergeResults. This map is consumed by mergeResults to assign `Symbol._parents` after G13 resolution
+      *   completes.
+      * @param childrenByOwner
+      *   Pre-indexed map from each symbol to its directly-owned child symbols, built by grouping all symbols by their `owner` field. Used
+      *   by mergeResults to assign `Symbol._declarations` (after filtering out TypeParam-kinded children per the declarations contract) and
+      *   `Symbol._typeParams` (TypeParam-kinded children only).
       */
     final case class Pass1Result(
         symbols: Chunk[Reflect.Symbol],
         addrMap: Map[Int, Reflect.Symbol],
         placeholders: Chunk[UnresolvedRef],
-        rootSymbol: Reflect.Symbol
+        rootSymbol: Reflect.Symbol,
+        parentsBySymbol: Map[Reflect.Symbol, Chunk[Reflect.Type]],
+        childrenByOwner: Map[Reflect.Symbol, Chunk[Reflect.Symbol]]
     )
 
     /** Run pass 1 over the AST section.
@@ -99,9 +110,10 @@ object AstUnpickler:
         home: ClasspathRef,
         arena: TypeArena
     ): Pass1Result =
-        val addrMap    = new mutable.HashMap[Int, Reflect.Symbol]()
-        val allSymbols = new mutable.ArrayBuffer[Reflect.Symbol]()
-        val ownerStack = new mutable.ArrayDeque[Reflect.Symbol]()
+        val addrMap         = new mutable.HashMap[Int, Reflect.Symbol]()
+        val allSymbols      = new mutable.ArrayBuffer[Reflect.Symbol]()
+        val ownerStack      = new mutable.ArrayDeque[Reflect.Symbol]()
+        val parentsBySymbol = new mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Type]]()
 
         // Synthetic root: a Package symbol with empty name; its owner is null (termination sentinel).
         val rootName   = Reflect.Name("")
@@ -114,13 +126,24 @@ object AstUnpickler:
         // Phase 1: collect symbols. The typeSession holds the live addrMap so type decode can find
         // locally-defined symbols as the walk progresses. Cross-file refs produce UnresolvedRef entries.
         val typeSession = new TypeUnpickler.DecodeSession(names, addrMap, arena, home)
-        walkStats(view, sectionEnd, names, attrs, home, addrMap, allSymbols, ownerStack, typeSession)
+        walkStats(view, sectionEnd, names, attrs, home, addrMap, allSymbols, ownerStack, typeSession, parentsBySymbol)
+
+        // Build childrenByOwner: group all non-root symbols by their owner.
+        val childrenByOwner = new mutable.HashMap[Reflect.Symbol, mutable.ArrayBuffer[Reflect.Symbol]]()
+        for sym <- allSymbols.tail do // skip root
+            val owner = sym.owner
+            if owner != null then
+                childrenByOwner.getOrElseUpdate(owner, new mutable.ArrayBuffer[Reflect.Symbol]()) += sym
+            end if
+        end for
 
         Pass1Result(
             symbols = Chunk.from(allSymbols.tail), // exclude root
             addrMap = addrMap.toMap,
             placeholders = Chunk.from(typeSession.placeholders),
-            rootSymbol = root
+            rootSymbol = root,
+            parentsBySymbol = parentsBySymbol.view.mapValues(identity).toMap,
+            childrenByOwner = childrenByOwner.view.mapValues(buf => Chunk.from(buf.toSeq)).toMap
         )
     end runPass1
 
@@ -137,7 +160,8 @@ object AstUnpickler:
         addrMap: mutable.HashMap[Int, Reflect.Symbol],
         allSymbols: mutable.ArrayBuffer[Reflect.Symbol],
         ownerStack: mutable.ArrayDeque[Reflect.Symbol],
-        typeSession: TypeUnpickler.DecodeSession
+        typeSession: TypeUnpickler.DecodeSession,
+        parentsBySymbol: mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Type]]
     ): Unit =
         while view.position < end do
             val nodeAddr = view.position
@@ -164,7 +188,7 @@ object AstUnpickler:
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     ownerStack.append(sym)
-                    walkStats(view, payloadEnd, names, attrs, home, addrMap, allSymbols, ownerStack, typeSession)
+                    walkStats(view, payloadEnd, names, attrs, home, addrMap, allSymbols, ownerStack, typeSession, parentsBySymbol)
                     discard(ownerStack.removeLast())
                     view.goto(payloadEnd)
 
@@ -202,7 +226,7 @@ object AstUnpickler:
                     // Use a forked sub-view of the payload body.
                     val innerView = view.subView(payloadBody, payloadEnd)
                     ownerStack.append(sym)
-                    walkStats(innerView, payloadEnd, names, attrs, home, addrMap, allSymbols, ownerStack, typeSession)
+                    walkStats(innerView, payloadEnd, names, attrs, home, addrMap, allSymbols, ownerStack, typeSession, parentsBySymbol)
                     discard(ownerStack.removeLast())
                     view.goto(payloadEnd)
 
@@ -229,7 +253,7 @@ object AstUnpickler:
                         // are skipped first; scanning stops at SELFDEF, VALDEF, DEFDEF, TYPEDEF, or
                         // any modifier tag (which signals the start of the stat section).
                         val parentScanView = view.subView(templateBodyStart, templatePayloadEnd)
-                        decodeTemplateParents(parentScanView, templatePayloadEnd, typeSession)
+                        val decodedParents = decodeTemplateParents(parentScanView, templatePayloadEnd, typeSession)
                         // Advance the outer view past the TEMPLATE payload so that readModifiers
                         // reads modifiers from templatePayloadEnd to payloadEnd.
                         view.goto(templatePayloadEnd)
@@ -241,10 +265,24 @@ object AstUnpickler:
                         val sym      = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
                         addrMap(nodeAddr) = sym
                         allSymbols += sym
+                        // Record parent types for this class symbol (used by mergeResults for _parents assignment).
+                        if decodedParents.nonEmpty then
+                            parentsBySymbol(sym) = Chunk.from(decodedParents)
                         // Walk template body to discover members (type params, constructor params, member defs).
                         val templateFork = view.subView(templateBodyStart, templatePayloadEnd)
                         ownerStack.append(sym)
-                        walkStats(templateFork, templatePayloadEnd, names, attrs, home, addrMap, allSymbols, ownerStack, typeSession)
+                        walkStats(
+                            templateFork,
+                            templatePayloadEnd,
+                            names,
+                            attrs,
+                            home,
+                            addrMap,
+                            allSymbols,
+                            ownerStack,
+                            typeSession,
+                            parentsBySymbol
+                        )
                         discard(ownerStack.removeLast())
                         view.goto(payloadEnd)
                     else
@@ -334,12 +372,16 @@ object AstUnpickler:
       *
       * Uses a fresh sub-view (parentScanView) that is independent of templateFork, so walkStats can still walk the same byte range from the
       * beginning.
+      *
+      * Returns the decoded parent types as a buffer. The caller records them into `parentsBySymbol` keyed by the class symbol. Parent types
+      * may contain proxy types (UnresolvedRef slots) for cross-file parents; these are resolved during Phase C.
       */
     private def decodeTemplateParents(
         parentScanView: ByteView,
         end: Int,
         typeSession: TypeUnpickler.DecodeSession
-    ): Unit =
+    ): mutable.ArrayBuffer[Reflect.Type] =
+        val collected = new mutable.ArrayBuffer[Reflect.Type]()
         // Phase 1: skip leading TYPEPARAM and PARAM nodes (class own type/term params).
         var skipParams = true
         while skipParams && parentScanView.position < end do
@@ -367,7 +409,8 @@ object AstUnpickler:
                 scanParents = false
             else
                 try
-                    discard(TypeUnpickler.readTypeIntoSession(parentScanView, typeSession))
+                    val decoded = TypeUnpickler.readTypeIntoSession(parentScanView, typeSession)
+                    collected += decoded
                 catch
                     case _: Exception =>
                         // On decode error, skip to end to avoid corrupting the scan.
@@ -376,6 +419,7 @@ object AstUnpickler:
                 end try
             end if
         end while
+        collected
     end decodeTemplateParents
 
     /** Scan forward through sub-trees, collecting modifier flag bits when modifiers are reached.

@@ -29,4 +29,11 @@ final class ClasspathRef:
         slot.get()
     end get
 
+    /** Returns true if the Classpath has been assigned, false if the slot is still unset. */
+    def isAssigned: Boolean =
+        // Unsafe: SingleAssign.isSet reads an AtomicReference.
+        import AllowUnsafe.embrace.danger
+        slot.isSet
+    end isAssigned
+
 end ClasspathRef
