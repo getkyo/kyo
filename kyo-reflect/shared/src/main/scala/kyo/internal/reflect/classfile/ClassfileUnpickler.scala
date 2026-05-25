@@ -76,11 +76,14 @@ object ClassfileUnpickler:
             result.classSymbol._declaredType.set(Reflect.Type.Named(result.classSymbol))
             // Java classfiles have no Comments section; scaladoc is always Absent for classfile symbols.
             result.classSymbol._scaladoc.set(Maybe.Absent)
+            // Java classfiles have no TASTy Positions section; position is always Absent for classfile symbols.
+            result.classSymbol._position.set(Maybe.Absent)
             for memberSym <- result.symbols do
                 memberSym._parents.set(Chunk.empty)
                 memberSym._typeParams.set(Chunk.empty)
                 memberSym._declarations.set(Chunk.empty)
                 memberSym._scaladoc.set(Maybe.Absent)
+                memberSym._position.set(Maybe.Absent)
                 // Assign _declaredType from memberTypes map if available.
                 result.memberTypes.get(memberSym) match
                     case Some(t) => memberSym._declaredType.set(t)
@@ -91,6 +94,7 @@ object ClassfileUnpickler:
                 tpSym._typeParams.set(Chunk.empty)
                 tpSym._declarations.set(Chunk.empty)
                 tpSym._scaladoc.set(Maybe.Absent)
+                tpSym._position.set(Maybe.Absent)
             end for
             result
 

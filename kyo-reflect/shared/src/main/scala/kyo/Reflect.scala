@@ -146,6 +146,14 @@ object Reflect:
         case ClassConst(tpe: Type)
     end Constant
 
+    /** Source position attached to a TASTy symbol.
+      *
+      * `sourceFile` is the file name from the Attributes section (if present). `line` and `column` are 1-based (line 1 = first line of the
+      * file; column 1 = first character of the line). `Absent` for classfile symbols and for TASTy symbols in a file without a Positions
+      * section.
+      */
+    final case class Position(sourceFile: Maybe[String], line: Int, column: Int)
+
     final case class Annotation(annotationType: Type, argsPickle: Chunk[Byte])
 
     final case class JavaMetadata(
@@ -228,6 +236,8 @@ object Reflect:
         private[kyo] val _declaredType: kyo.internal.reflect.symbol.SingleAssign[Type] = new kyo.internal.reflect.symbol.SingleAssign
         private[kyo] val _scaladoc: kyo.internal.reflect.symbol.SingleAssign[Maybe[String]] =
             new kyo.internal.reflect.symbol.SingleAssign
+        private[kyo] val _position: kyo.internal.reflect.symbol.SingleAssign[Maybe[Position]] =
+            new kyo.internal.reflect.symbol.SingleAssign
 
         // Pure accessors (no effect, always present even after classpath close).
         def fullName: Name        = Symbol.computeFullName(this)
@@ -255,6 +265,20 @@ object Reflect:
             if _scaladoc.isSet then _scaladoc.get()
             else Maybe.Absent
         end scaladoc
+
+        /** The source position of this symbol, if known.
+          *
+          * Returns `Present(pos)` for TASTy symbols with position data decoded from the Positions section. Returns `Absent` for
+          * Java-sourced classfile symbols (classfiles have no TASTy Positions section), for TASTy symbols in files without a Positions
+          * section, and for symbols whose home classpath has not yet been loaded. This is a pure accessor: it reads from a pre-populated
+          * write-once slot with no classpath I/O.
+          */
+        def position: Maybe[Position] =
+            // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public accessor boundary.
+            import AllowUnsafe.embrace.danger
+            if _position.isSet then _position.get()
+            else Maybe.Absent
+        end position
 
         // Resolving accessors (return ReflectError.NotImplemented in Phase 0).
 

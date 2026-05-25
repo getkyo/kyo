@@ -6,9 +6,11 @@ import kyo.internal.reflect.binary.ByteView
 import kyo.internal.reflect.symbol.Interner
 import kyo.internal.reflect.symbol.Symbol as InternalSymbol
 import kyo.internal.reflect.tasty.AstUnpickler
+import kyo.internal.reflect.tasty.AttributeUnpickler
 import kyo.internal.reflect.tasty.CommentsUnpickler
 import kyo.internal.reflect.tasty.FileAttributes
 import kyo.internal.reflect.tasty.NameUnpickler
+import kyo.internal.reflect.tasty.PositionsUnpickler
 import kyo.internal.reflect.tasty.SectionIndex
 import kyo.internal.reflect.tasty.TastyFormat
 import kyo.internal.reflect.tasty.TastyHeader
@@ -50,7 +52,8 @@ object ClasspathOrchestrator:
         parentsBySymbol: Map[Reflect.Symbol, Chunk[Reflect.Type]],
         childrenByOwner: Map[Reflect.Symbol, Chunk[Reflect.Symbol]],
         typeBySymbol: Map[Reflect.Symbol, Reflect.Type],
-        commentsBySymbol: Map[Reflect.Symbol, String]
+        commentsBySymbol: Map[Reflect.Symbol, String],
+        positionsBySymbol: Map[Reflect.Symbol, Reflect.Position]
     )
 
     /** Open a new classpath from a set of root paths.
@@ -121,13 +124,33 @@ object ClasspathOrchestrator:
                 if strict then
                     Abort.fail(err)
                 else
-                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty, Map.empty, Map.empty, Map.empty, Map.empty)
+                    FileResult(
+                        Seq.empty,
+                        TypeArena.canonical(),
+                        Seq(err),
+                        Chunk.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty
+                    )
             case Result.Panic(t) =>
                 val err = ReflectError.CorruptedFile(file, 0L, t.getMessage)
                 if strict then
                     Abort.fail(err)
                 else
-                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty, Map.empty, Map.empty, Map.empty, Map.empty)
+                    FileResult(
+                        Seq.empty,
+                        TypeArena.canonical(),
+                        Seq(err),
+                        Chunk.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty
+                    )
                 end if
 
     /** Decode TASTy bytes into a FileResult (fqn-symbol pairs + arena). */
@@ -144,7 +167,12 @@ object ClasspathOrchestrator:
             _        <- TastyHeader.read(view)
             names    <- NameUnpickler.read(view, interner)
             sections <- SectionIndex.read(view, names)
-            attrs = FileAttributes.default
+            attrs <- sections.get(TastyFormat.AttributesSection) match
+                case Present((offset, length)) =>
+                    val attrView = view.subView(offset, offset + length)
+                    AttributeUnpickler.read(attrView, names)
+                case Absent =>
+                    Sync.defer(FileAttributes.default)
             pass1Result <- sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
@@ -157,6 +185,12 @@ object ClasspathOrchestrator:
                     CommentsUnpickler.read(commentsView, pass1Result.addrMap)
                 case Absent =>
                     Sync.defer(Map.empty[Reflect.Symbol, String])
+            positionsBySymbol <- sections.get(TastyFormat.PositionsSection) match
+                case Present((offset, length)) =>
+                    val posView = view.subView(offset, offset + length)
+                    PositionsUnpickler.read(posView, pass1Result.addrMap, attrs.sourceFile)
+                case Absent =>
+                    Sync.defer(Map.empty[Reflect.Symbol, Reflect.Position])
         yield
             val pairs = pass1Result.symbols.toSeq.flatMap: sym =>
                 val fqn = nameToString(sym.fullName)
@@ -169,7 +203,8 @@ object ClasspathOrchestrator:
                 pass1Result.parentsBySymbol,
                 pass1Result.childrenByOwner,
                 pass1Result.typeBySymbol,
-                commentsBySymbol
+                commentsBySymbol,
+                positionsBySymbol
             )
         end for
     end decodeTastyBytes
@@ -306,6 +341,17 @@ object ClasspathOrchestrator:
             end for
             for sym <- allSyms do
                 if !sym._scaladoc.isSet then sym._scaladoc.set(Maybe.Absent)
+            end for
+
+            // Phase 7 (G2): assign _position from positionsBySymbol.
+            // Symbols with position data get Present(pos); all others get Absent.
+            for fr <- fileResults do
+                for (sym, pos) <- fr.positionsBySymbol do
+                    if !sym._position.isSet then sym._position.set(Maybe(pos))
+                end for
+            end for
+            for sym <- allSyms do
+                if !sym._position.isSet then sym._position.set(Maybe.Absent)
             end for
 
             // Add errors accumulated during Building state (e.g., from root validation)
