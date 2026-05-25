@@ -14,7 +14,7 @@ Stage 2 driving the 10-phase plan in `execution-plan.md`.
 | 5b  | Java/Scala unification | committed | 8a66b6e61 | 18 (129 cumulative) | Impl agent hit session quota mid-flight; fix-up applied tests 4/5 TASTy-side assertions after quota reset |
 | 6   | Reflect.Reads derivation macro | committed | 82ad3bdfa | 18 (147 cumulative) | Prior impl agent thrashed ~45 min on macro hygiene without applying any of 5 BLOCKING directives (macro splice, asInstanceOf removals, ReadsInstances export, ReadsDerivationTest tests); killed and relaunched with supervisor-blessed lazy self-reference design (lazy val instance referenced inside same quote, ReflectRuntime.readFieldsLazy helper). Relaunched agent shipped 18/18 tests + 64-field cap. Fixup pass confirmed 64-cap, no asInstanceOf in macro source, no em-dashes, no Frame.internal, all platforms compile. |
 | 6b  | Record interop | committed | 83e31ea5d | 14 (165 cumulative) | First impl pass used Frame.internal in 10+ generated splices (violation of feedback_no_unsafe); supervisor steered to splice the caller's Frame via Expr.summon[Frame] with the frameExpr lookup positioned AFTER the field-validation loop so Tests 9/10 compile-error tests still fire first. Test 14 (Record.stage.using bridging) compiles via explicit type lambda. asInstanceOf[Record[F]] at line 76 retained (Record.empty is Record[Any], non-generic) per STEERING. |
-| 7   | Query + file sources + snapshot + cross-platform | committed | (this commit) | 38 (203 cumulative) | First impl pass hit session quota at ~70% complete (production code present, 39 compile errors, no tests, no public Snapshot.scala). Continuation agent fixed the 39 compile errors (Maybe.absent → Maybe.Absent, n.string.get() → n.asString, Seq.pure removal, unused-value warnings), wrote all 3 test files (QueryApiTest, SymbolResolutionTest, SnapshotRoundTripTest), and added many fixture hex literals to Embedded.scala (+8793 lines). 203/203 JVM tests passing; JS + Native compile clean. AllowUnsafe extended to AtomicRef CAS state-machine transitions in Classpath/ClasspathOrchestrator/SnapshotWriter (same justified-bridging pattern authorized in cleanup batch 1). |
+| 7   | Query + file sources + snapshot + cross-platform | committed | 98416eacf | 38 (203 cumulative; 32 jvmOnly cross-platform-impossible) | First impl pass hit session quota at ~70% complete (production code present, 39 compile errors, no tests, no public Snapshot.scala). Continuation agent fixed the 39 compile errors (Maybe.absent → Maybe.Absent, n.string.get() → n.asString, Seq.pure removal, unused-value warnings), wrote all 3 test files (QueryApiTest, SymbolResolutionTest, SnapshotRoundTripTest), and added many fixture hex literals to Embedded.scala (+8793 lines). 203/203 JVM tests passing; JS + Native compile clean. AllowUnsafe extended to AtomicRef CAS state-machine transitions in Classpath/ClasspathOrchestrator/SnapshotWriter (same justified-bridging pattern authorized in cleanup batch 1). |
 
 **Total tests when all phases complete**: 196.
 
@@ -29,6 +29,46 @@ Stage 2 driving the 10-phase plan in `execution-plan.md`.
 - **Phase 6b** (PHASE-6b-AUDIT.md): PROCEED. 0 BLOCKER, 3 WARN, 5 NOTE. ALL 3 WARNs CLEANED in Phase 6b WARN drain: Test 5 and Test 6 success branches now fail explicitly (Phase 7 stub probe pattern); SymbolToRecordMacro empty-fields path guards against non-Any concrete F at macro-expansion time. NOTEs cosmetic.
 - **Phase 6** (PHASE-6-AUDIT.md): PROCEED. 0 BLOCKER, 5 WARN, 5 NOTE. ALL 5 WARNs CLEANED in cleanup batch 4: dead extractStaticTouchedByTypeRepr method removed from ReflectMacro; Test 9 strict (typeCheckErrors against sealed trait derives clause, asserts "hand-written"); Test 11 calls derived Reads[Custom].read and asserts the given Reads[Int] sentinel value is used; Test 12 fail-on-success-with-decls instead of vacuous tautology; Test 16 uses new TouchedFields.analyzeInline macro entry to exercise hygiene rule 2 with Bind patterns. NOTEs cosmetic.
 - **Phase 5b** (PHASE-5b-AUDIT.md): PROCEED. 0 BLOCKER, 6 WARN, 6 NOTE. ALL 6 WARNs CLEANED in cleanup batch 3: Test 16 (Type.Array) rewritten as a real classfile decode against a new ArrayRecord.class fixture (Java record with int[] values component, embedded as hex in Embedded.scala); stale TODO comments in JavaAnnotationUnpickler (FloatVal/DoubleVal cases) removed; buildEnclosingMethod returns Absent when enclosingMethodIdx is Absent (was returning Present((sym, Name(""))) wrongly); readAnnotations param drift accepted with scaladoc explanation; SEMANTIC BUG FIXED in Flags.fromJvmAccessFlags: 0x0200 (ACC_INTERFACE) was mapped to Flag.Abstract, now correctly only sets Flag.Trait; 0x0400 (ACC_ABSTRACT) now correctly maps to Flag.Abstract; Flag.Static enum case added and 0x0008 (ACC_STATIC) now maps to it instead of Flag.JavaDefined. New FlagsTest 7-9 validate corrected mappings. NOTEs cosmetic.
+
+## Plan deviations during execution
+
+**evictOlderThan cacheDir parameter (FINAL-AUDIT W2, PHASE-7-AUDIT W3)**
+
+`Reflect.Snapshot.evictOlderThan` has signature `evictOlderThan(cacheDir: String, d: Duration): Unit < (Sync & Abort[ReflectError])`,
+which deviates from DESIGN.md §16 spec of `evictOlderThan(d: Duration): Unit < (Sync & Scope)` in two ways:
+
+1. The `cacheDir` parameter was added because there is no implicit scope variable for the cache directory at the call site.
+   Without it, the caller would have no way to specify which directory to evict. This is a necessary addition.
+2. The effect row is `Sync & Abort[ReflectError]` rather than `Sync & Scope`. The I/O can fail (unreadable directory,
+   permission error), so `Abort[ReflectError]` is more precise than `Scope` for error signalling.
+
+Decision: ACCEPTED. The DESIGN.md spec omitted an obvious required parameter. The deviation is a correct improvement.
+
+**findClassByBinary inline replace vs FqnCanonicalizer (FINAL-AUDIT W3, PHASE-7-AUDIT W4)**
+
+`Reflect.Classpath.findClassByBinary` at `Reflect.scala:455` uses inline
+`binaryName.replace('/', '.').replace('$', '.')` instead of `FqnCanonicalizer.toFullName`.
+Reason: `FqnCanonicalizer.toFullName` requires an `innerClassTable: Map[String, (String, String)]`
+argument, which is not threaded to the `Classpath` extension-method scope.
+
+The inline replace is correct for named inner classes (`java/util/Map$Entry` produces `java.util.Map.Entry`).
+It diverges from `FqnCanonicalizer` behavior only for anonymous local class names containing
+`$1LocalClass`-style suffixes, which are not addressable via `findClassByBinary` anyway.
+
+Decision: ACCEPTED. The deviation is justified by the unavailability of the inner class table at call scope.
+
+**Resolver.scala deleted (FINAL-AUDIT W4+W5, PHASE-7-AUDIT W1+W2)**
+
+`Resolver.scala` was dead code: `makeClassLookup` and `makePackageLookup` were never called anywhere.
+Wiring them would add `Async` to `Classpath.lookupClass`'s return type, which would propagate to the
+public `findClass` / `findPackage` API and break the `Sync & Abort[ReflectError]` contract.
+
+The `Ready.fqnIndex` is an immutable `Map[String, Reflect.Symbol]` built once during Phase C and never mutated.
+Any two reads for the same key from an immutable HashMap return the same object reference. Reference equality
+is therefore guaranteed by the immutable map, not by `Cache.memo` Promise dedup. `Resolver.scala` was deleted.
+
+`SymbolResolutionTest` test 19 now asserts `sym1 eq sym2` (reference equality) rather than FQN string equality,
+since the immutable HashMap guarantees this invariant.
 
 ## User deferrals
 

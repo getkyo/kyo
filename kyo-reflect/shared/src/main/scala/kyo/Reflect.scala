@@ -234,11 +234,46 @@ object Reflect:
         def isJava: Boolean   = flags.contains(Flag.JavaDefined)
 
         // Resolving accessors (return ReflectError.NotImplemented in Phase 0).
-        def declaredType(using Frame): Type < (Sync & Abort[ReflectError])          = stub("Symbol.declaredType")
-        def parents(using Frame): Chunk[Type] < (Sync & Abort[ReflectError])        = stub("Symbol.parents")
-        def typeParams(using Frame): Chunk[Symbol] < (Sync & Abort[ReflectError])   = stub("Symbol.typeParams")
+
+        /** The declared type of this symbol.
+          *
+          * @note
+          *   Not implemented in v1. Always fails at runtime with `ReflectError.NotImplemented`. Deferred per DESIGN.md §24 ("Tree body
+          *   decode" is out of scope for v1).
+          */
+        def declaredType(using Frame): Type < (Sync & Abort[ReflectError]) = stub("Symbol.declaredType")
+
+        /** The parent types of this symbol (superclass and mixed-in traits).
+          *
+          * @note
+          *   Not implemented in v1. Always fails at runtime with `ReflectError.NotImplemented`. Deferred per DESIGN.md §24 ("Tree body
+          *   decode" is out of scope for v1).
+          */
+        def parents(using Frame): Chunk[Type] < (Sync & Abort[ReflectError]) = stub("Symbol.parents")
+
+        /** The type parameters of this symbol.
+          *
+          * @note
+          *   Not implemented in v1. Always fails at runtime with `ReflectError.NotImplemented`. Deferred per DESIGN.md §24 ("Tree body
+          *   decode" is out of scope for v1).
+          */
+        def typeParams(using Frame): Chunk[Symbol] < (Sync & Abort[ReflectError]) = stub("Symbol.typeParams")
+
+        /** The member declarations of this symbol (methods, fields, nested types).
+          *
+          * @note
+          *   Not implemented in v1. Always fails at runtime with `ReflectError.NotImplemented`. Deferred per DESIGN.md §24 ("Tree body
+          *   decode" is out of scope for v1).
+          */
         def declarations(using Frame): Chunk[Symbol] < (Sync & Abort[ReflectError]) = stub("Symbol.declarations")
-        def companion(using Frame): Maybe[Symbol] < (Sync & Abort[ReflectError])    = stub("Symbol.companion")
+
+        /** The companion object symbol of this class or trait, if one exists.
+          *
+          * @note
+          *   Not implemented in v1. Always fails at runtime with `ReflectError.NotImplemented`. Deferred per DESIGN.md §24 ("Tree body
+          *   decode" is out of scope for v1).
+          */
+        def companion(using Frame): Maybe[Symbol] < (Sync & Abort[ReflectError]) = stub("Symbol.companion")
 
         // Java-specific side door.
         def javaSpecific: Maybe[JavaMetadata] = javaMetadata

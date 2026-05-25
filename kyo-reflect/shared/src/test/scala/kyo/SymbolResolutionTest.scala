@@ -61,10 +61,11 @@ class SymbolResolutionTest extends Test:
                 ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: _ =>
                     Reflect.Classpath.wrap(rawCp)
 
-    // Test 19: two concurrent findClass calls for the same FQN yield symbols backed by the same underlying data
-    // Note: the current implementation uses a HashMap for lookup, so concurrent calls will both read from the same
-    // Ready-state index. We verify both return Present and the name is the same (same logical symbol).
-    "two concurrent findClass calls for the same FQN return matching symbols" in run {
+    // Test 19: two concurrent findClass calls for the same FQN return reference-equal Symbol instances.
+    // The Ready-state fqnIndex is an immutable HashMap built once during Phase C; any two reads for
+    // the same key return the same object reference. Reference equality is the chosen dedup invariant
+    // (Resolver.scala was deleted; the immutable HashMap provides the same guarantee without Async overhead).
+    "two concurrent findClass calls for the same FQN return reference-equal symbols" in run {
         Scope.run:
             Abort.run[ReflectError](openClasspath(fixtureSource()).flatMap: cp =>
                 Async.zip[ReflectError, Maybe[Reflect.Symbol], Maybe[Reflect.Symbol], Any](
@@ -73,8 +74,8 @@ class SymbolResolutionTest extends Test:
                 )).map:
                 case Result.Success((Present(sym1), Present(sym2))) =>
                     assert(
-                        sym1.fullName.asString == sym2.fullName.asString,
-                        s"Concurrent findClass calls must return symbols with same FQN: ${sym1.fullName.asString} vs ${sym2.fullName.asString}"
+                        sym1 eq sym2,
+                        s"Concurrent findClass calls must return reference-equal symbols; got different instances for ${sym1.fullName.asString}"
                     )
                 case Result.Success((Absent, _)) | Result.Success((_, Absent)) =>
                     fail("Expected both concurrent findClass calls to return Present")

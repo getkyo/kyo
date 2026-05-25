@@ -70,6 +70,7 @@ final class Classpath private[reflect] (
 
     /** All symbols in the classpath (classes + packages). */
     private[kyo] def allSymbols: Chunk[Reflect.Symbol] =
+        // Unsafe: non-effectful read of immutable Ready-state classlist
         import AllowUnsafe.embrace.danger
         stateRef.unsafe.get() match
             case s: Classpath.State.Ready    => s.allSymbols
@@ -122,6 +123,7 @@ object Classpath:
         canonical: TypeArena,
         errors: Chunk[ReflectError]
     ): Unit =
+        // Unsafe: atomic CAS of state machine, called from single-threaded Phase C merge
         import AllowUnsafe.embrace.danger
         val ready = new State.Ready(allSymbols, topLevelClasses, packages, fqnIndex, packageIndex, canonical, errors)
         cp.stateRef.unsafe.set(ready)
@@ -129,7 +131,9 @@ object Classpath:
 
     /** Transition to Closed. Called by Scope.ensure finalizer. */
     private[kyo] def close(cp: Classpath): Unit =
+        // Unsafe: atomic state transition to Closed, called from Scope finalizer
         import AllowUnsafe.embrace.danger
         cp.stateRef.unsafe.set(State.Closed)
+    end close
 
 end Classpath
