@@ -7,6 +7,24 @@
 - "Simpler" is not a justification. "Redundant with X" is not a justification. Implement exactly as specified or escalate.
 - Refactor phases preserve existing behavior byte-for-byte. Any default or derivation not in the plan must match prior code's computed value; do not invent new values.
 
+## Overnight directive (2026-05-24, user going to bed)
+
+> "Please don't stop, don't leave ANY issues behind. Fix all issues before starting a new phase."
+
+Interpretation, binding for the rest of the night:
+
+1. **Zero pending audit items between phases.** Before launching Phase N+1's impl agent, every WARN and NOTE from Phase N's audit must be addressed (fixed in code or explicitly documented + accepted with rationale in PROGRESS.md). No carry-forward.
+
+2. **The carry-forward cleanup TaskList items (#73 Phase 1 WARN, #74 Phase 2 WARN, #75 Phase 3 WARN, #76 Phase 4 WARN, #77 javaMetadata defaults, #78 Phase 5 WARN, #79 Phase 5b WARN) must be DRAINED before Phase 6b begins.** They piled up because the prior nightly loop tolerated them; the user's directive says do not. After Phase 6 commits, the next action is a dedicated cleanup sweep that closes all 7 tasks, then Phase 6b.
+
+3. **Phase 6 audit (when it lands) gets the same treatment.** If audit produces WARNs, fix them BEFORE Phase 6b launches.
+
+4. **"All platforms" remains in force.** JVM + JS + Native green for every phase commit. No "JVM passing, JS will be fixed in a later phase" — that is a deferred issue and the user said zero deferred issues.
+
+5. **No new TaskCreate cleanup tasks may be added during the campaign without being closed in the same nightly window.** If an audit finds a WARN you cannot fix immediately, escalate as a STEERING directive, not as a deferred task.
+
+This directive supersedes any prior implicit "queue for post-commit audit" workflow. The supervisor drains the queue before opening a new phase.
+
 ## NEVER STOP (mirrored from /implement skill)
 
 Once Stage 2 begins, the supervisor drives every phase through commit and immediately launches the next. The loop only stops when:
@@ -73,18 +91,69 @@ Both signature and TEMPLATE parent wiring completed. decodeTemplateParents walks
 
 All 4 BLOCKING fixes applied: ByteView.Heap.copyBytes replaces asInstanceOf; parents wired; javaSpecific populated; throwsTypes wired. Tests 3, 11, 12 strict. Cleared.
 
-### Phase 5b prep concerns (RESOLVED per pulse 1)
+### Phase 5b (RESOLVED, applied in 8a66b6e61)
 
-#1 (binaryName) and #2 (FloatVal/DoubleVal) confirmed complied by pulse 1. Cleared.
+All STEERING directives complied: tests 4 and 5 now assert both Java and TASTy sides. Cleared.
 
-### Phase 5b test fixes (BLOCKING before commit)
+### Phase 6 critical fixes (BLOCKING before commit)
 
-Pulse 1 surfaced two weakened tests in `JavaSymbolTest.scala` that violate plan tests 4 and 5 (which explicitly require BOTH Java-sourced AND TASTy-sourced assertions):
+Pulse 1 found 5 real issues confirmed by supervisor inspection. ALL must be applied before re-running tests.
 
-**Test 4** (plan: "`sym.isJava` is true for Java-sourced symbols AND false for TASTy-sourced symbols"). Current impl at lines 189-194 asserts only the Java side. Add a second assertion: load `PlainClass.tasty` via the same TASTy-pass-1 pattern used in `ClassfileReaderTest.firstClassSymbolFromTasty` (already established in `e29f81a34` codebase), get the resulting Symbol, assert `!sym.isJava`. Both assertions in the same test method.
+**1. Macro entry NOT wired in Reflect.scala**. Line 354 still has `inline def derived[A]: Reads[A] = scala.compiletime.error("...Phase 0 stub; lands in Phase 6")`. The Phase 6 macro at `kyo.internal.ReflectMacro.derivedImpl` exists but is disconnected from the public API. Replace the compiletime.error stub with `${ kyo.internal.ReflectMacro.derivedImpl[A] }` splice (using the standard Scala 3 macro entry pattern). Without this, `derives Reflect.Reads` cannot work at all.
 
-**Test 5** (plan: "`sym.javaSpecific` is `Present` for Java symbols AND `Absent` for Scala symbols"). Current impl at lines 199-204 asserts only the Java side. Add the same TASTy contrast: assert `tastySym.javaSpecific.isEmpty`.
+**2. `ReadsDerivationTest.scala` is ABSENT**. All 18 plan-mandated tests are missing. Create the file at `kyo-reflect/shared/src/test/scala/kyo/ReadsDerivationTest.scala`. Implement all 18 tests from the plan (product derivation, recursive case classes, built-in instances, given override, touched-fields, sum-type guard, higher-kinded guard, hygiene). Tests MUST be strict (no tautological assertions).
 
-Both tests live in `kyo-reflect/shared/src/test/scala/kyo/JavaSymbolTest.scala`. Use the existing `PlainClass.tasty` fixture (already present at `kyo-reflect/shared/src/test/resources/kyo/fixtures/PlainClass.tasty`). After both fixes, re-run `testOnly kyo.JavaSymbolTest kyo.UnifiedModelTest` plus cross-platform compile.
+**3. `asInstanceOf[Term]` at `ReflectMacro.scala:343`** in `paramss.head.head.asInstanceOf[Term]`. Violates `feedback_no_casts`. Replace with a proper match on the tree shape, or use the `quotes.reflect` Term API directly. If the tree has multiple shapes, pattern-match each explicitly.
 
-Pulse 1's claim that `UnifiedModelTest.scala` was absent was a false flag; the file exists with 8 tests.
+**4. `asInstanceOf` at `TouchedFields.scala:102`** in `items.asInstanceOf[List[quotes.reflect.Tree]]` inside `GotoQueue.drain`. Same violation. Replace with proper typing: declare `items: List[quotes.reflect.Tree]` from the start (parameterize `GotoQueue` over the `Quotes` instance) or use a sealed type for the queue payload.
+
+**5. `ReadsInstances` not exported**. `Reflect.Reads` companion object has no `given` delegation to instances in `kyo.internal.reflect.reads.ReadsInstances`. Without this, `summon[Reads[Reflect.Name]]` cannot find the built-in instances. Add `given` declarations or `export` statements in the `Reads` companion (in Reflect.scala or via `import` in user code's perspective).
+
+After ALL 5 are applied, re-run targeted tests + cross-platform compile.
+
+### Phase 6 lazy self-reference design (supervisor-blessed)
+
+The prior impl agent thrashed for ~45 minutes on Scala 3 macro hygiene for the lazy self-reference (`derives Reflect.Reads` on a recursive case class like `case class Node(name: Name, children: Chunk[Node])`). Do not re-derive this. Use the following design verbatim:
+
+The macro emits the entire lazy-product body as a single outer quote where the recursive reference is resolved by **referring to the lazy val from inside the same quote**, not by smuggling a name across splice boundaries:
+
+```scala
+'{
+    lazy val instance: Reflect.Reads[A] = new Reflect.Reads[A]:
+        val symbolKinds   = $symbolKindsExpr
+        val needsBodies   = false
+        val touchedFields = $touchedFieldsExpr
+        private val _ctor: Array[Any] => A = $ctorExpr
+        // Built outside the recursive ref: a Chunk of readers for non-recursive fields only.
+        private val _nonRecReaders: Chunk[Reflect.Symbol => Any < (Sync & Abort[ReflectError])] = $nonRecReadersExpr
+        // Bitmask: which slot indices are recursive (read via `instance`).
+        private val _isRecSlot: Long = $isRecSlotMaskExpr
+        // Bitmask: which slot indices are Chunk[Self] (vs single Self).
+        private val _isChunkSelf: Long = $isChunkSelfMaskExpr
+        def read(sym: Reflect.Symbol)(using Frame): A < (Sync & Abort[ReflectError]) =
+            kyo.internal.reflect.reads.ReflectRuntime.readFieldsLazy[A](
+                sym, _nonRecReaders, _isRecSlot, _isChunkSelf, instance, _ctor
+            )
+    instance
+}
+```
+
+`ReflectRuntime.readFieldsLazy` is a new helper in `kyo.internal.reflect.reads` that walks slot indices, picks a reader from `_nonRecReaders` for non-recursive slots, and uses the passed-in `instance` (the resolved lazy val) for recursive slots. The `instance` reference inside the outer quote resolves at user-code compile time to the surrounding `lazy val instance`, which is hygienically valid.
+
+No `thunk` / `() => Reflect.Reads[A]` indirection. The lazy val itself is the indirection.
+
+For non-recursive products, emit the eager form without `readFieldsLazy` (the same straightforward `Chunk(reader0, reader1, ...).map(...).collect` pattern documented in DESIGN.md section on Reads.derived).
+
+This design is supervisor-blessed; the impl agent must implement it verbatim.
+
+### Phase 6 missing tests (BLOCKING before commit)
+
+The impl agent stopped at 16/18 tests. The two missing tests are not optional; they are the core semantic checks:
+
+**Test 5** (plan line 498): `Reads[Simple].read(sym)` decodes a fixture symbol into a `Simple` whose `name == sym.name` and `flags == sym.flags`. Construction of `sym` must use a fixture (build a small `Reflect.Symbol` via a fresh small TASTy or via the existing `PlainClass.tasty` fixture; use the simplest path that gives a real `Reflect.Symbol` with a known `Name` and `Flags`). Strict assertions on both fields.
+
+**Test 18** (plan line 511): `Reads.read` on a real fixture symbol from `PlainClass.tasty` (already loaded by `AstUnpicklerTest` and `NameUnpicklerTest`) returns the expected product value for a simple two-field case class. Load the fixture via `getClass.getResourceAsStream("/kyo/fixtures/PlainClass.tasty")`, decode into a `Reflect.Symbol` for the class, then run a `derived Reads[Simple]` against it and assert the decoded `Simple.name.asString` matches "PlainClass" (or whatever the fixture top-level is).
+
+### Phase 6 64-field cap (BLOCKING before commit)
+
+`ReflectMacro.buildProduct` MUST `report.errorAndAbort(s"Reflect.Reads.derived supports up to 64 fields; got ${caseFields.length}")` if `caseFields.length > 64`. This guard runs at macro expansion time, NOT at runtime. The Long bitmask cap (`_isRecSlot: Long`, `_isChunkSelf: Long`) makes this a hard limit; without the guard, a 65-field case class would silently truncate.

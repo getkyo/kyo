@@ -1,0 +1,140 @@
+package kyo.internal.reflect.reads
+
+import kyo.Reflect
+import scala.quoted.*
+
+/** Tree-walker that collects the FieldSet bits touched by a compiled Reflect.Reads.read body.
+  *
+  * Extracted from ReflectMacro for testability. The analysis is conservative: it recognizes Select(qualifier, methodName) nodes where
+  * qualifier has type <:< Reflect.Symbol and maps the method name to the corresponding FieldSet bit.
+  *
+  * Hygiene rule 1: a fast-path Trees.exists pre-check avoids TreeTraverser allocation when the body contains no Symbol-typed selections.
+  *
+  * Hygiene rule 2: Match nodes are handled specially -- the .pattern subtree is skipped to avoid false positives from Bind/Unapply/Wildcard
+  * nodes that carry effect-tagged types resembling accessor calls.
+  *
+  * Hygiene rule 3: Block(Nil, ...) lambda wrapper peeling before entering the main traversal.
+  */
+object TouchedFields:
+
+    /** Analyze a compiled read body Term and return the union of all FieldSet bits it touches.
+      *
+      * @param readBody
+      *   the body Term of the read method override
+      * @return
+      *   FieldSet representing all Symbol accessors called in readBody
+      */
+    def analyze(using Quotes)(readBody: quotes.reflect.Term): Reflect.FieldSet =
+        import quotes.reflect.*
+
+        // Hygiene rule 3: peel Block(Nil, ...) lambda wrappers
+        val unwrapped = peel(readBody)
+
+        // Hygiene rule 1: cheap pre-check -- skip allocation if no Symbol-typed selects
+        val hasSymbolSelect = existsSymbolSelect(unwrapped)
+        if !hasSymbolSelect then return Reflect.FieldSet.Empty
+
+        var result = Reflect.FieldSet.Empty
+
+        traverseGoto(unwrapped) {
+            // Hygiene rule 2: Match -- skip .pattern, visit scrutinee/guard/rhs only
+            case Match(scrutinee, cases) =>
+                goto(scrutinee)
+                cases.foreach { c =>
+                    c.guard.foreach(goto)
+                    goto(c.rhs)
+                }
+
+            // Symbol accessor collection
+            case Select(qualifier, methodName) if qualifier.tpe <:< TypeRepr.of[Reflect.Symbol] =>
+                result = result | fieldSetForAccessor(methodName)
+        }
+        result
+    end analyze
+
+    /** Map a Symbol method name to the corresponding FieldSet bit. */
+    private[reads] def fieldSetForAccessor(methodName: String): Reflect.FieldSet =
+        methodName match
+            case "name" | "fullName" => Reflect.FieldSet.Name
+            case "binaryName"        => Reflect.FieldSet.BinaryName
+            case "flags" | "isInline" | "isContextual" | "isOpaque" |
+                "isPackageObject" | "isModule" | "isJava" => Reflect.FieldSet.Flags
+            case "kind"         => Reflect.FieldSet.Kind
+            case "owner"        => Reflect.FieldSet.Owner
+            case "declaredType" => Reflect.FieldSet.DeclaredType
+            case "parents"      => Reflect.FieldSet.Parents
+            case "typeParams"   => Reflect.FieldSet.TypeParams
+            case "declarations" => Reflect.FieldSet.Members
+            case "companion"    => Reflect.FieldSet.Companion
+            case "javaSpecific" => Reflect.FieldSet.JavaSpecific
+            case _              => Reflect.FieldSet.Empty
+
+    // ── Tree traversal helpers ──────────────────────────────────────────────
+
+    /** Peel Block(Nil, expr) wrappers. */
+    @annotation.tailrec
+    private def peel(using Quotes)(t: quotes.reflect.Term): quotes.reflect.Term =
+        import quotes.reflect.*
+        t match
+            case Block(Nil, expr) => peel(expr)
+            case _                => t
+    end peel
+
+    /** Check cheaply whether any Select has a Reflect.Symbol-typed qualifier. */
+    private def existsSymbolSelect(using Quotes)(tree: quotes.reflect.Tree): Boolean =
+        import quotes.reflect.*
+        var found = false
+        (new TreeTraverser:
+            override def traverseTree(t: Tree)(owner: Symbol): Unit =
+                if !found then
+                    t match
+                        case Select(qualifier, _) if qualifier.tpe <:< TypeRepr.of[Reflect.Symbol] =>
+                            found = true
+                        case _ =>
+                            super.traverseTree(t)(owner)
+        ).traverseTree(tree)(Symbol.spliceOwner)
+        found
+    end existsSymbolSelect
+
+    /** Opaque accumulator for trees to visit next in a traverseGoto step.
+      *
+      * Using a `scala.collection.mutable.ListBuffer` as the underlying type avoids any path-dependent cast: the `Tree` type is fixed to the
+      * outer `Quotes` instance.
+      */
+    private class GotoAccum[Q <: Quotes](val q: Q):
+        private val buf                  = new scala.collection.mutable.ListBuffer[q.reflect.Tree]
+        def add(t: q.reflect.Tree): Unit = buf += t
+        def flush(): List[q.reflect.Tree] =
+            val r = buf.toList; buf.clear(); r
+    end GotoAccum
+
+    /** Enqueues a tree for visiting inside a `traverseGoto` step. */
+    private def goto(using acc: GotoAccum[? <: Quotes])(tree: acc.q.reflect.Tree): Unit = acc.add(tree)
+
+    /** Traverse `tree` with a step-based partial function.
+      *
+      * If the partial function matches a node, the default TreeTraverser descent is suppressed. Instead, only trees explicitly passed to
+      * `goto(...)` inside the partial function body are visited next. This is the same contract as kyo-direct's Trees.traverseGoto.
+      */
+    private def traverseGoto(using
+        q: Quotes
+    )(
+        tree: quotes.reflect.Tree
+    )(pf: (acc: GotoAccum[q.type]) ?=> PartialFunction[quotes.reflect.Tree, Unit]): Unit =
+        import quotes.reflect.*
+        (new TreeTraverser:
+            override def traverseTree(t: Tree)(owner: Symbol): Unit =
+                given acc: GotoAccum[q.type] = new GotoAccum(q)
+                pf.lift(t) match
+                    case Some(_) =>
+                        // pf matched: only visit explicitly goto'd trees
+                        acc.flush().foreach(child => traverseTree(child)(owner))
+                    case None =>
+                        // pf did not match: default descent
+                        super.traverseTree(t)(owner)
+                end match
+            end traverseTree
+        ).traverseTree(tree)(Symbol.spliceOwner)
+    end traverseGoto
+
+end TouchedFields

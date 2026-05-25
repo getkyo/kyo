@@ -347,11 +347,11 @@ object Reflect:
         val symbolKinds: Set[SymbolKind]
         val needsBodies: Boolean
         val touchedFields: FieldSet
-        def read(sym: Symbol): A < (Sync & Abort[ReflectError])
+        def read(sym: Symbol)(using Frame): A < (Sync & Abort[ReflectError])
     end Reads
 
-    object Reads:
-        inline def derived[A]: Reads[A] = scala.compiletime.error("Reflect.Reads.derived not implemented in Phase 0; lands in Phase 6")
+    object Reads extends kyo.internal.reflect.reads.ReadsInstances:
+        inline def derived[A]: Reads[A] = ${ kyo.internal.ReflectMacro.derivedImpl[A] }
 
     // ── FieldSet (touched-fields hint) ─────────────────────────────────────
 
