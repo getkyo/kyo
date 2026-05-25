@@ -41,6 +41,9 @@ sealed trait ByteView:
     /** Current cursor position. */
     def position: Int
 
+    /** The underlying raw byte array. Used by TreeUnpickler to obtain the section bytes for lazy body decode. */
+    def allBytes: Array[Byte]
+
 end ByteView
 
 object ByteView:
@@ -97,9 +100,12 @@ object ByteView:
 
         def position: Int = cursor
 
+        def allBytes: Array[Byte] = bytes
+
     end Heap
 
     /** Stub for memory-mapped file support. Wired in Phase 7. */
-    sealed abstract class Mapped extends ByteView
+    sealed abstract class Mapped extends ByteView:
+        def allBytes: Array[Byte] = Array.empty[Byte]
 
 end ByteView

@@ -25,7 +25,7 @@ object Constant:
             Reflect.Name(""),
             null,
             new kyo.internal.reflect.query.ClasspathRef,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Reflect.Symbol.TastyOrigin.empty,
             kyo.Maybe.Absent
         )
 

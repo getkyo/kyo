@@ -12,7 +12,7 @@ class DeclarationTableTest extends Test:
 
     private def makeSymbol(nameStr: String): Reflect.Symbol =
         val home   = new ClasspathRef
-        val origin = Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
+        val origin = Reflect.Symbol.TastyOrigin.empty
         Reflect.Symbol.make(
             Reflect.SymbolKind.Val,
             Reflect.Flags.empty,

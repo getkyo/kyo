@@ -387,7 +387,7 @@ object ClasspathOrchestrator:
             Reflect.Name(fqn),
             null,
             new ClasspathRef,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Reflect.Symbol.TastyOrigin.empty,
             Absent
         )
 

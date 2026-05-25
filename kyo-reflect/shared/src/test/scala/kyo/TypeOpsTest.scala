@@ -17,7 +17,7 @@ class TypeOpsTest extends Test:
             Reflect.Name(""),
             null,
             new ClasspathRef,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Reflect.Symbol.TastyOrigin.empty,
             Absent
         )
         parts.foldLeft(root) { (owner, part) =>
@@ -27,7 +27,7 @@ class TypeOpsTest extends Test:
                 Reflect.Name(part),
                 owner,
                 new ClasspathRef,
-                Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+                Reflect.Symbol.TastyOrigin.empty,
                 Absent
             )
         }
@@ -38,7 +38,7 @@ class TypeOpsTest extends Test:
                 Reflect.Name(part),
                 owner,
                 new ClasspathRef,
-                Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+                Reflect.Symbol.TastyOrigin.empty,
                 Absent
             )
         }

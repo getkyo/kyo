@@ -301,7 +301,7 @@ class SymbolResolutionTest extends Test:
                         Reflect.Name(fqn),
                         null,
                         new kyo.internal.reflect.query.ClasspathRef,
-                        Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+                        Reflect.Symbol.TastyOrigin.empty,
                         Maybe.Absent
                     )
                     // Manually simulate Phase C: fqnIndex contains the class -> set slot.
@@ -362,7 +362,7 @@ class SymbolResolutionTest extends Test:
                         Reflect.Name(fqn),
                         null,
                         new kyo.internal.reflect.query.ClasspathRef,
-                        Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+                        Reflect.Symbol.TastyOrigin.empty,
                         Maybe.Absent
                     )
                     placeholder.replaceSlot.set(Reflect.Type.Named(unresolvedSym))

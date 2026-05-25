@@ -50,7 +50,7 @@ class CommentsUnpicklerTest extends Test:
     /** Create a minimal Reflect.Symbol for testing. */
     private def makeTestSymbol(nameStr: String): Reflect.Symbol =
         val home   = new ClasspathRef
-        val origin = Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
+        val origin = Reflect.Symbol.TastyOrigin.empty
         Reflect.Symbol.make(
             Reflect.SymbolKind.Class,
             Reflect.Flags.empty,

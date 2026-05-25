@@ -16,7 +16,7 @@ class TypeArenaTest extends Test:
             Reflect.Name(name),
             null,
             new ClasspathRef,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Reflect.Symbol.TastyOrigin.empty,
             Absent
         )
 

@@ -41,7 +41,7 @@ class TypeUnpicklerTest extends Test:
             Reflect.Name(name),
             null,
             new ClasspathRef,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Reflect.Symbol.TastyOrigin.empty,
             Absent
         )
 
@@ -416,7 +416,7 @@ class TypeUnpicklerTest extends Test:
             Reflect.Name("s"),
             null,
             new ClasspathRef,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Reflect.Symbol.TastyOrigin.empty,
             Absent
         )
         val rec     = Reflect.Type.Rec(Reflect.Type.Named(sentinel))

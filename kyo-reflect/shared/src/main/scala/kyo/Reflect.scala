@@ -216,6 +216,115 @@ object Reflect:
             case other                  => other.toString
     end Type
 
+    // ── Tree ADT ────────────────────────────────────────────────────────────
+
+    /** Structural representation of a TASTy expression or definition body.
+      *
+      * Produced by `Symbol.body` (lazy, memoized). Each case mirrors a TASTy AST tag. Trees may reference `Reflect.Type` and
+      * `Reflect.Symbol` values. All sub-trees are strict (no lazy slots); memoization is handled at the `body` accessor level.
+      *
+      * Reference: dotty TastyFormat.scala AST tag layout.
+      */
+    sealed trait Tree
+
+    object Tree:
+        /** Term reference by name (IDENT tag). */
+        final case class Ident(name: Name, tpe: Type) extends Tree
+
+        /** Member selection (SELECT tag). */
+        final case class Select(qualifier: Tree, name: Name, tpe: Type) extends Tree
+
+        /** Function application (APPLY tag). */
+        final case class Apply(fun: Tree, args: Chunk[Tree]) extends Tree
+
+        /** Type application (TYPEAPPLY tag). */
+        final case class TypeApply(fun: Tree, args: Chunk[Type]) extends Tree
+
+        /** Block of statements followed by an expression (BLOCK tag). */
+        final case class Block(stats: Chunk[Tree], expr: Tree) extends Tree
+
+        /** Conditional expression (IF tag). */
+        final case class If(cond: Tree, thenp: Tree, elsep: Tree) extends Tree
+
+        /** Pattern match (MATCH tag). */
+        final case class Match(selector: Tree, cases: Chunk[CaseDef]) extends Tree
+
+        /** Single case in a match (CASEDEF tag). */
+        final case class CaseDef(pattern: Tree, guard: Maybe[Tree], body: Tree) extends Tree
+
+        /** Literal constant (various const tags). */
+        final case class Literal(constant: Constant) extends Tree
+
+        /** Object allocation (NEW tag). */
+        final case class New(tpe: Type) extends Tree
+
+        /** Assignment (ASSIGN tag). */
+        final case class Assign(lhs: Tree, rhs: Tree) extends Tree
+
+        /** Return statement (RETURN tag). */
+        final case class Return(expr: Maybe[Tree], from: Symbol) extends Tree
+
+        /** Throw expression (THROW tag). */
+        final case class Throw(expr: Tree) extends Tree
+
+        /** Lambda / anonymous function (LAMBDA tag). */
+        final case class Lambda(method: Tree, tpe: Maybe[Type]) extends Tree
+
+        /** Type ascription (TYPED tag). */
+        final case class Typed(expr: Tree, tpe: Type) extends Tree
+
+        /** Inlined call expansion (INLINED tag). */
+        final case class Inlined(call: Maybe[Tree], bindings: Chunk[Tree], body: Tree) extends Tree
+
+        /** Try/catch/finally (TRY tag). */
+        final case class Try(expr: Tree, cases: Chunk[CaseDef], finalizer: Maybe[Tree]) extends Tree
+
+        /** While loop (WHILE tag). */
+        final case class While(cond: Tree, body: Tree) extends Tree
+
+        /** Pattern binding (BIND tag). */
+        final case class Bind(name: Name, pattern: Tree) extends Tree
+
+        /** Alternative patterns in a case (ALTERNATIVE tag). */
+        final case class Alternative(patterns: Chunk[Tree]) extends Tree
+
+        /** Unapply extractor call (UNAPPLY tag). */
+        final case class Unapply(fun: Tree, implicits: Chunk[Tree], patterns: Chunk[Tree]) extends Tree
+
+        /** Val or var definition (VALDEF tag). */
+        final case class ValDef(sym: Symbol, tpt: Type, rhs: Maybe[Tree]) extends Tree
+
+        /** Method definition (DEFDEF tag). */
+        final case class DefDef(sym: Symbol, paramss: Chunk[Chunk[Tree]], tpt: Type, rhs: Maybe[Tree]) extends Tree
+
+        /** Type alias or abstract type definition (TYPEDEF tag). */
+        final case class TypeDef(sym: Symbol, rhs: Type) extends Tree
+
+        /** Package definition (PACKAGE tag). */
+        final case class PackageDef(sym: Symbol, stats: Chunk[Tree]) extends Tree
+
+        /** Class definition (TYPEDEF with TEMPLATE). */
+        final case class ClassDef(sym: Symbol, template: Template) extends Tree
+
+        /** Class template body (TEMPLATE tag). */
+        final case class Template(parents: Chunk[Tree], self: Maybe[Symbol], body: Chunk[Tree]) extends Tree
+
+        /** Super reference (SUPER tag). */
+        final case class Super(qual: Tree, mix: Maybe[Name]) extends Tree
+
+        /** This reference (THIS tag). */
+        final case class This(cls: Symbol) extends Tree
+
+        /** Named argument in an application (NAMEDARG tag). */
+        final case class NamedArg(name: Name, value: Tree) extends Tree
+
+        /** Annotated tree (ANNOTATEDtpt/ANNOTATEDtype). */
+        final case class Annotated(expr: Tree, annotation: Tree) extends Tree
+
+        /** Unknown tag -- encountered a tag not covered by this ADT version. */
+        final case class Unknown(tag: Int, length: Int) extends Tree
+    end Tree
+
     // ── Symbol ──────────────────────────────────────────────────────────────
 
     final class Symbol private[Reflect] (
@@ -238,6 +347,26 @@ object Reflect:
             new kyo.internal.reflect.symbol.SingleAssign
         private[kyo] val _position: kyo.internal.reflect.symbol.SingleAssign[Maybe[Position]] =
             new kyo.internal.reflect.symbol.SingleAssign
+
+        // Lazy body memo: populated on first call to Symbol.body. Not a write-once slot because the
+        // computation is driven by the caller, not by classpath orchestration. Memo handles thread safety.
+        // Unsafe: Memo is an unsafe-tier helper; AllowUnsafe is embraced at the body accessor boundary.
+        // The init lambda may throw TreeUnpickler.DecodeException for corrupt byte slices; body() catches it.
+        private[kyo] val _bodyMemo: kyo.internal.reflect.symbol.Memo[Tree] =
+            new kyo.internal.reflect.symbol.Memo[Tree](() =>
+                // This init lambda is called at most once per symbol. TreeUnpickler.decodeSync throws
+                // TreeUnpickler.DecodeException on corrupt/truncated slices; body() catches and wraps it.
+                // Unsafe: AllowUnsafe is needed for TastyOrigin.addrMap SingleAssign read.
+                import AllowUnsafe.embrace.danger
+                origin match
+                    case Reflect.Symbol.JavaOrigin =>
+                        throw new kyo.internal.reflect.tasty.TreeUnpickler.DecodeException(
+                            "body not available for Java symbols"
+                        )
+                    case o: Reflect.Symbol.TastyOrigin =>
+                        kyo.internal.reflect.tasty.TreeUnpickler.decodeSync(o, this)
+                end match
+            )
 
         // Pure accessors (no effect, always present even after classpath close).
         def fullName: Name        = Symbol.computeFullName(this)
@@ -374,6 +503,52 @@ object Reflect:
 
         // Java-specific side door.
         def javaSpecific: Maybe[JavaMetadata] = javaMetadata
+
+        /** The body tree of this symbol, decoded lazily from the TASTy body byte slice.
+          *
+          * Returns the decoded Tree on success. The result is memoized: two consecutive calls return reference-equal Tree values.
+          *
+          * Fails with:
+          *   - `ReflectError.NotImplemented` for Java symbols (classfiles have no body AST).
+          *   - `ReflectError.NotImplemented` for Package symbols and any symbol without a body slice (bodyStart == 0).
+          *   - `ReflectError.ClasspathClosed` if the classpath has been closed.
+          *   - `ReflectError.MalformedSection` if the body byte slice is truncated or contains an unknown tag sequence.
+          */
+        def body(using Frame): Tree < (Sync & Abort[ReflectError]) =
+            import Name.asString
+            origin match
+                case Symbol.JavaOrigin =>
+                    Abort.fail(ReflectError.NotImplemented("body not available for Java symbols"))
+                case o: Symbol.TastyOrigin =>
+                    if !home.isAssigned then stub("Symbol.body")
+                    else
+                        home.get().checkOpen.andThen:
+                            if o.bodyStart == 0 || o.bodyEnd == 0 || kind == SymbolKind.Package then
+                                Abort.fail(ReflectError.NotImplemented("body not available for this symbol kind"))
+                            else
+                                // Decode via Memo to cache; the Memo init lambda runs synchronously on first call.
+                                // If the decode threw (corrupt bytes), convert to Abort.fail(MalformedSection).
+                                // The try/catch runs before entering any kyo effect so exceptions become Either.
+                                // Unsafe: Memo.get() is an unsafe-tier helper; AllowUnsafe is embraced here.
+                                import AllowUnsafe.embrace.danger
+                                val decoded: Either[ReflectError, Tree] =
+                                    try Right(_bodyMemo.get())
+                                    catch
+                                        case ex: kyo.internal.reflect.tasty.TreeUnpickler.DecodeException =>
+                                            Left(ReflectError.MalformedSection(
+                                                "ASTs",
+                                                s"body decode failed for '${name.asString}': ${ex.getMessage}"
+                                            ))
+                                        case ex: ArrayIndexOutOfBoundsException =>
+                                            Left(ReflectError.MalformedSection(
+                                                "ASTs",
+                                                s"body truncated for '${name.asString}': ${ex.getMessage}"
+                                            ))
+                                decoded match
+                                    case Right(t) => Sync.defer(t)
+                                    case Left(e)  => Abort.fail(e)
+            end match
+        end body
     end Symbol
 
     object Symbol:
@@ -454,11 +629,55 @@ object Reflect:
 
         /** The complete Symbol.Origin ADT. Phase 5 adds JavaOrigin construction sites; the ADT itself is sealed here. */
         sealed trait Origin derives CanEqual
-        final case class TastyOrigin(
-            addrMap: Map[Int, Reflect.Symbol],
-            bodyStart: Int,
-            bodyEnd: Int
-        ) extends Origin
+
+        /** Origin for a symbol decoded from a TASTy file.
+          *
+          * @param bodyStart
+          *   Absolute byte offset into `sectionBytes` where this symbol's body payload begins. 0 for symbols without a body.
+          * @param bodyEnd
+          *   Absolute byte offset into `sectionBytes` where this symbol's body payload ends. 0 for symbols without a body.
+          * @param sectionBytes
+          *   The raw AST section bytes for this file. Shared (not copied) across all symbols from the same file. Empty array for synthetic
+          *   symbols. Used by TreeUnpickler to create a ByteView for lazy body decode.
+          * @param names
+          *   The name table for this file, as decoded by NameUnpickler. Shared across all symbols from the same file. Empty array for
+          *   synthetic symbols.
+          *
+          * The `addrMap` is stored as a write-once slot (`SingleAssign`) populated after Pass1 completes. It maps TASTy byte address to
+          * symbol and is used by TreeUnpickler to resolve IDENT/SELECT tree references during lazy body decode. Always Map.empty for
+          * synthetic (non-file) symbols.
+          */
+        final class TastyOrigin(
+            val bodyStart: Int,
+            val bodyEnd: Int,
+            val sectionBytes: Array[Byte],
+            val names: Array[Reflect.Name],
+            val sectionOffset: Int
+        ) extends Origin:
+            // Write-once: populated by AstUnpickler after pass1 completes. Unsafe: SingleAssign is unsafe-tier.
+            private[kyo] val _addrMap: kyo.internal.reflect.symbol.SingleAssign[Map[Int, Reflect.Symbol]] =
+                new kyo.internal.reflect.symbol.SingleAssign
+
+            def addrMap(using AllowUnsafe): Map[Int, Reflect.Symbol] =
+                if _addrMap.isSet then _addrMap.get()
+                else Map.empty
+
+            override def equals(other: Any): Boolean = other match
+                case o: TastyOrigin =>
+                    bodyStart == o.bodyStart && bodyEnd == o.bodyEnd
+                case _ => false
+            override def hashCode(): Int = bodyStart * 31 + bodyEnd
+        end TastyOrigin
+
+        object TastyOrigin:
+            /** Convenience factory for synthetic symbols that have no file bytes or body. */
+            def empty: TastyOrigin = new TastyOrigin(0, 0, Array.empty[Byte], Array.empty[Reflect.Name], 0)
+
+            /** Pattern match extractor: `case TastyOrigin(bodyStart, bodyEnd)`. */
+            def unapply(o: TastyOrigin): Some[(Int, Int)] =
+                Some((o.bodyStart, o.bodyEnd))
+        end TastyOrigin
+
         case object JavaOrigin extends Origin
     end Symbol
 

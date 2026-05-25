@@ -2,6 +2,16 @@
 
 The v1 plan (`execution-plan.md`) is complete and committed. The active plan is now `kyo-reflect/execution-plan-v2.md`. v1 references in older sections of this file are historical.
 
+## v2 Phase 8 prep concerns (read before writing TreeUnpickler)
+
+PHASE-8-V2-PREP.md flagged two HIGH concerns the agent must address:
+
+1. **TastyOrigin.addrMap is Map.empty at all construction sites.** TreeUnpickler needs the addrMap to resolve SHAREDterm cross-references to other Trees. Either pass `addrMap` as an explicit argument to TreeUnpickler.decodeSync, OR retrofit TastyOrigin to store the live addrMap from AstUnpickler. Pick the simpler path (explicit argument is fine).
+
+2. **TastyOrigin does not store the original byte array.** TreeUnpickler needs the bodyStart..bodyEnd byte slice (or a sub-view). Either pass `bytes: ByteView` directly to decodeSync, OR extend TastyOrigin to hold a `ByteView` reference. Again, explicit argument is simpler.
+
+Implementation hint: the simplest correct path is to have Symbol.body capture `bodyBytes: Array[Byte] | ByteView` plus `addrMap: Map[Int, Symbol]` AT POPULATION TIME (in AstUnpickler walks, or in mergeResults) and pass both to TreeUnpickler.decode. The Memo wraps the lazy decode result.
+
 ## v2 Phase 5 test scope cut (CRITICAL — finish before exit)
 
 PHASE-5-V2-INFLIGHT-REVIEW-1.md reports the production wiring is clean and compile passes, but ALL 7 plan-mandated tests for Phase 5 (G20 declaredType) are MISSING. `git diff HEAD -- kyo-reflect/shared/src/test/` is empty; QueryApiTest.scala has zero `declaredType` occurrences.

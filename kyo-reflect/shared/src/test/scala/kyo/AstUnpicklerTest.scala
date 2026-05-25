@@ -297,7 +297,7 @@ class AstUnpicklerTest extends Test:
                     assert(methodOpt.isDefined, "No Method symbol found")
                     val method = methodOpt.get
                     method.origin match
-                        case Reflect.Symbol.TastyOrigin(_, bodyStart, bodyEnd) =>
+                        case Reflect.Symbol.TastyOrigin(bodyStart, bodyEnd) =>
                             assert(bodyStart > 0, s"bodyStart should be > 0 but was $bodyStart")
                             assert(bodyEnd > bodyStart, s"bodyEnd ($bodyEnd) should be > bodyStart ($bodyStart)")
                         case Reflect.Symbol.JavaOrigin =>

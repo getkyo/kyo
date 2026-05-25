@@ -38,7 +38,7 @@ object TypeUnpickler:
             Reflect.Name("$$MatchCase"),
             null,
             new ClasspathRef,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Reflect.Symbol.TastyOrigin.empty,
             Absent
         )
 
@@ -70,7 +70,7 @@ object TypeUnpickler:
                 val inProgressRec = new mutable.HashMap[Int, Reflect.Type.Rec]()
                 val binderAddrMap = new mutable.HashMap[Int, Chunk[Reflect.Symbol]]()
                 val placeholders  = new mutable.ArrayBuffer[UnresolvedRef]()
-                val ctx           = DecodeCtx(names, addrMap, arena, home, addrCache, inProgressRec, binderAddrMap, placeholders)
+                val ctx           = DecodeCtx(names, addrMap, arena, home, addrCache, inProgressRec, binderAddrMap, placeholders, null, 0)
                 val t             = readTypeNode(view, ctx)
                 Right((t, Chunk.from(placeholders)))
             catch
@@ -82,6 +82,77 @@ object TypeUnpickler:
             case Right(r)  => Sync.defer(r)
             case Left(err) => Abort.fail(err)
     end readType
+
+    /** Shared type decode state for use by TreeUnpickler during body decode.
+      *
+      * Created once per decodeSync call and threaded through all readType calls within the same body decode. Keeps a shared addrCache for
+      * SHAREDtype back-references and inProgressRec for RECtype cycle-breaking.
+      *
+      * `sectionBytes` is the full AST section byte array; used by readTypeForTree to re-decode SHAREDtype back-references at addresses not
+      * yet in addrCache (because Pass 1 decoded them from the section in a separate DecodeSession).
+      *
+      * Private to the tasty package; TreeUnpickler is a sibling object in the same package.
+      */
+    final private[tasty] class TreeTypeSession(
+        val names: Array[Reflect.Name],
+        val addrMap: Map[Int, Reflect.Symbol],
+        val arena: TypeArena,
+        val home: ClasspathRef,
+        val sectionBytes: Array[Byte],
+        val sectionOffset: Int
+    ):
+        val addrCache: mutable.HashMap[Int, Reflect.Type]              = new mutable.HashMap()
+        val inProgressRec: mutable.HashMap[Int, Reflect.Type.Rec]      = new mutable.HashMap()
+        val binderAddrMap: mutable.HashMap[Int, Chunk[Reflect.Symbol]] = new mutable.HashMap()
+        val placeholders: mutable.ArrayBuffer[UnresolvedRef]           = new mutable.ArrayBuffer()
+    end TreeTypeSession
+
+    /** Read one type node using a shared TreeTypeSession (called by TreeUnpickler).
+      *
+      * Handles SHAREDtype cache misses by re-decoding the referenced type from sectionBytes on demand.
+      */
+    private[tasty] def readTypeForTree(view: ByteView, session: TreeTypeSession): Reflect.Type =
+        val peek = view.peekByte(view.position) & 0xff
+        if peek == TastyFormat.SHAREDtype then
+            discard(view.readByte()) // consume SHAREDtype tag
+            val addr    = view.readNat()
+            val absAddr = session.sectionOffset + addr
+            session.addrCache.getOrElseUpdate(
+                absAddr, {
+                    // Cache miss: re-decode the type at the section-relative addr from the full section bytes.
+                    // addr is section-relative; absAddr = sectionOffset + addr is the absolute position.
+                    val forkView = ByteView(session.sectionBytes, absAddr, session.sectionBytes.length)
+                    val forkCtx = DecodeCtx(
+                        session.names,
+                        session.addrMap,
+                        session.arena,
+                        session.home,
+                        session.addrCache,
+                        session.inProgressRec,
+                        session.binderAddrMap,
+                        session.placeholders,
+                        session.sectionBytes,
+                        session.sectionOffset
+                    )
+                    readTypeNode(forkView, forkCtx)
+                }
+            )
+        else
+            val ctx = DecodeCtx(
+                session.names,
+                session.addrMap,
+                session.arena,
+                session.home,
+                session.addrCache,
+                session.inProgressRec,
+                session.binderAddrMap,
+                session.placeholders,
+                session.sectionBytes,
+                session.sectionOffset
+            )
+            readTypeNode(view, ctx)
+        end if
+    end readTypeForTree
 
     /** Synchronous (non-Kyo) variant used by AstUnpickler.runPass1.
       *
@@ -105,7 +176,9 @@ object TypeUnpickler:
             session.addrCache,
             session.inProgressRec,
             session.binderAddrMap,
-            session.placeholders
+            session.placeholders,
+            null,
+            0
         )
         readTypeNode(view, ctx)
     end readTypeIntoSession
@@ -128,6 +201,8 @@ object TypeUnpickler:
     end DecodeSession
 
     // Internal decode context passed through all recursive calls.
+    // sectionBytes: full AST section bytes for on-demand SHAREDtype re-decode on cache miss.
+    // Pass null when decoding from a live DecodeSession (Pass 1) where addrCache is always pre-populated.
     final private class DecodeCtx(
         val names: Array[Reflect.Name],
         val addrMap: Map[Int, Reflect.Symbol],
@@ -136,7 +211,9 @@ object TypeUnpickler:
         val addrCache: mutable.HashMap[Int, Reflect.Type],
         val inProgressRec: mutable.HashMap[Int, Reflect.Type.Rec],
         val binderAddrMap: mutable.HashMap[Int, Chunk[Reflect.Symbol]],
-        val placeholders: mutable.ArrayBuffer[UnresolvedRef]
+        val placeholders: mutable.ArrayBuffer[UnresolvedRef],
+        val sectionBytes: Array[Byte],
+        val sectionOffset: Int
     )
 
     private def makeUnresolvedSym(fqn: String, home: ClasspathRef): Reflect.Symbol =
@@ -146,7 +223,7 @@ object TypeUnpickler:
             Reflect.Name(fqn),
             null,
             home,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Reflect.Symbol.TastyOrigin.empty,
             Absent
         )
 
@@ -175,10 +252,32 @@ object TypeUnpickler:
             // ── Category 2 (tag + Nat) ────────────────────────────────────────────
 
             case TastyFormat.SHAREDtype =>
+                // astRef is a section-relative offset; absRef is the absolute position in sectionBytes.
                 val astRef = view.readNat()
+                val absRef = if ctx.sectionBytes != null then ctx.sectionOffset + astRef else astRef
                 ctx.addrCache.getOrElse(
-                    astRef, {
-                        throw new ArrayIndexOutOfBoundsException(s"SHAREDtype ref $astRef not in addrCache")
+                    absRef, {
+                        if ctx.sectionBytes != null then
+                            // Cache miss during body decode: re-decode the type at absRef from full section bytes.
+                            val forkView = ByteView(ctx.sectionBytes, absRef, ctx.sectionBytes.length)
+                            val forkCtx = DecodeCtx(
+                                ctx.names,
+                                ctx.addrMap,
+                                ctx.arena,
+                                ctx.home,
+                                ctx.addrCache,
+                                ctx.inProgressRec,
+                                ctx.binderAddrMap,
+                                ctx.placeholders,
+                                ctx.sectionBytes,
+                                ctx.sectionOffset
+                            )
+                            val t = readTypeNode(forkView, forkCtx)
+                            ctx.addrCache(absRef) = t
+                            t
+                        else
+                            throw new ArrayIndexOutOfBoundsException(s"SHAREDtype ref $astRef not in addrCache")
+                        end if
                     }
                 )
 
@@ -517,7 +616,7 @@ object TypeUnpickler:
                         symName,
                         null,
                         ctx.home,
-                        Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+                        Reflect.Symbol.TastyOrigin.empty,
                         Absent
                     )
             paramSyms += sym
@@ -560,7 +659,7 @@ object TypeUnpickler:
                             symName,
                             null,
                             ctx.home,
-                            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+                            Reflect.Symbol.TastyOrigin.empty,
                             Absent
                         )
                 paramSyms += sym
