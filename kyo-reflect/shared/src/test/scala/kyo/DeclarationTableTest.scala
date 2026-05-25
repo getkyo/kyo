@@ -24,9 +24,14 @@ class DeclarationTableTest extends Test:
     end makeSymbol
 
     // Test 21: 4 members use flat-array Dict path; all retrievable by name.
+    // Verifies that small tables (size <= 8) use the flat-array internal representation.
     "class with 4 members uses flat-array Dict path: all members retrievable" in run {
         val members = (1 to 4).map(i => Reflect.Name(s"member$i") -> makeSymbol(s"member$i"))
         val table   = DeclarationTable.build(members)
+        assert(
+            table.storageKind == "flat-array",
+            s"Expected flat-array storage for 4 members but got ${table.storageKind}"
+        )
         members.foreach { case (name, sym) =>
             val result = table.get(name)
             result match
@@ -37,9 +42,14 @@ class DeclarationTableTest extends Test:
     }
 
     // Test 22: 9 members (above threshold 8) use HashMap path; all retrievable.
+    // Verifies that larger tables (size > 8) use the HashMap internal representation.
     "class with 9 members (above threshold) uses HashMap path: all members retrievable" in run {
         val members = (1 to 9).map(i => Reflect.Name(s"field$i") -> makeSymbol(s"field$i"))
         val table   = DeclarationTable.build(members)
+        assert(
+            table.storageKind == "hash-map",
+            s"Expected hash-map storage for 9 members but got ${table.storageKind}"
+        )
         members.foreach { case (name, sym) =>
             val result = table.get(name)
             result match

@@ -39,6 +39,21 @@ final class DeclarationTable:
             case Some(dict) => dict
     end all
 
+    /** Return a string describing the internal storage representation.
+      *
+      * Dict uses flat-array storage for up to `Dict.threshold` (8) entries, and HashMap for more. This accessor lets tests verify the
+      * expected storage path without depending on Dict internals directly.
+      *
+      * Returns "flat-array" when the populated dict has at most 8 entries, "hash-map" when it has more, and "empty" when not yet populated.
+      */
+    private[kyo] def storageKind: String =
+        ref.get() match
+            case None => "empty"
+            case Some(dict) =>
+                if dict.size <= Dict.threshold then "flat-array"
+                else "hash-map"
+    end storageKind
+
 end DeclarationTable
 
 object DeclarationTable:

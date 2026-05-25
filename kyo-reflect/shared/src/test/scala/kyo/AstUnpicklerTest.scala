@@ -284,9 +284,11 @@ class AstUnpicklerTest extends Test:
                     )
                     val inner    = innerOpt.get
                     val fullName = inner.fullName.asString
-                    // fullName should contain "Inner" and a separator
-                    assert(fullName.contains("Inner"), s"fullName does not contain Inner: $fullName")
-                    assert(fullName.contains("."), s"fullName has no dot separator: $fullName")
+                    // fullName must be the exact dotted FQN as specified in the plan.
+                    assert(
+                        fullName == "kyo.fixtures.Outer.Inner",
+                        s"fullName expected 'kyo.fixtures.Outer.Inner' but was '$fullName'"
+                    )
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>
@@ -305,7 +307,8 @@ class AstUnpicklerTest extends Test:
                     val method = methodOpt.get
                     method.origin match
                         case Reflect.Symbol.TastyOrigin(_, bodyStart, bodyEnd) =>
-                            assert(bodyEnd > 0, s"bodyEnd should be > 0 but was $bodyEnd")
+                            assert(bodyStart > 0, s"bodyStart should be > 0 but was $bodyStart")
+                            assert(bodyEnd > bodyStart, s"bodyEnd ($bodyEnd) should be > bodyStart ($bodyStart)")
                         case Reflect.Symbol.JavaOrigin =>
                             fail("Expected TastyOrigin but got JavaOrigin")
                     end match
@@ -317,18 +320,45 @@ class AstUnpicklerTest extends Test:
     }
 
     // Test 19: cross-forward-reference type parameter check on GenericBox.
-    // GenericBox[A]: type param A should be in addrMap at its TASTy byte address.
-    "pass 1 on GenericBox.tasty: type param A is in addrMap by address" in run {
+    // GenericBox[A]: type param A should be retrievable from addrMap by its TASTy byte address.
+    // This tests the address-keyed lookup semantics of addrMap: given the addr key for A, the value
+    // at that key is exactly the TypeParam A symbol (not merely present in values). This exercises
+    // the same code path as cross-forward type parameter references, where a bound type references a
+    // sibling param by address.
+    // Note: plan line 202 called for a C[T1 <: T2, T2] fixture; using GenericBox as a fallback per
+    // CLEANUP-BATCH-2-NOTES.md anti-thrash rule. The addr-keyed assertion covers the critical
+    // addrMap(addr).name.asString == "A" check.
+    "pass 1 on GenericBox.tasty: type param A is retrievable from addrMap by its byte address" in run {
         val bytes = loadFixtureBytes("GenericBox.tasty")
         Abort.run[ReflectError](runPass1(bytes)).map { result =>
             result match
                 case Result.Success(r) =>
-                    // Find the TypeParam 'A' symbol
+                    // Find the TypeParam 'A' symbol in the symbols list.
                     val aOpt = r.symbols.find(s => s.name.asString == "A" && s.kind == Reflect.SymbolKind.TypeParam)
-                    assert(aOpt.isDefined, "No TypeParam A symbol")
-                    // addrMap should contain at least one entry for this symbol
-                    val aInMap = r.addrMap.values.exists(s => s.name.asString == "A" && s.kind == Reflect.SymbolKind.TypeParam)
-                    assert(aInMap, s"TypeParam A not found in addrMap. addrMap keys: ${r.addrMap.keys.mkString(", ")}")
+                    assert(
+                        aOpt.isDefined,
+                        s"No TypeParam A symbol. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
+                    )
+                    // Find the addr key for A in addrMap (addr-keyed lookup, not values scan).
+                    val aAddr = r.addrMap.find { case (_, sym) =>
+                        sym.name.asString == "A" && sym.kind == Reflect.SymbolKind.TypeParam
+                    }.map(_._1)
+                    assert(
+                        aAddr.isDefined,
+                        s"TypeParam A not found as value in addrMap. addrMap entries: ${r.addrMap.map { case (k, v) =>
+                                s"$k->${v.name.asString}"
+                            }.mkString(", ")}"
+                    )
+                    // Addr-keyed retrieval: addrMap(addr).name.asString must be exactly "A".
+                    val looked = r.addrMap(aAddr.get)
+                    assert(
+                        looked.name.asString == "A",
+                        s"addrMap(${aAddr.get}).name expected 'A' but was '${looked.name.asString}'"
+                    )
+                    assert(
+                        looked.kind == Reflect.SymbolKind.TypeParam,
+                        s"addrMap(${aAddr.get}).kind expected TypeParam but was ${looked.kind}"
+                    )
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>
@@ -379,19 +409,30 @@ class AstUnpicklerTest extends Test:
         }
     }
 
-    // Test 20: passing truncated TASTy bytes produces MalformedSection("ASTs", ...).
-    "pass 1 on truncated TASTy bytes produces MalformedSection(ASTs, ...)" in run {
-        // Build a minimal valid TASTy header + name table, then provide a truncated ASTs section.
-        // Easiest: load a real fixture, truncate by half.
-        val bytes     = loadFixtureBytes("PlainClass.tasty")
-        val truncated = bytes.take(bytes.length / 2)
-        Abort.run[ReflectError](runPass1(truncated)).map { result =>
+    // Test 20: passing a corrupt ASTs section produces MalformedSection("ASTs", ...).
+    // Directly calls AstUnpickler.readPass1 with a 3-byte view: PACKAGE tag (128), then a
+    // Nat encoding a large payload length (127 = 0xff single-byte in dotty Nat), but no
+    // payload bytes follow. The readEnd() returns cursor+127 but the next readByte() is past
+    // the end of the array, triggering ArrayIndexOutOfBoundsException which readPass1 converts
+    // to MalformedSection("ASTs", ...).
+    "pass 1 on truncated ASTs section produces MalformedSection(ASTs, ...)" in run {
+        // PACKAGE = 128 (category 5: tag + Length + payload)
+        // Length Nat = 127 (single byte in dotty Nat encoding: (127 | 0x80).toByte = 0xff)
+        // Then 0 actual payload bytes. readByte() inside the payload will AIOOB.
+        val corruptAsts = Array(128.toByte, 0xff.toByte)
+        val home        = new ClasspathRef
+        val arena       = TypeArena.canonical()
+        val view        = ByteView(corruptAsts)
+        val attrs       = FileAttributes.default
+        Abort.run[ReflectError](AstUnpickler.readPass1(view, Array.empty, attrs, home, arena)).map { result =>
             result match
-                case Result.Failure(_) =>
-                    // Any ReflectError is acceptable for truncated input.
+                case Result.Failure(ReflectError.MalformedSection("ASTs", _)) =>
+                    // Exact error type: MalformedSection with section name "ASTs".
                     succeed
+                case Result.Failure(other) =>
+                    fail(s"Expected MalformedSection(ASTs, ...) but got $other")
                 case Result.Success(_) =>
-                    fail("Expected failure on truncated TASTy but got success")
+                    fail("Expected failure on corrupt ASTs section but got success")
                 case Result.Panic(t) =>
                     throw t
         }

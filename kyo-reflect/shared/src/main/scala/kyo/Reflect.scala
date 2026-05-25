@@ -240,6 +240,9 @@ object Reflect:
     end Symbol
 
     object Symbol:
+        // Bring Name.asString extension into scope for use within computeFullName and computeBinaryName.
+        import Name.asString
+
         /** Walk the owner chain to build the fully-qualified dotted name.
           *
           * The root sentinel symbol owns itself. Package/class separators are all dots. Binary name uses '$' for nested classes and is
@@ -249,9 +252,9 @@ object Reflect:
             val parts = new scala.collection.mutable.ArrayBuffer[String]()
             var cur   = s
             while (cur ne null) && (cur.owner ne cur) && cur.owner != null do
-                parts.prepend(Name.asString(cur.name))
+                parts.prepend(cur.name.asString)
                 cur = cur.owner
-            parts.prepend(Name.asString(cur.name))
+            parts.prepend(cur.name.asString)
             // Filter empty segments (root sentinel name may be empty)
             val filtered = parts.filter(_.nonEmpty)
             val full     = filtered.mkString(".")
@@ -268,9 +271,9 @@ object Reflect:
             val parts = new scala.collection.mutable.ArrayBuffer[(String, SymbolKind)]()
             var cur   = s
             while (cur ne null) && (cur.owner ne cur) && cur.owner != null do
-                parts.prepend((Name.asString(cur.name), cur.kind))
+                parts.prepend((cur.name.asString, cur.kind))
                 cur = cur.owner
-            parts.prepend((Name.asString(cur.name), cur.kind))
+            parts.prepend((cur.name.asString, cur.kind))
             val filtered = parts.filter(_._1.nonEmpty)
             if filtered.isEmpty then ""
             else

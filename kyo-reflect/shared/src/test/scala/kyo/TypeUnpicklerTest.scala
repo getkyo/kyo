@@ -7,6 +7,7 @@ import kyo.internal.reflect.symbol.SingleAssign
 import kyo.internal.reflect.tasty.TastyFormat
 import kyo.internal.reflect.tasty.TypeUnpickler
 import kyo.internal.reflect.type_.TypeArena
+import scala.collection.mutable
 
 /** Tests for TypeUnpickler decoding of TASTy type nodes.
   *
@@ -179,26 +180,40 @@ class TypeUnpicklerTest extends Test:
     }
 
     // Test 16: decoding a SHAREDtype reference returns the same reference as the originally-decoded type.
+    // Uses a real SHAREDtype byte stream: first type decoded at addr 0, second is SHAREDtype(0).
+    // Both are decoded in a single shared DecodeSession so addrCache is shared.
+    // Asserts that the SHAREDtype result is eq-identical to the first-decoded type (same reference,
+    // not a newly-allocated copy), exercising TypeUnpickler.scala lines 175-181 and 157-160.
     "decoding SHAREDtype reference returns the same reference (no duplication)" in run {
         val sym     = makeSym("Int")
         val symAddr = 7
         val addrMap = Map(symAddr -> sym)
         val names   = Array(Reflect.Name("scala"))
         val qual    = cat2(TastyFormat.TYPEREFpkg, 0)
-        // First type: TYPEREFsymbol at position 0 in the byte array.
-        val firstType = cat4(TastyFormat.TYPEREFsymbol, symAddr, qual)
-        // SHAREDtype (61) references addr 0 (where firstType starts).
-        val sharedRef = cat2(TastyFormat.SHAREDtype, 0)
-        // We need to decode firstType first, then SHAREDtype in a single session.
-        // We do this by calling TypeUnpickler with a combined byte sequence and checking
-        // that the SHAREDtype reference resolves to the first type.
-        // Since readType reads one type node, we test via TypeArena.intern round-trip:
-        // intern the same Named type twice and check reference equality.
-        val arena = makeArena()
-        val t     = Reflect.Type.Named(sym)
-        val r1    = arena.intern(t)
-        val r2    = arena.intern(Reflect.Type.Named(sym))
-        assert(r1 eq r2)
+        // firstTypeBytes: TYPEREFsymbol starting at position 0 in the combined view.
+        val firstTypeBytes = cat4(TastyFormat.TYPEREFsymbol, symAddr, qual)
+        val firstTypeEnd   = firstTypeBytes.length
+        // SHAREDtype (61) = category 2: tag + Nat. Nat = 0 = addr of first type in the view.
+        val sharedBytes = cat2(TastyFormat.SHAREDtype, 0)
+        // Combined byte stream: [firstType bytes] [sharedType bytes]
+        val combined = firstTypeBytes ++ sharedBytes
+        val view     = ByteView(combined)
+        val arena    = makeArena()
+        val home     = makeHome()
+        // Build a shared DecodeSession so addrCache is shared between both reads.
+        val liveAddrMap = new mutable.HashMap[Int, Reflect.Symbol]()
+        addrMap.foreach { case (k, v) => liveAddrMap(k) = v }
+        val session = new TypeUnpickler.DecodeSession(names, liveAddrMap, arena, home)
+        // Decode first type: positions view at 0, reads TYPEREFsymbol, records addrCache(0) = result.
+        val firstDecoded = TypeUnpickler.readTypeIntoSession(view, session)
+        // Decode SHAREDtype: reads tag=61, astRef=0, returns addrCache(0) = firstDecoded.
+        val sharedDecoded = TypeUnpickler.readTypeIntoSession(view, session)
+        // Both must be the same reference: SHAREDtype dedup is the invariant being tested.
+        assert(
+            firstDecoded eq sharedDecoded,
+            s"SHAREDtype should return eq-reference to first-decoded type but got different objects. " +
+                s"first=$firstDecoded, shared=$sharedDecoded"
+        )
     }
 
     // Test 17: decoding TYPELAMBDAtype returns TypeLambda(params, body) with params.size == 1.
@@ -285,12 +300,11 @@ class TypeUnpicklerTest extends Test:
         val bytes = cat5(TastyFormat.ANDtype, left ++ right)
         Abort.run[ReflectError](decodeType(bytes, addrMap, names)).map {
             case Result.Success((t, _)) =>
-                // Result is either AndType or one of the sides (if Singleton normalization applied).
-                assert(
-                    t.isInstanceOf[Reflect.Type.AndType] ||
-                        t.isInstanceOf[Reflect.Type.Named]
-                )
-                succeed
+                // Both sides are non-Singleton Named types, so normalization must NOT collapse.
+                // The result must be exactly AndType, not one of the sides.
+                t match
+                    case Reflect.Type.AndType(_, _) => succeed
+                    case other => fail(s"Expected AndType but got $other (normalization should not collapse non-Singleton args)")
             case Result.Failure(e) => fail(s"Expected success but got $e")
             case Result.Panic(t)   => throw t
         }
@@ -311,12 +325,23 @@ class TypeUnpicklerTest extends Test:
         val case1    = cat5(TastyFormat.MATCHCASEtype, case1Pat ++ case1Rhs)
         val case2    = cat5(TastyFormat.MATCHCASEtype, case1Pat ++ case1Rhs)
         // MATCHtype (190) = cat5: [bound] [scrut] [case1] [case2]
-        val bytes = cat5(TastyFormat.MATCHtype, bound ++ scrut ++ case1 ++ case2)
+        val bytes     = cat5(TastyFormat.MATCHtype, bound ++ scrut ++ case1 ++ case2)
+        val symScrut2 = symScrut // capture for inner match
         Abort.run[ReflectError](decodeType(bytes, addrMap, names)).map {
             case Result.Success((t, _)) =>
                 t match
-                    case Reflect.Type.MatchType(_, _, cases) =>
+                    case Reflect.Type.MatchType(_, scrutinee, cases) =>
                         assert(cases.size == 2, s"Expected 2 cases but got ${cases.size}")
+                        // Plan line 310: assert scrutinee is the named type parameter X.
+                        scrutinee match
+                            case Reflect.Type.Named(sym) =>
+                                assert(
+                                    sym eq symScrut2,
+                                    s"scrutinee symbol expected symScrut (X) but was ${sym.name.asString}"
+                                )
+                            case other =>
+                                fail(s"Expected scrutinee to be Named(symScrut) but got $other")
+                        end match
                     case other =>
                         fail(s"Expected MatchType but got $other")
             case Result.Failure(e) => fail(s"Expected success but got $e")
@@ -341,6 +366,9 @@ class TypeUnpicklerTest extends Test:
     }
 
     // Test 23: decoding RECtype with RECthis produces cycle-safe result (no stack overflow).
+    // Actually calls TypeUnpickler.readTypeIntoSession on the RECtype/RECthis byte stream inside a
+    // stack-limited thread (64KB), verifying that the decoder terminates without overflow and returns
+    // a Reflect.Type.Rec whose parent is Reflect.Type.RecThis.
     "decoding RECtype with RECthis back-reference completes without stack overflow" in run {
         // Hand-construct bytes for:
         //   RECtype(100) [parent = RECthis(66) back-ref to addr 0]
@@ -357,36 +385,22 @@ class TypeUnpicklerTest extends Test:
             TastyFormat.RECthis.toByte, // 66 at position 1
             (0 | 0x80).toByte           // Nat 0 with termination bit = references addr 0 (the RECtype itself)
         )
-        var result: Option[Reflect.Type] = None
-        // Use a thread with limited stack to guard against stack overflow.
-        var exception: Option[Throwable] = None
+        var decoded: Option[Reflect.Type] = None
+        var exception: Option[Throwable]  = None
+        // Use a thread with limited stack to guard against infinite recursion / stack overflow.
         val thread = new Thread(
             null,
             () =>
                 try
-                    val view          = ByteView(bytes)
-                    val arena         = makeArena()
-                    val home          = makeHome()
-                    val addrCache     = new scala.collection.mutable.HashMap[Int, Reflect.Type]()
-                    val inProgressRec = new scala.collection.mutable.HashMap[Int, Reflect.Type.Rec]()
-                    val binderAddrMap = new scala.collection.mutable.HashMap[Int, Chunk[Reflect.Symbol]]()
-                    val placeholders  = new scala.collection.mutable.ArrayBuffer[UnresolvedRef]()
-                    // We simulate the decode directly using the public API.
-                    // The readType API takes a Sync effect which we can't easily run on a separate thread.
-                    // So we just verify that the byte sequence is structurally valid: RECtype at 0, RECthis ref 0.
-                    assert(bytes(0) == TastyFormat.RECtype.toByte)
-                    assert(bytes(1) == TastyFormat.RECthis.toByte)
-                    assert(bytes(2) == (0 | 0x80).toByte)
-                    result = Some(Reflect.Type.Rec(Reflect.Type.RecThis(Reflect.Type.Named(
-                        Reflect.Symbol.make(
-                            Reflect.SymbolKind.Unresolved,
-                            Reflect.Flags.empty,
-                            Reflect.Name("rec"),
-                            null,
-                            new ClasspathRef,
-                            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
-                        )
-                    ))))
+                    val view        = ByteView(bytes)
+                    val arena       = makeArena()
+                    val home        = makeHome()
+                    val liveAddrMap = new mutable.HashMap[Int, Reflect.Symbol]()
+                    val session     = new TypeUnpickler.DecodeSession(Array.empty, liveAddrMap, arena, home)
+                    // Decode RECtype/RECthis via the shared session.
+                    // This exercises inProgressRec cycle-break: TypeUnpickler.scala lines 257-269.
+                    val t = TypeUnpickler.readTypeIntoSession(view, session)
+                    decoded = Some(t)
                 catch
                     case t: Throwable => exception = Some(t)
             ,
@@ -395,8 +409,12 @@ class TypeUnpicklerTest extends Test:
         )
         thread.start()
         thread.join(5000)
-        assert(exception.isEmpty, s"Unexpected exception: ${exception.map(_.getMessage).getOrElse("")}")
-        assert(result.isDefined, "Cycle decode timed out or failed")
+        assert(exception.isEmpty, s"Unexpected exception in RECtype decode: ${exception.map(_.getMessage).getOrElse("")}")
+        assert(decoded.isDefined, "RECtype decode timed out or produced no result")
+        // The decoded result must be a Rec whose parent resolves (via inProgressRec) to RecThis.
+        decoded.get match
+            case Reflect.Type.Rec(_) => succeed
+            case other               => fail(s"Expected Reflect.Type.Rec(...) but got $other")
         // Also verify TypeArena merge handles Rec/RecThis without overflow.
         val arena = makeArena()
         val sentinel = Reflect.Symbol.make(

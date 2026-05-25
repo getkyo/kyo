@@ -44,20 +44,26 @@ class TypeArenaTest extends Test:
     }
 
     // Test 3: merge of two arenas containing the same structural type produces canonical arena with one entry.
+    // Uses two separately-allocated Named values that are structurally equal but NOT reference-equal,
+    // to verify that merge performs structural deduplication (not just reference identity).
+    // Mirrors test 5's rigour: t1 and t2 are allocated independently (distinct object identities).
     "merge of two arenas with structurally equal types produces one canonical entry" in run {
         val sym = makeSym("X")
-        val t   = Reflect.Type.Named(sym)
-        val a1  = TypeArena.canonical()
-        val a2  = TypeArena.canonical()
-        a1.intern(t)
-        a2.intern(t)
+        // Two separately-allocated Named values: same structure, different object identity.
+        val t1 = Reflect.Type.Named(sym)
+        val t2 = Reflect.Type.Named(sym)
+        assert(!(t1 eq t2), "t1 and t2 must be distinct objects for this test to be non-trivial")
+        val a1 = TypeArena.canonical()
+        val a2 = TypeArena.canonical()
+        a1.intern(t1)
+        a2.intern(t2)
         val canon = TypeArena.canonical()
         a1.merge(canon)
         a2.merge(canon)
-        // Both interns should map to the same canonical type.
-        val c1 = canon.intern(t)
-        val c2 = canon.intern(t)
-        assert(c1 eq c2)
+        // After merge, interning either structurally-equal value must yield the same reference.
+        val c1 = canon.intern(t1)
+        val c2 = canon.intern(t2)
+        assert(c1 eq c2, "After merge, structurally-equal types must be reference-equal in canonical arena")
     }
 
     // Test 4: merge correctly handles a Type.Rec(parent) containing Type.RecThis(rec) back-reference (no infinite loop).

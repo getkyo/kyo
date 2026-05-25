@@ -33,7 +33,19 @@ import scala.collection.mutable
   */
 object AstUnpickler:
 
-    /** Result of pass 1. */
+    /** Result of pass 1.
+      *
+      * @param symbols
+      *   All symbols discovered during the walk, excluding the synthetic root sentinel.
+      * @param addrMap
+      *   Map from TASTy byte address to symbol, for cross-symbol type references.
+      * @param placeholders
+      *   Cross-file UnresolvedRef entries collected by TypeUnpickler during type decode.
+      * @param rootSymbol
+      *   The synthetic root Package sentinel (empty name, null owner). Used as the top-level owner for package-level definitions. Excluded
+      *   from `symbols` (which only contains user-declared definitions) but retained here so downstream resolvers can walk the full owner
+      *   chain back to root without needing to reconstruct it.
+      */
     final case class Pass1Result(
         symbols: Chunk[Reflect.Symbol],
         addrMap: Map[Int, Reflect.Symbol],
@@ -53,6 +65,10 @@ object AstUnpickler:
       *   ClasspathRef stored in each symbol.
       * @param arena
       *   Per-file TypeArena used by TypeUnpickler to hash-cons decoded types.
+      *
+      * Note on effect row: the return type includes `Sync` because `Sync.defer` wraps the purely-computed `Pass1Result` value on the
+      * success path. The actual body (`runPass1`) is synchronous. The `Sync` widening is intentional to keep the return type uniform with
+      * other Kyo-effect-returning readers in this package.
       */
     def readPass1(
         view: ByteView,
@@ -127,11 +143,10 @@ object AstUnpickler:
                 case TastyFormat.PACKAGE =>
                     val payloadEnd = view.readEnd()
                     // PACKAGE payload: Path TopLevelStat*
-                    // Path is the package term reference (category 2 or 4 tag + Nat)
-                    val pathTag = (view.readByte(): Int) & 0xff
-                    // Skip the path reference (it's a term ref, category 2: tag + Nat)
-                    skipTreeBody(pathTag, view)
-                    val pkgName = Reflect.Name("") // placeholder; resolved from path in Phase 4
+                    // Path is the package term reference: TERMREFpkg (cat2: tag+NameRef) or
+                    // SELECT (cat4: tag+NameRef+qual) for nested packages (kyo.fixtures etc.).
+                    // Decode the innermost simple name from the path.
+                    val pkgName = extractPackageName(view, names)
                     val owner   = currentOwner(ownerStack)
                     val origin  = Reflect.Symbol.TastyOrigin(Map.empty, view.position, payloadEnd)
                     val sym = InternalSymbol.makeSymbol(
@@ -450,5 +465,44 @@ object AstUnpickler:
         else if tag >= 60 && tag <= 89 then
             discard(view.readNat())
         // else category 1: nothing to skip
+
+    /** Extract the full dotted package name from a PACKAGE path.
+      *
+      * A PACKAGE path encodes the package name as a term reference chain:
+      *   - `TERMREFpkg nameRef` (category 2): simple package name `names(nameRef)`.
+      *   - `SELECT nameRef qual` (category 4): nested selection `qual.names(nameRef)`. The qualifier is another path node.
+      *   - other: fallback, consume and return empty name.
+      *
+      * This method recursively walks the path chain to build the full dotted name (e.g. "kyo.fixtures" from
+      * `SELECT(nameRef=fixtures, TERMREFpkg(nameRef=kyo))`).
+      */
+    private def extractPackageName(view: ByteView, names: Array[Reflect.Name]): Reflect.Name =
+        val segments = new mutable.ArrayBuffer[String]()
+        extractPackagePathSegments(view, names, segments)
+        Reflect.Name(segments.mkString("."))
+    end extractPackageName
+
+    /** Recursively read a package path, prepending each segment to `segments`. */
+    private def extractPackagePathSegments(view: ByteView, names: Array[Reflect.Name], segments: mutable.ArrayBuffer[String]): Unit =
+        val pathTag = view.readByte() & 0xff
+        pathTag match
+            case TastyFormat.TERMREFpkg =>
+                // Leaf: tag + NameRef (category 2).
+                val nameRef = view.readNat()
+                val name    = names(nameRef).asString
+                if name.nonEmpty then segments.prepend(name)
+            case TastyFormat.SELECT | TastyFormat.SELECTtpt =>
+                // Nested: tag + NameRef + qual sub-tree (category 4).
+                // NameRef is the current (rightmost) segment; qual is the parent path.
+                val nameRef = view.readNat()
+                val name    = names(nameRef).asString
+                // Recurse into qual first to collect parent segments.
+                extractPackagePathSegments(view, names, segments)
+                if name.nonEmpty then segments.append(name)
+            case other =>
+                // Unknown path form: skip body and leave segments as-is.
+                skipTreeBody(other, view)
+        end match
+    end extractPackagePathSegments
 
 end AstUnpickler

@@ -94,7 +94,7 @@ object TypeUnpickler:
       * @return
       *   The decoded Reflect.Type, interned in `session.arena`.
       */
-    private[tasty] def readTypeIntoSession(view: ByteView, session: DecodeSession): Reflect.Type =
+    private[kyo] def readTypeIntoSession(view: ByteView, session: DecodeSession): Reflect.Type =
         // Use the live addrMap snapshot at call time so locally-defined symbols found so far are visible.
         val ctx = DecodeCtx(
             session.names,
@@ -114,7 +114,7 @@ object TypeUnpickler:
       * `liveAddrMap` is the mutable HashMap being built by AstUnpickler.walkStats. Passing it directly (not as a snapshot) lets type decode
       * find locally-defined symbols as the walk progresses.
       */
-    final private[tasty] class DecodeSession(
+    final private[kyo] class DecodeSession(
         val names: Array[Reflect.Name],
         val liveAddrMap: mutable.HashMap[Int, Reflect.Symbol],
         val arena: TypeArena,
