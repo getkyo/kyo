@@ -19,7 +19,7 @@ object SymbolToRecordMacro:
     def symbolToRecordImpl[F: scala.quoted.Type](sym: Expr[kyo.Reflect.Symbol])(using
         q: Quotes
     )
-        : Expr[kyo.Record[F] < (kyo.Sync & kyo.Abort[kyo.ReflectError])] =
+        : Expr[kyo.Record[F] < (kyo.Sync & kyo.Async & kyo.Abort[kyo.ReflectError])] =
         import quotes.reflect.*
 
         val validFieldNames = List(
@@ -77,7 +77,12 @@ object SymbolToRecordMacro:
             val isAbstract = fRepr.typeSymbol.isTypeParam || fRepr.typeSymbol.flags.is(Flags.Deferred)
             if !isAbstract && !(fRepr =:= TypeRepr.of[Any]) then
                 report.errorAndAbort(s"Record[F] requires F to be Any when empty, got: ${fRepr.show}")
-            return '{ kyo.Kyo.lift[kyo.Record[F], kyo.Sync & kyo.Abort[kyo.ReflectError]](kyo.Record.empty.asInstanceOf[kyo.Record[F]]) }
+            return '{
+                kyo.Kyo.lift[
+                    kyo.Record[F],
+                    kyo.Sync & kyo.Async & kyo.Abort[kyo.ReflectError]
+                ](kyo.Record.empty.asInstanceOf[kyo.Record[F]])
+            }
         end if
 
         // Validate each field: name must be known, value type must match expected
@@ -189,7 +194,7 @@ object SymbolToRecordMacro:
         def buildChain(
             remaining: List[String],
             boundEffectful: Map[String, Expr[Any]]
-        ): Expr[kyo.Record[F] < (kyo.Sync & kyo.Abort[kyo.ReflectError])] =
+        ): Expr[kyo.Record[F] < (kyo.Sync & kyo.Async & kyo.Abort[kyo.ReflectError])] =
             remaining match
                 case Nil =>
                     val resolvedFields: Map[String, Expr[Any]] = fields.map { (name, _) =>
@@ -197,7 +202,7 @@ object SymbolToRecordMacro:
                         else name                                  -> pureExpr(name)
                     }.toMap
                     val recordExpr = buildRecord(resolvedFields)
-                    '{ kyo.Kyo.lift[kyo.Record[F], kyo.Sync & kyo.Abort[kyo.ReflectError]]($recordExpr) }
+                    '{ kyo.Kyo.lift[kyo.Record[F], kyo.Sync & kyo.Async & kyo.Abort[kyo.ReflectError]]($recordExpr) }
 
                 case fieldName :: rest =>
                     fieldName match
@@ -251,7 +256,7 @@ object SymbolToRecordMacro:
                 name -> pureExpr(name)
             }.toMap
             val recordExpr = buildRecord(resolvedFields)
-            '{ kyo.Kyo.lift[kyo.Record[F], kyo.Sync & kyo.Abort[kyo.ReflectError]]($recordExpr) }
+            '{ kyo.Kyo.lift[kyo.Record[F], kyo.Sync & kyo.Async & kyo.Abort[kyo.ReflectError]]($recordExpr) }
         else
             buildChain(effectfulInOrder, Map.empty)
         end if

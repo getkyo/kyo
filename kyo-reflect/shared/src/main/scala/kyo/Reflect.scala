@@ -279,11 +279,37 @@ object Reflect:
 
         /** The companion object symbol of this class or trait, if one exists.
           *
-          * @note
-          *   Not implemented in v1. Always fails at runtime with `ReflectError.NotImplemented`. Deferred per DESIGN.md §24 ("Tree body
-          *   decode" is out of scope for v1).
+          * For a `Class` or `Trait` symbol, looks up the companion object via FQN `owner.fqn + "." + name + "$"`. For an `Object` symbol,
+          * looks up the companion class via the owner FQN and the simple name with any trailing `$` stripped. Java symbols always return
+          * `Absent`. All other kinds return `Absent`.
           */
-        def companion(using Frame): Maybe[Symbol] < (Sync & Abort[ReflectError]) = stub("Symbol.companion")
+        def companion(using Frame): Maybe[Symbol] < (Sync & Async & Abort[ReflectError]) =
+            if isJava then Kyo.lift(Maybe.Absent)
+            else if !home.isAssigned then Kyo.lift(Maybe.Absent)
+            else
+                home.get().checkOpen.andThen:
+                    import Name.asString
+                    kind match
+                        case SymbolKind.Class | SymbolKind.Trait =>
+                            // Companion object FQN uses the "$"-suffixed key convention established in fqnIndex.
+                            // fqnIndex stores Object-kind symbols under "OwnerFqn.SimpleName$".
+                            val ownerFqn = if owner != null && (owner.owner ne owner) then owner.fullName.asString else owner.name.asString
+                            val companionFqn = ownerFqn + "." + name.asString + "$"
+                            home.get().lookupClass(companionFqn).map:
+                                case Present(s) if s.kind == SymbolKind.Object => Maybe(s)
+                                case _                                         => Maybe.Absent
+                        case SymbolKind.Object =>
+                            // Companion class FQN: owner FQN + simple name without trailing "$".
+                            // The simple name may or may not end in "$" depending on TASTy encoding;
+                            // strip it and look up the class symbol by the plain dotted FQN.
+                            val simpleName = name.asString.stripSuffix("$")
+                            val ownerFqn = if owner != null && (owner.owner ne owner) then owner.fullName.asString else owner.name.asString
+                            val companionFqn = ownerFqn + "." + simpleName
+                            home.get().lookupClass(companionFqn).map:
+                                case Present(s) if s.kind == SymbolKind.Class || s.kind == SymbolKind.Trait => Maybe(s)
+                                case _                                                                      => Maybe.Absent
+                        case _ => Kyo.lift(Maybe.Absent)
+                    end match
 
         // Java-specific side door.
         def javaSpecific: Maybe[JavaMetadata] = javaMetadata
@@ -530,7 +556,7 @@ object Reflect:
         val symbolKinds: Set[SymbolKind]
         val needsBodies: Boolean
         val touchedFields: FieldSet
-        def read(sym: Symbol)(using Frame): A < (Sync & Abort[ReflectError])
+        def read(sym: Symbol)(using Frame): A < (Sync & Async & Abort[ReflectError])
     end Reads
 
     object Reads extends kyo.internal.reflect.reads.ReadsInstances:
@@ -567,7 +593,7 @@ object Reflect:
 
     // ── symbolToRecord (compile-time projection into kyo.Record) ───────────
 
-    inline def symbolToRecord[F: Fields](sym: Symbol)(using Frame): Record[F] < (Sync & Abort[ReflectError]) =
+    inline def symbolToRecord[F: Fields](sym: Symbol)(using Frame): Record[F] < (Sync & Async & Abort[ReflectError]) =
         ${ kyo.internal.SymbolToRecordMacro.symbolToRecordImpl[F]('sym) }
 
     // ── Snapshot management ─────────────────────────────────────────────────

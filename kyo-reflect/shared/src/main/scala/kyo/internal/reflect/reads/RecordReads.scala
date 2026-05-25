@@ -42,7 +42,7 @@ object RecordReads:
             val symbolKinds: Set[Reflect.SymbolKind] = Set(Reflect.SymbolKind.values*)
             val needsBodies: Boolean                 = false
             val touchedFields: Reflect.FieldSet      = tf
-            def read(sym: Reflect.Symbol)(using Frame): Record[F] < (Sync & Abort[ReflectError]) =
+            def read(sym: Reflect.Symbol)(using Frame): Record[F] < (Sync & Async & Abort[ReflectError]) =
                 Reflect.symbolToRecord[F](sym)
         end new
     end recordReads

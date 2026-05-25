@@ -15,9 +15,9 @@ object ReflectRuntime:
 
     def readFields[A](
         sym: Reflect.Symbol,
-        readers: Chunk[Reflect.Symbol => Any < (Sync & Abort[ReflectError])],
+        readers: Chunk[Reflect.Symbol => Any < (Sync & Async & Abort[ReflectError])],
         construct: Array[Any] => A
-    )(using Frame): A < (Sync & Abort[ReflectError]) =
+    )(using Frame): A < (Sync & Async & Abort[ReflectError]) =
         val n      = readers.length
         val result = new Array[Any](n)
         loop(sym, readers, result, 0, n, construct)
@@ -25,12 +25,12 @@ object ReflectRuntime:
 
     def readFieldsLazy[A](
         sym: Reflect.Symbol,
-        nonRecReaders: Chunk[Reflect.Symbol => Any < (Sync & Abort[ReflectError])],
+        nonRecReaders: Chunk[Reflect.Symbol => Any < (Sync & Async & Abort[ReflectError])],
         isRecSlot: Long,
         isChunkSelf: Long,
         self: => Reflect.Reads[A],
         construct: Array[Any] => A
-    )(using Frame): A < (Sync & Abort[ReflectError]) =
+    )(using Frame): A < (Sync & Async & Abort[ReflectError]) =
         val n      = nonRecReaders.length
         val result = new Array[Any](n)
         loopLazy(sym, nonRecReaders, result, 0, n, isRecSlot, isChunkSelf, self, construct)
@@ -38,12 +38,12 @@ object ReflectRuntime:
 
     private def loop[A](
         sym: Reflect.Symbol,
-        readers: Chunk[Reflect.Symbol => Any < (Sync & Abort[ReflectError])],
+        readers: Chunk[Reflect.Symbol => Any < (Sync & Async & Abort[ReflectError])],
         result: Array[Any],
         idx: Int,
         n: Int,
         construct: Array[Any] => A
-    )(using Frame): A < (Sync & Abort[ReflectError]) =
+    )(using Frame): A < (Sync & Async & Abort[ReflectError]) =
         if idx >= n then
             Kyo.lift(construct(result))
         else
@@ -54,7 +54,7 @@ object ReflectRuntime:
 
     private def loopLazy[A](
         sym: Reflect.Symbol,
-        nonRecReaders: Chunk[Reflect.Symbol => Any < (Sync & Abort[ReflectError])],
+        nonRecReaders: Chunk[Reflect.Symbol => Any < (Sync & Async & Abort[ReflectError])],
         result: Array[Any],
         idx: Int,
         n: Int,
@@ -62,12 +62,12 @@ object ReflectRuntime:
         isChunkSelf: Long,
         self: => Reflect.Reads[A],
         construct: Array[Any] => A
-    )(using Frame): A < (Sync & Abort[ReflectError]) =
+    )(using Frame): A < (Sync & Async & Abort[ReflectError]) =
         if idx >= n then
             Kyo.lift(construct(result))
         else
             val bit = 1L << idx
-            val readTask: Any < (Sync & Abort[ReflectError]) =
+            val readTask: Any < (Sync & Async & Abort[ReflectError]) =
                 if (isRecSlot & bit) != 0L then
                     self.read(sym)
                 else if (isChunkSelf & bit) != 0L then

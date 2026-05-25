@@ -81,7 +81,7 @@ class ReadsDerivationTest extends Test:
             val symbolKinds   = Set(Reflect.SymbolKind.values*)
             val needsBodies   = false
             val touchedFields = Reflect.FieldSet.Empty
-            def read(sym: Reflect.Symbol)(using Frame): Int < (Sync & Abort[ReflectError]) =
+            def read(sym: Reflect.Symbol)(using Frame): Int < (Sync & Async & Abort[ReflectError]) =
                 Kyo.lift(sym.name.asString.length)
         case class Custom(special: Int, name: Reflect.Name) derives Reflect.Reads
     end Test11

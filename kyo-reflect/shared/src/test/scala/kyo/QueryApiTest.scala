@@ -188,10 +188,10 @@ class QueryApiTest extends Test:
     // Test 9: query[Reflect.Symbol].run returns all symbols
     "cp.query run returns symbols from fixture classpath" in run {
         val readsInst = new Reflect.Reads[Reflect.Symbol]:
-            val symbolKinds: Set[Reflect.SymbolKind]                                                  = Set.empty
-            val needsBodies: Boolean                                                                  = false
-            val touchedFields: Reflect.FieldSet                                                       = Reflect.FieldSet.Empty
-            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Abort[ReflectError]) = sym
+            val symbolKinds: Set[Reflect.SymbolKind]                                                          = Set.empty
+            val needsBodies: Boolean                                                                          = false
+            val touchedFields: Reflect.FieldSet                                                               = Reflect.FieldSet.Empty
+            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 import kyo.internal.reflect.query.Query
@@ -207,10 +207,10 @@ class QueryApiTest extends Test:
     // Test 10: query.where(_.kind == Method) returns only method symbols
     "query.where filters to Method symbols only" in run {
         val readsInst = new Reflect.Reads[Reflect.Symbol]:
-            val symbolKinds: Set[Reflect.SymbolKind]                                                  = Set.empty
-            val needsBodies: Boolean                                                                  = false
-            val touchedFields: Reflect.FieldSet                                                       = Reflect.FieldSet.Empty
-            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Abort[ReflectError]) = sym
+            val symbolKinds: Set[Reflect.SymbolKind]                                                          = Set.empty
+            val needsBodies: Boolean                                                                          = false
+            val touchedFields: Reflect.FieldSet                                                               = Reflect.FieldSet.Empty
+            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 import kyo.internal.reflect.query.Query
@@ -229,10 +229,10 @@ class QueryApiTest extends Test:
     // Test 11: query.withFlag(Flag.Inline) returns only symbols with Inline flag
     "query.withFlag(Inline) returns only inline symbols" in run {
         val readsInst = new Reflect.Reads[Reflect.Symbol]:
-            val symbolKinds: Set[Reflect.SymbolKind]                                                  = Set.empty
-            val needsBodies: Boolean                                                                  = false
-            val touchedFields: Reflect.FieldSet                                                       = Reflect.FieldSet.Empty
-            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Abort[ReflectError]) = sym
+            val symbolKinds: Set[Reflect.SymbolKind]                                                          = Set.empty
+            val needsBodies: Boolean                                                                          = false
+            val touchedFields: Reflect.FieldSet                                                               = Reflect.FieldSet.Empty
+            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 import kyo.internal.reflect.query.Query
@@ -251,10 +251,10 @@ class QueryApiTest extends Test:
     // Test 12: query.named("PlainClass") returns symbols named PlainClass
     "query.named filters by simple name" in run {
         val readsInst = new Reflect.Reads[Reflect.Symbol]:
-            val symbolKinds: Set[Reflect.SymbolKind]                                                  = Set.empty
-            val needsBodies: Boolean                                                                  = false
-            val touchedFields: Reflect.FieldSet                                                       = Reflect.FieldSet.Empty
-            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Abort[ReflectError]) = sym
+            val symbolKinds: Set[Reflect.SymbolKind]                                                          = Set.empty
+            val needsBodies: Boolean                                                                          = false
+            val touchedFields: Reflect.FieldSet                                                               = Reflect.FieldSet.Empty
+            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 import kyo.internal.reflect.query.Query
@@ -273,10 +273,10 @@ class QueryApiTest extends Test:
     // Test 13: query.map(_.name) returns Chunk[Name]
     "query.map transforms decoded values" in run {
         val readsInst = new Reflect.Reads[Reflect.Symbol]:
-            val symbolKinds: Set[Reflect.SymbolKind]                                                  = Set.empty
-            val needsBodies: Boolean                                                                  = false
-            val touchedFields: Reflect.FieldSet                                                       = Reflect.FieldSet.Empty
-            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Abort[ReflectError]) = sym
+            val symbolKinds: Set[Reflect.SymbolKind]                                                          = Set.empty
+            val needsBodies: Boolean                                                                          = false
+            val touchedFields: Reflect.FieldSet                                                               = Reflect.FieldSet.Empty
+            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 import kyo.internal.reflect.query.Query
@@ -293,10 +293,10 @@ class QueryApiTest extends Test:
     "query.stream returns same results as .run" in run {
         given kyo.Tag[Emit[Chunk[Reflect.Symbol]]] = kyo.Tag[Emit[Chunk[Reflect.Symbol]]]
         val readsInst = new Reflect.Reads[Reflect.Symbol]:
-            val symbolKinds: Set[Reflect.SymbolKind]                                                  = Set.empty
-            val needsBodies: Boolean                                                                  = false
-            val touchedFields: Reflect.FieldSet                                                       = Reflect.FieldSet.Empty
-            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Abort[ReflectError]) = sym
+            val symbolKinds: Set[Reflect.SymbolKind]                                                          = Set.empty
+            val needsBodies: Boolean                                                                          = false
+            val touchedFields: Reflect.FieldSet                                                               = Reflect.FieldSet.Empty
+            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 import kyo.internal.reflect.query.Query
@@ -669,6 +669,116 @@ class QueryApiTest extends Test:
                 fail(s"ClassfileUnpickler or classpath setup failed: $e")
             case Result.Panic(t) =>
                 throw t
+    }
+
+    // Phase 4 Test 1 (G24): case class companion object.
+    // SomeCaseClass.tasty contains both the case class and its companion object.
+    // The class symbol's companion should return Present(objectSym) where kind == Object.
+    // Use topLevelClasses to find the Class-kind symbol since fqnIndex may be overwritten by
+    // the module accessor VALDEF (which shares the same dotted FQN as the class).
+    "Phase 4: SomeCaseClass.companion returns Present(objectSym) with kind Object" in run {
+        val src = MemoryFileSource()
+        src.add("root/SomeCaseClass.tasty", kyo.fixtures.Embedded.someCaseClassTasty)
+        Scope.run:
+            Abort.run[ReflectError](openFixtureClasspath(src).flatMap: cp =>
+                cp.topLevelClasses.flatMap: topLevel =>
+                    topLevel
+                        .filter(sym => sym.kind == Reflect.SymbolKind.Class && sym.name.asString == "SomeCaseClass")
+                        .headMaybe match
+                        case Present(classSym) => classSym.companion
+                        case Absent => Abort.fail(ReflectError.NotImplemented("SomeCaseClass Class not found in topLevelClasses"))).map:
+                case Result.Success(Present(objectSym: Reflect.Symbol)) =>
+                    assert(
+                        objectSym.kind == Reflect.SymbolKind.Object,
+                        s"Expected companion kind Object but got ${objectSym.kind}"
+                    )
+                    assert(
+                        objectSym.name.asString.contains("SomeCaseClass"),
+                        s"Expected companion name to contain 'SomeCaseClass' but got '${objectSym.name.asString}'"
+                    )
+                case Result.Success(Absent) =>
+                    fail("Expected Present(objectSym) but got Absent for SomeCaseClass companion")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Phase 4 Test 2 (G24): companion object reverse lookup -- the object symbol's companion is the class.
+    // Use topLevelClasses to find the Object-kind symbol, then call companion on it to get back the class.
+    "Phase 4: SomeCaseClass companion object's companion returns Present(classSym) with kind Class" in run {
+        val src = MemoryFileSource()
+        src.add("root/SomeCaseClass.tasty", kyo.fixtures.Embedded.someCaseClassTasty)
+        Scope.run:
+            Abort.run[ReflectError](openFixtureClasspath(src).flatMap: cp =>
+                cp.topLevelClasses.flatMap: topLevel =>
+                    topLevel
+                        .filter(sym => sym.kind == Reflect.SymbolKind.Object && sym.name.asString.contains("SomeCaseClass"))
+                        .headMaybe match
+                        case Present(objectSym) => objectSym.companion
+                        case Absent => Abort.fail(ReflectError.NotImplemented("SomeCaseClass Object not found in topLevelClasses"))).map:
+                case Result.Success(Present(classSym: Reflect.Symbol)) =>
+                    assert(
+                        classSym.kind == Reflect.SymbolKind.Class,
+                        s"Expected companion kind Class but got ${classSym.kind}"
+                    )
+                    assert(
+                        classSym.name.asString == "SomeCaseClass",
+                        s"Expected companion name 'SomeCaseClass' but got '${classSym.name.asString}'"
+                    )
+                case Result.Success(Absent) =>
+                    fail("Expected Present(classSym) but got Absent for SomeCaseClass companion object's companion")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Phase 4 Test 3 (G24): plain class with no companion returns Absent.
+    // PlainClass has no companion object in the fixtures.
+    "Phase 4: PlainClass.companion returns Absent (no companion object)" in run {
+        Scope.run:
+            Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
+                cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                    case Present(sym) =>
+                        assert(sym.kind == Reflect.SymbolKind.Class, s"Expected Class kind but got ${sym.kind}")
+                        sym.companion
+                    case Absent =>
+                        Abort.fail(ReflectError.NotImplemented("PlainClass not found"))).map:
+                case Result.Success(Absent) =>
+                    succeed
+                case Result.Success(Present(s)) =>
+                    fail(s"Expected Absent for PlainClass companion but got Present(${s.fullName.asString}:${s.kind})")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Phase 4 Test 4 (G24): companion called after classpath close returns ClasspathClosed.
+    "Phase 4: sym.companion after classpath close returns ClasspathClosed" in run {
+        val captureResult: Result[ReflectError, Reflect.Symbol] < Async =
+            Scope.run:
+                Abort.run[ReflectError]:
+                    openFixtureClasspath(fixtureSource()).flatMap: cp =>
+                        cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                            case Present(sym) => Kyo.lift(sym)
+                            case Absent       => Abort.fail(ReflectError.NotImplemented("PlainClass not found"))
+        captureResult.flatMap:
+            case Result.Failure(e) =>
+                fail(s"Expected success capturing PlainClass symbol but got: $e")
+            case Result.Panic(t) =>
+                throw t
+            case Result.Success(sym) =>
+                Abort.run[ReflectError](sym.companion).map:
+                    case Result.Failure(ReflectError.ClasspathClosed) =>
+                        succeed
+                    case Result.Failure(e) =>
+                        fail(s"Expected ClasspathClosed but got: $e")
+                    case Result.Success(v) =>
+                        fail(s"Expected ClasspathClosed but companion succeeded with: $v")
+                    case Result.Panic(t) =>
+                        throw t
     }
 
 end QueryApiTest

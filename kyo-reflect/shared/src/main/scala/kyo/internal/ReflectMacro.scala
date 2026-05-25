@@ -9,8 +9,9 @@ import scala.quoted.*
   * Supports case class (product) derivation via quotes.reflect.TypeRepr inspection. Sum types and higher-kinded types are rejected at
   * compile time with a clear error message.
   *
-  * Each field is read by a pre-built lambda: `Reflect.Symbol => Any < (Sync & Abort[ReflectError])`. The lambdas are sequenced at runtime
-  * by `ReflectRuntime.readFields`. A separate `Array[Any] => A` constructor bridge (with isolated asInstanceOf casts) builds the product.
+  * Each field is read by a pre-built lambda: `Reflect.Symbol => Any < (Sync & Async & Abort[ReflectError])`. The lambdas are sequenced at
+  * runtime by `ReflectRuntime.readFields`. A separate `Array[Any] => A` constructor bridge (with isolated asInstanceOf casts) builds the
+  * product.
   *
   * For recursive case classes (`Node(name, children: Chunk[Node])`), a `lazy val instance` is emitted. The recursive readers receive the
   * `instance` reference at runtime via `ReflectRuntime.readFieldsLazy`, which takes `instance: Reads[A]` directly as a parameter. The
@@ -39,7 +40,7 @@ object ReflectMacro:
                     |      val symbolKinds   = Set(SymbolKind.Class, SymbolKind.Trait, SymbolKind.Method)
                     |      val needsBodies   = false
                     |      val touchedFields = FieldSet.Kind
-                    |      def read(sym: Symbol): ${aSym.name} < (Sync & Abort[ReflectError]) =
+                    |      def read(sym: Symbol): ${aSym.name} < (Sync & Async & Abort[ReflectError]) =
                     |          Kyo.pure(sym.kind match
                     |              case SymbolKind.Class  => /* your class case */
                     |              case SymbolKind.Trait  => /* your trait case */
@@ -191,12 +192,12 @@ object ReflectMacro:
         val readersExpr = buildReadersExpr(aType, caseFields)
         '{
             new Reflect.Reads[A]:
-                val symbolKinds                                                                   = $symbolKindsExpr
-                val needsBodies                                                                   = false
-                val touchedFields                                                                 = $touchedExpr
-                private val _readers: Chunk[Reflect.Symbol => Any < (Sync & Abort[ReflectError])] = $readersExpr
-                private val _ctor: Array[Any] => A                                                = $ctorExpr
-                def read(sym: Reflect.Symbol)(using Frame): A < (Sync & Abort[ReflectError]) =
+                val symbolKinds                                                                           = $symbolKindsExpr
+                val needsBodies                                                                           = false
+                val touchedFields                                                                         = $touchedExpr
+                private val _readers: Chunk[Reflect.Symbol => Any < (Sync & Async & Abort[ReflectError])] = $readersExpr
+                private val _ctor: Array[Any] => A                                                        = $ctorExpr
+                def read(sym: Reflect.Symbol)(using Frame): A < (Sync & Async & Abort[ReflectError]) =
                     kyo.internal.reflect.reads.ReflectRuntime.readFields(sym, _readers, _ctor)
         }
     end emitSimpleProduct
@@ -220,7 +221,7 @@ object ReflectMacro:
         val n = caseFields.length
 
         // Slots 0..n-1: for non-recursive, real reader expr; for recursive, dummy null reader
-        val nonRecReaders: List[Expr[Reflect.Symbol => Any < (Sync & Abort[ReflectError])]] =
+        val nonRecReaders: List[Expr[Reflect.Symbol => Any < (Sync & Async & Abort[ReflectError])]] =
             caseFields.zip(fieldAnalyses).map { case (field, (kind, _)) =>
                 kind match
                     case SelfField | ChunkSelfField =>
@@ -241,7 +242,7 @@ object ReflectMacro:
             case (acc, _)                          => acc
         }
 
-        val nonRecReadersExpr: Expr[Chunk[Reflect.Symbol => Any < (Sync & Abort[ReflectError])]] =
+        val nonRecReadersExpr: Expr[Chunk[Reflect.Symbol => Any < (Sync & Async & Abort[ReflectError])]] =
             '{ Chunk.from(${ Expr.ofSeq(nonRecReaders) }) }
 
         val selfMaskExpr      = Expr(selfMask)
@@ -250,14 +251,14 @@ object ReflectMacro:
         // Inside the lazy quote, `instance` IS in scope for `readFieldsLazy`
         '{
             lazy val instance: Reflect.Reads[A] = new Reflect.Reads[A]:
-                val symbolKinds                                                                         = $symbolKindsExpr
-                val needsBodies                                                                         = false
-                val touchedFields                                                                       = $touchedExpr
-                private val _ctor: Array[Any] => A                                                      = $ctorExpr
-                private val _nonRecReaders: Chunk[Reflect.Symbol => Any < (Sync & Abort[ReflectError])] = $nonRecReadersExpr
-                private val _isRecSlot: Long                                                            = $selfMaskExpr
-                private val _isChunkSelf: Long                                                          = $chunkSelfMaskExpr
-                def read(sym: Reflect.Symbol)(using Frame): A < (Sync & Abort[ReflectError]) =
+                val symbolKinds                                                                                 = $symbolKindsExpr
+                val needsBodies                                                                                 = false
+                val touchedFields                                                                               = $touchedExpr
+                private val _ctor: Array[Any] => A                                                              = $ctorExpr
+                private val _nonRecReaders: Chunk[Reflect.Symbol => Any < (Sync & Async & Abort[ReflectError])] = $nonRecReadersExpr
+                private val _isRecSlot: Long                                                                    = $selfMaskExpr
+                private val _isChunkSelf: Long                                                                  = $chunkSelfMaskExpr
+                def read(sym: Reflect.Symbol)(using Frame): A < (Sync & Async & Abort[ReflectError]) =
                     kyo.internal.reflect.reads.ReflectRuntime.readFieldsLazy(sym, _nonRecReaders, _isRecSlot, _isChunkSelf, instance, _ctor)
             instance
         }
@@ -270,7 +271,7 @@ object ReflectMacro:
     )(
         aType: quotes.reflect.TypeRepr,
         caseFields: List[quotes.reflect.Symbol]
-    ): Expr[Chunk[Reflect.Symbol => Any < (Sync & Abort[ReflectError])]] =
+    ): Expr[Chunk[Reflect.Symbol => Any < (Sync & Async & Abort[ReflectError])]] =
         val elems = caseFields.map(f => buildSingleFieldReader(f.name, aType.memberType(f)))
         '{ Chunk.from(${ Expr.ofSeq(elems) }) }
     end buildReadersExpr
@@ -280,7 +281,7 @@ object ReflectMacro:
     )(
         fieldName: String,
         fieldType: quotes.reflect.TypeRepr
-    ): Expr[Reflect.Symbol => Any < (Sync & Abort[ReflectError])] =
+    ): Expr[Reflect.Symbol => Any < (Sync & Async & Abort[ReflectError])] =
         import quotes.reflect.*
         fieldName match
             case "name"            => '{ (sym: Reflect.Symbol) => Kyo.lift(sym.name) }

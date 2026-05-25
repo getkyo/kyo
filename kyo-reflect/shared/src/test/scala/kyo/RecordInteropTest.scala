@@ -170,20 +170,21 @@ class RecordInteropTest extends Test:
 
     // ── Test 6: WithCompanion for a case class symbol with companion ──────────
 
-    "Test 6: symbolToRecord[WithCompanion] for a case class with companion returns Present" taggedAs jvmOnly in run {
+    "Test 6: symbolToRecord[WithCompanion] for PlainClass returns Absent (no companion)" taggedAs jvmOnly in run {
         type WithCompanion = "companion" ~ Maybe[Reflect.Symbol]
         loadSymbols("PlainClass.tasty").flatMap { result =>
-            // Find a symbol that has a companion (companion object exists)
-            // PlainClass.tasty might not have a case class; use Class kind and check
+            // PlainClass has no companion object, so companion returns Absent
             val symOpt = result.symbols.find(s => s.kind == Reflect.SymbolKind.Class)
             assert(symOpt.isDefined, "No class symbol found in fixture")
             val classSym = symOpt.get
             Abort.run[ReflectError](Reflect.symbolToRecord[WithCompanion](classSym)).map { recordResult =>
                 recordResult match
                     case Result.Success(record) =>
-                        fail(s"Expected NotImplemented (Phase 7 stub) but companion returned: $record")
-                    case Result.Failure(ReflectError.NotImplemented(_)) =>
-                        succeed
+                        val companionField = record.selectDynamic("companion")
+                        assert(
+                            companionField == Maybe.Absent,
+                            s"Expected Absent companion for PlainClass but got: $companionField"
+                        )
                     case Result.Failure(e) =>
                         fail(s"symbolToRecord[WithCompanion] failed unexpectedly: $e")
                     case Result.Panic(t) =>

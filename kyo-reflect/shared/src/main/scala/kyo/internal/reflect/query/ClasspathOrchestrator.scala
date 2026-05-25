@@ -188,7 +188,25 @@ object ClasspathOrchestrator:
 
             for fr <- fileResults do
                 for (fqn, sym) <- fr.fqns do
-                    fqnIndex(fqn) = sym
+                    // Disambiguation strategy for same-dotted-FQN symbols that appear in the same TASTy file:
+                    // - Object-kind symbols are stored under a "$"-suffixed key (unless already ending in "$").
+                    //   This prevents companion objects from overwriting same-name class symbols.
+                    // - Non-Class/Trait/Object kinds (e.g., Val module accessor) do not overwrite an
+                    //   existing Class/Trait entry at the same key. They are stored only if the key is free
+                    //   or currently holds a non-structural symbol.
+                    val indexKey = if sym.kind == Reflect.SymbolKind.Object && !fqn.endsWith("$") then fqn + "$" else fqn
+                    val existing = fqnIndex.get(indexKey)
+                    val shouldStore = existing match
+                        case None       => true
+                        case Some(prev) =>
+                            // Prefer Class/Trait/Object over other kinds. Don't let Val/Method/etc. overwrite structural symbols.
+                            val prevIsStructural = prev.kind == Reflect.SymbolKind.Class ||
+                                prev.kind == Reflect.SymbolKind.Trait || prev.kind == Reflect.SymbolKind.Object
+                            val newIsStructural = sym.kind == Reflect.SymbolKind.Class ||
+                                sym.kind == Reflect.SymbolKind.Trait || sym.kind == Reflect.SymbolKind.Object
+                            // Allow overwrite only if new symbol is structural (or prev is non-structural).
+                            newIsStructural || !prevIsStructural
+                    if shouldStore then fqnIndex(indexKey) = sym
                     allSyms += sym
                     sym.kind match
                         case Reflect.SymbolKind.Package =>

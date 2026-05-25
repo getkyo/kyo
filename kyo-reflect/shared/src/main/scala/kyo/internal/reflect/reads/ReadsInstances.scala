@@ -24,35 +24,35 @@ trait ReadsInstances:
         val symbolKinds   = Set(SymbolKind.values*)
         val needsBodies   = false
         val touchedFields = FieldSet.Name
-        def read(sym: Symbol)(using Frame): Reflect.Name < (Sync & Abort[ReflectError]) =
+        def read(sym: Symbol)(using Frame): Reflect.Name < (Sync & Async & Abort[ReflectError]) =
             Kyo.lift(sym.name)
 
     given flagsReads: Reads[Reflect.Flags] = new Reads[Reflect.Flags]:
         val symbolKinds   = Set(SymbolKind.values*)
         val needsBodies   = false
         val touchedFields = FieldSet.Flags
-        def read(sym: Symbol)(using Frame): Reflect.Flags < (Sync & Abort[ReflectError]) =
+        def read(sym: Symbol)(using Frame): Reflect.Flags < (Sync & Async & Abort[ReflectError]) =
             Kyo.lift(sym.flags)
 
     given kindReads: Reads[Reflect.SymbolKind] = new Reads[Reflect.SymbolKind]:
         val symbolKinds   = Set(SymbolKind.values*)
         val needsBodies   = false
         val touchedFields = FieldSet.Kind
-        def read(sym: Symbol)(using Frame): Reflect.SymbolKind < (Sync & Abort[ReflectError]) =
+        def read(sym: Symbol)(using Frame): Reflect.SymbolKind < (Sync & Async & Abort[ReflectError]) =
             Kyo.lift(sym.kind)
 
     given typeReads: Reads[Reflect.Type] = new Reads[Reflect.Type]:
         val symbolKinds   = Set(SymbolKind.values*)
         val needsBodies   = false
         val touchedFields = FieldSet.DeclaredType
-        def read(sym: Symbol)(using Frame): Reflect.Type < (Sync & Abort[ReflectError]) =
+        def read(sym: Symbol)(using Frame): Reflect.Type < (Sync & Async & Abort[ReflectError]) =
             sym.declaredType
 
     given symbolReads: Reads[Reflect.Symbol] = new Reads[Reflect.Symbol]:
         val symbolKinds   = Set(SymbolKind.values*)
         val needsBodies   = false
         val touchedFields = FieldSet.Empty
-        def read(sym: Symbol)(using Frame): Reflect.Symbol < (Sync & Abort[ReflectError]) =
+        def read(sym: Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) =
             Kyo.lift(sym)
 
     // ── Primitives ───────────────────────────────────────────────────────────
@@ -61,28 +61,28 @@ trait ReadsInstances:
         val symbolKinds   = Set(SymbolKind.values*)
         val needsBodies   = false
         val touchedFields = FieldSet.Empty
-        def read(sym: Symbol)(using Frame): Boolean < (Sync & Abort[ReflectError]) =
+        def read(sym: Symbol)(using Frame): Boolean < (Sync & Async & Abort[ReflectError]) =
             Kyo.lift(false)
 
     given intReads: Reads[Int] = new Reads[Int]:
         val symbolKinds   = Set(SymbolKind.values*)
         val needsBodies   = false
         val touchedFields = FieldSet.Empty
-        def read(sym: Symbol)(using Frame): Int < (Sync & Abort[ReflectError]) =
+        def read(sym: Symbol)(using Frame): Int < (Sync & Async & Abort[ReflectError]) =
             Kyo.lift(0)
 
     given longReads: Reads[Long] = new Reads[Long]:
         val symbolKinds   = Set(SymbolKind.values*)
         val needsBodies   = false
         val touchedFields = FieldSet.Empty
-        def read(sym: Symbol)(using Frame): Long < (Sync & Abort[ReflectError]) =
+        def read(sym: Symbol)(using Frame): Long < (Sync & Async & Abort[ReflectError]) =
             Kyo.lift(0L)
 
     given stringReads: Reads[String] = new Reads[String]:
         val symbolKinds   = Set(SymbolKind.values*)
         val needsBodies   = false
         val touchedFields = FieldSet.Name
-        def read(sym: Symbol)(using Frame): String < (Sync & Abort[ReflectError]) =
+        def read(sym: Symbol)(using Frame): String < (Sync & Async & Abort[ReflectError]) =
             Kyo.lift(sym.name.asString)
 
     // ── Collection wrappers ──────────────────────────────────────────────────
@@ -92,7 +92,7 @@ trait ReadsInstances:
         val symbolKinds   = inner.symbolKinds
         val needsBodies   = inner.needsBodies
         val touchedFields = inner.touchedFields | FieldSet.Members
-        def read(sym: Symbol)(using Frame): Chunk[T] < (Sync & Abort[ReflectError]) =
+        def read(sym: Symbol)(using Frame): Chunk[T] < (Sync & Async & Abort[ReflectError]) =
             sym.declarations.flatMap: decls =>
                 Kyo.foreach(decls.filter(d => inner.symbolKinds.contains(d.kind)))(d => inner.read(d))
 
@@ -101,7 +101,7 @@ trait ReadsInstances:
         val symbolKinds   = inner.symbolKinds
         val needsBodies   = inner.needsBodies
         val touchedFields = inner.touchedFields | FieldSet.Companion
-        def read(sym: Symbol)(using Frame): Maybe[T] < (Sync & Abort[ReflectError]) =
+        def read(sym: Symbol)(using Frame): Maybe[T] < (Sync & Async & Abort[ReflectError]) =
             sym.companion.flatMap:
                 case Absent        => Kyo.lift(Absent)
                 case Present(csym) => inner.read(csym).map(Present(_))
@@ -112,7 +112,7 @@ trait ReadsInstances:
         val symbolKinds   = ra.symbolKinds & rb.symbolKinds
         val needsBodies   = ra.needsBodies || rb.needsBodies
         val touchedFields = ra.touchedFields | rb.touchedFields
-        def read(sym: Symbol)(using Frame): (A, B) < (Sync & Abort[ReflectError]) =
+        def read(sym: Symbol)(using Frame): (A, B) < (Sync & Async & Abort[ReflectError]) =
             for
                 a <- ra.read(sym)
                 b <- rb.read(sym)
@@ -123,7 +123,7 @@ trait ReadsInstances:
             val symbolKinds   = ra.symbolKinds & rb.symbolKinds & rc.symbolKinds
             val needsBodies   = ra.needsBodies || rb.needsBodies || rc.needsBodies
             val touchedFields = ra.touchedFields | rb.touchedFields | rc.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -135,7 +135,7 @@ trait ReadsInstances:
             val symbolKinds   = ra.symbolKinds & rb.symbolKinds & rc.symbolKinds & rd.symbolKinds
             val needsBodies   = ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies
             val touchedFields = ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -155,7 +155,7 @@ trait ReadsInstances:
             val symbolKinds   = ra.symbolKinds & rb.symbolKinds & rc.symbolKinds & rd.symbolKinds & re.symbolKinds
             val needsBodies   = ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies
             val touchedFields = ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D, E) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -180,7 +180,7 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -207,7 +207,7 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies || rg.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -236,7 +236,7 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies || rg.needsBodies || rh.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -267,7 +267,7 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies || rg.needsBodies || rh.needsBodies || ri.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -300,7 +300,7 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies || rg.needsBodies || rh.needsBodies || ri.needsBodies || rj.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields | rj.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -335,7 +335,7 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies || rg.needsBodies || rh.needsBodies || ri.needsBodies || rj.needsBodies || rk.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields | rj.touchedFields | rk.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -372,7 +372,7 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies || rg.needsBodies || rh.needsBodies || ri.needsBodies || rj.needsBodies || rk.needsBodies || rl.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields | rj.touchedFields | rk.touchedFields | rl.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -411,7 +411,7 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies || rg.needsBodies || rh.needsBodies || ri.needsBodies || rj.needsBodies || rk.needsBodies || rl.needsBodies || rm.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields | rj.touchedFields | rk.touchedFields | rl.touchedFields | rm.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L, M) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L, M) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -452,7 +452,7 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies || rg.needsBodies || rh.needsBodies || ri.needsBodies || rj.needsBodies || rk.needsBodies || rl.needsBodies || rm.needsBodies || rn.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields | rj.touchedFields | rk.touchedFields | rl.touchedFields | rm.touchedFields | rn.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L, M, N) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L, M, N) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -495,7 +495,7 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies || rg.needsBodies || rh.needsBodies || ri.needsBodies || rj.needsBodies || rk.needsBodies || rl.needsBodies || rm.needsBodies || rn.needsBodies || ro.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields | rj.touchedFields | rk.touchedFields | rl.touchedFields | rm.touchedFields | rn.touchedFields | ro.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -540,7 +540,7 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies || rg.needsBodies || rh.needsBodies || ri.needsBodies || rj.needsBodies || rk.needsBodies || rl.needsBodies || rm.needsBodies || rn.needsBodies || ro.needsBodies || rp.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields | rj.touchedFields | rk.touchedFields | rl.touchedFields | rm.touchedFields | rn.touchedFields | ro.touchedFields | rp.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -587,7 +587,7 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies || rg.needsBodies || rh.needsBodies || ri.needsBodies || rj.needsBodies || rk.needsBodies || rl.needsBodies || rm.needsBodies || rn.needsBodies || ro.needsBodies || rp.needsBodies || rq.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields | rj.touchedFields | rk.touchedFields | rl.touchedFields | rm.touchedFields | rn.touchedFields | ro.touchedFields | rp.touchedFields | rq.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -636,7 +636,9 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies || rg.needsBodies || rh.needsBodies || ri.needsBodies || rj.needsBodies || rk.needsBodies || rl.needsBodies || rm.needsBodies || rn.needsBodies || ro.needsBodies || rp.needsBodies || rq.needsBodies || rr.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields | rj.touchedFields | rk.touchedFields | rl.touchedFields | rm.touchedFields | rn.touchedFields | ro.touchedFields | rp.touchedFields | rq.touchedFields | rr.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using
+                Frame
+            ): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -687,7 +689,9 @@ trait ReadsInstances:
                 ra.needsBodies || rb.needsBodies || rc.needsBodies || rd.needsBodies || re.needsBodies || rf.needsBodies || rg.needsBodies || rh.needsBodies || ri.needsBodies || rj.needsBodies || rk.needsBodies || rl.needsBodies || rm.needsBodies || rn.needsBodies || ro.needsBodies || rp.needsBodies || rq.needsBodies || rr.needsBodies || rs.needsBodies
             val touchedFields =
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields | rj.touchedFields | rk.touchedFields | rl.touchedFields | rm.touchedFields | rn.touchedFields | ro.touchedFields | rp.touchedFields | rq.touchedFields | rr.touchedFields | rs.touchedFields
-            def read(sym: Symbol)(using Frame): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S) < (Sync & Abort[ReflectError]) =
+            def read(sym: Symbol)(using
+                Frame
+            ): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -742,7 +746,7 @@ trait ReadsInstances:
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields | rj.touchedFields | rk.touchedFields | rl.touchedFields | rm.touchedFields | rn.touchedFields | ro.touchedFields | rp.touchedFields | rq.touchedFields | rr.touchedFields | rs.touchedFields | rt.touchedFields
             def read(sym: Symbol)(using
                 Frame
-            ): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T) < (Sync & Abort[ReflectError]) =
+            ): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -799,7 +803,7 @@ trait ReadsInstances:
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields | rj.touchedFields | rk.touchedFields | rl.touchedFields | rm.touchedFields | rn.touchedFields | ro.touchedFields | rp.touchedFields | rq.touchedFields | rr.touchedFields | rs.touchedFields | rt.touchedFields | ru.touchedFields
             def read(sym: Symbol)(using
                 Frame
-            ): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U) < (Sync & Abort[ReflectError]) =
+            ): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)
@@ -858,7 +862,7 @@ trait ReadsInstances:
                 ra.touchedFields | rb.touchedFields | rc.touchedFields | rd.touchedFields | re.touchedFields | rf.touchedFields | rg.touchedFields | rh.touchedFields | ri.touchedFields | rj.touchedFields | rk.touchedFields | rl.touchedFields | rm.touchedFields | rn.touchedFields | ro.touchedFields | rp.touchedFields | rq.touchedFields | rr.touchedFields | rs.touchedFields | rt.touchedFields | ru.touchedFields | rv.touchedFields
             def read(sym: Symbol)(using
                 Frame
-            ): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V) < (Sync & Abort[ReflectError]) =
+            ): (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V) < (Sync & Async & Abort[ReflectError]) =
                 for
                     a <- ra.read(sym)
                     b <- rb.read(sym)

@@ -8,7 +8,7 @@ import kyo.Stream
   * Constructed via `cp.query[A](using Reads[A])` on a `Reflect.Classpath`. Terminal operations `.run` and `.stream` perform a single
   * traversal over the symbol cache, applying all accumulated predicates and the `Reads[A]` projection.
   *
-  * Effect row of terminal operations: `Sync & Abort[ReflectError]`. No `Async` -- the query layer is synchronous after Phase C.
+  * Effect row of terminal operations: `Sync & Async & Abort[ReflectError]`. No `Async` -- the query layer is synchronous after Phase C.
   *
   * `map` is implemented by wrapping the `Reads[A]` in a derived `Reads[B]` that post-processes with the given function. This avoids unsafe
   * casts for the transformation chain.
@@ -63,20 +63,20 @@ final class Query[A] private[reflect] (
             val symbolKinds: Set[Reflect.SymbolKind] = outerReads.symbolKinds
             val needsBodies: Boolean                 = outerReads.needsBodies
             val touchedFields: Reflect.FieldSet      = outerReads.touchedFields
-            def read(sym: Reflect.Symbol)(using Frame): B < (Sync & Abort[ReflectError]) =
+            def read(sym: Reflect.Symbol)(using Frame): B < (Sync & Async & Abort[ReflectError]) =
                 outerReads.read(sym).map(f)
         new Query[B](cp, wrappedReads, symbolPreds, Chunk.empty)
     end map
 
     /** Materialize all results as a `Chunk`. */
-    def run(using Frame): Chunk[A] < (Sync & Abort[ReflectError]) =
+    def run(using Frame): Chunk[A] < (Sync & Async & Abort[ReflectError]) =
         executeQuery
 
     /** Return results as a lazy `Stream`. */
-    def stream(using Frame, Tag[Emit[Chunk[A]]]): Stream[A, Sync & Abort[ReflectError]] =
+    def stream(using Frame, Tag[Emit[Chunk[A]]]): Stream[A, Sync & Async & Abort[ReflectError]] =
         Stream.init(executeQuery)
 
-    private def executeQuery(using Frame): Chunk[A] < (Sync & Abort[ReflectError]) =
+    private def executeQuery(using Frame): Chunk[A] < (Sync & Async & Abort[ReflectError]) =
         cp.checkOpen.andThen:
             val allSyms = cp.allSymbols
             // Filter by symbolKinds from Reads
