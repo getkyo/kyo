@@ -90,6 +90,7 @@ object Structure:
         case Float, Double
         case BigInt, BigDecimal
         case String, Boolean, Unit
+        case Instant, Duration, Frame, Text
     end PrimitiveKind
 
     object Type:

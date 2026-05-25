@@ -132,6 +132,13 @@ object Codec:
         /** Release this reader back to its pool. Default is no-op. */
         def release(): Unit = ()
 
+        /** Publish a field-id -> field-name mapping to this reader.
+          *
+          * Wire formats that key fields by numeric id (Protobuf) override this to translate [[field]] / [[lastFieldName]] results back to
+          * canonical names. The default is a no-op; readers that already key by name (JsonReader, StructureValueReader) inherit it.
+          */
+        def withFieldNames(names: Map[Int, String]): this.type = this
+
         /** Capture the next value into a buffered sub-Reader for deferred reading.
           *
           * Used by sum codecs to enable field-order independence: the value field may be read before the discriminator, then dispatched to

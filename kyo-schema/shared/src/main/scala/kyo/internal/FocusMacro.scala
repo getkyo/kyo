@@ -392,6 +392,11 @@ import scala.quoted.*
                     lazy val self: kyo.Schema[A] { type Focused = F } =
                         val _fieldBytes: Array[Array[Byte]] = ${ CodecMacro.mkFieldBytesPublic(preEncodedExprs) }
                         val _fieldNames: Array[String]      = ${ Expr(fields.map(_.name).toArray) }
+                        // Hoisted field-id -> field-name map: built once per Schema instance and shared across every
+                        // decode. Consumed by Protobuf decode (`ProtobufReader.withFieldNames`); no-op on JSON /
+                        // StructureValueReader. Replaces the prior per-decode allocation in the macro-emitted read body.
+                        val _fieldNameMap: Map[Int, String] =
+                            kyo.internal.SchemaSerializer.buildFieldNameMap(_fieldNames)
                         // `_subSchemas` is `lazy` because, for recursive schemas, slots may contain `self` — eagerly populating
                         // the array while `self` is still being initialized would cause infinite recursion / SOE. Lazy allocation
                         // defers array construction to first serializeWrite/Read call, by which time `self` is fully bound.
@@ -425,6 +430,7 @@ import scala.quoted.*
                                         '{ reader },
                                         '{ _fieldBytes },
                                         '{ _fieldNames },
+                                        '{ _fieldNameMap },
                                         fieldResolverPairs,
                                         '{ _subSchemas },
                                         '{ self }
@@ -446,6 +452,10 @@ import scala.quoted.*
                 '{
                     val _fieldBytes: Array[Array[Byte]] = ${ CodecMacro.mkFieldBytesPublic(preEncodedExprs) }
                     val _fieldNames: Array[String]      = ${ Expr(fields.map(_.name).toArray) }
+                    // Hoisted field-id -> field-name map: built once per Schema instance and shared across every decode.
+                    // Consumed by Protobuf decode (`ProtobufReader.withFieldNames`); no-op on JSON / StructureValueReader.
+                    val _fieldNameMap: Map[Int, String] =
+                        kyo.internal.SchemaSerializer.buildFieldNameMap(_fieldNames)
                     val _subSchemas: Array[kyo.Schema[Any]] =
                         ${ buildSubSchemasArrayExpr[A](needsSubSchema, fieldResolvers, '{ null.asInstanceOf[Schema[A]] }) }
                     kyo.Schema.create[A, F](
@@ -477,6 +487,7 @@ import scala.quoted.*
                                     '{ reader },
                                     '{ _fieldBytes },
                                     '{ _fieldNames },
+                                    '{ _fieldNameMap },
                                     fieldSchemaExprs,
                                     '{ _subSchemas }
                                 )
@@ -680,14 +691,79 @@ import scala.quoted.*
 
         val nilExpr = '{ Nil: List[Field[?, ?]] }
 
+        // Detect union (OrType) before the class-based branches: `OrType` is not a class symbol and
+        // would otherwise fall through to the trailing error. Delegates through `UnionMacroProxy` —
+        // the same trampoline pattern as `SchemaDerivedMacro -> FocusMacro` (see SchemaDerivedMacro.scala).
+        // The proxy defers loading `UnionMacro$` until the call actually fires, so `Schema.scala`'s own
+        // compilation (which invokes `FocusMacro.derivedImpl` for `Constraint derives Schema`) doesn't
+        // trip a `NoClassDefFoundError` for the `kyo.Schema` / `kyo.Codec` symbols transitively
+        // referenced by `UnionMacro$`. The wrapper-format wire shape composes with `.discriminator(name)`
+        // via `SchemaSerializer.flattenWithDiscriminator` (single-field Record => flat discriminator),
+        // so union schemas inherit discriminator support with no extra wiring.
+        val isUnion = tpe match
+            case OrType(_, _) => true
+            case _            => false
+
+        // Intersection types `A & B` have no general constructor — decoders for A and B
+        // independently cannot synthesize a value that simultaneously is-a A and is-a B
+        // unless the user supplies a concrete intersecting class. Detect and reject early
+        // with a clear pointer to the workarounds (derive the concrete class, or .transform).
+        val isIntersection = tpe match
+            case AndType(_, _) => true
+            case _             => false
+
         val result =
-            if sym.isClassDef && sym.flags.is(Flags.Sealed) then
+            if isIntersection then
+                report.errorAndAbort(
+                    s"Schema.derived[${tpe.show}]: intersection types have no general constructor. " +
+                        "If the intersection is a concrete case class extending both A and B, " +
+                        "derive its Schema directly (Schema.derived[ConcreteClass]). " +
+                        "Otherwise build a Schema for a concrete representation and use .transform " +
+                        "to map to and from the intersection."
+                )
+            else if isUnion then
+                UnionMacroProxy.derive[A].asInstanceOf[Expr[Any]]
+            // Java enum CLASS handling. MUST come before the sealed branch, because Scala 3 reflection
+            // reports Java enum classes as sealed (Flags.Sealed) and would otherwise dispatch to the
+            // sealed-trait sum encoder. The CLASS symbol carries JavaDefined+Enum; individual CONSTANTS
+            // additionally carry JavaStatic. Excluding JavaStatic distinguishes the parent enum class
+            // (handled here) from its constant terms (which never reach this branch via Schema.derived[A]
+            // because the parent class's encoder dispatches them by `name`).
+            else if sym.flags.is(Flags.JavaDefined) && sym.flags.is(Flags.Enum) && !sym.flags.is(Flags.JavaStatic) then
+                // Encode each constant by `name`; decode reflectively via the synthetic `valueOf(String)` static
+                // method that every Java enum subclass carries. Scala 3 cannot type the polymorphic
+                // `java.lang.Enum.valueOf[T <: Enum[T]]` call when the macro only has a `TypeRepr` (no
+                // `T <: Enum[T]` evidence), so we go through `Class.getMethod("valueOf", ...).invoke`.
+                // Invalid names surface as UnknownVariantException (a DecodeException) so that
+                // Json.decode / other Codec-driven entry points produce a Result.Failure rather than a Panic.
+                val fqnExpr: Expr[String] = Expr(tpe.dealias.typeSymbol.fullName)
+                '{
+                    val cls           = Class.forName(${ fqnExpr })
+                    val valueOfMethod = cls.getMethod("valueOf", classOf[String])
+                    Schema.init[A](
+                        // cast: macro reached this branch only when sym is a Java enum class
+                        writeFn = (v, w) => w.string(v.asInstanceOf[java.lang.Enum[?]].name),
+                        readFn = r =>
+                            val name = r.string()
+                            try
+                                // cast: Enum.valueOf returns the matched Java enum constant, runtime-typed as A
+                                valueOfMethod.invoke(null, name).asInstanceOf[A]
+                            catch
+                                case ite: java.lang.reflect.InvocationTargetException
+                                    if ite.getCause.isInstanceOf[IllegalArgumentException] =>
+                                    throw kyo.UnknownVariantException(Seq.empty, name)(using r.frame)
+                                case _: IllegalArgumentException =>
+                                    throw kyo.UnknownVariantException(Seq.empty, name)(using r.frame)
+                            end try
+                    )
+                }
+            else if sym.isClassDef && sym.flags.is(Flags.Sealed) then
                 generateSealedTraitSchema[A, A](nilExpr, checkSerializability = false)
             else if sym.isClassDef && sym.flags.is(Flags.Case) then
                 generateCaseClassSchema[A, A](nilExpr, checkSerializability = false)
             else
                 report.errorAndAbort(
-                    s"Schema.derived requires a case class or sealed trait, got: ${tpe.show}. " +
+                    s"Schema.derived requires a case class, sealed trait, or Java enum, got: ${tpe.show}. " +
                         "Provide a given Schema instance for this type if derivation is not possible."
                 )
 
@@ -730,11 +806,16 @@ import scala.quoted.*
                 '{
                     kyo.Schema.init[T](
                         writeFn = (_, w) =>
-                            w.objectStart(${ Expr(child.name) }, 0); w.objectEnd()
+                            w.objectStart(${ Expr(child.name) }, 0)
+                            w.objectEnd()
                         ,
                         readFn = r =>
-                            kyo.discard(r.objectStart()); r.objectEnd(); $singletonRef
-                    ).asInstanceOf[Schema[Any]]
+                            kyo.discard(r.objectStart())
+                            r.objectEnd()
+                            $singletonRef
+                    ).asInstanceOf[Schema[
+                        Any
+                    ]] // cast: macro-emitted singleton schema for sealed-trait leg, erased to Schema[Any] for array storage
                 }
         else
             // Case class variant — build field schema resolvers that reference the parent's self
@@ -826,6 +907,11 @@ import scala.quoted.*
 
                 '{
                     val _subSchemas: Array[kyo.Schema[Any]] = $subSchemasArrExpr
+                    val _variantFieldNames: Array[String]   = $fieldNamesExpr
+                    // Hoisted field-id -> field-name map for the variant: built once per variant Schema, consumed by
+                    // Protobuf decode and a no-op elsewhere.
+                    val _variantFieldNameMap: Map[Int, String] =
+                        kyo.internal.SchemaSerializer.buildFieldNameMap(_variantFieldNames)
                     kyo.Schema.init[T](
                         writeFn = (value: T, writer: Writer) =>
                             ${
@@ -849,7 +935,8 @@ import scala.quoted.*
                                 SerializationMacro.caseClassReadBodyResolved[T](
                                     '{ reader },
                                     fieldBytesExpr,
-                                    fieldNamesExpr,
+                                    '{ _variantFieldNames },
+                                    '{ _variantFieldNameMap },
                                     namedResolversForT,
                                     '{ _subSchemas },
                                     dummySelf
@@ -1541,3 +1628,20 @@ import scala.quoted.*
             s"Define ${missingType} as a case class or sealed trait, or provide a given Schema[${missingType}]."
 
 end FocusMacro
+
+/** Thin proxy for [[UnionMacro]] used by [[FocusMacro.derivedImpl]] to dispatch on union types.
+  *
+  * Mirrors the [[SchemaDerivedMacro]] pattern: by interposing this object between `FocusMacro` and `UnionMacro`, the JVM's bytecode verifier
+  * loads `UnionMacro$` only on demand (when `derive` is actually invoked), instead of eagerly when `FocusMacro$` is loaded. This avoids a
+  * `NoClassDefFoundError: kyo/internal/UnionMacro$` during `Schema.scala`'s own compilation, where types referenced by `UnionMacro$`
+  * (`Schema`, `Codec.Reader`, etc.) aren't on the macro classpath yet.
+  *
+  * Lives in the same source file as `FocusMacro` so sbt's incremental partitioner always co-compiles them; a separate file split the JS
+  * batch (sbt issued FocusMacro before UnionMacroProxy → `NoClassDefFoundError: kyo/internal/UnionMacroProxy$`).
+  */
+object UnionMacroProxy:
+
+    def derive[A: scala.quoted.Type](using scala.quoted.Quotes): scala.quoted.Expr[kyo.Schema[A]] =
+        UnionMacro.derive[A]
+
+end UnionMacroProxy

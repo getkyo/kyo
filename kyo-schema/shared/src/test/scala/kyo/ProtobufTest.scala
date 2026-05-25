@@ -437,6 +437,61 @@ class ProtobufTest extends Test:
         }
     }
 
+    // ===== Phase 5: Protobuf discriminator decode =====
+
+    "discriminator decode" - {
+
+        "top-level Protobuf round-trip with discriminator(\"type\")" in {
+            val v   = ProtoDiscSealed.Label("hello")
+            val b   = Protobuf.encode[ProtoDiscSealed](v)
+            val dec = Protobuf.decode[ProtoDiscSealed](b)
+            assert(dec == Result.succeed(v))
+        }
+
+        "top-level Protobuf round-trip across all variants with discriminator(\"type\")" in {
+            val label: ProtoDiscSealed = ProtoDiscSealed.Label("hi")
+            val count: ProtoDiscSealed = ProtoDiscSealed.Count(7)
+
+            val bLabel = Protobuf.encode[ProtoDiscSealed](label)
+            val bCount = Protobuf.encode[ProtoDiscSealed](count)
+
+            assert(Protobuf.decode[ProtoDiscSealed](bLabel) == Result.succeed(label))
+            assert(Protobuf.decode[ProtoDiscSealed](bCount) == Result.succeed(count))
+        }
+
+        "Protobuf round-trip with custom discriminator field name (\"$variant\")" in {
+            val v   = AltDiscSealed.Left("x")
+            val b   = Protobuf.encode[AltDiscSealed](v)
+            val dec = Protobuf.decode[AltDiscSealed](b)
+            assert(dec == Result.succeed(v))
+        }
+
+        "Protobuf round-trip with custom discriminator nested in an envelope" in {
+            val v   = AltDiscEnvelope(AltDiscSealed.Right(99))
+            val b   = Protobuf.encode(v)
+            val dec = Protobuf.decode[AltDiscEnvelope](b)
+            assert(dec == Result.succeed(v))
+        }
+
+        "Protobuf decode of payload missing the discriminator field surfaces a MissingFieldException naming the discriminator" in {
+            // Encode a sibling that does NOT carry the discriminator (a plain case class with the same
+            // shape as one variant), then decode the bytes as the discriminator-bearing schema. The
+            // discriminator field is absent from the wire, so the decode must fail with a clear error
+            // identifying the missing discriminator.
+            val sibling = NoDiscSibling("hello")
+            val bytes   = Protobuf.encode(sibling)
+            val result  = Protobuf.decode[ProtoDiscSealed](bytes)
+            assert(result.isFailure, s"expected failure, got $result")
+            result match
+                case Result.Failure(e) =>
+                    assert(e.isInstanceOf[MissingFieldException], s"expected MissingFieldException, got ${e.getClass.getName}: $e")
+                    assert(e.getMessage.contains("type"), s"expected message to mention discriminator 'type', got: ${e.getMessage}")
+                case other =>
+                    fail(s"expected Failure(MissingFieldException), got $other")
+            end match
+        }
+    }
+
     // ===== error paths =====
     //
     // Each throw site in Protobuf.scala / ProtobufReader.scala should have a
@@ -674,3 +729,32 @@ enum Protobuf1517Enum derives Schema, CanEqual:
 end Protobuf1517Enum
 
 case class Protobuf1517Holder(inner: Protobuf1517Sealed) derives Schema, CanEqual
+
+// ===== Phase 5 discriminator-decode fixtures =====
+// Distinct types from the other sealed-trait fixtures above so each scenario
+// owns its `given Schema` without ambiguity (a derives-Schema clause and a
+// transformed `given Schema[X]` for the same X clash).
+
+sealed trait ProtoDiscSealed derives CanEqual
+object ProtoDiscSealed:
+    final case class Label(value: String) extends ProtoDiscSealed derives CanEqual, Schema
+    final case class Count(value: Int)    extends ProtoDiscSealed derives CanEqual, Schema
+end ProtoDiscSealed
+
+given Schema[ProtoDiscSealed] = Schema.derived[ProtoDiscSealed].discriminator("type")
+
+sealed trait AltDiscSealed derives CanEqual
+object AltDiscSealed:
+    final case class Left(value: String) extends AltDiscSealed derives CanEqual, Schema
+    final case class Right(value: Int)   extends AltDiscSealed derives CanEqual, Schema
+end AltDiscSealed
+
+given Schema[AltDiscSealed] = Schema.derived[AltDiscSealed].discriminator("$variant")
+
+final case class AltDiscEnvelope(payload: AltDiscSealed) derives CanEqual, Schema
+
+// A separate top-level case class used for the negative test: encoding it
+// produces Protobuf bytes that do NOT carry the discriminator field "type",
+// which then must surface as MissingFieldException("type") when decoded as
+// ProtoDiscSealed.
+final case class NoDiscSibling(value: String) derives CanEqual, Schema

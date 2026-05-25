@@ -225,6 +225,11 @@ object Json:
                         case Structure.PrimitiveKind.String | Structure.PrimitiveKind.Char => Str()
                         case Structure.PrimitiveKind.Boolean                               => Bool
                         case Structure.PrimitiveKind.Unit                                  => Null
+                        // Phase 2: Instant / Duration / Frame / Text serialize as JSON strings.
+                        // kyo.Duration is encoded via Long-of-nanos at the wire level, but the JSON
+                        // surface is a quoted form; preserving Str here matches the JsonWriter behavior.
+                        case Structure.PrimitiveKind.Instant | Structure.PrimitiveKind.Duration |
+                            Structure.PrimitiveKind.Frame | Structure.PrimitiveKind.Text => Str()
 
                 case Structure.Type.Optional(_, _, inner) =>
                     Nullable(fromStructure(inner, seen))

@@ -50,6 +50,12 @@ object SealedNoArgVariants:
     case object Unit3                extends SealedNoArgVariants derives CanEqual
 end SealedNoArgVariants
 
+// Phase 2 fixtures — case classes carrying types that must be reported as PrimitiveKind leaves.
+final case class CaseClassWithInstant(at: kyo.Instant) derives Schema
+final case class CaseClassWithDuration(d: kyo.Duration) derives Schema
+final case class CaseClassWithFrame(f: kyo.Frame) derives Schema
+final case class CaseClassWithText(t: kyo.Text) derives Schema
+
 class StructureTest extends Test:
 
     given CanEqual[Any, Any]                       = CanEqual.derived
@@ -313,6 +319,73 @@ class StructureTest extends Test:
                     fail(s"expected Primitive(Unit), got $t")
             end match
         }
+
+        // ---- Phase 2: PrimitiveKind extension for Instant / Duration / Frame / Text ----
+
+        "PrimitiveKind.Instant" in {
+            val s = Structure.of[CaseClassWithInstant]
+            s match
+                case Structure.Type.Product(_, _, _, fields) =>
+                    assert(fields.size == 1)
+                    fields.head.fieldType match
+                        case Structure.Type.Primitive(kind, _) =>
+                            assert(kind == Structure.PrimitiveKind.Instant)
+                        case other => fail(s"expected Primitive, got $other")
+                    end match
+                case other => fail(s"expected Product, got $other")
+            end match
+        }
+
+        "PrimitiveKind.Duration" in {
+            val s = Structure.of[CaseClassWithDuration]
+            s match
+                case Structure.Type.Product(_, _, _, fields) =>
+                    assert(fields.size == 1)
+                    fields.head.fieldType match
+                        case Structure.Type.Primitive(kind, _) =>
+                            assert(kind == Structure.PrimitiveKind.Duration)
+                        case other => fail(s"expected Primitive, got $other")
+                    end match
+                case other => fail(s"expected Product, got $other")
+            end match
+        }
+
+        "PrimitiveKind.Frame" in {
+            val s = Structure.of[CaseClassWithFrame]
+            s match
+                case Structure.Type.Product(_, _, _, fields) =>
+                    assert(fields.size == 1)
+                    fields.head.fieldType match
+                        case Structure.Type.Primitive(kind, _) =>
+                            assert(kind == Structure.PrimitiveKind.Frame)
+                        case other => fail(s"expected Primitive, got $other")
+                    end match
+                case other => fail(s"expected Product, got $other")
+            end match
+        }
+
+        "PrimitiveKind.Text" in {
+            val s = Structure.of[CaseClassWithText]
+            s match
+                case Structure.Type.Product(_, _, _, fields) =>
+                    assert(fields.size == 1)
+                    fields.head.fieldType match
+                        case Structure.Type.Primitive(kind, _) =>
+                            assert(kind == Structure.PrimitiveKind.Text)
+                        case other => fail(s"expected Primitive, got $other")
+                    end match
+                case other => fail(s"expected Product, got $other")
+            end match
+        }
+
+        // Negative leaf for "unmapped primitive triggers error" is PENDING.
+        // Reason: after Phase 2, every entry in `MacroUtils.extendedPrimitiveSymbols` has a matching
+        // branch in `primitiveKindExpr`, so no natural synthetic test type exercises the
+        // `report.errorAndAbort("No PrimitiveKind mapping for primitive type: ...")` path. The Phase 2
+        // spec explicitly permits skipping this leaf when no natural example exists. A future phase
+        // that adds another entry to `extendedPrimitiveSymbols` without a paired `primitiveKindExpr`
+        // branch (e.g., transient state during Phase 11 java.time gap closure) will be the right place
+        // to land this coverage.
 
         "fieldPaths returns all leaf paths" in {
             val ref   = Structure.of[MTSmallTeam]

@@ -47,7 +47,14 @@ private[kyo] object TagMacro:
 
         def visit(t: TypeRepr): Type.Entry.Id =
 
-            val tpe = t.dealiasKeepOpaques.simplified.dealiasKeepOpaques
+            // Java raw / wildcard type arguments (e.g. `Comparable[ChronoLocalDateTime[?]]`)
+            // surface as bare TypeBounds(lo, hi) and don't match any of `loop`'s cases.
+            // Represent a wildcard `? <: hi` as its upper bound: that's the most informative
+            // type known statically, and matches the QuoteMatcher's view used in subtype tests.
+            val resolved = t match
+                case TypeBounds(_, hi) => hi
+                case other             => other
+            val tpe = resolved.dealiasKeepOpaques.simplified.dealiasKeepOpaques
             val key =
                 tpe.typeSymbol.isNoSymbol match
                     case true => tpe

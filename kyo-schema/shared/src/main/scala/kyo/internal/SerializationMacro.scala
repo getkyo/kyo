@@ -54,6 +54,13 @@ private[internal] object SerializationMacro:
         // Build per-field write statements at macro-expansion time (outside the outer quote).
         // Each splice-embedded call to a helper that requires `using Quotes` would otherwise collide with the
         // splice's own Quotes context; doing the work here keeps everything on a single Quotes.
+        //
+        // Unsafe: no Frame is reachable inside the emitted (value, writer) => Unit
+        // lambda body. SchemaSerializer.writeTo requires `using Frame` to thread
+        // into possible inner failures. The macro-time Frame.internal is the only
+        // option here; same pattern as the throw site below at L172. Applies to
+        // every `kyo.Frame.internal` use in the Maybe / Option / fallthrough
+        // branches of the write statements emitted by this method.
         val writeStmts: List[Expr[Unit]] = fieldNames.zipWithIndex.flatMap { (fieldName, idx) =>
             val fieldAccess = Select.unique(value.asTerm, fieldName).asExprOf[Any]
             val fid         = fieldIds(idx)._2
@@ -72,7 +79,7 @@ private[internal] object SerializationMacro:
                     $maybeAccess match
                         case kyo.Present(innerVal) =>
                             $writer.fieldBytes($fieldBytes($idxExpr), $fidExpr)
-                            $schemaExpr.serializeWrite(innerVal, $writer)
+                            kyo.internal.SchemaSerializer.writeTo($schemaExpr, innerVal, $writer)(using kyo.Frame.internal)
                         case _ => ()
                 })
             else if optionFields.contains(idx) then
@@ -80,7 +87,7 @@ private[internal] object SerializationMacro:
                 List('{
                     if $optAccess.isDefined then
                         $writer.fieldBytes($fieldBytes($idxExpr), $fidExpr)
-                        $schemaExpr.serializeWrite($optAccess, $writer)
+                        kyo.internal.SchemaSerializer.writeTo($schemaExpr, $optAccess, $writer)(using kyo.Frame.internal)
                 })
             else if isPrimitiveType(ft) then
                 // Primitive field: emit a direct typed Writer call. No Function2.apply, no autoboxing.
@@ -114,7 +121,7 @@ private[internal] object SerializationMacro:
                             case None =>
                                 List(
                                     '{ $writer.fieldBytes($fieldBytes($idxExpr), $fidExpr) },
-                                    '{ $schemaExpr.serializeWrite($fieldAccess, $writer) }
+                                    '{ kyo.internal.SchemaSerializer.writeTo($schemaExpr, $fieldAccess, $writer)(using kyo.Frame.internal) }
                                 )
                         end match
                 end match
@@ -156,6 +163,11 @@ private[internal] object SerializationMacro:
         value: Expr[A],
         writer: Expr[Writer]
     ): Expr[Unit] =
+        // Unsafe: no Frame is reachable inside the emitted (value, writer) => Unit
+        // lambda body. SchemaSerializer.writeTo requires `using Frame` to thread
+        // into possible inner failures; TypeMismatchException likewise. The
+        // macro-time Frame.internal is the only option here. Applies to both
+        // `kyo.Frame.internal` uses below.
         val checks = variants.zipWithIndex.map { case (info, idx) =>
             val vid = variantIds(idx)._2
             (
@@ -163,7 +175,11 @@ private[internal] object SerializationMacro:
                 '{
                     $writer.objectStart(${ Expr(typeName) }, 1)
                     $writer.fieldBytes($fieldBytes(${ Expr(idx) }), ${ Expr(vid) })
-                    ${ info.schemaResolver(selfSchema) }.serializeWrite(${ info.castExpr(value) }, $writer)
+                    kyo.internal.SchemaSerializer.writeTo(
+                        ${ info.schemaResolver(selfSchema) },
+                        ${ info.castExpr(value) },
+                        $writer
+                    )(using kyo.Frame.internal)
                     $writer.objectEnd()
                 }
             )
@@ -550,6 +566,7 @@ private[internal] object SerializationMacro:
     ): Expr[Unit] =
         import quotes.reflect.*
         val resultExpr = valueTerm.asExprOf[kyo.Result[Any, Any]]
+        // @unchecked: errTpe/okTpe are guaranteed primitives by resultFieldSpec; .asType always yields '[e], '[a]
         ((errTpe.asType, okTpe.asType): @unchecked) match
             case ('[e], '[a]) =>
                 val writeOk: quotes.reflect.Term => Expr[Unit]  = t => primitiveWriteExpr(okTpe, writer, t)
@@ -603,6 +620,7 @@ private[internal] object SerializationMacro:
         // inside the emitted code; the returned `Expr` is spliced into that same scope.
         val readOk: Expr[Reader] => Expr[Any]  = r => primitiveReadExpr(okTpe, r)
         val readErr: Expr[Reader] => Expr[Any] = r => primitiveReadExpr(errTpe, r)
+        // @unchecked: errTpe/okTpe are guaranteed primitives by resultFieldSpec; .asType always yields '[e], '[a]
         ((errTpe.asType, okTpe.asType): @unchecked) match
             case ('[e], '[a]) =>
                 '{
@@ -724,6 +742,7 @@ private[internal] object SerializationMacro:
         reader: Expr[Reader],
         fieldBytesExpr: Expr[Array[Array[Byte]]],
         fieldNamesExpr: Expr[Array[String]],
+        fieldNameMapExpr: Expr[Map[Int, String]],
         fieldSchemaResolvers: List[(String, SchemaResolver[A])],
         subSchemasExpr: Expr[Array[kyo.Schema[Any]]],
         selfSchema: Expr[Schema[A]]
@@ -837,11 +856,12 @@ private[internal] object SerializationMacro:
             if isMaybe then
                 // Maybe[T]: wrap the inner serializeRead result in kyo.Present.
                 ft.asType match
-                    case '[t] => '{ kyo.Present($schemaExpr.serializeRead($reader)).asInstanceOf[t] }
+                    case '[t] =>
+                        '{ kyo.Present(kyo.internal.SchemaSerializer.readFrom($schemaExpr, $reader)(using $reader.frame)).asInstanceOf[t] }
             else if isOption then
                 // Option[T]: the Option schema's serializeRead already yields Option[T].
                 ft.asType match
-                    case '[t] => '{ $schemaExpr.serializeRead($reader).asInstanceOf[t] }
+                    case '[t] => '{ kyo.internal.SchemaSerializer.readFrom($schemaExpr, $reader)(using $reader.frame).asInstanceOf[t] }
             else if fieldIsPrimitive(idx) then
                 // Direct primitive reader call — no boxing.
                 primitiveReadExpr(ft, reader)
@@ -859,7 +879,13 @@ private[internal] object SerializationMacro:
                                     case '[t] => '{ $readExpr.asInstanceOf[t] }
                             case None =>
                                 ft.asType match
-                                    case '[t] => '{ $schemaExpr.serializeRead($reader).asInstanceOf[t] }
+                                    case '[t] =>
+                                        '{
+                                            kyo.internal.SchemaSerializer.readFrom(
+                                                $schemaExpr,
+                                                $reader
+                                            )(using $reader.frame).asInstanceOf[t]
+                                        }
                         end match
                 end match
             end if
@@ -871,6 +897,7 @@ private[internal] object SerializationMacro:
             loopSym,
             paramss =>
                 // paramss has shape List(List(<N field params> :+ seen :+ expectedIdx)) — a single term-param clause.
+                // cast: macro reflection's DefDef paramss yields List[Tree]; we constructed it as Terms only
                 val termParams: List[Term]     = paramss.head.asInstanceOf[List[Term]]
                 val fieldParamRefs: List[Term] = termParams.take(n)
                 val seenParamRef: Term         = termParams(n)
@@ -980,6 +1007,14 @@ private[internal] object SerializationMacro:
         val initialCall: Term = Apply(Ref(loopSym), initialArgs)
 
         val bodyExpr: Expr[A] = '{
+            // Publish the field-name -> field-id map to the reader so wire formats that key by id
+            // (Protobuf) can return canonical names from `field()` / `lastFieldName()`. JSON / structure
+            // readers fall through to the no-op default on Codec.Reader. The map is hoisted to a schema-level
+            // `lazy val` at each FocusMacro call site (see `_fieldNameMap` next to `_fieldNames`), so it's
+            // built once per Schema instance (not per decode) and discarded essentially for free by the
+            // default no-op `withFieldNames`.
+            val _ = $reader.withFieldNames($fieldNameMapExpr)
+
             val _       = $reader.objectStart()
             val nFields = $nExpr
             // `initFields` is purely for pooled-reader lifecycle (e.g. JsonReader depth tracking). Result is discarded.
@@ -1000,6 +1035,7 @@ private[internal] object SerializationMacro:
         reader: Expr[Reader],
         fieldBytesExpr: Expr[Array[Array[Byte]]],
         fieldNamesExpr: Expr[Array[String]],
+        fieldNameMapExpr: Expr[Map[Int, String]],
         schemaExprs: List[(String, Expr[Schema[Any]])],
         subSchemasExpr: Expr[Array[kyo.Schema[Any]]]
     ): Expr[A] =
@@ -1007,7 +1043,15 @@ private[internal] object SerializationMacro:
             (name, (_: Expr[Schema[A]]) => schemaExpr)
         }
         // For simple types, selfSchema is never used by the resolvers, so pass a null placeholder
-        caseClassReadBodyResolved[A](reader, fieldBytesExpr, fieldNamesExpr, resolvers, subSchemasExpr, '{ null.asInstanceOf[Schema[A]] })
+        caseClassReadBodyResolved[A](
+            reader,
+            fieldBytesExpr,
+            fieldNamesExpr,
+            fieldNameMapExpr,
+            resolvers,
+            subSchemasExpr,
+            '{ null.asInstanceOf[Schema[A]] }
+        )
     end caseClassReadBody
 
     /** Generate read body for sealed trait.
@@ -1035,7 +1079,7 @@ private[internal] object SerializationMacro:
                 val checks = childSchemas.zipWithIndex.map { case ((_, schemaExpr), i) =>
                     (
                         '{ $reader.matchField(fieldBytes(${ Expr(i) })) },
-                        '{ $schemaExpr.serializeRead($reader).asInstanceOf[A] }
+                        '{ kyo.internal.SchemaSerializer.readFrom($schemaExpr, $reader)(using $reader.frame).asInstanceOf[A] }
                     )
                 }
                 checks.foldRight('{
@@ -1081,26 +1125,67 @@ private[internal] object SerializationMacro:
             TypeRepr.of[BigDecimal].typeSymbol,
             TypeRepr.of[java.time.Instant].typeSymbol,
             TypeRepr.of[java.time.Duration].typeSymbol,
-            TypeRepr.of[kyo.Frame].typeSymbol
+            TypeRepr.of[kyo.Frame].typeSymbol,
+            // Added Phase 1:
+            TypeRepr.of[java.time.LocalDate].typeSymbol,
+            TypeRepr.of[java.time.LocalTime].typeSymbol,
+            TypeRepr.of[java.time.LocalDateTime].typeSymbol,
+            TypeRepr.of[java.util.UUID].typeSymbol,
+            TypeRepr.of[kyo.Instant].typeSymbol,
+            TypeRepr.of[kyo.Duration].typeSymbol,
+            TypeRepr.of[kyo.Text].typeSymbol,
+            TypeRepr.of[Unit].typeSymbol,
+            // Added Phase 9:
+            TypeRepr.of[java.math.BigInteger].typeSymbol,
+            TypeRepr.of[java.math.BigDecimal].typeSymbol,
+            TypeRepr.of[scala.Symbol].typeSymbol,
+            TypeRepr.of[scala.util.matching.Regex].typeSymbol,
+            TypeRepr.of[Throwable].typeSymbol,
+            // Added Phase 11:
+            TypeRepr.of[java.time.ZoneId].typeSymbol,
+            TypeRepr.of[java.time.ZoneOffset].typeSymbol,
+            TypeRepr.of[java.time.OffsetDateTime].typeSymbol,
+            TypeRepr.of[java.time.ZonedDateTime].typeSymbol,
+            TypeRepr.of[java.time.Year].typeSymbol,
+            TypeRepr.of[java.time.YearMonth].typeSymbol,
+            TypeRepr.of[java.time.MonthDay].typeSymbol,
+            TypeRepr.of[java.time.Period].typeSymbol
         )
 
-        // Container type constructors that need inner type checked
-        // NOTE: Only include types that have corresponding Schema[Container[A]] givens in Schema companion
-        val containerSymbols = Set(
-            TypeRepr.of[List].typeSymbol,
-            TypeRepr.of[Vector].typeSymbol,
-            TypeRepr.of[Set].typeSymbol,
-            // NOT Seq - there's no Schema[Seq[A]] given
-            TypeRepr.of[kyo.Chunk].typeSymbol,
-            TypeRepr.of[kyo.Maybe].typeSymbol,
-            TypeRepr.of[Option].typeSymbol,
-            TypeRepr.of[kyo.Result].typeSymbol
-        )
+        // Container type constructors that need inner type checked. Sourced from MacroUtils as the
+        // single source of truth (Phase 3 consolidation); two-argument shapes (Map/Dict, Result, Either)
+        // are handled by dedicated branches in `check` below since MacroUtils does not differentiate by arity.
+        val containerSymbols: Set[Symbol] =
+            MacroUtils.collectionSymbols ++ MacroUtils.optionalSymbols
 
-        // Map-like types
-        val mapSymbols = Set(
-            TypeRepr.of[Map].typeSymbol,
-            TypeRepr.of[kyo.Dict].typeSymbol
+        // Map-like types (Map, kyo.Dict). Sourced from MacroUtils — single source of truth.
+        val mapSymbols: Set[Symbol] = MacroUtils.mapSymbols
+
+        // Tuple type constructors. The arity-bounded ladder lives on the Schema companion;
+        // Phase 12 extends this set to Tuple1 and Tuple6..Tuple22.
+        val tupleSymbols = Set(
+            TypeRepr.of[Tuple1[?]].typeSymbol,
+            TypeRepr.of[Tuple2[?, ?]].typeSymbol,
+            TypeRepr.of[Tuple3[?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple4[?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple5[?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple6[?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple7[?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple8[?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple9[?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple10[?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple11[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple12[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple13[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple14[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple15[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple16[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple17[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple18[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple19[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple20[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple21[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
+            TypeRepr.of[Tuple22[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol
         )
 
         // Use a mutable set to track visited types and avoid infinite recursion
@@ -1110,8 +1195,8 @@ private[internal] object SerializationMacro:
             val dealiased = t.dealias
             val sym       = dealiased.typeSymbol
 
-            // Check if it's a primitive
-            if primitiveSymbols.contains(sym) then
+            // Check if it's a primitive (shared + platform-specific)
+            if primitiveSymbols.contains(sym) || MacroUtils.platformPrimitiveSymbols.contains(sym) then
                 true
             // Check Span[Byte]
             else if dealiased =:= TypeRepr.of[kyo.Span[Byte]] then
@@ -1122,6 +1207,10 @@ private[internal] object SerializationMacro:
             // Check container types with single type parameter
             else
                 dealiased match
+                    // Union types: each leg must independently be serializable. Phase 15 — matches the
+                    // `OrType` branch added to `FocusMacro.derivedImpl` / `ExpandMacro.expandType`.
+                    case OrType(a, b) =>
+                        check(a) && check(b)
                     case AppliedType(tycon, List(inner)) if containerSymbols.contains(tycon.typeSymbol) =>
                         check(inner)
                     case AppliedType(tycon, List(key, value)) if mapSymbols.contains(tycon.typeSymbol) =>
@@ -1130,6 +1219,12 @@ private[internal] object SerializationMacro:
                     case AppliedType(tycon, List(err, success)) if tycon.typeSymbol == TypeRepr.of[kyo.Result].typeSymbol =>
                         // Result[E, A] needs both E and A serializable
                         check(err) && check(success)
+                    case AppliedType(tycon, List(a, b)) if tycon.typeSymbol == TypeRepr.of[Either].typeSymbol =>
+                        // Either[A, B] needs both legs serializable
+                        check(a) && check(b)
+                    case AppliedType(tycon, args) if tupleSymbols.contains(tycon.typeSymbol) =>
+                        // Tuples: every slot must be serializable
+                        args.forall(check)
                     case _ =>
                         // Check if it's a case class or sealed trait
                         if sym.isClassDef && sym.flags.is(Flags.Case) then
@@ -1152,6 +1247,8 @@ private[internal] object SerializationMacro:
                                     check(child.typeRef)
                                 }
                             end if
+                        else if sym.flags.is(Flags.JavaDefined) && sym.flags.is(Flags.Enum) then
+                            true
                         else
                             false
                         end if

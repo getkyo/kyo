@@ -37,6 +37,43 @@ import scala.language.dynamics
   * val errors = schema.validate(user)
   * }}}
   *
+  * == Supported types ==
+  *
+  * The following types have a `given Schema[T]` available on the `Schema` companion and are recognised by
+  * `metaApply` / `Schema.derived`. Where a type is JVM-only, the platform column says so.
+  *
+  *  - Primitives: `Int`, `Long`, `Short`, `Byte`, `Char`, `Float`, `Double`, `Boolean`, `String`, `Unit`,
+  *    `BigInt`, `BigDecimal`, `java.math.BigInteger`, `java.math.BigDecimal`, `scala.Symbol`,
+  *    `scala.util.matching.Regex`, `Throwable`
+  *  - Time: `kyo.Instant`, `kyo.Duration`, `java.time.Instant`, `java.time.Duration`,
+  *    `java.time.LocalDate`, `java.time.LocalTime`, `java.time.LocalDateTime`,
+  *    `java.time.OffsetDateTime`, `java.time.ZonedDateTime`, `java.time.ZoneId`, `java.time.ZoneOffset`,
+  *    `java.time.Year`, `java.time.YearMonth`, `java.time.MonthDay`, `java.time.Period`
+  *  - Identifiers: `java.util.UUID`, `kyo.Frame`, `kyo.Text`
+  *  - Collections: `List`, `Vector`, `Seq`, `Set`, `Chunk`, `Span`, `Array`, `ArraySeq`, `Queue`,
+  *    `SortedSet`, `Map`, `SortedMap`, `kyo.Dict`
+  *  - Optional / sum: `Option`, `Maybe`, `Either`, `kyo.Result`, `scala.util.Try`
+  *  - Tuples: `Tuple1` through `Tuple22`
+  *  - User-defined: case classes, sealed traits, enums, Scala 3 union types `A | B`, Java enums
+  *  - JVM-only: `java.net.URI`, `java.net.URL`, `java.net.InetAddress`, `java.nio.file.Path`,
+  *    `java.io.File`, `java.util.Locale`, `java.util.Currency`
+  *
+  * == Opaque types ==
+  *
+  * Opaque types do not have an automatic Schema. Provide one via `.transform` on the underlying primitive's
+  * schema:
+  *
+  * {{{
+  * opaque type Email = String
+  * object Email:
+  *   given Schema[Email] = Schema.stringSchema.transform[Email](identity)(identity)
+  * }}}
+  *
+  * == Intersection types ==
+  *
+  * Intersection types `A & B` are explicitly rejected at derivation. Use `.transform` to bridge to/from a
+  * concrete representation, or derive a Schema for the concrete intersecting case class directly.
+  *
   * @tparam A
   *   the source type this schema describes
   *
@@ -102,6 +139,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     private[kyo] val rootSelect: Focus.Select[A, Focused] =
         Focus.Select.create[A, Focused](
+            // cast: `getter` returns Maybe[Any] (erased Focused); macro-typed schema guarantees Focused = type-member binding
             (a: A) => getter(a).asInstanceOf[Maybe[Focused]],
             (a: A, v: Focused) => setter(a, v),
             segments,
@@ -863,10 +901,15 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     inline def foreach[C <: Seq[E], E](inline f: Focus.Select[A, Focused] => Focus.Select[A, C]): Focus[A, E, Chunk] =
         val navigated = f(rootSelect)
         Focus.createChunk[A, E](
+            // cast: getter returns erased Any; macro `Focus.Select[A, C]` guarantees element type E
             root => Chunk.from(navigated.getter(root).getOrElse(Chunk.empty).asInstanceOf[Seq[E]]),
             (root, elems) =>
+                // cast: same justification — recover Seq[E] then rebuild via the original collection's factory
                 val original = navigated.getter(root).getOrElse(Chunk.empty).asInstanceOf[Seq[E]]
-                navigated.setter(root, original.iterableFactory.from(elems).asInstanceOf[C])
+                navigated.setter(
+                    root,
+                    original.iterableFactory.from(elems).asInstanceOf[C]
+                ) // cast: factory result widens to C per macro-typed selector
             ,
             navigated.segments,
             this
@@ -912,11 +955,14 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     // --- Ordering/CanEqual givens ---
 
-    /** Derives an Ordering[A] for the source type by comparing fields in declaration order. */
+    /** Derives an Ordering[A] for the source type by comparing fields in declaration order.
+      * `inline` is required because `Schema.deriveOrdering` expands to an inline `erasedValue`/`summonAll` chain that
+      * needs the call site to be inline-known.
+      */
     inline given order(using Mirror.ProductOf[A]): Ordering[A] = Schema.deriveOrdering[A]
 
     /** Returns a CanEqual[A, A] instance for the source type. */
-    inline given canEqual: CanEqual[A, A] = CanEqual.derived
+    given canEqual: CanEqual[A, A] = CanEqual.derived
 
     // --- Internal ---
 
@@ -989,7 +1035,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
             acc.update(name, compute(value))
         }
 
-        new Record[Any](dict).asInstanceOf[Record[Focused]]
+        new Record[Any](dict).asInstanceOf[Record[Focused]] // cast: dict built per macro-typed Focused field set; runtime layout matches
     end resultOf
 
     /** Writes a value to a Writer (low-level serialization).
@@ -1095,7 +1141,9 @@ object Schema:
     inline def init[A](
         inline writeFn: (A, Writer) => Unit,
         inline readFn: Reader => A,
+        // cast: identity default — Maybe[A] structurally equals Maybe[Any] at the JVM type level (opaque Maybe is erased)
         inline getterFn: A => Maybe[Any] = (a: A) => Maybe(a).asInstanceOf[Maybe[Any]],
+        // cast: identity default — setter receives back the exact A value written by macro-emitted callers
         inline setterFn: (A, Any) => A = (_: A, v: Any) => v.asInstanceOf[A],
         segments: Seq[String] = Seq.empty,
         examples: Chunk[A] = Chunk.empty,
@@ -1179,7 +1227,9 @@ object Schema:
             documentation = documentation,
             fieldIdOverrides = fieldIdOverrides,
             discriminatorField = discriminatorField
-        ).asInstanceOf[Schema[A] { type Focused = F }]
+        ).asInstanceOf[Schema[A] {
+            type Focused = F
+        }] // cast: refines the abstract type member Focused to F (same justification as block comment above)
     end initFocused
 
     // --- Factory methods ---
@@ -1290,7 +1340,7 @@ object Schema:
       */
     given frameSchema: Schema[Frame] = Schema.init[Frame](
         writeFn = (v, w) => w.string(v.toString),
-        readFn = reader => reader.string().asInstanceOf[Frame]
+        readFn = reader => reader.string().asInstanceOf[Frame] // cast: Frame is opaque type = String at runtime
     )
 
     /** Tag schema — serializes as the string representation. Tags are opaque types backed by String at runtime for static tags.
@@ -1300,7 +1350,7 @@ object Schema:
             v match
                 case s: String => w.string(s)
                 case _         => w.string(v.show),
-        readFn = reader => reader.string().asInstanceOf[Tag[A]]
+        readFn = reader => reader.string().asInstanceOf[Tag[A]] // cast: Tag is opaque type = String at runtime for static tags
     )
 
     /** Schema for java.time.LocalDate values. Serializes as ISO-8601 string. */
@@ -1324,6 +1374,38 @@ object Schema:
             readFn = r => java.time.LocalDateTime.parse(r.string())
         )
 
+    /** Schema for java.time.ZoneId — encoded as IANA zone id string. */
+    given zoneIdSchema: Schema[java.time.ZoneId] =
+        stringSchema.transform[java.time.ZoneId](java.time.ZoneId.of)(_.getId)
+
+    /** Schema for java.time.ZoneOffset — encoded as ISO offset string. */
+    given zoneOffsetSchema: Schema[java.time.ZoneOffset] =
+        stringSchema.transform[java.time.ZoneOffset](java.time.ZoneOffset.of)(_.getId)
+
+    /** Schema for java.time.OffsetDateTime — encoded as ISO-8601 string. */
+    given offsetDateTimeSchema: Schema[java.time.OffsetDateTime] =
+        stringSchema.transform[java.time.OffsetDateTime](java.time.OffsetDateTime.parse)(_.toString)
+
+    /** Schema for java.time.ZonedDateTime — encoded as ISO-8601 with zone string. */
+    given zonedDateTimeSchema: Schema[java.time.ZonedDateTime] =
+        stringSchema.transform[java.time.ZonedDateTime](java.time.ZonedDateTime.parse)(_.toString)
+
+    /** Schema for java.time.Year — encoded as Int. */
+    given yearSchema: Schema[java.time.Year] =
+        intSchema.transform[java.time.Year](java.time.Year.of)(_.getValue)
+
+    /** Schema for java.time.YearMonth — encoded as ISO-8601 string. */
+    given yearMonthSchema: Schema[java.time.YearMonth] =
+        stringSchema.transform[java.time.YearMonth](java.time.YearMonth.parse)(_.toString)
+
+    /** Schema for java.time.MonthDay — encoded as ISO-8601 string. */
+    given monthDaySchema: Schema[java.time.MonthDay] =
+        stringSchema.transform[java.time.MonthDay](java.time.MonthDay.parse)(_.toString)
+
+    /** Schema for java.time.Period — encoded as ISO-8601 string. */
+    given periodSchema: Schema[java.time.Period] =
+        stringSchema.transform[java.time.Period](java.time.Period.parse)(_.toString)
+
     /** Schema for java.util.UUID values. Serializes as string. */
     given uuidSchema: Schema[java.util.UUID] =
         Schema.init[java.util.UUID](
@@ -1335,17 +1417,58 @@ object Schema:
     given unitSchema: Schema[Unit] = Schema.init[Unit](
         writeFn = (_, w) => w.nil(),
         readFn = r =>
-            r.skip(); ()
+            discard(r.skip())
+            ()
     )
 
+    /** Schema for java.math.BigInteger — delegates to bigIntSchema. */
+    given javaBigIntegerSchema: Schema[java.math.BigInteger] =
+        bigIntSchema.transform[java.math.BigInteger](_.bigInteger)(BigInt(_))
+
+    /** Schema for java.math.BigDecimal — delegates to bigDecimalSchema. */
+    given javaBigDecimalSchema: Schema[java.math.BigDecimal] =
+        bigDecimalSchema.transform[java.math.BigDecimal](_.bigDecimal)(BigDecimal(_))
+
+    /** Schema for scala.Symbol — encoded as its `.name`. */
+    given symbolSchema: Schema[scala.Symbol] =
+        stringSchema.transform[scala.Symbol](Symbol(_))(_.name)
+
+    /** Schema for scala.util.matching.Regex — encoded as its source string. */
+    given regexSchema: Schema[scala.util.matching.Regex] =
+        stringSchema.transform[scala.util.matching.Regex](_.r)(_.regex)
+
+    /** Schema for Throwable — encoded as `getMessage`.
+      *
+      * NOTE: class information is lost on round-trip; decoded value is always a `RuntimeException` carrying the original message.
+      */
+    given throwableSchema: Schema[Throwable] =
+        stringSchema.transform[Throwable](msg => new RuntimeException(msg))(_.getMessage)
+
+    /** Schema for scala.util.Try[A] — encoded as Either[Throwable, A]. */
+    given trySchema[A](using inner: Schema[A]): Schema[scala.util.Try[A]] =
+        eitherSchema[Throwable, A].transform[scala.util.Try[A]] {
+            case Left(t)  => scala.util.Failure(t)
+            case Right(a) => scala.util.Success(a)
+        } {
+            case scala.util.Failure(t) => Left(t)
+            case scala.util.Success(a) => Right(a)
+        }
+
     // --- Collection Schema givens ---
+    //
+    // Unsafe: no Frame is reachable inside the emitted (value, writer) => Unit
+    // lambda body. SchemaSerializer.writeTo requires `using Frame` to thread
+    // into possible inner failures. The macro-time Frame.internal is the only
+    // option here; same pattern as SerializationMacro.scala:172. Applies to
+    // every `Frame.internal` use in the writeFn lambdas of the collection,
+    // Maybe, Option, Map, and SortedMap givens below.
 
     /** Schema for List[A] values. */
     given listSchema[A](using inner: Schema[A]): Schema[List[A]] =
         Schema.init[List[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
-                value.foreach(inner.serializeWrite(_, writer))
+                value.foreach(internal.SchemaSerializer.writeTo(inner, _, writer)(using Frame.internal))
                 writer.arrayEnd()
             ,
             readFn = reader =>
@@ -1355,7 +1478,7 @@ object Schema:
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead(reader)
+                        builder += internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -1367,7 +1490,7 @@ object Schema:
         Schema.init[Vector[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
-                value.foreach(inner.serializeWrite(_, writer))
+                value.foreach(internal.SchemaSerializer.writeTo(inner, _, writer)(using Frame.internal))
                 writer.arrayEnd()
             ,
             readFn = reader =>
@@ -1377,7 +1500,7 @@ object Schema:
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead(reader)
+                        builder += internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -1389,7 +1512,7 @@ object Schema:
         Schema.init[Set[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
-                value.foreach(inner.serializeWrite(_, writer))
+                value.foreach(internal.SchemaSerializer.writeTo(inner, _, writer)(using Frame.internal))
                 writer.arrayEnd()
             ,
             readFn = reader =>
@@ -1399,7 +1522,7 @@ object Schema:
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead(reader)
+                        builder += internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -1411,7 +1534,7 @@ object Schema:
         Schema.init[Chunk[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
-                value.foreach(inner.serializeWrite(_, writer))
+                value.foreach(internal.SchemaSerializer.writeTo(inner, _, writer)(using Frame.internal))
                 writer.arrayEnd()
             ,
             readFn = reader =>
@@ -1421,7 +1544,7 @@ object Schema:
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead(reader)
+                        builder += internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -1433,7 +1556,7 @@ object Schema:
         Schema.init[Seq[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
-                value.foreach(inner.serializeWrite(_, writer))
+                value.foreach(internal.SchemaSerializer.writeTo(inner, _, writer)(using Frame.internal))
                 writer.arrayEnd()
             ,
             readFn = reader =>
@@ -1442,7 +1565,7 @@ object Schema:
                 @tailrec
                 def loop(): Unit =
                     if reader.hasNextElement() then
-                        builder += inner.serializeRead(reader)
+                        builder += internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame)
                         loop()
                 loop()
                 reader.arrayEnd()
@@ -1454,7 +1577,7 @@ object Schema:
         Schema.init[Span[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
-                value.foreach(inner.serializeWrite(_, writer))
+                value.foreach(internal.SchemaSerializer.writeTo(inner, _, writer)(using Frame.internal))
                 writer.arrayEnd()
             ,
             readFn = reader =>
@@ -1463,7 +1586,7 @@ object Schema:
                 @tailrec
                 def loop(): Unit =
                     if reader.hasNextElement() then
-                        builder += inner.serializeRead(reader)
+                        builder += internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame)
                         loop()
                 loop()
                 reader.arrayEnd()
@@ -1478,13 +1601,13 @@ object Schema:
         Schema.init[Maybe[A]](
             writeFn = (value, writer) =>
                 value match
-                    case Maybe.Present(v) => inner.serializeWrite(v, writer)
+                    case Maybe.Present(v) => internal.SchemaSerializer.writeTo(inner, v, writer)(using Frame.internal)
                     case _ =>
                         writer.nil()
             ,
             readFn = reader =>
                 if reader.isNil() then Maybe.empty
-                else Maybe(inner.serializeRead(reader))
+                else Maybe(internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame))
         )
 
     /** Schema for Option[A] values. */
@@ -1492,13 +1615,164 @@ object Schema:
         Schema.init[Option[A]](
             writeFn = (value, writer) =>
                 value match
-                    case Some(v) => inner.serializeWrite(v, writer)
+                    case Some(v) => internal.SchemaSerializer.writeTo(inner, v, writer)(using Frame.internal)
                     case None =>
                         writer.nil()
             ,
             readFn = reader =>
                 if reader.isNil() then None
-                else Some(inner.serializeRead(reader))
+                else Some(internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame))
+        )
+
+    /** Schema for Array[A] values. Encodes as a JSON array; per-element write/read routes through
+      * `SchemaSerializer.writeTo` / `readFrom` so transforms on the element schema compose correctly.
+      */
+    given arraySchema[A](using inner: Schema[A], ct: scala.reflect.ClassTag[A]): Schema[Array[A]] =
+        Schema.init[Array[A]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.length)
+                value.foreach(internal.SchemaSerializer.writeTo(inner, _, writer)(using Frame.internal))
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                val builder = Array.newBuilder[A]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        builder += internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame)
+                        loop(count + 1)
+                loop(1)
+                reader.arrayEnd()
+                builder.result()
+        )
+
+    /** Schema for ArraySeq[A] values. Encodes as a JSON array; per-element write/read routes through
+      * `SchemaSerializer.writeTo` / `readFrom` so transforms on the element schema compose correctly.
+      */
+    given arraySeqSchema[A](using inner: Schema[A], ct: scala.reflect.ClassTag[A]): Schema[scala.collection.immutable.ArraySeq[A]] =
+        Schema.init[scala.collection.immutable.ArraySeq[A]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach(internal.SchemaSerializer.writeTo(inner, _, writer)(using Frame.internal))
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                val builder = scala.collection.immutable.ArraySeq.newBuilder[A]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        builder += internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame)
+                        loop(count + 1)
+                loop(1)
+                reader.arrayEnd()
+                builder.result()
+        )
+
+    /** Schema for immutable.Queue[A] values. Encodes as a JSON array; preserves FIFO order. */
+    given queueSchema[A](using inner: Schema[A]): Schema[scala.collection.immutable.Queue[A]] =
+        Schema.init[scala.collection.immutable.Queue[A]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach(internal.SchemaSerializer.writeTo(inner, _, writer)(using Frame.internal))
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                val builder = scala.collection.immutable.Queue.newBuilder[A]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        builder += internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame)
+                        loop(count + 1)
+                loop(1)
+                reader.arrayEnd()
+                builder.result()
+        )
+
+    /** Schema for immutable.SortedSet[A] values. Encodes as a JSON array; requires `Ordering[A]` for construction. */
+    given sortedSetSchema[A](using inner: Schema[A], ord: Ordering[A]): Schema[scala.collection.immutable.SortedSet[A]] =
+        Schema.init[scala.collection.immutable.SortedSet[A]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach(internal.SchemaSerializer.writeTo(inner, _, writer)(using Frame.internal))
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                val builder = scala.collection.immutable.SortedSet.newBuilder[A]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        builder += internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame)
+                        loop(count + 1)
+                loop(1)
+                reader.arrayEnd()
+                builder.result()
+        )
+
+    /** Schema for immutable.SortedMap[K, V] when a `KeyCodec[K]` is available: object encoding keyed by `kc.encode(k)`,
+      * matching `mapSchemaWithKeyCodec` for `Map[K, V]`. Decode reconstructs a SortedMap via the in-scope `Ordering[K]`.
+      * Ranks above `sortedMapPairsSchema` via `scala.util.NotGiven` (same precedence trick as the `Map` givens).
+      */
+    given sortedMapSchemaWithKeyCodec[K, V](using
+        kc: KeyCodec[K],
+        valueSchema: Schema[V],
+        ord: Ordering[K]
+    ): Schema[scala.collection.immutable.SortedMap[K, V]] =
+        // Reuses `mapSchemaWithKeyCodec[K, V]` (object encoding) and bridges via SortedMap.from on the decode side.
+        // Encoding traverses the SortedMap in sorted order so the on-wire object preserves a stable key order.
+        mapSchemaWithKeyCodec[K, V].transform[scala.collection.immutable.SortedMap[K, V]](
+            scala.collection.immutable.SortedMap.from(_)
+        )(_.toMap)
+
+    /** Fallback Schema for immutable.SortedMap[K, V] when no `KeyCodec[K]` is available: array-of-pairs encoding
+      * `[[k1, v1], [k2, v2], ...]`. Matches `mapPairsSchema` shape; requires `Ordering[K]` for ordered reconstruction.
+      *
+      * The `scala.util.NotGiven[KeyCodec[K]]` constraint ensures `sortedMapSchemaWithKeyCodec` wins implicit search
+      * whenever a `KeyCodec[K]` is in scope; this fallback only applies for key types that lack one (case classes,
+      * tuples, anonymous structural types).
+      */
+    given sortedMapPairsSchema[K, V](using
+        kSchema: Schema[K],
+        vSchema: Schema[V],
+        ord: Ordering[K],
+        notKeyCodec: scala.util.NotGiven[KeyCodec[K]]
+    ): Schema[scala.collection.immutable.SortedMap[K, V]] =
+        Schema.init[scala.collection.immutable.SortedMap[K, V]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach { case (k, vv) =>
+                    writer.arrayStart(2)
+                    internal.SchemaSerializer.writeTo(kSchema, k, writer)(using Frame.internal)
+                    internal.SchemaSerializer.writeTo(vSchema, vv, writer)(using Frame.internal)
+                    writer.arrayEnd()
+                }
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                val builder = scala.collection.immutable.SortedMap.newBuilder[K, V]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        discard(reader.arrayStart())
+                        discard(reader.hasNextElement())
+                        val k = internal.SchemaSerializer.readFrom(kSchema, reader)(using reader.frame)
+                        discard(reader.hasNextElement())
+                        val v = internal.SchemaSerializer.readFrom(vSchema, reader)(using reader.frame)
+                        reader.arrayEnd()
+                        builder += (k -> v)
+                        loop(count + 1)
+                loop(1)
+                reader.arrayEnd()
+                builder.result()
         )
 
     /** Schema for Map[String, V] values (object encoding). */
@@ -1508,7 +1782,7 @@ object Schema:
                 writer.mapStart(value.size)
                 value.iterator.zipWithIndex.foreach { case ((k, v), idx) =>
                     writer.field(k, idx)
-                    valueSchema.serializeWrite(v, writer)
+                    internal.SchemaSerializer.writeTo(valueSchema, v, writer)(using Frame.internal)
                 }
                 writer.mapEnd()
             ,
@@ -1520,7 +1794,7 @@ object Schema:
                     if reader.hasNextEntry() then
                         reader.checkCollectionSize(count)
                         val k = reader.field()
-                        val v = valueSchema.serializeRead(reader)
+                        val v = internal.SchemaSerializer.readFrom(valueSchema, reader)(using reader.frame)
                         builder += (k -> v)
                         loop(count + 1)
                 loop(1)
@@ -1528,14 +1802,333 @@ object Schema:
                 builder.result()
         )
 
+    /** Schema for `Map[K, V]` when a `KeyCodec[K]` is available: object encoding keyed by `kc.encode(k)`. Ranks above the
+      * `mapPairsSchema` fallback via `scala.util.NotGiven`: that given is only summoned when no `KeyCodec[K]` is in scope.
+      */
+    given mapSchemaWithKeyCodec[K, V](using kc: KeyCodec[K], valueSchema: Schema[V]): Schema[Map[K, V]] =
+        Schema.init[Map[K, V]](
+            writeFn = (value, writer) =>
+                writer.mapStart(value.size)
+                value.iterator.zipWithIndex.foreach { case ((k, v), idx) =>
+                    writer.field(kc.encode(k), idx)
+                    internal.SchemaSerializer.writeTo(valueSchema, v, writer)(using Frame.internal)
+                }
+                writer.mapEnd()
+            ,
+            readFn = reader =>
+                given Frame = reader.frame
+                discard(reader.mapStart())
+                val builder = Map.newBuilder[K, V]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextEntry() then
+                        reader.checkCollectionSize(count)
+                        val rawKey = reader.field()
+                        val key = kc.decode(rawKey) match
+                            case Result.Success(k) => k
+                            case Result.Failure(e) => throw e
+                            case Result.Panic(t)   => throw t
+                        val v = internal.SchemaSerializer.readFrom(valueSchema, reader)(using reader.frame)
+                        builder += (key -> v)
+                        loop(count + 1)
+                    end if
+                end loop
+                loop(1)
+                reader.mapEnd()
+                builder.result()
+        )
+
+    /** Fallback Schema for `Map[K, V]` when no `KeyCodec[K]` is available: array-of-pairs encoding `[[k1, v1], [k2, v2], ...]`.
+      *
+      * The `scala.util.NotGiven[KeyCodec[K]]` constraint ensures `mapSchemaWithKeyCodec` wins implicit search whenever a `KeyCodec[K]` is in
+      * scope; this fallback only applies for key types that lack one (e.g. case classes, tuples).
+      */
+    given mapPairsSchema[K, V](using
+        kSchema: Schema[K],
+        vSchema: Schema[V],
+        notKeyCodec: scala.util.NotGiven[KeyCodec[K]]
+    ): Schema[Map[K, V]] =
+        Schema.init[Map[K, V]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach { case (k, vv) =>
+                    writer.arrayStart(2)
+                    internal.SchemaSerializer.writeTo(kSchema, k, writer)(using Frame.internal)
+                    internal.SchemaSerializer.writeTo(vSchema, vv, writer)(using Frame.internal)
+                    writer.arrayEnd()
+                }
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                val builder = Map.newBuilder[K, V]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        discard(reader.arrayStart())
+                        discard(reader.hasNextElement())
+                        val k = internal.SchemaSerializer.readFrom(kSchema, reader)(using reader.frame)
+                        discard(reader.hasNextElement())
+                        val v = internal.SchemaSerializer.readFrom(vSchema, reader)(using reader.frame)
+                        reader.arrayEnd()
+                        builder += (k -> v)
+                        loop(count + 1)
+                    end if
+                end loop
+                loop(1)
+                reader.arrayEnd()
+                builder.result()
+        )
+
     // --- Tuple Schemas ---
 
+    given tuple1Schema[A: Schema]: Schema[Tuple1[A]]                                                   = Schema.derived
     given tuple2Schema[A: Schema, B: Schema]: Schema[(A, B)]                                           = Schema.derived
     given tuple3Schema[A: Schema, B: Schema, C: Schema]: Schema[(A, B, C)]                             = Schema.derived
     given tuple4Schema[A: Schema, B: Schema, C: Schema, D: Schema]: Schema[(A, B, C, D)]               = Schema.derived
     given tuple5Schema[A: Schema, B: Schema, C: Schema, D: Schema, E: Schema]: Schema[(A, B, C, D, E)] = Schema.derived
 
+    given tuple6Schema[A: Schema, B: Schema, C: Schema, D: Schema, E: Schema, F: Schema]: Schema[(A, B, C, D, E, F)] = Schema.derived
+    given tuple7Schema[A: Schema, B: Schema, C: Schema, D: Schema, E: Schema, F: Schema, G: Schema]: Schema[(A, B, C, D, E, F, G)] =
+        Schema.derived
+    given tuple8Schema[A: Schema, B: Schema, C: Schema, D: Schema, E: Schema, F: Schema, G: Schema, H: Schema]
+        : Schema[(A, B, C, D, E, F, G, H)] = Schema.derived
+    given tuple9Schema[A: Schema, B: Schema, C: Schema, D: Schema, E: Schema, F: Schema, G: Schema, H: Schema, I: Schema]
+        : Schema[(A, B, C, D, E, F, G, H, I)] = Schema.derived
+    given tuple10Schema[A: Schema, B: Schema, C: Schema, D: Schema, E: Schema, F: Schema, G: Schema, H: Schema, I: Schema, J: Schema]
+        : Schema[(A, B, C, D, E, F, G, H, I, J)] = Schema.derived
+    given tuple11Schema[
+        A: Schema,
+        B: Schema,
+        C: Schema,
+        D: Schema,
+        E: Schema,
+        F: Schema,
+        G: Schema,
+        H: Schema,
+        I: Schema,
+        J: Schema,
+        K: Schema
+    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K)] = Schema.derived
+    given tuple12Schema[
+        A: Schema,
+        B: Schema,
+        C: Schema,
+        D: Schema,
+        E: Schema,
+        F: Schema,
+        G: Schema,
+        H: Schema,
+        I: Schema,
+        J: Schema,
+        K: Schema,
+        L: Schema
+    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L)] = Schema.derived
+    given tuple13Schema[
+        A: Schema,
+        B: Schema,
+        C: Schema,
+        D: Schema,
+        E: Schema,
+        F: Schema,
+        G: Schema,
+        H: Schema,
+        I: Schema,
+        J: Schema,
+        K: Schema,
+        L: Schema,
+        M: Schema
+    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M)] = Schema.derived
+    given tuple14Schema[
+        A: Schema,
+        B: Schema,
+        C: Schema,
+        D: Schema,
+        E: Schema,
+        F: Schema,
+        G: Schema,
+        H: Schema,
+        I: Schema,
+        J: Schema,
+        K: Schema,
+        L: Schema,
+        M: Schema,
+        N: Schema
+    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N)] = Schema.derived
+    given tuple15Schema[
+        A: Schema,
+        B: Schema,
+        C: Schema,
+        D: Schema,
+        E: Schema,
+        F: Schema,
+        G: Schema,
+        H: Schema,
+        I: Schema,
+        J: Schema,
+        K: Schema,
+        L: Schema,
+        M: Schema,
+        N: Schema,
+        O: Schema
+    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O)] = Schema.derived
+    given tuple16Schema[
+        A: Schema,
+        B: Schema,
+        C: Schema,
+        D: Schema,
+        E: Schema,
+        F: Schema,
+        G: Schema,
+        H: Schema,
+        I: Schema,
+        J: Schema,
+        K: Schema,
+        L: Schema,
+        M: Schema,
+        N: Schema,
+        O: Schema,
+        P: Schema
+    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P)] = Schema.derived
+    given tuple17Schema[
+        A: Schema,
+        B: Schema,
+        C: Schema,
+        D: Schema,
+        E: Schema,
+        F: Schema,
+        G: Schema,
+        H: Schema,
+        I: Schema,
+        J: Schema,
+        K: Schema,
+        L: Schema,
+        M: Schema,
+        N: Schema,
+        O: Schema,
+        P: Schema,
+        Q: Schema
+    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q)] = Schema.derived
+    given tuple18Schema[
+        A: Schema,
+        B: Schema,
+        C: Schema,
+        D: Schema,
+        E: Schema,
+        F: Schema,
+        G: Schema,
+        H: Schema,
+        I: Schema,
+        J: Schema,
+        K: Schema,
+        L: Schema,
+        M: Schema,
+        N: Schema,
+        O: Schema,
+        P: Schema,
+        Q: Schema,
+        R: Schema
+    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R)] = Schema.derived
+    given tuple19Schema[
+        A: Schema,
+        B: Schema,
+        C: Schema,
+        D: Schema,
+        E: Schema,
+        F: Schema,
+        G: Schema,
+        H: Schema,
+        I: Schema,
+        J: Schema,
+        K: Schema,
+        L: Schema,
+        M: Schema,
+        N: Schema,
+        O: Schema,
+        P: Schema,
+        Q: Schema,
+        R: Schema,
+        S: Schema
+    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S)] = Schema.derived
+    given tuple20Schema[
+        A: Schema,
+        B: Schema,
+        C: Schema,
+        D: Schema,
+        E: Schema,
+        F: Schema,
+        G: Schema,
+        H: Schema,
+        I: Schema,
+        J: Schema,
+        K: Schema,
+        L: Schema,
+        M: Schema,
+        N: Schema,
+        O: Schema,
+        P: Schema,
+        Q: Schema,
+        R: Schema,
+        S: Schema,
+        T: Schema
+    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T)] = Schema.derived
+    given tuple21Schema[
+        A: Schema,
+        B: Schema,
+        C: Schema,
+        D: Schema,
+        E: Schema,
+        F: Schema,
+        G: Schema,
+        H: Schema,
+        I: Schema,
+        J: Schema,
+        K: Schema,
+        L: Schema,
+        M: Schema,
+        N: Schema,
+        O: Schema,
+        P: Schema,
+        Q: Schema,
+        R: Schema,
+        S: Schema,
+        T: Schema,
+        U: Schema
+    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U)] = Schema.derived
+    given tuple22Schema[
+        A: Schema,
+        B: Schema,
+        C: Schema,
+        D: Schema,
+        E: Schema,
+        F: Schema,
+        G: Schema,
+        H: Schema,
+        I: Schema,
+        J: Schema,
+        K: Schema,
+        L: Schema,
+        M: Schema,
+        N: Schema,
+        O: Schema,
+        P: Schema,
+        Q: Schema,
+        R: Schema,
+        S: Schema,
+        T: Schema,
+        U: Schema,
+        V: Schema
+    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V)] = Schema.derived
+
     // --- Kyo-data type Schemas ---
+    //
+    // Unsafe: no Frame is reachable inside the emitted (value, writer) => Unit
+    // lambda body. SchemaSerializer.writeTo requires `using Frame` to thread
+    // into possible inner failures. The macro-time Frame.internal is the only
+    // option here; same pattern as SerializationMacro.scala:172. Applies to
+    // every `Frame.internal` use in the writeFn lambdas of the Result, Either,
+    // and Dict givens below.
 
     /** Schema for Result[E, A] values - serialized as discriminated union. */
     given resultSchema[E, A](using eSchema: Schema[E], aSchema: Schema[A]): Schema[Result[E, A]] =
@@ -1547,14 +2140,16 @@ object Schema:
                         writer.field("$type", 0)
                         writer.string("success")
                         writer.field("value", 1)
-                        aSchema.serializeWrite(a.asInstanceOf[A], writer)
+                        // cast: opaque Result.Success extractor widens to Any; A recovered from Schema[Result[E, A]] type
+                        internal.SchemaSerializer.writeTo(aSchema, a.asInstanceOf[A], writer)(using Frame.internal)
                         writer.objectEnd()
                     case Result.Failure(e) =>
                         writer.objectStart("Result", 2)
                         writer.field("$type", 0)
                         writer.string("failure")
                         writer.field("value", 1)
-                        eSchema.serializeWrite(e.asInstanceOf[E], writer)
+                        // cast: opaque Result.Failure extractor widens to Any; E recovered from Schema[Result[E, A]] type
+                        internal.SchemaSerializer.writeTo(eSchema, e.asInstanceOf[E], writer)(using Frame.internal)
                         writer.objectEnd()
                     case Result.Panic(ex) =>
                         writer.objectStart("Result", 2)
@@ -1574,7 +2169,9 @@ object Schema:
                         reader.field() match
                             case "$type" => loop(Maybe(reader.string()), captured)
                             case "value" => loop(typeName, Maybe(reader.captureValue()))
-                            case _       => reader.skip(); loop(typeName, captured)
+                            case _ =>
+                                reader.skip()
+                                loop(typeName, captured)
                     else (typeName, captured)
                 val (typeName, captured) = loop(Maybe.empty, Maybe.empty)
                 reader.objectEnd()
@@ -1584,8 +2181,9 @@ object Schema:
                     throw MissingFieldException(Seq.empty, "value")(using reader.frame)
                 val capturedReader = captured.get
                 typeName.get match
-                    case "success" => Result.succeed(aSchema.serializeRead(capturedReader))
-                    case "failure" => Result.fail(eSchema.serializeRead(capturedReader))
+                    case "success" =>
+                        Result.succeed(internal.SchemaSerializer.readFrom(aSchema, capturedReader)(using capturedReader.frame))
+                    case "failure" => Result.fail(internal.SchemaSerializer.readFrom(eSchema, capturedReader)(using capturedReader.frame))
                     case "panic" =>
                         val msg: Maybe[String] =
                             if capturedReader.isNil() then Maybe.empty
@@ -1605,14 +2203,16 @@ object Schema:
                         writer.field("$type", 0)
                         writer.string("Left")
                         writer.field("value", 1)
-                        aSchema.serializeWrite(a.asInstanceOf[A], writer)
+                        // cast: Left/Right are covariant in A/B; bind to invariant Schema[A]/Schema[B] param requires explicit cast
+                        internal.SchemaSerializer.writeTo(aSchema, a.asInstanceOf[A], writer)(using Frame.internal)
                         writer.objectEnd()
                     case Right(b) =>
                         writer.objectStart("Either", 2)
                         writer.field("$type", 0)
                         writer.string("Right")
                         writer.field("value", 1)
-                        bSchema.serializeWrite(b.asInstanceOf[B], writer)
+                        // cast: same — Right's B is covariant, Schema[B] is invariant
+                        internal.SchemaSerializer.writeTo(bSchema, b.asInstanceOf[B], writer)(using Frame.internal)
                         writer.objectEnd()
             ,
             readFn = reader =>
@@ -1623,7 +2223,9 @@ object Schema:
                         reader.field() match
                             case "$type" => loop(Maybe(reader.string()), captured)
                             case "value" => loop(typeName, Maybe(reader.captureValue()))
-                            case _       => reader.skip(); loop(typeName, captured)
+                            case _ =>
+                                reader.skip()
+                                loop(typeName, captured)
                     else (typeName, captured)
                 val (typeName, captured) = loop(Maybe.empty, Maybe.empty)
                 reader.objectEnd()
@@ -1633,8 +2235,8 @@ object Schema:
                     throw MissingFieldException(Seq.empty, "value")(using reader.frame)
                 val capturedReader = captured.get
                 typeName.get match
-                    case "Left"  => Left(aSchema.serializeRead(capturedReader))
-                    case "Right" => Right(bSchema.serializeRead(capturedReader))
+                    case "Left"  => Left(internal.SchemaSerializer.readFrom(aSchema, capturedReader)(using capturedReader.frame))
+                    case "Right" => Right(internal.SchemaSerializer.readFrom(bSchema, capturedReader)(using capturedReader.frame))
                     case other   => throw UnknownVariantException(Seq.empty, other)(using reader.frame)
                 end match
         )
@@ -1646,7 +2248,7 @@ object Schema:
                 writer.mapStart(value.size)
                 discard(value.foldLeft(0) { (idx, k, v) =>
                     writer.field(k, idx)
-                    vSchema.serializeWrite(v, writer)
+                    internal.SchemaSerializer.writeTo(vSchema, v, writer)(using Frame.internal)
                     idx + 1
                 })
                 writer.mapEnd()
@@ -1658,7 +2260,7 @@ object Schema:
                     if reader.hasNextEntry() then
                         reader.checkCollectionSize(count)
                         val k = reader.field()
-                        val v = vSchema.serializeRead(reader)
+                        val v = internal.SchemaSerializer.readFrom(vSchema, reader)(using reader.frame)
                         loop(dict.update(k, v), count + 1)
                     else dict
                 val dict = loop(Dict.empty[String, V], 1)
@@ -1673,8 +2275,8 @@ object Schema:
                 writer.arrayStart(value.size)
                 value.foreach { (k, v) =>
                     writer.arrayStart(2)
-                    kSchema.serializeWrite(k, writer)
-                    vSchema.serializeWrite(v, writer)
+                    internal.SchemaSerializer.writeTo(kSchema, k, writer)(using Frame.internal)
+                    internal.SchemaSerializer.writeTo(vSchema, v, writer)(using Frame.internal)
                     writer.arrayEnd()
                 }
                 writer.arrayEnd()
@@ -1686,8 +2288,8 @@ object Schema:
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
                         discard(reader.arrayStart())
-                        val k = kSchema.serializeRead(reader)
-                        val v = vSchema.serializeRead(reader)
+                        val k = internal.SchemaSerializer.readFrom(kSchema, reader)(using reader.frame)
+                        val v = internal.SchemaSerializer.readFrom(vSchema, reader)(using reader.frame)
                         reader.arrayEnd()
                         loop(dict.update(k, v), count + 1)
                     else dict
@@ -1881,6 +2483,8 @@ object Schema:
             documentation = doc,
             fieldIdOverrides = fieldIds,
             discriminatorField = discriminatorField
-        ).asInstanceOf[Schema[A] { type Focused = E }]
+        ).asInstanceOf[Schema[A] {
+            type Focused = E
+        }] // cast: refines abstract type member Focused to E (same justification as initFocused above)
 
 end Schema

@@ -239,11 +239,30 @@ private[internal] object MacroUtils:
             TypeRepr.of[BigDecimal].typeSymbol,
             TypeRepr.of[BigInt].typeSymbol,
             TypeRepr.of[java.math.BigDecimal].typeSymbol,
-            TypeRepr.of[java.math.BigInteger].typeSymbol
+            TypeRepr.of[java.math.BigInteger].typeSymbol,
+            // Phase 2: Instant / Duration / Frame / Text are flat scalars handled by primitiveKindExpr.
+            TypeRepr.of[java.time.Instant].typeSymbol,
+            TypeRepr.of[java.time.Duration].typeSymbol,
+            TypeRepr.of[kyo.Instant].typeSymbol,
+            TypeRepr.of[kyo.Duration].typeSymbol,
+            TypeRepr.of[kyo.Frame].typeSymbol,
+            TypeRepr.of[kyo.Text].typeSymbol
         )
     end extendedPrimitiveSymbols
 
-    /** Collection type symbols: List, Seq, Vector, Set, Chunk. */
+    /** Platform-specific primitive symbols. Empty on shared; each platform module
+      * (kyo-schema/jvm, kyo-schema/js, kyo-schema/native) ships a sibling
+      * `kyo.internal.PlatformSymbols` object containing the per-platform set
+      * (cross-build shadow pattern matching AsciiStringFactory). The gate at
+      * SerializationMacro.scala unions this set into its primitive check so
+      * platform-only `Schema` givens (e.g. JVM `java.net.URI`) pass `isSerializableType`
+      * when reached during macro expansion on the appropriate platform.
+      */
+    private[internal] def platformPrimitiveSymbols(using Quotes): Set[quotes.reflect.Symbol] =
+        PlatformSymbols.primitiveSymbols
+    end platformPrimitiveSymbols
+
+    /** Collection type symbols: List, Seq, Vector, Set, Chunk, Span, Result, Try, ArraySeq, Queue, SortedSet, Array. */
     private[internal] def collectionSymbols(using Quotes): Set[quotes.reflect.Symbol] =
         import quotes.reflect.*
         Set(
@@ -251,7 +270,17 @@ private[internal] object MacroUtils:
             TypeRepr.of[Seq].typeSymbol,
             TypeRepr.of[Vector].typeSymbol,
             TypeRepr.of[Set].typeSymbol,
-            TypeRepr.of[kyo.Chunk].typeSymbol
+            TypeRepr.of[kyo.Chunk].typeSymbol,
+            TypeRepr.of[kyo.Span].typeSymbol,
+            TypeRepr.of[kyo.Result].typeSymbol,
+            // Added Phase 9:
+            TypeRepr.of[scala.util.Try].typeSymbol,
+            // Added Phase 13:
+            TypeRepr.of[scala.collection.immutable.ArraySeq].typeSymbol,
+            TypeRepr.of[scala.collection.immutable.Queue].typeSymbol,
+            TypeRepr.of[scala.collection.immutable.SortedSet].typeSymbol,
+            // Array is special — uses defn.ArrayClass not TypeRepr.of[Array].typeSymbol
+            defn.ArrayClass
         )
     end collectionSymbols
 
@@ -264,11 +293,14 @@ private[internal] object MacroUtils:
         )
     end optionalSymbols
 
-    /** Map type symbols: Map. */
+    /** Map type symbols: Map, kyo.Dict, SortedMap. */
     private[internal] def mapSymbols(using Quotes): Set[quotes.reflect.Symbol] =
         import quotes.reflect.*
         Set(
-            TypeRepr.of[Map].typeSymbol
+            TypeRepr.of[Map].typeSymbol,
+            TypeRepr.of[kyo.Dict].typeSymbol,
+            // Added Phase 13:
+            TypeRepr.of[scala.collection.immutable.SortedMap].typeSymbol
         )
     end mapSymbols
 

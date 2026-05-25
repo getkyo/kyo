@@ -12,6 +12,26 @@ import scala.annotation.tailrec
   */
 private[kyo] object SchemaSerializer:
 
+    /** Build a field-id -> field-name map from the macro-emitted `_fieldNames` array.
+      *
+      * Called once per Schema instance from a `val _fieldNameMap` emitted by `FocusMacro`; the resulting map is
+      * published to the reader via `Codec.Reader.withFieldNames`. Wire formats keyed by numeric id (Protobuf)
+      * consult the map to recover canonical names; JSON / StructureValueReader inherit the default no-op
+      * `withFieldNames` and never read the map. Hoisting the construction to a per-Schema `val` (rather than
+      * rebuilding it per decode inside the read body) keeps the cost at O(unique schemas) instead of O(decodes).
+      *
+      * Lives on `SchemaSerializer` (rather than the macro-only `SerializationMacro`) because the emitted code
+      * lives in user packages and needs the wider `private[kyo]` visibility that `SchemaSerializer` already has.
+      */
+    def buildFieldNameMap(names: Array[String]): Map[Int, String] =
+        val b = Map.newBuilder[Int, String]
+        var i = 0
+        while i < names.length do
+            b += (CodecMacro.fieldId(names(i)) -> names(i))
+            i += 1
+        b.result()
+    end buildFieldNameMap
+
     /** Writes a value to a Writer, dispatching to the direct or transform-aware path.
       *
       * A non-serializable Schema throws `SchemaNotSerializableException` from inside its own `serializeWrite` body (the sentinel lambda
@@ -172,17 +192,18 @@ private[kyo] object SchemaSerializer:
         if isNull(value) then Structure.Value.Null
         else
             value match
-                case s: String                => Structure.Value.Str(s)
-                case b: Boolean               => Structure.Value.Bool(b)
-                case i: Int                   => Structure.Value.Integer(i.toLong)
-                case l: Long                  => Structure.Value.Integer(l)
-                case d: Double                => Structure.Value.Decimal(d)
-                case f: Float                 => Structure.Value.Decimal(f.toDouble)
-                case s: Short                 => Structure.Value.Integer(s.toLong)
-                case b: Byte                  => Structure.Value.Integer(b.toLong)
-                case c: Char                  => Structure.Value.Str(c.toString)
-                case bd: BigDecimal           => Structure.Value.BigNum(bd)
-                case bi: BigInt               => Structure.Value.BigNum(BigDecimal(bi))
+                case s: String      => Structure.Value.Str(s)
+                case b: Boolean     => Structure.Value.Bool(b)
+                case i: Int         => Structure.Value.Integer(i.toLong)
+                case l: Long        => Structure.Value.Integer(l)
+                case d: Double      => Structure.Value.Decimal(d)
+                case f: Float       => Structure.Value.Decimal(f.toDouble)
+                case s: Short       => Structure.Value.Integer(s.toLong)
+                case b: Byte        => Structure.Value.Integer(b.toLong)
+                case c: Char        => Structure.Value.Str(c.toString)
+                case bd: BigDecimal => Structure.Value.BigNum(bd)
+                case bi: BigInt     => Structure.Value.BigNum(BigDecimal(bi))
+                // @unchecked: Maybe is an opaque type; the matcher cannot verify its erasure but a Maybe value is one
                 case m: (Maybe[?] @unchecked) => m.fold(Structure.Value.Null)(v => anyToStructureValue(v))
                 case o: Option[?]             => o.fold(Structure.Value.Null)(v => anyToStructureValue(v))
                 case sv: Structure.Value      => sv
@@ -246,12 +267,13 @@ private[kyo] object SchemaSerializer:
             else if show == "scala.Byte" then java.lang.Byte.valueOf(0.toByte)
             else if show == "scala.Boolean" then java.lang.Boolean.FALSE
             else if show == "scala.Char" then java.lang.Character.valueOf('\u0000')
+            // cast: None / Maybe.empty are AnyRef at runtime; force target type for the null-check protocol
             else if field.tag <:< Tag[Option[Any]] then None.asInstanceOf[AnyRef]
             else if field.tag <:< Tag[Maybe[Any]] then Maybe.empty.asInstanceOf[AnyRef]
             else null // JVM null for unknown reference types — required by macro null-check protocol
             end if
         end zeroFromTag
-        field.default.fold(zeroFromTag)(_.asInstanceOf[AnyRef])
+        field.default.fold(zeroFromTag)(_.asInstanceOf[AnyRef]) // cast: erased default value reified to AnyRef for slot storage
     end zeroForField
 
     /** Discriminator-aware deserialization path.
@@ -325,9 +347,14 @@ private[kyo] object SchemaSerializer:
                         val _                           = inner.objectStart()
                         val fields                      = scala.collection.mutable.ListBuffer[(String, Reader)]()
                         var foundVariant: Maybe[String] = Maybe.empty
+                        // Hash-equivalent discriminator detection: wire formats that key fields by
+                        // numeric id (Protobuf) surface field names as id-as-string when no name map
+                        // is installed; compare by both the canonical name (JSON / structure readers)
+                        // and the hashed id (Protobuf without a name map).
+                        val discFieldIdStr = CodecMacro.fieldId(discField).toString
                         while inner.hasNextField() do
                             val fname = inner.field()
-                            if fname == discField then
+                            if fname == discField || fname == discFieldIdStr then
                                 foundVariant = Maybe(inner.string())
                             else
                                 val captured = inner.captureValue()
@@ -438,7 +465,20 @@ private[kyo] object SchemaSerializer:
             else if _parsedFieldName.isEmpty then false
             else
                 val expected = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
-                _parsedFieldName.get == expected
+                val parsed   = _parsedFieldName.get
+                if parsed == expected then true
+                else
+                    // Wire formats that key fields by numeric id (Protobuf) surface fields as their
+                    // id-as-string when no field-name map is installed on the inner reader. The
+                    // DiscriminatorReader can't pre-populate that map (the variant case-class field
+                    // names aren't statically known at the discriminator level), so we fall back to
+                    // hash-equivalence here: if the stored parsed name parses as the same id that
+                    // `expected` hashes to, the field matches.
+                    val parsedAsId: Int =
+                        try Integer.parseInt(parsed)
+                        catch case _: NumberFormatException => -1
+                    parsedAsId > 0 && parsedAsId == CodecMacro.fieldId(expected)
+                end if
         end matchField
 
         override def lastFieldName(): String =

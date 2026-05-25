@@ -27,6 +27,20 @@ object ExpandMacro:
         else
             // Check containers BEFORE sealed trait/case class (List, Option, etc. are sealed but should be treated as containers)
             dealiased match
+                // Union types: flatten nested OrTypes, expand each leg, and rebuild the OrType. Each leg
+                // gets the structural `~` tagging with the leg's simple type-symbol name, mirroring the
+                // sealed-trait expansion shape so downstream Focus/Navigation logic treats them uniformly.
+                case OrType(_, _) =>
+                    val legs      = flattenOrType(dealiased)
+                    val tildeType = TypeRepr.of[Record.~]
+                    val tagged = legs.map { leg =>
+                        val sym      = leg.typeSymbol
+                        val legName  = if sym.exists then sym.name else leg.show
+                        val nameType = ConstantType(StringConstant(legName))
+                        val expanded = expandType(leg)
+                        tildeType.appliedTo(List(nameType, expanded))
+                    }
+                    tagged.reduce(OrType(_, _))
                 case AppliedType(tycon, args) if isKnownContainer(tycon) =>
                     val expandedArgs = args.map(expandType)
                     tycon.appliedTo(expandedArgs)
@@ -77,6 +91,14 @@ object ExpandMacro:
                             tildeType.appliedTo(List(nameType, fieldType))
                         if fields.nonEmpty then fields.reduce(AndType(_, _))
                         else dealiased
+                    else if sym.flags.is(Flags.JavaDefined) && sym.flags.is(Flags.Enum) then
+                        // Java enum: expand as sum of singleton variant names like the Scala sealed branch above.
+                        val tildeType = TypeRepr.of[Record.~]
+                        val variants = sym.children.map: child =>
+                            val nameType = ConstantType(StringConstant(child.name))
+                            tildeType.appliedTo(List(nameType, child.typeRef))
+                        if variants.nonEmpty then variants.reduce(OrType(_, _))
+                        else dealiased
                     else
                         // Fallback: identity
                         dealiased
@@ -92,6 +114,32 @@ object ExpandMacro:
 
     private def isStructural(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
         MacroUtils.isStructuralType(tpe)
+
+    /** Flatten a (possibly nested) `OrType` into its leaf legs, drop `Nothing`, and deduplicate by `=:=`.
+      *
+      * Mirrors `UnionMacro.collectOrTypeLegs` so the structural expansion and the runtime schema both see
+      * the same leg list. Rejects fully-degenerate unions (where dedup removed legs that weren't Nothing).
+      */
+    private def flattenOrType(using Quotes)(tpe: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] =
+        import quotes.reflect.*
+
+        def go(t: TypeRepr): List[TypeRepr] = t.dealias match
+            case OrType(a, b) => go(a) ++ go(b)
+            case other        => List(other)
+
+        val nothingTpe = TypeRepr.of[Nothing]
+        val raw        = go(tpe).filterNot(_ =:= nothingTpe)
+
+        val out = scala.collection.mutable.ListBuffer[TypeRepr]()
+        for leg <- raw do
+            if !out.exists(_ =:= leg) then out += leg
+        val deduped = out.toList
+
+        if deduped.isEmpty then
+            report.errorAndAbort(s"Union type ${tpe.show} reduces to Nothing; no schema can be derived.")
+
+        deduped
+    end flattenOrType
 
     private def isKnownContainer(using Quotes)(tycon: quotes.reflect.TypeRepr): Boolean =
         import quotes.reflect.*

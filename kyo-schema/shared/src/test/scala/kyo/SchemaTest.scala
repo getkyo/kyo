@@ -5263,19 +5263,31 @@ class SchemaTest extends Test:
 
         "plain class" in {
             typeCheckFailure("kyo.Schema.derived[kyo.MTOpaque]")(
-                "requires a case class or sealed trait"
+                "requires a case class, sealed trait, or Java enum"
             )
         }
 
         "open trait" in {
             typeCheckFailure("kyo.Schema.derived[kyo.MTOpenTrait]")(
-                "requires a case class or sealed trait"
+                "requires a case class, sealed trait, or Java enum"
             )
         }
 
         "primitive" in {
             typeCheckFailure("kyo.Schema.derived[Int]")(
-                "requires a case class or sealed trait"
+                "requires a case class, sealed trait, or Java enum"
+            )
+        }
+
+        "intersection type" in {
+            typeCheckFailure("kyo.Schema.derived[String & Int]")(
+                "intersection types have no general constructor"
+            )
+        }
+
+        "intersection type — error message points at .transform" in {
+            typeCheckFailure("kyo.Schema.derived[String & Int]")(
+                ".transform"
             )
         }
 

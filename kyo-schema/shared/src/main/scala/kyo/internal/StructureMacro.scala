@@ -218,6 +218,12 @@ object StructureMacro:
         else if sym == TypeRepr.of[BigDecimal].typeSymbol || sym == TypeRepr.of[java.math.BigDecimal].typeSymbol then
             '{ Structure.PrimitiveKind.BigDecimal }
         else if sym == TypeRepr.of[Unit].typeSymbol then '{ Structure.PrimitiveKind.Unit }
+        else if sym == TypeRepr.of[kyo.Instant].typeSymbol || sym == TypeRepr.of[java.time.Instant].typeSymbol then
+            '{ Structure.PrimitiveKind.Instant }
+        else if sym == TypeRepr.of[kyo.Duration].typeSymbol || sym == TypeRepr.of[java.time.Duration].typeSymbol then
+            '{ Structure.PrimitiveKind.Duration }
+        else if sym == TypeRepr.of[kyo.Frame].typeSymbol then '{ Structure.PrimitiveKind.Frame }
+        else if sym == TypeRepr.of[kyo.Text].typeSymbol then '{ Structure.PrimitiveKind.Text }
         else
             report.errorAndAbort(
                 s"No PrimitiveKind mapping for primitive type: ${tpe.show}. " +

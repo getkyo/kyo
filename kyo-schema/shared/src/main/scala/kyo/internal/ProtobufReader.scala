@@ -27,9 +27,14 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
     private var fieldNames: Map[Int, String] = Map.empty
     private var pendingTag: Boolean          = false
 
-    /** Set field name mapping for the current message level. */
-    def withFieldNames(names: Map[Int, String]): this.type =
-        fieldNames = names
+    /** Merge a field-id -> field-name mapping into this reader's known names.
+      *
+      * Merge (not overwrite) so multiple publishers — the case-class macro's per-message map and
+      * `SchemaSerializer.readWithDiscriminator`'s discriminator-field publish — can coexist on a single
+      * reader instance without clobbering each other.
+      */
+    override def withFieldNames(names: Map[Int, String]): this.type =
+        fieldNames = fieldNames ++ names
         this
 
     def objectStart(): Int =
