@@ -41,7 +41,7 @@ class ByteViewTest extends Test:
     "subView shares underlying array with correct bounds" in run {
         val bytes = Array[Byte](1, 2, 3, 4, 5)
         val view  = ByteView(bytes)
-        val sub   = view.subView(1, 4).asInstanceOf[ByteView.Heap]
+        val sub   = view.subView(1, 4)
         assert(sub.start == 1)
         assert(sub.end == 4)
         assert(sub.position == 1)

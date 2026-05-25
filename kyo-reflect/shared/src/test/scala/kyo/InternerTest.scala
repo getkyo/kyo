@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.internal.reflect.symbol.Interner
-import kyo.internal.reflect.symbol.Memo
 
 class InternerTest extends Test:
 
@@ -29,16 +28,20 @@ class InternerTest extends Test:
 
     // Test 3: intern from two different shards (different hash values) produces distinct entries.
     "names in different shards are distinct entries" in run {
-        // Use 1-shard interner so shard logic is exercised; then use 2-shard to force shard separation.
-        val interner = new Interner(32)
-        // "a" and "b" will most likely land in different shards given FNV-1a hash distribution.
-        val ba = utf8Bytes("alpha")
-        val bb = utf8Bytes("beta")
-        val na = interner.intern(ba, 0, ba.length)
-        val nb = interner.intern(bb, 0, bb.length)
-        assert(!(na eq nb))
-        // Confirm they resolve to distinct strings.
-        assert(na.string.get() != nb.string.get())
+        // Use a 2-shard interner. FNV-1a("kyo") & 1 == 0 and FNV-1a("foo") & 1 == 1,
+        // so "kyo" lands in shard 0 and "foo" lands in shard 1. Computed statically:
+        //   FNV-1a("kyo") = 1444849266 -> & 1 = 0 (shard 0)
+        //   FNV-1a("foo") = 703823575  -> & 1 = 1 (shard 1)
+        val interner = new Interner(2)
+        val bKyo     = utf8Bytes("kyo")
+        val bFoo     = utf8Bytes("foo")
+        val nKyo     = interner.intern(bKyo, 0, bKyo.length)
+        val nFoo     = interner.intern(bFoo, 0, bFoo.length)
+        // Entries are not the same object.
+        assert(!(nKyo eq nFoo))
+        // Each shard has exactly 1 entry: shard 0 has "kyo", shard 1 has "foo".
+        assert(interner.shardSize(0) == 1, "shard 0 should contain exactly 1 entry")
+        assert(interner.shardSize(1) == 1, "shard 1 should contain exactly 1 entry")
     }
 
     // Test 4: Name.asString returns the correct UTF-8 decoded string.

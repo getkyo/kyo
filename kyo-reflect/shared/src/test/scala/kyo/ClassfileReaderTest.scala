@@ -197,7 +197,7 @@ class ClassfileReaderTest extends Test:
         readClass("java/lang/Object.class").map: javaResult =>
             val javaSym = javaResult.classSymbol
             assert(javaSym.javaSpecific.isDefined, "Java-sourced symbol should have javaSpecific Present")
-            val tastyBytes = loadResourceBytes("/kyo/fixtures/PlainClass.tasty")
+            val tastyBytes = kyo.fixtures.Embedded.plainClassTasty
             firstClassSymbolFromTasty(tastyBytes).map: tastySym =>
                 assert(tastySym.javaSpecific.isEmpty, s"TASTy-sourced symbol should have javaSpecific Absent, got ${tastySym.javaSpecific}")
     }

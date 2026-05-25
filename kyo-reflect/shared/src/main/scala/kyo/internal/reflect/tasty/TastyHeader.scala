@@ -35,80 +35,105 @@ object TastyHeader:
         uuid: String
     )
 
+    private def truncated(using Frame): Data < Abort[ReflectError] =
+        Abort.fail(ReflectError.MalformedSection("header", "unexpected end of TASTy header"))
+
     /** Read the TASTy header from `view`, returning `Data` or a `ReflectError`.
+      *
+      * Uses explicit bounds checks via `view.remaining` before each read to avoid exception-based control flow.
       *
       * `Abort.fail(ReflectError.CorruptedFile(...))` if magic bytes mismatch. `Abort.fail(ReflectError.UnsupportedVersion(...))` if the
       * version is not compatible. `Abort.fail(ReflectError.MalformedSection(...))` if the header is truncated.
-      *
-      * ArrayIndexOutOfBoundsException from reading past the end is caught here and converted to MalformedSection, because TASTy parsers are
-      * only called when they know bytes remain (they do bounds-checking before entering this method in production use), but tests may
-      * supply truncated buffers.
       */
     def read(view: ByteView)(using Frame): Data < Abort[ReflectError] =
-        try readBytes(view)
-        catch
-            case _: ArrayIndexOutOfBoundsException =>
-                Abort.fail(ReflectError.MalformedSection("header", "unexpected end of TASTy header"))
+        // Step 1: check 4 magic bytes via explicit remaining guard.
+        if view.remaining < TastyFormat.MagicBytes.length then truncated
+        else checkMagic(view, 0)
 
-    private def readBytes(view: ByteView)(using Frame): Data < Abort[ReflectError] =
-        // Step 1: check 4 magic bytes
-        // readByte() returns a signed Byte; mask with & 0xff for unsigned comparison.
-        var i = 0
-        while i < TastyFormat.MagicBytes.length do
+    private def checkMagic(view: ByteView, i: Int)(using Frame): Data < Abort[ReflectError] =
+        if i >= TastyFormat.MagicBytes.length then readVersions(view)
+        else
             val expected = TastyFormat.MagicBytes(i)
             val actual   = view.readByte() & 0xff
             if actual != expected then
-                return Abort.fail(
+                Abort.fail(
                     ReflectError.CorruptedFile(
                         path = "<byte view>",
                         at = i.toLong,
                         reason = s"magic byte $i expected 0x${expected.toHexString} but got 0x${actual.toHexString}"
                     )
                 )
+            else checkMagic(view, i + 1)
             end if
-            i += 1
-        end while
-
-        // Step 2: version triple (3 Nats)
-        val fileMajor        = Varint.readNat(view)
-        val fileMinor        = Varint.readNat(view)
-        val fileExperimental = Varint.readNat(view)
-
-        // Step 3: check version compatibility using verbatim dotty formula
-        val supported = Reflect.supportedTastyVersion
-        val compatible = TastyFormat.isVersionCompatible(
-            fileMajor,
-            fileMinor,
-            fileExperimental,
-            supported.major,
-            supported.minor,
-            supported.experimental
-        )
-        if !compatible then
-            return Abort.fail(
-                ReflectError.UnsupportedVersion(
-                    found = Reflect.Version(fileMajor, fileMinor, fileExperimental),
-                    supported = supported
-                )
-            )
         end if
+    end checkMagic
 
-        // Step 4: tooling version string (length Nat + length bytes)
-        val toolingLength = Varint.readNat(view)
-        val toolingBytes  = new Array[Byte](toolingLength)
-        var j             = 0
-        while j < toolingLength do
-            toolingBytes(j) = view.readByte()
-            j += 1
-        val toolingVersion = Utf8.decode(toolingBytes, 0, toolingLength)
+    private def readVersions(view: ByteView)(using Frame): Data < Abort[ReflectError] =
+        // Step 2: version triple (3 Nats); each Nat is at least 1 byte.
+        if view.remaining < 3 then truncated
+        else
+            val fileMajor        = Varint.readNat(view)
+            val fileMinor        = Varint.readNat(view)
+            val fileExperimental = Varint.readNat(view)
 
-        // Step 5: UUID as two big-endian uncompressed Longs (16 bytes total)
-        val msb  = readUncompressedLong(view)
-        val lsb  = readUncompressedLong(view)
-        val uuid = f"${msb}%016x${lsb}%016x"
+            // Step 3: check version compatibility using verbatim dotty formula.
+            val supported = Reflect.supportedTastyVersion
+            val compatible = TastyFormat.isVersionCompatible(
+                fileMajor,
+                fileMinor,
+                fileExperimental,
+                supported.major,
+                supported.minor,
+                supported.experimental
+            )
+            if !compatible then
+                Abort.fail(
+                    ReflectError.UnsupportedVersion(
+                        found = Reflect.Version(fileMajor, fileMinor, fileExperimental),
+                        supported = supported
+                    )
+                )
+            else readTooling(view, fileMajor, fileMinor, fileExperimental)
+            end if
+        end if
+    end readVersions
 
-        Data(fileMajor, fileMinor, fileExperimental, toolingVersion, uuid)
-    end readBytes
+    private def readTooling(view: ByteView, fileMajor: Int, fileMinor: Int, fileExperimental: Int)(using
+        Frame
+    ): Data < Abort[ReflectError] =
+        // Step 4: tooling version string (length Nat + length bytes).
+        if view.remaining < 1 then truncated
+        else
+            val toolingLength = Varint.readNat(view)
+            if view.remaining < toolingLength then truncated
+            else
+                val toolingBytes = new Array[Byte](toolingLength)
+                var j            = 0
+                while j < toolingLength do
+                    toolingBytes(j) = view.readByte()
+                    j += 1
+                val toolingVersion = Utf8.decode(toolingBytes, 0, toolingLength)
+                readUuid(view, fileMajor, fileMinor, fileExperimental, toolingVersion)
+            end if
+        end if
+    end readTooling
+
+    private def readUuid(
+        view: ByteView,
+        fileMajor: Int,
+        fileMinor: Int,
+        fileExperimental: Int,
+        toolingVersion: String
+    )(using Frame): Data < Abort[ReflectError] =
+        // Step 5: UUID as two big-endian uncompressed Longs (16 bytes total).
+        if view.remaining < 16 then truncated
+        else
+            val msb  = readUncompressedLong(view)
+            val lsb  = readUncompressedLong(view)
+            val uuid = f"${msb}%016x${lsb}%016x"
+            Data(fileMajor, fileMinor, fileExperimental, toolingVersion, uuid)
+        end if
+    end readUuid
 
     /** Read 8 bytes big-endian as a Long (verbatim from TastyReader.readUncompressedLong). */
     private def readUncompressedLong(view: ByteView): Long =

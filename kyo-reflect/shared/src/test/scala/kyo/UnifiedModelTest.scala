@@ -38,15 +38,19 @@ class UnifiedModelTest extends Test:
 
     /** Load fixture bytes from test resources (TASTy or .class files). */
     private def loadFixture(name: String): Array[Byte] =
-        val is = getClass.getResourceAsStream(s"/kyo/fixtures/$name")
-        if is == null then throw new RuntimeException(s"Fixture not found: /kyo/fixtures/$name")
-        val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
-        var b   = is.read()
-        while b != -1 do
-            buf += b.toByte
-            b = is.read()
-        is.close()
-        buf.toArray
+        name match
+            case "PlainClass.tasty" => kyo.fixtures.Embedded.plainClassTasty
+            case other =>
+                val is = getClass.getResourceAsStream(s"/kyo/fixtures/$other")
+                if is == null then throw new RuntimeException(s"Fixture not found: /kyo/fixtures/$other")
+                val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
+                var b   = is.read()
+                while b != -1 do
+                    buf += b.toByte
+                    b = is.read()
+                is.close()
+                buf.toArray
+        end match
     end loadFixture
 
     private def readClass(binaryPath: String)(using Frame): ClassfileResult < (Sync & Abort[ReflectError]) =

@@ -87,7 +87,7 @@ object ByteView:
             val len = Varint.readNat(this)
             cursor + len
 
-        def subView(from: Int, until: Int): ByteView =
+        override def subView(from: Int, until: Int): ByteView.Heap =
             new Heap(bytes, from, until)
 
         def goto(addr: Int): Unit =

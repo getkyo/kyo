@@ -151,6 +151,9 @@ final class Interner(numShards: Int = 32):
         h & 0x7fffffff // keep positive
     end computeHash
 
+    /** Return the number of filled slots in shard `idx`. Package-accessible; for testing only. */
+    private[kyo] def shardSize(idx: Int): Int = countFilled(shards(idx).get())
+
 end Interner
 
 object Interner:

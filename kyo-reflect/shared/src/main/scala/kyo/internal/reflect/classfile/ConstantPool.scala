@@ -81,9 +81,17 @@ final class ConstantPool(
         entry(idx).map: cpEntry =>
             cpEntry match
                 case u: CpEntry.Utf8Lazy =>
-                    Sync.defer(u.decode(interner).string.get())
+                    Sync.defer {
+                        // Unsafe: Memo.get() is an unsafe-tier helper called inside Sync boundary.
+                        import AllowUnsafe.embrace.danger
+                        u.decode(interner).string.get()
+                    }
                 case CpEntry.Utf8Decoded(e) =>
-                    Sync.defer(e.string.get())
+                    Sync.defer {
+                        // Unsafe: Memo.get() is an unsafe-tier helper called inside Sync boundary.
+                        import AllowUnsafe.embrace.danger
+                        e.string.get()
+                    }
                 case _ =>
                     Abort.fail(ReflectError.ClassfileFormatError(path, s"Expected Utf8 at pool[$idx]"))
 

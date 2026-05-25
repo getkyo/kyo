@@ -22,15 +22,19 @@ import kyo.internal.reflect.type_.TypeArena
 class AstUnpicklerTest extends Test:
 
     private def loadFixtureBytes(fileName: String): Array[Byte] =
-        val stream = getClass.getResourceAsStream(s"/kyo/fixtures/$fileName")
-        if stream == null then throw new RuntimeException(s"Fixture not found: /kyo/fixtures/$fileName")
-        val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
-        var b   = stream.read()
-        while b != -1 do
-            buf += b.toByte
-            b = stream.read()
-        stream.close()
-        buf.toArray
+        fileName match
+            case "PlainClass.tasty" => kyo.fixtures.Embedded.plainClassTasty
+            case other =>
+                val stream = getClass.getResourceAsStream(s"/kyo/fixtures/$other")
+                if stream == null then throw new RuntimeException(s"Fixture not found: /kyo/fixtures/$other")
+                val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
+                var b   = stream.read()
+                while b != -1 do
+                    buf += b.toByte
+                    b = stream.read()
+                stream.close()
+                buf.toArray
+        end match
     end loadFixtureBytes
 
     /** Parse a TASTy file and run pass 1. Returns the Pass1Result. */

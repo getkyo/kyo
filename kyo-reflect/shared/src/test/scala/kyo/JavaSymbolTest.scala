@@ -68,7 +68,9 @@ class JavaSymbolTest extends Test:
 
     /** Run TASTy pass 1 on raw TASTy bytes and return the first non-root class symbol. */
     private def firstClassSymbolFromTasty(resourceName: String)(using Frame): Reflect.Symbol < (Sync & Abort[ReflectError]) =
-        val bytes = loadResourceBytes(s"/kyo/fixtures/$resourceName")
+        val bytes = resourceName match
+            case "PlainClass.tasty" => kyo.fixtures.Embedded.plainClassTasty
+            case other              => loadResourceBytes(s"/kyo/fixtures/$other")
         val view  = ByteView(bytes)
         val home  = new ClasspathRef
         val arena = new TypeArena

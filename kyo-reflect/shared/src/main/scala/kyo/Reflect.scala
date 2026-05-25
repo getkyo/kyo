@@ -51,7 +51,11 @@ object Reflect:
 
         extension (n: Name)
             /** Decode the interned bytes to a String (lazily cached). */
-            def asString: String = n.string.get()
+            def asString: String =
+                // Unsafe: Memo.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public API boundary.
+                import AllowUnsafe.embrace.danger
+                n.string.get()
+        end extension
     end Name
 
     final class Flags(val bits: Long) extends AnyVal:
@@ -211,14 +215,18 @@ object Reflect:
         private[kyo] val javaMetadata: Maybe[JavaMetadata] = Absent
     ):
         // Pure accessors (no effect, always present even after classpath close).
-        def fullName: Name           = Symbol.computeFullName(this)
-        def binaryName: String       = Symbol.computeBinaryName(this)
-        def isInline: Boolean        = flags.contains(Flag.Inline)
-        def isContextual: Boolean    = flags.contains(Flag.Given)
-        def isOpaque: Boolean        = flags.contains(Flag.Opaque)
-        def isPackageObject: Boolean = flags.contains(Flag.Module) && name.string.get() == "package"
-        def isModule: Boolean        = flags.contains(Flag.Module)
-        def isJava: Boolean          = flags.contains(Flag.JavaDefined)
+        def fullName: Name        = Symbol.computeFullName(this)
+        def binaryName: String    = Symbol.computeBinaryName(this)
+        def isInline: Boolean     = flags.contains(Flag.Inline)
+        def isContextual: Boolean = flags.contains(Flag.Given)
+        def isOpaque: Boolean     = flags.contains(Flag.Opaque)
+        def isPackageObject: Boolean =
+            // Unsafe: Memo.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public API boundary.
+            import AllowUnsafe.embrace.danger
+            flags.contains(Flag.Module) && name.string.get() == "package"
+        end isPackageObject
+        def isModule: Boolean = flags.contains(Flag.Module)
+        def isJava: Boolean   = flags.contains(Flag.JavaDefined)
 
         // Resolving accessors (return ReflectError.NotImplemented in Phase 0).
         def declaredType(using Frame): Type < (Sync & Abort[ReflectError])          = stub("Symbol.declaredType")
