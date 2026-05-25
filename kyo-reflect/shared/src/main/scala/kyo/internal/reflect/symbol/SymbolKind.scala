@@ -24,13 +24,32 @@ object SymbolKind:
         else if (flags & Reflect.Flag.Module.bit) != 0L then Reflect.SymbolKind.Object
         else Reflect.SymbolKind.Class
 
+    /** Resolve SymbolKind from a TYPEDEF modifier flags bitmask and the sub-tree tag, where the caller has confirmed the TYPEDEF payload
+      * does NOT contain a TEMPLATE (type-level definition). Discriminants (checked in order):
+      *   - OPAQUE flag: OpaqueType
+      *   - ABSTRACT flag OR bodyTag is TYPEBOUNDS/TYPEBOUNDStpt: AbstractType (abstract type member, e.g. `type Item` in a trait). dotty
+      *     emits TYPEBOUNDS or TYPEBOUNDStpt for abstract type members; the ABSTRACT (Deferred) modifier may or may not be present.
+      *   - else: TypeAlias
+      */
+    def fromTypedefTypeFlagsAndBody(flags: Long, bodyTag: Int): Reflect.SymbolKind =
+        if (flags & Reflect.Flag.Opaque.bit) != 0L then Reflect.SymbolKind.OpaqueType
+        else if (flags & Reflect.Flag.Abstract.bit) != 0L
+            || bodyTag == TastyFormat.TYPEBOUNDS
+            || bodyTag == TastyFormat.TYPEBOUNDStpt
+        then Reflect.SymbolKind.AbstractType
+        else Reflect.SymbolKind.TypeAlias
+
     /** Resolve SymbolKind from a TYPEDEF modifier flags bitmask, where the caller has confirmed the TYPEDEF payload does NOT contain a
       * TEMPLATE (type-level definition). Discriminants:
       *   - OPAQUE flag: OpaqueType
-      *   - else: TypeAlias (TYPEBOUNDS-vs-alias distinction is resolved lazily in Phase 4)
+      *   - ABSTRACT flag: AbstractType (abstract type member, e.g. `type Item` in a trait)
+      *   - else: TypeAlias
+      *
+      * Prefer fromTypedefTypeFlagsAndBody when the sub-tree tag is available, for more reliable AbstractType detection.
       */
     def fromTypedefTypeFlags(flags: Long): Reflect.SymbolKind =
         if (flags & Reflect.Flag.Opaque.bit) != 0L then Reflect.SymbolKind.OpaqueType
+        else if (flags & Reflect.Flag.Abstract.bit) != 0L then Reflect.SymbolKind.AbstractType
         else Reflect.SymbolKind.TypeAlias
 
     /** Map a VALDEF modifier flags bitmask to Val or Var. */

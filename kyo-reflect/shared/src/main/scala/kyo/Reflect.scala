@@ -153,6 +153,8 @@ object Reflect:
             case StringVal(s: String)
             case IntVal(i: Int)
             case LongVal(l: Long)
+            case FloatVal(f: Float)
+            case DoubleVal(d: Double)
             case BoolVal(b: Boolean)
             case ClassVal(tpe: Type)
             case EnumVal(enumType: Symbol, constant: Name)
@@ -249,23 +251,37 @@ object Reflect:
         end computeFullName
 
         private[Reflect] def computeBinaryName(s: Symbol): String =
-            // Walk owner chain: packages separated by '.', nested classes by '$'
-            val parts = new scala.collection.mutable.ArrayBuffer[String]()
+            // Walk owner chain producing JVM binary form:
+            //   - packages (kind == Package) contribute segments separated by '/'
+            //   - class/trait/object segments are separated by '$' from a preceding class segment
+            //   - the overall package prefix uses '/', inner class transitions use '$'
+            // Example: java.util.Map.Entry -> "java/util/Map$Entry"
+            // Example: com.example.Foo (top-level) -> "com/example/Foo"
+            val parts = new scala.collection.mutable.ArrayBuffer[(String, SymbolKind)]()
             var cur   = s
             while (cur ne null) && (cur.owner ne cur) && cur.owner != null do
-                parts.prepend(Name.asString(cur.name))
+                parts.prepend((Name.asString(cur.name), cur.kind))
                 cur = cur.owner
-            parts.prepend(Name.asString(cur.name))
-            val filtered = parts.filter(_.nonEmpty)
+            parts.prepend((Name.asString(cur.name), cur.kind))
+            val filtered = parts.filter(_._1.nonEmpty)
             if filtered.isEmpty then ""
             else
                 val sb = new StringBuilder()
                 var i  = 0
                 while i < filtered.length do
+                    val (segment, kind) = filtered(i)
                     if i > 0 then
-                        sb.append('.')
+                        // Use '$' if the previous segment was a class-like kind, '/' otherwise
+                        val prevKind = filtered(i - 1)._2
+                        if prevKind == SymbolKind.Class || prevKind == SymbolKind.Trait ||
+                            prevKind == SymbolKind.Object
+                        then
+                            sb.append('$')
+                        else
+                            sb.append('/')
+                        end if
                     end if
-                    sb.append(filtered(i))
+                    sb.append(segment)
                     i += 1
                 end while
                 sb.toString

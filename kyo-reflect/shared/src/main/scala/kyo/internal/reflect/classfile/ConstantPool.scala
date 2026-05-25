@@ -96,6 +96,34 @@ final class ConstantPool(
                 case _ =>
                     Abort.fail(ReflectError.ClassfileFormatError(path, s"Expected Class at pool[$idx]"))
 
+    /** Return an integer constant at `idx`. */
+    def integer(idx: Int)(using Frame): Int < Abort[ReflectError] =
+        entry(idx).map: cpEntry =>
+            cpEntry match
+                case CpEntry.CpInteger(value) => value
+                case _                        => Abort.fail(ReflectError.ClassfileFormatError(path, s"Expected Integer at pool[$idx]"))
+
+    /** Return a long constant at `idx`. */
+    def long_(idx: Int)(using Frame): Long < Abort[ReflectError] =
+        entry(idx).map: cpEntry =>
+            cpEntry match
+                case CpEntry.CpLong(value) => value
+                case _                     => Abort.fail(ReflectError.ClassfileFormatError(path, s"Expected Long at pool[$idx]"))
+
+    /** Return a float constant at `idx`. */
+    def float_(idx: Int)(using Frame): Float < Abort[ReflectError] =
+        entry(idx).map: cpEntry =>
+            cpEntry match
+                case CpEntry.CpFloat(value) => value
+                case _                      => Abort.fail(ReflectError.ClassfileFormatError(path, s"Expected Float at pool[$idx]"))
+
+    /** Return a double constant at `idx`. */
+    def double_(idx: Int)(using Frame): Double < Abort[ReflectError] =
+        entry(idx).map: cpEntry =>
+            cpEntry match
+                case CpEntry.CpDouble(value) => value
+                case _                       => Abort.fail(ReflectError.ClassfileFormatError(path, s"Expected Double at pool[$idx]"))
+
     /** Return (name, descriptor) for a CONSTANT_NameAndType entry. */
     def nameAndType(idx: Int)(using Frame): (String, String) < (Sync & Abort[ReflectError]) =
         entry(idx).map: cpEntry =>

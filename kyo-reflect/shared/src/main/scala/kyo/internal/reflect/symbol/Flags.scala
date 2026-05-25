@@ -75,9 +75,11 @@ object Flags:
         if (acc & 0x0004) != 0 then bits |= Flag.Protected.bit
         if (acc & 0x0010) != 0 then bits |= Flag.Final.bit
         if (acc & 0x0200) != 0 then bits |= Flag.Abstract.bit
+        if (acc & 0x0200) != 0 then bits |= Flag.Trait.bit // ACC_INTERFACE -> Trait
         if (acc & 0x1000) != 0 then bits |= Flag.Synthetic.bit
         if (acc & 0x4000) != 0 then bits |= Flag.Enum.bit
         if (acc & 0x0008) != 0 then bits |= Flag.JavaDefined.bit // ACC_STATIC
+        // Flag.JavaRecord is NOT set here; set by ClassfileUnpickler when Record attribute found.
         new Reflect.Flags(bits)
     end fromJvmAccessFlags
 

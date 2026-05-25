@@ -4,6 +4,7 @@ import kyo.*
 import kyo.internal.reflect.binary.ByteView
 import kyo.internal.reflect.query.ClasspathRef
 import kyo.internal.reflect.symbol.Flags as FlagsHelper
+import kyo.internal.reflect.symbol.FqnCanonicalizer
 import kyo.internal.reflect.symbol.Interner
 import kyo.internal.reflect.symbol.Symbol as SymbolFactory
 import kyo.internal.reflect.type_.TypeArena
@@ -207,14 +208,18 @@ object ClassfileUnpickler:
     // Member info reading
     // -------------------------------------------------------------------------
 
-    /** Raw parsed data from a field_info or method_info entry. */
+    /** Raw parsed data from a field_info or method_info entry.
+      *
+      * annotationBytes stores the raw bytes of RuntimeVisibleAnnotations and RuntimeInvisibleAnnotations attributes for deferred decoding.
+      */
     final private case class MemberInfo(
         accessFlags: Int,
         nameIdx: Int,
         descriptorIdx: Int,
         signatureIdx: Maybe[Int],
         exceptionIdxs: Chunk[Int],
-        hasRuntimeVisibleAnnotations: Boolean
+        visibleAnnotationBytes: Maybe[Array[Byte]],
+        invisibleAnnotationBytes: Maybe[Array[Byte]]
     )
 
     private def readMemberInfos(
@@ -252,9 +257,17 @@ object ClassfileUnpickler:
             val attrCount   = readU2(view)
             (accessFlags, nameIdx, descIdx, attrCount)
         }.map: (accessFlags, nameIdx, descIdx, attrCount) =>
-            readMemberAttributes(view, pool, path, attrCount, Maybe.empty, Chunk.empty, hasRVA = false).map:
-                (sigIdx, exceptionIdxs, hasRVA) =>
-                    MemberInfo(accessFlags, nameIdx, descIdx, sigIdx, exceptionIdxs, hasRVA)
+            readMemberAttributes(
+                view,
+                pool,
+                path,
+                attrCount,
+                Maybe.empty,
+                Chunk.empty,
+                Maybe.empty,
+                Maybe.empty
+            ).map: (sigIdx, exceptionIdxs, visAnn, invisAnn) =>
+                MemberInfo(accessFlags, nameIdx, descIdx, sigIdx, exceptionIdxs, visAnn, invisAnn)
 
     private def readMemberAttributes(
         view: ByteView,
@@ -263,9 +276,10 @@ object ClassfileUnpickler:
         remaining: Int,
         sigIdx: Maybe[Int],
         exceptionIdxs: Chunk[Int],
-        hasRVA: Boolean
-    )(using Frame): (Maybe[Int], Chunk[Int], Boolean) < (Sync & Abort[ReflectError]) =
-        if remaining == 0 then (sigIdx, exceptionIdxs, hasRVA)
+        visibleAnnBytes: Maybe[Array[Byte]],
+        invisibleAnnBytes: Maybe[Array[Byte]]
+    )(using Frame): (Maybe[Int], Chunk[Int], Maybe[Array[Byte]], Maybe[Array[Byte]]) < (Sync & Abort[ReflectError]) =
+        if remaining == 0 then (sigIdx, exceptionIdxs, visibleAnnBytes, invisibleAnnBytes)
         else
             Sync.defer {
                 val nameIdx = readU2(view)
@@ -277,7 +291,16 @@ object ClassfileUnpickler:
                         case ClassfileFormat.AttrSignature =>
                             val idx = Sync.defer(readU2(view))
                             idx.map: i =>
-                                readMemberAttributes(view, pool, path, remaining - 1, Present(i), exceptionIdxs, hasRVA)
+                                readMemberAttributes(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    Present(i),
+                                    exceptionIdxs,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes
+                                )
 
                         case ClassfileFormat.AttrExceptions =>
                             Sync.defer {
@@ -289,15 +312,62 @@ object ClassfileUnpickler:
                                     k += 1
                                 idxs
                             }.map: idxs =>
-                                readMemberAttributes(view, pool, path, remaining - 1, sigIdx, idxs, hasRVA)
+                                readMemberAttributes(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    sigIdx,
+                                    idxs,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes
+                                )
 
                         case ClassfileFormat.AttrRuntimeVisibleAnnotations =>
-                            Sync.defer(skipBytes(view, attrLen)).map: _ =>
-                                readMemberAttributes(view, pool, path, remaining - 1, sigIdx, exceptionIdxs, hasRVA = true)
+                            // Capture raw bytes for deferred annotation decoding
+                            Sync.defer {
+                                val bytes = captureBytes(view, attrLen)
+                                bytes
+                            }.map: bytes =>
+                                readMemberAttributes(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    sigIdx,
+                                    exceptionIdxs,
+                                    Present(bytes),
+                                    invisibleAnnBytes
+                                )
+
+                        case ClassfileFormat.AttrRuntimeInvisibleAnnotations =>
+                            Sync.defer {
+                                val bytes = captureBytes(view, attrLen)
+                                bytes
+                            }.map: bytes =>
+                                readMemberAttributes(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    sigIdx,
+                                    exceptionIdxs,
+                                    visibleAnnBytes,
+                                    Present(bytes)
+                                )
 
                         case _ =>
                             Sync.defer(skipBytes(view, attrLen)).map: _ =>
-                                readMemberAttributes(view, pool, path, remaining - 1, sigIdx, exceptionIdxs, hasRVA)
+                                readMemberAttributes(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    sigIdx,
+                                    exceptionIdxs,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes
+                                )
 
     // -------------------------------------------------------------------------
     // Class-level attribute reading
@@ -309,7 +379,9 @@ object ClassfileUnpickler:
         enclosingClassIdx: Maybe[Int],
         enclosingMethodIdx: Maybe[Int],
         hasRecord: Boolean,
-        recordComponents: Chunk[(Int, Int, Maybe[Int])]
+        recordComponents: Chunk[(Int, Int, Maybe[Int])],
+        visibleAnnotationBytes: Maybe[Array[Byte]],
+        invisibleAnnotationBytes: Maybe[Array[Byte]]
     )
 
     private def readClassAttributes(
@@ -328,7 +400,9 @@ object ClassfileUnpickler:
                 Maybe.empty,
                 Maybe.empty,
                 hasRecord = false,
-                Chunk.empty
+                Chunk.empty,
+                Maybe.empty,
+                Maybe.empty
             )
 
     private def readClassAttrList(
@@ -341,10 +415,21 @@ object ClassfileUnpickler:
         enclosingClassIdx: Maybe[Int],
         enclosingMethodIdx: Maybe[Int],
         hasRecord: Boolean,
-        recordComponents: Chunk[(Int, Int, Maybe[Int])]
+        recordComponents: Chunk[(Int, Int, Maybe[Int])],
+        visibleAnnBytes: Maybe[Array[Byte]],
+        invisibleAnnBytes: Maybe[Array[Byte]]
     )(using Frame): ClassAttributes < (Sync & Abort[ReflectError]) =
         if remaining == 0 then
-            ClassAttributes(sigIdx, innerClasses, enclosingClassIdx, enclosingMethodIdx, hasRecord, recordComponents)
+            ClassAttributes(
+                sigIdx,
+                innerClasses,
+                enclosingClassIdx,
+                enclosingMethodIdx,
+                hasRecord,
+                recordComponents,
+                visibleAnnBytes,
+                invisibleAnnBytes
+            )
         else
             Sync.defer {
                 val nameIdx = readU2(view)
@@ -365,7 +450,9 @@ object ClassfileUnpickler:
                                     enclosingClassIdx,
                                     enclosingMethodIdx,
                                     hasRecord,
-                                    recordComponents
+                                    recordComponents,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes
                                 )
 
                         case ClassfileFormat.AttrInnerClasses =>
@@ -393,7 +480,9 @@ object ClassfileUnpickler:
                                     enclosingClassIdx,
                                     enclosingMethodIdx,
                                     hasRecord,
-                                    recordComponents
+                                    recordComponents,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes
                                 )
 
                         case ClassfileFormat.AttrEnclosingMethod =>
@@ -413,36 +502,15 @@ object ClassfileUnpickler:
                                     Present(classIdx),
                                     methodMaybe,
                                     hasRecord,
-                                    recordComponents
+                                    recordComponents,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes
                                 )
 
                         case ClassfileFormat.AttrRecord =>
-                            Sync.defer {
-                                val numComponents = readU2(view)
-                                var comps         = Chunk.empty[(Int, Int, Maybe[Int])]
-                                var k             = 0
-                                while k < numComponents do
-                                    val compNameIdx = readU2(view)
-                                    val compDescIdx = readU2(view)
-                                    val compAttrCnt = readU2(view)
-                                    var compSigIdx  = Maybe.empty[Int]
-                                    var j           = 0
-                                    while j < compAttrCnt do
-                                        val cAttrNameIdx = readU2(view)
-                                        val cAttrLen     = readU4(view)
-                                        // We don't have pool access in Sync.defer here,
-                                        // store nameIdx for later resolution.
-                                        // For simplicity: skip all component attributes inline.
-                                        // Signature attribute index = 1 (tag = CONSTANT_Utf8 at typical small class)
-                                        // We will read cAttrLen bytes and ignore.
-                                        skipBytes(view, cAttrLen)
-                                        j += 1
-                                    end while
-                                    comps = comps.appended((compNameIdx, compDescIdx, compSigIdx))
-                                    k += 1
-                                end while
-                                comps
-                            }.map: comps =>
+                            // Parse Record attribute: list of components with name, descriptor,
+                            // and optional Signature sub-attribute.
+                            readRecordComponents(view, pool, path).map: comps =>
                                 readClassAttrList(
                                     view,
                                     pool,
@@ -453,7 +521,49 @@ object ClassfileUnpickler:
                                     enclosingClassIdx,
                                     enclosingMethodIdx,
                                     hasRecord = true,
-                                    comps
+                                    comps,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes
+                                )
+
+                        case ClassfileFormat.AttrRuntimeVisibleAnnotations =>
+                            Sync.defer {
+                                val bytes = captureBytes(view, attrLen)
+                                bytes
+                            }.map: bytes =>
+                                readClassAttrList(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    sigIdx,
+                                    innerClasses,
+                                    enclosingClassIdx,
+                                    enclosingMethodIdx,
+                                    hasRecord,
+                                    recordComponents,
+                                    Present(bytes),
+                                    invisibleAnnBytes
+                                )
+
+                        case ClassfileFormat.AttrRuntimeInvisibleAnnotations =>
+                            Sync.defer {
+                                val bytes = captureBytes(view, attrLen)
+                                bytes
+                            }.map: bytes =>
+                                readClassAttrList(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    sigIdx,
+                                    innerClasses,
+                                    enclosingClassIdx,
+                                    enclosingMethodIdx,
+                                    hasRecord,
+                                    recordComponents,
+                                    visibleAnnBytes,
+                                    Present(bytes)
                                 )
 
                         case _ =>
@@ -468,8 +578,72 @@ object ClassfileUnpickler:
                                     enclosingClassIdx,
                                     enclosingMethodIdx,
                                     hasRecord,
-                                    recordComponents
+                                    recordComponents,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes
                                 )
+
+    /** Parse Record attribute components.
+      *
+      * Each component has: nameIdx (u2), descriptorIdx (u2), and attrCount (u2) sub-attributes. We extract Signature sub-attribute index if
+      * present; skip others.
+      */
+    private def readRecordComponents(
+        view: ByteView,
+        pool: ConstantPool,
+        path: String
+    )(using Frame): Chunk[(Int, Int, Maybe[Int])] < (Sync & Abort[ReflectError]) =
+        Sync.defer(readU2(view)).map: numComponents =>
+            readRecordComponentList(view, pool, path, numComponents, 0, Chunk.empty)
+
+    private def readRecordComponentList(
+        view: ByteView,
+        pool: ConstantPool,
+        path: String,
+        total: Int,
+        idx: Int,
+        acc: Chunk[(Int, Int, Maybe[Int])]
+    )(using Frame): Chunk[(Int, Int, Maybe[Int])] < (Sync & Abort[ReflectError]) =
+        if idx >= total then acc
+        else
+            Sync.defer {
+                val compNameIdx = readU2(view)
+                val compDescIdx = readU2(view)
+                val compAttrCnt = readU2(view)
+                (compNameIdx, compDescIdx, compAttrCnt)
+            }.map: (compNameIdx, compDescIdx, compAttrCnt) =>
+                readRecordComponentAttributes(view, pool, path, compAttrCnt, Maybe.empty).map: sigIdx =>
+                    readRecordComponentList(
+                        view,
+                        pool,
+                        path,
+                        total,
+                        idx + 1,
+                        acc.appended((compNameIdx, compDescIdx, sigIdx))
+                    )
+
+    private def readRecordComponentAttributes(
+        view: ByteView,
+        pool: ConstantPool,
+        path: String,
+        remaining: Int,
+        sigIdx: Maybe[Int]
+    )(using Frame): Maybe[Int] < (Sync & Abort[ReflectError]) =
+        if remaining == 0 then sigIdx
+        else
+            Sync.defer {
+                val attrNameIdx = readU2(view)
+                val attrLen     = readU4(view)
+                (attrNameIdx, attrLen)
+            }.map: (attrNameIdx, attrLen) =>
+                pool.utf8(attrNameIdx).map: attrName =>
+                    attrName match
+                        case ClassfileFormat.AttrSignature =>
+                            Sync.defer(readU2(view)).map: idx =>
+                                readRecordComponentAttributes(view, pool, path, remaining - 1, Present(idx))
+                        case _ =>
+                            Sync.defer(skipBytes(view, attrLen)).map: _ =>
+                                readRecordComponentAttributes(view, pool, path, remaining - 1, sigIdx)
 
     // -------------------------------------------------------------------------
     // Symbol construction
@@ -489,10 +663,8 @@ object ClassfileUnpickler:
         classAttrs: ClassAttributes
     )(using Frame): ClassfileResult < (Sync & Abort[ReflectError]) =
 
-        val simpleName   = thisBinaryName.split("[./]").last
         val isInterface  = (accessFlags & ClassfileFormat.ACC_INTERFACE) != 0
         val isAnnotation = (accessFlags & ClassfileFormat.ACC_ANNOTATION) != 0
-        val isEnum       = (accessFlags & ClassfileFormat.ACC_ENUM) != 0
         val isRecord     = classAttrs.hasRecord
 
         val kind =
@@ -501,34 +673,287 @@ object ClassfileUnpickler:
 
         val baseFlags   = FlagsHelper.fromJvmAccessFlags(accessFlags)
         val javaDefined = new Reflect.Flags(Reflect.Flag.JavaDefined.bit)
-        val traitFlag   = if isInterface || isAnnotation then new Reflect.Flags(Reflect.Flag.Trait.bit) else Reflect.Flags.empty
         val recordFlag  = if isRecord then new Reflect.Flags(Reflect.Flag.JavaRecord.bit) else Reflect.Flags.empty
-        val classFlags  = baseFlags | javaDefined | traitFlag | recordFlag
-        val classMetadata = Reflect.JavaMetadata(
-            throwsTypes = Chunk.empty,
-            annotations = Chunk.empty,
-            enclosingMethod = Absent,
-            accessFlags = accessFlags,
-            recordComponents = Chunk.empty
-        )
+        val classFlags  = baseFlags | javaDefined | recordFlag
 
-        val classSym = SymbolFactory.makeSymbol(
-            kind,
-            classFlags,
-            Reflect.Name(simpleName),
-            null,
-            home,
-            Reflect.Symbol.JavaOrigin,
-            Present(classMetadata)
-        )
+        // Build inner class table and FQN canonicalization.
+        // Must be done before constructing the class symbol so we can set the correct owner.
+        buildInnerClassTable(pool, path, classAttrs.innerClasses).map: innerTable =>
+            // Determine the symbol's name and owner from the inner class table.
+            // For inner classes, use the simple inner name; set owner to an unresolved outer symbol.
+            // For top-level classes, use the simple class name; owner = null.
+            val (symName, symOwner) = resolveNameAndOwner(thisBinaryName, innerTable, home)
 
-        // Build member symbols
-        buildMemberSymbols(pool, interner, home, path, classSym, fieldInfos, isMethods = false).map: fieldSyms =>
-            buildMemberSymbols(pool, interner, home, path, classSym, methodInfos, isMethods = true).map: methodSyms =>
-                val allSymbols = fieldSyms ++ methodSyms
-                buildInnerClassTable(pool, path, classAttrs.innerClasses).map: innerTable =>
-                    ClassfileResult(classSym, parents, innerTable, allSymbols, arena)
+            // Build enclosingMethod from EnclosingMethod attribute
+            buildEnclosingMethod(pool, path, classAttrs.enclosingClassIdx, classAttrs.enclosingMethodIdx, innerTable, home).map:
+                enclosingMethodMaybe =>
+                    // Build record components if this is a record class
+                    buildRecordComponents(pool, interner, home, path, classAttrs.recordComponents, isRecord).map: recordComps =>
+                        // Decode class-level annotations
+                        decodeAnnotations(pool, interner, home, classAttrs.visibleAnnotationBytes, classAttrs.invisibleAnnotationBytes).map:
+                            classAnnotations =>
+                                val classMetadata = Reflect.JavaMetadata(
+                                    throwsTypes = Chunk.empty,
+                                    annotations = classAnnotations,
+                                    enclosingMethod = enclosingMethodMaybe,
+                                    accessFlags = accessFlags,
+                                    recordComponents = recordComps
+                                )
+
+                                val classSym = SymbolFactory.makeSymbol(
+                                    kind,
+                                    classFlags,
+                                    Reflect.Name(symName),
+                                    symOwner,
+                                    home,
+                                    Reflect.Symbol.JavaOrigin,
+                                    Present(classMetadata)
+                                )
+
+                                // Build member symbols
+                                buildMemberSymbols(pool, interner, home, path, classSym, fieldInfos, isMethods = false).map: fieldSyms =>
+                                    buildMemberSymbols(
+                                        pool,
+                                        interner,
+                                        home,
+                                        path,
+                                        classSym,
+                                        methodInfos,
+                                        isMethods = true
+                                    ).map: methodSyms =>
+                                        val allSymbols = fieldSyms ++ methodSyms
+                                        ClassfileResult(classSym, parents, innerTable, allSymbols, arena)
     end buildResult
+
+    /** Resolve the symbol name and owner symbol for a class, using the inner class table.
+      *
+      * For inner classes: uses the simple inner name from the table and creates an unresolved outer symbol as the owner. For
+      * anonymous/local classes: uses the '$'-form name, owner = null. For top-level classes: uses the simple class name (last segment after
+      * '/'), owner = null.
+      */
+    private def resolveNameAndOwner(
+        thisBinaryName: String,
+        innerTable: Map[String, (String, String)],
+        home: ClasspathRef
+    ): (String, Reflect.Symbol) =
+        innerTable.get(thisBinaryName) match
+            case Some((outerBinaryName, innerSimpleName))
+                if outerBinaryName.nonEmpty && innerSimpleName.nonEmpty =>
+                // Named inner class: use innerSimpleName; create an unresolved outer symbol
+                val outerSym = buildPackageOwnerChain(outerBinaryName, innerTable, home)
+                (innerSimpleName, outerSym)
+            case Some(_) =>
+                // Anonymous, local, or partially-resolved: use '$'-form name, owner = null
+                (thisBinaryName.replace('/', '.'), null)
+            case None =>
+                // Top-level class: parse the package prefix and class name.
+                // The class name is the last segment (after the last '/').
+                // The package prefix (segments before the last '/') becomes the owner chain.
+                val segments  = thisBinaryName.split("/")
+                val className = segments.last
+                val pkgOwner  = buildPackageSymbol(segments.dropRight(1), home)
+                (className, pkgOwner)
+
+    /** Build an owner symbol for an outer binary name. Creates a chain of package/class owner symbols so that computeFullName and
+      * computeBinaryName produce correct results.
+      *
+      * For a top-level outer class "java/util/Map": creates a package symbol for "java.util" as owner, then a class symbol for "Map" as the
+      * returned symbol.
+      */
+    private def buildPackageOwnerChain(
+        outerBinaryName: String,
+        innerTable: Map[String, (String, String)],
+        home: ClasspathRef
+    ): Reflect.Symbol =
+        // Check if the outer is itself an inner class
+        innerTable.get(outerBinaryName) match
+            case Some((outerOuterBinaryName, outerSimpleName))
+                if outerOuterBinaryName.nonEmpty && outerSimpleName.nonEmpty =>
+                // Nested inner class: recurse
+                val grandParent = buildPackageOwnerChain(outerOuterBinaryName, innerTable, home)
+                SymbolFactory.makeSymbol(
+                    Reflect.SymbolKind.Class,
+                    new Reflect.Flags(Reflect.Flag.JavaDefined.bit),
+                    Reflect.Name(outerSimpleName),
+                    grandParent,
+                    home,
+                    Reflect.Symbol.JavaOrigin
+                )
+            case _ =>
+                // Top-level outer class: parse the package prefix and class name
+                val segments  = outerBinaryName.split("/")
+                val className = segments.last
+                val pkgSymbol = buildPackageSymbol(segments.dropRight(1), home)
+                SymbolFactory.makeSymbol(
+                    Reflect.SymbolKind.Class,
+                    new Reflect.Flags(Reflect.Flag.JavaDefined.bit),
+                    Reflect.Name(className),
+                    pkgSymbol,
+                    home,
+                    Reflect.Symbol.JavaOrigin
+                )
+
+    /** Build a chain of Package symbols for a package path (e.g., Array("java", "util")). Returns the innermost package symbol. If segments
+      * is empty, returns null.
+      */
+    private def buildPackageSymbol(
+        segments: Array[String],
+        home: ClasspathRef
+    ): Reflect.Symbol =
+        if segments.isEmpty then null
+        else
+            var cur: Reflect.Symbol = null
+            var i                   = 0
+            while i < segments.length do
+                cur = SymbolFactory.makeSymbol(
+                    Reflect.SymbolKind.Package,
+                    new Reflect.Flags(Reflect.Flag.JavaDefined.bit),
+                    Reflect.Name(segments(i)),
+                    cur,
+                    home,
+                    Reflect.Symbol.JavaOrigin
+                )
+                i += 1
+            end while
+            cur
+
+    private def buildEnclosingMethod(
+        pool: ConstantPool,
+        path: String,
+        enclosingClassIdx: Maybe[Int],
+        enclosingMethodIdx: Maybe[Int],
+        innerTable: Map[String, (String, String)],
+        home: ClasspathRef
+    )(using Frame): Maybe[(Reflect.Symbol, Reflect.Name)] < (Sync & Abort[ReflectError]) =
+        enclosingClassIdx match
+            case Absent => Absent
+            case Present(classIdx) =>
+                pool.classRef(classIdx).map: enclosingBinaryName =>
+                    val enclosingFqn   = FqnCanonicalizer.toFullName(enclosingBinaryName, innerTable)
+                    val enclosingName  = enclosingFqn.split("\\.").last
+                    val enclosingOwner = buildPackageOwnerChain(enclosingBinaryName, innerTable, home)
+                    val enclosingClassSym = SymbolFactory.makeSymbol(
+                        Reflect.SymbolKind.Unresolved,
+                        new Reflect.Flags(Reflect.Flag.JavaDefined.bit),
+                        Reflect.Name(enclosingName),
+                        enclosingOwner,
+                        home,
+                        Reflect.Symbol.JavaOrigin
+                    )
+                    enclosingMethodIdx match
+                        case Absent => Present((enclosingClassSym, Reflect.Name("")))
+                        case Present(methodIdx) =>
+                            pool.nameAndType(methodIdx).map: (methodName, _) =>
+                                Present((enclosingClassSym, Reflect.Name(methodName)))
+                    end match
+
+    private def buildRecordComponents(
+        pool: ConstantPool,
+        interner: Interner,
+        home: ClasspathRef,
+        path: String,
+        components: Chunk[(Int, Int, Maybe[Int])],
+        isRecord: Boolean
+    )(using Frame): Chunk[(Reflect.Name, Reflect.Type)] < (Sync & Abort[ReflectError]) =
+        if !isRecord || components.isEmpty then Chunk.empty
+        else buildRecordComponentList(pool, interner, home, path, components, 0, Chunk.empty)
+
+    private def buildRecordComponentList(
+        pool: ConstantPool,
+        interner: Interner,
+        home: ClasspathRef,
+        path: String,
+        components: Chunk[(Int, Int, Maybe[Int])],
+        idx: Int,
+        acc: Chunk[(Reflect.Name, Reflect.Type)]
+    )(using Frame): Chunk[(Reflect.Name, Reflect.Type)] < (Sync & Abort[ReflectError]) =
+        if idx >= components.length then acc
+        else
+            val (nameIdx, descIdx, sigIdx) = components(idx)
+            pool.utf8(nameIdx).map: compName =>
+                pool.utf8(descIdx).map: descriptor =>
+                    resolveComponentType(pool, interner, home, path, descriptor, sigIdx).map: compType =>
+                        val name = Reflect.Name(compName)
+                        buildRecordComponentList(pool, interner, home, path, components, idx + 1, acc.appended((name, compType)))
+
+    private def resolveComponentType(
+        pool: ConstantPool,
+        interner: Interner,
+        home: ClasspathRef,
+        path: String,
+        descriptor: String,
+        sigIdx: Maybe[Int]
+    )(using Frame): Reflect.Type < (Sync & Abort[ReflectError]) =
+        sigIdx match
+            case Present(idx) =>
+                pool.utf8(idx).map: sig =>
+                    Abort.run(JavaSignatures.parseFieldSignature(sig, interner)).map:
+                        case Result.Success(tpe) => tpe
+                        case Result.Failure(_)   => parseErasedDescriptorType(descriptor, home)
+                        case Result.Panic(t)     => Abort.panic(t)
+            case Absent =>
+                parseErasedDescriptorType(descriptor, home)
+
+    /** Parse a JVM field descriptor (erased type) into a Reflect.Type.
+      *
+      * Handles: B/C/D/F/I/J/S/Z (primitives), V (void), [X (array), Lfoo/bar/Baz; (class reference).
+      */
+    private def parseErasedDescriptorType(descriptor: String, home: ClasspathRef): Reflect.Type =
+        descriptor match
+            case "B" => primType("scala.Byte")
+            case "C" => primType("scala.Char")
+            case "D" => primType("scala.Double")
+            case "F" => primType("scala.Float")
+            case "I" => primType("scala.Int")
+            case "J" => primType("scala.Long")
+            case "S" => primType("scala.Short")
+            case "Z" => primType("scala.Boolean")
+            case "V" => primType("scala.Unit")
+            case s if s.startsWith("[") =>
+                Reflect.Type.Array(parseErasedDescriptorType(s.substring(1), home))
+            case s if s.startsWith("L") && s.endsWith(";") =>
+                val binaryName = s.substring(1, s.length - 1)
+                unresolvedType(binaryName, home)
+            case other =>
+                unresolvedType(other, home)
+
+    private def primType(fqn: String): Reflect.Type =
+        val sym = SymbolFactory.makeSymbol(
+            Reflect.SymbolKind.Class,
+            new Reflect.Flags(Reflect.Flag.JavaDefined.bit),
+            Reflect.Name(fqn.split("\\.").last),
+            null,
+            new ClasspathRef,
+            Reflect.Symbol.JavaOrigin
+        )
+        Reflect.Type.Named(sym)
+    end primType
+
+    private def decodeAnnotations(
+        pool: ConstantPool,
+        interner: Interner,
+        home: ClasspathRef,
+        visibleBytes: Maybe[Array[Byte]],
+        invisibleBytes: Maybe[Array[Byte]]
+    )(using Frame): Chunk[Reflect.JavaAnnotation] < (Sync & Abort[ReflectError]) =
+        val visibleEffect: Chunk[Reflect.JavaAnnotation] < (Sync & Abort[ReflectError]) =
+            visibleBytes match
+                case Absent => Chunk.empty
+                case Present(bytes) =>
+                    val annView = ByteView(bytes)
+                    JavaAnnotationUnpickler.readAnnotations(annView, pool, interner, home)
+
+        visibleEffect.map: visible =>
+            val invisibleEffect: Chunk[Reflect.JavaAnnotation] < (Sync & Abort[ReflectError]) =
+                invisibleBytes match
+                    case Absent => Chunk.empty
+                    case Present(bytes) =>
+                        val annView = ByteView(bytes)
+                        JavaAnnotationUnpickler.readAnnotations(annView, pool, interner, home)
+
+            invisibleEffect.map: invisible =>
+                visible ++ invisible
+    end decodeAnnotations
 
     private def buildMemberSymbols(
         pool: ConstantPool,
@@ -583,28 +1008,27 @@ object ClassfileUnpickler:
 
             // Resolve throws types for JavaMetadata
             resolveThrowsTypes(pool, path, info.exceptionIdxs).map: throwsTypes =>
-                val metadata = Reflect.JavaMetadata(
-                    throwsTypes = throwsTypes,
-                    annotations = Chunk.empty,
-                    enclosingMethod = Absent,
-                    accessFlags = accessFlags,
-                    recordComponents = Chunk.empty
-                )
+                decodeAnnotations(pool, interner, home, info.visibleAnnotationBytes, info.invisibleAnnotationBytes).map:
+                    memberAnnotations =>
+                        val metadata = Reflect.JavaMetadata(
+                            throwsTypes = throwsTypes,
+                            annotations = memberAnnotations,
+                            enclosingMethod = Absent,
+                            accessFlags = accessFlags,
+                            recordComponents = Chunk.empty
+                        )
 
-                val nameEntry = interner.intern(
-                    memberName.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                    0,
-                    memberName.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
-                )
-                SymbolFactory.makeSymbol(
-                    kind,
-                    memberFlags,
-                    Reflect.Name.wrap(nameEntry),
-                    owner,
-                    home,
-                    Reflect.Symbol.JavaOrigin,
-                    Present(metadata)
-                )
+                        val nameBytes = memberName.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                        val nameEntry = interner.intern(nameBytes, 0, nameBytes.length)
+                        SymbolFactory.makeSymbol(
+                            kind,
+                            memberFlags,
+                            Reflect.Name.wrap(nameEntry),
+                            owner,
+                            home,
+                            Reflect.Symbol.JavaOrigin,
+                            Present(metadata)
+                        )
 
     private def resolveThrowsTypes(
         pool: ConstantPool,
@@ -623,8 +1047,6 @@ object ClassfileUnpickler:
         if i >= idxs.length then acc
         else
             pool.classRef(idxs(i)).map: binaryName =>
-                val sym = JavaSignatures.nothingSym // placeholder: real sym from binaryName
-                import kyo.internal.reflect.symbol.Symbol as SymbolFactory
                 val exSym = SymbolFactory.makeSymbol(
                     Reflect.SymbolKind.Unresolved,
                     new Reflect.Flags(Reflect.Flag.JavaDefined.bit),
@@ -678,8 +1100,24 @@ object ClassfileUnpickler:
         else pool.utf8(idx)
 
     // -------------------------------------------------------------------------
-    // Byte skip helper
+    // Byte helpers
     // -------------------------------------------------------------------------
+
+    /** Capture `count` bytes from `view` into a fresh Array[Byte]. */
+    private def captureBytes(view: ByteView, count: Int): Array[Byte] =
+        view match
+            case h: ByteView.Heap =>
+                val start = h.position
+                skipBytes(view, count)
+                h.copyBytes(start, start + count)
+            case _: ByteView.Mapped =>
+                val out = new Array[Byte](count)
+                var i   = 0
+                while i < count do
+                    out(i) = view.readByte()
+                    i += 1
+                out
+    end captureBytes
 
     private def skipBytes(view: ByteView, count: Int): Unit =
         var i = 0

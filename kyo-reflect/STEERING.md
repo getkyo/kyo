@@ -69,22 +69,22 @@ All 4 BLOCKING fixes from pulse 1 applied by the fix-up agent before commit: Pas
 
 Both signature and TEMPLATE parent wiring completed. decodeTemplateParents walks Type nodes between TypeParam/Param and SELFDEF/VALDEF/DEFDEF/TYPEDEF/modifier. Cleared.
 
-### Phase 5 fixes (BLOCKING before commit)
+### Phase 5 fixes (RESOLVED, applied in 79bea87b1)
 
-In-flight pulse 1 surfaced 4 real issues confirmed against the plan. Apply ALL before re-running tests.
+All 4 BLOCKING fixes applied: ByteView.Heap.copyBytes replaces asInstanceOf; parents wired; javaSpecific populated; throwsTypes wired. Tests 3, 11, 12 strict. Cleared.
 
-**1. `asInstanceOf` at `ConstantPool.scala:140`** violates `feedback_no_casts`. The line `val heap = view.asInstanceOf[ByteView.Heap]` casts a ByteView for raw byte access. Fix one of two ways:
-(a) Extend `ByteView` with a public `copyBytes(from: Int, until: Int): Array[Byte]` method that handles Heap and (future) Mapped variants uniformly. Use it from ConstantPool.
-(b) Eagerly copy the UTF-8 bytes at constant-pool-read time into `Array[Byte]` and store; defer only String materialization via `Interner`.
-Option (a) is more aligned with the design's lazy-decode philosophy.
+### Phase 5b prep concerns (RESOLVED per pulse 1)
 
-**2. Wire super/interfaces into Symbol parents (plan test 3 leaf)**. Plan test 3 says `java.lang.String` has `parents` containing a symbol whose name includes `"Object"`. ClassfileResult currently omits parents entirely; super_class and interface indices are read then discarded (see line 133 comment "Skip interfaces"). 
-- Add `parents: Chunk[Reflect.Type]` (or wire onto classSymbol via Symbol's accessor) constructed from the super_class CONSTANT_Class entry + each interface CONSTANT_Class entry, mapped to `Reflect.Type.Named(unresolvedSymbol)` placeholders (the unpickler doesn't yet know if those classes are in the classpath; Phase 7 resolver replaces with real symbols).
-- Update test 3 to actually exercise this: load a real `String.class` fixture and assert `classSymbol.parents` contains a `Type.Named(...)` whose `.name.asString` contains `"Object"`.
+#1 (binaryName) and #2 (FloatVal/DoubleVal) confirmed complied by pulse 1. Cleared.
 
-**3. Wire javaSpecific on each Symbol (plan test 11 leaf)**. Plan calls for `populates JavaMetadata on each symbol`. Currently `ClassfileResult` returns symbols but they likely have `javaSpecific = Absent` everywhere. Build a `JavaMetadata` per symbol from the relevant attributes (throwsTypes, annotations, enclosingMethod, accessFlags, recordComponents) and pass it to the Symbol constructor.
-- Test 11 must assert: a Java-sourced symbol's `javaSpecific.isDefined == true` AND a TASTy-sourced symbol's `javaSpecific.isDefined == false`.
+### Phase 5b test fixes (BLOCKING before commit)
 
-**4. Wire throwsTypes (plan test 12 leaf)**. For each method symbol, parse the `Exceptions` attribute and populate `JavaMetadata.throwsTypes: Chunk[Reflect.Type]`. Test 12 must assert: a method declared `throws IOException` has non-empty `throwsTypes`.
+Pulse 1 surfaced two weakened tests in `JavaSymbolTest.scala` that violate plan tests 4 and 5 (which explicitly require BOTH Java-sourced AND TASTy-sourced assertions):
 
-After all 4 fixes land and tests pass strictly (not weakened), commit. Re-test with `sbt 'project kyo-reflect; testOnly kyo.ClassfileReaderTest kyo.JavaSignaturesTest'` plus cross-platform compile.
+**Test 4** (plan: "`sym.isJava` is true for Java-sourced symbols AND false for TASTy-sourced symbols"). Current impl at lines 189-194 asserts only the Java side. Add a second assertion: load `PlainClass.tasty` via the same TASTy-pass-1 pattern used in `ClassfileReaderTest.firstClassSymbolFromTasty` (already established in `e29f81a34` codebase), get the resulting Symbol, assert `!sym.isJava`. Both assertions in the same test method.
+
+**Test 5** (plan: "`sym.javaSpecific` is `Present` for Java symbols AND `Absent` for Scala symbols"). Current impl at lines 199-204 asserts only the Java side. Add the same TASTy contrast: assert `tastySym.javaSpecific.isEmpty`.
+
+Both tests live in `kyo-reflect/shared/src/test/scala/kyo/JavaSymbolTest.scala`. Use the existing `PlainClass.tasty` fixture (already present at `kyo-reflect/shared/src/test/resources/kyo/fixtures/PlainClass.tasty`). After both fixes, re-run `testOnly kyo.JavaSymbolTest kyo.UnifiedModelTest` plus cross-platform compile.
+
+Pulse 1's claim that `UnifiedModelTest.scala` was absent was a false flag; the file exists with 8 tests.

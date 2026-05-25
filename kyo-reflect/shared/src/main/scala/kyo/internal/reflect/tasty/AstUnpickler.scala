@@ -230,10 +230,12 @@ object AstUnpickler:
                         view.goto(payloadEnd)
                     else
                         // Type-level TYPEDEF: skip type sub-tree, then read modifiers.
+                        // nextTag is the type body tag (e.g. TYPEBOUNDS for abstract types, TYPEREF for aliases).
+                        // Pass it to fromTypedefTypeFlagsAndBody for reliable AbstractType detection.
                         discard(view.readByte()) // consume the type sub-tree tag
                         skipTreeBody(nextTag, view)
                         val flagBits = readModifiers(view, payloadEnd)
-                        val kind     = InternalSymbolKind.fromTypedefTypeFlags(flagBits)
+                        val kind     = InternalSymbolKind.fromTypedefTypeFlagsAndBody(flagBits, nextTag)
                         val flags    = new Reflect.Flags(flagBits)
                         val origin   = Reflect.Symbol.TastyOrigin(Map.empty, payloadEnd, payloadEnd)
                         val sym      = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin)
