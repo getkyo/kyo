@@ -830,6 +830,31 @@ object Reflect:
             Query.make(cp, reads)
     end extension
 
+    // ── Type subtyping extension ─────────────────────────────────────────────
+
+    /** Extension method for subtype checking on `Reflect.Type` values.
+      *
+      * Checks whether `t` is a subtype of `other` using the structural covariant rules implemented in
+      * `kyo.internal.reflect.type_.Subtyping`. Parent-chain lookups use the provided `cp` classpath (explicit, per
+      * `feedback_no_implicit_handlers`).
+      *
+      * ==Rec depth budget==
+      *
+      * A `Rec` type contains a recursive back-reference (`RecThis`). To avoid infinite recursion, each `Rec` unfolding decrements an
+      * internal budget counter that starts at 64. If the budget is exhausted before a definitive subtype verdict is reached, the method
+      * returns `false` (conservative: not-a-subtype). Normal type hierarchies are nowhere near 64 levels deep; the budget is a safety net
+      * for adversarial or machine-generated type structures.
+      *
+      * @param other
+      *   the candidate supertype
+      * @param cp
+      *   the classpath used for transitive parent-chain resolution
+      */
+    extension (t: Type)
+        def isSubtypeOf(other: Type)(using cp: Classpath)(using Frame): Boolean < (Sync & Abort[ReflectError]) =
+            kyo.internal.reflect.type_.Subtyping.isSubtype(t, other, cp, budget = 64)
+    end extension
+
     // ── Reads typeclass (schema-driven projection) ─────────────────────────
 
     trait Reads[A]:
