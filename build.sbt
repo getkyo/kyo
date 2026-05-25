@@ -164,6 +164,7 @@ lazy val kyoJVM = project
         `kyo-actor`.jvm,
         `kyo-reflect`.jvm,
         `kyo-reflect-fixtures`.jvm,
+        `kyo-reflect-bench`.jvm,
         `kyo-compat-future`.jvm,
         `kyo-compat-kyo`.jvm,
         `kyo-compat-zio`.jvm,
@@ -508,6 +509,17 @@ lazy val `kyo-reflect-fixtures` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
+
+lazy val `kyo-reflect-bench` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-reflect-bench"))
+        .dependsOn(`kyo-reflect`)
+        .dependsOn(`kyo-reflect-fixtures`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .disablePlugins(MimaPlugin)
 
 lazy val `kyo-logging-jpl` =
     crossProject(JVMPlatform)
