@@ -5,7 +5,7 @@ case class Foo(x: Int, y: String) derives Schema, CanEqual
 case class Bar(z: Boolean) derives Schema, CanEqual
 case class Holder(v: String | Int) derives Schema, CanEqual
 
-class UnionTest extends Test:
+class UnionMacroTest extends Test:
 
     // Strict-equality safe comparison: routes through java.lang.Object.equals to bypass CanEqual.
     private def sameRef(actual: Any, expected: Any): Boolean =
@@ -182,4 +182,4 @@ class UnionTest extends Test:
         }
     }
 
-end UnionTest
+end UnionMacroTest

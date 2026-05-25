@@ -102,7 +102,113 @@ case class Neg(inner: Expr)             extends Expr derives CanEqual
 case class MTProtoMapHolder(name: String, scores: Map[String, Int]) derives CanEqual
 case class MTListOfOption(name: String, tags: List[Option[Int]]) derives CanEqual
 
+// Intersection-type test fixtures (Phase 13)
+trait MTIxFoo:
+    def a: Int
+trait MTIxBar:
+    def b: String
+trait MTIxEmptyMarker
+case class MTIxUser(name: String, age: Int) derives CanEqual
+trait MTIxT1:
+    def a: Int
+trait MTIxT2:
+    def b: String
+trait MTIxT3:
+    def c: Boolean
+trait MTIxHasX1:
+    def x: Int
+trait MTIxHasX2:
+    def x: Int
+case class MTIxWrapped(value: Int) derives CanEqual
+
 // Discriminator test types
 sealed trait MTStatus derives CanEqual
 case object MTActive                   extends MTStatus derives CanEqual
 case class MTSuspended(reason: String) extends MTStatus derives CanEqual
+
+// =========================================================================
+// Nested transform composition fixtures (folded from NestedTransformTest)
+// =========================================================================
+
+// --- Reporter's repro: discriminator on a nested sealed-trait field ---
+sealed trait NestedRO derives CanEqual
+object NestedRO:
+    final case class `string`(value: String) extends NestedRO derives CanEqual, Schema
+    final case class `number`(value: Int)    extends NestedRO derives CanEqual, Schema
+end NestedRO
+
+given Schema[NestedRO] = Schema.derived[NestedRO].discriminator("type")
+final case class NestedEnvelope(result: NestedRO) derives CanEqual, Schema
+
+// --- Two-deep nesting of the same discriminator ---
+final case class NestedTwoDeepMiddle(payload: NestedRO) derives CanEqual, Schema
+final case class NestedTwoDeepOuter(middle: NestedTwoDeepMiddle) derives CanEqual, Schema
+
+// --- .drop on nested schema ---
+final case class NestedDropInner(visible: String, secret: String) derives CanEqual
+given Schema[NestedDropInner] = Schema[NestedDropInner].drop("secret")
+final case class NestedDropOuter(inner: NestedDropInner) derives CanEqual, Schema
+
+// --- .rename on nested schema ---
+final case class NestedRenameInner(x: Int) derives CanEqual
+given Schema[NestedRenameInner] = Schema[NestedRenameInner].rename("x", "y")
+final case class NestedRenameOuter(inner: NestedRenameInner) derives CanEqual, Schema
+
+// --- .add on nested schema ---
+final case class NestedAddInner(x: Int) derives CanEqual
+given Schema[NestedAddInner] = Schema[NestedAddInner].add("derived")(_.x * 2)
+final case class NestedAddOuter(inner: NestedAddInner) derives CanEqual, Schema
+
+// --- discriminator + drop combined on nested schema ---
+// Drop applies to the case-class variants (.drop on a sealed trait is not
+// supported by design); discriminator applies to the trait. Together, when
+// a value is encoded through the trait inside an envelope, the wire should
+// carry the discriminator AND omit the dropped variant field.
+sealed trait NestedDiscDropRO derives CanEqual
+object NestedDiscDropRO:
+    final case class `string`(value: String, metadata: String) extends NestedDiscDropRO derives CanEqual
+    final case class `number`(value: Int, metadata: String)    extends NestedDiscDropRO derives CanEqual
+end NestedDiscDropRO
+
+given Schema[NestedDiscDropRO.`string`] = Schema[NestedDiscDropRO.`string`].drop("metadata")
+given Schema[NestedDiscDropRO.`number`] = Schema[NestedDiscDropRO.`number`].drop("metadata")
+given Schema[NestedDiscDropRO]          = Schema.derived[NestedDiscDropRO].discriminator("type")
+
+final case class NestedDiscDropEnvelope(result: NestedDiscDropRO) derives CanEqual, Schema
+
+// =========================================================================
+// Composition matrix fixtures (folded from CompositionMatrixTest)
+// =========================================================================
+
+// --- Shared shape sealed-trait (used by Sweeps A/B/C) ---
+sealed trait CMShape derives CanEqual
+object CMShape:
+    final case class CMCircle(radius: Double)          extends CMShape derives CanEqual
+    final case class CMRectangle(w: Double, h: Double) extends CMShape derives CanEqual
+
+// --- Shared user case class (used by Sweeps B/C) ---
+final case class CMUser(name: String, password: String) derives CanEqual
+
+// --- Per-category P1 wrappers (one Wrap per category to avoid the generic-derives pitfall) ---
+final case class CMWrapInt(value: Int) derives CanEqual
+final case class CMWrapStr(value: String) derives CanEqual
+final case class CMWrapInstant(value: java.time.Instant) derives CanEqual
+final case class CMWrapListInt(value: List[Int]) derives CanEqual
+final case class CMWrapMaybeInt(value: Maybe[Int]) derives CanEqual
+final case class CMWrapEitherStrInt(value: Either[String, Int]) derives CanEqual
+final case class CMWrapTupIS(value: (Int, String)) derives CanEqual
+final case class CMWrapShape(value: CMShape) derives CanEqual
+
+// --- Sweep B PT1 case-class outer wrappers (one per transform target) ---
+final case class CMOuterShape(inner: CMShape)
+final case class CMOuterUser(inner: CMUser)
+
+// --- Sweep B PT7 two-level-deep wrappers ---
+final case class CMMiddleShape(inner: CMShape)
+final case class CMOuterMiddleShape(middle: CMMiddleShape)
+final case class CMMiddleUser(inner: CMUser)
+final case class CMOuterMiddleUser(middle: CMMiddleUser)
+
+// --- Sweep C envelopes ---
+final case class CMEnvelopeShape(result: CMShape)
+final case class CMEnvelopeUser(value: CMUser)

@@ -512,3 +512,34 @@ object Structure:
     end Path
 
 end Structure
+
+/** Typeclass evidence that a type `T` corresponds to a `Structure.PrimitiveKind`.
+  *
+  * The set of givens on the companion is the single source of truth for "what counts as a primitive" across the schema macros. Adding a
+  * primitive entails declaring a new `given PrimitiveKindFor[T]` here; downstream `StructureMacro` / `ExpandMacro` pick it up via
+  * `Expr.summon[PrimitiveKindFor[T]]` automatically.
+  */
+final class PrimitiveKindFor[T] private[kyo] (val kind: Structure.PrimitiveKind)
+
+object PrimitiveKindFor:
+    given intKind: PrimitiveKindFor[Int]                             = new PrimitiveKindFor(Structure.PrimitiveKind.Int)
+    given longKind: PrimitiveKindFor[Long]                           = new PrimitiveKindFor(Structure.PrimitiveKind.Long)
+    given shortKind: PrimitiveKindFor[Short]                         = new PrimitiveKindFor(Structure.PrimitiveKind.Short)
+    given byteKind: PrimitiveKindFor[Byte]                           = new PrimitiveKindFor(Structure.PrimitiveKind.Byte)
+    given charKind: PrimitiveKindFor[Char]                           = new PrimitiveKindFor(Structure.PrimitiveKind.Char)
+    given floatKind: PrimitiveKindFor[Float]                         = new PrimitiveKindFor(Structure.PrimitiveKind.Float)
+    given doubleKind: PrimitiveKindFor[Double]                       = new PrimitiveKindFor(Structure.PrimitiveKind.Double)
+    given booleanKind: PrimitiveKindFor[Boolean]                     = new PrimitiveKindFor(Structure.PrimitiveKind.Boolean)
+    given stringKind: PrimitiveKindFor[String]                       = new PrimitiveKindFor(Structure.PrimitiveKind.String)
+    given unitKind: PrimitiveKindFor[Unit]                           = new PrimitiveKindFor(Structure.PrimitiveKind.Unit)
+    given bigIntKind: PrimitiveKindFor[BigInt]                       = new PrimitiveKindFor(Structure.PrimitiveKind.BigInt)
+    given javaBigIntegerKind: PrimitiveKindFor[java.math.BigInteger] = new PrimitiveKindFor(Structure.PrimitiveKind.BigInt)
+    given bigDecimalKind: PrimitiveKindFor[BigDecimal]               = new PrimitiveKindFor(Structure.PrimitiveKind.BigDecimal)
+    given javaBigDecimalKind: PrimitiveKindFor[java.math.BigDecimal] = new PrimitiveKindFor(Structure.PrimitiveKind.BigDecimal)
+    given javaInstantKind: PrimitiveKindFor[java.time.Instant]       = new PrimitiveKindFor(Structure.PrimitiveKind.Instant)
+    given kyoInstantKind: PrimitiveKindFor[kyo.Instant]              = new PrimitiveKindFor(Structure.PrimitiveKind.Instant)
+    given javaDurationKind: PrimitiveKindFor[java.time.Duration]     = new PrimitiveKindFor(Structure.PrimitiveKind.Duration)
+    given kyoDurationKind: PrimitiveKindFor[kyo.Duration]            = new PrimitiveKindFor(Structure.PrimitiveKind.Duration)
+    given frameKind: PrimitiveKindFor[kyo.Frame]                     = new PrimitiveKindFor(Structure.PrimitiveKind.Frame)
+    given textKind: PrimitiveKindFor[kyo.Text]                       = new PrimitiveKindFor(Structure.PrimitiveKind.Text)
+end PrimitiveKindFor

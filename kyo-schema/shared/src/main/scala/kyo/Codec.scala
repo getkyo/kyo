@@ -137,7 +137,7 @@ object Codec:
           * Wire formats that key fields by numeric id (Protobuf) override this to translate [[field]] / [[lastFieldName]] results back to
           * canonical names. The default is a no-op; readers that already key by name (JsonReader, StructureValueReader) inherit it.
           */
-        def withFieldNames(names: Map[Int, String]): this.type = this
+        def withFieldNames(names: Dict[Int, String]): this.type = this
 
         /** Capture the next value into a buffered sub-Reader for deferred reading.
           *

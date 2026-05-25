@@ -1180,6 +1180,30 @@ class TagTest extends Test:
         }
     }
 
+    "TagMacro narrow (FromJavaObject peel)" - {
+
+        "Tag[java.time.LocalDateTime] derives without crashing" in {
+            val t = Tag[java.time.LocalDateTime]
+            assert(t.show.contains("java.time.LocalDateTime"))
+        }
+
+        "Tag[Comparable[ChronoLocalDateTime[?]]] derives (explicit Java wildcard)" in {
+            val t = Tag[java.lang.Comparable[java.time.chrono.ChronoLocalDateTime[?]]]
+            assert(t.show.contains("Comparable"))
+        }
+
+        "Tag[List[?]] derives cleanly after the narrow (Scala-side wildcard)" in {
+            val t = Tag[List[?]]
+            assert(t.show.contains("List"))
+        }
+
+        "abstract type without an in-scope Tag still produces a TagMacro error" in {
+            typeCheckFailure("def f[A]: kyo.Tag[A] = kyo.Tag[A]")(
+                "Please provide an implicit kyo.Tag"
+            )
+        }
+    }
+
     // TODO: fix this to use `pendingUntilFixed` instead of `ignore`
     given RegisterFunction = (name, test, pending) =>
         if pending then name ignore Future.successful(test)

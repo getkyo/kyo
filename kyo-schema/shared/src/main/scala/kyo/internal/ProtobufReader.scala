@@ -20,12 +20,12 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
     private val LengthDelimited = 2
     private val Fixed32         = 5
 
-    private var pos: Int                     = 0
-    private var currentWireType: Int         = 0
-    private var currentFieldNumber: Int      = 0
-    private var limits: List[Int]            = List(data.length)
-    private var fieldNames: Map[Int, String] = Map.empty
-    private var pendingTag: Boolean          = false
+    private var pos: Int                      = 0
+    private var currentWireType: Int          = 0
+    private var currentFieldNumber: Int       = 0
+    private var limits: List[Int]             = List(data.length)
+    private var fieldNames: Dict[Int, String] = Dict.empty
+    private var pendingTag: Boolean           = false
 
     /** Merge a field-id -> field-name mapping into this reader's known names.
       *
@@ -33,8 +33,8 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
       * `SchemaSerializer.readWithDiscriminator`'s discriminator-field publish — can coexist on a single
       * reader instance without clobbering each other.
       */
-    override def withFieldNames(names: Map[Int, String]): this.type =
-        fieldNames = fieldNames ++ names
+    override def withFieldNames(names: Dict[Int, String]): this.type =
+        fieldNames = fieldNames.concat(names)
         this
 
     def objectStart(): Int =

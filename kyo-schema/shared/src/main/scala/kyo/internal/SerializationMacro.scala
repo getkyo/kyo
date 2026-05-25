@@ -54,13 +54,6 @@ private[internal] object SerializationMacro:
         // Build per-field write statements at macro-expansion time (outside the outer quote).
         // Each splice-embedded call to a helper that requires `using Quotes` would otherwise collide with the
         // splice's own Quotes context; doing the work here keeps everything on a single Quotes.
-        //
-        // Unsafe: no Frame is reachable inside the emitted (value, writer) => Unit
-        // lambda body. SchemaSerializer.writeTo requires `using Frame` to thread
-        // into possible inner failures. The macro-time Frame.internal is the only
-        // option here; same pattern as the throw site below at L172. Applies to
-        // every `kyo.Frame.internal` use in the Maybe / Option / fallthrough
-        // branches of the write statements emitted by this method.
         val writeStmts: List[Expr[Unit]] = fieldNames.zipWithIndex.flatMap { (fieldName, idx) =>
             val fieldAccess = Select.unique(value.asTerm, fieldName).asExprOf[Any]
             val fid         = fieldIds(idx)._2
@@ -163,11 +156,6 @@ private[internal] object SerializationMacro:
         value: Expr[A],
         writer: Expr[Writer]
     ): Expr[Unit] =
-        // Unsafe: no Frame is reachable inside the emitted (value, writer) => Unit
-        // lambda body. SchemaSerializer.writeTo requires `using Frame` to thread
-        // into possible inner failures; TypeMismatchException likewise. The
-        // macro-time Frame.internal is the only option here. Applies to both
-        // `kyo.Frame.internal` uses below.
         val checks = variants.zipWithIndex.map { case (info, idx) =>
             val vid = variantIds(idx)._2
             (
@@ -566,7 +554,6 @@ private[internal] object SerializationMacro:
     ): Expr[Unit] =
         import quotes.reflect.*
         val resultExpr = valueTerm.asExprOf[kyo.Result[Any, Any]]
-        // @unchecked: errTpe/okTpe are guaranteed primitives by resultFieldSpec; .asType always yields '[e], '[a]
         ((errTpe.asType, okTpe.asType): @unchecked) match
             case ('[e], '[a]) =>
                 val writeOk: quotes.reflect.Term => Expr[Unit]  = t => primitiveWriteExpr(okTpe, writer, t)
@@ -620,7 +607,6 @@ private[internal] object SerializationMacro:
         // inside the emitted code; the returned `Expr` is spliced into that same scope.
         val readOk: Expr[Reader] => Expr[Any]  = r => primitiveReadExpr(okTpe, r)
         val readErr: Expr[Reader] => Expr[Any] = r => primitiveReadExpr(errTpe, r)
-        // @unchecked: errTpe/okTpe are guaranteed primitives by resultFieldSpec; .asType always yields '[e], '[a]
         ((errTpe.asType, okTpe.asType): @unchecked) match
             case ('[e], '[a]) =>
                 '{
@@ -742,7 +728,7 @@ private[internal] object SerializationMacro:
         reader: Expr[Reader],
         fieldBytesExpr: Expr[Array[Array[Byte]]],
         fieldNamesExpr: Expr[Array[String]],
-        fieldNameMapExpr: Expr[Map[Int, String]],
+        fieldNameMapExpr: Expr[kyo.Dict[Int, String]],
         fieldSchemaResolvers: List[(String, SchemaResolver[A])],
         subSchemasExpr: Expr[Array[kyo.Schema[Any]]],
         selfSchema: Expr[Schema[A]]
@@ -897,7 +883,6 @@ private[internal] object SerializationMacro:
             loopSym,
             paramss =>
                 // paramss has shape List(List(<N field params> :+ seen :+ expectedIdx)) — a single term-param clause.
-                // cast: macro reflection's DefDef paramss yields List[Tree]; we constructed it as Terms only
                 val termParams: List[Term]     = paramss.head.asInstanceOf[List[Term]]
                 val fieldParamRefs: List[Term] = termParams.take(n)
                 val seenParamRef: Term         = termParams(n)
@@ -1035,7 +1020,7 @@ private[internal] object SerializationMacro:
         reader: Expr[Reader],
         fieldBytesExpr: Expr[Array[Array[Byte]]],
         fieldNamesExpr: Expr[Array[String]],
-        fieldNameMapExpr: Expr[Map[Int, String]],
+        fieldNameMapExpr: Expr[kyo.Dict[Int, String]],
         schemaExprs: List[(String, Expr[Schema[Any]])],
         subSchemasExpr: Expr[Array[kyo.Schema[Any]]]
     ): Expr[A] =
@@ -1095,169 +1080,6 @@ private[internal] object SerializationMacro:
             result
         }
     end sealedReadBody
-
-    /** Checks if a type is serializable without triggering inline given derived.
-      *
-      * Returns true for:
-      *   - Primitive types (String, Int, Long, Double, Float, Boolean, Short, Byte, Char, BigInt, BigDecimal)
-      *   - java.time.Instant, java.time.Duration
-      *   - Span[Byte]
-      *   - Known container types with serializable inner type (List, Vector, Set, Chunk, Maybe, Option, Map[String, V], Dict)
-      *   - Case classes and sealed traits (will be handled by Schema.derived)
-      */
-    private[internal] def isSerializableType(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
-        import quotes.reflect.*
-
-        given CanEqual[Symbol, Symbol] = CanEqual.derived
-
-        // Primitive types with built-in schemas
-        val primitiveSymbols = Set(
-            TypeRepr.of[String].typeSymbol,
-            TypeRepr.of[Int].typeSymbol,
-            TypeRepr.of[Long].typeSymbol,
-            TypeRepr.of[Double].typeSymbol,
-            TypeRepr.of[Float].typeSymbol,
-            TypeRepr.of[Boolean].typeSymbol,
-            TypeRepr.of[Short].typeSymbol,
-            TypeRepr.of[Byte].typeSymbol,
-            TypeRepr.of[Char].typeSymbol,
-            TypeRepr.of[BigInt].typeSymbol,
-            TypeRepr.of[BigDecimal].typeSymbol,
-            TypeRepr.of[java.time.Instant].typeSymbol,
-            TypeRepr.of[java.time.Duration].typeSymbol,
-            TypeRepr.of[kyo.Frame].typeSymbol,
-            // Added Phase 1:
-            TypeRepr.of[java.time.LocalDate].typeSymbol,
-            TypeRepr.of[java.time.LocalTime].typeSymbol,
-            TypeRepr.of[java.time.LocalDateTime].typeSymbol,
-            TypeRepr.of[java.util.UUID].typeSymbol,
-            TypeRepr.of[kyo.Instant].typeSymbol,
-            TypeRepr.of[kyo.Duration].typeSymbol,
-            TypeRepr.of[kyo.Text].typeSymbol,
-            TypeRepr.of[Unit].typeSymbol,
-            // Added Phase 9:
-            TypeRepr.of[java.math.BigInteger].typeSymbol,
-            TypeRepr.of[java.math.BigDecimal].typeSymbol,
-            TypeRepr.of[scala.Symbol].typeSymbol,
-            TypeRepr.of[scala.util.matching.Regex].typeSymbol,
-            TypeRepr.of[Throwable].typeSymbol,
-            // Added Phase 11:
-            TypeRepr.of[java.time.ZoneId].typeSymbol,
-            TypeRepr.of[java.time.ZoneOffset].typeSymbol,
-            TypeRepr.of[java.time.OffsetDateTime].typeSymbol,
-            TypeRepr.of[java.time.ZonedDateTime].typeSymbol,
-            TypeRepr.of[java.time.Year].typeSymbol,
-            TypeRepr.of[java.time.YearMonth].typeSymbol,
-            TypeRepr.of[java.time.MonthDay].typeSymbol,
-            TypeRepr.of[java.time.Period].typeSymbol
-        )
-
-        // Container type constructors that need inner type checked. Sourced from MacroUtils as the
-        // single source of truth (Phase 3 consolidation); two-argument shapes (Map/Dict, Result, Either)
-        // are handled by dedicated branches in `check` below since MacroUtils does not differentiate by arity.
-        val containerSymbols: Set[Symbol] =
-            MacroUtils.collectionSymbols ++ MacroUtils.optionalSymbols
-
-        // Map-like types (Map, kyo.Dict). Sourced from MacroUtils — single source of truth.
-        val mapSymbols: Set[Symbol] = MacroUtils.mapSymbols
-
-        // Tuple type constructors. The arity-bounded ladder lives on the Schema companion;
-        // Phase 12 extends this set to Tuple1 and Tuple6..Tuple22.
-        val tupleSymbols = Set(
-            TypeRepr.of[Tuple1[?]].typeSymbol,
-            TypeRepr.of[Tuple2[?, ?]].typeSymbol,
-            TypeRepr.of[Tuple3[?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple4[?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple5[?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple6[?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple7[?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple8[?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple9[?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple10[?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple11[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple12[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple13[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple14[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple15[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple16[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple17[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple18[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple19[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple20[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple21[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol,
-            TypeRepr.of[Tuple22[?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?]].typeSymbol
-        )
-
-        // Use a mutable set to track visited types and avoid infinite recursion
-        val visited = scala.collection.mutable.Set[Symbol]()
-
-        def check(t: TypeRepr): Boolean =
-            val dealiased = t.dealias
-            val sym       = dealiased.typeSymbol
-
-            // Check if it's a primitive (shared + platform-specific)
-            if primitiveSymbols.contains(sym) || MacroUtils.platformPrimitiveSymbols.contains(sym) then
-                true
-            // Check Span[Byte]
-            else if dealiased =:= TypeRepr.of[kyo.Span[Byte]] then
-                true
-            // Check Tag[A] - always serializable
-            else if sym == TypeRepr.of[kyo.Tag].typeSymbol then
-                true
-            // Check container types with single type parameter
-            else
-                dealiased match
-                    // Union types: each leg must independently be serializable. Phase 15 — matches the
-                    // `OrType` branch added to `FocusMacro.derivedImpl` / `ExpandMacro.expandType`.
-                    case OrType(a, b) =>
-                        check(a) && check(b)
-                    case AppliedType(tycon, List(inner)) if containerSymbols.contains(tycon.typeSymbol) =>
-                        check(inner)
-                    case AppliedType(tycon, List(key, value)) if mapSymbols.contains(tycon.typeSymbol) =>
-                        // For Map/Dict, check both key and value
-                        check(key) && check(value)
-                    case AppliedType(tycon, List(err, success)) if tycon.typeSymbol == TypeRepr.of[kyo.Result].typeSymbol =>
-                        // Result[E, A] needs both E and A serializable
-                        check(err) && check(success)
-                    case AppliedType(tycon, List(a, b)) if tycon.typeSymbol == TypeRepr.of[Either].typeSymbol =>
-                        // Either[A, B] needs both legs serializable
-                        check(a) && check(b)
-                    case AppliedType(tycon, args) if tupleSymbols.contains(tycon.typeSymbol) =>
-                        // Tuples: every slot must be serializable
-                        args.forall(check)
-                    case _ =>
-                        // Check if it's a case class or sealed trait
-                        if sym.isClassDef && sym.flags.is(Flags.Case) then
-                            // Avoid infinite recursion for recursive types
-                            if visited.contains(sym) then true
-                            else
-                                visited += sym
-                                // For case classes, recursively check all fields
-                                sym.caseFields.forall { field =>
-                                    check(dealiased.memberType(field))
-                                }
-                            end if
-                        else if sym.flags.is(Flags.Sealed) then
-                            // Avoid infinite recursion for recursive types
-                            if visited.contains(sym) then true
-                            else
-                                visited += sym
-                                // For sealed traits, check all children
-                                sym.children.forall { child =>
-                                    check(child.typeRef)
-                                }
-                            end if
-                        else if sym.flags.is(Flags.JavaDefined) && sym.flags.is(Flags.Enum) then
-                            true
-                        else
-                            false
-                        end if
-                end match
-            end if
-        end check
-
-        check(tpe)
-    end isSerializableType
 
     /** Checks if a type contains (references) another type, for detecting recursion. Also checks case class field types for enum variants
       * that reference the parent sealed trait.

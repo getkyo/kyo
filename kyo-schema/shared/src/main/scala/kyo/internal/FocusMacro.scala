@@ -291,10 +291,10 @@ import scala.quoted.*
 
                 if isCaseClass then
                     // Case class: generate Schema with structural expansion AND serialization
-                    generateCaseClassSchema[A, f]('{ $fieldsExpr.fields }, checkSerializability = true)
+                    generateCaseClassSchema[A, f]('{ $fieldsExpr.fields })
                 else if isSealedTrait then
                     // Sealed trait: generate Schema with structural expansion AND serialization
-                    generateSealedTraitSchema[A, f]('{ $fieldsExpr.fields }, checkSerializability = true)
+                    generateSealedTraitSchema[A, f]('{ $fieldsExpr.fields })
                 else
                     // Other types (Records, etc.): no serialization, use existing behavior
                     // Identity getter/setter at root level.
@@ -319,14 +319,15 @@ import scala.quoted.*
 
     /** Generates Schema[A] { type Focused = F } for a case class with serialization.
       *
+      * Always emits the serialization path. If a field type has no resolvable `Schema[FieldType]`, derivation fails loudly via the
+      * per-field `Expr.summon[Schema[T]]` inside `summonFieldSchemaResolvers` (which calls `report.errorAndAbort` with the field name and
+      * type).
+      *
       * @param sourceFieldsExpr
       *   the fields list expression (from Fields[A].fields for metaApply, Nil for derived)
-      * @param checkSerializability
-      *   if true, checks isSerializableType and falls back to no-serialization Schema; if false, always generates serialization
       */
     private def generateCaseClassSchema[A: Type, F: Type](
-        sourceFieldsExpr: Expr[List[Field[?, ?]]],
-        checkSerializability: Boolean
+        sourceFieldsExpr: Expr[List[Field[?, ?]]]
     )(using Quotes): Expr[Any] =
         import quotes.reflect.*
 
@@ -348,116 +349,36 @@ import scala.quoted.*
             Expr(field.name.getBytes(java.nio.charset.StandardCharsets.UTF_8))
         }
 
-        // Check if all field schemas can be generated (only when checkSerializability is true)
-        val cannotSerialize = checkSerializability && !fields.zipWithIndex.forall { (field, idx) =>
-            val fieldType = tpe.memberType(field)
-            if maybeFields.contains(idx) then
-                fieldType.dealias match
-                    case AppliedType(_, List(innerType)) =>
-                        SerializationMacro.isSerializableType(innerType)
-                    case _ => false
-            else
-                SerializationMacro.isSerializableType(fieldType)
-            end if
-        }
+        val fieldSchemaBuilders = summonFieldSchemaResolvers[A](fields, tpe, maybeFields, optionFields, isRecursive)
 
-        if cannotSerialize then
+        // Extract resolvers from field schema builders
+        val fieldResolvers: List[SerializationMacro.SchemaResolver[A]] =
+            fieldSchemaBuilders.map(_._3)
+
+        // Extract resolver pairs for read body
+        val fieldResolverPairs: List[(String, SerializationMacro.SchemaResolver[A])] =
+            fieldSchemaBuilders.map { (name, _, builder) => (name, builder) }
+
+        // Per-field flag: does the emitted lambda body read the sub-schema slot for this field?
+        // Primitive / primitive-element container / primitive-arg Result specializations leave slots null.
+        val needsSubSchema: List[Boolean] =
+            computeFieldNeedsSubSchema(fields, tpe, maybeFields, optionFields)
+
+        if isRecursive then
             '{
-                kyo.Schema.create[A, F](
-                    ${ MacroUtils.identityGetter[A, F] },
-                    ${ MacroUtils.identitySetter[A, F] },
-                    Seq.empty,
-                    $sourceFieldsExpr
-                )
-            }
-        else
-
-            val fieldSchemaBuilders = summonFieldSchemaResolvers[A](fields, tpe, maybeFields, optionFields, isRecursive)
-
-            // Extract resolvers from field schema builders
-            val fieldResolvers: List[SerializationMacro.SchemaResolver[A]] =
-                fieldSchemaBuilders.map(_._3)
-
-            // Extract resolver pairs for read body
-            val fieldResolverPairs: List[(String, SerializationMacro.SchemaResolver[A])] =
-                fieldSchemaBuilders.map { (name, _, builder) => (name, builder) }
-
-            // Per-field flag: does the emitted lambda body read the sub-schema slot for this field?
-            // Primitive / primitive-element container / primitive-arg Result specializations leave slots null.
-            val needsSubSchema: List[Boolean] =
-                computeFieldNeedsSubSchema(fields, tpe, maybeFields, optionFields)
-
-            if isRecursive then
-                '{
-                    lazy val self: kyo.Schema[A] { type Focused = F } =
-                        val _fieldBytes: Array[Array[Byte]] = ${ CodecMacro.mkFieldBytesPublic(preEncodedExprs) }
-                        val _fieldNames: Array[String]      = ${ Expr(fields.map(_.name).toArray) }
-                        // Hoisted field-id -> field-name map: built once per Schema instance and shared across every
-                        // decode. Consumed by Protobuf decode (`ProtobufReader.withFieldNames`); no-op on JSON /
-                        // StructureValueReader. Replaces the prior per-decode allocation in the macro-emitted read body.
-                        val _fieldNameMap: Map[Int, String] =
-                            kyo.internal.SchemaSerializer.buildFieldNameMap(_fieldNames)
-                        // `_subSchemas` is `lazy` because, for recursive schemas, slots may contain `self` — eagerly populating
-                        // the array while `self` is still being initialized would cause infinite recursion / SOE. Lazy allocation
-                        // defers array construction to first serializeWrite/Read call, by which time `self` is fully bound.
-                        lazy val _subSchemas: Array[kyo.Schema[Any]] =
-                            ${ buildSubSchemasArrayExpr[A](needsSubSchema, fieldResolvers, '{ self }) }
-                        kyo.Schema.create[A, F](
-                            ${ MacroUtils.identityGetter[A, F] },
-                            ${ MacroUtils.identitySetter[A, F] },
-                            Seq.empty,
-                            $sourceFieldsExpr,
-                            (value: A, writer: Writer) =>
-                                ${
-                                    SerializationMacro.caseClassWriteBody[A](
-                                        typeName,
-                                        n,
-                                        fields.map(_.name),
-                                        fieldIds,
-                                        maybeFields,
-                                        optionFields,
-                                        fieldResolvers,
-                                        '{ _fieldBytes },
-                                        '{ _subSchemas },
-                                        '{ self },
-                                        '{ value },
-                                        '{ writer }
-                                    )
-                                },
-                            (reader: Reader) =>
-                                ${
-                                    SerializationMacro.caseClassReadBodyResolved[A](
-                                        '{ reader },
-                                        '{ _fieldBytes },
-                                        '{ _fieldNames },
-                                        '{ _fieldNameMap },
-                                        fieldResolverPairs,
-                                        '{ _subSchemas },
-                                        '{ self }
-                                    )
-                                }
-                        )
-                    end self
-                    self
-                }
-            else
-                // Simple (non-recursive) case class
-
-                // Extract name -> schema pairs for the non-recursive read body
-                val fieldSchemaExprs: List[(String, Expr[Schema[Any]])] =
-                    fieldSchemaBuilders.map { (name, _, resolver) =>
-                        (name, resolver('{ null.asInstanceOf[Schema[A]] }))
-                    }
-
-                '{
+                lazy val self: kyo.Schema[A] { type Focused = F } =
                     val _fieldBytes: Array[Array[Byte]] = ${ CodecMacro.mkFieldBytesPublic(preEncodedExprs) }
                     val _fieldNames: Array[String]      = ${ Expr(fields.map(_.name).toArray) }
-                    // Hoisted field-id -> field-name map: built once per Schema instance and shared across every decode.
-                    // Consumed by Protobuf decode (`ProtobufReader.withFieldNames`); no-op on JSON / StructureValueReader.
-                    val _fieldNameMap: Map[Int, String] =
+                    // Hoisted field-id -> field-name map: built once per Schema instance and shared across every
+                    // decode. Consumed by Protobuf decode (`ProtobufReader.withFieldNames`); no-op on JSON /
+                    // StructureValueReader. Replaces the prior per-decode allocation in the macro-emitted read body.
+                    val _fieldNameMap: kyo.Dict[Int, String] =
                         kyo.internal.SchemaSerializer.buildFieldNameMap(_fieldNames)
-                    val _subSchemas: Array[kyo.Schema[Any]] =
-                        ${ buildSubSchemasArrayExpr[A](needsSubSchema, fieldResolvers, '{ null.asInstanceOf[Schema[A]] }) }
+                    // `_subSchemas` is `lazy` because, for recursive schemas, slots may contain `self` — eagerly populating
+                    // the array while `self` is still being initialized would cause infinite recursion / SOE. Lazy allocation
+                    // defers array construction to first serializeWrite/Read call, by which time `self` is fully bound.
+                    lazy val _subSchemas: Array[kyo.Schema[Any]] =
+                        ${ buildSubSchemasArrayExpr[A](needsSubSchema, fieldResolvers, '{ self }) }
                     kyo.Schema.create[A, F](
                         ${ MacroUtils.identityGetter[A, F] },
                         ${ MacroUtils.identitySetter[A, F] },
@@ -465,7 +386,6 @@ import scala.quoted.*
                         $sourceFieldsExpr,
                         (value: A, writer: Writer) =>
                             ${
-                                val dummySelf = '{ null.asInstanceOf[Schema[A]] }
                                 SerializationMacro.caseClassWriteBody[A](
                                     typeName,
                                     n,
@@ -476,38 +396,94 @@ import scala.quoted.*
                                     fieldResolvers,
                                     '{ _fieldBytes },
                                     '{ _subSchemas },
-                                    dummySelf,
+                                    '{ self },
                                     '{ value },
                                     '{ writer }
                                 )
                             },
                         (reader: Reader) =>
                             ${
-                                SerializationMacro.caseClassReadBody[A](
+                                SerializationMacro.caseClassReadBodyResolved[A](
                                     '{ reader },
                                     '{ _fieldBytes },
                                     '{ _fieldNames },
                                     '{ _fieldNameMap },
-                                    fieldSchemaExprs,
-                                    '{ _subSchemas }
+                                    fieldResolverPairs,
+                                    '{ _subSchemas },
+                                    '{ self }
                                 )
                             }
                     )
+                end self
+                self
+            }
+        else
+            // Simple (non-recursive) case class
+
+            // Extract name -> schema pairs for the non-recursive read body
+            val fieldSchemaExprs: List[(String, Expr[Schema[Any]])] =
+                fieldSchemaBuilders.map { (name, _, resolver) =>
+                    (name, resolver('{ null.asInstanceOf[Schema[A]] }))
                 }
-            end if
+
+            '{
+                val _fieldBytes: Array[Array[Byte]] = ${ CodecMacro.mkFieldBytesPublic(preEncodedExprs) }
+                val _fieldNames: Array[String]      = ${ Expr(fields.map(_.name).toArray) }
+                // Hoisted field-id -> field-name map: built once per Schema instance and shared across every decode.
+                // Consumed by Protobuf decode (`ProtobufReader.withFieldNames`); no-op on JSON / StructureValueReader.
+                val _fieldNameMap: kyo.Dict[Int, String] =
+                    kyo.internal.SchemaSerializer.buildFieldNameMap(_fieldNames)
+                val _subSchemas: Array[kyo.Schema[Any]] =
+                    ${ buildSubSchemasArrayExpr[A](needsSubSchema, fieldResolvers, '{ null.asInstanceOf[Schema[A]] }) }
+                kyo.Schema.create[A, F](
+                    ${ MacroUtils.identityGetter[A, F] },
+                    ${ MacroUtils.identitySetter[A, F] },
+                    Seq.empty,
+                    $sourceFieldsExpr,
+                    (value: A, writer: Writer) =>
+                        ${
+                            val dummySelf = '{ null.asInstanceOf[Schema[A]] }
+                            SerializationMacro.caseClassWriteBody[A](
+                                typeName,
+                                n,
+                                fields.map(_.name),
+                                fieldIds,
+                                maybeFields,
+                                optionFields,
+                                fieldResolvers,
+                                '{ _fieldBytes },
+                                '{ _subSchemas },
+                                dummySelf,
+                                '{ value },
+                                '{ writer }
+                            )
+                        },
+                    (reader: Reader) =>
+                        ${
+                            SerializationMacro.caseClassReadBody[A](
+                                '{ reader },
+                                '{ _fieldBytes },
+                                '{ _fieldNames },
+                                '{ _fieldNameMap },
+                                fieldSchemaExprs,
+                                '{ _subSchemas }
+                            )
+                        }
+                )
+            }
         end if
     end generateCaseClassSchema
 
     /** Generates Schema[A] { type Focused = F } for a sealed trait with serialization.
       *
+      * Always emits the serialization path. If a variant type has no resolvable `Schema[VariantType]`, derivation fails loudly via the
+      * per-variant `Expr.summon[Schema[t]]` inside the variant infos block (which falls back to `buildVariantSchemaResolver`).
+      *
       * @param sourceFieldsExpr
       *   the fields list expression (from Fields[A].fields for metaApply, Nil for derived)
-      * @param checkSerializability
-      *   if true, checks isSerializableType and falls back to no-serialization Schema; if false, always generates serialization
       */
     private def generateSealedTraitSchema[A: Type, F: Type](
-        sourceFieldsExpr: Expr[List[Field[?, ?]]],
-        checkSerializability: Boolean
+        sourceFieldsExpr: Expr[List[Field[?, ?]]]
     )(using Quotes): Expr[Any] =
         import quotes.reflect.*
         given CanEqual[Symbol, Symbol] = CanEqual.derived
@@ -520,128 +496,79 @@ import scala.quoted.*
         if children.isEmpty then
             report.errorAndAbort(s"Cannot derive Schema for sealed trait ${sym.name}: no case class or object variants found.")
 
-        // Check if all variant types are serializable (only when checkSerializability is true)
-        val cannotSerialize = checkSerializability && !children.forall { child =>
-            val childType = child.typeRef
-            if childType =:= tpe then true // self-referential - will use self schema
-            else SerializationMacro.isSerializableType(childType)
+        // Compute stable variant IDs from names
+        val variantIds: List[(String, Int)] = children.map(c => c.name -> CodecMacro.fieldId(c.name))
+
+        val isRecursive = children.exists { child =>
+            SerializationMacro.containsType(child.typeRef, tpe)
         }
 
-        if cannotSerialize then
-            '{
-                kyo.Schema.create[A, F](
-                    ${ MacroUtils.identityGetter[A, F] },
-                    ${ MacroUtils.identitySetter[A, F] },
-                    Seq.empty,
-                    $sourceFieldsExpr
-                )
-            }
-        else
+        // Pre-encode discriminator field name strings
+        val preEncodedExprs: List[Expr[Array[Byte]]] = children.map { child =>
+            Expr(child.name.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        }
 
-            // Compute stable variant IDs from names
-            val variantIds: List[(String, Int)] = children.map(c => c.name -> CodecMacro.fieldId(c.name))
+        // Build variant infos — unified for both simple and recursive
+        val variants: List[SerializationMacro.VariantInfo[A]] =
+            children.map { child =>
+                val childType =
+                    if child.isType then child.typeRef
+                    else if child.flags.is(Flags.Module) then child.termRef.widen
+                    else child.typeRef
 
-            val isRecursive = children.exists { child =>
-                SerializationMacro.containsType(child.typeRef, tpe)
-            }
-
-            // Pre-encode discriminator field name strings
-            val preEncodedExprs: List[Expr[Array[Byte]]] = children.map { child =>
-                Expr(child.name.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-            }
-
-            // Build variant infos — unified for both simple and recursive
-            val variants: List[SerializationMacro.VariantInfo[A]] =
-                children.map { child =>
-                    val childType =
-                        if child.isType then child.typeRef
-                        else if child.flags.is(Flags.Module) then child.termRef.widen
-                        else child.typeRef
-
-                    // Variant check: for class-like children (child.isType) use isInstanceOf[t].
-                    // For module children (no-arg enum cases, case objects), `child.termRef.widen`
-                    // widens the singleton term-ref to the PARENT enum/sealed type, so
-                    // `isInstanceOf[t]` collapses to `isInstanceOf[ParentEnum]` — a tautology
-                    // that matches every variant. Use reference equality against the singleton
-                    // instead.
-                    val checkExpr: Expr[A] => Expr[Boolean] =
-                        if !child.isType then
-                            val singletonRef: Expr[AnyRef] =
-                                if child.flags.is(Flags.Module) && child.companionModule != Symbol.noSymbol then
-                                    Ref(child.companionModule).asExprOf[AnyRef]
+                // Variant check: for class-like children (child.isType) use isInstanceOf[t].
+                // For module children (no-arg enum cases, case objects), `child.termRef.widen`
+                // widens the singleton term-ref to the PARENT enum/sealed type, so
+                // `isInstanceOf[t]` collapses to `isInstanceOf[ParentEnum]` — a tautology
+                // that matches every variant. Use reference equality against the singleton
+                // instead.
+                val checkExpr: Expr[A] => Expr[Boolean] =
+                    if !child.isType then
+                        val singletonRef: Expr[AnyRef] =
+                            if child.flags.is(Flags.Module) && child.companionModule != Symbol.noSymbol then
+                                Ref(child.companionModule).asExprOf[AnyRef]
+                            else
+                                val parentSym = child.owner
+                                if parentSym.companionModule != Symbol.noSymbol then
+                                    Select.unique(Ref(parentSym.companionModule), child.name).asExprOf[AnyRef]
                                 else
-                                    val parentSym = child.owner
-                                    if parentSym.companionModule != Symbol.noSymbol then
-                                        Select.unique(Ref(parentSym.companionModule), child.name).asExprOf[AnyRef]
-                                    else
-                                        Ref(child).asExprOf[AnyRef]
-                                    end if
-                            (v: Expr[A]) => '{ $v.asInstanceOf[AnyRef] eq $singletonRef }
-                        else
-                            childType.asType match
-                                case '[t] => (v: Expr[A]) => '{ $v.isInstanceOf[t] }
+                                    Ref(child).asExprOf[AnyRef]
+                                end if
+                        (v: Expr[A]) => '{ $v.asInstanceOf[AnyRef] eq $singletonRef }
+                    else
+                        childType.asType match
+                            case '[t] => (v: Expr[A]) => '{ $v.isInstanceOf[t] }
 
-                    childType.asType match
-                        case '[t] =>
-                            val schemaResolver: SerializationMacro.SchemaResolver[A] =
-                                if isRecursive && childType =:= tpe then
-                                    (self: Expr[Schema[A]]) => '{ $self.asInstanceOf[Schema[Any]] }
-                                else if isRecursive then
-                                    // For recursive sealed traits, generate ALL variant schemas inline
-                                    // to avoid circular implicit resolution (summoning Schema for a variant
-                                    // triggers Schema.derived which would re-derive the parent sealed trait).
-                                    buildVariantSchemaResolver[A, t](childType, tpe, child)
-                                else
-                                    Expr.summon[Schema[t]] match
-                                        case Some(schema) =>
-                                            (_: Expr[Schema[A]]) => '{ $schema.asInstanceOf[Schema[Any]] }
-                                        case None =>
-                                            // Schema not found via summoning — generate inline
-                                            // (handles case objects, enum values, etc.)
-                                            buildVariantSchemaResolver[A, t](childType, tpe, child)
-                            SerializationMacro.VariantInfo[A](
-                                child.name,
-                                checkExpr,
-                                (v: Expr[A]) => '{ $v.asInstanceOf[t].asInstanceOf[Any] },
-                                schemaResolver
-                            )
-                    end match
-                }
-
-            if isRecursive then
-                '{
-                    lazy val self: kyo.Schema[A] { type Focused = F } =
-                        val _fieldBytes: Array[Array[Byte]] = ${ CodecMacro.mkFieldBytesPublic(preEncodedExprs) }
-                        kyo.Schema.create[A, F](
-                            ${ MacroUtils.identityGetter[A, F] },
-                            ${ MacroUtils.identitySetter[A, F] },
-                            Seq.empty,
-                            $sourceFieldsExpr,
-                            (value: A, writer: Writer) =>
-                                ${
-                                    SerializationMacro.sealedWriteBody[A](
-                                        typeName,
-                                        variantIds,
-                                        variants,
-                                        '{ _fieldBytes },
-                                        '{ self },
-                                        '{ value },
-                                        '{ writer }
-                                    )
-                                },
-                            (reader: Reader) =>
-                                ${
-                                    val schemaExprs = variants.map { info =>
-                                        (info.name, info.schemaResolver('{ self }))
-                                    }
-                                    SerializationMacro.sealedReadBody[A]('{ reader }, '{ _fieldBytes }, schemaExprs)
-                                }
+                childType.asType match
+                    case '[t] =>
+                        val schemaResolver: SerializationMacro.SchemaResolver[A] =
+                            if isRecursive && childType =:= tpe then
+                                (self: Expr[Schema[A]]) => '{ $self.asInstanceOf[Schema[Any]] }
+                            else if isRecursive then
+                                // For recursive sealed traits, generate ALL variant schemas inline
+                                // to avoid circular implicit resolution (summoning Schema for a variant
+                                // triggers Schema.derived which would re-derive the parent sealed trait).
+                                buildVariantSchemaResolver[A, t](childType, tpe, child)
+                            else
+                                Expr.summon[Schema[t]] match
+                                    case Some(schema) =>
+                                        (_: Expr[Schema[A]]) => '{ $schema.asInstanceOf[Schema[Any]] }
+                                    case None =>
+                                        // Schema not found via summoning — generate inline
+                                        // (handles case objects, enum values, etc.)
+                                        buildVariantSchemaResolver[A, t](childType, tpe, child)
+                        SerializationMacro.VariantInfo[A](
+                            child.name,
+                            checkExpr,
+                            (v: Expr[A]) => '{ $v.asInstanceOf[t].asInstanceOf[Any] },
+                            schemaResolver
                         )
-                    end self
-                    self
-                }
-            else
-                '{
+                end match
+            }
+
+        if isRecursive then
+            '{
+                lazy val self: kyo.Schema[A] { type Focused = F } =
                     val _fieldBytes: Array[Array[Byte]] = ${ CodecMacro.mkFieldBytesPublic(preEncodedExprs) }
                     kyo.Schema.create[A, F](
                         ${ MacroUtils.identityGetter[A, F] },
@@ -650,13 +577,12 @@ import scala.quoted.*
                         $sourceFieldsExpr,
                         (value: A, writer: Writer) =>
                             ${
-                                val dummySelf = '{ null.asInstanceOf[Schema[A]] }
                                 SerializationMacro.sealedWriteBody[A](
                                     typeName,
                                     variantIds,
                                     variants,
                                     '{ _fieldBytes },
-                                    dummySelf,
+                                    '{ self },
                                     '{ value },
                                     '{ writer }
                                 )
@@ -664,13 +590,44 @@ import scala.quoted.*
                         (reader: Reader) =>
                             ${
                                 val schemaExprs = variants.map { info =>
-                                    (info.name, info.schemaResolver('{ null.asInstanceOf[Schema[A]] }))
+                                    (info.name, info.schemaResolver('{ self }))
                                 }
                                 SerializationMacro.sealedReadBody[A]('{ reader }, '{ _fieldBytes }, schemaExprs)
                             }
                     )
-                }
-            end if
+                end self
+                self
+            }
+        else
+            '{
+                val _fieldBytes: Array[Array[Byte]] = ${ CodecMacro.mkFieldBytesPublic(preEncodedExprs) }
+                kyo.Schema.create[A, F](
+                    ${ MacroUtils.identityGetter[A, F] },
+                    ${ MacroUtils.identitySetter[A, F] },
+                    Seq.empty,
+                    $sourceFieldsExpr,
+                    (value: A, writer: Writer) =>
+                        ${
+                            val dummySelf = '{ null.asInstanceOf[Schema[A]] }
+                            SerializationMacro.sealedWriteBody[A](
+                                typeName,
+                                variantIds,
+                                variants,
+                                '{ _fieldBytes },
+                                dummySelf,
+                                '{ value },
+                                '{ writer }
+                            )
+                        },
+                    (reader: Reader) =>
+                        ${
+                            val schemaExprs = variants.map { info =>
+                                (info.name, info.schemaResolver('{ null.asInstanceOf[Schema[A]] }))
+                            }
+                            SerializationMacro.sealedReadBody[A]('{ reader }, '{ _fieldBytes }, schemaExprs)
+                        }
+                )
+            }
         end if
     end generateSealedTraitSchema
 
@@ -681,7 +638,7 @@ import scala.quoted.*
     /** Derives Schema[A] with serialization for case classes and sealed traits.
       *
       * This is called by `inline given derived[A]: Schema[A]` to enable auto-derivation during implicit search. Delegates to the shared
-      * generateCaseClassSchema/generateSealedTraitSchema with Focused = A, empty fields, and no serializability check.
+      * generateCaseClassSchema/generateSealedTraitSchema with Focused = A and empty fields.
       */
     def derivedImpl[A: Type](using Quotes): Expr[Schema[A]] =
         import quotes.reflect.*
@@ -704,23 +661,17 @@ import scala.quoted.*
             case OrType(_, _) => true
             case _            => false
 
-        // Intersection types `A & B` have no general constructor — decoders for A and B
-        // independently cannot synthesize a value that simultaneously is-a A and is-a B
-        // unless the user supplies a concrete intersecting class. Detect and reject early
-        // with a clear pointer to the workarounds (derive the concrete class, or .transform).
+        // Intersection types `A & B`: dispatched via `IntersectionMacroProxy` (same trampoline pattern as
+        // `UnionMacroProxy` above). Handles the four sub-cases described in IntersectionMacro: concrete +
+        // marker, both-have-fields anonymous synthesis, refinement passthrough, and unconstructible residual.
         val isIntersection = tpe match
-            case AndType(_, _) => true
-            case _             => false
+            case AndType(_, _)       => true
+            case Refinement(_, _, _) => true
+            case _                   => false
 
         val result =
             if isIntersection then
-                report.errorAndAbort(
-                    s"Schema.derived[${tpe.show}]: intersection types have no general constructor. " +
-                        "If the intersection is a concrete case class extending both A and B, " +
-                        "derive its Schema directly (Schema.derived[ConcreteClass]). " +
-                        "Otherwise build a Schema for a concrete representation and use .transform " +
-                        "to map to and from the intersection."
-                )
+                IntersectionMacroProxy.derive[A].asInstanceOf[Expr[Any]]
             else if isUnion then
                 UnionMacroProxy.derive[A].asInstanceOf[Expr[Any]]
             // Java enum CLASS handling. MUST come before the sealed branch, because Scala 3 reflection
@@ -741,12 +692,10 @@ import scala.quoted.*
                     val cls           = Class.forName(${ fqnExpr })
                     val valueOfMethod = cls.getMethod("valueOf", classOf[String])
                     Schema.init[A](
-                        // cast: macro reached this branch only when sym is a Java enum class
                         writeFn = (v, w) => w.string(v.asInstanceOf[java.lang.Enum[?]].name),
                         readFn = r =>
                             val name = r.string()
                             try
-                                // cast: Enum.valueOf returns the matched Java enum constant, runtime-typed as A
                                 valueOfMethod.invoke(null, name).asInstanceOf[A]
                             catch
                                 case ite: java.lang.reflect.InvocationTargetException
@@ -758,9 +707,9 @@ import scala.quoted.*
                     )
                 }
             else if sym.isClassDef && sym.flags.is(Flags.Sealed) then
-                generateSealedTraitSchema[A, A](nilExpr, checkSerializability = false)
+                generateSealedTraitSchema[A, A](nilExpr)
             else if sym.isClassDef && sym.flags.is(Flags.Case) then
-                generateCaseClassSchema[A, A](nilExpr, checkSerializability = false)
+                generateCaseClassSchema[A, A](nilExpr)
             else
                 report.errorAndAbort(
                     s"Schema.derived requires a case class, sealed trait, or Java enum, got: ${tpe.show}. " +
@@ -815,7 +764,7 @@ import scala.quoted.*
                             $singletonRef
                     ).asInstanceOf[Schema[
                         Any
-                    ]] // cast: macro-emitted singleton schema for sealed-trait leg, erased to Schema[Any] for array storage
+                    ]]
                 }
         else
             // Case class variant — build field schema resolvers that reference the parent's self
@@ -910,7 +859,7 @@ import scala.quoted.*
                     val _variantFieldNames: Array[String]   = $fieldNamesExpr
                     // Hoisted field-id -> field-name map for the variant: built once per variant Schema, consumed by
                     // Protobuf decode and a no-op elsewhere.
-                    val _variantFieldNameMap: Map[Int, String] =
+                    val _variantFieldNameMap: kyo.Dict[Int, String] =
                         kyo.internal.SchemaSerializer.buildFieldNameMap(_variantFieldNames)
                     kyo.Schema.init[T](
                         writeFn = (value: T, writer: Writer) =>

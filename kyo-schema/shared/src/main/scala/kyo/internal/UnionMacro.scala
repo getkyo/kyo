@@ -9,20 +9,16 @@ import scala.quoted.*
   *
   * Wire format is wrapper-style: write produces `{ "L_i": <legValue> }` and read dispatches by leg name. This shape composes with
   * `.discriminator(name)` because `SchemaSerializer.flattenWithDiscriminator` flattens a single-field wrapper Record into flat discriminator
-  * format. For bare untagged input the read attempts each leg by matching the wrapper field name; if no leg's name matches (or the input
-  * isn't an object) a `TypeMismatchException` is raised naming every attempted branch.
+  * format.
   *
-  * Each leg's schema is summoned at compile time; runtime write dispatch is an `isInstanceOf` chain across the legs. Read dispatch is the
-  * sealed-trait style `objectStart` + `fieldParse` + `matchField` chain, identical in shape to the sealed-trait reader so the existing
-  * `DiscriminatorReader` (which presents flat-discriminator input as wrapper format) composes with no extra wiring.
+  * Write delegates to `SerializationMacro.sealedWriteBody` (each leg becomes a `VariantInfo` with `isInstanceOf` check and a summoned-Schema
+  * resolver). Read stays union-specific: it reports `TypeMismatchException` listing every leg on failure (instead of `UnknownVariantException`
+  * / `MissingFieldException` like a sealed trait), and wraps any pre-dispatch parse failure with the same leg-list message so callers see a
+  * consistent attempted-branch summary.
   */
 object UnionMacro:
 
-    /** Entry point. Derives a `Schema[T]` for a union type `T = L1 | ... | Ln`.
-      *
-      * After flattening and deduplication, single-leg unions (e.g. `String | Nothing =:= String` or `Int | Int` reduced by `=:=`) delegate
-      * directly to the leg's summoned `Schema`. Empty legs (theoretically impossible after Nothing-stripping) abort with a compile error.
-      */
+    /** Entry point. After flattening and deduplication, single-leg unions delegate directly to the leg's summoned `Schema`. */
     def derive[T: Type](using Quotes): Expr[Schema[T]] =
         import quotes.reflect.*
 
@@ -51,36 +47,31 @@ object UnionMacro:
                                 s"No given Schema[${legs.head.show}] for union leg. Define ${legs.head.show} as a case class or sealed trait, or provide a given Schema[${legs.head.show}]."
                             )
         else
+            // Build a VariantInfo for each leg. The leg's `Type[L]` is captured inside the closures so the
+            // splice site (inside `sealedWriteBody`) sees the correct instanceOf / asInstanceOf widening.
+            val legNames: List[String]          = legs.map(legName)
+            val variantIds: List[(String, Int)] = legNames.map(n => n -> CodecMacro.fieldId(n))
+            val variants: List[SerializationMacro.VariantInfo[T]] =
+                legs.map(leg => buildVariant[T](leg))
 
-            // For each leg, capture the leg's quoted Type[L] (Quotes-agnostic), Schema[Any] Expr, name, and name bytes.
-            // These together let us emit the runtime body without ever referring to a TypeRepr inside a splice context.
-            val legInfos: List[LegInfo] = legs.map(legInfoFor)
-            val legNames: List[String]  = legInfos.map(_.name)
+            // Pre-encoded UTF-8 bytes for each leg name, used by both write (sealedWriteBody.fieldBytes)
+            // and the union-specific read body's matchField chain.
             val legNameBytesExprs: List[Expr[Array[Byte]]] =
                 legNames.map(n => Expr(n.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
-            val legFieldIds: List[Int]           = legNames.map(CodecMacro.fieldId)
-            val legSchemasExprs                  = legInfos.map(_.schemaAny)
-            val legNamesExpr: Expr[List[String]] = Expr.ofList(legNames.map(Expr(_)))
-
             val legNameBytesArrExpr: Expr[Array[Array[Byte]]] =
                 '{ Array[Array[Byte]](${ Varargs(legNameBytesExprs) }*) }
+
+            // Per-leg summoned Schema[Any] array, needed by the union-specific read body for runtime dispatch.
+            val legSchemasExprs: List[Expr[Schema[Any]]] =
+                variants.map(_.schemaResolver('{ null.asInstanceOf[Schema[T]] }))
             val legSchemasArrExpr: Expr[Array[Schema[Any]]] =
                 '{ Array[Schema[Any]](${ Varargs(legSchemasExprs) }*) }
 
-            // Build the write/read body lambdas in the OUTER Quotes context. Each closure captures only
-            // Quotes-agnostic state (LegInfo, names, ids, schema-array Expr), so we can call them from
-            // within the splice with the splice's bound Exprs ('value, 'writer, 'reader) safely — Expr
-            // itself is Quotes-agnostic at the value level.
-            def buildWrite(value: Expr[T], writer: Expr[Writer], schemas: Expr[Array[Schema[Any]]]): Expr[Unit] =
-                writeBody[T](value, writer, schemas, legInfos, legNames, legFieldIds)
-
-            def buildRead(
-                reader: Expr[Reader],
-                nameBytes: Expr[Array[Array[Byte]]],
-                schemas: Expr[Array[Schema[Any]]],
-                names: Expr[List[String]]
-            ): Expr[T] =
-                readBody[T](reader, nameBytes, schemas, names)
+            val legNamesExpr: Expr[List[String]] = Expr.ofList(legNames.map(Expr(_)))
+            // Joined name string used as the sealedWriteBody `typeName` (advisory: drives the
+            // TypeMismatchException source string in the write-terminal; JsonWriter / ProtobufWriter
+            // ignore the objectStart name argument).
+            val joinedNames: String = legNames.mkString(" | ")
 
             '{
                 val _legNameBytes: Array[Array[Byte]] = $legNameBytesArrExpr
@@ -88,46 +79,46 @@ object UnionMacro:
                 val _legNames: List[String]           = $legNamesExpr
                 Schema.init[T](
                     writeFn = (value: T, writer: Writer) =>
-                        ${ buildWrite('value, 'writer, '{ _legSchemas }) },
+                        ${
+                            SerializationMacro.sealedWriteBody[T](
+                                joinedNames,
+                                variantIds,
+                                variants,
+                                '{ _legNameBytes },
+                                '{ null.asInstanceOf[Schema[T]] },
+                                'value,
+                                'writer
+                            )
+                        },
                     readFn = (reader: Reader) =>
-                        ${ buildRead('reader, '{ _legNameBytes }, '{ _legSchemas }, '{ _legNames }) }
+                        ${ readBody[T]('reader, '{ _legNameBytes }, '{ _legSchemas }, '{ _legNames }) }
                 )
             }
         end if
     end derive
 
-    /** Per-leg compile-time bundle. Holds:
-      *   - the leg's quoted `Type[L]` (Quotes-agnostic — survives splice boundaries) as a type member,
-      *   - the leg's `Expr[Schema[Any]]` (the summoned, erased schema),
-      *   - the leg's simple name for wire serialisation.
+    /** Builds a `VariantInfo[T]` for a single union leg. The leg's quoted `Type[L]` is captured inside the closures so the splice that
+      * consumes the VariantInfo (inside `sealedWriteBody`) emits `isInstanceOf[L]` / `asInstanceOf[L]` with the correct widening.
       */
-    sealed private trait LegInfo:
-        type L
-        val tpe: Type[L]
-        val schemaAny: Expr[Schema[Any]]
-        val name: String
-    end LegInfo
-
-    /** Builds a `LegInfo` for one leg: summons the leg's Schema, erases to `Schema[Any]`, and derives a stable name. */
-    private def legInfoFor(using Quotes)(leg: quotes.reflect.TypeRepr): LegInfo =
+    private def buildVariant[T: Type](using
+        Quotes
+    )(leg: quotes.reflect.TypeRepr): SerializationMacro.VariantInfo[T] =
         import quotes.reflect.*
         leg.asType match
-            case '[t] =>
-                val s = Expr.summon[Schema[t]].getOrElse(
+            case '[l] =>
+                val summoned: Expr[Schema[l]] = Expr.summon[Schema[l]].getOrElse(
                     report.errorAndAbort(
                         s"No given Schema[${leg.show}] for union leg. Define ${leg.show} as a case class or sealed trait, or provide a given Schema[${leg.show}]."
                     )
                 )
-                val sAny: Expr[Schema[Any]] = '{ $s.asInstanceOf[Schema[Any]] }
-                val nm                      = legName(leg)
-                new LegInfo:
-                    type L = t
-                    val tpe       = summon[Type[t]]
-                    val schemaAny = sAny
-                    val name      = nm
-                end new
+                SerializationMacro.VariantInfo[T](
+                    name = legName(leg),
+                    checkExpr = (v: Expr[T]) => '{ $v.isInstanceOf[l] },
+                    castExpr = (v: Expr[T]) => '{ $v.asInstanceOf[l].asInstanceOf[Any] },
+                    schemaResolver = (_: Expr[Schema[T]]) => '{ $summoned.asInstanceOf[Schema[Any]] }
+                )
         end match
-    end legInfoFor
+    end buildVariant
 
     /** Flattens nested `OrType`s into a list of leaf legs, dropping `Nothing` (bottom) and deduplicating by `=:=`.
       *
@@ -195,90 +186,15 @@ object UnionMacro:
         if sym.exists then sym.name else leg.show
     end legName
 
-    /** Emits the write body. For each leg in declaration order, a runtime `isInstanceOf` check selects the leg's schema and writes the
-      * value through it inside a single-field wrapper object. Going through `SchemaSerializer.writeTo` (not `serializeWrite`) ensures
-      * any per-leg transforms (`.drop`, `.rename`, `.discriminator` on a sealed-trait leg) compose correctly.
+    /** Emits the union-specific read body. Reads a single-field wrapper object and dispatches by leg name.
       *
-      * The terminal branch throws `TypeMismatchException` if a runtime value matches none of the legs.
-      */
-    private def writeBody[T: Type](using
-        Quotes
-    )(
-        value: Expr[T],
-        writer: Expr[Writer],
-        legSchemas: Expr[Array[Schema[Any]]],
-        legInfos: List[LegInfo],
-        legNames: List[String],
-        legFieldIds: List[Int]
-    ): Expr[Unit] =
-        val branches: List[(Expr[Boolean], Expr[Unit])] = legInfos.zipWithIndex.map { (info, idx) =>
-            val nameExpr  = Expr(legNames(idx))
-            val fieldIdEx = Expr(legFieldIds(idx))
-            val idxExpr   = Expr(idx)
-            buildLegBranch[T, info.L](value, writer, legSchemas, nameExpr, fieldIdEx, idxExpr)(using
-                summon[Type[T]],
-                info.tpe
-            )
-        }
-
-        val legNamesStr = Expr(legNames.mkString(" | "))
-        // Unsafe: no Frame is reachable inside the emitted (value, writer) => Unit
-        // lambda body. TypeMismatchException requires `using Frame`; the macro-time
-        // Frame.internal is the only option here. Same pattern as
-        // SerializationMacro.scala:172.
-        val terminal: Expr[Unit] =
-            '{
-                throw kyo.TypeMismatchException(
-                    Seq.empty,
-                    $legNamesStr,
-                    // cast: value is union T at compile time; AnyRef coercion exposes the runtime class for error reporting
-                    $value.asInstanceOf[AnyRef].getClass.getName
-                )(using kyo.Frame.internal)
-            }
-
-        branches.foldRight(terminal) { case ((cond, body), elseBody) =>
-            '{ if $cond then $body else $elseBody }
-        }
-    end writeBody
-
-    /** Builds the (cond, body) pair for one leg, with the leg's Type given. Extracted so the leg type parameter `L` is bound in scope. */
-    private def buildLegBranch[T: Type, L: Type](using
-        Quotes
-    )(
-        value: Expr[T],
-        writer: Expr[Writer],
-        legSchemas: Expr[Array[Schema[Any]]],
-        nameExpr: Expr[String],
-        fieldIdEx: Expr[Int],
-        idxExpr: Expr[Int]
-    ): (Expr[Boolean], Expr[Unit]) =
-        val cond: Expr[Boolean] = '{ $value.isInstanceOf[L] }
-        // Unsafe: no Frame is reachable inside the emitted (value, writer) => Unit
-        // lambda body. SchemaSerializer.writeTo requires `using Frame` to thread
-        // into possible inner failures. The macro-time Frame.internal is the only
-        // option here; same pattern as SerializationMacro.scala:172.
-        val body: Expr[Unit] =
-            '{
-                $writer.objectStart($nameExpr, 1)
-                $writer.field($nameExpr, $fieldIdEx)
-                kyo.internal.SchemaSerializer.writeTo(
-                    $legSchemas($idxExpr),
-                    // cast: leg-typed value bound to Schema[Any] array slot; isInstanceOf check above proved L
-                    $value.asInstanceOf[Any],
-                    $writer
-                )(using kyo.Frame.internal)
-                $writer.objectEnd()
-            }
-        (cond, body)
-    end buildLegBranch
-
-    /** Emits the read body. Reads a single-field wrapper object, parses the field name once, and dispatches by matching against each leg's
-      * pre-encoded name bytes. The selected leg's `readFrom` is invoked through `SchemaSerializer.readFrom` so any leg-level transforms
-      * compose. If no leg matches, throws `TypeMismatchException` naming every attempted branch.
+      * Kept separate from `SerializationMacro.sealedReadBody`: failure semantics differ (sealed traits raise
+      * `MissingFieldException("<discriminator>")` / `UnknownVariantException(name)`; unions surface the full leg list in one
+      * `TypeMismatchException`). Pre-dispatch parse failures are wrapped with the same leg-list message so callers see a consistent
+      * attempted-branch summary; post-dispatch failures (inside a leg decoder) propagate verbatim.
       *
-      * Pre-dispatch failures (e.g. JsonReader's `Expected '{'` parse error when the wire value isn't a wrapper object) are wrapped with a
-      * `TypeMismatchException` listing every leg, so callers consistently see one attempted-leg list. Post-dispatch failures (inside a leg
-      * decoder) propagate verbatim so leg-internal context isn't lost.
+      * Tagged input (when `.discriminator(name)` is applied to the resulting schema) reaches this body via
+      * `SchemaSerializer.DiscriminatorReader`, which transforms flat-discriminator JSON into wrapper format.
       */
     private def readBody[T: Type](using
         Quotes
@@ -312,7 +228,6 @@ object UnionMacro:
                         // failed" (wrap with leg list) from "leg decode failed" (rethrow verbatim).
                         dispatched = true
                         resultRef =
-                            // cast: leg readFrom returns Any (Schema[Any] array); store as AnyRef for nullable slot
                             kyo.internal.SchemaSerializer.readFrom(schemas(i), $reader)(using $reader.frame).asInstanceOf[AnyRef]
                     end if
                     i += 1
@@ -327,7 +242,7 @@ object UnionMacro:
                     )(using $reader.frame)
                 end if
                 $reader.objectEnd()
-                resultRef.asInstanceOf[T] // cast: dispatched leg produced a T-shaped value via the matching Schema
+                resultRef.asInstanceOf[T]
             catch
                 case scala.util.control.NonFatal(t) if !dispatched =>
                     // Preserve the original pre-dispatch failure as a suppressed exception

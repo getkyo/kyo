@@ -207,102 +207,69 @@ private[internal] object MacroUtils:
         end if
     end deriveNominalType
 
-    // ---- Type classifier sets ----
+    // ---- Container type classification (source of truth: Schema companion givens) ----
 
-    /** Base primitive type symbols: Int, String, Boolean, Double, Float, Long, Short, Byte, Char, Unit.
+    /** Enumerates container / optional / map tycon symbols by inspecting the `kyo.Schema` companion's `given` declarations directly.
       *
-      * Used by ExpandMacro.isPrimitive.
-      */
-    private[internal] def basePrimitiveSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        Set(
-            TypeRepr.of[Int].typeSymbol,
-            TypeRepr.of[String].typeSymbol,
-            TypeRepr.of[Boolean].typeSymbol,
-            TypeRepr.of[Double].typeSymbol,
-            TypeRepr.of[Float].typeSymbol,
-            TypeRepr.of[Long].typeSymbol,
-            TypeRepr.of[Short].typeSymbol,
-            TypeRepr.of[Byte].typeSymbol,
-            TypeRepr.of[Char].typeSymbol,
-            TypeRepr.of[Unit].typeSymbol
-        )
-    end basePrimitiveSymbols
-
-    /** Extended primitive type symbols: base primitives + BigDecimal, BigInt, java.math.BigDecimal, java.math.BigInteger.
+      * Each parameterised `given Schema[F[X]]` declared on `Schema.type` is classified by its return type's shape:
+      *   - 1-arg `F[X]` where `F` is `Option` / `kyo.Maybe`: an optional;
+      *   - 1-arg `F[X]` otherwise: a collection;
+      *   - 2-arg `F[K, V]` where `F` is `Map` / `kyo.Dict` / `SortedMap`: a map.
       *
-      * Used by StructureMacro.isPrimitive.
+      * Returns `(collections, optionals, maps)`. Sourced from the givens themselves so adding a new container `given Schema[F[A]]` to the
+      * `Schema` companion automatically extends the classifier with no companion list to update.
       */
-    private[internal] def extendedPrimitiveSymbols(using Quotes): Set[quotes.reflect.Symbol] =
+    private[internal] def containerSymbolsFromSchema(using
+        Quotes
+    ): (
+        Set[quotes.reflect.Symbol],
+        Set[quotes.reflect.Symbol],
+        Set[quotes.reflect.Symbol]
+    ) =
         import quotes.reflect.*
-        basePrimitiveSymbols ++ Set(
-            TypeRepr.of[BigDecimal].typeSymbol,
-            TypeRepr.of[BigInt].typeSymbol,
-            TypeRepr.of[java.math.BigDecimal].typeSymbol,
-            TypeRepr.of[java.math.BigInteger].typeSymbol,
-            // Phase 2: Instant / Duration / Frame / Text are flat scalars handled by primitiveKindExpr.
-            TypeRepr.of[java.time.Instant].typeSymbol,
-            TypeRepr.of[java.time.Duration].typeSymbol,
-            TypeRepr.of[kyo.Instant].typeSymbol,
-            TypeRepr.of[kyo.Duration].typeSymbol,
-            TypeRepr.of[kyo.Frame].typeSymbol,
-            TypeRepr.of[kyo.Text].typeSymbol
-        )
-    end extendedPrimitiveSymbols
 
-    /** Platform-specific primitive symbols. Empty on shared; each platform module
-      * (kyo-schema/jvm, kyo-schema/js, kyo-schema/native) ships a sibling
-      * `kyo.internal.PlatformSymbols` object containing the per-platform set
-      * (cross-build shadow pattern matching AsciiStringFactory). The gate at
-      * SerializationMacro.scala unions this set into its primitive check so
-      * platform-only `Schema` givens (e.g. JVM `java.net.URI`) pass `isSerializableType`
-      * when reached during macro expansion on the appropriate platform.
-      */
-    private[internal] def platformPrimitiveSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        PlatformSymbols.primitiveSymbols
-    end platformPrimitiveSymbols
-
-    /** Collection type symbols: List, Seq, Vector, Set, Chunk, Span, Result, Try, ArraySeq, Queue, SortedSet, Array. */
-    private[internal] def collectionSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        Set(
-            TypeRepr.of[List].typeSymbol,
-            TypeRepr.of[Seq].typeSymbol,
-            TypeRepr.of[Vector].typeSymbol,
-            TypeRepr.of[Set].typeSymbol,
-            TypeRepr.of[kyo.Chunk].typeSymbol,
-            TypeRepr.of[kyo.Span].typeSymbol,
-            TypeRepr.of[kyo.Result].typeSymbol,
-            // Added Phase 9:
-            TypeRepr.of[scala.util.Try].typeSymbol,
-            // Added Phase 13:
-            TypeRepr.of[scala.collection.immutable.ArraySeq].typeSymbol,
-            TypeRepr.of[scala.collection.immutable.Queue].typeSymbol,
-            TypeRepr.of[scala.collection.immutable.SortedSet].typeSymbol,
-            // Array is special — uses defn.ArrayClass not TypeRepr.of[Array].typeSymbol
-            defn.ArrayClass
-        )
-    end collectionSymbols
-
-    /** Optional type symbols: Option, Maybe. */
-    private[internal] def optionalSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        Set(
+        val optionalTycons: Set[Symbol] = Set(
             TypeRepr.of[Option].typeSymbol,
             TypeRepr.of[kyo.Maybe].typeSymbol
         )
-    end optionalSymbols
-
-    /** Map type symbols: Map, kyo.Dict, SortedMap. */
-    private[internal] def mapSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        Set(
+        val mapTycons: Set[Symbol] = Set(
             TypeRepr.of[Map].typeSymbol,
             TypeRepr.of[kyo.Dict].typeSymbol,
-            // Added Phase 13:
             TypeRepr.of[scala.collection.immutable.SortedMap].typeSymbol
         )
-    end mapSymbols
+
+        def peel(ret: TypeRepr): Option[TypeRepr] =
+            ret.dealias match
+                case AppliedType(_, List(target)) => Some(target)
+                case Refinement(parent, _, _)     => peel(parent)
+                case _                            => None
+
+        val schemaSym    = TypeRepr.of[kyo.Schema.type].typeSymbol
+        val givenMembers = schemaSym.declaredMethods.filter(_.flags.is(Flags.Given))
+
+        var collections = Set.empty[Symbol]
+        var optionals   = Set.empty[Symbol]
+        var maps        = Set.empty[Symbol]
+        givenMembers.foreach { m =>
+            m.tree match
+                case d: DefDef =>
+                    peel(d.returnTpt.tpe).foreach {
+                        case AppliedType(tycon, args) =>
+                            val sym = tycon.typeSymbol
+                            args.size match
+                                case 1 =>
+                                    if optionalTycons.contains(sym) then optionals = optionals + sym
+                                    else collections = collections + sym
+                                case 2 if mapTycons.contains(sym) =>
+                                    maps = maps + sym
+                                case _ => ()
+                            end match
+                        case _ => ()
+                    }
+                case _ => ()
+        }
+        (collections, optionals, maps)
+    end containerSymbolsFromSchema
 
     // ---- Constructor call generation ----
 

@@ -50,7 +50,7 @@ object SealedNoArgVariants:
     case object Unit3                extends SealedNoArgVariants derives CanEqual
 end SealedNoArgVariants
 
-// Phase 2 fixtures — case classes carrying types that must be reported as PrimitiveKind leaves.
+// Fixtures: case classes carrying types that must be reported as PrimitiveKind leaves.
 final case class CaseClassWithInstant(at: kyo.Instant) derives Schema
 final case class CaseClassWithDuration(d: kyo.Duration) derives Schema
 final case class CaseClassWithFrame(f: kyo.Frame) derives Schema
@@ -320,7 +320,7 @@ class StructureTest extends Test:
             end match
         }
 
-        // ---- Phase 2: PrimitiveKind extension for Instant / Duration / Frame / Text ----
+        // ---- PrimitiveKind extension for Instant / Duration / Frame / Text ----
 
         "PrimitiveKind.Instant" in {
             val s = Structure.of[CaseClassWithInstant]
@@ -379,13 +379,10 @@ class StructureTest extends Test:
         }
 
         // Negative leaf for "unmapped primitive triggers error" is PENDING.
-        // Reason: after Phase 2, every entry in `MacroUtils.extendedPrimitiveSymbols` has a matching
-        // branch in `primitiveKindExpr`, so no natural synthetic test type exercises the
-        // `report.errorAndAbort("No PrimitiveKind mapping for primitive type: ...")` path. The Phase 2
-        // spec explicitly permits skipping this leaf when no natural example exists. A future phase
-        // that adds another entry to `extendedPrimitiveSymbols` without a paired `primitiveKindExpr`
-        // branch (e.g., transient state during Phase 11 java.time gap closure) will be the right place
-        // to land this coverage.
+        // Reason: `StructureMacro.primitiveKindExpr` summons `PrimitiveKindFor[T]`; only types with such a given are
+        // considered primitive in the first place, so by construction every primitive that reaches `primitiveKindExpr`
+        // has a `PrimitiveKindFor[T]` to project the kind from. A future change that re-introduces a primitive without
+        // a paired `PrimitiveKindFor` given will be the right place to land this coverage.
 
         "fieldPaths returns all leaf paths" in {
             val ref   = Structure.of[MTSmallTeam]

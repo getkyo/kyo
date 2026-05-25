@@ -48,12 +48,14 @@ private[kyo] object TagMacro:
         def visit(t: TypeRepr): Type.Entry.Id =
 
             // Java raw / wildcard type arguments (e.g. `Comparable[ChronoLocalDateTime[?]]`)
-            // surface as bare TypeBounds(lo, hi) and don't match any of `loop`'s cases.
-            // Represent a wildcard `? <: hi` as its upper bound: that's the most informative
-            // type known statically, and matches the QuoteMatcher's view used in subtype tests.
+            // surface as bare TypeBounds(lo, FromJavaObject). Scala 3 marks the upper bound
+            // of Java wildcards / raw types with the synthetic `<FromJavaObject>` symbol
+            // (a TypeAlias of j.l.Object owned by the synthetic Ops package; not exposed
+            // via `defn.*` in the reflection API, so we match by its reserved name).
+            // We peel only that shape and let Scala-side `? <: hi` traverse `loop` cases.
             val resolved = t match
-                case TypeBounds(_, hi) => hi
-                case other             => other
+                case TypeBounds(_, hi) if hi.typeSymbol.name == "<FromJavaObject>" => hi
+                case other                                                         => other
             val tpe = resolved.dealiasKeepOpaques.simplified.dealiasKeepOpaques
             val key =
                 tpe.typeSymbol.isNoSymbol match

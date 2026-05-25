@@ -41,6 +41,20 @@ object ExpandMacro:
                         tildeType.appliedTo(List(nameType, expanded))
                     }
                     tagged.reduce(OrType(_, _))
+                // Intersection types: flatten nested AndTypes, expand each half, and rebuild via Record.~
+                // tagging with each half's simple type-symbol name. Mirrors the sealed-trait / union shape so
+                // downstream Focus / Navigation logic treats them uniformly.
+                case AndType(_, _) =>
+                    val halves    = flattenAndType(dealiased)
+                    val tildeType = TypeRepr.of[Record.~]
+                    val tagged = halves.map { half =>
+                        val sym      = half.typeSymbol
+                        val halfName = if sym.exists then sym.name else half.show
+                        val nameType = ConstantType(StringConstant(halfName))
+                        val expanded = expandType(half)
+                        tildeType.appliedTo(List(nameType, expanded))
+                    }
+                    tagged.reduce(AndType(_, _))
                 case AppliedType(tycon, args) if isKnownContainer(tycon) =>
                     val expandedArgs = args.map(expandType)
                     tycon.appliedTo(expandedArgs)
@@ -109,7 +123,8 @@ object ExpandMacro:
 
     private def isPrimitive(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
         import quotes.reflect.*
-        MacroUtils.basePrimitiveSymbols.contains(tpe.dealias.typeSymbol)
+        tpe.dealias.asType match
+            case '[t] => Expr.summon[kyo.PrimitiveKindFor[t]].isDefined
     end isPrimitive
 
     private def isStructural(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
@@ -120,6 +135,15 @@ object ExpandMacro:
       * Mirrors `UnionMacro.collectOrTypeLegs` so the structural expansion and the runtime schema both see
       * the same leg list. Rejects fully-degenerate unions (where dedup removed legs that weren't Nothing).
       */
+    /** Flatten a (possibly nested) `AndType` into its leaf halves. */
+    private def flattenAndType(using Quotes)(tpe: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] =
+        import quotes.reflect.*
+        def go(t: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] = t.dealias match
+            case AndType(a, b) => go(a) ++ go(b)
+            case other         => List(other)
+        go(tpe)
+    end flattenAndType
+
     private def flattenOrType(using Quotes)(tpe: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] =
         import quotes.reflect.*
 
@@ -143,10 +167,9 @@ object ExpandMacro:
 
     private def isKnownContainer(using Quotes)(tycon: quotes.reflect.TypeRepr): Boolean =
         import quotes.reflect.*
-        val sym = tycon.typeSymbol
-        MacroUtils.collectionSymbols.contains(sym) ||
-        MacroUtils.optionalSymbols.contains(sym) ||
-        MacroUtils.mapSymbols.contains(sym)
+        val (collections, optionals, maps) = MacroUtils.containerSymbolsFromSchema
+        val sym                            = tycon.typeSymbol
+        collections.contains(sym) || optionals.contains(sym) || maps.contains(sym)
     end isKnownContainer
 
 end ExpandMacro

@@ -23,13 +23,13 @@ private[kyo] object SchemaSerializer:
       * Lives on `SchemaSerializer` (rather than the macro-only `SerializationMacro`) because the emitted code
       * lives in user packages and needs the wider `private[kyo]` visibility that `SchemaSerializer` already has.
       */
-    def buildFieldNameMap(names: Array[String]): Map[Int, String] =
-        val b = Map.newBuilder[Int, String]
+    def buildFieldNameMap(names: Array[String]): Dict[Int, String] =
+        var d = Dict.empty[Int, String]
         var i = 0
         while i < names.length do
-            b += (CodecMacro.fieldId(names(i)) -> names(i))
+            d = d.update(CodecMacro.fieldId(names(i)), names(i))
             i += 1
-        b.result()
+        d
     end buildFieldNameMap
 
     /** Writes a value to a Writer, dispatching to the direct or transform-aware path.
@@ -192,18 +192,17 @@ private[kyo] object SchemaSerializer:
         if isNull(value) then Structure.Value.Null
         else
             value match
-                case s: String      => Structure.Value.Str(s)
-                case b: Boolean     => Structure.Value.Bool(b)
-                case i: Int         => Structure.Value.Integer(i.toLong)
-                case l: Long        => Structure.Value.Integer(l)
-                case d: Double      => Structure.Value.Decimal(d)
-                case f: Float       => Structure.Value.Decimal(f.toDouble)
-                case s: Short       => Structure.Value.Integer(s.toLong)
-                case b: Byte        => Structure.Value.Integer(b.toLong)
-                case c: Char        => Structure.Value.Str(c.toString)
-                case bd: BigDecimal => Structure.Value.BigNum(bd)
-                case bi: BigInt     => Structure.Value.BigNum(BigDecimal(bi))
-                // @unchecked: Maybe is an opaque type; the matcher cannot verify its erasure but a Maybe value is one
+                case s: String                => Structure.Value.Str(s)
+                case b: Boolean               => Structure.Value.Bool(b)
+                case i: Int                   => Structure.Value.Integer(i.toLong)
+                case l: Long                  => Structure.Value.Integer(l)
+                case d: Double                => Structure.Value.Decimal(d)
+                case f: Float                 => Structure.Value.Decimal(f.toDouble)
+                case s: Short                 => Structure.Value.Integer(s.toLong)
+                case b: Byte                  => Structure.Value.Integer(b.toLong)
+                case c: Char                  => Structure.Value.Str(c.toString)
+                case bd: BigDecimal           => Structure.Value.BigNum(bd)
+                case bi: BigInt               => Structure.Value.BigNum(BigDecimal(bi))
                 case m: (Maybe[?] @unchecked) => m.fold(Structure.Value.Null)(v => anyToStructureValue(v))
                 case o: Option[?]             => o.fold(Structure.Value.Null)(v => anyToStructureValue(v))
                 case sv: Structure.Value      => sv
@@ -267,13 +266,12 @@ private[kyo] object SchemaSerializer:
             else if show == "scala.Byte" then java.lang.Byte.valueOf(0.toByte)
             else if show == "scala.Boolean" then java.lang.Boolean.FALSE
             else if show == "scala.Char" then java.lang.Character.valueOf('\u0000')
-            // cast: None / Maybe.empty are AnyRef at runtime; force target type for the null-check protocol
             else if field.tag <:< Tag[Option[Any]] then None.asInstanceOf[AnyRef]
             else if field.tag <:< Tag[Maybe[Any]] then Maybe.empty.asInstanceOf[AnyRef]
             else null // JVM null for unknown reference types — required by macro null-check protocol
             end if
         end zeroFromTag
-        field.default.fold(zeroFromTag)(_.asInstanceOf[AnyRef]) // cast: erased default value reified to AnyRef for slot storage
+        field.default.fold(zeroFromTag)(_.asInstanceOf[AnyRef])
     end zeroForField
 
     /** Discriminator-aware deserialization path.

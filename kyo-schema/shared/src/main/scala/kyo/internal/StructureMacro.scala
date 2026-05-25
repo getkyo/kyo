@@ -11,10 +11,19 @@ object StructureMacro:
 
     def deriveImpl[A: Type](using Quotes): Expr[Structure.Type] =
         import quotes.reflect.*
-        deriveType(TypeRepr.of[A], Set.empty)
+        val (collections, optionals, maps) = MacroUtils.containerSymbolsFromSchema
+        deriveType(TypeRepr.of[A], Set.empty, collections, optionals, maps)
     end deriveImpl
 
-    private def deriveType(using Quotes)(tpe: quotes.reflect.TypeRepr, seen: Set[String]): Expr[Structure.Type] =
+    private def deriveType(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        seen: Set[String],
+        collections: Set[quotes.reflect.Symbol],
+        optionals: Set[quotes.reflect.Symbol],
+        maps: Set[quotes.reflect.Symbol]
+    ): Expr[Structure.Type] =
         import quotes.reflect.*
 
         val dealiased = tpe.dealias
@@ -39,26 +48,26 @@ object StructureMacro:
         else
             // 3-5. Check optional, map, and collection types
             dealiased match
-                case AppliedType(tycon, List(inner)) if isOptionalType(tycon) =>
+                case AppliedType(tycon, List(inner)) if isOptionalType(tycon, optionals) =>
                     val name     = dealiased.typeSymbol.name
-                    val innerRef = deriveType(inner, seen)
+                    val innerRef = deriveType(inner, seen, collections, optionals, maps)
                     dealiased.asType match
                         case '[a] =>
                             val tagExpr = summonTag[a]
                             '{ Structure.Type.Optional(${ Expr(name) }, $tagExpr, $innerRef) }
                     end match
-                case AppliedType(tycon, List(k, v)) if isMapType(tycon) =>
+                case AppliedType(tycon, List(k, v)) if isMapType(tycon, maps) =>
                     val name     = dealiased.typeSymbol.name
-                    val keyRef   = deriveType(k, seen)
-                    val valueRef = deriveType(v, seen)
+                    val keyRef   = deriveType(k, seen, collections, optionals, maps)
+                    val valueRef = deriveType(v, seen, collections, optionals, maps)
                     dealiased.asType match
                         case '[a] =>
                             val tagExpr = summonTag[a]
                             '{ Structure.Type.Mapping(${ Expr(name) }, $tagExpr, $keyRef, $valueRef) }
                     end match
-                case AppliedType(tycon, List(elem)) if isCollectionType(tycon) =>
+                case AppliedType(tycon, List(elem)) if isCollectionType(tycon, collections) =>
                     val name    = dealiased.typeSymbol.name
-                    val elemRef = deriveType(elem, seen)
+                    val elemRef = deriveType(elem, seen, collections, optionals, maps)
                     dealiased.asType match
                         case '[a] =>
                             val tagExpr = summonTag[a]
@@ -86,7 +95,7 @@ object StructureMacro:
                                     if child.isType then child.typeRef
                                     else if child.flags.is(Flags.Module) then child.termRef.widen
                                     else child.typeRef
-                                val variantRef = deriveType(childType, newSeen)
+                                val variantRef = deriveType(childType, newSeen, collections, optionals, maps)
                                 '{ Structure.Variant(${ Expr(childName) }, $variantRef) }
                             }
 
@@ -107,10 +116,10 @@ object StructureMacro:
                                     }
                             end match
                         else
-                            deriveCaseClassOrFallback(dealiased, sym, seen)
+                            deriveCaseClassOrFallback(dealiased, sym, seen, collections, optionals, maps)
                         end if
                     else
-                        deriveCaseClassOrFallback(dealiased, sym, seen)
+                        deriveCaseClassOrFallback(dealiased, sym, seen, collections, optionals, maps)
                     end if
             end match
         end if
@@ -122,7 +131,10 @@ object StructureMacro:
     )(
         dealiased: quotes.reflect.TypeRepr,
         sym: quotes.reflect.Symbol,
-        seen: Set[String]
+        seen: Set[String],
+        collections: Set[quotes.reflect.Symbol],
+        optionals: Set[quotes.reflect.Symbol],
+        maps: Set[quotes.reflect.Symbol]
     ): Expr[Structure.Type] =
         import quotes.reflect.*
 
@@ -134,7 +146,7 @@ object StructureMacro:
             val fieldExprs = sym.caseFields.zipWithIndex.map { (field, idx) =>
                 val fieldName = field.name
                 val fieldType = dealiased.memberType(field)
-                val fieldRef  = deriveType(fieldType, newSeen)
+                val fieldRef  = deriveType(fieldType, newSeen, collections, optionals, maps)
 
                 // Check for default value — convert to Structure.Value
                 val defaultExpr: Expr[Maybe[Structure.Value]] = MacroUtils.getDefault(sym, idx) match
@@ -150,9 +162,12 @@ object StructureMacro:
                         '{ Maybe.empty[Structure.Value] }
 
                 // Check if the field type is optional
-                val isOptional = isOptionalType(fieldType.dealias match
-                    case AppliedType(tycon, _) => tycon
-                    case _                     => fieldType)
+                val isOptional = isOptionalType(
+                    fieldType.dealias match
+                        case AppliedType(tycon, _) => tycon
+                        case _                     => fieldType,
+                    optionals
+                )
 
                 '{ Structure.Field(${ Expr(fieldName) }, $fieldRef, Maybe.empty[String], $defaultExpr, ${ Expr(isOptional) }) }
             }
@@ -191,57 +206,49 @@ object StructureMacro:
 
     private def isPrimitive(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
         import quotes.reflect.*
-        MacroUtils.extendedPrimitiveSymbols.contains(tpe.dealias.typeSymbol)
+        tpe.dealias.asType match
+            case '[t] => Expr.summon[kyo.PrimitiveKindFor[t]].isDefined
     end isPrimitive
 
-    /** Maps a primitive TypeRepr to the corresponding `Structure.PrimitiveKind` expression.
-      *
-      * Scala BigInt / java.math.BigInteger both map to `PrimitiveKind.BigInt`; Scala BigDecimal / java.math.BigDecimal both map to
-      * `PrimitiveKind.BigDecimal`. Any type that passes `isPrimitive` but has no matching kind is rejected with `report.errorAndAbort`.
+    /** Maps a primitive TypeRepr to the corresponding `Structure.PrimitiveKind` expression by summoning the `PrimitiveKindFor[T]`
+      * typeclass. The set of givens on `PrimitiveKindFor`'s companion is the single source of truth for which scalar types map to a
+      * `Structure.PrimitiveKind`.
       */
     private def primitiveKindExpr(using Quotes)(tpe: quotes.reflect.TypeRepr): Expr[Structure.PrimitiveKind] =
         import quotes.reflect.*
-        given CanEqual[Symbol, Symbol] = CanEqual.derived
-
-        val sym = tpe.dealias.typeSymbol
-        if sym == TypeRepr.of[Int].typeSymbol then '{ Structure.PrimitiveKind.Int }
-        else if sym == TypeRepr.of[Long].typeSymbol then '{ Structure.PrimitiveKind.Long }
-        else if sym == TypeRepr.of[Short].typeSymbol then '{ Structure.PrimitiveKind.Short }
-        else if sym == TypeRepr.of[Byte].typeSymbol then '{ Structure.PrimitiveKind.Byte }
-        else if sym == TypeRepr.of[Char].typeSymbol then '{ Structure.PrimitiveKind.Char }
-        else if sym == TypeRepr.of[Float].typeSymbol then '{ Structure.PrimitiveKind.Float }
-        else if sym == TypeRepr.of[Double].typeSymbol then '{ Structure.PrimitiveKind.Double }
-        else if sym == TypeRepr.of[String].typeSymbol then '{ Structure.PrimitiveKind.String }
-        else if sym == TypeRepr.of[Boolean].typeSymbol then '{ Structure.PrimitiveKind.Boolean }
-        else if sym == TypeRepr.of[BigInt].typeSymbol || sym == TypeRepr.of[java.math.BigInteger].typeSymbol then
-            '{ Structure.PrimitiveKind.BigInt }
-        else if sym == TypeRepr.of[BigDecimal].typeSymbol || sym == TypeRepr.of[java.math.BigDecimal].typeSymbol then
-            '{ Structure.PrimitiveKind.BigDecimal }
-        else if sym == TypeRepr.of[Unit].typeSymbol then '{ Structure.PrimitiveKind.Unit }
-        else if sym == TypeRepr.of[kyo.Instant].typeSymbol || sym == TypeRepr.of[java.time.Instant].typeSymbol then
-            '{ Structure.PrimitiveKind.Instant }
-        else if sym == TypeRepr.of[kyo.Duration].typeSymbol || sym == TypeRepr.of[java.time.Duration].typeSymbol then
-            '{ Structure.PrimitiveKind.Duration }
-        else if sym == TypeRepr.of[kyo.Frame].typeSymbol then '{ Structure.PrimitiveKind.Frame }
-        else if sym == TypeRepr.of[kyo.Text].typeSymbol then '{ Structure.PrimitiveKind.Text }
-        else
-            report.errorAndAbort(
-                s"No PrimitiveKind mapping for primitive type: ${tpe.show}. " +
-                    "Add a case to Structure.PrimitiveKind or remove the type from extendedPrimitiveSymbols."
-            )
-        end if
+        tpe.dealias.asType match
+            case '[t] =>
+                Expr.summon[kyo.PrimitiveKindFor[t]] match
+                    case Some(p) => '{ $p.kind }
+                    case None    => report.errorAndAbort(s"No PrimitiveKindFor[${tpe.show}] in scope.")
+        end match
     end primitiveKindExpr
 
-    private def isOptionalType(using Quotes)(tycon: quotes.reflect.TypeRepr): Boolean =
-        MacroUtils.optionalSymbols.contains(tycon.typeSymbol)
+    private def isOptionalType(using
+        Quotes
+    )(
+        tycon: quotes.reflect.TypeRepr,
+        optionals: Set[quotes.reflect.Symbol]
+    ): Boolean =
+        optionals.contains(tycon.typeSymbol)
     end isOptionalType
 
-    private def isCollectionType(using Quotes)(tycon: quotes.reflect.TypeRepr): Boolean =
-        MacroUtils.collectionSymbols.contains(tycon.typeSymbol)
+    private def isCollectionType(using
+        Quotes
+    )(
+        tycon: quotes.reflect.TypeRepr,
+        collections: Set[quotes.reflect.Symbol]
+    ): Boolean =
+        collections.contains(tycon.typeSymbol)
     end isCollectionType
 
-    private def isMapType(using Quotes)(tycon: quotes.reflect.TypeRepr): Boolean =
-        MacroUtils.mapSymbols.contains(tycon.typeSymbol)
+    private def isMapType(using
+        Quotes
+    )(
+        tycon: quotes.reflect.TypeRepr,
+        maps: Set[quotes.reflect.Symbol]
+    ): Boolean =
+        maps.contains(tycon.typeSymbol)
     end isMapType
 
 end StructureMacro

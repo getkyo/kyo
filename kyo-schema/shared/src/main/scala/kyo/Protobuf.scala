@@ -220,7 +220,7 @@ object Protobuf:
                     case Structure.PrimitiveKind.String                                      => "string"
                     case Structure.PrimitiveKind.Boolean                                     => "bool"
                     case Structure.PrimitiveKind.BigInt | Structure.PrimitiveKind.BigDecimal => "string"
-                    // Phase 2: Instant / Duration / Frame / Text are serialized as strings on the wire
+                    // Instant / Duration / Frame / Text are serialized as strings on the wire
                     // by the existing writers (JsonWriter.instant/duration emit ISO strings; kyo.Frame
                     // and kyo.Text are string-backed). Map to proto3 `string` accordingly.
                     case Structure.PrimitiveKind.Instant | Structure.PrimitiveKind.Duration |

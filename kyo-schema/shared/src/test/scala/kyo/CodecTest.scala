@@ -12,7 +12,7 @@ case class CodecTree(value: Int, children: List[CodecTree]) derives CanEqual
 
 case class CodecWithDefaults(name: String, age: Int = 25, active: Boolean = true) derives CanEqual
 
-// --- Phase 1 metaApply gate-coverage fixtures (top-level for macro visibility) ---
+// --- metaApply gate-coverage fixtures (top-level for macro visibility) ---
 
 case class CodecWithLocalDate(d: java.time.LocalDate) derives CanEqual
 case class CodecWithLocalTime(t: java.time.LocalTime) derives CanEqual
@@ -27,7 +27,7 @@ case class CodecWithSpanInt(xs: Span[Int]) derives CanEqual
 case class CodecWithEitherStringInt(e: Either[String, Int]) derives CanEqual
 case class CodecWithTuple3(t: (Int, String, Boolean)) derives CanEqual
 
-// --- Phase 8 fixture: a key type with no KeyCodec, so Map[CaseClassKey, V] falls back to array-of-pairs. ---
+// --- Fixture: a key type with non-String K, so Map[CaseClassKey, V] uses the array-of-pairs encoding. ---
 case class CaseClassKey(s: String, i: Int) derives CanEqual, Schema
 
 // --- Token-based Writer/Reader for testing ---
@@ -593,11 +593,23 @@ class CodecTest extends Test:
         assert(jsonRoundTrip(value) == value)
     }
 
-    // --- Phase 1: metaApply gate coverage ---
+    // --- java.* platform-bound types (cross-platform via scala-java-* emulation) ---
+
+    "URI round-trip with query and fragment" in {
+        val value = new java.net.URI("https://example.com/path?query=v&q2=w#frag")
+        assert(jsonRoundTrip(value) == value)
+    }
+
+    "Locale BCP-47 round-trip with script and region" in {
+        val value = java.util.Locale.forLanguageTag("zh-Hant-TW")
+        val got   = jsonRoundTrip(value)
+        assert(got.toLanguageTag == "zh-Hant-TW")
+    }
+
+    // --- metaApply coverage ---
     // Each test exercises Schema[CaseClassWithField] (the apply / metaApply path) which
-    // invokes SerializationMacro.isSerializableType on every field type. A type missing
-    // from the gate would be silently demoted to a no-serialization Schema and round-trip
-    // would either fail to compile or drop the field.
+    // resolves a `Schema[FieldType]` for every field via `Expr.summon`. A type without a
+    // matching given would fail derivation at compile time with a clear error.
 
     "metaApply: LocalDate field round-trip" in {
         val schema: Schema[CodecWithLocalDate] = Schema[CodecWithLocalDate]
@@ -680,7 +692,7 @@ class CodecTest extends Test:
         assert(jsonRoundTrip(value)(using schema) == value)
     }
 
-    // --- Phase 8: generic Map[K, V] via KeyCodec, array-of-pairs fallback ---
+    // --- generic Map[K, V] via Dict delegation, array-of-pairs for non-String K ---
 
     private def jsonEncode[A](value: A)(using schema: Schema[A]): String =
         val w = JsonWriter()
@@ -688,30 +700,30 @@ class CodecTest extends Test:
         w.resultString
     end jsonEncode
 
-    "Phase 8: Map[Int, String] serialises as JSON object keyed by stringified Int" in {
+    "Map[Int, String] serialises as array-of-pairs" in {
         val value = Map(1 -> "a", 2 -> "b")
         val js    = jsonEncode(value)
         // Two valid orderings since Map iteration is not key-ordered.
-        assert(js == """{"1":"a","2":"b"}""" || js == """{"2":"b","1":"a"}""", js)
+        assert(js == """[[1,"a"],[2,"b"]]""" || js == """[[2,"b"],[1,"a"]]""", js)
         assert(jsonRoundTrip(value) == value)
     }
 
-    "Phase 8: Map[Long, String] serialises as JSON object" in {
+    "Map[Long, String] serialises as array-of-pairs" in {
         val value = Map(1L -> "a")
         val js    = jsonEncode(value)
-        assert(js == """{"1":"a"}""", js)
+        assert(js == """[[1,"a"]]""", js)
         assert(jsonRoundTrip(value) == value)
     }
 
-    "Phase 8: Map[UUID, Int] serialises as JSON object keyed by UUID string" in {
+    "Map[UUID, Int] serialises as array-of-pairs" in {
         val id    = java.util.UUID.fromString("550e8400-e29b-41d4-a716-446655440000")
         val value = Map(id -> 1)
         val js    = jsonEncode(value)
-        assert(js == s"""{"${id.toString}":1}""", js)
+        assert(js == s"""[["${id.toString}",1]]""", js)
         assert(jsonRoundTrip(value) == value)
     }
 
-    "Phase 8: Map[CaseClassKey, String] falls back to array-of-pairs encoding" in {
+    "Map[CaseClassKey, String] uses array-of-pairs encoding" in {
         val key   = CaseClassKey("a", 1)
         val value = Map(key -> "v")
         val js    = jsonEncode(value)
@@ -722,21 +734,28 @@ class CodecTest extends Test:
         assert(jsonRoundTrip(value) == value)
     }
 
-    "Phase 8: Map[(Int, Int), String] falls back to array-of-pairs (no tuple KeyCodec)" in {
+    "Map[(Int, Int), String] uses array-of-pairs encoding" in {
         val value = Map((1, 2) -> "v")
         val js    = jsonEncode(value)
         assert(js.startsWith("[["), js)
         assert(jsonRoundTrip(value) == value)
     }
 
-    // --- Phase 9: Shared string-transform givens ---
+    "Map[String, String] still serialises as JSON object" in {
+        val value = Map("a" -> "1", "b" -> "2")
+        val js    = jsonEncode(value)
+        assert(js == """{"a":"1","b":"2"}""" || js == """{"b":"2","a":"1"}""", js)
+        assert(jsonRoundTrip(value) == value)
+    }
 
-    "Phase 9: java.math.BigInteger round-trip" in {
+    // --- Shared string-transform givens ---
+
+    "java.math.BigInteger round-trip" in {
         val value = new java.math.BigInteger("99999999999999999999")
         assert(jsonRoundTrip(value) == value)
     }
 
-    "Phase 9: java.math.BigDecimal round-trip" in {
+    "java.math.BigDecimal round-trip" in {
         val value = new java.math.BigDecimal("3.1415926535897932384626")
         val got   = jsonRoundTrip(value)
         assert(got == value)
@@ -744,31 +763,31 @@ class CodecTest extends Test:
         assert(got.unscaledValue() == value.unscaledValue())
     }
 
-    "Phase 9: Symbol round-trip" in {
+    "Symbol round-trip" in {
         val value = Symbol("hello-world")
         val got   = jsonRoundTrip(value)
         assert(got.name == value.name)
     }
 
-    "Phase 9: Regex round-trip" in {
+    "Regex round-trip" in {
         val value = "a+b".r
         val got   = jsonRoundTrip(value)
         assert(got.regex == "a+b")
     }
 
-    "Phase 9: Throwable round-trip via getMessage" in {
+    "Throwable round-trip via getMessage" in {
         val value: Throwable = new RuntimeException("boom")
         val got              = jsonRoundTrip(value)
         assert(got.getMessage == "boom")
         assert(got.isInstanceOf[RuntimeException])
     }
 
-    "Phase 9: Try[Int] Success round-trip" in {
+    "Try[Int] Success round-trip" in {
         val value: scala.util.Try[Int] = scala.util.Success(42)
         assert(jsonRoundTrip(value) == value)
     }
 
-    "Phase 9: Try[Int] Failure round-trip" in {
+    "Try[Int] Failure round-trip" in {
         val value: scala.util.Try[Int] = scala.util.Failure(new RuntimeException("x"))
         val got                        = jsonRoundTrip(value)
         assert(got.isFailure)
@@ -780,26 +799,26 @@ class CodecTest extends Test:
         end match
     }
 
-    // --- Phase 11: java.time gap closure ---
+    // --- java.time gap closure ---
 
-    "Phase 11: ZoneId round-trip" in {
+    "ZoneId round-trip" in {
         // Use UTC (fixed-offset) so the test runs on JS/Native without scala-java-time-tzdb.
         // IANA regional zones (e.g. America/Los_Angeles) are covered by CodecJvmTest.
         val value = java.time.ZoneId.of("UTC")
         assert(jsonRoundTrip(value) == value)
     }
 
-    "Phase 11: ZoneOffset round-trip" in {
+    "ZoneOffset round-trip" in {
         val value = java.time.ZoneOffset.of("+05:30")
         assert(jsonRoundTrip(value) == value)
     }
 
-    "Phase 11: OffsetDateTime DST spring-forward round-trip" in {
+    "OffsetDateTime DST spring-forward round-trip" in {
         val value = java.time.OffsetDateTime.parse("2024-03-10T02:30:00-08:00")
         assert(jsonRoundTrip(value) == value)
     }
 
-    "Phase 11: ZonedDateTime round-trip" in {
+    "ZonedDateTime round-trip" in {
         // Use a fixed-offset zone (UTC) so the test runs on JS/Native without
         // scala-java-time-tzdb. IANA DST edge cases are covered by CodecJvmTest.
         val value = java.time.ZonedDateTime.parse("2024-11-03T01:30:00Z[UTC]")
@@ -808,49 +827,49 @@ class CodecTest extends Test:
         assert(got.getOffset == value.getOffset)
     }
 
-    "Phase 11: Year leap-year round-trip" in {
+    "Year leap-year round-trip" in {
         val value = java.time.Year.of(2024)
         val got   = jsonRoundTrip(value)
         assert(got == value)
         assert(got.isLeap)
     }
 
-    "Phase 11: YearMonth leap-February round-trip" in {
+    "YearMonth leap-February round-trip" in {
         val value = java.time.YearMonth.of(2024, 2)
         val got   = jsonRoundTrip(value)
         assert(got == value)
         assert(got.lengthOfMonth == 29)
     }
 
-    "Phase 11: MonthDay leap-day round-trip" in {
+    "MonthDay leap-day round-trip" in {
         val value = java.time.MonthDay.of(2, 29)
         assert(jsonRoundTrip(value) == value)
     }
 
-    "Phase 11: Period round-trip" in {
+    "Period round-trip" in {
         val value = java.time.Period.of(1, 2, 3)
         assert(jsonRoundTrip(value) == value)
     }
 
-    // --- Phase 12: Tuple ladder Tuple1, Tuple6..Tuple22 ---
+    // --- Tuple ladder Tuple1, Tuple6..Tuple22 ---
 
-    "Phase 12: Tuple1[Int] round-trip" in {
+    "Tuple1[Int] round-trip" in {
         val value = Tuple1(42)
         assert(jsonRoundTrip(value) == value)
     }
 
-    "Phase 12: Tuple6 mixed-primitive round-trip" in {
+    "Tuple6 mixed-primitive round-trip" in {
         val value: (Int, String, Boolean, Long, Double, Char) = (1, "two", true, 4L, 5.0, 'x')
         assert(jsonRoundTrip(value) == value)
     }
 
-    "Phase 12: Tuple12 mixed-primitive round-trip" in {
+    "Tuple12 mixed-primitive round-trip" in {
         val value: (Int, String, Boolean, Long, Double, Char, Short, Byte, Float, Int, String, Boolean) =
             (1, "two", true, 4L, 5.0, 'x', 6.toShort, 7.toByte, 8.0f, 9, "ten", false)
         assert(jsonRoundTrip(value) == value)
     }
 
-    "Phase 12: Tuple22 mixed-primitive round-trip" in {
+    "Tuple22 mixed-primitive round-trip" in {
         val value: (
             Int,
             String,
@@ -901,7 +920,7 @@ class CodecTest extends Test:
         assert(jsonRoundTrip(value) == value)
     }
 
-    // --- Phase 13: Array[A] and missing immutable collections ---
+    // --- Array[A] and missing immutable collections ---
 
     "array codec round-trip" in {
         val value   = Array(1, 2, 3)
@@ -925,20 +944,20 @@ class CodecTest extends Test:
         assert(decoded == scala.collection.immutable.SortedSet(1, 2, 3))
     }
 
-    "sortedMap codec round-trip (Int key uses object encoding via KeyCodec)" in {
+    "sortedMap codec round-trip (Int key uses array-of-pairs via Dict)" in {
         val value   = scala.collection.immutable.SortedMap(2 -> "b", 1 -> "a")
         val encoded = Json.encode(value)
-        // With KeyCodec[Int] in scope, encoding matches Map[Int, V]: object form keyed by `kc.encode(k)`,
-        // sorted by the SortedMap's iteration order ("1" before "2") so the wire output is stable.
-        assert(encoded == """{"1":"a","2":"b"}""", encoded)
+        // Map[Int, V] now delegates to dictSchema (array-of-pairs); SortedMap inherits the same wire format.
+        assert(encoded.startsWith("["), encoded)
+        assert(encoded.contains("\"a\"") && encoded.contains("\"b\""), encoded)
         val decoded = jsonRoundTrip(value)
         assert(decoded == scala.collection.immutable.SortedMap(1 -> "a", 2 -> "b"))
         assert(decoded.toList == List(1 -> "a", 2 -> "b"))
     }
 
-    "sortedMap codec round-trip (tuple key falls back to array-of-pairs)" in {
-        // Tuple keys lack a KeyCodec[(Int, Int)] given; `sortedMapPairsSchema` (the NotGiven-gated fallback)
-        // takes over and emits the array-of-pairs form. Round-trip must preserve key ordering on decode.
+    "sortedMap codec round-trip (tuple key uses array-of-pairs)" in {
+        // Tuple keys also serialise via array-of-pairs through dictSchema delegation. Round-trip must
+        // preserve key ordering on decode via the in-scope Ordering[K].
         val value   = scala.collection.immutable.SortedMap((2, 1) -> "b", (1, 2) -> "a")
         val encoded = Json.encode(value)
         // Array-of-pairs: outer array, each inner element is `[key, value]`. The two keys sort as

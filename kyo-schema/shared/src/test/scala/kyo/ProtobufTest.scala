@@ -136,7 +136,7 @@ class ProtobufTest extends Test:
             val nameId = CodecMacro.fieldId("name")
             val ageId  = CodecMacro.fieldId("age")
             val r = new ProtobufReader(w.resultBytes)
-                .withFieldNames(Map(nameId -> "name", ageId -> "age"))
+                .withFieldNames(Dict(nameId -> "name", ageId -> "age"))
             val decoded = schema.readFrom(r)
             assert(decoded == person)
         }
@@ -437,7 +437,7 @@ class ProtobufTest extends Test:
         }
     }
 
-    // ===== Phase 5: Protobuf discriminator decode =====
+    // ===== Protobuf discriminator decode =====
 
     "discriminator decode" - {
 
@@ -730,7 +730,7 @@ end Protobuf1517Enum
 
 case class Protobuf1517Holder(inner: Protobuf1517Sealed) derives Schema, CanEqual
 
-// ===== Phase 5 discriminator-decode fixtures =====
+// ===== Discriminator-decode fixtures =====
 // Distinct types from the other sealed-trait fixtures above so each scenario
 // owns its `given Schema` without ambiguity (a derives-Schema clause and a
 // transformed `given Schema[X]` for the same X clash).

@@ -7,23 +7,25 @@ import java.net.URL
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.Currency
-import java.util.Locale
 import kyo.*
 
-/** JVM-only `Schema` givens for platform-bound types not portable to JS/Native.
+/** JVM-only `Schema` givens for platform-bound types whose Scala.js / Scala Native
+  * emulation is incomplete or absent at runtime.
   *
-  * Each given delegates to `Schema.stringSchema.transform` so the wire form is a JSON string
-  * (round-trip via the type's canonical string form). The corresponding `typeSymbol`s are
-  * registered in `PlatformSymbols.primitiveSymbols` so that case classes referencing these
-  * types pass the `isSerializableType` gate during `metaApply` macro expansion on JVM.
+  * Each given delegates to `Schema.stringSchema.transform` so the wire form is a JSON
+  * string (round-trip via the type's canonical string form).
+  *
+  * Per-type cross-platform notes:
+  *   - `URI` and `Locale` live in the shared `Schema` companion (scala-java-net /
+  *     scala-java-locales cover their string round-trip on JS / Native).
+  *   - `URL`, `InetAddress`, `Path`, `File`, `Currency` live here: they compile cross-
+  *     platform but their construction methods (`new URL`, `InetAddress.getByName`,
+  *     `Paths.get`, `Currency.getInstance`) fail at runtime on JS / Native because the
+  *     emulation layers omit the supporting registries / system resources.
   *
   * Import as `import kyo.internal.PlatformSchemas.given` at the use site.
   */
 object PlatformSchemas:
-
-    /** Schema for java.net.URI — encoded as the URI's canonical string form. */
-    given uriSchema: Schema[URI] =
-        Schema.stringSchema.transform[URI](new URI(_))(_.toString)
 
     /** Schema for java.net.URL — encoded as the URL string; decode routes through URI to avoid the deprecated `new URL(String)`. */
     given urlSchema: Schema[URL] =
@@ -40,10 +42,6 @@ object PlatformSchemas:
     /** Schema for java.io.File — encoded as the file's path string. */
     given fileSchema: Schema[File] =
         Schema.stringSchema.transform[File](new File(_))(_.getPath)
-
-    /** Schema for java.util.Locale — encoded as an IETF BCP 47 language tag. */
-    given localeSchema: Schema[Locale] =
-        Schema.stringSchema.transform[Locale](Locale.forLanguageTag)(_.toLanguageTag)
 
     /** Schema for java.util.Currency — encoded as an ISO 4217 three-letter currency code. */
     given currencySchema: Schema[Currency] =
