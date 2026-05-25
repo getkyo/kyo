@@ -16,7 +16,8 @@ class TypeArenaTest extends Test:
             Reflect.Name(name),
             null,
             new ClasspathRef,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
+            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Absent
         )
 
     // Test 1: intern called twice with structurally identical Type.Named(sym) returns the same reference.

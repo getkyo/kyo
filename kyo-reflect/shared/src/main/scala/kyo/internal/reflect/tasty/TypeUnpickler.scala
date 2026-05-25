@@ -38,7 +38,8 @@ object TypeUnpickler:
             Reflect.Name("$$MatchCase"),
             null,
             new ClasspathRef,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
+            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Absent
         )
 
     /** Decode a single type node from `view`.
@@ -145,7 +146,8 @@ object TypeUnpickler:
             Reflect.Name(fqn),
             null,
             home,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
+            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Absent
         )
 
     /** Decode one type node. tag byte not yet consumed. Records startAddr -> result in addrCache. */
@@ -515,7 +517,8 @@ object TypeUnpickler:
                         symName,
                         null,
                         ctx.home,
-                        Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
+                        Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+                        Absent
                     )
             paramSyms += sym
         end while
@@ -557,7 +560,8 @@ object TypeUnpickler:
                             symName,
                             null,
                             ctx.home,
-                            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
+                            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+                            Absent
                         )
                 paramSyms += sym
             end if

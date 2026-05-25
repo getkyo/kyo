@@ -26,6 +26,12 @@ object JavaAnnotationUnpickler:
       *
       * The view must be positioned at the u2 num_annotations field (the first byte of annotation data after the attribute header has been
       * consumed).
+      *
+      * Note on the `home` parameter: the plan spec (Phase 5b line 406) listed `addrMap: Map[Int, Reflect.Symbol]` as the fourth parameter,
+      * which is a TASTy concept (an address-to-symbol map for TASTy cross-references). Annotations in classfiles resolve class references
+      * via CONSTANT_Class pool entries, not by TASTy addresses. The correct dependency here is `home: ClasspathRef`, which supplies the
+      * namespace context for constructing Unresolved symbols for annotation class references. The addrMap parameter is not applicable for
+      * classfile-derived annotations.
       */
     def readAnnotations(
         view: ByteView,
@@ -110,15 +116,11 @@ object JavaAnnotationUnpickler:
 
                 case 'D' =>
                     // double: stored as CONSTANT_Double.
-                    // FloatVal/DoubleVal not in enum; use StringVal as documented fallback.
-                    // TODO Phase 7: extend JavaAnnotation.Value with DoubleVal(d: Double).
                     Sync.defer(readU2(view)).map: idx =>
                         pool.double_(idx).map(v => Reflect.JavaAnnotation.Value.DoubleVal(v))
 
                 case 'F' =>
                     // float: stored as CONSTANT_Float.
-                    // FloatVal not in enum; use StringVal as documented fallback.
-                    // TODO Phase 7: extend JavaAnnotation.Value with FloatVal(f: Float).
                     Sync.defer(readU2(view)).map: idx =>
                         pool.float_(idx).map(v => Reflect.JavaAnnotation.Value.FloatVal(v))
 
@@ -208,7 +210,8 @@ object JavaAnnotationUnpickler:
             Reflect.Name(fqn),
             null,
             home,
-            Reflect.Symbol.JavaOrigin
+            Reflect.Symbol.JavaOrigin,
+            Absent
         )
     end descriptorToUnresolvedSymbol
 

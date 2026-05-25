@@ -103,7 +103,7 @@ object AstUnpickler:
         // Synthetic root: a Package symbol with empty name; its owner is null (termination sentinel).
         val rootName   = Reflect.Name("")
         val rootOrigin = Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
-        val root       = InternalSymbol.makeSymbol(Reflect.SymbolKind.Package, Reflect.Flags.empty, rootName, null, home, rootOrigin)
+        val root = InternalSymbol.makeSymbol(Reflect.SymbolKind.Package, Reflect.Flags.empty, rootName, null, home, rootOrigin, Absent)
         ownerStack.append(root)
         allSymbols += root
 
@@ -155,7 +155,8 @@ object AstUnpickler:
                         pkgName,
                         owner,
                         home,
-                        origin
+                        origin,
+                        Absent
                     )
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
@@ -177,7 +178,7 @@ object AstUnpickler:
                     val kind     = InternalSymbolKind.fromValdefFlags(flagBits)
                     val flags    = new Reflect.Flags(flagBits)
                     val origin   = Reflect.Symbol.TastyOrigin(Map.empty, payloadBody, payloadEnd)
-                    val sym      = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin)
+                    val sym      = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     view.goto(payloadEnd)
@@ -191,7 +192,7 @@ object AstUnpickler:
                     val flagBits    = scanForwardAndCollectFlags(view, payloadEnd)
                     val flags       = new Reflect.Flags(flagBits)
                     val origin      = Reflect.Symbol.TastyOrigin(Map.empty, payloadBody, payloadEnd)
-                    val sym         = InternalSymbol.makeSymbol(Reflect.SymbolKind.Method, flags, symName, owner, home, origin)
+                    val sym         = InternalSymbol.makeSymbol(Reflect.SymbolKind.Method, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     // Recurse into DEFDEF body to discover type params and value params.
@@ -234,7 +235,7 @@ object AstUnpickler:
                         val kind     = InternalSymbolKind.fromTypedefTemplateFlags(flagBits)
                         val flags    = new Reflect.Flags(flagBits)
                         val origin   = Reflect.Symbol.TastyOrigin(Map.empty, templateBodyStart, templatePayloadEnd)
-                        val sym      = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin)
+                        val sym      = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
                         addrMap(nodeAddr) = sym
                         allSymbols += sym
                         // Walk template body to discover members (type params, constructor params, member defs).
@@ -253,7 +254,7 @@ object AstUnpickler:
                         val kind     = InternalSymbolKind.fromTypedefTypeFlagsAndBody(flagBits, nextTag)
                         val flags    = new Reflect.Flags(flagBits)
                         val origin   = Reflect.Symbol.TastyOrigin(Map.empty, payloadEnd, payloadEnd)
-                        val sym      = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin)
+                        val sym      = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
                         addrMap(nodeAddr) = sym
                         allSymbols += sym
                         view.goto(payloadEnd)
@@ -269,7 +270,7 @@ object AstUnpickler:
                     val flagBits = readModifiers(view, payloadEnd)
                     val flags    = new Reflect.Flags(flagBits)
                     val origin   = Reflect.Symbol.TastyOrigin(Map.empty, payloadEnd, payloadEnd)
-                    val sym      = InternalSymbol.makeSymbol(Reflect.SymbolKind.TypeParam, flags, symName, owner, home, origin)
+                    val sym      = InternalSymbol.makeSymbol(Reflect.SymbolKind.TypeParam, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     view.goto(payloadEnd)
@@ -284,7 +285,7 @@ object AstUnpickler:
                     val flagBits = scanForwardAndCollectFlags(view, payloadEnd)
                     val flags    = new Reflect.Flags(flagBits)
                     val origin   = Reflect.Symbol.TastyOrigin(Map.empty, payloadEnd, payloadEnd)
-                    val sym      = InternalSymbol.makeSymbol(Reflect.SymbolKind.Parameter, flags, symName, owner, home, origin)
+                    val sym      = InternalSymbol.makeSymbol(Reflect.SymbolKind.Parameter, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     view.goto(payloadEnd)

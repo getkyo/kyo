@@ -90,7 +90,8 @@ class FlagsTest extends Test:
             Reflect.Flag.Invisible,
             Reflect.Flag.Into,
             Reflect.Flag.PARAMsetter,
-            Reflect.Flag.PARAMalias
+            Reflect.Flag.PARAMalias,
+            Reflect.Flag.Static
         )
         val bits = allFlags.map(_.bit)
         assert(bits.distinct.size == bits.size, s"Duplicate bit found in flags: ${allFlags.map(f => s"${f.name}=${f.bit}").mkString(", ")}")
@@ -98,6 +99,38 @@ class FlagsTest extends Test:
         bits.foreach { b =>
             assert(b != 0L && (b & (b - 1)) == 0L, s"Bit $b is not a power of two")
         }
+        succeed
+    }
+
+    // Test 7: ACC_ABSTRACT (0x0400) sets Flag.Abstract; not set by ACC_INTERFACE alone.
+    "fromJvmAccessFlags: ACC_PUBLIC|ACC_ABSTRACT (0x0401) sets Flag.Abstract, not Flag.Trait" in run {
+        // 0x0001 = ACC_PUBLIC, 0x0400 = ACC_ABSTRACT
+        val flags = InternalFlags.fromJvmAccessFlags(0x0001 | 0x0400)
+        assert(flags.contains(Reflect.Flag.Abstract), "Expected Flag.Abstract for ACC_ABSTRACT class")
+        assert(!flags.contains(Reflect.Flag.Trait), "Expected Flag.Trait NOT set for non-interface abstract class")
+        succeed
+    }
+
+    // Test 8: ACC_PUBLIC|ACC_INTERFACE|ACC_ABSTRACT (0x0601) sets both Flag.Trait and Flag.Abstract.
+    "fromJvmAccessFlags: ACC_PUBLIC|ACC_INTERFACE|ACC_ABSTRACT (0x0601) sets both Flag.Trait and Flag.Abstract" in run {
+        // Typical interface access_flags per JVMS: ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT
+        // 0x0001 = ACC_PUBLIC, 0x0200 = ACC_INTERFACE, 0x0400 = ACC_ABSTRACT
+        val flags = InternalFlags.fromJvmAccessFlags(0x0001 | 0x0200 | 0x0400)
+        assert(flags.contains(Reflect.Flag.Trait), "Expected Flag.Trait for ACC_INTERFACE")
+        assert(flags.contains(Reflect.Flag.Abstract), "Expected Flag.Abstract for ACC_ABSTRACT")
+        succeed
+    }
+
+    // Test 9: ACC_STATIC (0x0008) sets Flag.Static, not Flag.JavaDefined.
+    "fromJvmAccessFlags: ACC_PUBLIC|ACC_STATIC (0x0009) sets Flag.Static but not Flag.JavaDefined" in run {
+        // Flag.JavaDefined is set unconditionally by ClassfileUnpickler, not here.
+        // ACC_STATIC (0x0008) should map only to Flag.Static.
+        val flags = InternalFlags.fromJvmAccessFlags(0x0001 | 0x0008)
+        assert(flags.contains(Reflect.Flag.Static), "Expected Flag.Static for ACC_STATIC")
+        assert(
+            !flags.contains(Reflect.Flag.JavaDefined),
+            "Flag.JavaDefined must NOT be set by fromJvmAccessFlags (set by ClassfileUnpickler)"
+        )
         succeed
     }
 

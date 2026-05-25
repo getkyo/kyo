@@ -17,7 +17,8 @@ class TypeOpsTest extends Test:
             Reflect.Name(""),
             null,
             new ClasspathRef,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
+            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Absent
         )
         parts.foldLeft(root) { (owner, part) =>
             Reflect.Symbol.make(
@@ -26,7 +27,8 @@ class TypeOpsTest extends Test:
                 Reflect.Name(part),
                 owner,
                 new ClasspathRef,
-                Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
+                Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+                Absent
             )
         }
         val finalSym = parts.foldLeft(root) { (owner, part) =>
@@ -36,7 +38,8 @@ class TypeOpsTest extends Test:
                 Reflect.Name(part),
                 owner,
                 new ClasspathRef,
-                Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
+                Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+                Absent
             )
         }
         Reflect.Type.Named(finalSym)

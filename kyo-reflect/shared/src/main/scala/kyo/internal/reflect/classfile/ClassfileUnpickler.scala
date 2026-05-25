@@ -28,6 +28,7 @@ final case class ClassfileResult(
     parents: Chunk[Reflect.Type],
     innerClassTable: Map[String, (String, String)],
     symbols: Chunk[Reflect.Symbol],
+    typeParams: Chunk[Reflect.Symbol],
     arena: TypeArena
 )
 
@@ -108,6 +109,7 @@ object ClassfileUnpickler:
                         Chunk.empty,
                         Map.empty,
                         Chunk.empty,
+                        Chunk.empty,
                         arena
                     )
                 else
@@ -121,7 +123,8 @@ object ClassfileUnpickler:
             Reflect.Name(simpleName),
             null,
             home,
-            Reflect.Symbol.JavaOrigin
+            Reflect.Symbol.JavaOrigin,
+            Absent
         )
     end makeUnresolvedSymbol
 
@@ -132,7 +135,8 @@ object ClassfileUnpickler:
             Reflect.Name(binaryName.replace('/', '.')),
             null,
             home,
-            Reflect.Symbol.JavaOrigin
+            Reflect.Symbol.JavaOrigin,
+            Absent
         )
         Reflect.Type.Named(sym)
     end unresolvedType
@@ -710,20 +714,42 @@ object ClassfileUnpickler:
                                     Present(classMetadata)
                                 )
 
-                                // Build member symbols
-                                buildMemberSymbols(pool, interner, home, path, classSym, fieldInfos, isMethods = false).map: fieldSyms =>
-                                    buildMemberSymbols(
-                                        pool,
-                                        interner,
-                                        home,
-                                        path,
-                                        classSym,
-                                        methodInfos,
-                                        isMethods = true
-                                    ).map: methodSyms =>
-                                        val allSymbols = fieldSyms ++ methodSyms
-                                        ClassfileResult(classSym, parents, innerTable, allSymbols, arena)
+                                // Parse class-level Signature attribute to extract type parameters.
+                                parseClassTypeParams(pool, interner, classAttrs.signatureIdx).map: classTypeParams =>
+                                    // Build member symbols
+                                    buildMemberSymbols(pool, interner, home, path, classSym, fieldInfos, isMethods = false).map:
+                                        fieldSyms =>
+                                            buildMemberSymbols(
+                                                pool,
+                                                interner,
+                                                home,
+                                                path,
+                                                classSym,
+                                                methodInfos,
+                                                isMethods = true
+                                            ).map: methodSyms =>
+                                                val allSymbols = fieldSyms ++ methodSyms
+                                                ClassfileResult(classSym, parents, innerTable, allSymbols, classTypeParams, arena)
     end buildResult
+
+    /** Parse the class-level Signature attribute to extract type parameter symbols.
+      *
+      * Returns Chunk.empty if no Signature attribute is present or if parsing fails (graceful degradation: erased-type info is still
+      * correct without generic signatures).
+      */
+    private def parseClassTypeParams(
+        pool: ConstantPool,
+        interner: Interner,
+        signatureIdx: Maybe[Int]
+    )(using Frame): Chunk[Reflect.Symbol] < (Sync & Abort[ReflectError]) =
+        signatureIdx match
+            case Absent => Chunk.empty
+            case Present(idx) =>
+                pool.utf8(idx).map: sig =>
+                    Abort.run(JavaSignatures.parseClassSignature(sig, interner)).map:
+                        case Result.Success((typeParams, _)) => typeParams
+                        case Result.Failure(_)               => Chunk.empty
+                        case Result.Panic(t)                 => Abort.panic(t)
 
     /** Resolve the symbol name and owner symbol for a class, using the inner class table.
       *
@@ -777,7 +803,8 @@ object ClassfileUnpickler:
                     Reflect.Name(outerSimpleName),
                     grandParent,
                     home,
-                    Reflect.Symbol.JavaOrigin
+                    Reflect.Symbol.JavaOrigin,
+                    Absent
                 )
             case _ =>
                 // Top-level outer class: parse the package prefix and class name
@@ -790,7 +817,8 @@ object ClassfileUnpickler:
                     Reflect.Name(className),
                     pkgSymbol,
                     home,
-                    Reflect.Symbol.JavaOrigin
+                    Reflect.Symbol.JavaOrigin,
+                    Absent
                 )
 
     /** Build a chain of Package symbols for a package path (e.g., Array("java", "util")). Returns the innermost package symbol. If segments
@@ -811,7 +839,8 @@ object ClassfileUnpickler:
                     Reflect.Name(segments(i)),
                     cur,
                     home,
-                    Reflect.Symbol.JavaOrigin
+                    Reflect.Symbol.JavaOrigin,
+                    Absent
                 )
                 i += 1
             end while
@@ -838,10 +867,16 @@ object ClassfileUnpickler:
                         Reflect.Name(enclosingName),
                         enclosingOwner,
                         home,
-                        Reflect.Symbol.JavaOrigin
+                        Reflect.Symbol.JavaOrigin,
+                        Absent
                     )
                     enclosingMethodIdx match
-                        case Absent => Present((enclosingClassSym, Reflect.Name("")))
+                        case Absent =>
+                            // The EnclosingMethod attribute is present but method_index == 0,
+                            // meaning the class is enclosed by a class initializer or field
+                            // initializer, not by a named method. Per JVMS §4.7.7 and PREP §6.2,
+                            // this means "no enclosing method" and the field should be Absent.
+                            Absent
                         case Present(methodIdx) =>
                             pool.nameAndType(methodIdx).map: (methodName, _) =>
                                 Present((enclosingClassSym, Reflect.Name(methodName)))
@@ -924,7 +959,8 @@ object ClassfileUnpickler:
             Reflect.Name(fqn.split("\\.").last),
             null,
             new ClasspathRef,
-            Reflect.Symbol.JavaOrigin
+            Reflect.Symbol.JavaOrigin,
+            Absent
         )
         Reflect.Type.Named(sym)
     end primType
@@ -1053,7 +1089,8 @@ object ClassfileUnpickler:
                     Reflect.Name(binaryName.replace('/', '.')),
                     null,
                     new ClasspathRef,
-                    Reflect.Symbol.JavaOrigin
+                    Reflect.Symbol.JavaOrigin,
+                    Absent
                 )
                 resolveThrowsList(pool, path, idxs, i + 1, acc.appended(Reflect.Type.Named(exSym)))
 

@@ -19,7 +19,8 @@ class DeclarationTableTest extends Test:
             Reflect.Name(nameStr),
             null,
             home,
-            origin
+            origin,
+            Absent
         )
     end makeSymbol
 

@@ -107,13 +107,21 @@ class ClassfileReaderTest extends Test:
     }
 
     // -------------------------------------------------------------------------
-    // Test 4: ArrayList.class has at least one TypeParam in symbols (via signature parsing)
+    // Test 4: ArrayList.class has at least one TypeParam via class Signature attribute
     // -------------------------------------------------------------------------
-    "reading ArrayList.class: class symbol is present and has JavaDefined flag" taggedAs jvmOnly in run {
+    "reading ArrayList.class: typeParams contains at least one TypeParam with non-empty name" taggedAs jvmOnly in run {
         readClass("java/util/ArrayList.class").map: result =>
             val sym = result.classSymbol
             assert(sym.name.asString == "ArrayList", s"Expected 'ArrayList', got '${sym.name.asString}'")
             assert(sym.flags.contains(Reflect.Flag.JavaDefined))
+            assert(result.typeParams.nonEmpty, s"Expected at least one typeParam in ArrayList (generic class), got empty")
+            val badKind = result.typeParams.find(_.kind != Reflect.SymbolKind.TypeParam)
+            assert(
+                badKind.isEmpty,
+                s"Expected all typeParams to have TypeParam kind; bad: ${badKind.map(tp => tp.name.asString + ":" + tp.kind)}"
+            )
+            val emptyName = result.typeParams.find(_.name.asString.isEmpty)
+            assert(emptyName.isEmpty, s"Expected all typeParams to have non-empty names; found empty name")
     }
 
     // -------------------------------------------------------------------------

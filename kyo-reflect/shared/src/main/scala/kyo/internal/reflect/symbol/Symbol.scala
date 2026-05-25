@@ -24,7 +24,7 @@ object Symbol:
         owner: Reflect.Symbol,
         home: ClasspathRef,
         origin: Reflect.Symbol.Origin,
-        javaMetadata: Maybe[Reflect.JavaMetadata] = Absent
+        javaMetadata: Maybe[Reflect.JavaMetadata]
     ): Reflect.Symbol =
         Reflect.Symbol.make(kind, flags, name, owner, home, origin, javaMetadata)
 

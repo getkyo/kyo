@@ -25,7 +25,8 @@ object Constant:
             Reflect.Name(""),
             null,
             new kyo.internal.reflect.query.ClasspathRef,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
+            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            kyo.Maybe.Absent
         )
 
     /** Decode the constant whose tag byte has already been read. The `view` cursor is positioned immediately after the tag.

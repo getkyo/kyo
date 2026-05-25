@@ -114,6 +114,7 @@ object Reflect:
         val Into: Flag          = Flag(1L << 40, "Into")
         val PARAMsetter: Flag   = Flag(1L << 41, "PARAMsetter")
         val PARAMalias: Flag    = Flag(1L << 42, "PARAMalias")
+        val Static: Flag        = Flag(1L << 43, "Static")
     end Flag
 
     // ── Symbol kinds ────────────────────────────────────────────────────────
@@ -212,7 +213,7 @@ object Reflect:
         val owner: Symbol,
         private[Reflect] val home: ClasspathRef,
         private[kyo] val origin: Symbol.Origin,
-        private[kyo] val javaMetadata: Maybe[JavaMetadata] = Absent
+        private[kyo] val javaMetadata: Maybe[JavaMetadata]
     ):
         // Pure accessors (no effect, always present even after classpath close).
         def fullName: Name        = Symbol.computeFullName(this)
@@ -311,7 +312,7 @@ object Reflect:
             owner: Symbol,
             home: ClasspathRef,
             origin: Origin,
-            javaMetadata: Maybe[JavaMetadata] = Absent
+            javaMetadata: Maybe[JavaMetadata]
         ): Symbol =
             new Symbol(kind, flags, name, owner, home, origin, javaMetadata)
 

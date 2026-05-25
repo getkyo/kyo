@@ -211,52 +211,33 @@ class UnifiedModelTest extends Test:
     }
 
     // -------------------------------------------------------------------------
-    // Test 16: Type.Array for both Java int[] and Scala Array[Int]
+    // Test 16: Type.Array is decoded from a Java record with int[] component
     // -------------------------------------------------------------------------
-    "Type.Array is produced for both Java int[] (classfile) and Scala Array[Int] (TASTy)" taggedAs jvmOnly in run {
-        // Java: java.util.Arrays has methods returning int[] and taking int[].
-        // We check that at least one symbol type (in parents or declared) is Type.Array.
-        // Actually we test via the record components: PointRecord has "int x" and "int y".
-        // Let's use a simpler approach: a Java class with an array-typed field.
-        // GenericBox.tasty has content field of type A. Instead use java.lang.String which has
-        // private final byte[] value field.
-        readClass("java/lang/String.class").map: javaResult =>
-            // Check symbols for array types in the result
-            // Actually the Type.Array would appear in the type of fields/methods which we don't
-            // fully parse yet (that's Phase 7). Instead, we verify TypeOps.mkArray produces
-            // Type.Array by testing the classfile record components parsing path (PointRecord).
-            // PointRecord has int x, int y components - these are Int types, not arrays.
-            // For the Java array test, we synthesize a classfile with an array-typed field.
-            // The simplest available test: use GenericBox.tasty for Scala Array via TypeOps.
-            //
-            // Since full type resolution is Phase 7, we verify the structural Type.Array case
-            // exists in the ADT (compile-time check via pattern matching).
-            val arrayType = Reflect.Type.Array(Reflect.Type.Named(
-                kyo.internal.reflect.symbol.Symbol.makeSymbol(
-                    Reflect.SymbolKind.Class,
-                    Reflect.Flags.empty,
-                    Reflect.Name("Int"),
-                    null,
-                    new ClasspathRef,
-                    Reflect.Symbol.JavaOrigin
-                )
-            ))
-            arrayType match
-                case Reflect.Type.Array(elem) =>
-                    assert(elem.isInstanceOf[Reflect.Type.Named], s"Expected Named elem in Array type")
+    "Type.Array is decoded from ArrayRecord classfile: record component 'values' has type Type.Array" in run {
+        // ArrayRecord is a Java record with a single int[] component named "values".
+        // The classfile bytes are embedded cross-platform in Embedded.arrayRecordClass.
+        // ClassfileUnpickler.buildRecordComponents calls parseErasedDescriptorType which
+        // must produce Type.Array for the "[I" descriptor of the int[] field.
+        readClassBytes(kyo.fixtures.Embedded.arrayRecordClass).map: result =>
+            val components = result.classSymbol.javaSpecific
+                .map(_.recordComponents)
+                .getOrElse(Chunk.empty)
+            assert(
+                components.nonEmpty,
+                s"Expected non-empty recordComponents for ArrayRecord; got empty. classSymbol=${result.classSymbol.name.asString}"
+            )
+            val valuesComponent = components.find(_._1.asString == "values")
+            assert(
+                valuesComponent.isDefined,
+                s"Expected component named 'values' in ArrayRecord; components: ${components.map(_._1.asString).mkString(", ")}"
+            )
+            val (_, tpe) = valuesComponent.get
+            tpe match
+                case Reflect.Type.Array(_) =>
+                    succeed
                 case other =>
-                    fail(s"Expected Type.Array, got $other")
+                    fail(s"Expected Type.Array for 'values' component, got $other")
             end match
-            // Scala: GenericBox.tasty has a TypeParam 'A' - not Array. Let's use FixtureClasses
-            // which has methods. For proper Array test, load SomeCaseClass which has no arrays.
-            // The actual proof that TypeOps.mkArray is unified is architectural (same ADT case).
-            // The test validates the Type.Array case exists and is pattern-matchable on both
-            // Java-produced and Scala-produced type trees.
-            tastySymbols("GenericBox.tasty").map: tastyResult =>
-                val hasTypeParam = tastyResult.symbols.exists(_.kind == Reflect.SymbolKind.TypeParam)
-                assert(hasTypeParam, s"Expected TypeParam in GenericBox.tasty (verifying TASTy symbols are present)")
-                // Both Java and Scala use Reflect.Type.Array; it's the same ADT case.
-                assert(Reflect.Type.Array(Reflect.Type.Named(javaResult.classSymbol)).isInstanceOf[Reflect.Type.Array])
     }
 
     // -------------------------------------------------------------------------

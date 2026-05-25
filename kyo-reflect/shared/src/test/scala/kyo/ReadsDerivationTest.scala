@@ -67,9 +67,10 @@ class ReadsDerivationTest extends Test:
             Reflect.Name(""),
             null,
             home,
-            Reflect.Symbol.JavaOrigin
+            Reflect.Symbol.JavaOrigin,
+            Absent
         )
-        Reflect.Symbol.make(kind, flags, nameVal, root, home, Reflect.Symbol.JavaOrigin)
+        Reflect.Symbol.make(kind, flags, nameVal, root, home, Reflect.Symbol.JavaOrigin, Absent)
     end stubSymbol
 
     // ── Test fixtures: case classes defined here so they are in user code scope ──

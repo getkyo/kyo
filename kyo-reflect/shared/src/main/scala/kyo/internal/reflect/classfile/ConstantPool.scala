@@ -177,8 +177,13 @@ object ConstantPool:
             val count   = readU2(view)
             val entries = new Array[CpEntry | Null](count)
 
+            // errorMsg is set inside the while loop when a non-recoverable format error is detected.
+            // We cannot call Abort.fail inside Sync.defer, so we capture the error and surface it
+            // as Abort.fail after the Sync.defer block completes.
+            var errorMsg: String = null
+
             var idx = 1
-            while idx < count do
+            while idx < count && errorMsg == null do
                 val tag = readU1(view)
                 tag match
                     case ClassfileFormat.CONSTANT_Utf8 =>
@@ -191,10 +196,13 @@ object ConstantPool:
                             i += 1
                         // Copy bytes eagerly (cursor has advanced past them).
                         // Deferring only String materialization via the Interner.
-                        val copiedBytes = view match
-                            case h: ByteView.Heap => h.copyBytes(off, off + len)
-                            case _                => throw new IllegalStateException(s"Unexpected ByteView variant in $path")
-                        entries(idx) = new CpEntry.Utf8Lazy(copiedBytes, 0, len)
+                        view match
+                            case h: ByteView.Heap =>
+                                entries(idx) = new CpEntry.Utf8Lazy(h.copyBytes(off, off + len), 0, len)
+                            case _: ByteView.Mapped =>
+                                errorMsg =
+                                    s"Unexpected ByteView variant while reading UTF-8 entry at pool[$idx] in $path; only Heap ByteView is supported for classfile reading"
+                        end match
                         idx += 1
 
                     case ClassfileFormat.CONSTANT_Integer =>
@@ -266,13 +274,14 @@ object ConstantPool:
                         idx += 1
 
                     case unknown =>
-                        throw new IllegalStateException(
-                            s"Unknown constant pool tag $unknown at index $idx in $path"
-                        )
+                        errorMsg = s"Unknown constant pool tag $unknown at index $idx in $path"
                 end match
             end while
 
-            new ConstantPool(entries, interner, path)
-        }
+            if errorMsg != null then Left(errorMsg)
+            else Right(new ConstantPool(entries, interner, path))
+        }.map:
+            case Right(pool) => pool
+            case Left(msg)   => Abort.fail(ReflectError.ClassfileFormatError(path, msg))
 
 end ConstantPool

@@ -41,7 +41,8 @@ class TypeUnpicklerTest extends Test:
             Reflect.Name(name),
             null,
             new ClasspathRef,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
+            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Absent
         )
 
     /** Encode an unsigned Nat in dotty's TASTy big-endian base-128 format.
@@ -423,7 +424,8 @@ class TypeUnpicklerTest extends Test:
             Reflect.Name("s"),
             null,
             new ClasspathRef,
-            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0)
+            Reflect.Symbol.TastyOrigin(Map.empty, 0, 0),
+            Absent
         )
         val rec     = Reflect.Type.Rec(Reflect.Type.Named(sentinel))
         val recThis = Reflect.Type.RecThis(rec)
