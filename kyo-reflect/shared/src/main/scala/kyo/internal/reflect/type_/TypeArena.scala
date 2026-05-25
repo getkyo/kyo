@@ -124,13 +124,11 @@ final class TypeKey(val hash: Int, val t: Reflect.Type):
 end TypeKey
 
 object TypeKey:
-    private val hashingInProgress: ThreadLocal[mutable.HashSet[Reflect.Type]] =
-        ThreadLocal.withInitial(() => new mutable.HashSet[Reflect.Type]())
 
     def of(t: Reflect.Type): TypeKey = new TypeKey(computeHash(t), t)
 
     private def computeHash(t: Reflect.Type): Int =
-        val inProgress = hashingInProgress.get()
+        val inProgress = PlatformHashingState.get()
         if inProgress.contains(t) then return 0
         discard(inProgress.add(t))
         val h =

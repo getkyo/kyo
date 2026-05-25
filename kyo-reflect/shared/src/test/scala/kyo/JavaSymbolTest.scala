@@ -26,45 +26,18 @@ class JavaSymbolTest extends Test:
 
     /** Load JDK class bytes by binary path. JVM-only. */
     private def loadJdkClass(binaryPath: String): Array[Byte] =
-        val is = getClass.getClassLoader.getResourceAsStream(binaryPath)
-        if is == null then throw new RuntimeException(s"JDK class not found: $binaryPath")
-        val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
-        var b   = is.read()
-        while b != -1 do
-            buf += b.toByte
-            b = is.read()
-        is.close()
-        buf.toArray
-    end loadJdkClass
+        TestResourceLoader.loadBytes(binaryPath)
 
     /** Load fixture class bytes from test resources. JVM-only. */
     private def loadFixture(name: String): Array[Byte] =
-        val is = getClass.getResourceAsStream(s"/kyo/fixtures/$name")
-        if is == null then throw new RuntimeException(s"Fixture not found: /kyo/fixtures/$name")
-        val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
-        var b   = is.read()
-        while b != -1 do
-            buf += b.toByte
-            b = is.read()
-        is.close()
-        buf.toArray
-    end loadFixture
+        TestResourceLoader.loadBytes(s"/kyo/fixtures/$name")
 
     private def readClass(bytes: Array[Byte])(using Frame): ClassfileResult < (Sync & Abort[ReflectError]) =
         ClassfileUnpickler.read(bytes, interner, new TypeArena, new ClasspathRef)
 
     /** Load raw bytes for a test resource by path. JVM-only. */
     private def loadResourceBytes(resourcePath: String): Array[Byte] =
-        val is = getClass.getResourceAsStream(resourcePath)
-        if is == null then throw new RuntimeException(s"Resource not found: $resourcePath")
-        val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
-        var b   = is.read()
-        while b != -1 do
-            buf += b.toByte
-            b = is.read()
-        is.close()
-        buf.toArray
-    end loadResourceBytes
+        TestResourceLoader.loadBytes(resourcePath)
 
     /** Run TASTy pass 1 on raw TASTy bytes and return the first non-root class symbol. */
     private def firstClassSymbolFromTasty(resourceName: String)(using Frame): Reflect.Symbol < (Sync & Abort[ReflectError]) =

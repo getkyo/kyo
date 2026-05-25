@@ -24,16 +24,7 @@ class ClassfileReaderTest extends Test:
 
     /** Load raw bytes for a JVM class by binary path. Only works on JVM. */
     private def loadClassBytes(binaryPath: String): Array[Byte] =
-        val is = getClass.getClassLoader.getResourceAsStream(binaryPath)
-        if is == null then throw new RuntimeException(s"Resource not found: $binaryPath")
-        val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
-        var b   = is.read()
-        while b != -1 do
-            buf += b.toByte
-            b = is.read()
-        is.close()
-        buf.toArray
-    end loadClassBytes
+        TestResourceLoader.loadBytes(binaryPath)
 
     private def readClass(binaryPath: String)(using Frame): ClassfileResult < (Sync & Abort[ReflectError]) =
         val bytes = loadClassBytes(binaryPath)
@@ -41,16 +32,7 @@ class ClassfileReaderTest extends Test:
 
     /** Load raw bytes for a test resource by path. Works on JVM only. */
     private def loadResourceBytes(resourcePath: String): Array[Byte] =
-        val is = getClass.getResourceAsStream(resourcePath)
-        if is == null then throw new RuntimeException(s"Resource not found: $resourcePath")
-        val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
-        var b   = is.read()
-        while b != -1 do
-            buf += b.toByte
-            b = is.read()
-        is.close()
-        buf.toArray
-    end loadResourceBytes
+        TestResourceLoader.loadBytes(resourcePath)
 
     /** Run TASTy pass 1 on raw TASTy bytes and return the first non-root class symbol. */
     private def firstClassSymbolFromTasty(bytes: Array[Byte])(using Frame): Reflect.Symbol < (Sync & Abort[ReflectError]) =

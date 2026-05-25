@@ -24,16 +24,7 @@ class AstUnpicklerTest extends Test:
     private def loadFixtureBytes(fileName: String): Array[Byte] =
         fileName match
             case "PlainClass.tasty" => kyo.fixtures.Embedded.plainClassTasty
-            case other =>
-                val stream = getClass.getResourceAsStream(s"/kyo/fixtures/$other")
-                if stream == null then throw new RuntimeException(s"Fixture not found: /kyo/fixtures/$other")
-                val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
-                var b   = stream.read()
-                while b != -1 do
-                    buf += b.toByte
-                    b = stream.read()
-                stream.close()
-                buf.toArray
+            case other              => TestResourceLoader.loadBytes(s"/kyo/fixtures/$other")
         end match
     end loadFixtureBytes
 

@@ -24,16 +24,7 @@ class ReadsDerivationTest extends Test:
     private def loadFixtureBytes(name: String): Array[Byte] =
         name match
             case "PlainClass.tasty" => kyo.fixtures.Embedded.plainClassTasty
-            case other =>
-                val is = getClass.getResourceAsStream(s"/kyo/fixtures/$other")
-                if is == null then throw new RuntimeException(s"Fixture not found: /kyo/fixtures/$other")
-                val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
-                var b   = is.read()
-                while b != -1 do
-                    buf += b.toByte
-                    b = is.read()
-                is.close()
-                buf.toArray
+            case other              => TestResourceLoader.loadBytes(s"/kyo/fixtures/$other")
         end match
     end loadFixtureBytes
 

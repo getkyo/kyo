@@ -26,7 +26,7 @@ object CodegenExample:
     )
 
     /** Discover all top-level classes in a classpath, project each into FacadeType, render. */
-    def run(roots: Seq[String])(using Frame): Unit < (Sync & Abort[ReflectError] & Scope) =
+    def run(roots: Seq[String])(using Frame): Unit < (Sync & Async & Abort[ReflectError] & Scope) =
         for
             cp <- Reflect.Classpath.openCached(roots, cacheDir = ".kyo-reflect-cache")
             given Classpath = cp

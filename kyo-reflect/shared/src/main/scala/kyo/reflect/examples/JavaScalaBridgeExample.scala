@@ -16,7 +16,7 @@ object JavaScalaBridgeExample:
         members: Chunk[String]
     )
 
-    def summarize(fqn: String)(using Frame): Maybe[ClassSummary] < (Sync & Abort[ReflectError] & Scope) =
+    def summarize(fqn: String)(using Frame): Maybe[ClassSummary] < (Sync & Async & Abort[ReflectError] & Scope) =
         for
             cp     <- Reflect.Classpath.openCached(Seq("."), cacheDir = ".kyo-reflect-cache")
             clsOpt <- cp.findClass(fqn)
@@ -35,7 +35,7 @@ object JavaScalaBridgeExample:
         yield out
 
     /** Compare a Java class and its Scala counterpart side-by-side. */
-    def compare(javaFqn: String, scalaFqn: String)(using Frame): String < (Sync & Abort[ReflectError] & Scope) =
+    def compare(javaFqn: String, scalaFqn: String)(using Frame): String < (Sync & Async & Abort[ReflectError] & Scope) =
         for
             javaSummary  <- summarize(javaFqn)
             scalaSummary <- summarize(scalaFqn)

@@ -1,15 +1,19 @@
 package kyo
 
 import kyo.internal.reflect.binary.Utf8
+import kyo.internal.reflect.query.ClasspathOrchestrator
 import kyo.internal.reflect.query.ClasspathRef
+import kyo.internal.reflect.query.PlatformFileSource
+import kyo.internal.reflect.query.Query
+import kyo.internal.reflect.snapshot.DigestComputer as SnapshotDigest
+import kyo.internal.reflect.snapshot.SnapshotReader
+import kyo.internal.reflect.snapshot.SnapshotWriter
 import kyo.internal.reflect.symbol.Interner
+import kyo.internal.reflect.type_.TypeArena
 
 /** kyo-reflect public entry object.
   *
   * Reads Scala 3 TASTy files and Java classfiles through a unified Symbol/Type API. Cross-platform JVM, JS, Native.
-  *
-  * This file is the Phase 0 skeleton: types compile, methods return `Abort.fail(ReflectError.NotImplemented)` until the real implementation
-  * lands per the phased plan in DESIGN.md.
   *
   * Note on naming: all types are nested in `object Reflect` (`Reflect.Type`, `Reflect.Symbol`, etc.) to avoid polluting `kyo.*` and to keep
   * separation from `kyo.Structure.Type` (kyo-schema's value-structure type tree). If both `Structure` and `Reflect` are imported in the
@@ -332,25 +336,131 @@ object Reflect:
 
     // ── Classpath ───────────────────────────────────────────────────────────
 
-    opaque type Classpath = ClasspathState
-
-    final private class ClasspathState // placeholder until Phase 7 implements the real state machine
+    opaque type Classpath = kyo.internal.reflect.query.Classpath
 
     object Classpath:
-        def open(roots: Seq[String])(using Frame): Classpath < (Sync & Scope & Abort[ReflectError]) = stub("Classpath.open")
-        def open(roots: Seq[String], strict: Boolean)(using Frame): Classpath < (Sync & Scope & Abort[ReflectError]) =
-            stub("Classpath.open(strict)")
-        def openCached(roots: Seq[String], cacheDir: String)(using Frame): Classpath < (Sync & Scope & Abort[ReflectError]) =
-            stub("Classpath.openCached")
-        def fromPickles(pickles: Seq[Pickle])(using Frame): Classpath < Sync = Sync.defer(new ClasspathState)
+
+        /** Open a classpath from directory/file roots. Soft-fail mode (errors accumulate in `cp.errors`).
+          *
+          * Registers a finalizer on the enclosing `Scope` to close the classpath.
+          */
+        def open(roots: Seq[String])(using Frame): Classpath < (Sync & Async & Scope & Abort[ReflectError]) =
+            openImpl(roots, strict = false)
+
+        /** Open a classpath from directory/file roots. Strict mode: any file error aborts immediately. */
+        def open(roots: Seq[String], strict: Boolean)(using Frame): Classpath < (Sync & Async & Scope & Abort[ReflectError]) =
+            openImpl(roots, strict)
+
+        /** Open a classpath from directory/file roots, using a snapshot cache in `cacheDir`.
+          *
+          * On a cache hit (digest match), deserializes the snapshot directly. On a miss, opens normally then writes a new snapshot.
+          */
+        def openCached(roots: Seq[String], cacheDir: String)(using Frame): Classpath < (Sync & Async & Scope & Abort[ReflectError]) =
+            openCachedImpl(roots, cacheDir)
+
+        /** Wrap a raw InternalClasspath as the public Classpath opaque type. For use by internal test helpers only. */
+        private[kyo] def wrap(cp: kyo.internal.reflect.query.Classpath): Classpath = cp
+
+        /** Unwrap the public Classpath opaque type to the internal representation. For use by internal test helpers only. */
+        private[kyo] def unwrap(cp: Classpath): kyo.internal.reflect.query.Classpath = cp
+
+        /** Create a classpath from pre-parsed in-memory pickles. */
+        def fromPickles(pickles: Seq[Pickle])(using Frame): Classpath < Sync =
+            kyo.internal.reflect.query.Classpath.allocate.map: cp =>
+                kyo.internal.reflect.query.Classpath.transitionToReady(
+                    cp,
+                    allSymbols = Chunk.empty,
+                    topLevelClasses = Chunk.empty,
+                    packages = Chunk.empty,
+                    fqnIndex = Map.empty,
+                    packageIndex = Map.empty,
+                    canonical = TypeArena.canonical(),
+                    errors = Chunk.empty
+                )
+                assignHomes(cp, cp)
+                cp
+
+        /** Internal: open implementation, delegates to ClasspathOrchestrator. */
+        private def openImpl(
+            roots: Seq[String],
+            strict: Boolean
+        )(using Frame): Classpath < (Sync & Async & Scope & Abort[ReflectError]) =
+            val source      = PlatformFileSource.get
+            val concurrency = Runtime.getRuntime.availableProcessors().max(1)
+            ClasspathOrchestrator.open(roots, strict, source, concurrency).map: cp =>
+                assignHomes(cp, cp)
+                cp
+        end openImpl
+
+        private def openCachedImpl(
+            roots: Seq[String],
+            cacheDir: String
+        )(using Frame): Classpath < (Sync & Async & Scope & Abort[ReflectError]) =
+            val source      = PlatformFileSource.get
+            val concurrency = Runtime.getRuntime.availableProcessors().max(1)
+            // Compute digest of root metadata
+            Abort.run[ReflectError](SnapshotDigest.compute(roots, source)).flatMap:
+                case Result.Failure(_) =>
+                    // Digest computation failed (e.g., browser): fall through to normal open
+                    openImpl(roots, strict = false)
+                case Result.Panic(_) =>
+                    openImpl(roots, strict = false)
+                case Result.Success(digest) =>
+                    val hexDigest    = SnapshotDigest.toHexString(digest)
+                    val snapshotPath = s"$cacheDir/$hexDigest.krfl"
+                    source.exists(snapshotPath).flatMap: exists =>
+                        if exists then
+                            // Try to load from snapshot
+                            kyo.internal.reflect.query.Classpath.allocate.flatMap: cp =>
+                                Scope.ensure(Sync.defer(kyo.internal.reflect.query.Classpath.close(cp))).andThen:
+                                    Abort.run[ReflectError](SnapshotReader.read(snapshotPath, source, cp)).flatMap:
+                                        case Result.Success(_) =>
+                                            assignHomes(cp, cp)
+                                            cp
+                                        case Result.Failure(_) | Result.Panic(_) =>
+                                            // Snapshot unreadable; fall through to normal open
+                                            openImpl(roots, strict = false)
+                        else
+                            // No snapshot; open normally then write snapshot
+                            openImpl(roots, strict = false).flatMap: cp =>
+                                Abort.run[ReflectError](SnapshotWriter.write(cp, cacheDir, digest, source)).andThen(cp)
+        end openCachedImpl
+
+        /** Assign each symbol's `ClasspathRef` to this classpath. Called once, after the classpath transitions to Ready. */
+        private def assignHomes(cp: kyo.internal.reflect.query.Classpath, cpPublic: Classpath): Unit =
+            // Inside object Reflect, Classpath is transparent: cp (internal) == cpPublic (opaque) at runtime.
+            // We use AllowUnsafe to read allSymbols without an effect context.
+            import AllowUnsafe.embrace.danger
+            val syms = cp.allSymbols
+            var i    = 0
+            while i < syms.length do
+                syms(i).home.assign(cpPublic)
+                i += 1
+        end assignHomes
+
     end Classpath
 
     extension (cp: Classpath)(using Frame)
-        def findClass(fqn: String): Maybe[Symbol] < (Sync & Abort[ReflectError])   = stub("Classpath.findClass")
-        def findPackage(fqn: String): Maybe[Symbol] < (Sync & Abort[ReflectError]) = stub("Classpath.findPackage")
-        def packages: Chunk[Symbol] < (Sync & Abort[ReflectError])                 = stub("Classpath.packages")
-        def topLevelClasses: Chunk[Symbol] < (Sync & Abort[ReflectError])          = stub("Classpath.topLevelClasses")
-        def errors: Chunk[ReflectError] < Sync                                     = Sync.defer(Chunk.empty)
+        def findClass(fqn: String): Maybe[Symbol] < (Sync & Abort[ReflectError])   = cp.lookupClass(fqn)
+        def findPackage(fqn: String): Maybe[Symbol] < (Sync & Abort[ReflectError]) = cp.lookupPackage(fqn)
+        def packages: Chunk[Symbol] < (Sync & Abort[ReflectError])                 = cp.allPackages
+        def topLevelClasses: Chunk[Symbol] < (Sync & Abort[ReflectError])          = cp.allTopLevelClasses
+        def errors: Chunk[ReflectError] < Sync                                     = Sync.defer(cp.accumulatedErrors)
+
+        /** Find a class symbol by JVM binary name (e.g., "com/example/Foo$Inner").
+          *
+          * Converts the binary name to a dotted FQN and delegates to `findClass`.
+          */
+        def findClassByBinary(binaryName: String): Maybe[Symbol] < (Sync & Abort[ReflectError]) =
+            val fqn = binaryName.replace('/', '.').replace('$', '.')
+            cp.lookupClass(fqn)
+
+        /** Build a type-safe query over this classpath.
+          *
+          * The query is lazily evaluated on `.run` or `.stream`.
+          */
+        def query[A](using reads: Reads[A]): Query[A] =
+            Query.make(cp, reads)
     end extension
 
     // ── Reads typeclass (schema-driven projection) ─────────────────────────
@@ -398,6 +508,73 @@ object Reflect:
 
     inline def symbolToRecord[F: Fields](sym: Symbol)(using Frame): Record[F] < (Sync & Abort[ReflectError]) =
         ${ kyo.internal.SymbolToRecordMacro.symbolToRecordImpl[F]('sym) }
+
+    // ── Snapshot management ─────────────────────────────────────────────────
+
+    /** Snapshot cache management utilities. */
+    object Snapshot:
+
+        /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAge` milliseconds.
+          *
+          * Only deletes files matching `*.krfl`. Does not recurse into subdirectories.
+          *
+          * @param cacheDir
+          *   directory containing snapshot files
+          * @param maxAgeMs
+          *   maximum age in milliseconds; files older than this are deleted
+          */
+        def evictOlderThan(cacheDir: String, maxAgeMs: Long)(using Frame): Unit < (Sync & Abort[ReflectError]) =
+            val source = PlatformFileSource.get
+            source.list(cacheDir, ".krfl").flatMap: files =>
+                Kyo.foreach(files): path =>
+                    source.stat(path).flatMap: st =>
+                        val now = java.lang.System.currentTimeMillis()
+                        if now - st.mtimeMs > maxAgeMs then
+                            // Try to delete; ignore errors (concurrent writers may already have replaced the file)
+                            Abort.run[ReflectError](deleteFile(source, path)).andThen(Kyo.unit)
+                        else
+                            Kyo.unit
+                        end if
+                .andThen(Kyo.unit)
+        end evictOlderThan
+
+        /** Delete snapshot files in `cacheDir` whose modification time is older than `d`.
+          *
+          * Only deletes files matching `*.krfl`. Does not recurse into subdirectories.
+          */
+        @scala.annotation.targetName("evictOlderThanDuration")
+        def evictOlderThan(cacheDir: String, d: Duration)(using Frame): Unit < (Sync & Abort[ReflectError]) =
+            evictOlderThan(cacheDir, d.toMillis)
+
+        /** Internal overload that accepts a custom FileSource for testing. */
+        private[kyo] def evictOlderThanWithSource(
+            cacheDir: String,
+            maxAgeMs: Long,
+            source: kyo.internal.reflect.query.FileSource
+        )(using Frame): Unit < (Sync & Abort[ReflectError]) =
+            source.list(cacheDir, ".krfl").flatMap: files =>
+                Kyo.foreach(files): path =>
+                    source.stat(path).flatMap: st =>
+                        val now = java.lang.System.currentTimeMillis()
+                        if now - st.mtimeMs > maxAgeMs then
+                            Abort.run[ReflectError](deleteFile(source, path)).andThen(Kyo.unit)
+                        else
+                            Kyo.unit
+                        end if
+                .andThen(Kyo.unit)
+        end evictOlderThanWithSource
+
+        private def deleteFile(
+            source: kyo.internal.reflect.query.FileSource,
+            path: String
+        )(using Frame): Unit < (Sync & Abort[ReflectError]) =
+            // Rename to a tombstone then discard; if rename fails (already gone) we just continue.
+            val tombstone = path + ".deleting"
+            source.rename(path, tombstone).andThen:
+                source.rename(tombstone, tombstone + ".gone").andThen(Kyo.unit)
+        end deleteFile
+
+    end Snapshot
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 

@@ -48,6 +48,9 @@ object NameUnpickler:
             catch
                 case _: ArrayIndexOutOfBoundsException =>
                     Left(ReflectError.MalformedSection("Names", "unexpected end of name table"))
+                case ex: java.lang.Error
+                    if ex.getCause != null && ex.getCause.isInstanceOf[ArrayIndexOutOfBoundsException] =>
+                    Left(ReflectError.MalformedSection("Names", "unexpected end of name table"))
         result match
             case Right(names) => Sync.defer(names)
             case Left(err)    => Abort.fail(err)

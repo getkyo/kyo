@@ -25,31 +25,13 @@ class UnifiedModelTest extends Test:
 
     /** Load JDK class bytes by binary path. JVM-only. */
     private def loadJdkClass(binaryPath: String): Array[Byte] =
-        val is = getClass.getClassLoader.getResourceAsStream(binaryPath)
-        if is == null then throw new RuntimeException(s"JDK class not found: $binaryPath")
-        val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
-        var b   = is.read()
-        while b != -1 do
-            buf += b.toByte
-            b = is.read()
-        is.close()
-        buf.toArray
-    end loadJdkClass
+        TestResourceLoader.loadBytes(binaryPath)
 
     /** Load fixture bytes from test resources (TASTy or .class files). */
     private def loadFixture(name: String): Array[Byte] =
         name match
             case "PlainClass.tasty" => kyo.fixtures.Embedded.plainClassTasty
-            case other =>
-                val is = getClass.getResourceAsStream(s"/kyo/fixtures/$other")
-                if is == null then throw new RuntimeException(s"Fixture not found: /kyo/fixtures/$other")
-                val buf = new scala.collection.mutable.ArrayBuffer[Byte]()
-                var b   = is.read()
-                while b != -1 do
-                    buf += b.toByte
-                    b = is.read()
-                is.close()
-                buf.toArray
+            case other              => TestResourceLoader.loadBytes(s"/kyo/fixtures/$other")
         end match
     end loadFixture
 

@@ -7,7 +7,7 @@ import kyo.Reflect.*
 object IdeHoverExample:
 
     /** Returns the hover string for `fqn.member`, or Absent if either lookup fails. */
-    def hover(fqn: String, member: String)(using Frame): Maybe[String] < (Sync & Abort[ReflectError] & Scope) =
+    def hover(fqn: String, member: String)(using Frame): Maybe[String] < (Sync & Async & Abort[ReflectError] & Scope) =
         for
             cp     <- Reflect.Classpath.openCached(Seq("."), cacheDir = ".kyo-reflect-cache")
             clsOpt <- cp.findClass(fqn)
@@ -22,7 +22,7 @@ object IdeHoverExample:
         yield out
 
     /** "Find all sealed classes in this classpath" composed query. */
-    def findSealed(using Frame): Chunk[Reflect.Symbol] < (Sync & Abort[ReflectError] & Scope) =
+    def findSealed(using Frame): Chunk[Reflect.Symbol] < (Sync & Async & Abort[ReflectError] & Scope) =
         for
             cp      <- Reflect.Classpath.openCached(Seq("."), cacheDir = ".kyo-reflect-cache")
             classes <- cp.topLevelClasses

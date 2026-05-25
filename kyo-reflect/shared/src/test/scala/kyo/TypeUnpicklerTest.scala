@@ -388,28 +388,20 @@ class TypeUnpicklerTest extends Test:
         )
         var decoded: Option[Reflect.Type] = None
         var exception: Option[Throwable]  = None
-        // Use a thread with limited stack to guard against infinite recursion / stack overflow.
-        val thread = new Thread(
-            null,
-            () =>
-                try
-                    val view        = ByteView(bytes)
-                    val arena       = makeArena()
-                    val home        = makeHome()
-                    val liveAddrMap = new mutable.HashMap[Int, Reflect.Symbol]()
-                    val session     = new TypeUnpickler.DecodeSession(Array.empty, liveAddrMap, arena, home)
-                    // Decode RECtype/RECthis via the shared session.
-                    // This exercises inProgressRec cycle-break: TypeUnpickler.scala lines 257-269.
-                    val t = TypeUnpickler.readTypeIntoSession(view, session)
-                    decoded = Some(t)
-                catch
-                    case t: Throwable => exception = Some(t)
-            ,
-            "cycle-test",
-            64 * 1024
-        )
-        thread.start()
-        thread.join(5000)
+        // StackLimitedRunner is platform-specific: JVM uses a 64KB-stack Thread, JS/Native run directly.
+        StackLimitedRunner.run:
+            try
+                val view        = ByteView(bytes)
+                val arena       = makeArena()
+                val home        = makeHome()
+                val liveAddrMap = new mutable.HashMap[Int, Reflect.Symbol]()
+                val session     = new TypeUnpickler.DecodeSession(Array.empty, liveAddrMap, arena, home)
+                // Decode RECtype/RECthis via the shared session.
+                // This exercises inProgressRec cycle-break: TypeUnpickler.scala lines 257-269.
+                val t = TypeUnpickler.readTypeIntoSession(view, session)
+                decoded = Some(t)
+            catch
+                case t: Throwable => exception = Some(t)
         assert(exception.isEmpty, s"Unexpected exception in RECtype decode: ${exception.map(_.getMessage).getOrElse("")}")
         assert(decoded.isDefined, "RECtype decode timed out or produced no result")
         // The decoded result must be a Rec whose parent resolves (via inProgressRec) to RecThis.

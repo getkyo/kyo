@@ -11,7 +11,7 @@ import kyo.Reflect.*
 object RuntimeReflectionExample:
 
     /** Returns the public val fields of `A` as `(name, type)` pairs. */
-    def fieldsOf[A](using t: Tag[A], frame: Frame): Chunk[(String, Reflect.Type)] < (Sync & Abort[ReflectError] & Scope) =
+    def fieldsOf[A](using t: Tag[A], frame: Frame): Chunk[(String, Reflect.Type)] < (Sync & Async & Abort[ReflectError] & Scope) =
         val fqn = Reflect.classFqn[A]
         for
             cp     <- Reflect.Classpath.openCached(Seq("."), cacheDir = ".kyo-reflect-cache")
@@ -25,7 +25,7 @@ object RuntimeReflectionExample:
     end fieldsOf
 
     /** Returns a structural type summary of a known type for debugging or printing. */
-    def describe[A](using t: Tag[A], frame: Frame): String < (Sync & Abort[ReflectError] & Scope) =
+    def describe[A](using t: Tag[A], frame: Frame): String < (Sync & Async & Abort[ReflectError] & Scope) =
         val fqn = Reflect.classFqn[A]
         for
             cp      <- Reflect.Classpath.openCached(Seq("."), cacheDir = ".kyo-reflect-cache")

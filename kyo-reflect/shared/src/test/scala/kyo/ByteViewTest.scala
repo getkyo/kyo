@@ -26,15 +26,20 @@ class ByteViewTest extends Test:
         assert(view.position == 2)
     }
 
-    // Test 3: readByte at end produces ArrayIndexOutOfBoundsException
+    // Test 3: readByte at end produces ArrayIndexOutOfBoundsException (or a wrapping Error on Scala.js)
     "readByte at end produces ArrayIndexOutOfBoundsException" in run {
         val bytes = Array[Byte](0x80.toByte)
         val view  = ByteView(bytes)
         view.readByte() // consume the only byte
         assert(view.remaining == 0)
-        assertThrows[ArrayIndexOutOfBoundsException] {
+        try
             view.readByte()
-        }
+            fail("Expected ArrayIndexOutOfBoundsException but no exception was thrown")
+        catch
+            case _: ArrayIndexOutOfBoundsException => succeed
+            case ex: java.lang.Error
+                if ex.getCause != null && ex.getCause.isInstanceOf[ArrayIndexOutOfBoundsException] => succeed
+        end try
     }
 
     // Test 4: subView shares underlying array, has correct start/end/position

@@ -82,6 +82,9 @@ object AstUnpickler:
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
                     Left(ReflectError.MalformedSection("ASTs", s"unexpected end: ${ex.getMessage}"))
+                case ex: java.lang.Error
+                    if ex.getCause != null && ex.getCause.isInstanceOf[ArrayIndexOutOfBoundsException] =>
+                    Left(ReflectError.MalformedSection("ASTs", s"unexpected end: ${ex.getCause.getMessage}"))
                 case ex: Exception =>
                     Left(ReflectError.MalformedSection("ASTs", s"parse error: ${ex.getMessage}"))
         result match

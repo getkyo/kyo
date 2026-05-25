@@ -13,7 +13,6 @@ import scala.scalajs.js.typedarray.Int8Array
   * (String.length == 1), unlike JVM which uses a surrogate pair (String.length == 2).
   */
 object Utf8 extends Utf8Impl:
-    private val decoder = js.Dynamic.global.TextDecoder.newInstance("utf-8")
 
     def decode(bytes: Array[Byte], offset: Int, length: Int): String =
         val arr = new Int8Array(length)
@@ -21,6 +20,7 @@ object Utf8 extends Utf8Impl:
         while i < length do
             arr(i) = bytes(offset + i)
             i += 1
+        val decoder = js.Dynamic.newInstance(js.Dynamic.global.TextDecoder)("utf-8")
         decoder.decode(arr).asInstanceOf[String]
     end decode
 end Utf8
