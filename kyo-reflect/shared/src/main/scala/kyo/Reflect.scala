@@ -226,6 +226,8 @@ object Reflect:
         private[kyo] val _declarations: kyo.internal.reflect.symbol.SingleAssign[Chunk[Symbol]] =
             new kyo.internal.reflect.symbol.SingleAssign
         private[kyo] val _declaredType: kyo.internal.reflect.symbol.SingleAssign[Type] = new kyo.internal.reflect.symbol.SingleAssign
+        private[kyo] val _scaladoc: kyo.internal.reflect.symbol.SingleAssign[Maybe[String]] =
+            new kyo.internal.reflect.symbol.SingleAssign
 
         // Pure accessors (no effect, always present even after classpath close).
         def fullName: Name        = Symbol.computeFullName(this)
@@ -240,6 +242,19 @@ object Reflect:
         end isPackageObject
         def isModule: Boolean = flags.contains(Flag.Module)
         def isJava: Boolean   = flags.contains(Flag.JavaDefined)
+
+        /** The scaladoc comment associated with this symbol, if any.
+          *
+          * Returns `Present(text)` for TASTy symbols with a scaladoc comment decoded from the Comments section. Returns `Absent` for TASTy
+          * symbols without a comment, for Java-sourced classfile symbols (classfiles have no Comments section), and for symbols whose home
+          * classpath has not yet been loaded. This is a pure accessor: it reads from a pre-populated write-once slot with no classpath I/O.
+          */
+        def scaladoc: Maybe[String] =
+            // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public accessor boundary.
+            import AllowUnsafe.embrace.danger
+            if _scaladoc.isSet then _scaladoc.get()
+            else Maybe.Absent
+        end scaladoc
 
         // Resolving accessors (return ReflectError.NotImplemented in Phase 0).
 

@@ -6,6 +6,7 @@ import kyo.internal.reflect.binary.ByteView
 import kyo.internal.reflect.symbol.Interner
 import kyo.internal.reflect.symbol.Symbol as InternalSymbol
 import kyo.internal.reflect.tasty.AstUnpickler
+import kyo.internal.reflect.tasty.CommentsUnpickler
 import kyo.internal.reflect.tasty.FileAttributes
 import kyo.internal.reflect.tasty.NameUnpickler
 import kyo.internal.reflect.tasty.SectionIndex
@@ -48,7 +49,8 @@ object ClasspathOrchestrator:
         placeholders: Chunk[UnresolvedRef],
         parentsBySymbol: Map[Reflect.Symbol, Chunk[Reflect.Type]],
         childrenByOwner: Map[Reflect.Symbol, Chunk[Reflect.Symbol]],
-        typeBySymbol: Map[Reflect.Symbol, Reflect.Type]
+        typeBySymbol: Map[Reflect.Symbol, Reflect.Type],
+        commentsBySymbol: Map[Reflect.Symbol, String]
     )
 
     /** Open a new classpath from a set of root paths.
@@ -119,13 +121,13 @@ object ClasspathOrchestrator:
                 if strict then
                     Abort.fail(err)
                 else
-                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty, Map.empty, Map.empty, Map.empty)
+                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty, Map.empty, Map.empty, Map.empty, Map.empty)
             case Result.Panic(t) =>
                 val err = ReflectError.CorruptedFile(file, 0L, t.getMessage)
                 if strict then
                     Abort.fail(err)
                 else
-                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty, Map.empty, Map.empty, Map.empty)
+                    FileResult(Seq.empty, TypeArena.canonical(), Seq(err), Chunk.empty, Map.empty, Map.empty, Map.empty, Map.empty)
                 end if
 
     /** Decode TASTy bytes into a FileResult (fqn-symbol pairs + arena). */
@@ -149,6 +151,12 @@ object ClasspathOrchestrator:
                     AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
                     Abort.fail(ReflectError.MalformedSection("ASTs", s"$file: ASTs section not found"))
+            commentsBySymbol <- sections.get(TastyFormat.CommentsSection) match
+                case Present((offset, length)) =>
+                    val commentsView = view.subView(offset, offset + length)
+                    CommentsUnpickler.read(commentsView, pass1Result.addrMap)
+                case Absent =>
+                    Sync.defer(Map.empty[Reflect.Symbol, String])
         yield
             val pairs = pass1Result.symbols.toSeq.flatMap: sym =>
                 val fqn = nameToString(sym.fullName)
@@ -160,7 +168,8 @@ object ClasspathOrchestrator:
                 pass1Result.placeholders,
                 pass1Result.parentsBySymbol,
                 pass1Result.childrenByOwner,
-                pass1Result.typeBySymbol
+                pass1Result.typeBySymbol,
+                commentsBySymbol
             )
         end for
     end decodeTastyBytes
@@ -287,6 +296,17 @@ object ClasspathOrchestrator:
             end for
             // Package and root symbols: leave _declaredType unset.
             // The public accessor has a kind == Package guard that returns NotImplemented.
+
+            // Phase 6 (G3): assign _scaladoc from commentsBySymbol.
+            // Symbols with a scaladoc entry get Present(text); all others get Absent.
+            for fr <- fileResults do
+                for (sym, text) <- fr.commentsBySymbol do
+                    if !sym._scaladoc.isSet then sym._scaladoc.set(Maybe(text))
+                end for
+            end for
+            for sym <- allSyms do
+                if !sym._scaladoc.isSet then sym._scaladoc.set(Maybe.Absent)
+            end for
 
             // Add errors accumulated during Building state (e.g., from root validation)
             // Unsafe: stateRef.unsafe.get() read of Building state, single-threaded Phase C merge
