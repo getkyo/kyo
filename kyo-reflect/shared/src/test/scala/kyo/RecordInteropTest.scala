@@ -166,11 +166,8 @@ class RecordInteropTest extends Test:
             Abort.run[ReflectError](Reflect.symbolToRecord[WithDecls](classSym)).map { recordResult =>
                 recordResult match
                     case Result.Success(record) =>
-                        // When declarations is implemented (Phase 7), it will be non-empty.
-                        // For now, successful resolution proves the macro correctly wired the effectful accessor.
-                        succeed
+                        fail(s"Expected NotImplemented (Phase 7 stub) but declarations returned: $record")
                     case Result.Failure(ReflectError.NotImplemented(_)) =>
-                        // Expected in pre-Phase 7: sym.declarations is stubbed. Proves the effectful accessor was called.
                         succeed
                     case Result.Failure(e) =>
                         fail(s"symbolToRecord[WithDecls] failed unexpectedly: $e")
@@ -193,12 +190,8 @@ class RecordInteropTest extends Test:
             Abort.run[ReflectError](Reflect.symbolToRecord[WithCompanion](classSym)).map { recordResult =>
                 recordResult match
                     case Result.Success(record) =>
-                        // companion may be Present or Absent depending on whether the class has a companion.
-                        // What we verify is that the field was projected (no error) and the type is Maybe[Symbol].
-                        val companion: Maybe[Reflect.Symbol] = record.companion
-                        assert(companion.isDefined || companion.isEmpty, "companion field is a valid Maybe")
+                        fail(s"Expected NotImplemented (Phase 7 stub) but companion returned: $record")
                     case Result.Failure(ReflectError.NotImplemented(_)) =>
-                        // stub companion is not implemented; shows the accessor was called correctly
                         succeed
                     case Result.Failure(e) =>
                         fail(s"symbolToRecord[WithCompanion] failed unexpectedly: $e")

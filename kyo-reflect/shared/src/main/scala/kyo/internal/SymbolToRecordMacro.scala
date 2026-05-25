@@ -73,7 +73,12 @@ object SymbolToRecordMacro:
 
         // If F = Any (no fields), return Record.empty
         if fields.isEmpty then
+            val fRepr      = TypeRepr.of[F]
+            val isAbstract = fRepr.typeSymbol.isTypeParam || fRepr.typeSymbol.flags.is(Flags.Deferred)
+            if !isAbstract && !(fRepr =:= TypeRepr.of[Any]) then
+                report.errorAndAbort(s"Record[F] requires F to be Any when empty, got: ${fRepr.show}")
             return '{ kyo.Kyo.lift[kyo.Record[F], kyo.Sync & kyo.Abort[kyo.ReflectError]](kyo.Record.empty.asInstanceOf[kyo.Record[F]]) }
+        end if
 
         // Validate each field: name must be known, value type must match expected
         for (fieldName, valueType) <- fields do
