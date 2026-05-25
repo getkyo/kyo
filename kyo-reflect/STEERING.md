@@ -1,3 +1,38 @@
+## ACTIVE PLAN: execution-plan-v2.md
+
+The v1 plan (`execution-plan.md`) is complete and committed. The active plan is now `kyo-reflect/execution-plan-v2.md`. v1 references in older sections of this file are historical.
+
+## v2 Phase 1 Async deviation (supervisor-approved)
+
+The v2 plan Phase 1 says "Public API modifications: none" but wiring `Cache.memo` into `lookupClass`/`lookupPackage` fundamentally requires `Async` in the effect row (Promise dedup is intrinsically async; the only alternative is `Fiber.block` which STEERING forbids). The v1 final WARN drain deleted Resolver.scala citing exactly this constraint; v2 resurrected the wiring intent without resolving it.
+
+Supervisor decision: ACCEPT the Async addition.
+
+Affected public APIs:
+- `Reflect.Classpath.findClass(fqn: String)(using Frame): Maybe[Symbol] < (Sync & Abort[ReflectError])` becomes `Maybe[Symbol] < (Sync & Async & Abort[ReflectError])`.
+- `Reflect.Classpath.findPackage(fqn: String)(using Frame): Maybe[Symbol] < (Sync & Abort[ReflectError])` becomes `Maybe[Symbol] < (Sync & Async & Abort[ReflectError])`.
+- `Reflect.Classpath.findClassByBinary(binaryName: String)(using Frame)` follows `findClass` (Sync & Async & Abort).
+
+This is the minimum viable change to wire Promise dedup. Test 2's `pending` is removed; the test asserts that two concurrent findClass calls during Building return the same Symbol (reference-equal via Cache.memo).
+
+Document in PROGRESS.md under "Plan deviations during execution".
+
+## v2 Project rules (carry forward from v1; all still binding)
+
+- No em-dashes (`—` or `–`) in any output: code, comments, docs, commit messages.
+- No `Co-Authored-By` lines in commits.
+- No `git push` under any circumstance.
+- No `AllowUnsafe` extension to NEW sites without a `// Unsafe: <reason>` comment AND supervisor approval. Existing authorized sites: Memo/SingleAssign primitives (v1 cleanup batch 1), AtomicRef CAS state-machine transitions in Classpath/ClasspathOrchestrator/SnapshotWriter (v1 Phase 7), and the same justified-bridging pattern.
+- No `Frame.internal` ANYWHERE in production code. ZERO occurrences. Propagate `(using Frame)` on every public method.
+- No `asInstanceOf` in macro source. Emitted `asInstanceOf` AS GENERATED CODE inside `'{...}` quotes is allowed.
+- No `null` in new code (use sentinel objects). Existing hot-path `null` sentinels in Interner/SnapshotReader/ClassfileUnpickler/ConstantPool are documented and accepted.
+- No default parameters on internal/private APIs (`feedback_no_default_params_internal`).
+- No explicit `[E]` on `Abort.fail` that inference could resolve.
+- Tests live ONLY at `kyo-reflect/shared/src/test/scala/kyo/`. Cross-platform: JVM + JS + Native. JVM-only tests use `taggedAs jvmOnly`.
+- `kyo` is public API only; `kyo.internal` is implementation. Macro entry points are flat under `kyo.internal` (e.g., `ReflectMacro`, `SymbolToRecordMacro`).
+- `Maybe` over `Option`, `Chunk` over `Seq` (storage), `Span` over `Array` (immutable), `Result` over `Either`.
+- Sequential cross-platform test runs (per `feedback_sequential_test_runs`): never run JVM/JS/Native suites in parallel.
+
 ## Scope integrity (read every cycle)
 
 - Every line item in the plan's `### Files to produce / modify / delete` and `### Tests` sections is mandatory.

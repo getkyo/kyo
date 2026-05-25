@@ -476,17 +476,17 @@ object Reflect:
     end Classpath
 
     extension (cp: Classpath)(using Frame)
-        def findClass(fqn: String): Maybe[Symbol] < (Sync & Abort[ReflectError])   = cp.lookupClass(fqn)
-        def findPackage(fqn: String): Maybe[Symbol] < (Sync & Abort[ReflectError]) = cp.lookupPackage(fqn)
-        def packages: Chunk[Symbol] < (Sync & Abort[ReflectError])                 = cp.allPackages
-        def topLevelClasses: Chunk[Symbol] < (Sync & Abort[ReflectError])          = cp.allTopLevelClasses
-        def errors: Chunk[ReflectError] < Sync                                     = Sync.defer(cp.accumulatedErrors)
+        def findClass(fqn: String): Maybe[Symbol] < (Sync & Async & Abort[ReflectError])   = cp.lookupClass(fqn)
+        def findPackage(fqn: String): Maybe[Symbol] < (Sync & Async & Abort[ReflectError]) = cp.lookupPackage(fqn)
+        def packages: Chunk[Symbol] < (Sync & Abort[ReflectError])                         = cp.allPackages
+        def topLevelClasses: Chunk[Symbol] < (Sync & Abort[ReflectError])                  = cp.allTopLevelClasses
+        def errors: Chunk[ReflectError] < Sync                                             = Sync.defer(cp.accumulatedErrors)
 
         /** Find a class symbol by JVM binary name (e.g., "com/example/Foo$Inner").
           *
           * Converts the binary name to a dotted FQN and delegates to `findClass`.
           */
-        def findClassByBinary(binaryName: String): Maybe[Symbol] < (Sync & Abort[ReflectError]) =
+        def findClassByBinary(binaryName: String): Maybe[Symbol] < (Sync & Async & Abort[ReflectError]) =
             val fqn = binaryName.replace('/', '.').replace('$', '.')
             cp.lookupClass(fqn)
 

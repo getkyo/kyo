@@ -70,6 +70,24 @@ is therefore guaranteed by the immutable map, not by `Cache.memo` Promise dedup.
 `SymbolResolutionTest` test 19 now asserts `sym1 eq sym2` (reference equality) rather than FQN string equality,
 since the immutable HashMap guarantees this invariant.
 
+**v2 Phase 1 (Async expansion): findClass / findPackage / findClassByBinary effect row expanded**
+
+`findClass`, `findPackage`, and `findClassByBinary` effect rows expanded from `Sync & Abort[ReflectError]` to
+`Sync & Async & Abort[ReflectError]` to accommodate Cache.memo Promise dedup and the `readyLatch` Building-state gate.
+
+`Classpath.lookupClass`/`lookupPackage` now await a `Latch.Unsafe` (the `readyLatch` field) when the classpath is
+in Building state, suspending the caller until `transitionToReady` releases the latch. This enables the concurrent
+deduplication property: callers that arrive during Building block until Phase C completes, then read from the
+immutable `fqnIndex`/`packageIndex`. Cache.memo (`Resolver.makeClassLookup`/`makePackageLookup`) is now wired
+because `lookupClass`/`lookupPackage` carry `Async`, matching the memoized function's `Async & Sync & Abort[ReflectError]` row.
+
+Originally documented as "Public API modifications: none" in the v2 Phase 1 plan. Supervisor-approved deviation
+per STEERING.md ("v2 Phase 1 Async deviation").
+
+`SymbolResolutionTest` Test 2 `pending` marker removed. Test now launches a background fiber for `openInto` and
+two concurrent `findClass` fibers that await the latch; both return the same reference-equal Symbol from
+the immutable `fqnIndex`.
+
 ## User deferrals
 
 (populated only if the user explicitly accepts a deviation from the plan; nothing should land here without an explicit user message granting the deferral)

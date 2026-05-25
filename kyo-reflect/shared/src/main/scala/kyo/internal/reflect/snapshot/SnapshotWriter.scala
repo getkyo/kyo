@@ -57,7 +57,7 @@ object SnapshotWriter:
 
     /** Serialize a Classpath to KRFL bytes. */
     private def serialize(cp: Classpath): Array[Byte] =
-        // Unsafe: non-effectful read of immutable Ready-state during snapshot write
+        // Unsafe: stateRef.unsafe.get() non-effectful read of immutable Ready state for snapshot serialization
         import AllowUnsafe.embrace.danger
         val allSymbols = cp.stateRef.unsafe.get() match
             case s: Classpath.State.Ready => s.allSymbols

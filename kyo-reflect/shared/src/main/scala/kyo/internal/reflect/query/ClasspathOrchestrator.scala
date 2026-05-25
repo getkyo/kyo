@@ -197,7 +197,7 @@ object ClasspathOrchestrator:
             end for
 
             // Add errors accumulated during Building state (e.g., from root validation)
-            // Unsafe: atomic read of state machine during Phase C merge, single-threaded
+            // Unsafe: stateRef.unsafe.get() read of Building state, single-threaded Phase C merge
             import AllowUnsafe.embrace.danger
             cp.stateRef.unsafe.get() match
                 case b: Classpath.State.Building => accErrors ++= b.errors

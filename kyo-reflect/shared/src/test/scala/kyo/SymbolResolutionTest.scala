@@ -61,6 +61,40 @@ class SymbolResolutionTest extends Test:
                 ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: _ =>
                     Reflect.Classpath.wrap(rawCp)
 
+    // Test 2 (Phase 1 Resolver wiring): two concurrent findClass calls during Building state block until Ready.
+    // Both calls suspend on readyLatch while a background fiber runs openInto, which calls transitionToReady
+    // and releases the latch. After waking, both findClass calls look up the symbol from the immutable fqnIndex
+    // and return the same reference-equal Symbol instance (same immutable HashMap entry).
+    "concurrent findClass calls during Building state both receive reference-equal symbols after Ready" in run {
+        Scope.run:
+            Abort.run[ReflectError]:
+                // Allocate a classpath manually; it starts in Building state.
+                InternalClasspath.allocate.flatMap: rawCp =>
+                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
+                        val cp  = Reflect.Classpath.wrap(rawCp)
+                        val src = fixtureSource()
+                        // Launch openInto as a background fiber so the two findClass calls below
+                        // can run concurrently. openInto calls transitionToReady, which releases
+                        // rawCp.readyLatch and unblocks the two awaiting fibers.
+                        Fiber.initUnscoped(ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp)).andThen:
+                            Async.zip[ReflectError, Maybe[Reflect.Symbol], Maybe[Reflect.Symbol], Any](
+                                cp.findClass("kyo.fixtures.PlainClass"),
+                                cp.findClass("kyo.fixtures.PlainClass")
+                            )
+            .map:
+                case Result.Success((Present(sym1: Reflect.Symbol), Present(sym2: Reflect.Symbol))) =>
+                    assert(
+                        sym1 eq sym2,
+                        "Building-state concurrent findClass calls must return reference-equal symbols via immutable fqnIndex"
+                    )
+                case Result.Success((Absent, _)) | Result.Success((_, Absent)) =>
+                    fail("Expected both concurrent Building-state findClass calls to return Present after Ready")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
     // Test 19: two concurrent findClass calls for the same FQN return reference-equal Symbol instances.
     // The Ready-state fqnIndex is an immutable HashMap built once during Phase C; any two reads for
     // the same key return the same object reference. Reference equality is the chosen dedup invariant
