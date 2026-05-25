@@ -90,6 +90,34 @@ class ReadsDerivationTest extends Test:
     case class Inner(parents: Chunk[Reflect.Type]) derives Reflect.Reads
     case class Outer(inner: Inner, name: Reflect.Name) derives Reflect.Reads
 
+    // Tests 19, 20: hand-written Reads participating in touchedFields via TouchedFields.declare
+
+    // Test 19: hand-written Reads with TouchedFields.declare in read body and matching touchedFields val.
+    // The declare call documents the accessed fields and must match the touchedFields val.
+    // The derived Reads[Wrapper19] picks up Name|Flags transitively via r.touchedFields.
+    case class MyType19(n: String, f: Long)
+    given handWrittenReads19: Reflect.Reads[MyType19] = new Reflect.Reads[MyType19]:
+        val symbolKinds = Set(Reflect.SymbolKind.values*)
+        val needsBodies = false
+        // declare documents the fields accessed; touchedFields val matches the declare value.
+        val touchedFields = Reflect.FieldSet.Name | Reflect.FieldSet.Flags
+        def read(sym: Reflect.Symbol)(using Frame): MyType19 < (Sync & Async & Abort[ReflectError]) =
+            kyo.internal.reflect.reads.TouchedFields.declare(Reflect.FieldSet.Name | Reflect.FieldSet.Flags)
+            Kyo.lift(MyType19(sym.name.asString, sym.flags.bits))
+
+    case class Wrapper19(inner: MyType19, id: Reflect.Name) derives Reflect.Reads
+
+    // Test 20: hand-written Reads WITHOUT TouchedFields.declare -- touchedFields = All, propagated as All.
+    case class MyType20(kind: Reflect.SymbolKind)
+    given handWrittenReads20: Reflect.Reads[MyType20] = new Reflect.Reads[MyType20]:
+        val symbolKinds   = Set(Reflect.SymbolKind.values*)
+        val needsBodies   = false
+        val touchedFields = Reflect.FieldSet.All
+        def read(sym: Reflect.Symbol)(using Frame): MyType20 < (Sync & Async & Abort[ReflectError]) =
+            Kyo.lift(MyType20(sym.kind))
+
+    case class Wrapper20(inner: MyType20, id: Reflect.Name) derives Reflect.Reads
+
     // Test 16: hygiene rule 2 -- TouchedFields.analyzeInline must skip Bind patterns in Match nodes
 
     // ── Test 1: Simple derives compiles ──────────────────────────────────────
@@ -374,6 +402,41 @@ class ReadsDerivationTest extends Test:
                         throw t
             }
         }
+    }
+
+    // ── Test 19: hand-written Reads with TouchedFields.declare propagates declared fields ──
+    "Test 19: derived Reads[Wrapper19] touchedFields contains Name|Flags declared in hand-written Reads[MyType19]" in run {
+        val wr = summon[Reflect.Reads[Wrapper19]]
+        val tf = wr.touchedFields
+        // Wrapper19 has: inner: MyType19 (touchedFields=Name|Flags, confirmed by declare) + id: Reflect.Name (direct Name bit)
+        // The declared Name|Flags from handWrittenReads19.touchedFields is unioned with Name from the id field.
+        // Name | Flags | Name = Name | Flags = 5
+        assert(
+            tf.contains(Reflect.FieldSet.Name),
+            s"Wrapper19.touchedFields should contain Name (from handWrittenReads19), got bits=${tf.bits}"
+        )
+        assert(
+            tf.contains(Reflect.FieldSet.Flags),
+            s"Wrapper19.touchedFields should contain Flags (from handWrittenReads19), got bits=${tf.bits}"
+        )
+        val expected = Reflect.FieldSet.Name | Reflect.FieldSet.Flags
+        assert(
+            tf.bits == expected.bits,
+            s"Wrapper19.touchedFields should be exactly Name|Flags=${expected.bits}, got bits=${tf.bits}"
+        )
+    }
+
+    // ── Test 20: hand-written Reads without TouchedFields.declare defaults to FieldSet.All ──
+    "Test 20: derived Reads[Wrapper20] touchedFields defaults to FieldSet.All when hand-written Reads has no declare" in run {
+        val wr = summon[Reflect.Reads[Wrapper20]]
+        val tf = wr.touchedFields
+        // Wrapper20 has: inner: MyType20 (no declare, touchedFields=All), id: Reflect.Name (direct Name)
+        // Since handWrittenReads20 has no TouchedFields.declare, macro falls back to r.touchedFields=All.
+        // Union of All with anything is All.
+        assert(
+            tf.bits == Reflect.FieldSet.All.bits,
+            s"Wrapper20.touchedFields should be All=${Reflect.FieldSet.All.bits} when no declare is present, got bits=${tf.bits}"
+        )
     }
 
 end ReadsDerivationTest

@@ -1,5 +1,8 @@
 package kyo.internal.reflect.reads
 
+import kyo.Maybe
+import kyo.Maybe.Absent
+import kyo.Maybe.Present
 import kyo.Reflect
 import scala.quoted.*
 
@@ -20,13 +23,38 @@ import scala.quoted.*
   * cases covered by direct-field dispatch and SummonField propagation. The analyze method is preserved as the testable extracted path:
   * tests can call it directly on any function body to verify hygiene rule 2 (Match.pattern skipped) and rule 1 (cheap pre-check) without
   * going through the full derivation pipeline.
+  *
+  * Hand-written Reads instances may call `TouchedFields.declare(fields)` inside their `read` body as a compile-time hint. The derivation
+  * macro recognizes this call and uses the declared FieldSet for transitive touchedFields propagation instead of defaulting to
+  * FieldSet.All.
   */
 object TouchedFields:
+
+    /** Compile-time hint for hand-written `Reads` instances.
+      *
+      * Call this inside a `read` body to declare which FieldSet bits the implementation accesses. The call expands to `()` at runtime (no
+      * overhead). The derivation macro recognizes `TouchedFields.declare(fs)` in a summoned Reads' `read` body and uses `fs` for transitive
+      * touchedFields propagation instead of defaulting to `FieldSet.All`.
+      *
+      * Example:
+      * {{{
+      * given Reflect.Reads[MyType] = new Reflect.Reads[MyType]:
+      *     val symbolKinds   = Set(Reflect.SymbolKind.values*)
+      *     val needsBodies   = false
+      *     val touchedFields = Reflect.FieldSet.Name | Reflect.FieldSet.Flags
+      *     def read(sym: Reflect.Symbol)(using Frame): MyType < (Sync & Async & Abort[ReflectError]) =
+      *         TouchedFields.declare(Reflect.FieldSet.Name | Reflect.FieldSet.Flags)
+      *         Kyo.lift(MyType(sym.name, sym.flags))
+      * }}}
+      */
+    def declare(fields: Reflect.FieldSet): Unit = ()
 
     /** Analyze a compiled read body Term and return the union of all FieldSet bits it touches.
       *
       * This is the testable extracted path. ReflectMacro builds touchedFields via field-name dispatch at derivation time; analyze can be
       * called directly on any function body (including hand-written ones) to verify hygiene rule behavior.
+      *
+      * If the body contains a `TouchedFields.declare(fs)` call, returns `fs` immediately (the declared value takes precedence).
       *
       * @param readBody
       *   the body Term of the read method override
@@ -38,6 +66,11 @@ object TouchedFields:
 
         // Hygiene rule 3: peel Block(Nil, ...) lambda wrappers
         val unwrapped = peel(readBody)
+
+        // Check for TouchedFields.declare(fs) call -- if present, use declared value immediately.
+        extractDeclaredFieldSet(unwrapped) match
+            case Present(fs) => return fs
+            case Absent      =>
 
         // Hygiene rule 1: cheap pre-check -- skip allocation if no Symbol-typed selects
         val hasSymbolSelect = existsSymbolSelect(unwrapped)
@@ -60,6 +93,86 @@ object TouchedFields:
         }
         result
     end analyze
+
+    /** Try to extract a `TouchedFields.declare(fs)` call from a read body Term.
+      *
+      * Returns `Present(fs)` if the body starts with (or contains as a Block statement) a call to `TouchedFields.declare`, so the macro can
+      * use the declared value for transitive touchedFields propagation. Returns `Absent` if no declare call is found.
+      */
+    def extractDeclaredFieldSet(using Quotes)(body: quotes.reflect.Term): Maybe[Reflect.FieldSet] =
+        import quotes.reflect.*
+        val declareSym = TypeRepr.of[TouchedFields.type].typeSymbol.methodMember("declare").headOption
+        declareSym match
+            case None => Absent
+            case Some(declSym) =>
+                var found: Maybe[Reflect.FieldSet] = Absent
+                (new TreeTraverser:
+                    override def traverseTree(t: Tree)(owner: Symbol): Unit =
+                        if found.isEmpty then
+                            t match
+                                // TouchedFields.declare(fs) -- direct call
+                                case Apply(Select(_, "declare"), List(fsArg)) if found.isEmpty =>
+                                    fsArg.tpe.widenTermRefByName.asType match
+                                        case '[Reflect.FieldSet] =>
+                                            fsArg match
+                                                case Inlined(_, _, inner) =>
+                                                    tryEvalFieldSet(inner) match
+                                                        case Present(fs) => found = Present(fs)
+                                                        case Absent      => super.traverseTree(t)(owner)
+                                                case _ =>
+                                                    tryEvalFieldSet(fsArg) match
+                                                        case Present(fs) => found = Present(fs)
+                                                        case Absent      => super.traverseTree(t)(owner)
+                                        case _ => super.traverseTree(t)(owner)
+                                case _ => super.traverseTree(t)(owner)
+                ).traverseTree(body)(Symbol.spliceOwner)
+                found
+        end match
+    end extractDeclaredFieldSet
+
+    /** Attempt to statically evaluate a FieldSet expression at macro time.
+      *
+      * Handles the common patterns: FieldSet constant (via `new FieldSet(bitsLiteral)`), binary `|` of two FieldSets, and named companion
+      * vals like `Reflect.FieldSet.Name` / `Reflect.FieldSet.Flags` (which appear as `Select` nodes in the AST since they are regular vals,
+      * not inline vals). Returns Absent if the expression cannot be evaluated statically.
+      */
+    def tryEvalFieldSet(using Quotes)(expr: quotes.reflect.Term): Maybe[Reflect.FieldSet] =
+        import quotes.reflect.*
+        expr match
+            // new Reflect.FieldSet(bitsLong) -- direct constructor
+            case Apply(Select(New(_), "<init>"), List(Literal(LongConstant(bits)))) =>
+                Present(new Reflect.FieldSet(bits))
+            // Literal Long constant (unlikely but handle it)
+            case Literal(LongConstant(bits)) =>
+                Present(new Reflect.FieldSet(bits))
+            // fs1 | fs2 -- union of two FieldSets
+            case Apply(Select(lhs, "|"), List(rhs)) =>
+                for
+                    l <- tryEvalFieldSet(lhs)
+                    r <- tryEvalFieldSet(rhs)
+                yield l | r
+            // Inlined(_, _, inner) -- inline expansion wrapper
+            case Inlined(_, _, inner) =>
+                tryEvalFieldSet(inner)
+            // Block(Nil, inner) -- single-expression block
+            case Block(Nil, inner) =>
+                tryEvalFieldSet(inner)
+            // Named companion val: Reflect.FieldSet.Name, .Flags, etc.
+            // These appear as Select nodes since FieldSet companion vals are not inline.
+            // Walk the RHS of the val's ValDef to resolve the bits.
+            case select: Select if select.tpe <:< TypeRepr.of[Reflect.FieldSet] =>
+                val sym = select.symbol
+                if sym.isNoSymbol then Absent
+                else
+                    try
+                        sym.tree match
+                            case ValDef(_, _, Some(rhs)) => tryEvalFieldSet(rhs)
+                            case _                       => Absent
+                    catch case _: Throwable => Absent
+                end if
+            case _ => Absent
+        end match
+    end tryEvalFieldSet
 
     /** Inline macro entry point for testing: analyze the body of a `Reflect.Symbol => Any` function at compile time.
       *

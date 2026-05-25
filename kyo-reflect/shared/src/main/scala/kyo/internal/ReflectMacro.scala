@@ -109,9 +109,11 @@ object ReflectMacro:
                         case '[ft] =>
                             Expr.summon[Reflect.Reads[ft]] match
                                 case Some(r) =>
-                                    // Use the summoned instance's touchedFields directly so
-                                    // transitive touchedFields from nested derived Reads propagate.
-                                    (SummonField, '{ $r.touchedFields })
+                                    // Check for TouchedFields.declare(fs) in the summoned instance's read body.
+                                    // If found, use the declared FieldSet at compile time (precise static analysis).
+                                    // Otherwise, fall back to r.touchedFields (runtime value, still correct).
+                                    val fsExpr = tryGetDeclaredTouchedFields(r).getOrElse('{ $r.touchedFields })
+                                    (SummonField, fsExpr)
                                 case None =>
                                     report.errorAndAbort(
                                         s"No Reflect.Reads[${fieldType.show}] available for field '${field.name}'. " +
@@ -119,6 +121,79 @@ object ReflectMacro:
                                     )
         end if
     end analyzeField
+
+    /** Try to extract a compile-time `Expr[FieldSet]` from a `TouchedFields.declare(fs)` call in the `read` method body of a summoned
+      * `Reads[A]` instance.
+      *
+      * Walks the type-symbol tree of the summoned expression to find the `read` method override, then calls
+      * `TouchedFields.extractDeclaredFieldSet` on its body. Returns `None` if the tree is not available (cross-compilation boundary) or if
+      * no `declare` call is found.
+      *
+      * Falls back gracefully -- callers must use `r.touchedFields` when this returns `None`.
+      */
+    private def tryGetDeclaredTouchedFields[A](
+        using q: Quotes
+    )(
+        r: Expr[Reflect.Reads[A]]
+    ): Option[Expr[Reflect.FieldSet]] =
+        import quotes.reflect.*
+        import kyo.internal.reflect.reads.TouchedFields
+
+        try
+            val rSym        = r.asTerm.symbol
+            val readBodyOpt = findReadBodyInGivenSym(rSym)
+            readBodyOpt match
+                case None => None
+                case Some(body) =>
+                    TouchedFields.extractDeclaredFieldSet(body) match
+                        case Present(fs) =>
+                            val bitsVal = Expr(fs.bits)
+                            Some('{ new Reflect.FieldSet($bitsVal) })
+                        case Absent => None
+            end match
+        catch
+            case _: Throwable => None
+        end try
+    end tryGetDeclaredTouchedFields
+
+    /** Walk a given val or def symbol's RHS to find the body of the `read` method override.
+      *
+      * The summoned `Reads[A]` expression is typically a reference to a `given val` or `given def` whose RHS is
+      * `new Reads[A] { ... override def read(...) = body }`. We drill into that anonymous class body to find the `read` DefDef.
+      *
+      * Note: Scala 3 `given val`s are lazy and their `sym.tree` may not expose the RHS (the body is in a synthetic lazy initializer). In
+      * that case this method returns `None` and the caller falls back to `$r.touchedFields` at runtime.
+      */
+    private def findReadBodyInGivenSym(using q: Quotes)(sym: quotes.reflect.Symbol): Option[quotes.reflect.Term] =
+        import quotes.reflect.*
+        if sym.isNoSymbol then return None
+        try
+            sym.tree match
+                case ValDef(_, _, Some(rhs))    => findReadBodyInTerm(rhs)
+                case DefDef(_, _, _, Some(rhs)) => findReadBodyInTerm(rhs)
+                case _                          => None
+        catch
+            case _: Throwable => None
+        end try
+    end findReadBodyInGivenSym
+
+    private def findReadBodyInTerm(using q: Quotes)(term: quotes.reflect.Term): Option[quotes.reflect.Term] =
+        import quotes.reflect.*
+        term match
+            case Block(stats, _) =>
+                // The anonymous class is a ClassDef in the stats list.
+                stats
+                    .collect { case cd: ClassDef => cd }
+                    .flatMap { cd =>
+                        cd.body.collect { case dd: DefDef if dd.name == "read" => dd }
+                    }
+                    .headOption
+                    .flatMap(_.rhs)
+            case Inlined(_, _, inner) =>
+                findReadBodyInTerm(inner)
+            case _ => None
+        end match
+    end findReadBodyInTerm
 
     // ── Product derivation ────────────────────────────────────────────────────
 
