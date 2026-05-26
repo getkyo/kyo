@@ -203,8 +203,6 @@ private[internal] object SerializationMacro:
         sym == TypeRepr.of[Char].typeSymbol ||
         sym == TypeRepr.of[String].typeSymbol ||
         dealiased =:= TypeRepr.of[kyo.Span[Byte]] ||
-        sym == TypeRepr.of[java.time.Instant].typeSymbol ||
-        sym == TypeRepr.of[java.time.Duration].typeSymbol ||
         sym == TypeRepr.of[BigInt].typeSymbol ||
         sym == TypeRepr.of[BigDecimal].typeSymbol ||
         sym == TypeRepr.of[java.util.UUID].typeSymbol ||
@@ -230,8 +228,6 @@ private[internal] object SerializationMacro:
         else if sym == TypeRepr.of[Char].typeSymbol then '{ $reader.char() }
         else if sym == TypeRepr.of[String].typeSymbol then '{ $reader.string() }
         else if dealiased =:= TypeRepr.of[kyo.Span[Byte]] then '{ $reader.bytes() }
-        else if sym == TypeRepr.of[java.time.Instant].typeSymbol then '{ $reader.instant() }
-        else if sym == TypeRepr.of[java.time.Duration].typeSymbol then '{ $reader.duration() }
         else if sym == TypeRepr.of[BigInt].typeSymbol then '{ $reader.bigInt() }
         else if sym == TypeRepr.of[BigDecimal].typeSymbol then '{ $reader.bigDecimal() }
         else if sym == TypeRepr.of[java.util.UUID].typeSymbol then '{ java.util.UUID.fromString($reader.string()) }
@@ -669,8 +665,6 @@ private[internal] object SerializationMacro:
         else if sym == TypeRepr.of[Char].typeSymbol then '{ $writer.char(${ valueTerm.asExprOf[Char] }) }
         else if sym == TypeRepr.of[String].typeSymbol then '{ $writer.string(${ valueTerm.asExprOf[String] }) }
         else if dealiased =:= TypeRepr.of[kyo.Span[Byte]] then '{ $writer.bytes(${ valueTerm.asExprOf[kyo.Span[Byte]] }) }
-        else if sym == TypeRepr.of[java.time.Instant].typeSymbol then '{ $writer.instant(${ valueTerm.asExprOf[java.time.Instant] }) }
-        else if sym == TypeRepr.of[java.time.Duration].typeSymbol then '{ $writer.duration(${ valueTerm.asExprOf[java.time.Duration] }) }
         else if sym == TypeRepr.of[BigInt].typeSymbol then '{ $writer.bigInt(${ valueTerm.asExprOf[BigInt] }) }
         else if sym == TypeRepr.of[BigDecimal].typeSymbol then '{ $writer.bigDecimal(${ valueTerm.asExprOf[BigDecimal] }) }
         else if sym == TypeRepr.of[java.util.UUID].typeSymbol then '{ $writer.string(${ valueTerm.asExprOf[java.util.UUID] }.toString) }

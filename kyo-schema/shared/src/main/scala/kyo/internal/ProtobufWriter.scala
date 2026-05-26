@@ -153,18 +153,6 @@ final class ProtobufWriter extends Writer:
     def bigInt(value: BigInt): Unit         = string(value.toString)
     def bigDecimal(value: BigDecimal): Unit = string(value.toString)
 
-    def instant(value: java.time.Instant): Unit =
-        val fn = if inArray then repeatedFieldNumber else currentFieldNumber
-        writeTag(fn, Varint)
-        writeVarint(encodeZigZag64(value.toEpochMilli))
-    end instant
-
-    def duration(value: java.time.Duration): Unit =
-        val fn = if inArray then repeatedFieldNumber else currentFieldNumber
-        writeTag(fn, Varint)
-        writeVarint(encodeZigZag64(value.toMillis))
-    end duration
-
     def resultBytes: Array[Byte] = bufferStack.last.toByteArray
 
     def result(): Span[Byte] = Span.from(resultBytes)

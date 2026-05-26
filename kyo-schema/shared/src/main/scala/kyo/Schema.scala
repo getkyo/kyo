@@ -105,7 +105,33 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     private[kyo] val documentation: Maybe[String] = Maybe.empty,
     private[kyo] val fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
     private[kyo] val discriminatorField: Maybe[String] = Maybe.empty
-):
+)(using val tag: Tag[A]):
+
+    /** Source Schema for `.transform`-derived Schemas. Empty otherwise. Used by `Structure.fromSchema` to follow the chain
+      * back to the underlying primitive / structural Schema.
+      */
+    val transformSource: Maybe[Schema[?]] = Maybe.empty
+
+    /** Variant Schemas for sealed-trait / enum Schemas. Each entry is `(variantName, variantSchema)`. Empty otherwise.
+      * Used by `Structure.fromSchema` to enumerate the variants of a Sum type.
+      */
+    val variants: Maybe[Seq[(String, Schema[?])]] = Maybe.empty
+
+    /** Element Schema for homogeneous collection Schemas (List, Vector, Chunk, Set, Seq, Span, Array, ...). Empty otherwise.
+      * Used by `Structure.fromSchema` to dispatch on collection shape.
+      */
+    val collectionElement: Maybe[Schema[?]] = Maybe.empty
+
+    /** Inner-element Schema for optional Schemas (Option, Maybe). Empty otherwise.
+      * Used by `Structure.fromSchema` to dispatch on optional shape.
+      */
+    val optionalInner: Maybe[Schema[?]] = Maybe.empty
+
+    /** Key Schema for mapping Schemas (Map, Dict). Empty otherwise. Used by `Structure.fromSchema` to dispatch on mapping shape. */
+    val mappingKey: Maybe[Schema[?]] = Maybe.empty
+
+    /** Value Schema for mapping Schemas (Map, Dict). Empty otherwise. Used by `Structure.fromSchema` to dispatch on mapping shape. */
+    val mappingValue: Maybe[Schema[?]] = Maybe.empty
 
     /** The structural representation type. Set by factory/transforms. */
     type Focused
@@ -943,11 +969,12 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * @return
       *   a new Schema[B] with delegated serialization
       */
-    def transform[B](to: A => B)(from: B => A): Schema[B] =
+    def transform[B](to: A => B)(from: B => A)(using Tag[B]): Schema[B] =
         val self = this
         Schema.init[B](
             writeFn = (b: B, w: Writer) => self.serializeWrite(from(b), w),
-            readFn = (r: Reader) => to(self.serializeRead(r))
+            readFn = (r: Reader) => to(self.serializeRead(r)),
+            transformSourceOpt = Maybe(self)
         )
     end transform
 
@@ -1153,8 +1180,20 @@ object Schema:
         checks: Seq[A => Seq[ValidationFailedException]] = Seq.empty,
         documentation: Maybe[String] = Maybe.empty,
         fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
-        discriminatorField: Maybe[String] = Maybe.empty
-    ): Schema[A] =
+        discriminatorField: Maybe[String] = Maybe.empty,
+        variantsOpt: Maybe[Seq[(String, Schema[?])]] = Maybe.empty,
+        transformSourceOpt: Maybe[Schema[?]] = Maybe.empty,
+        collectionElementOpt: Maybe[Schema[?]] = Maybe.empty,
+        optionalInnerOpt: Maybe[Schema[?]] = Maybe.empty,
+        mappingKeyOpt: Maybe[Schema[?]] = Maybe.empty,
+        mappingValueOpt: Maybe[Schema[?]] = Maybe.empty
+    )(using tag: Tag[A]): Schema[A] =
+        val _variants          = variantsOpt
+        val _transformSource   = transformSourceOpt
+        val _collectionElement = collectionElementOpt
+        val _optionalInner     = optionalInnerOpt
+        val _mappingKey        = mappingKeyOpt
+        val _mappingValue      = mappingValueOpt
         new Schema[A](
             segments,
             examples,
@@ -1170,10 +1209,17 @@ object Schema:
             fieldIdOverrides,
             discriminatorField
         ):
+            override val transformSource: Maybe[Schema[?]]                     = _transformSource
+            override val variants: Maybe[Seq[(String, Schema[?])]]             = _variants
+            override val collectionElement: Maybe[Schema[?]]                   = _collectionElement
+            override val optionalInner: Maybe[Schema[?]]                       = _optionalInner
+            override val mappingKey: Maybe[Schema[?]]                          = _mappingKey
+            override val mappingValue: Maybe[Schema[?]]                        = _mappingValue
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit = writeFn(value, writer)
             @publicInBinary def serializeRead(reader: Reader): A               = readFn(reader)
             @publicInBinary def getter(value: A): Maybe[Any]                   = getterFn(value)
             @publicInBinary def setter(value: A, next: Any): A                 = setterFn(value, next)
+        end new
     end init
 
     /** Typed-focus variant of `Schema.init`. Produces `Schema[A] { type Focused = F }`. Internally, the user's `getterFn` and `setterFn`
@@ -1198,8 +1244,14 @@ object Schema:
         checks: Seq[A => Seq[ValidationFailedException]] = Seq.empty,
         documentation: Maybe[String] = Maybe.empty,
         fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
-        discriminatorField: Maybe[String] = Maybe.empty
-    ): Schema[A] { type Focused = F } =
+        discriminatorField: Maybe[String] = Maybe.empty,
+        variantsOpt: Maybe[Seq[(String, Schema[?])]] = Maybe.empty,
+        transformSourceOpt: Maybe[Schema[?]] = Maybe.empty,
+        collectionElementOpt: Maybe[Schema[?]] = Maybe.empty,
+        optionalInnerOpt: Maybe[Schema[?]] = Maybe.empty,
+        mappingKeyOpt: Maybe[Schema[?]] = Maybe.empty,
+        mappingValueOpt: Maybe[Schema[?]] = Maybe.empty
+    )(using tag: Tag[A]): Schema[A] { type Focused = F } =
         // Erase the F-typed Function signatures to (A, Any) via asInstanceOf on the Function
         // value itself (no runtime effect — purely a Function-type cast). This mirrors the
         // pre-phase-4 `identityGetter` / `identitySetter` macro shape (`((_: Any, v: Any) => v).asInstanceOf[(A, F) => A]`)
@@ -1222,7 +1274,13 @@ object Schema:
             checks = checks,
             documentation = documentation,
             fieldIdOverrides = fieldIdOverrides,
-            discriminatorField = discriminatorField
+            discriminatorField = discriminatorField,
+            variantsOpt = variantsOpt,
+            transformSourceOpt = transformSourceOpt,
+            collectionElementOpt = collectionElementOpt,
+            optionalInnerOpt = optionalInnerOpt,
+            mappingKeyOpt = mappingKeyOpt,
+            mappingValueOpt = mappingValueOpt
         ).asInstanceOf[Schema[A] {
             type Focused = F
         }]
@@ -1308,13 +1366,13 @@ object Schema:
     /** Schema for BigInt values. */
     given bigIntSchema: Schema[BigInt] = Schema.init[BigInt](writeFn = (v, w) => w.bigInt(v), readFn = _.bigInt())
 
-    /** Schema for java.time.Instant values. */
+    /** Schema for java.time.Instant values — encoded as ISO-8601 string. */
     given instantSchema: Schema[java.time.Instant] =
-        Schema.init[java.time.Instant](writeFn = (v, w) => w.instant(v), readFn = _.instant())
+        stringSchema.transform[java.time.Instant](java.time.Instant.parse)(_.toString)
 
-    /** Schema for java.time.Duration values. */
+    /** Schema for java.time.Duration values — encoded as ISO-8601 string. */
     given durationSchema: Schema[java.time.Duration] =
-        Schema.init[java.time.Duration](writeFn = (v, w) => w.duration(v), readFn = _.duration())
+        stringSchema.transform[java.time.Duration](java.time.Duration.parse)(_.toString)
 
     /** Schema for kyo.Instant values. */
     given kyoInstantSchema: Schema[kyo.Instant] =
@@ -1334,20 +1392,17 @@ object Schema:
 
     /** Frame schema — serializes as the raw encoded string. Frame is an opaque type backed by String at runtime.
       */
-    given frameSchema: Schema[Frame] = Schema.init[Frame](
-        writeFn = (v, w) => w.string(v.toString),
-        readFn = reader => reader.string().asInstanceOf[Frame]
-    )
+    given frameSchema: Schema[Frame] =
+        stringSchema.transform[Frame](_.asInstanceOf[Frame])(_.toString)
 
     /** Tag schema — serializes as the string representation. Tags are opaque types backed by String at runtime for static tags.
       */
-    given tagSchema[A]: Schema[Tag[A]] = Schema.init[Tag[A]](
-        writeFn = (v, w) =>
+    given tagSchema[A]: Schema[Tag[A]] =
+        stringSchema.transform[Tag[A]](_.asInstanceOf[Tag[A]]) { v =>
             v match
-                case s: String => w.string(s)
-                case _         => w.string(v.show),
-        readFn = reader => reader.string().asInstanceOf[Tag[A]]
-    )
+                case s: String => s
+                case _         => v.show
+        }
 
     /** Schema for java.time.LocalDate values. Serializes as ISO-8601 string. */
     given localDateSchema: Schema[java.time.LocalDate] =
@@ -1439,7 +1494,12 @@ object Schema:
         stringSchema.transform[Throwable](msg => new RuntimeException(msg))(_.getMessage)
 
     /** Schema for scala.util.Try[A] — encoded as Either[Throwable, A]. */
-    given trySchema[A](using inner: Schema[A]): Schema[scala.util.Try[A]] =
+    given trySchema[A](using
+        inner: Schema[A],
+        tag: Tag[A],
+        eitherTag: Tag[Either[Throwable, A]],
+        outerTag: Tag[scala.util.Try[A]]
+    ): Schema[scala.util.Try[A]] =
         eitherSchema[Throwable, A].transform[scala.util.Try[A]] {
             case Left(t)  => scala.util.Failure(t)
             case Right(a) => scala.util.Success(a)
@@ -1459,7 +1519,7 @@ object Schema:
     // --- Collection Schema givens ---
 
     /** Schema for List[A] values. */
-    given listSchema[A](using inner: Schema[A]): Schema[List[A]] =
+    given listSchema[A](using inner: Schema[A], tag: Tag[A], outerTag: Tag[List[A]]): Schema[List[A]] =
         Schema.init[List[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1478,10 +1538,12 @@ object Schema:
                 loop(1)
                 reader.arrayEnd()
                 builder.result()
+            ,
+            collectionElementOpt = Maybe(inner)
         )
 
     /** Schema for Vector[A] values. */
-    given vectorSchema[A](using inner: Schema[A]): Schema[Vector[A]] =
+    given vectorSchema[A](using inner: Schema[A], tag: Tag[A], outerTag: Tag[Vector[A]]): Schema[Vector[A]] =
         Schema.init[Vector[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1500,10 +1562,12 @@ object Schema:
                 loop(1)
                 reader.arrayEnd()
                 builder.result()
+            ,
+            collectionElementOpt = Maybe(inner)
         )
 
     /** Schema for Set[A] values. */
-    given setSchema[A](using inner: Schema[A]): Schema[Set[A]] =
+    given setSchema[A](using inner: Schema[A], tag: Tag[A], outerTag: Tag[Set[A]]): Schema[Set[A]] =
         Schema.init[Set[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1522,10 +1586,12 @@ object Schema:
                 loop(1)
                 reader.arrayEnd()
                 builder.result()
+            ,
+            collectionElementOpt = Maybe(inner)
         )
 
     /** Schema for Chunk[A] values. */
-    given chunkSchema[A](using inner: Schema[A]): Schema[Chunk[A]] =
+    given chunkSchema[A](using inner: Schema[A], tag: Tag[A], outerTag: Tag[Chunk[A]]): Schema[Chunk[A]] =
         Schema.init[Chunk[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1544,10 +1610,12 @@ object Schema:
                 loop(1)
                 reader.arrayEnd()
                 builder.result()
+            ,
+            collectionElementOpt = Maybe(inner)
         )
 
     /** Schema for Seq[A] values. */
-    given seqSchema[A](using inner: Schema[A]): Schema[Seq[A]] =
+    given seqSchema[A](using inner: Schema[A], tag: Tag[A], outerTag: Tag[Seq[A]]): Schema[Seq[A]] =
         Schema.init[Seq[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1565,10 +1633,12 @@ object Schema:
                 loop()
                 reader.arrayEnd()
                 builder.result()
+            ,
+            collectionElementOpt = Maybe(inner)
         )
 
     /** Schema for Span[A] values. */
-    given spanSchema[A](using inner: Schema[A], ct: scala.reflect.ClassTag[A]): Schema[Span[A]] =
+    given spanSchema[A](using inner: Schema[A], ct: scala.reflect.ClassTag[A], tag: Tag[A], outerTag: Tag[Span[A]]): Schema[Span[A]] =
         Schema.init[Span[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1586,13 +1656,15 @@ object Schema:
                 loop()
                 reader.arrayEnd()
                 Span.from(builder.result())
+            ,
+            collectionElementOpt = Maybe(inner)
         )
 
     /** Schema for Maybe[A] values.
       *
       * Encodes as null when Absent, delegates to inner schema when Present.
       */
-    given maybeSchema[A](using inner: Schema[A]): Schema[Maybe[A]] =
+    given maybeSchema[A](using inner: Schema[A], tag: Tag[A], outerTag: Tag[Maybe[A]]): Schema[Maybe[A]] =
         Schema.init[Maybe[A]](
             writeFn = (value, writer) =>
                 value match
@@ -1602,11 +1674,12 @@ object Schema:
             ,
             readFn = reader =>
                 if reader.isNil() then Maybe.empty
-                else Maybe(internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame))
+                else Maybe(internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame)),
+            optionalInnerOpt = Maybe(inner)
         )
 
     /** Schema for Option[A] values. */
-    given optionSchema[A](using inner: Schema[A]): Schema[Option[A]] =
+    given optionSchema[A](using inner: Schema[A], tag: Tag[A], outerTag: Tag[Option[A]]): Schema[Option[A]] =
         Schema.init[Option[A]](
             writeFn = (value, writer) =>
                 value match
@@ -1616,27 +1689,51 @@ object Schema:
             ,
             readFn = reader =>
                 if reader.isNil() then None
-                else Some(internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame))
+                else Some(internal.SchemaSerializer.readFrom(inner, reader)(using reader.frame)),
+            optionalInnerOpt = Maybe(inner)
         )
 
     /** Schema for Array[A] values. Encodes as a JSON array; per-element write/read routes through
       * `SchemaSerializer.writeTo` / `readFrom` so transforms on the element schema compose correctly.
       */
-    given arraySchema[A](using inner: Schema[A], ct: scala.reflect.ClassTag[A]): Schema[Array[A]] =
+    given arraySchema[A](using
+        inner: Schema[A],
+        ct: scala.reflect.ClassTag[A],
+        tag: Tag[A],
+        seqTag: Tag[Seq[A]],
+        outerTag: Tag[Array[A]]
+    ): Schema[Array[A]] =
         seqSchema[A].transform[Array[A]](_.toArray)(_.toSeq)
 
     /** Schema for ArraySeq[A] values. Encodes as a JSON array; per-element write/read routes through
       * `SchemaSerializer.writeTo` / `readFrom` so transforms on the element schema compose correctly.
       */
-    given arraySeqSchema[A](using inner: Schema[A], ct: scala.reflect.ClassTag[A]): Schema[scala.collection.immutable.ArraySeq[A]] =
+    given arraySeqSchema[A](using
+        inner: Schema[A],
+        ct: scala.reflect.ClassTag[A],
+        tag: Tag[A],
+        seqTag: Tag[Seq[A]],
+        outerTag: Tag[scala.collection.immutable.ArraySeq[A]]
+    ): Schema[scala.collection.immutable.ArraySeq[A]] =
         seqSchema[A].transform[scala.collection.immutable.ArraySeq[A]](scala.collection.immutable.ArraySeq.from)(_.toSeq)
 
     /** Schema for immutable.Queue[A] values. Encodes as a JSON array; preserves FIFO order. */
-    given queueSchema[A](using inner: Schema[A]): Schema[scala.collection.immutable.Queue[A]] =
+    given queueSchema[A](using
+        inner: Schema[A],
+        tag: Tag[A],
+        listTag: Tag[List[A]],
+        outerTag: Tag[scala.collection.immutable.Queue[A]]
+    ): Schema[scala.collection.immutable.Queue[A]] =
         listSchema[A].transform[scala.collection.immutable.Queue[A]](scala.collection.immutable.Queue.from)(_.toList)
 
     /** Schema for immutable.SortedSet[A] values. Encodes as a JSON array; requires `Ordering[A]` for construction. */
-    given sortedSetSchema[A](using inner: Schema[A], ord: Ordering[A]): Schema[scala.collection.immutable.SortedSet[A]] =
+    given sortedSetSchema[A](using
+        inner: Schema[A],
+        ord: Ordering[A],
+        tag: Tag[A],
+        setTag: Tag[Set[A]],
+        outerTag: Tag[scala.collection.immutable.SortedSet[A]]
+    ): Schema[scala.collection.immutable.SortedSet[A]] =
         setSchema[A].transform[scala.collection.immutable.SortedSet[A]](scala.collection.immutable.SortedSet.from)(_.toSet)
 
     /** Schema for immutable.SortedMap[K, V]: delegates to `mapSchema` and reconstructs a SortedMap via the in-scope `Ordering[K]`.
@@ -1645,12 +1742,16 @@ object Schema:
     given sortedMapSchema[K, V](using
         kSchema: Schema[K],
         vSchema: Schema[V],
-        ord: Ordering[K]
+        ord: Ordering[K],
+        kTag: Tag[K],
+        vTag: Tag[V],
+        mapTag: Tag[Map[K, V]],
+        outerTag: Tag[scala.collection.immutable.SortedMap[K, V]]
     ): Schema[scala.collection.immutable.SortedMap[K, V]] =
         mapSchema[K, V].transform[scala.collection.immutable.SortedMap[K, V]](scala.collection.immutable.SortedMap.from)(_.toMap)
 
     /** Schema for Map[String, V] values (object encoding). */
-    given stringMapSchema[V](using valueSchema: Schema[V]): Schema[Map[String, V]] =
+    given stringMapSchema[V](using valueSchema: Schema[V], vTag: Tag[V], outerTag: Tag[Map[String, V]]): Schema[Map[String, V]] =
         Schema.init[Map[String, V]](
             writeFn = (value, writer) =>
                 writer.mapStart(value.size)
@@ -1674,258 +1775,327 @@ object Schema:
                 loop(1)
                 reader.mapEnd()
                 builder.result()
+            ,
+            mappingKeyOpt = Maybe(Schema.stringSchema),
+            mappingValueOpt = Maybe(valueSchema)
         )
 
     /** Schema for `Map[K, V]`: array-of-pairs encoding via Dict delegation. For `Map[String, V]`, the more specific
       * `stringMapSchema` wins implicit resolution and emits the JSON-object form.
       */
-    given mapSchema[K, V](using kSchema: Schema[K], vSchema: Schema[V]): Schema[Map[K, V]] =
+    given mapSchema[K, V](using
+        kSchema: Schema[K],
+        vSchema: Schema[V],
+        kTag: Tag[K],
+        vTag: Tag[V],
+        dictTag: Tag[Dict[K, V]],
+        outerTag: Tag[Map[K, V]]
+    ): Schema[Map[K, V]] =
         dictSchema[K, V].transform[Map[K, V]](_.toMap)(Dict.from)
 
     // --- Tuple Schemas ---
 
-    given tuple1Schema[A: Schema]: Schema[Tuple1[A]]                                                   = Schema.derived
-    given tuple2Schema[A: Schema, B: Schema]: Schema[(A, B)]                                           = Schema.derived
-    given tuple3Schema[A: Schema, B: Schema, C: Schema]: Schema[(A, B, C)]                             = Schema.derived
-    given tuple4Schema[A: Schema, B: Schema, C: Schema, D: Schema]: Schema[(A, B, C, D)]               = Schema.derived
-    given tuple5Schema[A: Schema, B: Schema, C: Schema, D: Schema, E: Schema]: Schema[(A, B, C, D, E)] = Schema.derived
-
-    given tuple6Schema[A: Schema, B: Schema, C: Schema, D: Schema, E: Schema, F: Schema]: Schema[(A, B, C, D, E, F)] = Schema.derived
-    given tuple7Schema[A: Schema, B: Schema, C: Schema, D: Schema, E: Schema, F: Schema, G: Schema]: Schema[(A, B, C, D, E, F, G)] =
+    given tuple1Schema[A: {Schema, Tag}](using Tag[Tuple1[A]]): Schema[Tuple1[A]]                                     = Schema.derived
+    given tuple2Schema[A: {Schema, Tag}, B: {Schema, Tag}](using Tag[(A, B)]): Schema[(A, B)]                         = Schema.derived
+    given tuple3Schema[A: {Schema, Tag}, B: {Schema, Tag}, C: {Schema, Tag}](using Tag[(A, B, C)]): Schema[(A, B, C)] = Schema.derived
+    given tuple4Schema[A: {Schema, Tag}, B: {Schema, Tag}, C: {Schema, Tag}, D: {Schema, Tag}](using
+        Tag[(A, B, C, D)]
+    ): Schema[(A, B, C, D)] =
         Schema.derived
-    given tuple8Schema[A: Schema, B: Schema, C: Schema, D: Schema, E: Schema, F: Schema, G: Schema, H: Schema]
-        : Schema[(A, B, C, D, E, F, G, H)] = Schema.derived
-    given tuple9Schema[A: Schema, B: Schema, C: Schema, D: Schema, E: Schema, F: Schema, G: Schema, H: Schema, I: Schema]
-        : Schema[(A, B, C, D, E, F, G, H, I)] = Schema.derived
-    given tuple10Schema[A: Schema, B: Schema, C: Schema, D: Schema, E: Schema, F: Schema, G: Schema, H: Schema, I: Schema, J: Schema]
-        : Schema[(A, B, C, D, E, F, G, H, I, J)] = Schema.derived
+    given tuple5Schema[A: {Schema, Tag}, B: {Schema, Tag}, C: {Schema, Tag}, D: {Schema, Tag}, E: {Schema, Tag}](using
+        Tag[(A, B, C, D, E)]
+    ): Schema[(A, B, C, D, E)] =
+        Schema.derived
+
+    given tuple6Schema[A: {Schema, Tag}, B: {Schema, Tag}, C: {Schema, Tag}, D: {Schema, Tag}, E: {Schema, Tag}, F: {Schema, Tag}](
+        using Tag[(A, B, C, D, E, F)]
+    ): Schema[(A, B, C, D, E, F)] = Schema.derived
+    given tuple7Schema[
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag}
+    ](using Tag[(A, B, C, D, E, F, G)]): Schema[(A, B, C, D, E, F, G)] = Schema.derived
+    given tuple8Schema[
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag}
+    ](using Tag[(A, B, C, D, E, F, G, H)]): Schema[(A, B, C, D, E, F, G, H)] = Schema.derived
+    given tuple9Schema[
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag}
+    ](using Tag[(A, B, C, D, E, F, G, H, I)]): Schema[(A, B, C, D, E, F, G, H, I)] = Schema.derived
+    given tuple10Schema[
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag},
+        J: {Schema, Tag}
+    ](using Tag[(A, B, C, D, E, F, G, H, I, J)]): Schema[(A, B, C, D, E, F, G, H, I, J)] = Schema.derived
     given tuple11Schema[
-        A: Schema,
-        B: Schema,
-        C: Schema,
-        D: Schema,
-        E: Schema,
-        F: Schema,
-        G: Schema,
-        H: Schema,
-        I: Schema,
-        J: Schema,
-        K: Schema
-    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K)] = Schema.derived
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag},
+        J: {Schema, Tag},
+        K: {Schema, Tag}
+    ](using Tag[(A, B, C, D, E, F, G, H, I, J, K)]): Schema[(A, B, C, D, E, F, G, H, I, J, K)] = Schema.derived
     given tuple12Schema[
-        A: Schema,
-        B: Schema,
-        C: Schema,
-        D: Schema,
-        E: Schema,
-        F: Schema,
-        G: Schema,
-        H: Schema,
-        I: Schema,
-        J: Schema,
-        K: Schema,
-        L: Schema
-    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L)] = Schema.derived
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag},
+        J: {Schema, Tag},
+        K: {Schema, Tag},
+        L: {Schema, Tag}
+    ](using Tag[(A, B, C, D, E, F, G, H, I, J, K, L)]): Schema[(A, B, C, D, E, F, G, H, I, J, K, L)] = Schema.derived
     given tuple13Schema[
-        A: Schema,
-        B: Schema,
-        C: Schema,
-        D: Schema,
-        E: Schema,
-        F: Schema,
-        G: Schema,
-        H: Schema,
-        I: Schema,
-        J: Schema,
-        K: Schema,
-        L: Schema,
-        M: Schema
-    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M)] = Schema.derived
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag},
+        J: {Schema, Tag},
+        K: {Schema, Tag},
+        L: {Schema, Tag},
+        M: {Schema, Tag}
+    ](using Tag[(A, B, C, D, E, F, G, H, I, J, K, L, M)]): Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M)] = Schema.derived
     given tuple14Schema[
-        A: Schema,
-        B: Schema,
-        C: Schema,
-        D: Schema,
-        E: Schema,
-        F: Schema,
-        G: Schema,
-        H: Schema,
-        I: Schema,
-        J: Schema,
-        K: Schema,
-        L: Schema,
-        M: Schema,
-        N: Schema
-    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N)] = Schema.derived
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag},
+        J: {Schema, Tag},
+        K: {Schema, Tag},
+        L: {Schema, Tag},
+        M: {Schema, Tag},
+        N: {Schema, Tag}
+    ](using Tag[(A, B, C, D, E, F, G, H, I, J, K, L, M, N)]): Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N)] = Schema.derived
     given tuple15Schema[
-        A: Schema,
-        B: Schema,
-        C: Schema,
-        D: Schema,
-        E: Schema,
-        F: Schema,
-        G: Schema,
-        H: Schema,
-        I: Schema,
-        J: Schema,
-        K: Schema,
-        L: Schema,
-        M: Schema,
-        N: Schema,
-        O: Schema
-    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O)] = Schema.derived
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag},
+        J: {Schema, Tag},
+        K: {Schema, Tag},
+        L: {Schema, Tag},
+        M: {Schema, Tag},
+        N: {Schema, Tag},
+        O: {Schema, Tag}
+    ](using Tag[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O)]): Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O)] = Schema.derived
     given tuple16Schema[
-        A: Schema,
-        B: Schema,
-        C: Schema,
-        D: Schema,
-        E: Schema,
-        F: Schema,
-        G: Schema,
-        H: Schema,
-        I: Schema,
-        J: Schema,
-        K: Schema,
-        L: Schema,
-        M: Schema,
-        N: Schema,
-        O: Schema,
-        P: Schema
-    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P)] = Schema.derived
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag},
+        J: {Schema, Tag},
+        K: {Schema, Tag},
+        L: {Schema, Tag},
+        M: {Schema, Tag},
+        N: {Schema, Tag},
+        O: {Schema, Tag},
+        P: {Schema, Tag}
+    ](using Tag[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P)]): Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P)] =
+        Schema.derived
     given tuple17Schema[
-        A: Schema,
-        B: Schema,
-        C: Schema,
-        D: Schema,
-        E: Schema,
-        F: Schema,
-        G: Schema,
-        H: Schema,
-        I: Schema,
-        J: Schema,
-        K: Schema,
-        L: Schema,
-        M: Schema,
-        N: Schema,
-        O: Schema,
-        P: Schema,
-        Q: Schema
-    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q)] = Schema.derived
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag},
+        J: {Schema, Tag},
+        K: {Schema, Tag},
+        L: {Schema, Tag},
+        M: {Schema, Tag},
+        N: {Schema, Tag},
+        O: {Schema, Tag},
+        P: {Schema, Tag},
+        Q: {Schema, Tag}
+    ](using Tag[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q)]): Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q)] =
+        Schema.derived
     given tuple18Schema[
-        A: Schema,
-        B: Schema,
-        C: Schema,
-        D: Schema,
-        E: Schema,
-        F: Schema,
-        G: Schema,
-        H: Schema,
-        I: Schema,
-        J: Schema,
-        K: Schema,
-        L: Schema,
-        M: Schema,
-        N: Schema,
-        O: Schema,
-        P: Schema,
-        Q: Schema,
-        R: Schema
-    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R)] = Schema.derived
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag},
+        J: {Schema, Tag},
+        K: {Schema, Tag},
+        L: {Schema, Tag},
+        M: {Schema, Tag},
+        N: {Schema, Tag},
+        O: {Schema, Tag},
+        P: {Schema, Tag},
+        Q: {Schema, Tag},
+        R: {Schema, Tag}
+    ](using Tag[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R)]): Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R)] =
+        Schema.derived
     given tuple19Schema[
-        A: Schema,
-        B: Schema,
-        C: Schema,
-        D: Schema,
-        E: Schema,
-        F: Schema,
-        G: Schema,
-        H: Schema,
-        I: Schema,
-        J: Schema,
-        K: Schema,
-        L: Schema,
-        M: Schema,
-        N: Schema,
-        O: Schema,
-        P: Schema,
-        Q: Schema,
-        R: Schema,
-        S: Schema
-    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S)] = Schema.derived
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag},
+        J: {Schema, Tag},
+        K: {Schema, Tag},
+        L: {Schema, Tag},
+        M: {Schema, Tag},
+        N: {Schema, Tag},
+        O: {Schema, Tag},
+        P: {Schema, Tag},
+        Q: {Schema, Tag},
+        R: {Schema, Tag},
+        S: {Schema, Tag}
+    ](using
+        Tag[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S)]
+    ): Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S)] = Schema.derived
     given tuple20Schema[
-        A: Schema,
-        B: Schema,
-        C: Schema,
-        D: Schema,
-        E: Schema,
-        F: Schema,
-        G: Schema,
-        H: Schema,
-        I: Schema,
-        J: Schema,
-        K: Schema,
-        L: Schema,
-        M: Schema,
-        N: Schema,
-        O: Schema,
-        P: Schema,
-        Q: Schema,
-        R: Schema,
-        S: Schema,
-        T: Schema
-    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T)] = Schema.derived
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag},
+        J: {Schema, Tag},
+        K: {Schema, Tag},
+        L: {Schema, Tag},
+        M: {Schema, Tag},
+        N: {Schema, Tag},
+        O: {Schema, Tag},
+        P: {Schema, Tag},
+        Q: {Schema, Tag},
+        R: {Schema, Tag},
+        S: {Schema, Tag},
+        T: {Schema, Tag}
+    ](using
+        Tag[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T)]
+    ): Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T)] = Schema.derived
     given tuple21Schema[
-        A: Schema,
-        B: Schema,
-        C: Schema,
-        D: Schema,
-        E: Schema,
-        F: Schema,
-        G: Schema,
-        H: Schema,
-        I: Schema,
-        J: Schema,
-        K: Schema,
-        L: Schema,
-        M: Schema,
-        N: Schema,
-        O: Schema,
-        P: Schema,
-        Q: Schema,
-        R: Schema,
-        S: Schema,
-        T: Schema,
-        U: Schema
-    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U)] = Schema.derived
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag},
+        J: {Schema, Tag},
+        K: {Schema, Tag},
+        L: {Schema, Tag},
+        M: {Schema, Tag},
+        N: {Schema, Tag},
+        O: {Schema, Tag},
+        P: {Schema, Tag},
+        Q: {Schema, Tag},
+        R: {Schema, Tag},
+        S: {Schema, Tag},
+        T: {Schema, Tag},
+        U: {Schema, Tag}
+    ](using
+        Tag[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U)]
+    ): Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U)] = Schema.derived
     given tuple22Schema[
-        A: Schema,
-        B: Schema,
-        C: Schema,
-        D: Schema,
-        E: Schema,
-        F: Schema,
-        G: Schema,
-        H: Schema,
-        I: Schema,
-        J: Schema,
-        K: Schema,
-        L: Schema,
-        M: Schema,
-        N: Schema,
-        O: Schema,
-        P: Schema,
-        Q: Schema,
-        R: Schema,
-        S: Schema,
-        T: Schema,
-        U: Schema,
-        V: Schema
-    ]: Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V)] = Schema.derived
+        A: {Schema, Tag},
+        B: {Schema, Tag},
+        C: {Schema, Tag},
+        D: {Schema, Tag},
+        E: {Schema, Tag},
+        F: {Schema, Tag},
+        G: {Schema, Tag},
+        H: {Schema, Tag},
+        I: {Schema, Tag},
+        J: {Schema, Tag},
+        K: {Schema, Tag},
+        L: {Schema, Tag},
+        M: {Schema, Tag},
+        N: {Schema, Tag},
+        O: {Schema, Tag},
+        P: {Schema, Tag},
+        Q: {Schema, Tag},
+        R: {Schema, Tag},
+        S: {Schema, Tag},
+        T: {Schema, Tag},
+        U: {Schema, Tag},
+        V: {Schema, Tag}
+    ](using
+        Tag[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V)]
+    ): Schema[(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V)] = Schema.derived
 
     // --- Kyo-data type Schemas ---
 
     /** Schema for Result[E, A] values - serialized as discriminated union. */
-    given resultSchema[E, A](using eSchema: Schema[E], aSchema: Schema[A]): Schema[Result[E, A]] =
+    given resultSchema[E, A](using
+        eSchema: Schema[E],
+        aSchema: Schema[A],
+        eTag: Tag[E],
+        aTag: Tag[A],
+        outerTag: Tag[Result[E, A]]
+    ): Schema[Result[E, A]] =
         Schema.init[Result[E, A]](
             writeFn = (value, writer) =>
                 value match
@@ -1986,7 +2156,13 @@ object Schema:
         )
 
     /** Schema for Either[A, B] values - serialized as discriminated union with Left/Right variants. */
-    given eitherSchema[A, B](using aSchema: Schema[A], bSchema: Schema[B]): Schema[Either[A, B]] =
+    given eitherSchema[A, B](using
+        aSchema: Schema[A],
+        bSchema: Schema[B],
+        aTag: Tag[A],
+        bTag: Tag[B],
+        outerTag: Tag[Either[A, B]]
+    ): Schema[Either[A, B]] =
         Schema.init[Either[A, B]](
             writeFn = (value, writer) =>
                 value match
@@ -2032,7 +2208,7 @@ object Schema:
         )
 
     /** Schema for Dict[String, V] - serializes as a JSON object. */
-    given stringDictSchema[V](using vSchema: Schema[V]): Schema[Dict[String, V]] =
+    given stringDictSchema[V](using vSchema: Schema[V], vTag: Tag[V], outerTag: Tag[Dict[String, V]]): Schema[Dict[String, V]] =
         Schema.init[Dict[String, V]](
             writeFn = (value, writer) =>
                 writer.mapStart(value.size)
@@ -2059,7 +2235,13 @@ object Schema:
         )
 
     /** Schema for Dict[K, V] with non-String keys - serializes as array of [k, v] pairs. */
-    given dictSchema[K, V](using kSchema: Schema[K], vSchema: Schema[V]): Schema[Dict[K, V]] =
+    given dictSchema[K, V](using
+        kSchema: Schema[K],
+        vSchema: Schema[V],
+        kTag: Tag[K],
+        vTag: Tag[V],
+        outerTag: Tag[Dict[K, V]]
+    ): Schema[Dict[K, V]] =
         Schema.init[Dict[K, V]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -2088,6 +2270,9 @@ object Schema:
                 val dict = loop(Dict.empty[K, V], 1)
                 reader.arrayEnd()
                 dict
+            ,
+            mappingKeyOpt = Maybe(kSchema),
+            mappingValueOpt = Maybe(vSchema)
         )
 
     // --- Internal helpers ---
@@ -2190,7 +2375,7 @@ object Schema:
         inline setterFn: (A, F) => A,
         segments: Seq[String],
         sourceFields: Seq[Field[?, ?]] = Seq.empty
-    )(using frame: Frame): Schema[A] { type Focused = F } =
+    )(using frame: Frame, tag: Tag[A]): Schema[A] { type Focused = F } =
         Schema.initFocused[A, F](
             writeFn = (_: A, _: Writer) => throw SchemaNotSerializableException(Schema.notSerializableMessage)(using frame),
             readFn = (_: Reader) => throw SchemaNotSerializableException(Schema.notSerializableMessage)(using frame),
@@ -2209,7 +2394,7 @@ object Schema:
         sourceFields: Seq[Field[?, ?]],
         inline writeFn: (A, Writer) => Unit,
         inline readFn: Reader => A
-    ): Schema[A] { type Focused = F } =
+    )(using tag: Tag[A]): Schema[A] { type Focused = F } =
         Schema.initFocused[A, F](
             writeFn = writeFn,
             readFn = readFn,
@@ -2256,7 +2441,7 @@ object Schema:
         constraints: Seq[Constraint] = Seq.empty,
         fieldIds: Map[Seq[String], Int] = Map.empty,
         discriminatorField: Maybe[String] = Maybe.empty
-    ): Schema[A] { type Focused = E } =
+    )(using tag: Tag[A]): Schema[A] { type Focused = E } =
         Schema.init[A](
             writeFn = writeFn,
             readFn = readFn,

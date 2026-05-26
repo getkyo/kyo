@@ -53,8 +53,6 @@ enum Token derives CanEqual:
     case Bytes(value: Span[Byte])
     case BigIntVal(value: BigInt)
     case BigDecimalVal(value: BigDecimal)
-    case InstantVal(value: java.time.Instant)
-    case DurationVal(value: java.time.Duration)
 end Token
 
 class TestWriter extends Writer:
@@ -82,8 +80,6 @@ class TestWriter extends Writer:
     def bytes(value: Span[Byte]): Unit                 = tokens += Token.Bytes(value)
     def bigInt(value: BigInt): Unit                    = tokens += Token.BigIntVal(value)
     def bigDecimal(value: BigDecimal): Unit            = tokens += Token.BigDecimalVal(value)
-    def instant(value: java.time.Instant): Unit        = tokens += Token.InstantVal(value)
-    def duration(value: java.time.Duration): Unit      = tokens += Token.DurationVal(value)
 
     def resultTokens: List[Token] = tokens.toList
 
@@ -240,14 +236,6 @@ class TestReader(tokens: List[Token])(using _frame: Frame) extends Reader:
     def bigDecimal(): BigDecimal = next() match
         case Token.BigDecimalVal(v) => v
         case t                      => throw TypeMismatchException(scala.Nil, "BigDecimalVal", t.toString)
-
-    def instant(): java.time.Instant = next() match
-        case Token.InstantVal(v) => v
-        case t                   => throw TypeMismatchException(scala.Nil, "InstantVal", t.toString)
-
-    def duration(): java.time.Duration = next() match
-        case Token.DurationVal(v) => v
-        case t                    => throw TypeMismatchException(scala.Nil, "DurationVal", t.toString)
 end TestReader
 
 // --- Helpers ---

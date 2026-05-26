@@ -25,7 +25,7 @@ import scala.annotation.tailrec
   * @see
   *   [[Modify]] for accumulating imperative mutations in a single step
   */
-final case class Changeset[A](operations: Chunk[Changeset.Patch]) derives Schema:
+final case class Changeset[A](operations: Chunk[Changeset.Patch]):
 
     /** Returns true when the two values are identical (no operations). */
     def isEmpty: Boolean = operations.isEmpty
@@ -51,6 +51,10 @@ final case class Changeset[A](operations: Chunk[Changeset.Patch]) derives Schema
 end Changeset
 
 object Changeset:
+
+    /** Schema for Changeset[A]: encoded as the operations chunk. The A parameter only appears in the typed return of `applyTo`. */
+    given changesetSchema[A](using Tag[A], Tag[Changeset[A]]): Schema[Changeset[A]] =
+        Schema.chunkSchema[Changeset.Patch].transform[Changeset[A]](Changeset[A](_))(_.operations)
 
     /** A single patch operation targeting a field path within the Structure.Value tree.
       *

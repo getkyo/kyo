@@ -378,24 +378,6 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         end try
     end bigDecimal
 
-    def instant(): java.time.Instant =
-        val s = string()
-        try java.time.Instant.parse(s)
-        catch
-            case e: java.time.format.DateTimeParseException =>
-                error(s"Invalid Instant value: '$s' (${e.getMessage})")
-        end try
-    end instant
-
-    def duration(): java.time.Duration =
-        val s = string()
-        try java.time.Duration.parse(s)
-        catch
-            case e: java.time.format.DateTimeParseException =>
-                error(s"Invalid Duration value: '$s' (${e.getMessage})")
-        end try
-    end duration
-
     // Internal parsing methods
 
     /** Read a quoted string when we know there are escapes (backslash found during fast scan). */

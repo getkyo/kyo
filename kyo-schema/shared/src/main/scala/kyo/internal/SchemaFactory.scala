@@ -59,6 +59,7 @@ private[kyo] object SchemaFactory:
                 renamePathKey(ids, rename._1, rename._2)
             }
         end updatedFieldIds
+        given Tag[A] = source.tag
         Schema.initFocused[A, F2](
             writeFn = (a: A, w: Writer) => source.serializeWrite(a, w),
             readFn = (r: Reader) => source.serializeRead(r),

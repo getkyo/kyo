@@ -21,6 +21,7 @@ private[kyo] object SchemaValidation:
         pred: V => Boolean,
         msg: String
     )(using frame: Frame): Schema[A] { type Focused = meta.Focused } =
+        given Tag[A] = meta.tag
         val check: A => Seq[ValidationFailedException] = (root: A) =>
             getter(root) match
                 case Maybe.Present(v) =>
@@ -59,6 +60,7 @@ private[kyo] object SchemaValidation:
         msg: String,
         constraint: Schema.Constraint
     )(using frame: Frame): Schema[A] { type Focused = meta.Focused } =
+        given Tag[A] = meta.tag
         val check: A => Seq[ValidationFailedException] = (root: A) =>
             getter(root) match
                 case Maybe.Present(v) =>
@@ -92,6 +94,7 @@ private[kyo] object SchemaValidation:
         meta: Schema[A],
         constraint: Schema.Constraint
     ): Schema[A] { type Focused = meta.Focused } =
+        given Tag[A] = meta.tag
         Schema.createWithFocused[A, meta.Focused](
             getterFn = (a: A) => meta.getter(a),
             setterFn = (a: A, v: Any) => meta.setter(a, v),
@@ -120,6 +123,7 @@ private[kyo] object SchemaValidation:
         fieldPath: Seq[String],
         description: String
     ): Schema[A] { type Focused = meta.Focused } =
+        given Tag[A] = meta.tag
         Schema.createWithFocused[A, meta.Focused](
             getterFn = (a: A) => meta.getter(a),
             setterFn = (a: A, v: Any) => meta.setter(a, v),
@@ -148,6 +152,7 @@ private[kyo] object SchemaValidation:
         fieldPath: Seq[String],
         reason: String
     ): Schema[A] { type Focused = meta.Focused } =
+        given Tag[A] = meta.tag
         Schema.createWithFocused[A, meta.Focused](
             getterFn = (a: A) => meta.getter(a),
             setterFn = (a: A, v: Any) => meta.setter(a, v),

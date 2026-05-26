@@ -220,11 +220,6 @@ object Protobuf:
                     case Structure.PrimitiveKind.String                                      => "string"
                     case Structure.PrimitiveKind.Boolean                                     => "bool"
                     case Structure.PrimitiveKind.BigInt | Structure.PrimitiveKind.BigDecimal => "string"
-                    // Instant / Duration / Frame / Text are serialized as strings on the wire
-                    // by the existing writers (JsonWriter.instant/duration emit ISO strings; kyo.Frame
-                    // and kyo.Text are string-backed). Map to proto3 `string` accordingly.
-                    case Structure.PrimitiveKind.Instant | Structure.PrimitiveKind.Duration |
-                        Structure.PrimitiveKind.Frame | Structure.PrimitiveKind.Text => "string"
                     case Structure.PrimitiveKind.Unit =>
                         throw new IllegalArgumentException(
                             "Unit-typed fields are not supported in Protobuf; omit the field or wrap in Option[T]"

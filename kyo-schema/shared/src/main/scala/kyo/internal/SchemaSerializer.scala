@@ -588,14 +588,6 @@ private[kyo] object SchemaSerializer:
             if delegateReader.nonEmpty then delegateReader.get.bigDecimal()
             else throw TypeMismatchException(Seq.empty, "BigDecimal", s"unexpected phase $phase")(using _frame)
 
-        def instant(): java.time.Instant =
-            if delegateReader.nonEmpty then delegateReader.get.instant()
-            else throw TypeMismatchException(Seq.empty, "Instant", s"unexpected phase $phase")(using _frame)
-
-        def duration(): java.time.Duration =
-            if delegateReader.nonEmpty then delegateReader.get.duration()
-            else throw TypeMismatchException(Seq.empty, "Duration", s"unexpected phase $phase")(using _frame)
-
         override def captureValue(): Reader =
             if delegateReader.nonEmpty then delegateReader.get
             else inner.captureValue()
@@ -691,8 +683,6 @@ private[kyo] object SchemaSerializer:
         def bytes(): Span[Byte]             = inner.bytes()
         def bigInt(): BigInt                = inner.bigInt()
         def bigDecimal(): BigDecimal        = inner.bigDecimal()
-        def instant(): java.time.Instant    = inner.instant()
-        def duration(): java.time.Duration  = inner.duration()
         override def captureValue(): Reader = inner.captureValue()
         override def release(): Unit        = inner.release()
     end TransformAwareReader

@@ -73,6 +73,7 @@ object UnionMacro:
             // ignore the objectStart name argument).
             val joinedNames: String = legNames.mkString(" | ")
 
+            val tagExprUnion: Expr[Tag[T]] = Expr.summon[Tag[T]].getOrElse('{ kyo.Tag[Any].asInstanceOf[Tag[T]] })
             '{
                 val _legNameBytes: Array[Array[Byte]] = $legNameBytesArrExpr
                 val _legSchemas: Array[Schema[Any]]   = $legSchemasArrExpr
@@ -92,7 +93,7 @@ object UnionMacro:
                         },
                     readFn = (reader: Reader) =>
                         ${ readBody[T]('reader, '{ _legNameBytes }, '{ _legSchemas }, '{ _legNames }) }
-                )
+                )(using $tagExprUnion)
             }
         end if
     end derive

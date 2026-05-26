@@ -218,6 +218,7 @@ object IntersectionMacro:
         // inner splices rebuild halves/merged from `Type[T]` (re-running flattenAnd + dedup, which is pure and
         // stable for the same T). The `fieldNames` / `typeName` / `nFields` ints/strings are scope-free.
         val fieldNamesCapt: List[String] = fieldNames
+        val tagExpr: Expr[Tag[T]]        = Expr.summon[Tag[T]].getOrElse('{ kyo.Tag[Any].asInstanceOf[Tag[T]] })
         '{
             val _fieldBytes: Array[Array[Byte]]   = $fieldBytesArrExpr
             val _fieldSchemas: Array[Schema[Any]] = $fieldSchemasArrExpr
@@ -236,7 +237,7 @@ object IntersectionMacro:
                     },
                 readFn = (reader: Reader) =>
                     ${ readBody[T]('reader, '{ _fieldBytes }, '{ _fieldSchemas }, nFields) }
-            )
+            )(using $tagExpr)
         }
     end deriveSynthesized
 

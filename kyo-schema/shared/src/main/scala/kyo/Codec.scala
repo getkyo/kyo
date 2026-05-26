@@ -84,8 +84,6 @@ object Codec:
         def bytes(): Span[Byte]
         def bigInt(): BigInt
         def bigDecimal(): BigDecimal
-        def instant(): java.time.Instant
-        def duration(): java.time.Duration
 
         /** Initialize reusable field values array for n fields. Returns the array. Override for pooled implementations (e.g. JsonReader).
           * Default allocates fresh.
@@ -187,8 +185,6 @@ object Codec:
         def bytes(value: Span[Byte]): Unit
         def bigInt(value: BigInt): Unit
         def bigDecimal(value: BigDecimal): Unit
-        def instant(value: java.time.Instant): Unit
-        def duration(value: java.time.Duration): Unit
         def result(): Span[Byte]
 
         /** Materialize the output as a String. Default delegates to `result()` + UTF-8 decode; codecs with char-native or ASCII-fast paths

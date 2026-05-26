@@ -172,14 +172,6 @@ final class JsonWriter private (
         maybeComma()
         writeQuotedString(value.toString)
 
-    def instant(value: java.time.Instant): Unit =
-        maybeComma()
-        writeQuotedString(value.toString)
-
-    def duration(value: java.time.Duration): Unit =
-        maybeComma()
-        writeQuotedString(value.toString)
-
     override def resultString: String =
         val s =
             if hasNonAscii(buf, pos) then

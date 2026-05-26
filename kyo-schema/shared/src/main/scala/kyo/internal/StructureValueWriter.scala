@@ -89,11 +89,9 @@ final class StructureValueWriter(using Frame) extends Writer:
 
     def mapEnd(): Unit = objectEnd()
 
-    def bytes(value: Span[Byte]): Unit            = addValue(Structure.Value.Str(java.util.Base64.getEncoder.encodeToString(value.toArray)))
-    def bigInt(value: BigInt): Unit               = addValue(Structure.Value.BigNum(BigDecimal(value)))
-    def bigDecimal(value: BigDecimal): Unit       = addValue(Structure.Value.BigNum(value))
-    def instant(value: java.time.Instant): Unit   = addValue(Structure.Value.Str(value.toString))
-    def duration(value: java.time.Duration): Unit = addValue(Structure.Value.Str(value.toString))
+    def bytes(value: Span[Byte]): Unit      = addValue(Structure.Value.Str(java.util.Base64.getEncoder.encodeToString(value.toArray)))
+    def bigInt(value: BigInt): Unit         = addValue(Structure.Value.BigNum(BigDecimal(value)))
+    def bigDecimal(value: BigDecimal): Unit = addValue(Structure.Value.BigNum(value))
 
     def getResult: Structure.Value = resultValue
 

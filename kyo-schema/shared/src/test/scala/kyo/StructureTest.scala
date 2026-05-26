@@ -320,69 +320,66 @@ class StructureTest extends Test:
             end match
         }
 
-        // ---- PrimitiveKind extension for Instant / Duration / Frame / Text ----
+        // ---- Instant / Duration / Frame / Text now surface as their .transform source primitive ----
+        // Schema-driven Structure derivation follows Schema.transformSource. instantSchema/durationSchema/frameSchema/
+        // kyoTextSchema are .transform chains over stringSchema / longSchema, so the field's Structure reports the
+        // underlying primitive kind, not a dedicated Instant/Duration/Frame/Text PrimitiveKind.
 
-        "PrimitiveKind.Instant" in {
+        "Instant field surfaces as String primitive (via transform chain)" in {
             val s = Structure.of[CaseClassWithInstant]
             s match
                 case Structure.Type.Product(_, _, _, fields) =>
                     assert(fields.size == 1)
                     fields.head.fieldType match
                         case Structure.Type.Primitive(kind, _) =>
-                            assert(kind == Structure.PrimitiveKind.Instant)
+                            assert(kind == Structure.PrimitiveKind.String)
                         case other => fail(s"expected Primitive, got $other")
                     end match
                 case other => fail(s"expected Product, got $other")
             end match
         }
 
-        "PrimitiveKind.Duration" in {
+        "Duration (kyo) field surfaces as Long primitive (kyoDurationSchema delegates to longSchema)" in {
             val s = Structure.of[CaseClassWithDuration]
             s match
                 case Structure.Type.Product(_, _, _, fields) =>
                     assert(fields.size == 1)
                     fields.head.fieldType match
                         case Structure.Type.Primitive(kind, _) =>
-                            assert(kind == Structure.PrimitiveKind.Duration)
+                            assert(kind == Structure.PrimitiveKind.Long)
                         case other => fail(s"expected Primitive, got $other")
                     end match
                 case other => fail(s"expected Product, got $other")
             end match
         }
 
-        "PrimitiveKind.Frame" in {
+        "Frame field surfaces as String primitive (via transform chain)" in {
             val s = Structure.of[CaseClassWithFrame]
             s match
                 case Structure.Type.Product(_, _, _, fields) =>
                     assert(fields.size == 1)
                     fields.head.fieldType match
                         case Structure.Type.Primitive(kind, _) =>
-                            assert(kind == Structure.PrimitiveKind.Frame)
+                            assert(kind == Structure.PrimitiveKind.String)
                         case other => fail(s"expected Primitive, got $other")
                     end match
                 case other => fail(s"expected Product, got $other")
             end match
         }
 
-        "PrimitiveKind.Text" in {
+        "Text field surfaces as String primitive (via transform chain)" in {
             val s = Structure.of[CaseClassWithText]
             s match
                 case Structure.Type.Product(_, _, _, fields) =>
                     assert(fields.size == 1)
                     fields.head.fieldType match
                         case Structure.Type.Primitive(kind, _) =>
-                            assert(kind == Structure.PrimitiveKind.Text)
+                            assert(kind == Structure.PrimitiveKind.String)
                         case other => fail(s"expected Primitive, got $other")
                     end match
                 case other => fail(s"expected Product, got $other")
             end match
         }
-
-        // Negative leaf for "unmapped primitive triggers error" is PENDING.
-        // Reason: `StructureMacro.primitiveKindExpr` summons `PrimitiveKindFor[T]`; only types with such a given are
-        // considered primitive in the first place, so by construction every primitive that reaches `primitiveKindExpr`
-        // has a `PrimitiveKindFor[T]` to project the kind from. A future change that re-introduces a primitive without
-        // a paired `PrimitiveKindFor` given will be the right place to land this coverage.
 
         "fieldPaths returns all leaf paths" in {
             val ref   = Structure.of[MTSmallTeam]
@@ -1033,24 +1030,6 @@ class StructureTest extends Test:
             assert(r.bigDecimal() == value)
         }
 
-        "json instant round-trip" in {
-            val value = java.time.Instant.parse("2024-06-15T10:30:00Z")
-            val w     = JsonWriter()
-            w.instant(value)
-            val json = w.resultString
-            val r    = JsonReader(json)
-            assert(r.instant() == value)
-        }
-
-        "json duration round-trip" in {
-            val value = java.time.Duration.ofHours(2).plusMinutes(30)
-            val w     = JsonWriter()
-            w.duration(value)
-            val json = w.resultString
-            val r    = JsonReader(json)
-            assert(r.duration() == value)
-        }
-
         "json mapStart/mapEnd" in {
             val w = JsonWriter()
             w.mapStart(2)
@@ -1104,26 +1083,6 @@ class StructureTest extends Test:
             val r = new ProtobufReader(w.resultBytes)
             val _ = r.field()
             assert(r.bigDecimal() == value)
-        }
-
-        "protobuf instant round-trip" in {
-            val value = java.time.Instant.parse("2024-01-01T00:00:00Z")
-            val w     = new ProtobufWriter
-            w.field("value", 0)
-            w.instant(value)
-            val r = new ProtobufReader(w.resultBytes)
-            val _ = r.field()
-            assert(r.instant() == value)
-        }
-
-        "protobuf duration round-trip" in {
-            val value = java.time.Duration.ofSeconds(3661)
-            val w     = new ProtobufWriter
-            w.field("value", 0)
-            w.duration(value)
-            val r = new ProtobufReader(w.resultBytes)
-            val _ = r.field()
-            assert(r.duration() == value)
         }
 
         "protobuf mapStart/mapEnd" in {
@@ -1195,24 +1154,6 @@ class StructureTest extends Test:
             assert(r.bigDecimal() == value)
         }
 
-        "dynamic instant round-trip" in {
-            val value = java.time.Instant.parse("2025-12-31T23:59:59Z")
-            val w     = new StructureValueWriter
-            w.instant(value)
-            val dv = w.getResult
-            val r  = new StructureValueReader(dv)
-            assert(r.instant() == value)
-        }
-
-        "dynamic duration round-trip" in {
-            val value = java.time.Duration.ofMinutes(90)
-            val w     = new StructureValueWriter
-            w.duration(value)
-            val dv = w.getResult
-            val r  = new StructureValueReader(dv)
-            assert(r.duration() == value)
-        }
-
         "dynamic map round-trip" in {
             val w = new StructureValueWriter
             w.mapStart(2)
@@ -1282,20 +1223,6 @@ class StructureTest extends Test:
             val ex = intercept[ParseException](r.bigDecimal())
             assert(ex.isInstanceOf[DecodeException])
             assert(ex.getMessage.contains("BigDecimal"))
-        }
-
-        "json invalid instant throws ParseException" in {
-            val r  = JsonReader("\"not-a-date\"")
-            val ex = intercept[ParseException](r.instant())
-            assert(ex.isInstanceOf[DecodeException])
-            assert(ex.getMessage.contains("Instant"))
-        }
-
-        "json invalid duration throws ParseException" in {
-            val r  = JsonReader("\"not-a-duration\"")
-            val ex = intercept[ParseException](r.duration())
-            assert(ex.isInstanceOf[DecodeException])
-            assert(ex.getMessage.contains("Duration"))
         }
 
         "json invalid unicode escape throws ParseException" in {

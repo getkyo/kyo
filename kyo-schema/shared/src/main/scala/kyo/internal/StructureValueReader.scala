@@ -215,14 +215,4 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
             case Structure.Value.Decimal(d) => BigDecimal(d)
             case other                      => throw TypeMismatchException(Seq.empty, "BigDecimal", other.toString)
 
-    def instant(): java.time.Instant =
-        currentValue match
-            case Structure.Value.Str(s) => java.time.Instant.parse(s)
-            case other                  => throw TypeMismatchException(Seq.empty, "Instant", other.toString)
-
-    def duration(): java.time.Duration =
-        currentValue match
-            case Structure.Value.Str(s) => java.time.Duration.parse(s)
-            case other                  => throw TypeMismatchException(Seq.empty, "Duration", other.toString)
-
 end StructureValueReader

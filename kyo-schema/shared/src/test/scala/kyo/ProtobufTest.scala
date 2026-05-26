@@ -703,7 +703,44 @@ class ProtobufTest extends Test:
         }
     }
 
+    // Cross-path consistency: case-class Instant/Duration fields must encode the SAME payload bytes (string-form
+    // ISO-8601) as a standalone Schema[Instant] / Schema[Duration] field encoded via the same case-class wrapper.
+    // Both routes now derive from `instantSchema = stringSchema.transform[Instant]` / same for Duration, so the
+    // wrapped encoding of an Instant field is byte-identical to the wrapped encoding of the ISO-string for the
+    // same value. Before this change, the SerializationMacro routed case-class Instant/Duration fields through
+    // Codec.Writer.instant/duration (varint epoch-millis), which produced different bytes than the standalone path.
+    "case-class Instant/Duration field wire bytes match standalone Schema" - {
+        "Instant field bytes equal standalone-String bytes for the same value" in {
+            val v          = java.time.Instant.parse("2024-06-15T12:00:00Z")
+            val viaInstant = Protobuf.encode(TimeInstantBox(v)).toArray.toSeq
+            val viaString  = Protobuf.encode(TimeStringBox(v.toString)).toArray.toSeq
+            assert(viaInstant == viaString)
+        }
+        "Duration field bytes equal standalone-String bytes for the same value" in {
+            val v           = java.time.Duration.ofHours(2).plusMinutes(30)
+            val viaDuration = Protobuf.encode(TimeDurationBox(v)).toArray.toSeq
+            val viaString   = Protobuf.encode(TimeStringBox(v.toString)).toArray.toSeq
+            assert(viaDuration == viaString)
+        }
+        "standalone Schema[Instant] and Schema[String] encoded with the same ISO produce the same bytes" in {
+            val v    = java.time.Instant.parse("2024-06-15T12:00:00Z")
+            val viaI = Protobuf.encode(v).toArray.toSeq
+            val viaS = Protobuf.encode(v.toString).toArray.toSeq
+            assert(viaI == viaS)
+        }
+        "standalone Schema[Duration] and Schema[String] encoded with the same ISO produce the same bytes" in {
+            val v    = java.time.Duration.ofHours(2).plusMinutes(30)
+            val viaD = Protobuf.encode(v).toArray.toSeq
+            val viaS = Protobuf.encode(v.toString).toArray.toSeq
+            assert(viaD == viaS)
+        }
+    }
+
 end ProtobufTest
+
+case class TimeInstantBox(value: java.time.Instant) derives Schema, CanEqual
+case class TimeDurationBox(value: java.time.Duration) derives Schema, CanEqual
+case class TimeStringBox(value: String) derives Schema, CanEqual
 
 // Top-level to avoid issues with derives Schema inside nested definitions
 case class WithUnitField(done: Unit) derives Schema

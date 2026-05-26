@@ -364,6 +364,7 @@ import scala.quoted.*
         val needsSubSchema: List[Boolean] =
             computeFieldNeedsSubSchema(fields, tpe, maybeFields, optionFields)
 
+        val tagAExprRec: Expr[Tag[A]] = Expr.summon[Tag[A]].getOrElse('{ kyo.Tag[Any].asInstanceOf[Tag[A]] })
         if isRecursive then
             '{
                 lazy val self: kyo.Schema[A] { type Focused = F } =
@@ -413,7 +414,7 @@ import scala.quoted.*
                                     '{ self }
                                 )
                             }
-                    )
+                    )(using $tagAExprRec)
                 end self
                 self
             }
@@ -469,7 +470,7 @@ import scala.quoted.*
                                 '{ _subSchemas }
                             )
                         }
-                )
+                )(using $tagAExprRec)
             }
         end if
     end generateCaseClassSchema
@@ -566,6 +567,7 @@ import scala.quoted.*
                 end match
             }
 
+        val tagAExprSealed: Expr[Tag[A]] = Expr.summon[Tag[A]].getOrElse('{ kyo.Tag[Any].asInstanceOf[Tag[A]] })
         if isRecursive then
             '{
                 lazy val self: kyo.Schema[A] { type Focused = F } =
@@ -594,7 +596,7 @@ import scala.quoted.*
                                 }
                                 SerializationMacro.sealedReadBody[A]('{ reader }, '{ _fieldBytes }, schemaExprs)
                             }
-                    )
+                    )(using $tagAExprSealed)
                 end self
                 self
             }
@@ -626,7 +628,7 @@ import scala.quoted.*
                             }
                             SerializationMacro.sealedReadBody[A]('{ reader }, '{ _fieldBytes }, schemaExprs)
                         }
-                )
+                )(using $tagAExprSealed)
             }
         end if
     end generateSealedTraitSchema
@@ -687,7 +689,8 @@ import scala.quoted.*
                 // `T <: Enum[T]` evidence), so we go through `Class.getMethod("valueOf", ...).invoke`.
                 // Invalid names surface as UnknownVariantException (a DecodeException) so that
                 // Json.decode / other Codec-driven entry points produce a Result.Failure rather than a Panic.
-                val fqnExpr: Expr[String] = Expr(tpe.dealias.typeSymbol.fullName)
+                val fqnExpr: Expr[String]     = Expr(tpe.dealias.typeSymbol.fullName)
+                val tagExprJava: Expr[Tag[A]] = Expr.summon[Tag[A]].getOrElse('{ kyo.Tag[Any].asInstanceOf[Tag[A]] })
                 '{
                     val cls           = Class.forName(${ fqnExpr })
                     val valueOfMethod = cls.getMethod("valueOf", classOf[String])
@@ -704,7 +707,7 @@ import scala.quoted.*
                                 case _: IllegalArgumentException =>
                                     throw kyo.UnknownVariantException(Seq.empty, name)(using r.frame)
                             end try
-                    )
+                    )(using $tagExprJava)
                 }
             else if sym.isClassDef && sym.flags.is(Flags.Sealed) then
                 generateSealedTraitSchema[A, A](nilExpr)
@@ -751,6 +754,7 @@ import scala.quoted.*
                         Ref(child).asExprOf[T]
                     end if
 
+            val tagExpr: Expr[Tag[T]] = Expr.summon[Tag[T]].getOrElse('{ kyo.Tag[Any].asInstanceOf[Tag[T]] })
             (self: Expr[Schema[A]]) =>
                 '{
                     kyo.Schema.init[T](
@@ -762,7 +766,7 @@ import scala.quoted.*
                             kyo.discard(r.objectStart())
                             r.objectEnd()
                             $singletonRef
-                    ).asInstanceOf[Schema[
+                    )(using $tagExpr).asInstanceOf[Schema[
                         Any
                     ]]
                 }
@@ -854,6 +858,7 @@ import scala.quoted.*
                         resolversForT.map(r => r(dummySelf))
                     )
 
+                val tagExpr2: Expr[Tag[T]] = Expr.summon[Tag[T]].getOrElse('{ kyo.Tag[Any].asInstanceOf[Tag[T]] })
                 '{
                     val _subSchemas: Array[kyo.Schema[Any]] = $subSchemasArrExpr
                     val _variantFieldNames: Array[String]   = $fieldNamesExpr
@@ -891,7 +896,7 @@ import scala.quoted.*
                                     dummySelf
                                 )
                             }
-                    ).asInstanceOf[Schema[Any]]
+                    )(using $tagExpr2).asInstanceOf[Schema[Any]]
                 }
         end if
     end buildVariantSchemaResolver
@@ -1050,7 +1055,9 @@ import scala.quoted.*
                                     '{
                                         kyo.Schema.tuple2Schema[t1, t2](using
                                             $s1.asInstanceOf[Schema[t1]],
-                                            $s2.asInstanceOf[Schema[t2]]
+                                            summon[Tag[t1]],
+                                            $s2.asInstanceOf[Schema[t2]],
+                                            summon[Tag[t2]]
                                         ).asInstanceOf[Schema[Any]]
                                     }
                             case (true, false) =>
@@ -1060,7 +1067,14 @@ import scala.quoted.*
                                 )
                                 (self: Expr[Schema[A]]) =>
                                     val s1 = resolver1(self)
-                                    '{ kyo.Schema.tuple2Schema[t1, t2](using $s1.asInstanceOf[Schema[t1]], $s2).asInstanceOf[Schema[Any]] }
+                                    '{
+                                        kyo.Schema.tuple2Schema[t1, t2](using
+                                            $s1.asInstanceOf[Schema[t1]],
+                                            summon[Tag[t1]],
+                                            $s2,
+                                            summon[Tag[t2]]
+                                        ).asInstanceOf[Schema[Any]]
+                                    }
                             case (false, true) =>
                                 val s1 = Expr.summon[Schema[t1]].getOrElse(
                                     report.errorAndAbort(noSchemaMessage(fieldName, arg1.show, fieldType.show))
@@ -1068,7 +1082,14 @@ import scala.quoted.*
                                 val resolver2 = buildRecursiveResolver[A](arg2, parentType, fieldName)
                                 (self: Expr[Schema[A]]) =>
                                     val s2 = resolver2(self)
-                                    '{ kyo.Schema.tuple2Schema[t1, t2](using $s1, $s2.asInstanceOf[Schema[t2]]).asInstanceOf[Schema[Any]] }
+                                    '{
+                                        kyo.Schema.tuple2Schema[t1, t2](using
+                                            $s1,
+                                            summon[Tag[t1]],
+                                            $s2.asInstanceOf[Schema[t2]],
+                                            summon[Tag[t2]]
+                                        ).asInstanceOf[Schema[Any]]
+                                    }
                             case (false, false) =>
                                 // Neither contains recursive type; shouldn't reach here
                                 val schema = Expr.summon[Schema[(t1, t2)]].getOrElse(

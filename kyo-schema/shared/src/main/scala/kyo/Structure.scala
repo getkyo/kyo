@@ -31,6 +31,64 @@ object Structure:
       */
     inline def of[A]: Structure.Type = ${ kyo.internal.StructureMacro.deriveImpl[A] }
 
+    /** Runtime-walked Structure.Type derivation driven by a Schema instance.
+      *
+      * Matches `schema.tag` against the 12 primitive Tags; otherwise dispatches on Schema accessors
+      * (`collectionElement` / `optionalInner` / `mappingKey` + `mappingValue`) for container shapes, then follows
+      * `transformSource` until a primitive / container surfaces, or emits a nominal `Product` fallback.
+      */
+    def fromSchema[A](schema: Schema[A]): Structure.Type =
+        val tag = schema.tag
+        // 12 primitive Tags
+        if tag =:= Tag[String] then Type.Primitive(PrimitiveKind.String, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Boolean] then Type.Primitive(PrimitiveKind.Boolean, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Int] then Type.Primitive(PrimitiveKind.Int, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Long] then Type.Primitive(PrimitiveKind.Long, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Short] then Type.Primitive(PrimitiveKind.Short, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Byte] then Type.Primitive(PrimitiveKind.Byte, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Char] then Type.Primitive(PrimitiveKind.Char, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Float] then Type.Primitive(PrimitiveKind.Float, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Double] then Type.Primitive(PrimitiveKind.Double, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Unit] then Type.Primitive(PrimitiveKind.Unit, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[BigInt] then Type.Primitive(PrimitiveKind.BigInt, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[BigDecimal] then Type.Primitive(PrimitiveKind.BigDecimal, tag.asInstanceOf[Tag[Any]])
+        else
+            (schema.collectionElement, schema.optionalInner, schema.mappingKey, schema.mappingValue) match
+                case (Maybe.Present(elem), _, _, _) =>
+                    Type.Collection(
+                        containerName(tag),
+                        tag.asInstanceOf[Tag[Any]],
+                        fromSchema(elem)
+                    )
+                case (_, Maybe.Present(inner), _, _) =>
+                    Type.Optional(
+                        containerName(tag),
+                        tag.asInstanceOf[Tag[Any]],
+                        fromSchema(inner)
+                    )
+                case (_, _, Maybe.Present(k), Maybe.Present(v)) =>
+                    Type.Mapping(
+                        containerName(tag),
+                        tag.asInstanceOf[Tag[Any]],
+                        fromSchema(k),
+                        fromSchema(v)
+                    )
+                case _ =>
+                    schema.transformSource match
+                        case Maybe.Present(source) => fromSchema(source)
+                        case _                     =>
+                            // Nominal fallback: emit a fieldless Product carrying the type's tag.
+                            Type.Product(containerName(tag), tag.asInstanceOf[Tag[Any]], Chunk.empty, Chunk.empty)
+        end if
+    end fromSchema
+
+    /** Extract the short container name from a Tag's display string: `List[Int]` -> `List`, `scala.Option[String]` -> `Option`. */
+    private def containerName[A](tag: Tag[A]): String =
+        val full = tag.show.takeWhile(_ != '[')
+        val dot  = full.lastIndexOf('.')
+        if dot >= 0 then full.substring(dot + 1) else full
+    end containerName
+
     /** Converts a typed value to its untyped Structure.Value representation.
       *
       * Uses the Schema[A] instance to serialize the value into the universal Value tree. The result can be inspected, modified, or decoded
@@ -90,7 +148,6 @@ object Structure:
         case Float, Double
         case BigInt, BigDecimal
         case String, Boolean, Unit
-        case Instant, Duration, Frame, Text
     end PrimitiveKind
 
     object Type:
@@ -522,24 +579,16 @@ end Structure
 final class PrimitiveKindFor[T] private[kyo] (val kind: Structure.PrimitiveKind)
 
 object PrimitiveKindFor:
-    given intKind: PrimitiveKindFor[Int]                             = new PrimitiveKindFor(Structure.PrimitiveKind.Int)
-    given longKind: PrimitiveKindFor[Long]                           = new PrimitiveKindFor(Structure.PrimitiveKind.Long)
-    given shortKind: PrimitiveKindFor[Short]                         = new PrimitiveKindFor(Structure.PrimitiveKind.Short)
-    given byteKind: PrimitiveKindFor[Byte]                           = new PrimitiveKindFor(Structure.PrimitiveKind.Byte)
-    given charKind: PrimitiveKindFor[Char]                           = new PrimitiveKindFor(Structure.PrimitiveKind.Char)
-    given floatKind: PrimitiveKindFor[Float]                         = new PrimitiveKindFor(Structure.PrimitiveKind.Float)
-    given doubleKind: PrimitiveKindFor[Double]                       = new PrimitiveKindFor(Structure.PrimitiveKind.Double)
-    given booleanKind: PrimitiveKindFor[Boolean]                     = new PrimitiveKindFor(Structure.PrimitiveKind.Boolean)
-    given stringKind: PrimitiveKindFor[String]                       = new PrimitiveKindFor(Structure.PrimitiveKind.String)
-    given unitKind: PrimitiveKindFor[Unit]                           = new PrimitiveKindFor(Structure.PrimitiveKind.Unit)
-    given bigIntKind: PrimitiveKindFor[BigInt]                       = new PrimitiveKindFor(Structure.PrimitiveKind.BigInt)
-    given javaBigIntegerKind: PrimitiveKindFor[java.math.BigInteger] = new PrimitiveKindFor(Structure.PrimitiveKind.BigInt)
-    given bigDecimalKind: PrimitiveKindFor[BigDecimal]               = new PrimitiveKindFor(Structure.PrimitiveKind.BigDecimal)
-    given javaBigDecimalKind: PrimitiveKindFor[java.math.BigDecimal] = new PrimitiveKindFor(Structure.PrimitiveKind.BigDecimal)
-    given javaInstantKind: PrimitiveKindFor[java.time.Instant]       = new PrimitiveKindFor(Structure.PrimitiveKind.Instant)
-    given kyoInstantKind: PrimitiveKindFor[kyo.Instant]              = new PrimitiveKindFor(Structure.PrimitiveKind.Instant)
-    given javaDurationKind: PrimitiveKindFor[java.time.Duration]     = new PrimitiveKindFor(Structure.PrimitiveKind.Duration)
-    given kyoDurationKind: PrimitiveKindFor[kyo.Duration]            = new PrimitiveKindFor(Structure.PrimitiveKind.Duration)
-    given frameKind: PrimitiveKindFor[kyo.Frame]                     = new PrimitiveKindFor(Structure.PrimitiveKind.Frame)
-    given textKind: PrimitiveKindFor[kyo.Text]                       = new PrimitiveKindFor(Structure.PrimitiveKind.Text)
+    given intKind: PrimitiveKindFor[Int]               = new PrimitiveKindFor(Structure.PrimitiveKind.Int)
+    given longKind: PrimitiveKindFor[Long]             = new PrimitiveKindFor(Structure.PrimitiveKind.Long)
+    given shortKind: PrimitiveKindFor[Short]           = new PrimitiveKindFor(Structure.PrimitiveKind.Short)
+    given byteKind: PrimitiveKindFor[Byte]             = new PrimitiveKindFor(Structure.PrimitiveKind.Byte)
+    given charKind: PrimitiveKindFor[Char]             = new PrimitiveKindFor(Structure.PrimitiveKind.Char)
+    given floatKind: PrimitiveKindFor[Float]           = new PrimitiveKindFor(Structure.PrimitiveKind.Float)
+    given doubleKind: PrimitiveKindFor[Double]         = new PrimitiveKindFor(Structure.PrimitiveKind.Double)
+    given booleanKind: PrimitiveKindFor[Boolean]       = new PrimitiveKindFor(Structure.PrimitiveKind.Boolean)
+    given stringKind: PrimitiveKindFor[String]         = new PrimitiveKindFor(Structure.PrimitiveKind.String)
+    given unitKind: PrimitiveKindFor[Unit]             = new PrimitiveKindFor(Structure.PrimitiveKind.Unit)
+    given bigIntKind: PrimitiveKindFor[BigInt]         = new PrimitiveKindFor(Structure.PrimitiveKind.BigInt)
+    given bigDecimalKind: PrimitiveKindFor[BigDecimal] = new PrimitiveKindFor(Structure.PrimitiveKind.BigDecimal)
 end PrimitiveKindFor
