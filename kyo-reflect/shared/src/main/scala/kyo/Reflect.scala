@@ -4,7 +4,6 @@ import kyo.internal.reflect.binary.Utf8
 import kyo.internal.reflect.query.ClasspathOrchestrator
 import kyo.internal.reflect.query.ClasspathRef
 import kyo.internal.reflect.query.PlatformFileSource
-import kyo.internal.reflect.query.Query
 import kyo.internal.reflect.snapshot.DigestComputer as SnapshotDigest
 import kyo.internal.reflect.snapshot.SnapshotReader
 import kyo.internal.reflect.snapshot.SnapshotWriter
@@ -933,12 +932,6 @@ object Reflect:
             val fqn = binaryName.replace('/', '.').replace('$', '.')
             cp.lookupClass(fqn)
 
-        /** Build a type-safe query over this classpath.
-          *
-          * The query is lazily evaluated on `.run` or `.stream`.
-          */
-        def query[A](using reads: Reads[A]): Query[A] =
-            Query.make(cp, reads)
     end extension
 
     // ── Type subtyping extension ─────────────────────────────────────────────
@@ -966,51 +959,9 @@ object Reflect:
             kyo.internal.reflect.type_.Subtyping.isSubtype(t, other, cp, budget = 64)
     end extension
 
-    // ── Reads typeclass (schema-driven projection) ─────────────────────────
-
-    trait Reads[A]:
-        val symbolKinds: Set[SymbolKind]
-        val needsBodies: Boolean
-        val touchedFields: FieldSet
-        def read(sym: Symbol)(using Frame): A < (Sync & Async & Abort[ReflectError])
-    end Reads
-
-    object Reads extends kyo.internal.reflect.reads.ReadsInstances:
-        inline def derived[A]: Reads[A] = ${ kyo.internal.ReflectMacro.derivedImpl[A] }
-        export kyo.internal.reflect.reads.RecordReads.recordReads
-
-    // ── FieldSet (touched-fields hint) ─────────────────────────────────────
-
-    final class FieldSet(val bits: Long) extends AnyVal:
-        def |(other: FieldSet): FieldSet       = new FieldSet(bits | other.bits)
-        def contains(other: FieldSet): Boolean = (bits & other.bits) == other.bits
-
-    object FieldSet:
-        val Empty: FieldSet        = new FieldSet(0L)
-        val Name: FieldSet         = new FieldSet(1L << 0)
-        val BinaryName: FieldSet   = new FieldSet(1L << 1)
-        val Flags: FieldSet        = new FieldSet(1L << 2)
-        val Kind: FieldSet         = new FieldSet(1L << 3)
-        val Owner: FieldSet        = new FieldSet(1L << 4)
-        val DeclaredType: FieldSet = new FieldSet(1L << 5)
-        val Parents: FieldSet      = new FieldSet(1L << 6)
-        val TypeParams: FieldSet   = new FieldSet(1L << 7)
-        val Members: FieldSet      = new FieldSet(1L << 8)
-        val Companion: FieldSet    = new FieldSet(1L << 9)
-        val JavaSpecific: FieldSet = new FieldSet(1L << 10)
-        val ParamTypes: FieldSet   = new FieldSet(1L << 11)
-        val Annotations: FieldSet  = new FieldSet(1L << 12)
-        val All: FieldSet          = new FieldSet((1L << 32) - 1)
-    end FieldSet
-
     // ── FQN helper ──────────────────────────────────────────────────────────
 
     inline def classFqn[A](using t: Tag[A]): String = t.show
-
-    // ── symbolToRecord (compile-time projection into kyo.Record) ───────────
-
-    inline def symbolToRecord[F: Fields](sym: Symbol)(using Frame): Record[F] < (Sync & Async & Abort[ReflectError]) =
-        ${ kyo.internal.SymbolToRecordMacro.symbolToRecordImpl[F]('sym) }
 
     // ── Snapshot management ─────────────────────────────────────────────────
 

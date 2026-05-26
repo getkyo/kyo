@@ -7,6 +7,7 @@ import java.util.jar.JarFile
 import kyo.*
 import kyo.internal.reflect.query.Classpath as InternalClasspath
 import kyo.internal.reflect.query.ClasspathOrchestrator
+import kyo.internal.reflect.query.ClasspathTestHelpers
 import kyo.internal.reflect.query.FileSource
 import kyo.internal.reflect.query.JvmFileSource
 import kyo.internal.reflect.snapshot.DigestComputer
@@ -135,7 +136,7 @@ object ReflectBench:
             Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
                 ClasspathOrchestrator.openInto(Seq("fixtures"), strict = false, src, concurrency = 1, rawCp).map: _ =>
                     val cp = Reflect.Classpath.wrap(rawCp)
-                    Reflect.Classpath.assignHomesForTest(rawCp)
+                    ClasspathTestHelpers.assignHomesForTest(rawCp)
                     cp
 
     /** Open a classpath that the caller is responsible for closing via InternalClasspath.close. No Scope finalizer registered. */
@@ -145,7 +146,7 @@ object ReflectBench:
         InternalClasspath.allocate.flatMap: rawCp =>
             ClasspathOrchestrator.openInto(Seq("fixtures"), strict = false, src, concurrency = 1, rawCp).map: _ =>
                 val cp = Reflect.Classpath.wrap(rawCp)
-                Reflect.Classpath.assignHomesForTest(rawCp)
+                ClasspathTestHelpers.assignHomesForTest(rawCp)
                 (cp, rawCp)
 
     /** Write a snapshot and return the snapshot path. */
@@ -256,7 +257,7 @@ object ReflectBench:
             "kyo.fixtures.BaseClass"
         )
 
-        // Open a warm classpath that stays live across W4, W5, W6. Caller closes it manually after benchmarks.
+        // Open a warm classpath that stays live across W4, W5, W8. Caller closes it manually after benchmarks.
         val (warmCp, warmRawCp): (Reflect.Classpath, InternalClasspath) =
             runSync:
                 Scope.run:
@@ -286,14 +287,18 @@ object ReflectBench:
 
             java.lang.System.out.println()
 
-            // Workload 6: schema-driven traversal via cp.query[SimpleSig].run.
-            case class SimpleSig(name: Reflect.Name, flags: Reflect.Flags) derives Reflect.Reads
-
-            bench("W6 schema-driven query[SimpleSig].run", warmupIter, measureIter):
+            // Workload 8: plain iteration (no Reads, no Query).
+            bench("W8 plain iteration (no Query)", warmupIter, measureIter):
                 val _ = runSync:
-                    warmCp.query[SimpleSig].run.map(_.size)
+                    for
+                        tops <- warmCp.topLevelClasses
+                        all <- kyo.Kyo.foreach(tops): cls =>
+                            cls.declarations.map: decls =>
+                                decls.count(_.kind == Reflect.SymbolKind.Method) +
+                                    (if cls.kind == Reflect.SymbolKind.Method then 1 else 0)
+                    yield all.sum
 
-            java.lang.System.out.println(s"  (Reads[SimpleSig] derived; scans all symbols)")
+            java.lang.System.out.println(s"  (plain for-comprehension over Symbol accessors)")
             java.lang.System.out.println()
             java.lang.System.out.println("=== done ===")
         finally

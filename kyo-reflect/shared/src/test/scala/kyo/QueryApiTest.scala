@@ -186,18 +186,12 @@ class QueryApiTest extends Test:
                     throw t
     }
 
-    // Test 9: query[Reflect.Symbol].run returns all symbols
-    "cp.query run returns symbols from fixture classpath" in run {
-        val readsInst = new Reflect.Reads[Reflect.Symbol]:
-            val symbolKinds: Set[Reflect.SymbolKind]                                                          = Set.empty
-            val needsBodies: Boolean                                                                          = false
-            val touchedFields: Reflect.FieldSet                                                               = Reflect.FieldSet.Empty
-            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
+    // Test 9: direct iteration over all symbols returns non-empty result
+    "direct symbol iteration returns symbols from fixture classpath" in run {
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                import kyo.internal.reflect.query.Query
-                Query.make(Reflect.Classpath.unwrap(cp), readsInst).run).map:
-                case Result.Success(syms: Chunk[Reflect.Symbol]) =>
+                Sync.defer(Reflect.Classpath.unwrap(cp).allSymbols)).map:
+                case Result.Success(syms) =>
                     assert(syms.nonEmpty, "Expected at least one symbol from fixture classpath")
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
@@ -205,18 +199,12 @@ class QueryApiTest extends Test:
                     throw t
     }
 
-    // Test 10: query.where(_.kind == Method) returns only method symbols
-    "query.where filters to Method symbols only" in run {
-        val readsInst = new Reflect.Reads[Reflect.Symbol]:
-            val symbolKinds: Set[Reflect.SymbolKind]                                                          = Set.empty
-            val needsBodies: Boolean                                                                          = false
-            val touchedFields: Reflect.FieldSet                                                               = Reflect.FieldSet.Empty
-            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
+    // Test 10: direct filter to Method kind returns only method symbols
+    "direct filter to Method kind returns only method symbols" in run {
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                import kyo.internal.reflect.query.Query
-                Query.make(Reflect.Classpath.unwrap(cp), readsInst).where(_.kind == Reflect.SymbolKind.Method).run).map:
-                case Result.Success(syms: Chunk[Reflect.Symbol]) =>
+                Sync.defer(Reflect.Classpath.unwrap(cp).allSymbols.filter(_.kind == Reflect.SymbolKind.Method))).map:
+                case Result.Success(syms) =>
                     assert(
                         syms.forall(_.kind == Reflect.SymbolKind.Method),
                         s"Some symbols are not Method kind"
@@ -227,18 +215,12 @@ class QueryApiTest extends Test:
                     throw t
     }
 
-    // Test 11: query.withFlag(Flag.Inline) returns only symbols with Inline flag
-    "query.withFlag(Inline) returns only inline symbols" in run {
-        val readsInst = new Reflect.Reads[Reflect.Symbol]:
-            val symbolKinds: Set[Reflect.SymbolKind]                                                          = Set.empty
-            val needsBodies: Boolean                                                                          = false
-            val touchedFields: Reflect.FieldSet                                                               = Reflect.FieldSet.Empty
-            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
+    // Test 11: direct filter by Inline flag returns only symbols with Inline flag
+    "direct filter by Inline flag returns only inline symbols" in run {
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                import kyo.internal.reflect.query.Query
-                Query.make(Reflect.Classpath.unwrap(cp), readsInst).withFlag(Reflect.Flag.Inline).run).map:
-                case Result.Success(syms: Chunk[Reflect.Symbol]) =>
+                Sync.defer(Reflect.Classpath.unwrap(cp).allSymbols.filter(_.flags.contains(Reflect.Flag.Inline)))).map:
+                case Result.Success(syms) =>
                     assert(
                         syms.forall(_.flags.contains(Reflect.Flag.Inline)),
                         s"Some symbols do not have Inline flag"
@@ -249,21 +231,15 @@ class QueryApiTest extends Test:
                     throw t
     }
 
-    // Test 12: query.named("PlainClass") returns symbols named PlainClass
-    "query.named filters by simple name" in run {
-        val readsInst = new Reflect.Reads[Reflect.Symbol]:
-            val symbolKinds: Set[Reflect.SymbolKind]                                                          = Set.empty
-            val needsBodies: Boolean                                                                          = false
-            val touchedFields: Reflect.FieldSet                                                               = Reflect.FieldSet.Empty
-            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
+    // Test 12: direct filter by name returns symbols named PlainClass
+    "direct filter by name finds symbols named PlainClass" in run {
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                import kyo.internal.reflect.query.Query
-                Query.make(Reflect.Classpath.unwrap(cp), readsInst).named("PlainClass").run).map:
-                case Result.Success(syms: Chunk[Reflect.Symbol]) =>
+                Sync.defer(Reflect.Classpath.unwrap(cp).allSymbols.filter(_.name.asString == "PlainClass"))).map:
+                case Result.Success(syms) =>
                     assert(
                         syms.forall(_.name.asString == "PlainClass"),
-                        s"All named-filtered symbols must have name PlainClass, got: ${syms.map(_.name.asString)}"
+                        s"All name-filtered symbols must have name PlainClass, got: ${syms.map(_.name.asString)}"
                     )
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
@@ -271,18 +247,12 @@ class QueryApiTest extends Test:
                     throw t
     }
 
-    // Test 13: query.map(_.name) returns Chunk[Name]
-    "query.map transforms decoded values" in run {
-        val readsInst = new Reflect.Reads[Reflect.Symbol]:
-            val symbolKinds: Set[Reflect.SymbolKind]                                                          = Set.empty
-            val needsBodies: Boolean                                                                          = false
-            val touchedFields: Reflect.FieldSet                                                               = Reflect.FieldSet.Empty
-            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
+    // Test 13: direct map over symbols produces names
+    "direct map over symbols produces names" in run {
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                import kyo.internal.reflect.query.Query
-                Query.make(Reflect.Classpath.unwrap(cp), readsInst).map(_.name).run).map:
-                case Result.Success(names: Chunk[Reflect.Name]) =>
+                Sync.defer(Reflect.Classpath.unwrap(cp).allSymbols.map(_.name))).map:
+                case Result.Success(names) =>
                     assert(names.forall(_.isInstanceOf[Reflect.Name]))
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
@@ -290,25 +260,16 @@ class QueryApiTest extends Test:
                     throw t
     }
 
-    // Test 14: query.stream returns same result as .run
-    "query.stream returns same results as .run" in run {
-        given kyo.Tag[Emit[Chunk[Reflect.Symbol]]] = kyo.Tag[Emit[Chunk[Reflect.Symbol]]]
-        val readsInst = new Reflect.Reads[Reflect.Symbol]:
-            val symbolKinds: Set[Reflect.SymbolKind]                                                          = Set.empty
-            val needsBodies: Boolean                                                                          = false
-            val touchedFields: Reflect.FieldSet                                                               = Reflect.FieldSet.Empty
-            def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
+    // Test 14: counting symbols via allSymbols is consistent across two calls
+    "direct allSymbols count is consistent across two calls" in run {
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                import kyo.internal.reflect.query.Query
-                val q = Query.make(Reflect.Classpath.unwrap(cp), readsInst)
-                q.run.flatMap: runResult =>
-                    q.stream.run.map: streamResult =>
-                        (runResult.size, streamResult.size)).map:
-                case Result.Success((runCount, streamCount)) =>
+                val rawCp = Reflect.Classpath.unwrap(cp)
+                Sync.defer((rawCp.allSymbols.size, rawCp.allSymbols.size))).map:
+                case Result.Success((count1, count2)) =>
                     assert(
-                        runCount == streamCount,
-                        s"stream and run should return same count: run=$runCount stream=$streamCount"
+                        count1 == count2,
+                        s"allSymbols should return consistent count: first=$count1 second=$count2"
                     )
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
@@ -857,18 +818,11 @@ class QueryApiTest extends Test:
         src.add("root/FixtureClasses$package.tasty", kyo.fixtures.Embedded.fixtureClassesPackageTasty)
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(src).flatMap: cp =>
-                cp.topLevelClasses.flatMap: topLevel =>
-                    // StringList is a TypeAlias in the package object; find it via all symbols
-                    import kyo.internal.reflect.query.Query
-                    val readsInst = new Reflect.Reads[Reflect.Symbol]:
-                        val symbolKinds: Set[Reflect.SymbolKind] = Set.empty
-                        val needsBodies: Boolean                 = false
-                        val touchedFields: Reflect.FieldSet      = Reflect.FieldSet.Empty
-                        def read(sym: Reflect.Symbol)(using Frame): Reflect.Symbol < (Sync & Async & Abort[ReflectError]) = sym
-                    Query.make(Reflect.Classpath.unwrap(cp), readsInst).named("StringList").run.flatMap: syms =>
-                        syms.headMaybe match
-                            case Absent             => Abort.fail(ReflectError.NotImplemented("No StringList symbol found"))
-                            case Present(stringSym) => stringSym.declaredType).map:
+                // StringList is a TypeAlias in the package object; find it via direct allSymbols iteration
+                val syms = Reflect.Classpath.unwrap(cp).allSymbols.filter(_.name.asString == "StringList")
+                syms.headMaybe match
+                    case Absent             => Abort.fail(ReflectError.NotImplemented("No StringList symbol found"))
+                    case Present(stringSym) => stringSym.declaredType).map:
                 case Result.Success(tpe) =>
                     // StringList is a type alias for List[String]. The declared type is the alias body.
                     // It could be Type.Applied(Named(List), Chunk(Named(String))) or similar.
