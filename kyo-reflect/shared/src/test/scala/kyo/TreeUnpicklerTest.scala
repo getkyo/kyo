@@ -20,7 +20,7 @@ import scala.collection.mutable
 /** Tests for TreeUnpickler body decode (Phase 8 plan tests 1-9).
   *
   * Tests 1-5 and 8: decode bodies directly from pass-1 TastyOrigin values using decodeSync (no full classpath needed). Test 6: verifies
-  * Java symbol error path. Test 7: verifies ClasspathClosed error path via scope exit. Test 9: verifies Memo reference equality.
+  * Java symbol error path. Test 7: verifies ClasspathClosed error path via scope exit. Test 9: verifies OnceCell reference equality.
   */
 class TreeUnpicklerTest extends Test:
 
@@ -382,7 +382,7 @@ class TreeUnpicklerTest extends Test:
 
     // ── Test 9: two consecutive body calls return reference-equal Tree ────────
 
-    "Test 9: two consecutive _bodyMemo.get() calls return the same Tree reference" in run {
+    "Test 9: two consecutive _bodyOnce.get() calls return the same Tree reference" in run {
         Abort.run[ReflectError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
             case Result.Success(pass1) =>
                 val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == Reflect.SymbolKind.Val)
@@ -393,8 +393,8 @@ class TreeUnpicklerTest extends Test:
                         import AllowUnsafe.embrace.danger
                         sym.origin match
                             case o: Reflect.Symbol.TastyOrigin if o.bodyStart > 0 =>
-                                val tree1 = sym._bodyMemo.get()
-                                val tree2 = sym._bodyMemo.get()
+                                val tree1 = sym._bodyOnce.get()
+                                val tree2 = sym._bodyOnce.get()
                                 assert(
                                     tree1 eq tree2,
                                     s"Expected reference-equal Trees, got distinct objects: $tree1 vs $tree2"

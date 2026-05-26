@@ -55,8 +55,8 @@ class InternerTest extends Test:
         assert(name.asString == s)
     }
 
-    // Test 5: Name.asString called twice returns the same (reference-equal) String (Memo caching).
-    "Name.asString called twice returns the same String reference (Memo caching)" in run {
+    // Test 5: Name.asString called twice returns the same (reference-equal) String (OnceCell caching).
+    "Name.asString called twice returns the same String reference (OnceCell caching)" in run {
         val interner           = new Interner(32)
         val bytes              = utf8Bytes("cached")
         val entry              = interner.intern(bytes, 0, bytes.length)

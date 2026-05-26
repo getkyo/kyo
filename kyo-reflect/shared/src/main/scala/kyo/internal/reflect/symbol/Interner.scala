@@ -52,7 +52,7 @@ final class Interner(numShards: Int = 32):
                     bytes,
                     offset,
                     length,
-                    new Memo(() => Utf8.decode(bytes, offset, length))
+                    new OnceCell(() => Utf8.decode(bytes, offset, length))
                 )
                 // Check load factor before inserting; grow if needed.
                 val filled = countFilled(table)
@@ -160,15 +160,15 @@ object Interner:
 
     /** A single interned byte-sequence entry.
       *
-      * The `string` field is a lazy `Memo[String]` that decodes the interned bytes to a `String` on first access. Equality between interned
-      * entries is reference equality (the interner guarantees unique `Entry` per unique byte sequence).
+      * The `string` field is a lazy `OnceCell[String]` that decodes the interned bytes to a `String` on first access. Equality between
+      * interned entries is reference equality (the interner guarantees unique `Entry` per unique byte sequence).
       */
     final class Entry(
         val hash: Int,
         val bytes: Array[Byte],
         val offset: Int,
         val length: Int,
-        val string: Memo[String]
+        val string: OnceCell[String]
     )
 
 end Interner

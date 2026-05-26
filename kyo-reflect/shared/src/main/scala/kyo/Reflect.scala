@@ -35,9 +35,9 @@ object Reflect:
 
     /** An interned name backed by a byte sequence.
       *
-      * The internal representation is `Interner.Entry`, which stores raw UTF-8 bytes and decodes to a `String` lazily via `Memo[String]`.
-      * Reference equality on two `Name` values implies byte-level equality because the interner guarantees a unique `Entry` per unique byte
-      * sequence. The `CanEqual` instance delegates to reference equality, which is therefore correct.
+      * The internal representation is `Interner.Entry`, which stores raw UTF-8 bytes and decodes to a `String` lazily via
+      * `OnceCell[String]`. Reference equality on two `Name` values implies byte-level equality because the interner guarantees a unique
+      * `Entry` per unique byte sequence. The `CanEqual` instance delegates to reference equality, which is therefore correct.
       */
     opaque type Name = Interner.Entry
     object Name:
@@ -55,7 +55,7 @@ object Reflect:
         extension (n: Name)
             /** Decode the interned bytes to a String (lazily cached). */
             def asString: String =
-                // Unsafe: Memo.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public API boundary.
+                // Unsafe: OnceCell.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public API boundary.
                 import AllowUnsafe.embrace.danger
                 n.string.get()
         end extension
@@ -442,12 +442,12 @@ object Reflect:
         private[kyo] val _position: kyo.internal.reflect.symbol.SingleAssign[Maybe[Position]] =
             new kyo.internal.reflect.symbol.SingleAssign
 
-        // Lazy body memo: populated on first call to Symbol.body. Not a write-once slot because the
-        // computation is driven by the caller, not by classpath orchestration. Memo handles thread safety.
-        // Unsafe: Memo is an unsafe-tier helper; AllowUnsafe is embraced at the body accessor boundary.
+        // Lazy body cell: populated on first call to Symbol.body. Not a write-once slot because the
+        // computation is driven by the caller, not by classpath orchestration. OnceCell handles thread safety.
+        // Unsafe: OnceCell is an unsafe-tier helper; AllowUnsafe is embraced at the body accessor boundary.
         // The init lambda may throw TreeUnpickler.DecodeException for corrupt byte slices; body() catches it.
-        private[kyo] val _bodyMemo: kyo.internal.reflect.symbol.Memo[Tree] =
-            new kyo.internal.reflect.symbol.Memo[Tree](() =>
+        private[kyo] val _bodyOnce: kyo.internal.reflect.symbol.OnceCell[Tree] =
+            new kyo.internal.reflect.symbol.OnceCell[Tree](() =>
                 // This init lambda is called at most once per symbol. TreeUnpickler.decodeSync throws
                 // TreeUnpickler.DecodeException on corrupt/truncated slices; body() catches and wraps it.
                 // Unsafe: AllowUnsafe is needed for TastyOrigin.addrMap SingleAssign read.
@@ -469,7 +469,7 @@ object Reflect:
         def isContextual: Boolean = flags.contains(Flag.Given)
         def isOpaque: Boolean     = flags.contains(Flag.Opaque)
         def isPackageObject: Boolean =
-            // Unsafe: Memo.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public API boundary.
+            // Unsafe: OnceCell.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public API boundary.
             import AllowUnsafe.embrace.danger
             flags.contains(Flag.Module) && name.string.get() == "package"
         end isPackageObject
@@ -629,10 +629,10 @@ object Reflect:
                             if o.bodyStart == 0 || o.bodyEnd == 0 || kind == SymbolKind.Package then
                                 Abort.fail(ReflectError.NotImplemented("body not available for this symbol kind"))
                             else
-                                // Decode via Memo to cache; the Memo init lambda runs synchronously on first call.
+                                // Decode via OnceCell to cache; the OnceCell init lambda runs synchronously on first call.
                                 // If the decode threw (corrupt bytes), convert to Abort.fail(MalformedSection).
                                 // The try/catch runs before entering any kyo effect so exceptions become Either.
-                                // Unsafe: Memo.get() is an unsafe-tier helper; AllowUnsafe is embraced here.
+                                // Unsafe: OnceCell.get() is an unsafe-tier helper; AllowUnsafe is embraced here.
                                 import AllowUnsafe.embrace.danger
                                 // Unsafe: Reading classpath state under AllowUnsafe to detect closed classpath
                                 // before body decode; state transitions are monotonic (Closed is terminal) so
@@ -641,7 +641,7 @@ object Reflect:
                                     Abort.fail(ReflectError.ClasspathClosed)
                                 else
                                     val decoded: Either[ReflectError, Tree] =
-                                        try Right(_bodyMemo.get())
+                                        try Right(_bodyOnce.get())
                                         catch
                                             case ex: kyo.internal.reflect.tasty.TreeUnpickler.DecodeException =>
                                                 Left(ReflectError.MalformedSection(

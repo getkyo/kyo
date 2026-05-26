@@ -82,13 +82,13 @@ final class ConstantPool(
             cpEntry match
                 case u: CpEntry.Utf8Lazy =>
                     Sync.defer {
-                        // Unsafe: Memo.get() is an unsafe-tier helper called inside Sync boundary.
+                        // Unsafe: OnceCell.get() is an unsafe-tier helper called inside Sync boundary.
                         import AllowUnsafe.embrace.danger
                         u.decode(interner).string.get()
                     }
                 case CpEntry.Utf8Decoded(e) =>
                     Sync.defer {
-                        // Unsafe: Memo.get() is an unsafe-tier helper called inside Sync boundary.
+                        // Unsafe: OnceCell.get() is an unsafe-tier helper called inside Sync boundary.
                         import AllowUnsafe.embrace.danger
                         e.string.get()
                     }

@@ -579,7 +579,7 @@ class SnapshotRoundTripTest extends Test:
                                             // the IllegalStateException path if the body bytes are accessed via sectionBytes.
                                             succeed
                                         case Result.Success(_) =>
-                                            // Body decoded before arena close (cached by Memo). Also acceptable.
+                                            // Body decoded before arena close (cached by OnceCell). Also acceptable.
                                             succeed
                                         case Result.Panic(t) =>
                                             throw t

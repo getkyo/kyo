@@ -10,7 +10,7 @@ import scala.collection.mutable
 
 /** Decodes TASTy body byte slices into Reflect.Tree values.
   *
-  * Called synchronously from Symbol._bodyMemo init lambdas. Does not use Kyo effects; throws DecodeException or
+  * Called synchronously from Symbol._bodyOnce init lambdas. Does not use Kyo effects; throws DecodeException or
   * ArrayIndexOutOfBoundsException on error.
   *
   * Design: each decode session uses an independent treeAddrCache keyed by absolute byte address in the section. SHAREDterm references an
@@ -25,7 +25,7 @@ object TreeUnpickler:
 
     /** Synchronously decode the body byte slice for `sym` (described by `origin`) into a Tree.
       *
-      * Called from the Memo init lambda; must not use Kyo effects. Throws DecodeException or ArrayIndexOutOfBoundsException on error.
+      * Called from the OnceCell init lambda; must not use Kyo effects. Throws DecodeException or ArrayIndexOutOfBoundsException on error.
       *
       * @param origin
       *   the TastyOrigin carrying sectionBytes, bodyStart, bodyEnd, names, and addrMap.

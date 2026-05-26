@@ -143,10 +143,10 @@ class NameUnpicklerTest extends Test:
                     // Both names decode to the same string value.
                     assert(n1.asString == "PlainClass")
                     assert(n2.asString == "PlainClass")
-                    // The cached string object inside n1 is the same reference (Memo caches).
+                    // The cached string object inside n1 is the same reference (OnceCell caches).
                     assert(n1.asString eq n1.asString)
                     // Core interning invariant: n1 and n2 are the same underlying Entry (reference identity).
-                    // This verifies that the interner, not just the Memo, provides deduplication.
+                    // This verifies that the interner, not just the OnceCell, provides deduplication.
                     // Name is an opaque type wrapping Interner.Entry; == uses AnyRef.equals which is reference equality.
                     assert(n1 == n2, "Interning the same bytes via the same Interner must return the same Entry reference")
                 case Result.Failure(e) =>
