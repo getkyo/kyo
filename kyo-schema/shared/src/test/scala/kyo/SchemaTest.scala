@@ -4427,7 +4427,7 @@ class SchemaTest extends Test:
                 val back   = auditJsonRoundTrip(frame)(using schema)
                 assert(frame.toString == back.toString)
                 assert(back.className.nonEmpty)
-                assert(back.methodName.nonEmpty)
+                assert(back.callerName.nonEmpty)
             }
 
             "Tag[Int] round-trip — static tag" in {
