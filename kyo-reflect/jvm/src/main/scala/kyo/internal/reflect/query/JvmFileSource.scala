@@ -147,16 +147,23 @@ object JvmFileSource extends FileSource:
 
     private def readJarEntry(jarPath: String, entryName: String): Array[Byte] =
         PerfCounters.jarOpenCount.incrementAndGet()
+        val t0 = java.lang.System.nanoTime()
         val jf = new java.util.jar.JarFile(jarPath)
+        val t1 = java.lang.System.nanoTime()
+        PerfCounters.jarConstructTimeNs.addAndGet(t1 - t0)
         try
             val entry = jf.getJarEntry(entryName)
             if entry == null then
                 throw new java.io.FileNotFoundException(s"$jarPath!/$entryName: entry not found in jar")
             val is = jf.getInputStream(entry)
-            try is.readAllBytes()
+            try
+                val bytes = is.readAllBytes()
+                val t2    = java.lang.System.nanoTime()
+                PerfCounters.jarReadTimeNs.addAndGet(t2 - t1)
+                bytes
             finally is.close()
-        finally
-            jf.close()
+            end try
+        finally jf.close()
         end try
     end readJarEntry
 

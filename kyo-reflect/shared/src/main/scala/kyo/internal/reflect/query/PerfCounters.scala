@@ -11,13 +11,17 @@ import java.util.concurrent.atomic.AtomicLong
   * Private to the kyo package so this never appears in public API.
   */
 private[kyo] object PerfCounters:
-    val jarOpenCount: AtomicInteger   = new AtomicInteger(0)
-    val entryReadCount: AtomicInteger = new AtomicInteger(0)
-    val bytesReadTotal: AtomicLong    = new AtomicLong(0L)
+    val jarOpenCount: AtomicInteger    = new AtomicInteger(0)
+    val entryReadCount: AtomicInteger  = new AtomicInteger(0)
+    val bytesReadTotal: AtomicLong     = new AtomicLong(0L)
+    val jarConstructTimeNs: AtomicLong = new AtomicLong(0L)
+    val jarReadTimeNs: AtomicLong      = new AtomicLong(0L)
 
     def reset(): Unit =
         jarOpenCount.set(0)
         entryReadCount.set(0)
         bytesReadTotal.set(0L)
+        jarConstructTimeNs.set(0L)
+        jarReadTimeNs.set(0L)
     end reset
 end PerfCounters

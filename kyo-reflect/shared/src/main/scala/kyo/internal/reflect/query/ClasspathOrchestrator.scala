@@ -206,22 +206,24 @@ object ClasspathOrchestrator:
                                 .andThen:
                                     if timingEnabled then
                                         Sync.defer:
-                                            val t_end      = java.lang.System.nanoTime()
-                                            val t0         = t_start.get()
-                                            val tList      = t_listEnd.get()
-                                            val tDec       = t_decodeEnd.get()
-                                            val tMrg       = t_mergeEnd.get()
-                                            val listMs     = if tList > 0 then (tList - t0) / 1_000_000L else -1L
-                                            val decodeMs   = if tDec > 0 then (tDec - t0) / 1_000_000L else -1L
-                                            val mergeMs    = if tMrg > 0 then (tMrg - t0) / 1_000_000L else -1L
-                                            val totalMs    = (t_end - t0) / 1_000_000L
-                                            val finalizeMs = if tMrg > 0 then (t_end - tMrg) / 1_000_000L else -1L
-                                            val jars       = PerfCounters.jarOpenCount.get()
-                                            val entries    = PerfCounters.entryReadCount.get()
-                                            val bytesRaw   = PerfCounters.bytesReadTotal.get()
-                                            val bytesMB    = bytesRaw / (1024L * 1024L)
+                                            val t_end       = java.lang.System.nanoTime()
+                                            val t0          = t_start.get()
+                                            val tList       = t_listEnd.get()
+                                            val tDec        = t_decodeEnd.get()
+                                            val tMrg        = t_mergeEnd.get()
+                                            val listMs      = if tList > 0 then (tList - t0) / 1_000_000L else -1L
+                                            val decodeMs    = if tDec > 0 then (tDec - t0) / 1_000_000L else -1L
+                                            val mergeMs     = if tMrg > 0 then (tMrg - t0) / 1_000_000L else -1L
+                                            val totalMs     = (t_end - t0) / 1_000_000L
+                                            val finalizeMs  = if tMrg > 0 then (t_end - tMrg) / 1_000_000L else -1L
+                                            val jars        = PerfCounters.jarOpenCount.get()
+                                            val entries     = PerfCounters.entryReadCount.get()
+                                            val bytesRaw    = PerfCounters.bytesReadTotal.get()
+                                            val bytesMB     = bytesRaw / (1024L * 1024L)
+                                            val constructMs = PerfCounters.jarConstructTimeNs.get() / 1_000_000L
+                                            val readMs      = PerfCounters.jarReadTimeNs.get() / 1_000_000L
                                             java.lang.System.err.println(
-                                                s"[kyo-reflect] cold-load: list=${listMs}ms decode=${decodeMs}ms merge=${mergeMs}ms finalize=${finalizeMs}ms total=${totalMs}ms | jars=$jars entries=$entries bytes=${bytesMB}MB"
+                                                s"[kyo-reflect] cold-load: list=${listMs}ms decode=${decodeMs}ms merge=${mergeMs}ms finalize=${finalizeMs}ms total=${totalMs}ms | jars=$jars (construct=${constructMs}ms read=${readMs}ms) entries=$entries bytes=${bytesMB}MB"
                                             )
                                     else
                                         Kyo.unit
