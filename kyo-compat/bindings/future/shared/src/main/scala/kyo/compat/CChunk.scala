@@ -1,21 +1,38 @@
 package kyo.compat
 
-/** Backed by `Vector[A]`. */
+/** Underlying carrier is `Vector[A]`. The Future ecosystem has no native bulk-collection type, so `CChunk` reuses the standard-library
+  * `Vector`. The Future ecosystem has no `Frame` / `Trace` to propagate. `lift` and `lower` are identity since the carrier is already a
+  * `Vector`. The portable accessor surface (`toSeq`, `toIndexedSeq`, `apply`, `size`, `iterator`, `isEmpty`) is exposed on every backend.
+  */
 opaque type CChunk[+A] = Vector[A]
 
 object CChunk:
 
+    /** Wraps a `Vector` as a `CChunk`. Identity on the carrier. */
     inline def lift[A](inline c: Vector[A]): CChunk[A] = c
 
     extension [A](inline self: CChunk[A])
 
-        inline def lower: Vector[A]            = self
-        inline def toSeq: Seq[A]               = self
+        /** Unwraps to the native `Vector`. Identity on the carrier. */
+        inline def lower: Vector[A] = self
+
+        /** Views the chunk as a `Seq[A]`. */
+        inline def toSeq: Seq[A] = self
+
+        /** Views the chunk as an `IndexedSeq[A]`. */
         inline def toIndexedSeq: IndexedSeq[A] = self
-        inline def apply(inline i: Int): A     = self(i)
-        inline def size: Int                   = self.size
-        inline def iterator: Iterator[A]       = self.iterator
-        inline def isEmpty: Boolean            = self.isEmpty
+
+        /** Returns the element at index `i`. */
+        inline def apply(inline i: Int): A = self(i)
+
+        /** Number of elements. */
+        inline def size: Int = self.size
+
+        /** Iterator over the chunk's elements. */
+        inline def iterator: Iterator[A] = self.iterator
+
+        /** `true` if the chunk has no elements. */
+        inline def isEmpty: Boolean = self.isEmpty
 
     end extension
 
