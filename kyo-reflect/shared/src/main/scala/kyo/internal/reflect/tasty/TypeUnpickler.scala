@@ -168,10 +168,14 @@ object TypeUnpickler:
       *   The decoded Reflect.Type, interned in `session.arena`.
       */
     private[kyo] def readTypeIntoSession(view: ByteView, session: DecodeSession): Reflect.Type =
-        // Use the live addrMap snapshot at call time so locally-defined symbols found so far are visible.
+        // Pass session.liveAddrMap directly -- no per-call IntMap snapshot.
+        // liveAddrMap is the mutable.HashMap being built by AstUnpickler.walkStats.
+        // Locally-defined symbols accumulated so far are visible through the live map.
+        // The immutable IntMap snapshot is built ONCE at end of pass1 (AstUnpickler.runPass1
+        // line ~156) and stored in each TastyOrigin._addrMap for lazy body decode.
         val ctx = DecodeCtx(
             session.names,
-            IntMap.from(session.liveAddrMap.iterator),
+            session.liveAddrMap,
             session.arena,
             session.home,
             session.addrCache,
@@ -204,9 +208,11 @@ object TypeUnpickler:
     // Internal decode context passed through all recursive calls.
     // sectionBytes: full AST section bytes for on-demand SHAREDtype re-decode on cache miss.
     // Pass null when decoding from a live DecodeSession (Pass 1) where addrCache is always pre-populated.
+    // addrMap accepts any scala.collection.Map so pass1 can pass liveAddrMap (mutable.HashMap) directly
+    // without snapshotting into an IntMap on every type-node decode call.
     final private class DecodeCtx(
         val names: Array[Reflect.Name],
-        val addrMap: IntMap[Reflect.Symbol],
+        val addrMap: scala.collection.Map[Int, Reflect.Symbol],
         val arena: TypeArena,
         val home: ClasspathRef,
         val addrCache: mutable.HashMap[Int, Reflect.Type],
