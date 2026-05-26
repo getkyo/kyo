@@ -567,7 +567,7 @@ object Reflect:
           * looks up the companion class via the owner FQN and the simple name with any trailing `$` stripped. Java symbols always return
           * `Absent`. All other kinds return `Absent`.
           */
-        def companion(using Frame): Maybe[Symbol] < (Sync & Async & Abort[ReflectError]) =
+        def companion(using Frame): Maybe[Symbol] < (Sync & Abort[ReflectError]) =
             if isJava then Kyo.lift(Maybe.Absent)
             else if !home.isAssigned then Kyo.lift(Maybe.Absent)
             else
@@ -910,11 +910,11 @@ object Reflect:
     end Classpath
 
     extension (cp: Classpath)(using Frame)
-        def findClass(fqn: String): Maybe[Symbol] < (Sync & Async & Abort[ReflectError])   = cp.lookupClass(fqn)
-        def findPackage(fqn: String): Maybe[Symbol] < (Sync & Async & Abort[ReflectError]) = cp.lookupPackage(fqn)
-        def packages: Chunk[Symbol] < (Sync & Abort[ReflectError])                         = cp.allPackages
-        def topLevelClasses: Chunk[Symbol] < (Sync & Abort[ReflectError])                  = cp.allTopLevelClasses
-        def errors: Chunk[ReflectError] < Sync                                             = Sync.defer(cp.accumulatedErrors)
+        def findClass(fqn: String): Maybe[Symbol] < (Sync & Abort[ReflectError])   = cp.lookupClass(fqn)
+        def findPackage(fqn: String): Maybe[Symbol] < (Sync & Abort[ReflectError]) = cp.lookupPackage(fqn)
+        def packages: Chunk[Symbol] < (Sync & Abort[ReflectError])                 = cp.allPackages
+        def topLevelClasses: Chunk[Symbol] < (Sync & Abort[ReflectError])          = cp.allTopLevelClasses
+        def errors: Chunk[ReflectError] < Sync                                     = Sync.defer(cp.accumulatedErrors)
 
         /** Look up a JPMS module descriptor by module name (e.g., "java.base").
           *
@@ -928,7 +928,7 @@ object Reflect:
           *
           * Converts the binary name to a dotted FQN and delegates to `findClass`.
           */
-        def findClassByBinary(binaryName: String): Maybe[Symbol] < (Sync & Async & Abort[ReflectError]) =
+        def findClassByBinary(binaryName: String): Maybe[Symbol] < (Sync & Abort[ReflectError]) =
             val fqn = binaryName.replace('/', '.').replace('$', '.')
             cp.lookupClass(fqn)
 

@@ -18,7 +18,7 @@ import scala.collection.mutable
 
 /** Tests for Phase 7: Symbol resolution, deduplication, and cross-classpath equality.
   *
-  * Plan tests 19-21, 35.
+  * Plan tests 19, 21, 35.
   */
 class SymbolResolutionTest extends Test:
 
@@ -72,46 +72,9 @@ class SymbolResolutionTest extends Test:
                 ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: _ =>
                     Reflect.Classpath.wrap(rawCp)
 
-    // Test 2 (Phase 1 Resolver wiring): two concurrent findClass calls during Building state block until Ready.
-    // Both calls suspend on readyLatch while a background fiber runs openInto, which calls transitionToReady
-    // and releases the latch. After waking, both findClass calls look up the symbol from the immutable fqnIndex
-    // and return the same reference-equal Symbol instance (same immutable HashMap entry).
-    "concurrent findClass calls during Building state both receive reference-equal symbols after Ready" in run {
-        Scope.run:
-            Abort.run[ReflectError]:
-                // Allocate a classpath manually; it starts in Building state.
-                InternalClasspath.allocate.flatMap: rawCp =>
-                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                        val cp  = Reflect.Classpath.wrap(rawCp)
-                        val src = fixtureSource()
-                        // Launch openInto as a background fiber so the two findClass calls below
-                        // can run concurrently. openInto calls transitionToReady, which releases
-                        // rawCp.readyLatch and unblocks the two awaiting fibers.
-                        Fiber.initUnscoped(ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp)).andThen:
-                            Async.zip[ReflectError, Maybe[Reflect.Symbol], Maybe[Reflect.Symbol], Any](
-                                cp.findClass("kyo.fixtures.PlainClass"),
-                                cp.findClass("kyo.fixtures.PlainClass")
-                            )
-            .map:
-                case Result.Success((Present(sym1: Reflect.Symbol), Present(sym2: Reflect.Symbol))) =>
-                    assert(
-                        sym1 eq sym2,
-                        "Building-state concurrent findClass calls must return reference-equal symbols via immutable fqnIndex"
-                    )
-                case Result.Success((Absent, _)) | Result.Success((_, Absent)) =>
-                    fail("Expected both concurrent Building-state findClass calls to return Present after Ready")
-                case Result.Failure(e) =>
-                    fail(s"Unexpected failure: $e")
-                case Result.Panic(t) =>
-                    throw t
-    }
-
     // Test 19: two concurrent findClass calls for the same FQN return reference-equal Symbol instances.
-    // Resolver.scala wires Cache.memo Promise dedup via Classpath.classLookup (initialized in Classpath.allocate).
-    // For the Ready state, both calls hit the same Cache.memo entry and receive the same resolved Symbol reference.
-    // The fqnIndex is an immutable HashMap, so the underlying rawLookupClass always returns the same object
-    // reference for the same key; the Cache.memo layer additionally collapses concurrent in-flight resolutions
-    // into a single Promise, guaranteeing reference equality even when both calls arrive before the first resolves.
+    // The fqnIndex is an immutable HashMap populated once during Phase C. Both calls read the same
+    // HashMap entry and return the same object reference (reference equality via HashMap identity).
     "two concurrent findClass calls for the same FQN return reference-equal symbols" in run {
         Scope.run:
             Abort.run[ReflectError](openClasspath(fixtureSource()).flatMap: cp =>
@@ -126,55 +89,6 @@ class SymbolResolutionTest extends Test:
                     )
                 case Result.Success((Absent, _)) | Result.Success((_, Absent)) =>
                     fail("Expected both concurrent findClass calls to return Present")
-                case Result.Failure(e) =>
-                    fail(s"Unexpected failure: $e")
-                case Result.Panic(t) =>
-                    throw t
-    }
-
-    // Test 20 (Cache.memo dedup): N=5 concurrent findClass calls during Building state all resolve to the
-    // same Symbol reference, proving that Cache.memo's Promise dedup collapses concurrent in-flight calls.
-    // During Building state all 5 fibers suspend on rawLookupClass's readyLatch. Once transitionToReady
-    // fires, all 5 wake up; Cache.memo routes them all through the same Promise, so they receive the same
-    // resolved Symbol instance (reference-equal). Direct invocation counting of rawLookupClass requires
-    // test-only instrumentation in a final class, which would pollute production code; instead we rely on
-    // observable reference equality across N=5 to confirm the dedup contract is operative.
-    "N=5 concurrent Building-state findClass calls all resolve to the same Symbol instance (Cache.memo dedup)" in run {
-        Scope.run:
-            Abort.run[ReflectError]:
-                InternalClasspath.allocate.flatMap: rawCp =>
-                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                        val cp  = Reflect.Classpath.wrap(rawCp)
-                        val src = fixtureSource()
-                        val fqn = "kyo.fixtures.PlainClass"
-                        // Launch openInto as a background fiber; it will call transitionToReady, which
-                        // releases rawCp.readyLatch and unblocks the 5 concurrent findClass fibers below.
-                        Fiber.initUnscoped(ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp)).andThen:
-                            Async.zip[
-                                ReflectError,
-                                Maybe[Reflect.Symbol],
-                                Maybe[Reflect.Symbol],
-                                Maybe[Reflect.Symbol],
-                                Maybe[Reflect.Symbol],
-                                Maybe[Reflect.Symbol],
-                                Any
-                            ](
-                                cp.findClass(fqn),
-                                cp.findClass(fqn),
-                                cp.findClass(fqn),
-                                cp.findClass(fqn),
-                                cp.findClass(fqn)
-                            )
-            .map:
-                case Result.Success((r1, r2, r3, r4, r5)) =>
-                    List(r1, r2, r3, r4, r5).zipWithIndex.foreach:
-                        case (Absent, i) => fail(s"Expected findClass call $i to return Present[Symbol]")
-                        case _           => ()
-                    val sym1 = r1.get
-                    assert(r2.get eq sym1, "sym2 must be reference-equal to sym1 (Cache.memo dedup)")
-                    assert(r3.get eq sym1, "sym3 must be reference-equal to sym1 (Cache.memo dedup)")
-                    assert(r4.get eq sym1, "sym4 must be reference-equal to sym1 (Cache.memo dedup)")
-                    assert(r5.get eq sym1, "sym5 must be reference-equal to sym1 (Cache.memo dedup)")
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>
