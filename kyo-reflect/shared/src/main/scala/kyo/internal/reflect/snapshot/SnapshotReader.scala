@@ -241,6 +241,7 @@ object SnapshotReader:
 
         val canonical = TypeArena.canonical()
         Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors, Map.empty)
+        // Unsafe: SingleAssign.set() is an unsafe-tier helper; called here from single-threaded deserializeMapped.
         import AllowUnsafe.embrace.danger
         for sym <- allSymbols do
             if !sym._parents.isSet then sym._parents.set(Chunk.empty)

@@ -116,6 +116,27 @@ Scaladoc explaining the simplification has been added to both `decodeValSym` and
 Decision: DEFERRED. If Scala 2 pickle type-table accuracy becomes required for a downstream use case, a dedicated
 follow-up phase can add full recursive type-table descent.
 
+## v3 Phases
+
+v3 was a subtraction plan: delete the typed-projection mechanism (Reads, FieldSet, Query layer), unwind the Async cascade introduced for Cache.memo/readyLatch in v2, and make all symbol accessors pure values. Only `body` retains an effect row (strict ClasspathClosed check via AllowUnsafe). The Resolver, Cache.memo, readyLatch, and symbolToRecord were deleted. Memo was renamed to OnceCell to clarify its distinct single-write-CAS semantics. Examples and bench were updated to remove stale effect ceremony.
+
+| Phase | Commit | Title | Tests delta |
+|---|---|---|---|
+| 1 | 9a317c7fa | Delete Reads + Query layer | -34 |
+| 2 | 624a37499 | Delete Resolver + Cache.memo + readyLatch | -2 |
+| 3+5 | 4b1d041f9 | Pure accessors + symbolToRecord deletion (Phase 5 collapsed) | 0 |
+| 4 | 30f06bd54 | body strict ClasspathClosed + regression test | +1 |
+| 6 | 73855f5cc | Rename Memo to OnceCell | 0 |
+| 7 | 0a7c73e81 | Update examples and benchmark | 0 |
+
+**Expected runtime test count after v3**: 243 on JVM (v2 actual 278, minus 34 Phase 1, minus 2 Phase 2, plus 1 Phase 4). Plan stated 246; off by 3 due to v2 actual count (278 not 280) and Phase 2 deleting Test 20 as well as Test 2.
+
+### v3 Plan deviations
+
+**Phase 2 deleted 2 tests not 1**: Test 20 (SymbolResolutionTest) was Cache.memo-dependent and became fully obsolete when Resolver and Cache.memo were deleted. The plan accounted for only Test 2. The extra deletion was correct; documented in PHASE-2-V3-AUDIT.md.
+
+**Phase 5 collapsed into Phase 3 commit**: SymbolToRecordMacro.scala emitted Async-style accessor calls that broke under the Phase 3 pure conversion. Rather than committing a broken intermediate state, Phase 5 (delete symbolToRecord) was applied in the same commit as Phase 3. No behavioral impact; the plan prescribed separate commits purely for incremental review.
+
 ## User deferrals
 
 (populated only if the user explicitly accepts a deviation from the plan; nothing should land here without an explicit user message granting the deferral)

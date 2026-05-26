@@ -1,29 +1,16 @@
-## ACTIVE PLAN: execution-plan-v3.md
+## COMPLETED PLAN: execution-plan-v3.md
 
-v2 is complete (commit 4de012f0d + the kyo.Path migration commit). v3 is the simplification plan:
-delete Reads/Query/Resolver/Cache.memo/readyLatch, make all accessors pure values, keep `body` as
-the lone effectful accessor with strict ClasspathClosed check, delete symbolToRecord, rename
-Memo to OnceCell, update examples and bench.
+v3 is complete (commit 0a7c73e81). All 7 phases committed. Final audit (FINAL-AUDIT-V3.md) verdict: PROCEED with 4 WARNs, all drained. No active plan; new work will define a new plan file.
 
-v2-era directives in this file are historical; the v3 directives below take precedence.
+v2 is complete (commit 4de012f0d + the kyo.Path migration commit). v3 deleted Reads/Query/Resolver/Cache.memo/readyLatch, made all accessors pure values, kept `body` as the lone effectful accessor with strict ClasspathClosed check, deleted symbolToRecord, renamed Memo to OnceCell, updated examples and bench.
 
-## v3 overnight directive (user going to bed; supervisor proceeds autonomously)
+## v3 overnight directive (completed; historical reference only)
 
-> "go ahead. I'll go to bed to do a proper validation of the plan and proceed to execution
-> autonomously. Do not stop. Be diligent and fix ALL issues before starting a new phase"
+The overnight directive that authorized autonomous v3 execution has been satisfied. All phases committed, all WARNs drained, final green run complete. This section is retained as a historical reference for the nightly workflow pattern.
 
-Interpretation:
-- Stage 1 design and validation auto-run; no user-approval pause.
-- Stage 2 executes autonomously; never pause for user input.
-- Every WARN from per-phase audits MUST be drained before the next phase launches.
-- "Don't leave any issues behind": pending markers, TODO/FIXME/XXX, weakened tests, etc. all
-  must be resolved as they surface. If an agent claims completion with deferrals, restart it
-  with the specific items quoted verbatim.
-- All platforms (JVM + JS + Native) green at every phase commit. JVM-only is not green.
+## HISTORICAL PLAN: execution-plan-v2.md
 
-## ACTIVE PLAN: execution-plan-v2.md (historical reference)
-
-The v1 plan (`execution-plan.md`) is complete and committed. The active plan is now `kyo-reflect/execution-plan-v2.md`. v1 references in older sections of this file are historical.
+The v1 plan (`execution-plan.md`) is complete and committed. The v2 plan (`kyo-reflect/execution-plan-v2.md`) is also complete. v1 and v2 references in older sections of this file are historical.
 
 ## v2 Phase 8 prep concerns (RESOLVED in commit e08e70478)
 
