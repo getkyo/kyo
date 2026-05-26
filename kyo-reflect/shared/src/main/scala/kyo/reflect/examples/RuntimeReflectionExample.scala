@@ -8,7 +8,7 @@ import kyo.Reflect.*
   * Replaces use cases that would otherwise reach for `scala.reflect.runtime` or `java.lang.reflect`. Compile-time type info from TASTy
   * means no runtime classloading; works on Scala Native and Scala.js where standard reflection isn't fully available.
   *
-  * Updated for v3 Phase 3: findClass, declarations, parents, and declaredType are now pure values.
+  * Updated for v3 Phase 7: findClass, declarations, parents, and declaredType are pure values; no Sync.defer ceremony.
   */
 object RuntimeReflectionExample:
 
@@ -37,9 +37,9 @@ object RuntimeReflectionExample:
         end for
     end describe
 
-    private def requireFound(m: Maybe[Reflect.Symbol], fqn: String)(using Frame): Reflect.Symbol < (Sync & Abort[ReflectError]) =
+    private def requireFound(m: Maybe[Reflect.Symbol], fqn: String)(using Frame): Reflect.Symbol < Abort[ReflectError] =
         m match
-            case Present(s) => Sync.defer(s)
+            case Present(s) => s
             case Absent     => Abort.fail(ReflectError.SymbolNotFound(fqn))
 
 end RuntimeReflectionExample

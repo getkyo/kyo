@@ -189,6 +189,60 @@ object ReflectBench:
         )
     end bench
 
+    /** Recursively count the number of tree nodes that reference `targetName` via Ident, Select, or Apply. */
+    private def countTreeRefs(tree: Reflect.Tree, targetName: String): Int =
+        tree match
+            case Reflect.Tree.Ident(name, _) =>
+                if name.asString == targetName then 1 else 0
+            case Reflect.Tree.Select(qual, name, _) =>
+                (if name.asString == targetName then 1 else 0) + countTreeRefs(qual, targetName)
+            case Reflect.Tree.Apply(fun, args) =>
+                countTreeRefs(fun, targetName) + args.map(countTreeRefs(_, targetName)).sum
+            case Reflect.Tree.TypeApply(fun, _) =>
+                countTreeRefs(fun, targetName)
+            case Reflect.Tree.Block(stats, expr) =>
+                stats.map(countTreeRefs(_, targetName)).sum + countTreeRefs(expr, targetName)
+            case Reflect.Tree.If(cond, thenp, elsep) =>
+                countTreeRefs(cond, targetName) + countTreeRefs(thenp, targetName) + countTreeRefs(elsep, targetName)
+            case Reflect.Tree.Match(selector, cases) =>
+                countTreeRefs(selector, targetName) + cases.map: c =>
+                    countTreeRefs(c.pattern, targetName) +
+                        c.guard.map(countTreeRefs(_, targetName)).getOrElse(0) +
+                        countTreeRefs(c.body, targetName)
+                .sum
+            case Reflect.Tree.Assign(lhs, rhs) =>
+                countTreeRefs(lhs, targetName) + countTreeRefs(rhs, targetName)
+            case Reflect.Tree.Typed(expr, _) =>
+                countTreeRefs(expr, targetName)
+            case Reflect.Tree.Inlined(call, bindings, body) =>
+                call.map(countTreeRefs(_, targetName)).getOrElse(0) +
+                    bindings.map(countTreeRefs(_, targetName)).sum +
+                    countTreeRefs(body, targetName)
+            case Reflect.Tree.Lambda(method, _) =>
+                countTreeRefs(method, targetName)
+            case Reflect.Tree.Try(expr, cases, finalizer) =>
+                countTreeRefs(expr, targetName) +
+                    cases.map(c => countTreeRefs(c.body, targetName)).sum +
+                    finalizer.map(countTreeRefs(_, targetName)).getOrElse(0)
+            case Reflect.Tree.While(cond, body) =>
+                countTreeRefs(cond, targetName) + countTreeRefs(body, targetName)
+            case Reflect.Tree.Throw(expr) =>
+                countTreeRefs(expr, targetName)
+            case Reflect.Tree.Return(expr, _) =>
+                expr.map(countTreeRefs(_, targetName)).getOrElse(0)
+            case Reflect.Tree.ValDef(_, _, rhs) =>
+                rhs.map(countTreeRefs(_, targetName)).getOrElse(0)
+            case Reflect.Tree.DefDef(_, paramss, _, rhs) =>
+                paramss.flatMap(_.map(countTreeRefs(_, targetName))).sum +
+                    rhs.map(countTreeRefs(_, targetName)).getOrElse(0)
+            case Reflect.Tree.ClassDef(_, template) =>
+                template.body.map(countTreeRefs(_, targetName)).sum
+            case Reflect.Tree.PackageDef(_, stats) =>
+                stats.map(countTreeRefs(_, targetName)).sum
+            case _ =>
+                0
+    end countTreeRefs
+
     def main(args: Array[String]): Unit =
         import AllowUnsafe.embrace.danger
 
@@ -213,8 +267,8 @@ object ReflectBench:
         bench("W1 cold-load enumerate top-level classes", warmupIter, measureIter):
             val _ = runSync:
                 Scope.run:
-                    openClasspath(fixtureSrc).flatMap: cp =>
-                        cp.topLevelClasses.map(_.size)
+                    openClasspath(fixtureSrc).map: cp =>
+                        cp.topLevelClasses.size
 
         java.lang.System.out.println()
 
@@ -267,12 +321,9 @@ object ReflectBench:
             bench("W4 per-FQN lookup warm cache", warmupIter, measureIter):
                 var hits = 0
                 for fqn <- fqnsToLookup do
-                    val _ = runSync:
-                        warmCp.findClass(fqn).map:
-                            case Present(_) =>
-                                hits += 1
-                            case Absent =>
-                                ()
+                    warmCp.findClass(fqn) match
+                        case Present(_) => hits += 1
+                        case Absent     => ()
                 end for
 
             java.lang.System.out.println(s"  (${fqnsToLookup.size} lookups per run)")
@@ -280,25 +331,64 @@ object ReflectBench:
 
             // Workload 5: declarations enumeration on a class with declared members.
             bench("W5 declarations enumeration (PlainClass)", warmupIter, measureIter):
-                val _ = runSync:
-                    warmCp.findClass("kyo.fixtures.PlainClass").flatMap:
-                        case Present(sym) => sym.declarations.map(_.size)
-                        case Absent       => 0
+                val count = warmCp.findClass("kyo.fixtures.PlainClass") match
+                    case Present(sym) => sym.declarations.size
+                    case Absent       => 0
+                val _ = count
 
             java.lang.System.out.println()
 
-            // Workload 8: plain iteration (no Reads, no Query).
-            bench("W8 plain iteration (no Query)", warmupIter, measureIter):
-                val _ = runSync:
-                    for
-                        tops <- warmCp.topLevelClasses
-                        all <- kyo.Kyo.foreach(tops): cls =>
-                            cls.declarations.map: decls =>
-                                decls.count(_.kind == Reflect.SymbolKind.Method) +
-                                    (if cls.kind == Reflect.SymbolKind.Method then 1 else 0)
-                    yield all.sum
+            // Workload 8: plain iteration over all top-level classes and their declarations.
+            bench("W8 plain iteration (pure accessor for-comp)", warmupIter, measureIter):
+                val tops  = warmCp.topLevelClasses
+                var total = 0
+                for cls <- tops do
+                    val decls = cls.declarations
+                    total += decls.count(_.kind == Reflect.SymbolKind.Method)
+                    if cls.kind == Reflect.SymbolKind.Method then total += 1
+                end for
 
-            java.lang.System.out.println(s"  (plain for-comprehension over Symbol accessors)")
+            java.lang.System.out.println(s"  (pure for-comp over Symbol accessors, no effect threading)")
+            java.lang.System.out.println()
+
+            // Workload 9: hover-shaped query (pure, sub-ms target).
+            // Walk topLevelClasses, find the first Method symbol, return name + scaladoc + kind string.
+            bench("W9 hover-shaped query (pure accessors)", warmupIter, measureIter):
+                val tops   = warmCp.topLevelClasses
+                var result = ""
+                var found  = false
+                for cls <- tops if !found do
+                    for sym <- cls.declarations if !found do
+                        if sym.kind == Reflect.SymbolKind.Method then
+                            val sig  = sym.name.asString
+                            val doc  = sym.scaladoc.getOrElse("")
+                            val kind = sym.kind.toString
+                            result = s"$sig $doc $kind"
+                            found = true
+                end for
+                val _ = result
+
+            java.lang.System.out.println(s"  (pure walk: topLevelClasses -> declarations -> name/scaladoc/kind)")
+            java.lang.System.out.println()
+
+            // Workload 10: find-references-shaped query.
+            // For target name "apply", walk all Method symbols, decode each body, count tree nodes that
+            // reference that name via Apply/Select/Ident. Uses Kyo.foreach to iterate body decodes.
+            bench("W10 find-references-shaped (body decode + tree walk)", warmupIter, measureIter):
+                val targetName = "apply"
+                val total = runSync:
+                    val tops    = warmCp.topLevelClasses
+                    val methods = tops.flatMap(_.declarations.filter(_.kind == Reflect.SymbolKind.Method))
+                    val counts: Chunk[Int] < Sync =
+                        Kyo.foreach(methods): (sym: Reflect.Symbol) =>
+                            Abort.run[ReflectError](sym.body.map((tree: Reflect.Tree) => countTreeRefs(tree, targetName)))
+                                .map:
+                                    case Result.Success(n) => n
+                                    case _                 => 0
+                    counts.map(_.foldLeft(0)(_ + _))
+                val _ = total
+
+            java.lang.System.out.println(s"  (body decode + recursive Tree walk for name references)")
             java.lang.System.out.println()
             java.lang.System.out.println("=== done ===")
         finally

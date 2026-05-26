@@ -3,15 +3,65 @@ package kyo.reflect.examples
 import kyo.*
 import kyo.Reflect.*
 
-/** IDE-style symbol query: look up a class by FQN, find a member, render hover text.
+/** IDE-style hover query: scan a classpath for the symbol at a given (file, line) position.
   *
-  * Updated for v3 Phase 3: findClass, declarations, and declaredType are now pure values. The for-comprehension no longer threads effects
-  * through these calls.
+  * This is the canonical "kyo-lsp shaped" use case. The walk is a plain for-comprehension over pure accessors: topLevelClasses (pure),
+  * declarations (pure), position (pure), scaladoc (pure). Only the classpath open itself carries Sync & Async & Scope effects; all symbol
+  * traversal is pure data access with no effect threading.
+  *
+  * v3 Phase 7: accessors are pure values. No Sync.defer, no flatMap ceremony around reads.
   */
 object IdeHoverExample:
 
-    /** Returns the hover string for `fqn.member`, or Absent if either lookup fails. */
-    def hover(fqn: String, member: String)(using Frame): Maybe[String] < (Sync & Async & Abort[ReflectError] & Scope) =
+    /** A hover result for an LSP textDocument/hover request. */
+    final case class HoverInfo(
+        symbolName: String,
+        kind: Reflect.SymbolKind,
+        signature: String,
+        doc: Maybe[String]
+    )
+
+    /** Find the symbol at (file, line) across all top-level classes in the classpath.
+      *
+      * Walks topLevelClasses -> declarations -> position in a plain for-comprehension. All accessor calls are pure; only openCached
+      * produces effects (Sync & Async & Scope & Abort[ReflectError]).
+      */
+    def hover(
+        file: String,
+        line: Int
+    )(using Frame): Maybe[HoverInfo] < (Sync & Async & Abort[ReflectError] & Scope) =
+        for
+            cp <- Reflect.Classpath.openCached(Seq("."), cacheDir = ".kyo-reflect-cache")
+        yield
+            // Pure walk: no flatMap, no Sync.defer, no effect threading on accessors.
+            // topLevelClasses, declarations, position, scaladoc, declaredType are all pure values.
+            val classes                  = cp.topLevelClasses
+            var result: Maybe[HoverInfo] = Absent
+            var i                        = 0
+            while i < classes.size && result.isEmpty do
+                val cls   = classes(i)
+                val decls = cls.declarations
+                var j     = 0
+                while j < decls.size && result.isEmpty do
+                    val sym = decls(j)
+                    sym.position match
+                        case Present(pos) if pos.sourceFile.contains(file) && pos.line == line =>
+                            result = Present(HoverInfo(
+                                symbolName = sym.name.asString,
+                                kind = sym.kind,
+                                signature = s"${sym.name.asString}: ${sym.declaredType.show}",
+                                doc = sym.scaladoc
+                            ))
+                        case _ =>
+                    end match
+                    j += 1
+                end while
+                i += 1
+            end while
+            result
+
+    /** Simplified hover that looks up by FQN and member name. Demonstrates the same pure accessor pattern. */
+    def hoverByName(fqn: String, member: String)(using Frame): Maybe[String] < (Sync & Async & Abort[ReflectError] & Scope) =
         for
             cp <- Reflect.Classpath.openCached(Seq("."), cacheDir = ".kyo-reflect-cache")
         yield cp.findClass(fqn) match
@@ -21,7 +71,7 @@ object IdeHoverExample:
                     case Absent     => Absent
                     case Present(s) => Present(s"${s.name.asString}: ${s.declaredType.show}")
 
-    /** "Find all sealed classes in this classpath" composed query. */
+    /** "Find all sealed classes in this classpath" composed query. Pure filter over topLevelClasses. */
     def findSealed(using Frame): Chunk[Reflect.Symbol] < (Sync & Async & Abort[ReflectError] & Scope) =
         for
             cp <- Reflect.Classpath.openCached(Seq("."), cacheDir = ".kyo-reflect-cache")
