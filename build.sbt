@@ -171,7 +171,9 @@ lazy val kyoJVM = project
         `kyo-compat-ce`.jvm,
         `kyo-compat-ox`.jvm,
         `kyo-compat-twitter-future`.jvm,
-        `kyo-compat`
+        `kyo-compat`,
+        `kyo-reflect-sbt-runner`,
+        `kyo-reflect-sbt-plugin`
     )
 
 lazy val kyoJS = project
@@ -1292,5 +1294,61 @@ lazy val `kyo-compat` = (project in file("kyo-compat/plugin"))
             "-Xmx1024M",
             "-Dplugin.version=" + version.value
         ),
+        scriptedBufferLog := false
+    )
+
+// --- kyo-reflect-sbt (fork-JVM sbt plugin that generates kyo-reflect snapshots)
+//
+// Two subprojects:
+//   kyo-reflect-sbt-runner  — Scala 3 JVM JAR that calls Reflect.Classpath.openCached.
+//                             Assembled into a fat JAR by sbt-assembly for the forked JVM.
+//   kyo-reflect-sbt-plugin  — Scala 2.12 sbt AutoPlugin that forks the runner JVM.
+//
+// Both aggregated into kyoJVM only (sbt plugins run on JVM).
+// Scripted tests are run via `kyo-reflect-sbt-plugin/scripted`.
+
+lazy val `kyo-reflect-sbt-runner` = (project in file("kyo-reflect-sbt/runner"))
+    .dependsOn(`kyo-reflect`.jvm)
+    .settings(
+        moduleName := "kyo-reflect-sbt-runner",
+        `kyo-settings`,
+        mimaCheck(false),
+        // Produce a fat JAR so the plugin can fork a self-contained JVM.
+        assembly / assemblyJarName := s"kyo-reflect-sbt-runner-assembly-${version.value}.jar",
+        assembly / assemblyMergeStrategy := {
+            case PathList("META-INF", "services", _ @ _*) => MergeStrategy.concat
+            case PathList("META-INF", _ @ _*)             => MergeStrategy.discard
+            case PathList("module-info.class")             => MergeStrategy.discard
+            case x =>
+                val old = (assembly / assemblyMergeStrategy).value
+                old(x)
+        }
+    )
+
+lazy val `kyo-reflect-sbt-plugin` = (project in file("kyo-reflect-sbt/plugin"))
+    .enablePlugins(SbtPlugin)
+    .settings(
+        moduleName         := "kyo-reflect-sbt",
+        scalaVersion       := "2.12.20",
+        crossScalaVersions := Seq("2.12.20"),
+        sbtPlugin          := true,
+        // The runner JAR path is injected via -Drunner.jar in scriptedLaunchOpts.
+        // assemblyOutputPath is a TaskKey so it cannot appear in a SettingKey directly;
+        // instead we construct the deterministic output path from pure settings.
+        scriptedLaunchOpts := {
+            // Construct the runner assembly JAR path from pure settings (no task deps).
+            // The jar name mirrors the assemblyJarName setting in kyo-reflect-sbt-runner.
+            val runnerScalaVer = (`kyo-reflect-sbt-runner` / scalaVersion).value
+            val runnerVersion  = version.value
+            val runnerJar = (`kyo-reflect-sbt-runner` / target).value /
+                s"scala-$runnerScalaVer" /
+                s"kyo-reflect-sbt-runner-assembly-$runnerVersion.jar"
+            Seq(
+                "-Xmx1024M",
+                "-Dplugin.version=" + version.value,
+                "-Drunner.jar=" + runnerJar.getAbsolutePath
+            )
+        },
+        scripted := scripted.dependsOn(`kyo-reflect-sbt-runner` / assembly).evaluated,
         scriptedBufferLog := false
     )
