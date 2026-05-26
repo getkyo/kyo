@@ -497,7 +497,10 @@ lazy val `kyo-reflect` =
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
         .dependsOn(`kyo-reflect-fixtures` % Test)
 
 lazy val `kyo-reflect-fixtures` =

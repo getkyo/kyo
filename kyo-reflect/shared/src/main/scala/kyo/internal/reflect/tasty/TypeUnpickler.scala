@@ -295,14 +295,14 @@ object TypeUnpickler:
 
             case TastyFormat.TERMREFpkg =>
                 val nameRef = view.readNat()
-                val fqn     = ctx.names(nameRef).asString
+                val fqn     = nameAt(ctx.names, nameRef).asString
                 val ref     = new UnresolvedRef(fqn, new SingleAssign[Reflect.Type])
                 ctx.placeholders += ref
                 Reflect.Type.Named(makeUnresolvedSym(fqn, ctx.home))
 
             case TastyFormat.TYPEREFpkg =>
                 val nameRef = view.readNat()
-                val fqn     = ctx.names(nameRef).asString
+                val fqn     = nameAt(ctx.names, nameRef).asString
                 val ref     = new UnresolvedRef(fqn, new SingleAssign[Reflect.Type])
                 ctx.placeholders += ref
                 Reflect.Type.Named(makeUnresolvedSym(fqn, ctx.home))
@@ -337,7 +337,7 @@ object TypeUnpickler:
                 Reflect.Type.ConstantType(Reflect.Constant.DoubleConst(java.lang.Double.longBitsToDouble(view.readLongNat())))
             case TastyFormat.STRINGconst =>
                 val nameRef = view.readNat()
-                Reflect.Type.ConstantType(Reflect.Constant.StringConst(ctx.names(nameRef).asString))
+                Reflect.Type.ConstantType(Reflect.Constant.StringConst(nameAt(ctx.names, nameRef).asString))
 
             // ── Category 3 (tag + AST) ────────────────────────────────────────────
 
@@ -381,7 +381,7 @@ object TypeUnpickler:
             case TastyFormat.TERMREF =>
                 val nameRef = view.readNat()
                 val qual    = readTypeNode(view, ctx)
-                Reflect.Type.TermRef(qual, ctx.names(nameRef))
+                Reflect.Type.TermRef(qual, nameAt(ctx.names, nameRef))
 
             case TastyFormat.TYPEREFsymbol =>
                 val astRef = view.readNat()
@@ -396,7 +396,7 @@ object TypeUnpickler:
                 val qual    = readTypeNode(view, ctx)
                 // For TYPEREF, try to resolve from qual context; return Named if resolvable.
                 // For now, build a TermRef-style qualified reference.
-                Reflect.Type.TermRef(qual, ctx.names(nameRef))
+                Reflect.Type.TermRef(qual, nameAt(ctx.names, nameRef))
 
             // ── Category 5 (tag + Length + payload) ──────────────────────────────
 
@@ -444,7 +444,7 @@ object TypeUnpickler:
                 val parent  = readTypeNode(view, ctx)
                 val info    = readTypeNode(view, ctx)
                 view.goto(end)
-                Reflect.Type.Refinement(parent, ctx.names(nameRef), info)
+                Reflect.Type.Refinement(parent, nameAt(ctx.names, nameRef), info)
 
             case TastyFormat.MATCHtype =>
                 val end   = view.readEnd()
@@ -509,7 +509,7 @@ object TypeUnpickler:
                 discard(readTypeNode(view, ctx)) // qual
                 discard(readTypeNode(view, ctx)) // namespace
                 view.goto(end)
-                val fqn = ctx.names(nameRef).asString
+                val fqn = nameAt(ctx.names, nameRef).asString
                 val ref = new UnresolvedRef(fqn, new SingleAssign[Reflect.Type])
                 ctx.placeholders += ref
                 Reflect.Type.Named(makeUnresolvedSym(fqn, ctx.home))
@@ -520,7 +520,7 @@ object TypeUnpickler:
                 val qual    = readTypeNode(view, ctx)
                 discard(readTypeNode(view, ctx)) // namespace
                 view.goto(end)
-                Reflect.Type.TermRef(qual, ctx.names(nameRef))
+                Reflect.Type.TermRef(qual, nameAt(ctx.names, nameRef))
 
             case TastyFormat.TYPEBOUNDS =>
                 // TYPEBOUNDS Length lowOrAlias_Type high_Type? Variance*
@@ -606,7 +606,7 @@ object TypeUnpickler:
         while view.position < end do
             val typeRef = view.readNat()
             val nameRef = view.readNat()
-            val symName = ctx.names(nameRef)
+            val symName = nameAt(ctx.names, nameRef)
             val sym = ctx.addrMap.get(typeRef) match
                 case Some(existingSym) => existingSym
                 case None =>
@@ -649,7 +649,7 @@ object TypeUnpickler:
             else
                 val typeRef = view.readNat()
                 val nameRef = view.readNat()
-                val symName = ctx.names(nameRef)
+                val symName = nameAt(ctx.names, nameRef)
                 val sym = ctx.addrMap.get(typeRef) match
                     case Some(existingSym) => existingSym
                     case None =>
@@ -699,6 +699,16 @@ object TypeUnpickler:
         else if tag >= 60 && tag <= 89 then
             discard(view.readNat())
         // else category 1: nothing to skip
+
+    /** Return the Reflect.Name at `idx` in `names`, throwing ArrayIndexOutOfBoundsException explicitly.
+      *
+      * ScalaJS fastLinkJS wraps raw array out-of-bounds into UndefinedBehaviorError (a JS class) which is NOT caught by Java
+      * `catch case _: ArrayIndexOutOfBoundsException` handlers. Adding an explicit guard here ensures the AIOBE is thrown as a proper Java
+      * exception that callers (Symbol.body) can catch and map to ReflectError.MalformedSection.
+      */
+    private def nameAt(names: Array[Reflect.Name], idx: Int): Reflect.Name =
+        if idx < 0 || idx >= names.length then throw new ArrayIndexOutOfBoundsException(idx)
+        names(idx)
 
     private def isVarianceTag(tag: Int): Boolean =
         tag == TastyFormat.STABLE || tag == TastyFormat.COVARIANT || tag == TastyFormat.CONTRAVARIANT

@@ -962,8 +962,8 @@ class QueryApiTest extends Test:
 
     // Test G19 (Phase 13): InconsistentClasspath uses java.util.UUID for both UUID fields
     "ReflectError.InconsistentClasspath UUID type fields compile and pattern-match correctly" in {
-        val expected = java.util.UUID.randomUUID()
-        val found    = java.util.UUID.randomUUID()
+        val expected = new java.util.UUID(0L, 1L)
+        val found    = new java.util.UUID(0L, 2L)
         val err      = ReflectError.InconsistentClasspath("foo.tasty", expected, found)
         err match
             case ReflectError.InconsistentClasspath(file, exp, fnd) =>

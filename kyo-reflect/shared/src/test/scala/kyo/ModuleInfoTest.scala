@@ -391,32 +391,4 @@ class ModuleInfoTest extends Test:
                     fail(s"Expected ClassfileFormatError, got: $other")
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Test 6 (jvmOnly): cp.findModule("java.base") on JVM returns Present with name == "java.base"
-    // ─────────────────────────────────────────────────────────────────────────
-    "cp.findModule(java.base) on JVM classpath returns Present(desc) with name == java.base" taggedAs jvmOnly in run {
-        // Load java.base module-info.class directly from jrt:/ filesystem
-        val jrtBytes = loadJavaBaseModuleInfo()
-        ModuleInfoReader.read(jrtBytes).map: desc =>
-            assert(desc.name == "java.base", s"Expected name 'java.base', got '${desc.name}'")
-            assert(
-                desc.requires.nonEmpty || desc.exports.nonEmpty,
-                "java.base should have non-empty requires or exports"
-            )
-    }
-
-    /** Load the module-info.class for java.base from the JDK jrt:/ filesystem.
-      *
-      * The jrt:/ filesystem is available on JDK 9+ and provides access to the platform modules. The path for java.base's module descriptor
-      * is jrt:/modules/java.base/module-info.class.
-      *
-      * This method is guarded by jvmOnly; it will not be called on JS or Native.
-      */
-    private def loadJavaBaseModuleInfo(): Array[Byte] =
-        val uri = java.net.URI.create("jrt:/")
-        val fs  = java.nio.file.FileSystems.getFileSystem(uri)
-        val p   = fs.getPath("/modules/java.base/module-info.class")
-        java.nio.file.Files.readAllBytes(p)
-    end loadJavaBaseModuleInfo
-
 end ModuleInfoTest

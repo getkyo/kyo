@@ -61,7 +61,7 @@ object ByteView:
       * Invariants:
       *   - `start` and `end` are fixed after construction.
       *   - `cursor` is the mutable read position, always in range [start, end].
-      *   - Callers must not read past `end`; ArrayIndexOutOfBoundsException is the intended signal.
+      *   - Callers must not read past `end`; `readByte` throws ArrayIndexOutOfBoundsException explicitly.
       */
     final class Heap(val bytes: Array[Byte], val start: Int, val end: Int) extends ByteView:
 
@@ -70,6 +70,7 @@ object ByteView:
         def peekByte(at: Int): Byte = bytes(at)
 
         def readByte(): Byte =
+            if cursor >= end then throw new ArrayIndexOutOfBoundsException(cursor)
             val b = bytes(cursor)
             cursor += 1
             b
