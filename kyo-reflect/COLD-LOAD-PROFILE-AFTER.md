@@ -62,3 +62,23 @@ The snapshot path is the real win from this campaign (5.5x improvement, Phase 2)
 (b) async/parallel JAR opens at the OS level (currently the pipeline parallelizes decoding, not the initial CEN reads, which happen serially in the producer stage).
 
 The pre-walk revert (Phase 8) recovers the ~12 ms regression introduced by Phase 6, bringing cold-load back to approximately the original 55 ms baseline. The residual gap vs 55 ms baseline (59.77 - 55 = 4.77 ms) is within normal measurement variance across OS page-cache states.
+
+## Honest re-measurement: jar entry read fix
+
+The original COLD-LOAD-PROFILE-FULL.md baseline and all post-Phase-8 measurements above were invalid because JvmFileSource.read did not handle jar!/entry paths. Soft-fail mode silently swallowed all FileNotFound errors per cold-load, so the bench measured loading approximately 37 files from the kyo-bench classes directory only, not the full 5,949 TASTy entries across 121 jars.
+
+Bug: in JvmFileSource.read, a path like "/path/to/foo.jar!/some/Bar.tasty" did not start with "jrt:/" and did not end with ".jar", so it fell through to Files.readAllBytes(Paths.get(path)) which threw NoSuchFileException. The IOException was caught and wrapped as Abort[ReflectError.FileNotFound]. In soft-fail mode (the default), the decoder accumulated these into cp.errors and returned an empty FileResult for each of the 5,912 jar entries.
+
+Fix: added a readJarEntry(jarPath, entryName) branch that checks for "!/" in the path before the ".jar" suffix check, then reads the entry via java.util.jar.JarFile.
+
+After fixing JvmFileSource.read to actually read jar entries:
+
+- cp.errors after cold-load: 0 (was 5,912)
+- Cold-load median: 7127.82 ms (loading actual 5,949 TASTy files across 121 jars)
+- Cold-load p95: 8513.21 ms
+- Snapshot median: 487.16 ms (snapshot of actual full symbol set)
+- Snapshot p95: 585.73 ms
+
+This is the FIRST measurement of the real workload. The Phase 1-8 optimizations now have an honest baseline to optimize against. The cold-load is dominated by per-entry JarFile construction (5,949 open+close cycles, one per TASTy entry). The snapshot path is dominated by serialization/deserialization of the full 5,949-entry symbol set. Both are substantially higher than the broken baseline. Future optimization work should target these bottlenecks.
+
+Bench parameters: 5 warmup + 10 measurement iterations (args: 5 10). Machine: Apple M-series, warm JVM (no GC pauses recorded).

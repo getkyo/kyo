@@ -28,10 +28,17 @@ object JvmFileSource extends FileSource:
             try
                 if path.startsWith("jrt:/") then
                     readJrtPath(path)
-                else if path.toLowerCase.endsWith(".jar") then
-                    Abort.fail(ReflectError.FileNotFound(s"$path: reading individual paths inside JARs not supported; use list() first"))
                 else
-                    Files.readAllBytes(Paths.get(path))
+                    val jarSepIdx = path.indexOf("!/")
+                    if jarSepIdx > 0 then
+                        readJarEntry(path.substring(0, jarSepIdx), path.substring(jarSepIdx + 2))
+                    else if path.toLowerCase.endsWith(".jar") then
+                        Abort.fail(ReflectError.FileNotFound(
+                            s"$path: reading individual paths inside JARs requires `jar!/entry` syntax; use list() first"
+                        ))
+                    else
+                        Files.readAllBytes(Paths.get(path))
+                    end if
             catch
                 case ex: java.io.IOException =>
                     Abort.fail(ReflectError.FileNotFound(s"$path: ${ex.getMessage}"))
@@ -137,6 +144,20 @@ object JvmFileSource extends FileSource:
         val jrtPath = fs.getPath(path.stripPrefix("jrt:/"))
         Files.readAllBytes(jrtPath)
     end readJrtPath
+
+    private def readJarEntry(jarPath: String, entryName: String): Array[Byte] =
+        val jf = new java.util.jar.JarFile(jarPath)
+        try
+            val entry = jf.getJarEntry(entryName)
+            if entry == null then
+                throw new java.io.FileNotFoundException(s"$jarPath!/$entryName: entry not found in jar")
+            val is = jf.getInputStream(entry)
+            try is.readAllBytes()
+            finally is.close()
+        finally
+            jf.close()
+        end try
+    end readJarEntry
 
     private def listJrtPathMulti(dir: String, suffixes: Chunk[String]): Chunk[String] =
         val fs = jrtFileSystem
