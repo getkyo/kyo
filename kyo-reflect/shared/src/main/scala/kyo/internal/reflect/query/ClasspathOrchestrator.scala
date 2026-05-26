@@ -18,19 +18,21 @@ import kyo.internal.reflect.tasty.TastyHeader
 import kyo.internal.reflect.type_.TypeArena
 import scala.collection.mutable
 
-/** Phase A/B/C classpath orchestration.
+/** Phase A/B/C classpath orchestration via streaming Channel pipeline.
   *
-  * Phase A: header sweep -- reads file bytes, decoding header + name table for each .tasty file; per-file `Scope.run` inner block releases
-  * handles promptly. Phase B: parallel body decode -- each fiber decodes one file's full AST section, producing symbols with lazy bodies;
-  * each fiber owns its own `TypeArena`; per-file inner `Scope.run` (here the handle is already bytes in memory so no file handle to close,
-  * but the pattern is maintained for consistency). Phase C: single-threaded merge -- resolves cross-file type references (`UnresolvedRef`),
-  * merges TypeArenas, CAS-transitions `Classpath` from `Building` to `Ready`.
+  * Phase A: root walker -- enqueues (entryPath, kind) pairs to `entryCh`. Phase B: parallel decoders -- consume `entryCh`; each decodes one
+  * file and enqueues a `DecodeResult` to `resultCh`. Phase C: single-threaded merger -- consumes `resultCh` and accumulates a `MergeState`;
+  * after merger drains, `finalizeMerge` resolves placeholders and transitions the Classpath to Ready.
   *
   * Per `feedback_kyo_scope_fiber_shared`: every `Scope.acquireRelease` inside an `Async.foreach` worker MUST be wrapped in an inner
   * `Scope.run` to prevent file-handle accumulation in the outer scope.
   *
   * Strict vs soft-fail: in strict mode any single file error fails the entire load. In soft-fail mode (default), bad files accumulate
   * errors; valid files continue decoding.
+  *
+  * Channel close semantics: `closeAwaitEmpty` (not `close`) is used on both channels so that buffered items are drained to consumers before
+  * the channel transitions to fully-closed. Using `close` would return buffered items in its result rather than delivering them.
+  * `Scope.ensure` registrations guarantee channels close on any exit (success, Abort, interrupt) so the merger never blocks forever.
   */
 object ClasspathOrchestrator:
 
@@ -42,7 +44,7 @@ object ClasspathOrchestrator:
       * On success: `Present(pairs)` where pairs are (fqn, symbol). On decode error in soft-fail mode: `Absent` (error already accumulated
       * in the classpath's Building state error list).
       *
-      * `parentsBySymbol` and `childrenByOwner` are pre-indexed maps from Pass1Result used by `mergeResults` to assign `_parents`,
+      * `parentsBySymbol` and `childrenByOwner` are pre-indexed maps from Pass1Result used by `finalizeMerge` to assign `_parents`,
       * `_typeParams`, and `_declarations` on each symbol after Phase C placeholder resolution completes.
       */
     final private case class FileResult(
@@ -56,6 +58,30 @@ object ClasspathOrchestrator:
         commentsBySymbol: Map[Reflect.Symbol, String],
         positionsBySymbol: Map[Reflect.Symbol, Reflect.Position]
     )
+
+    /** Tagged union for results flowing through the result channel.
+      *
+      * `FileResultCase` carries a decoded TASTy file result. `ModuleInfoCase` carries a decoded module-info.class descriptor.
+      */
+    sealed private trait DecodeResult
+    final private case class FileResultCase(fr: FileResult)                             extends DecodeResult
+    final private case class ModuleInfoCase(name: String, md: Reflect.ModuleDescriptor) extends DecodeResult
+
+    /** Mutable accumulator for the single-threaded merger stage (Phase C).
+      *
+      * Collects decoded file results and module descriptors as they arrive from the result channel. `finalizeMerge` reads from this state
+      * once the merger has drained the result channel.
+      */
+    final private class MergeState:
+        val fqnIndex: mutable.HashMap[String, Reflect.Symbol]              = mutable.HashMap.empty
+        val packageIndex: mutable.HashMap[String, Reflect.Symbol]          = mutable.HashMap.empty
+        val allSyms: mutable.ArrayBuffer[Reflect.Symbol]                   = mutable.ArrayBuffer.empty
+        val topLevelCls: mutable.ArrayBuffer[Reflect.Symbol]               = mutable.ArrayBuffer.empty
+        val packages: mutable.ArrayBuffer[Reflect.Symbol]                  = mutable.ArrayBuffer.empty
+        val accErrors: mutable.ArrayBuffer[ReflectError]                   = mutable.ArrayBuffer.empty
+        val fileResults: mutable.ArrayBuffer[FileResult]                   = mutable.ArrayBuffer.empty
+        val moduleIndex: mutable.HashMap[String, Reflect.ModuleDescriptor] = mutable.HashMap.empty
+    end MergeState
 
     /** Open a new classpath from a set of root paths.
       *
@@ -87,29 +113,274 @@ object ClasspathOrchestrator:
                 if !ex then Abort.fail(ReflectError.FileNotFound(root))
                 else Kyo.unit
         .andThen:
-            collectAllEntries(roots, source).flatMap: (tastyFiles, moduleFiles) =>
-                runPhaseAB(tastyFiles, moduleFiles, strict, source, concurrency, cp)
+            runPhaseAB(roots, strict, source, concurrency, cp)
 
-    /** Phase A: read all .tasty bytes concurrently; Phase B: decode each file concurrently. Returns merged FileResult list. */
+    /** Phase A+B+C pipeline via Channels.
+      *
+      * Three concurrent stages run inside `Async.gather`: - Producer: walks each root via `source.list`, puts (entryPath, kind) to
+      * `entryCh`, then closes `entryCh` with `closeAwaitEmpty` so decoders drain. - Decoders: consume `entryCh` via `streamUntilClosed`;
+      * each decoded result is put to `resultCh`; after all entries consumed, close `resultCh`. - Merger: consumes `resultCh` via
+      * `streamUntilClosed`; accumulates into `MergeState`; exits when `resultCh` closes.
+      *
+      * `Scope.ensure` registrations on both channels guarantee they close on any exit (success, Abort, interrupt). Without this, a
+      * strict-mode Abort in a decoder would leave `resultCh` open and the merger would block forever.
+      */
     private def runPhaseAB(
-        tastyFiles: Chunk[String],
-        moduleFiles: Chunk[String],
+        roots: Seq[String],
         strict: Boolean,
         source: FileSource,
         concurrency: Int,
         cp: Classpath
     )(using Frame): Unit < (Sync & Async & Abort[ReflectError]) =
-        val interner = new Interner(128)
-        // Phase A/B merged: read + decode each file in one parallel step with an inner Scope.run
-        Async.foreach(tastyFiles, concurrency): file =>
-            Scope.run:
-                readAndDecodeTastyFile(file, interner, source, cp, strict)
-        .flatMap: fileResults =>
-            // Read module-info.class files sequentially (typically few or none)
-            readModuleInfoFiles(moduleFiles, source, strict).flatMap: moduleIndex =>
-                // Phase C: single-threaded merge
-                mergeResults(fileResults, moduleIndex, cp)
+        val decodeConcurrency = concurrency.max(1)
+        val rootCount         = roots.size.max(1)
+        val entryCap          = decodeConcurrency * 4
+        val resultCap         = decodeConcurrency * 2
+        val interner          = new Interner(128)
+        val mergeState        = new MergeState()
+
+        Scope.run:
+            Channel.initUnscoped[(String, String)](entryCap, Access.MultiProducerMultiConsumer).flatMap: entryCh =>
+                Channel.initUnscoped[DecodeResult](resultCap, Access.MultiProducerMultiConsumer).flatMap: resultCh =>
+                    // Scope.ensure registrations guarantee channels close on ANY exit (success, abort, interrupt).
+                    // Uses close (not closeAwaitEmpty) so that on abort the signal is immediate: interrupted
+                    // consumers are no longer draining, and closeAwaitEmpty would block forever waiting for them.
+                    // streamUntilClosed handles the Closed signal correctly on any exit path.
+                    Scope.ensure(entryCh.close.unit).andThen:
+                        Scope.ensure(resultCh.close.unit).andThen:
+                            val producerStage = Async.foreach(Chunk.from(roots), rootCount): root =>
+                                walkRoot(root, entryCh, source)
+
+                            val decoderStage = Async.foreach(Chunk.fill(decodeConcurrency)(()), decodeConcurrency): _ =>
+                                entryCh.streamUntilClosed().foreach: (entryPath, kind) =>
+                                    decodeOneEntry(entryPath, kind, interner, source, cp, strict).flatMap: result =>
+                                        // If resultCh closed early (strict-mode abort), silently discard
+                                        Abort.run[Closed](resultCh.put(result)).unit
+
+                            val mergerStage: Unit < (Async & Abort[ReflectError]) =
+                                resultCh.streamUntilClosed().foreach: result =>
+                                    Sync.defer(mergeOneInto(mergeState, result))
+
+                            // Producer closes entryCh after all puts complete (closeAwaitEmpty so decoders drain buffer).
+                            val producerWithClose: Unit < (Abort[ReflectError] & Async) =
+                                producerStage.andThen(entryCh.closeAwaitEmpty.unit)
+                            // Decoders close resultCh after all puts complete.
+                            val decoderWithClose: Unit < (Abort[ReflectError] & Async) =
+                                decoderStage.andThen(resultCh.closeAwaitEmpty.unit)
+
+                            // Async.foreach with concurrency=3 and 3 items runs all 3 stages concurrently.
+                            // Unlike Async.gather, Async.foreach propagates the first Abort failure and
+                            // interrupts the other fibers (including a stuck merger) via IOPromise.interrupts.
+                            val stages: Chunk[Unit < (Abort[ReflectError] & Async)] =
+                                Chunk(producerWithClose, decoderWithClose, mergerStage)
+                            Async.foreach(stages, 3): stage =>
+                                stage
+                            .andThen(finalizeMerge(mergeState, source, strict, cp))
     end runPhaseAB
+
+    /** Walk a single root, putting (entryPath, kind) pairs into entryCh.
+      *
+      * If `root` is itself a `.tasty` or `module-info.class` file (i.e., `source.list` returns empty), emit it directly. If `entryCh` is
+      * already closed (strict-mode abort scenario), the put fails with `Closed`; we discard the error and stop walking this root.
+      */
+    private def walkRoot(
+        root: String,
+        entryCh: Channel[(String, String)],
+        source: FileSource
+    )(using Frame): Unit < (Sync & Async & Abort[ReflectError]) =
+        source.list(root, Chunk(".tasty", "module-info.class")).flatMap: listed =>
+            val entries: Chunk[String] =
+                if listed.isEmpty then
+                    if root.endsWith(".tasty") || root.endsWith("module-info.class") then Chunk(root)
+                    else Chunk.empty
+                else listed
+            Kyo.foreach(entries): entry =>
+                val kind =
+                    if entry.endsWith("module-info.class") then "module-info.class"
+                    else ".tasty"
+                // Discard Closed: if entryCh closed early, stop putting
+                Abort.run[Closed](entryCh.put((entry, kind))).unit
+            .unit
+
+    /** Decode one entry by kind and return a DecodeResult.
+      *
+      * For `.tasty`: reads bytes, decodes TASTy, returns a FileResultCase. For `module-info.class`: reads bytes, decodes module descriptor,
+      * returns a ModuleInfoCase.
+      *
+      * In strict mode, decode errors propagate as Abort[ReflectError]. In soft-fail mode they produce empty/error FileResult.
+      */
+    private def decodeOneEntry(
+        entryPath: String,
+        kind: String,
+        interner: Interner,
+        source: FileSource,
+        cp: Classpath,
+        strict: Boolean
+    )(using Frame): DecodeResult < (Sync & Async & Abort[ReflectError]) =
+        if kind == "module-info.class" then
+            Abort.run[ReflectError](
+                source.read(entryPath).flatMap: bytes =>
+                    ModuleInfoReader.read(bytes)
+            ).flatMap:
+                case Result.Success(desc) =>
+                    ModuleInfoCase(desc.name, desc)
+                case Result.Failure(err: ReflectError) =>
+                    if strict then Abort.fail(err)
+                    else
+                        // Soft-fail: produce an empty FileResult with the error recorded
+                        FileResultCase(emptyFileResultWithError(entryPath, err))
+                case Result.Panic(t) =>
+                    val err = ReflectError.CorruptedFile(entryPath, 0L, t.getMessage)
+                    if strict then Abort.fail(err)
+                    else FileResultCase(emptyFileResultWithError(entryPath, err))
+        else
+            Scope.run:
+                readAndDecodeTastyFile(entryPath, interner, source, cp, strict).map(FileResultCase.apply)
+
+    /** Merge one DecodeResult into the MergeState. Single-threaded (only the merger fiber calls it). */
+    private def mergeOneInto(state: MergeState, result: DecodeResult): Unit =
+        result match
+            case FileResultCase(fr) =>
+                for (fqn, sym) <- fr.fqns do
+                    val indexKey = if sym.kind == Reflect.SymbolKind.Object && !fqn.endsWith("$") then fqn + "$" else fqn
+                    val existing = state.fqnIndex.get(indexKey)
+                    val shouldStore = existing match
+                        case None => true
+                        case Some(prev) =>
+                            val prevIsStructural = prev.kind == Reflect.SymbolKind.Class ||
+                                prev.kind == Reflect.SymbolKind.Trait || prev.kind == Reflect.SymbolKind.Object
+                            val newIsStructural = sym.kind == Reflect.SymbolKind.Class ||
+                                sym.kind == Reflect.SymbolKind.Trait || sym.kind == Reflect.SymbolKind.Object
+                            newIsStructural || !prevIsStructural
+                    if shouldStore then state.fqnIndex(indexKey) = sym
+                    state.allSyms += sym
+                    sym.kind match
+                        case Reflect.SymbolKind.Package =>
+                            state.packages += sym
+                            state.packageIndex(fqn) = sym
+                        case Reflect.SymbolKind.Class | Reflect.SymbolKind.Trait | Reflect.SymbolKind.Object =>
+                            state.topLevelCls += sym
+                        case _ =>
+                            ()
+                    end match
+                end for
+                state.accErrors ++= fr.errors
+                state.fileResults += fr
+            case ModuleInfoCase(name, md) =>
+                state.moduleIndex(name) = md
+
+    /** Phase C: placeholder resolution + final Classpath transition.
+      *
+      * Runs once after the merger has drained the result channel. Resolves cross-file type references, assigns _parents / _typeParams /
+      * _declarations / _declaredType / _scaladoc / _position, and transitions the Classpath from Building to Ready.
+      */
+    private def finalizeMerge(
+        state: MergeState,
+        source: FileSource,
+        strict: Boolean,
+        cp: Classpath
+    )(using Frame): Unit < Sync =
+        Sync.defer:
+            val canonical    = TypeArena.canonical()
+            val fileResults  = state.fileResults.toSeq
+            val fqnIndex     = state.fqnIndex
+            val packageIndex = state.packageIndex
+            val allSyms      = state.allSyms
+            val topLevelCls  = state.topLevelCls
+            val packages     = state.packages
+            val accErrors    = state.accErrors
+            val moduleIndex  = state.moduleIndex.toMap
+
+            for fr <- fileResults do
+                canonical.merge(fr.arena)
+            end for
+
+            // Phase C: resolve all UnresolvedRef placeholders accumulated during Phase B decode.
+            // All arenas merged and fqnIndex fully populated above, so lookups are complete.
+            // Unsafe: replaceSlot.set uses AllowUnsafe (covered by the import below).
+            val allPlaceholders = Chunk.from(fileResults).flatMap(_.placeholders)
+            import AllowUnsafe.embrace.danger
+            for placeholder <- allPlaceholders do
+                fqnIndex.get(placeholder.fqn) match
+                    case Some(sym) =>
+                        placeholder.replaceSlot.set(Reflect.Type.Named(sym))
+                    case None =>
+                        placeholder.replaceSlot.set(Reflect.Type.Named(makeUnresolvedSym(placeholder.fqn)))
+            end for
+
+            // After G13 placeholder resolution: assign _parents, _typeParams, _declarations on TASTy symbols.
+            for fr <- fileResults do
+                for (sym, parents) <- fr.parentsBySymbol do
+                    sym._parents.set(parents)
+                end for
+            end for
+            for fr <- fileResults do
+                for (sym, children) <- fr.childrenByOwner do
+                    val typeParams   = children.filter(_.kind == Reflect.SymbolKind.TypeParam)
+                    val declarations = children.filter(_.kind != Reflect.SymbolKind.TypeParam)
+                    sym._typeParams.set(typeParams)
+                    sym._declarations.set(declarations)
+                end for
+            end for
+
+            // Set _parents, _typeParams, _declarations to empty for all symbols not covered by the above loops.
+            for sym <- allSyms do
+                if !sym._parents.isSet then sym._parents.set(Chunk.empty)
+                if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
+                if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
+            end for
+
+            // Phase 5 (G20): assign _declaredType AFTER Phase C placeholder resolution.
+            for fr <- fileResults do
+                for (sym, t) <- fr.typeBySymbol do
+                    if !sym._declaredType.isSet then sym._declaredType.set(t)
+                end for
+            end for
+            for sym <- allSyms do
+                if !sym._declaredType.isSet && (sym.kind == Reflect.SymbolKind.Class ||
+                        sym.kind == Reflect.SymbolKind.Trait ||
+                        sym.kind == Reflect.SymbolKind.Object)
+                then
+                    sym._declaredType.set(Reflect.Type.Named(sym))
+            end for
+
+            // Phase 6 (G3): assign _scaladoc from commentsBySymbol.
+            for fr <- fileResults do
+                for (sym, text) <- fr.commentsBySymbol do
+                    if !sym._scaladoc.isSet then sym._scaladoc.set(Maybe(text))
+                end for
+            end for
+            for sym <- allSyms do
+                if !sym._scaladoc.isSet then sym._scaladoc.set(Maybe.Absent)
+            end for
+
+            // Phase 7 (G2): assign _position from positionsBySymbol.
+            for fr <- fileResults do
+                for (sym, pos) <- fr.positionsBySymbol do
+                    if !sym._position.isSet then sym._position.set(Maybe(pos))
+                end for
+            end for
+            for sym <- allSyms do
+                if !sym._position.isSet then sym._position.set(Maybe.Absent)
+            end for
+
+            // Add errors accumulated during Building state (e.g., from root validation)
+            // Unsafe: stateRef.unsafe.get() read of Building state, single-threaded Phase C merge
+            cp.stateRef.unsafe.get() match
+                case b: Classpath.State.Building => accErrors ++= b.errors
+                case _                           => ()
+
+            Classpath.transitionToReady(
+                cp,
+                Chunk.from(allSyms.toSeq),
+                Chunk.from(topLevelCls.toSeq),
+                Chunk.from(packages.toSeq),
+                fqnIndex.toMap,
+                packageIndex.toMap,
+                canonical,
+                Chunk.from(accErrors.toSeq),
+                moduleIndex
+            )
 
     /** Read bytes and decode a single TASTy file. Returns FileResult. */
     private def readAndDecodeTastyFile(
@@ -128,34 +399,28 @@ object ClasspathOrchestrator:
                 if strict then
                     Abort.fail(err)
                 else
-                    FileResult(
-                        Chunk.empty,
-                        TypeArena.canonical(),
-                        Seq(err),
-                        Chunk.empty,
-                        Map.empty,
-                        Map.empty,
-                        Map.empty,
-                        Map.empty,
-                        Map.empty
-                    )
+                    emptyFileResultWithError(file, err)
             case Result.Panic(t) =>
                 val err = ReflectError.CorruptedFile(file, 0L, t.getMessage)
                 if strict then
                     Abort.fail(err)
                 else
-                    FileResult(
-                        Chunk.empty,
-                        TypeArena.canonical(),
-                        Seq(err),
-                        Chunk.empty,
-                        Map.empty,
-                        Map.empty,
-                        Map.empty,
-                        Map.empty,
-                        Map.empty
-                    )
+                    emptyFileResultWithError(file, err)
                 end if
+
+    /** Produce an empty FileResult carrying a single error (soft-fail path). */
+    private def emptyFileResultWithError(file: String, err: ReflectError): FileResult =
+        FileResult(
+            Chunk.empty,
+            TypeArena.canonical(),
+            Seq(err),
+            Chunk.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty
+        )
 
     /** Decode TASTy bytes into a FileResult (fqn-symbol pairs + arena). */
     private def decodeTastyBytes(
@@ -212,202 +477,6 @@ object ClasspathOrchestrator:
             )
         end for
     end decodeTastyBytes
-
-    /** Collect all .tasty and module-info.class entries from roots in a single walk per root.
-      *
-      * Returns (tastyFiles, moduleFiles) by partitioning the combined listing by suffix. Replaces the two sequential collectTastyFiles +
-      * collectModuleInfoFiles calls, eliminating one JAR open per root.
-      */
-    private def collectAllEntries(
-        roots: Seq[String],
-        source: FileSource
-    )(using Frame): (Chunk[String], Chunk[String]) < (Sync & Abort[ReflectError]) =
-        Kyo.foreach(Chunk.from(roots)): root =>
-            source.list(root, Chunk(".tasty", "module-info.class")).flatMap: listed =>
-                if listed.isEmpty then
-                    source.exists(root).map: ex =>
-                        if ex && root.endsWith(".tasty") then Chunk(root)
-                        else if ex && root.endsWith("module-info.class") then Chunk(root)
-                        else listed
-                else
-                    listed
-        .map: allListed =>
-            val flat    = allListed.flatten
-            val tasty   = flat.filter(_.endsWith(".tasty"))
-            val modules = flat.filter(_.endsWith("module-info.class"))
-            (tasty, modules)
-
-    /** Read and parse all module-info.class files, returning a map from module name to descriptor.
-      *
-      * In soft-fail mode, failed files are silently skipped. In strict mode, any failure propagates.
-      */
-    private def readModuleInfoFiles(
-        files: Chunk[String],
-        source: FileSource,
-        strict: Boolean
-    )(using Frame): Map[String, Reflect.ModuleDescriptor] < (Sync & Abort[ReflectError]) =
-        Kyo.foreach(files): file =>
-            Abort.run[ReflectError](
-                source.read(file).flatMap: bytes =>
-                    ModuleInfoReader.read(bytes)
-            ).map:
-                case Result.Success(desc) => Maybe((desc.name, desc))
-                case Result.Failure(err) =>
-                    if strict then Abort.fail(err)
-                    else Maybe.Absent
-                case Result.Panic(_) =>
-                    if strict then Maybe.Absent
-                    else Maybe.Absent
-        .map: results =>
-            results.collect { case Present((k, v)) => k -> v }.toMap
-
-    /** Phase C: merge all per-file results into the Classpath. */
-    private def mergeResults(
-        fileResults: Chunk[FileResult],
-        moduleIndex: Map[String, Reflect.ModuleDescriptor],
-        cp: Classpath
-    )(using Frame): Unit < Sync =
-        Sync.defer:
-            val canonical    = TypeArena.canonical()
-            val fqnIndex     = mutable.HashMap.empty[String, Reflect.Symbol]
-            val packageIndex = mutable.HashMap.empty[String, Reflect.Symbol]
-            val allSyms      = mutable.ArrayBuffer.empty[Reflect.Symbol]
-            val topLevelCls  = mutable.ArrayBuffer.empty[Reflect.Symbol]
-            val packages     = mutable.ArrayBuffer.empty[Reflect.Symbol]
-            val accErrors    = mutable.ArrayBuffer.empty[ReflectError]
-
-            for fr <- fileResults do
-                for (fqn, sym) <- fr.fqns do
-                    // Disambiguation strategy for same-dotted-FQN symbols that appear in the same TASTy file:
-                    // - Object-kind symbols are stored under a "$"-suffixed key (unless already ending in "$").
-                    //   This prevents companion objects from overwriting same-name class symbols.
-                    // - Non-Class/Trait/Object kinds (e.g., Val module accessor) do not overwrite an
-                    //   existing Class/Trait entry at the same key. They are stored only if the key is free
-                    //   or currently holds a non-structural symbol.
-                    val indexKey = if sym.kind == Reflect.SymbolKind.Object && !fqn.endsWith("$") then fqn + "$" else fqn
-                    val existing = fqnIndex.get(indexKey)
-                    val shouldStore = existing match
-                        case None       => true
-                        case Some(prev) =>
-                            // Prefer Class/Trait/Object over other kinds. Don't let Val/Method/etc. overwrite structural symbols.
-                            val prevIsStructural = prev.kind == Reflect.SymbolKind.Class ||
-                                prev.kind == Reflect.SymbolKind.Trait || prev.kind == Reflect.SymbolKind.Object
-                            val newIsStructural = sym.kind == Reflect.SymbolKind.Class ||
-                                sym.kind == Reflect.SymbolKind.Trait || sym.kind == Reflect.SymbolKind.Object
-                            // Allow overwrite only if new symbol is structural (or prev is non-structural).
-                            newIsStructural || !prevIsStructural
-                    if shouldStore then fqnIndex(indexKey) = sym
-                    allSyms += sym
-                    sym.kind match
-                        case Reflect.SymbolKind.Package =>
-                            packages += sym
-                            packageIndex(fqn) = sym
-                        case Reflect.SymbolKind.Class | Reflect.SymbolKind.Trait | Reflect.SymbolKind.Object =>
-                            topLevelCls += sym
-                        case _ =>
-                            ()
-                    end match
-                end for
-                accErrors ++= fr.errors
-                canonical.merge(fr.arena)
-            end for
-
-            // Phase C: resolve all UnresolvedRef placeholders accumulated during Phase B decode.
-            // All arenas merged and fqnIndex fully populated above, so lookups are complete.
-            // Unsafe: replaceSlot.set uses AllowUnsafe (covered by the import below).
-            val allPlaceholders = fileResults.flatMap(_.placeholders)
-            import AllowUnsafe.embrace.danger
-            for placeholder <- allPlaceholders do
-                fqnIndex.get(placeholder.fqn) match
-                    case Some(sym) =>
-                        placeholder.replaceSlot.set(Reflect.Type.Named(sym))
-                    case None =>
-                        placeholder.replaceSlot.set(Reflect.Type.Named(makeUnresolvedSym(placeholder.fqn)))
-            end for
-
-            // After G13 placeholder resolution: assign _parents, _typeParams, _declarations on TASTy symbols.
-            // All parent type slots are now resolved; cross-file proxy types have their SingleAssign slots set.
-            // Each symbol appears in exactly one FileResult so no double-set can occur.
-            for fr <- fileResults do
-                for (sym, parents) <- fr.parentsBySymbol do
-                    sym._parents.set(parents)
-                end for
-            end for
-            for fr <- fileResults do
-                for (sym, children) <- fr.childrenByOwner do
-                    val typeParams   = children.filter(_.kind == Reflect.SymbolKind.TypeParam)
-                    val declarations = children.filter(_.kind != Reflect.SymbolKind.TypeParam)
-                    sym._typeParams.set(typeParams)
-                    sym._declarations.set(declarations)
-                end for
-            end for
-
-            // Set _parents, _typeParams, _declarations to empty for all symbols not covered by the above loops.
-            // This covers non-class-like symbols (methods, fields, type params, parameters, packages) which have
-            // no entry in parentsBySymbol or childrenByOwner, and any class symbol whose template had no parents or no children.
-            for sym <- allSyms do
-                if !sym._parents.isSet then sym._parents.set(Chunk.empty)
-                if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
-                if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
-            end for
-
-            // Phase 5 (G20): assign _declaredType AFTER Phase C placeholder resolution.
-            // TASTy path: assign from typeBySymbol (VALDEF, PARAM, TYPEPARAM, type-level TYPEDEF, DEFDEF return types).
-            for fr <- fileResults do
-                for (sym, t) <- fr.typeBySymbol do
-                    if !sym._declaredType.isSet then sym._declaredType.set(t)
-                end for
-            end for
-            // Class-like TYPEDEF symbols (Class/Trait/Object) get Type.Named(sym) as their declaredType.
-            for sym <- allSyms do
-                if !sym._declaredType.isSet && (sym.kind == Reflect.SymbolKind.Class ||
-                        sym.kind == Reflect.SymbolKind.Trait ||
-                        sym.kind == Reflect.SymbolKind.Object)
-                then
-                    sym._declaredType.set(Reflect.Type.Named(sym))
-            end for
-            // Package and root symbols: leave _declaredType unset.
-            // The public accessor has a kind == Package guard that returns NotImplemented.
-
-            // Phase 6 (G3): assign _scaladoc from commentsBySymbol.
-            // Symbols with a scaladoc entry get Present(text); all others get Absent.
-            for fr <- fileResults do
-                for (sym, text) <- fr.commentsBySymbol do
-                    if !sym._scaladoc.isSet then sym._scaladoc.set(Maybe(text))
-                end for
-            end for
-            for sym <- allSyms do
-                if !sym._scaladoc.isSet then sym._scaladoc.set(Maybe.Absent)
-            end for
-
-            // Phase 7 (G2): assign _position from positionsBySymbol.
-            // Symbols with position data get Present(pos); all others get Absent.
-            for fr <- fileResults do
-                for (sym, pos) <- fr.positionsBySymbol do
-                    if !sym._position.isSet then sym._position.set(Maybe(pos))
-                end for
-            end for
-            for sym <- allSyms do
-                if !sym._position.isSet then sym._position.set(Maybe.Absent)
-            end for
-
-            // Add errors accumulated during Building state (e.g., from root validation)
-            // Unsafe: stateRef.unsafe.get() read of Building state, single-threaded Phase C merge
-            cp.stateRef.unsafe.get() match
-                case b: Classpath.State.Building => accErrors ++= b.errors
-                case _                           => ()
-
-            Classpath.transitionToReady(
-                cp,
-                Chunk.from(allSyms.toSeq),
-                Chunk.from(topLevelCls.toSeq),
-                Chunk.from(packages.toSeq),
-                fqnIndex.toMap,
-                packageIndex.toMap,
-                canonical,
-                Chunk.from(accErrors.toSeq),
-                moduleIndex
-            )
 
     /** Convert a Name (opaque Interner.Entry) to a String. */
     private def nameToString(n: Reflect.Name): String =
