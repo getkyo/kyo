@@ -102,7 +102,7 @@ case class Neg(inner: Expr)             extends Expr derives CanEqual
 case class MTProtoMapHolder(name: String, scores: Map[String, Int]) derives CanEqual
 case class MTListOfOption(name: String, tags: List[Option[Int]]) derives CanEqual
 
-// Intersection-type test fixtures (Phase 13)
+// Intersection-type test fixtures
 trait MTIxFoo:
     def a: Int
 trait MTIxBar:

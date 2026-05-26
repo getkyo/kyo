@@ -1416,6 +1416,33 @@ class StructureTest extends Test:
             assert(Json.decode[SealedNoArgVariants](j2).getOrThrow == unit2)
             assert(Json.decode[SealedNoArgVariants](j3).getOrThrow == unit3)
         }
+
+        "Structure.fromSchema derives Sum for sealed trait via schema.variants" in {
+            // Exercises the runtime walker path: the sealed-trait Schema produced by FocusMacro
+            // populates `variants`, and `Structure.fromSchema` dispatches on it to produce a Sum
+            // with the right variant names. Deeper per-variant payload structure stays the
+            // responsibility of the type-level `Structure.of[A]` macro path, since case-class
+            // Schemas do not carry `sourceFields` outside focused projections.
+            val schema  = summon[Schema[StructureSumShape]]
+            val fromRun = Structure.fromSchema(schema)
+
+            fromRun match
+                case Structure.Type.Sum(name, tag, _, variants, _) =>
+                    assert(name == "StructureSumShape")
+                    assert(tag =:= Tag[StructureSumShape])
+                    assert(variants.size == 2)
+                    val variantNames = variants.map(_.name).toSet
+                    assert(variantNames == Set("StructureSumCircle", "StructureSumSquare"))
+                case other => fail(s"Expected Sum from Structure.fromSchema, got $other")
+            end match
+        }
     }
 
 end StructureTest
+
+// Fixtures for the Structure.fromSchema sealed-trait dispatch test. Kept distinct from MTShape
+// so the test type-level path (Structure.of) and the runtime path (Structure.fromSchema) both
+// have a clean target with two variants and Double payload fields.
+sealed trait StructureSumShape derives Schema, CanEqual
+case class StructureSumCircle(r: Double)    extends StructureSumShape derives CanEqual
+case class StructureSumSquare(side: Double) extends StructureSumShape derives CanEqual

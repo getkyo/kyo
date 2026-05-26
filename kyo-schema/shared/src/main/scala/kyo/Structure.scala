@@ -34,10 +34,18 @@ object Structure:
     /** Runtime-walked Structure.Type derivation driven by a Schema instance.
       *
       * Matches `schema.tag` against the 12 primitive Tags; otherwise dispatches on Schema accessors
-      * (`collectionElement` / `optionalInner` / `mappingKey` + `mappingValue`) for container shapes, then follows
-      * `transformSource` until a primitive / container surfaces, or emits a nominal `Product` fallback.
+      * (`collectionElement` / `optionalInner` / `mappingKey` + `mappingValue`) for container shapes, then on `variants`
+      * for sealed-trait / enum sums, then follows `transformSource` until a primitive / container surfaces, or emits a
+      * nominal `Product` fallback.
       */
     def fromSchema[A](schema: Schema[A]): Structure.Type =
+        fromSchemaSeen(schema, Set.empty)
+
+    /** Cycle-protected walker. `seen` carries the set of `tag.show` strings already visited so that
+      * recursive sealed-trait variant lists (a variant Schema that points back at the parent) do not loop.
+      * On a revisit, emit a nominal fieldless Product carrying the visited type's tag.
+      */
+    private def fromSchemaSeen[A](schema: Schema[A], seen: Set[String]): Structure.Type =
         val tag = schema.tag
         // 12 primitive Tags
         if tag =:= Tag[String] then Type.Primitive(PrimitiveKind.String, tag.asInstanceOf[Tag[Any]])
@@ -53,34 +61,103 @@ object Structure:
         else if tag =:= Tag[BigInt] then Type.Primitive(PrimitiveKind.BigInt, tag.asInstanceOf[Tag[Any]])
         else if tag =:= Tag[BigDecimal] then Type.Primitive(PrimitiveKind.BigDecimal, tag.asInstanceOf[Tag[Any]])
         else
-            (schema.collectionElement, schema.optionalInner, schema.mappingKey, schema.mappingValue) match
-                case (Maybe.Present(elem), _, _, _) =>
-                    Type.Collection(
-                        containerName(tag),
-                        tag.asInstanceOf[Tag[Any]],
-                        fromSchema(elem)
-                    )
-                case (_, Maybe.Present(inner), _, _) =>
-                    Type.Optional(
-                        containerName(tag),
-                        tag.asInstanceOf[Tag[Any]],
-                        fromSchema(inner)
-                    )
-                case (_, _, Maybe.Present(k), Maybe.Present(v)) =>
-                    Type.Mapping(
-                        containerName(tag),
-                        tag.asInstanceOf[Tag[Any]],
-                        fromSchema(k),
-                        fromSchema(v)
-                    )
-                case _ =>
-                    schema.transformSource match
-                        case Maybe.Present(source) => fromSchema(source)
-                        case _                     =>
-                            // Nominal fallback: emit a fieldless Product carrying the type's tag.
-                            Type.Product(containerName(tag), tag.asInstanceOf[Tag[Any]], Chunk.empty, Chunk.empty)
+            val tagKey = tag.show
+            if seen.contains(tagKey) then
+                // Recursive cycle: emit a nominal fieldless Product carrying the type's tag.
+                Type.Product(containerName(tag), tag.asInstanceOf[Tag[Any]], Chunk.empty, Chunk.empty)
+            else
+                val nextSeen = seen + tagKey
+                (schema.collectionElement, schema.optionalInner, schema.mappingKey, schema.mappingValue) match
+                    case (Maybe.Present(elem), _, _, _) =>
+                        Type.Collection(
+                            containerName(tag),
+                            tag.asInstanceOf[Tag[Any]],
+                            fromSchemaSeen(elem, nextSeen)
+                        )
+                    case (_, Maybe.Present(inner), _, _) =>
+                        Type.Optional(
+                            containerName(tag),
+                            tag.asInstanceOf[Tag[Any]],
+                            fromSchemaSeen(inner, nextSeen)
+                        )
+                    case (_, _, Maybe.Present(k), Maybe.Present(v)) =>
+                        Type.Mapping(
+                            containerName(tag),
+                            tag.asInstanceOf[Tag[Any]],
+                            fromSchemaSeen(k, nextSeen),
+                            fromSchemaSeen(v, nextSeen)
+                        )
+                    case _ =>
+                        schema.variants match
+                            case Maybe.Present(vs) =>
+                                val variantChunk = Chunk.from(vs.map { (variantName, variantSchema) =>
+                                    Structure.Variant(variantName, fromSchemaSeen(variantSchema, nextSeen))
+                                })
+                                Type.Sum(
+                                    containerName(tag),
+                                    tag.asInstanceOf[Tag[Any]],
+                                    Chunk.empty,
+                                    variantChunk,
+                                    Chunk.empty
+                                )
+                            case _ =>
+                                if schema.sourceFields.nonEmpty then
+                                    val fieldChunk = Chunk.from(schema.sourceFields.map { f =>
+                                        Structure.Field(
+                                            f.name,
+                                            fromFieldTypeSeen(f, nextSeen),
+                                            Maybe.empty,
+                                            Maybe.empty,
+                                            optional = false
+                                        )
+                                    })
+                                    Type.Product(containerName(tag), tag.asInstanceOf[Tag[Any]], Chunk.empty, fieldChunk)
+                                else
+                                    schema.transformSource match
+                                        case Maybe.Present(source) => fromSchemaSeen(source, nextSeen)
+                                        case _                     =>
+                                            // Nominal fallback: emit a fieldless Product carrying the type's tag.
+                                            Type.Product(containerName(tag), tag.asInstanceOf[Tag[Any]], Chunk.empty, Chunk.empty)
+                end match
+            end if
         end if
-    end fromSchema
+    end fromSchemaSeen
+
+    /** Derive a Structure.Type for a single source-field of a case-class Schema using the field's Tag and `nested` metadata.
+      *
+      * Primitive Tags map to the corresponding `Type.Primitive`; nested case-class fields surface as a nested `Type.Product`
+      * built from `Field.nested`. Non-primitive, non-nested fields fall back to a nominal fieldless Product; the macro path
+      * (`Structure.of[A]`) retains richer container/sum coverage for those cases.
+      */
+    private def fromFieldTypeSeen(field: kyo.Field[?, ?], seen: Set[String]): Structure.Type =
+        val tag = field.tag
+        if tag =:= Tag[String] then Type.Primitive(PrimitiveKind.String, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Boolean] then Type.Primitive(PrimitiveKind.Boolean, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Int] then Type.Primitive(PrimitiveKind.Int, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Long] then Type.Primitive(PrimitiveKind.Long, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Short] then Type.Primitive(PrimitiveKind.Short, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Byte] then Type.Primitive(PrimitiveKind.Byte, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Char] then Type.Primitive(PrimitiveKind.Char, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Float] then Type.Primitive(PrimitiveKind.Float, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Double] then Type.Primitive(PrimitiveKind.Double, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[Unit] then Type.Primitive(PrimitiveKind.Unit, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[BigInt] then Type.Primitive(PrimitiveKind.BigInt, tag.asInstanceOf[Tag[Any]])
+        else if tag =:= Tag[BigDecimal] then Type.Primitive(PrimitiveKind.BigDecimal, tag.asInstanceOf[Tag[Any]])
+        else
+            val tagKey = tag.show
+            if seen.contains(tagKey) then
+                Type.Product(containerName(tag), tag.asInstanceOf[Tag[Any]], Chunk.empty, Chunk.empty)
+            else if field.nested.nonEmpty then
+                val nextSeen = seen + tagKey
+                val fieldChunk = Chunk.from(field.nested.map { nf =>
+                    Structure.Field(nf.name, fromFieldTypeSeen(nf, nextSeen), Maybe.empty, Maybe.empty, optional = false)
+                })
+                Type.Product(containerName(tag), tag.asInstanceOf[Tag[Any]], Chunk.empty, fieldChunk)
+            else
+                Type.Product(containerName(tag), tag.asInstanceOf[Tag[Any]], Chunk.empty, Chunk.empty)
+            end if
+        end if
+    end fromFieldTypeSeen
 
     /** Extract the short container name from a Tag's display string: `List[Int]` -> `List`, `scala.Option[String]` -> `Option`. */
     private def containerName[A](tag: Tag[A]): String =

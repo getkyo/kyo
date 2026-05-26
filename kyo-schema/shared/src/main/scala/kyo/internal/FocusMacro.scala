@@ -413,7 +413,8 @@ import scala.quoted.*
                                     '{ _subSchemas },
                                     '{ self }
                                 )
-                            }
+                            },
+                        variantsOpt = kyo.Maybe.empty
                     )(using $tagAExprRec)
                 end self
                 self
@@ -469,7 +470,8 @@ import scala.quoted.*
                                 fieldSchemaExprs,
                                 '{ _subSchemas }
                             )
-                        }
+                        },
+                    variantsOpt = kyo.Maybe.empty
                 )(using $tagAExprRec)
             }
         end if
@@ -595,7 +597,15 @@ import scala.quoted.*
                                     (info.name, info.schemaResolver('{ self }))
                                 }
                                 SerializationMacro.sealedReadBody[A]('{ reader }, '{ _fieldBytes }, schemaExprs)
+                            },
+                        variantsOpt = kyo.Maybe(${
+                            val pairExprs: List[Expr[(String, kyo.Schema[?])]] = variants.map { info =>
+                                val nameExpr   = Expr(info.name)
+                                val schemaExpr = info.schemaResolver('{ self }).asExprOf[kyo.Schema[Any]]
+                                '{ ($nameExpr, $schemaExpr.asInstanceOf[kyo.Schema[?]]) }
                             }
+                            Expr.ofSeq(pairExprs)
+                        })
                     )(using $tagAExprSealed)
                 end self
                 self
@@ -627,7 +637,15 @@ import scala.quoted.*
                                 (info.name, info.schemaResolver('{ null.asInstanceOf[Schema[A]] }))
                             }
                             SerializationMacro.sealedReadBody[A]('{ reader }, '{ _fieldBytes }, schemaExprs)
+                        },
+                    variantsOpt = kyo.Maybe(${
+                        val pairExprs: List[Expr[(String, kyo.Schema[?])]] = variants.map { info =>
+                            val nameExpr   = Expr(info.name)
+                            val schemaExpr = info.schemaResolver('{ null.asInstanceOf[Schema[A]] }).asExprOf[kyo.Schema[Any]]
+                            '{ ($nameExpr, $schemaExpr.asInstanceOf[kyo.Schema[?]]) }
                         }
+                        Expr.ofSeq(pairExprs)
+                    })
                 )(using $tagAExprSealed)
             }
         end if

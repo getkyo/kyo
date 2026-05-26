@@ -114,8 +114,13 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     /** Variant Schemas for sealed-trait / enum Schemas. Each entry is `(variantName, variantSchema)`. Empty otherwise.
       * Used by `Structure.fromSchema` to enumerate the variants of a Sum type.
+      *
+      * `lazy val` so recursive sealed-trait schemas (whose variant list captures `self`) can be constructed without
+      * forcing the variants list during the parent's own lazy initialization. The first read of `variants` happens
+      * at `Structure.fromSchema` call time, by which point all recursive `lazy val self: Schema[A]` bindings are
+      * fully bound.
       */
-    val variants: Maybe[Seq[(String, Schema[?])]] = Maybe.empty
+    lazy val variants: Maybe[Seq[(String, Schema[?])]] = Maybe.empty
 
     /** Element Schema for homogeneous collection Schemas (List, Vector, Chunk, Set, Seq, Span, Array, ...). Empty otherwise.
       * Used by `Structure.fromSchema` to dispatch on collection shape.
@@ -1181,14 +1186,13 @@ object Schema:
         documentation: Maybe[String] = Maybe.empty,
         fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
         discriminatorField: Maybe[String] = Maybe.empty,
-        variantsOpt: Maybe[Seq[(String, Schema[?])]] = Maybe.empty,
+        inline variantsOpt: Maybe[Seq[(String, Schema[?])]] = Maybe.empty,
         transformSourceOpt: Maybe[Schema[?]] = Maybe.empty,
         collectionElementOpt: Maybe[Schema[?]] = Maybe.empty,
         optionalInnerOpt: Maybe[Schema[?]] = Maybe.empty,
         mappingKeyOpt: Maybe[Schema[?]] = Maybe.empty,
         mappingValueOpt: Maybe[Schema[?]] = Maybe.empty
     )(using tag: Tag[A]): Schema[A] =
-        val _variants          = variantsOpt
         val _transformSource   = transformSourceOpt
         val _collectionElement = collectionElementOpt
         val _optionalInner     = optionalInnerOpt
@@ -1210,7 +1214,7 @@ object Schema:
             discriminatorField
         ):
             override val transformSource: Maybe[Schema[?]]                     = _transformSource
-            override val variants: Maybe[Seq[(String, Schema[?])]]             = _variants
+            override lazy val variants: Maybe[Seq[(String, Schema[?])]]        = variantsOpt
             override val collectionElement: Maybe[Schema[?]]                   = _collectionElement
             override val optionalInner: Maybe[Schema[?]]                       = _optionalInner
             override val mappingKey: Maybe[Schema[?]]                          = _mappingKey
@@ -1245,7 +1249,7 @@ object Schema:
         documentation: Maybe[String] = Maybe.empty,
         fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
         discriminatorField: Maybe[String] = Maybe.empty,
-        variantsOpt: Maybe[Seq[(String, Schema[?])]] = Maybe.empty,
+        inline variantsOpt: Maybe[Seq[(String, Schema[?])]] = Maybe.empty,
         transformSourceOpt: Maybe[Schema[?]] = Maybe.empty,
         collectionElementOpt: Maybe[Schema[?]] = Maybe.empty,
         optionalInnerOpt: Maybe[Schema[?]] = Maybe.empty,
@@ -2385,7 +2389,13 @@ object Schema:
             sourceFields = sourceFields
         )
 
-    /** Internal factory for macro-generated Schema instances with serialization. */
+    /** Internal factory for macro-generated Schema instances with serialization.
+      *
+      * `variantsOpt` is non-defaulted to disambiguate from the sentinel-codec overload above (Scala 3 forbids two
+      * overloads of the same method from both carrying default arguments). Callers in `FocusMacro` pass
+      * `Maybe.empty` for case classes and a populated `Maybe(variants)` for sealed traits (consumed by
+      * `Structure.fromSchema` to produce a `Type.Sum`).
+      */
     @nowarn("msg=anonymous")
     inline def create[A, F](
         inline getterFn: A => Maybe[F],
@@ -2393,7 +2403,8 @@ object Schema:
         segments: Seq[String],
         sourceFields: Seq[Field[?, ?]],
         inline writeFn: (A, Writer) => Unit,
-        inline readFn: Reader => A
+        inline readFn: Reader => A,
+        inline variantsOpt: Maybe[Seq[(String, Schema[?])]]
     )(using tag: Tag[A]): Schema[A] { type Focused = F } =
         Schema.initFocused[A, F](
             writeFn = writeFn,
@@ -2401,7 +2412,8 @@ object Schema:
             getterFn = getterFn,
             setterFn = setterFn,
             segments = segments,
-            sourceFields = sourceFields
+            sourceFields = sourceFields,
+            variantsOpt = variantsOpt
         )
 
     /** Internal factory for transform macros. Copies internal state from a source Schema. Not part of public API.
