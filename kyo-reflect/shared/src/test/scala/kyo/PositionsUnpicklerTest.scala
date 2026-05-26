@@ -7,6 +7,7 @@ import kyo.internal.reflect.query.ClasspathTestHelpers
 import kyo.internal.reflect.symbol.Interner
 import kyo.internal.reflect.tasty.PositionsUnpickler
 import kyo.internal.reflect.type_.TypeArena
+import scala.collection.immutable.IntMap
 
 /** Tests for PositionsUnpickler.read and Reflect.Symbol.position.
   *
@@ -74,7 +75,7 @@ class PositionsUnpicklerTest extends Test:
     // addrMap has {5 -> sym} so header = (5<<3)|4 = 44 (addrDelta=5, hasStart=true), start_delta=17.
     "PositionsUnpickler: class at line 3 column 1 returns Present(Position(Foo.scala, 3, 1))" in run {
         val sym     = makeTestSymbol("Foo")
-        val addrMap = Map(5 -> sym)
+        val addrMap = IntMap(5 -> sym)
         // LinesSizes: numLines=3, sizes=[10,5,20]
         // Assoc: header=(5<<3)|4=44 (addrDelta=5, hasStart=true), start_delta=17
         val payload = Array[Byte](
@@ -105,7 +106,7 @@ class PositionsUnpicklerTest extends Test:
     // Phase 7 Test 2: an empty Positions section (zero-length payload) returns an empty map without error.
     "PositionsUnpickler: empty payload returns empty map without error" in run {
         val view = ByteView(Array.empty[Byte])
-        Abort.run[ReflectError](PositionsUnpickler.read(view, Map.empty, Absent)).map:
+        Abort.run[ReflectError](PositionsUnpickler.read(view, IntMap.empty, Absent)).map:
             case Result.Success(result) =>
                 assert(result.isEmpty, s"Expected empty result but got ${result.size} entries")
             case Result.Failure(e) =>
@@ -129,7 +130,7 @@ class PositionsUnpicklerTest extends Test:
             // truncated here -- missing the signed Int for start_delta
         )
         val sym     = makeTestSymbol("Truncated")
-        val addrMap = Map(1 -> sym)
+        val addrMap = IntMap(1 -> sym)
         val view    = ByteView(payload)
         Abort.run[ReflectError](PositionsUnpickler.read(view, addrMap, Absent)).map:
             case Result.Success(result) =>
@@ -187,7 +188,7 @@ class PositionsUnpicklerTest extends Test:
     "PositionsUnpickler: two sibling definitions have distinct line/column values" in run {
         val symAlpha = makeTestSymbol("Alpha")
         val symBeta  = makeTestSymbol("Beta")
-        val addrMap  = Map(3 -> symAlpha, 7 -> symBeta)
+        val addrMap  = IntMap(3 -> symAlpha, 7 -> symBeta)
         // LinesSizes: numLines=2, sizes=[10,10]
         // Entry 1: addrDelta=3, hasStart=1 => header=(3<<3)|4=28, start_delta=2 => offset=2 => (line 1, col 3)
         // Entry 2: addrDelta=4, hasStart=1 => header=(4<<3)|4=36, start_delta=11 => offset=2+11=13 => (line 2, col 3)
@@ -220,6 +221,106 @@ class PositionsUnpicklerTest extends Test:
                     posAlpha.line != posBeta.line,
                     s"Siblings must be on different lines but both on line ${posAlpha.line}"
                 )
+            case Result.Failure(e) =>
+                fail(s"Expected success but got failure: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // ── Test T-P5-1: IntMap addrMap with 10,000 entries, correctness at scale ──
+
+    // T-P5-1: PositionsUnpickler.readSync with an IntMap addrMap of 10,000 entries returns
+    // correct position mappings for all 10,000 entries. Behavioral correctness at scale.
+    // Integer-allocation-elimination assertion is deferred to Phase 8 re-profiling per plan.
+    //
+    // Payload construction:
+    //   - numLines = 10001 (enough lines for offset 10000)
+    //   - Each line has size 0 so lineStarts(k) = k (since lineStarts(k) = lineStarts(k-1) + 0 + 1)
+    //   - Each Assoc entry: addrDelta=1 (header=(1<<3)|4=12), start_delta=1 (offset advances by 1 per entry)
+    //   - Entry i (0-based): curIndex = i+1, curStart = i+1; offset i+1 => line i+1, col 1
+    //   - addrMap has {i+1 -> sym(i)} for i in [0, 10000)
+    //
+    // Spot checks at entries 0, 999, 4999, 7777, 9999.
+    "T-P5-1: PositionsUnpickler.readSync with IntMap addrMap of 10,000 entries returns correct positions" in run {
+        val N = 10000
+
+        // Build 10,000 symbols, one per addr index 1..N
+        val syms: Array[Reflect.Symbol] =
+            Array.tabulate(N)(i => makeTestSymbol(s"sym$i"))
+
+        val addrMap: IntMap[Reflect.Symbol] =
+            IntMap.from((0 until N).map(i => (i + 1) -> syms(i)))
+
+        // Build the payload bytes:
+        //   LinesSizes: numLines=N+1, then N+1 zero-size lines (each as a single-byte Nat 0x80)
+        //   Assoc stream: N entries each = [encNat(12), encInt(1)]
+        //     header 12 = (1<<3)|4 = addrDelta=1, hasStart=true
+        //     start_delta = 1 (small positive Int, fits in 1 byte as 0x81)
+        val lineCount = N + 1
+        // numLines = 10001 encodes as 2 bytes (multi-byte Nat); lineCount line sizes each 1 byte
+        val lineSizeBytes   = 2 + lineCount // 2 bytes for numLines Nat + lineCount bytes for sizes
+        val assocEntryBytes = 2             // 1 byte header + 1 byte start_delta
+        val totalBytes      = lineSizeBytes + N * assocEntryBytes
+        val payload         = new Array[Byte](totalBytes)
+        var pos             = 0
+
+        // numLines as Nat: lineCount = 10001, multi-byte Nat encoding
+        // Nat encoding: groups of 7 bits; continuation bit = 0x80 CLEAR on all but last; last byte has 0x80 SET.
+        // 10001 in binary: 10011100010001 (14 bits) => two groups: [0001001] [1100010001]
+        // Wait, TASTy Nat: last byte = value | 0x80; preceding bytes have bit7=0.
+        // 10001 = 0x2711; in 7-bit groups (big-endian): [1] [39] [17] but only 2 groups needed:
+        // 10001 = 78 * 128 + 17 => first byte = 78 (0x4E, no stop bit), second byte = 17 | 0x80 = 0x91
+        // Verify: (78 << 7) | 17 = 9984 + 17 = 10001. Correct.
+        payload(pos) = 0x4e.toByte; pos += 1 // high 7 bits of 10001
+        payload(pos) = 0x91.toByte; pos += 1 // low 7 bits of 10001 | 0x80 stop
+
+        // Line sizes: lineCount bytes, each = 0 | 0x80 = 0x80 (size 0, stop bit set)
+        var li = 0
+        while li < lineCount do
+            payload(pos) = 0x80.toByte
+            pos += 1
+            li += 1
+        end while
+
+        // Assoc entries: N entries, each = [0x8c, 0x81]
+        // header = 12 | 0x80 = 0x8c (single-byte Nat for 12)
+        // start_delta = 1 | 0x80 = 0x81 (single-byte signed Int for +1)
+        var ei = 0
+        while ei < N do
+            payload(pos) = 0x8c.toByte; pos += 1 // encNat(12)
+            payload(pos) = 0x81.toByte; pos += 1 // encInt(1)
+            ei += 1
+        end while
+
+        val view = ByteView(payload)
+        Abort.run[ReflectError](PositionsUnpickler.read(view, addrMap, Present("scale-test.scala"))).map:
+            case Result.Success(result) =>
+                assert(result.size == N, s"Expected $N position entries but got ${result.size}")
+                // Spot-check 5 entries: indices 0, 999, 4999, 7777, 9999
+                val checks = Seq(0, 999, 4999, 7777, 9999)
+                for i <- checks do
+                    val sym = syms(i)
+                    assert(result.contains(sym), s"Expected sym$i to have a position entry")
+                    val pos = result(sym)
+                    // curIndex = i+1, curStart = i+1; lineStarts(k) = k for size-0 lines.
+                    // offset = i+1; binary search finds highest k with lineStarts(k) <= i+1.
+                    // lineStarts(i+1) = i+1 exactly matches, so line index = i+1 (0-based) => line i+2 (1-based).
+                    // col = offset - lineStarts(i+1) + 1 = (i+1) - (i+1) + 1 = 1.
+                    val expectedLine = i + 2
+                    assert(
+                        pos.line == expectedLine,
+                        s"sym$i expected line=${expectedLine} but got ${pos.line}"
+                    )
+                    assert(
+                        pos.column == 1,
+                        s"sym$i expected column=1 but got ${pos.column}"
+                    )
+                    assert(
+                        pos.sourceFile == Present("scale-test.scala"),
+                        s"sym$i expected sourceFile=Present(scale-test.scala) but got ${pos.sourceFile}"
+                    )
+                end for
+                succeed
             case Result.Failure(e) =>
                 fail(s"Expected success but got failure: $e")
             case Result.Panic(t) =>

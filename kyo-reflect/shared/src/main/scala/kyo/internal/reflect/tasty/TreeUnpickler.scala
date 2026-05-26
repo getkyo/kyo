@@ -6,6 +6,7 @@ import kyo.internal.reflect.binary.ByteView
 import kyo.internal.reflect.query.ClasspathRef
 import kyo.internal.reflect.symbol.Symbol as InternalSymbol
 import kyo.internal.reflect.type_.TypeArena
+import scala.collection.immutable.IntMap
 import scala.collection.mutable
 
 /** Decodes TASTy body byte slices into Reflect.Tree values.
@@ -109,7 +110,7 @@ object TreeUnpickler:
 
     final private class DecodeCtx(
         val names: Array[Reflect.Name],
-        val addrMap: scala.collection.Map[Int, Reflect.Symbol],
+        val addrMap: IntMap[Reflect.Symbol],
         val home: ClasspathRef,
         val typeSession: TypeUnpickler.TreeTypeSession,
         val treeAddrCache: mutable.HashMap[Int, Reflect.Tree]

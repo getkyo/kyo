@@ -8,6 +8,7 @@ import kyo.internal.reflect.symbol.Flags as InternalFlags
 import kyo.internal.reflect.symbol.Symbol as InternalSymbol
 import kyo.internal.reflect.symbol.SymbolKind as InternalSymbolKind
 import kyo.internal.reflect.type_.TypeArena
+import scala.collection.immutable.IntMap
 import scala.collection.mutable
 
 /** Pass 1 skeleton-eager AST unpickler.
@@ -61,7 +62,7 @@ object AstUnpickler:
       */
     final case class Pass1Result(
         symbols: Chunk[Reflect.Symbol],
-        addrMap: mutable.HashMap[Int, Reflect.Symbol],
+        addrMap: IntMap[Reflect.Symbol],
         placeholders: Chunk[UnresolvedRef],
         rootSymbol: Reflect.Symbol,
         parentsBySymbol: mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Type]],
@@ -150,6 +151,10 @@ object AstUnpickler:
             typeBySymbol
         )
 
+        // Convert the mutable addrMap to an immutable IntMap once, after walkStats completes.
+        // IntMap uses primitive Int keys; no autoboxing on .get(Int) lookups.
+        val intMap = IntMap.from(addrMap.iterator)
+
         // Populate the addrMap SingleAssign on every TastyOrigin in this file now that the full addrMap is known.
         // This allows TreeUnpickler (called lazily from Symbol.body) to resolve IDENT/SELECT addr references.
         // Unsafe: SingleAssign.set is an unsafe-tier helper; AllowUnsafe is embraced here.
@@ -158,7 +163,7 @@ object AstUnpickler:
             sym.origin match
                 case o: Reflect.Symbol.TastyOrigin =>
                     if !o._addrMap.isSet then
-                        o._addrMap.set(addrMap)
+                        o._addrMap.set(intMap)
                 case _ => ()
         end for
 
@@ -178,7 +183,7 @@ object AstUnpickler:
 
         Pass1Result(
             symbols = Chunk.from(allSymbols.tail), // exclude root
-            addrMap = addrMap,
+            addrMap = intMap,
             placeholders = Chunk.from(typeSession.placeholders),
             rootSymbol = root,
             parentsBySymbol = parentsBySymbol,

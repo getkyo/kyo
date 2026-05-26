@@ -8,6 +8,7 @@ import kyo.internal.reflect.symbol.SingleAssign
 import kyo.internal.reflect.symbol.Symbol as InternalSymbol
 import kyo.internal.reflect.type_.TypeArena
 import kyo.internal.reflect.type_.TypeOps
+import scala.collection.immutable.IntMap
 import scala.collection.mutable
 
 /** Decodes TASTy type nodes into Reflect.Type values.
@@ -60,7 +61,7 @@ object TypeUnpickler:
     def readType(
         view: ByteView,
         names: Array[Reflect.Name],
-        addrMap: Map[Int, Reflect.Symbol],
+        addrMap: IntMap[Reflect.Symbol],
         arena: TypeArena,
         home: ClasspathRef
     )(using Frame): (Reflect.Type, Chunk[UnresolvedRef]) < (Sync & Abort[ReflectError]) =
@@ -95,7 +96,7 @@ object TypeUnpickler:
       */
     final private[tasty] class TreeTypeSession(
         val names: Array[Reflect.Name],
-        val addrMap: scala.collection.Map[Int, Reflect.Symbol],
+        val addrMap: IntMap[Reflect.Symbol],
         val arena: TypeArena,
         val home: ClasspathRef,
         val sectionBytes: Array[Byte],
@@ -170,7 +171,7 @@ object TypeUnpickler:
         // Use the live addrMap snapshot at call time so locally-defined symbols found so far are visible.
         val ctx = DecodeCtx(
             session.names,
-            session.liveAddrMap.toMap,
+            IntMap.from(session.liveAddrMap.iterator),
             session.arena,
             session.home,
             session.addrCache,
@@ -205,7 +206,7 @@ object TypeUnpickler:
     // Pass null when decoding from a live DecodeSession (Pass 1) where addrCache is always pre-populated.
     final private class DecodeCtx(
         val names: Array[Reflect.Name],
-        val addrMap: scala.collection.Map[Int, Reflect.Symbol],
+        val addrMap: IntMap[Reflect.Symbol],
         val arena: TypeArena,
         val home: ClasspathRef,
         val addrCache: mutable.HashMap[Int, Reflect.Type],

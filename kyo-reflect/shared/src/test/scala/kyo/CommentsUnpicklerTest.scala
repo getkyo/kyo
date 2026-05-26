@@ -8,6 +8,7 @@ import kyo.internal.reflect.query.ClasspathTestHelpers
 import kyo.internal.reflect.symbol.Interner
 import kyo.internal.reflect.tasty.CommentsUnpickler
 import kyo.internal.reflect.type_.TypeArena
+import scala.collection.immutable.IntMap
 
 /** Tests for CommentsUnpickler.read and Reflect.Symbol.scaladoc.
   *
@@ -69,7 +70,7 @@ class CommentsUnpicklerTest extends Test:
     // entry for that symbol containing the documented text.
     "CommentsUnpickler: documented class entry produces result with comment text" in run {
         val sym     = makeTestSymbol("Foo")
-        val addrMap = Map(10 -> sym) // addr 10 -> sym
+        val addrMap = IntMap(10 -> sym) // addr 10 -> sym
         val payload = buildSection(10 -> "/** My doc */")
         val view    = ByteView(payload)
         Abort.run[ReflectError](CommentsUnpickler.read(view, addrMap)).map:
@@ -90,7 +91,7 @@ class CommentsUnpicklerTest extends Test:
     // error.
     "CommentsUnpickler: empty payload returns empty map without error" in run {
         val view = ByteView(Array.empty[Byte])
-        Abort.run[ReflectError](CommentsUnpickler.read(view, Map.empty)).map:
+        Abort.run[ReflectError](CommentsUnpickler.read(view, IntMap.empty)).map:
             case Result.Success(result) =>
                 assert(result.isEmpty, s"Expected empty result but got ${result.size} entries")
             case Result.Failure(e) =>
@@ -115,7 +116,7 @@ class CommentsUnpicklerTest extends Test:
             // missing 17 more bytes + span
         )
         val sym     = makeTestSymbol("Truncated")
-        val addrMap = Map(5 -> sym)
+        val addrMap = IntMap(5 -> sym)
         val view    = ByteView(payload)
         Abort.run[ReflectError](CommentsUnpickler.read(view, addrMap)).map:
             case Result.Success(result) =>
@@ -135,7 +136,7 @@ class CommentsUnpicklerTest extends Test:
     "CommentsUnpickler: symbol with comment gets Present; symbol without comment gets Absent" in run {
         val symWithDoc    = makeTestSymbol("WithDoc")
         val symWithoutDoc = makeTestSymbol("WithoutDoc")
-        val addrMap       = Map(1 -> symWithDoc, 2 -> symWithoutDoc)
+        val addrMap       = IntMap(1 -> symWithDoc, 2 -> symWithoutDoc)
         // Only addr 1 has a comment; addr 2 is in addrMap but has no comment entry in the section.
         val payload = buildSection(1 -> "/** documented */")
         val view    = ByteView(payload)
@@ -174,7 +175,7 @@ class CommentsUnpicklerTest extends Test:
     "CommentsUnpickler: two sibling definitions have independent scaladoc entries" in run {
         val symAlpha = makeTestSymbol("Alpha")
         val symBeta  = makeTestSymbol("Beta")
-        val addrMap  = Map(10 -> symAlpha, 20 -> symBeta)
+        val addrMap  = IntMap(10 -> symAlpha, 20 -> symBeta)
         val payload  = buildSection(10 -> "/** Alpha doc */", 20 -> "/** Beta doc */")
         val view     = ByteView(payload)
         Abort.run[ReflectError](CommentsUnpickler.read(view, addrMap)).map:

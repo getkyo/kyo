@@ -11,6 +11,7 @@ import kyo.internal.reflect.tasty.SectionIndex
 import kyo.internal.reflect.tasty.TastyFormat
 import kyo.internal.reflect.tasty.TastyHeader
 import kyo.internal.reflect.type_.TypeArena
+import scala.collection.immutable.IntMap
 import scala.collection.mutable
 
 /** Tests for AstUnpickler.readPass1.
@@ -572,7 +573,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[ReflectError](runPass1WithArena(bytes, arena)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val addrMapH: mutable.HashMap[Int, Reflect.Symbol]                      = r.addrMap
+                    val addrMapH: IntMap[Reflect.Symbol]                                    = r.addrMap
                     val parentsByH: mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Type]]    = r.parentsBySymbol
                     val childrenByH: mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Symbol]] = r.childrenByOwner
                     val typeByH: mutable.HashMap[Reflect.Symbol, Reflect.Type]              = r.typeBySymbol

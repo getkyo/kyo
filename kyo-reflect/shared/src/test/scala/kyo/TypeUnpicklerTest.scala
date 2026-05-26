@@ -7,6 +7,7 @@ import kyo.internal.reflect.symbol.SingleAssign
 import kyo.internal.reflect.tasty.TastyFormat
 import kyo.internal.reflect.tasty.TypeUnpickler
 import kyo.internal.reflect.type_.TypeArena
+import scala.collection.immutable.IntMap
 import scala.collection.mutable
 
 /** Tests for TypeUnpickler decoding of TASTy type nodes.
@@ -82,7 +83,7 @@ class TypeUnpicklerTest extends Test:
       */
     private def decodeType(
         bytes: Array[Byte],
-        addrMap: Map[Int, Reflect.Symbol] = Map.empty,
+        addrMap: IntMap[Reflect.Symbol] = IntMap.empty,
         names: Array[Reflect.Name] = Array.empty
     )(using Frame): (Reflect.Type, Chunk[UnresolvedRef]) < (Sync & Abort[ReflectError]) =
         val view  = ByteView(bytes)
@@ -95,7 +96,7 @@ class TypeUnpicklerTest extends Test:
     "decoding TYPEREFsymbol returns Named(intSymbol)" in run {
         val sym     = makeSym("Int")
         val symAddr = 42
-        val addrMap = Map(symAddr -> sym)
+        val addrMap = IntMap(symAddr -> sym)
         // TYPEREFsymbol (116) = cat4: tag + symAddr Nat + qual sub-type.
         // qual = TYPEREFpkg (65) with nameRef 0 => need names[0].
         val names     = Array(Reflect.Name("scala"))
@@ -115,7 +116,7 @@ class TypeUnpicklerTest extends Test:
     "decoding BYNAMEtype wrapping a TYPEREFsymbol returns ByName(Named(sym))" in run {
         val sym        = makeSym("Int")
         val symAddr    = 10
-        val addrMap    = Map(symAddr -> sym)
+        val addrMap    = IntMap(symAddr -> sym)
         val names      = Array(Reflect.Name("scala"))
         val qualBytes  = cat2(TastyFormat.TYPEREFpkg, 0)
         val innerBytes = cat4(TastyFormat.TYPEREFsymbol, symAddr, qualBytes)
@@ -135,7 +136,7 @@ class TypeUnpicklerTest extends Test:
     "decoding REPEATED returns Repeated(elem)" in run {
         val sym       = makeSym("String")
         val symAddr   = 5
-        val addrMap   = Map(symAddr -> sym)
+        val addrMap   = IntMap(symAddr -> sym)
         val names     = Array(Reflect.Name("scala"))
         val qualBytes = cat2(TastyFormat.TYPEREFpkg, 0)
         val elemBytes = cat4(TastyFormat.TYPEREFsymbol, symAddr, qualBytes)
@@ -157,7 +158,7 @@ class TypeUnpicklerTest extends Test:
         val stringSym  = makeSym("String")
         val listAddr   = 20
         val stringAddr = 30
-        val addrMap    = Map(listAddr -> listSym, stringAddr -> stringSym)
+        val addrMap    = IntMap(listAddr -> listSym, stringAddr -> stringSym)
         val names      = Array(Reflect.Name("scala"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
         // APPLIEDtype (161) = cat5: [tycon=TYPEREFsymbol(listAddr, qual)] [arg=TYPEREFsymbol(stringAddr, qual)]
@@ -188,7 +189,7 @@ class TypeUnpicklerTest extends Test:
     "decoding SHAREDtype reference returns the same reference (no duplication)" in run {
         val sym     = makeSym("Int")
         val symAddr = 7
-        val addrMap = Map(symAddr -> sym)
+        val addrMap = IntMap(symAddr -> sym)
         val names   = Array(Reflect.Name("scala"))
         val qual    = cat2(TastyFormat.TYPEREFpkg, 0)
         // firstTypeBytes: TYPEREFsymbol starting at position 0 in the combined view.
@@ -223,7 +224,7 @@ class TypeUnpicklerTest extends Test:
         val resultSym  = makeSym("Int")
         val paramAddr  = 5
         val resultAddr = 10
-        val addrMap    = Map(paramAddr -> paramSym, resultAddr -> resultSym)
+        val addrMap    = IntMap(paramAddr -> paramSym, resultAddr -> resultSym)
         val names      = Array(Reflect.Name("scala"), Reflect.Name("A"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
         // TYPELAMBDAtype (170) = cat5: [result_Type] [typeRef0 paramNameRef0]
@@ -249,7 +250,7 @@ class TypeUnpicklerTest extends Test:
     "decoding ANNOTATEDtype returns Annotated(underlying, annotation)" in run {
         val sym        = makeSym("Int")
         val symAddr    = 3
-        val addrMap    = Map(symAddr -> sym)
+        val addrMap    = IntMap(symAddr -> sym)
         val names      = Array(Reflect.Name("scala"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
         val underlying = cat4(TastyFormat.TYPEREFsymbol, symAddr, qual)
@@ -271,7 +272,7 @@ class TypeUnpicklerTest extends Test:
     "decoding ORtype returns OrType(left, right)" in run {
         val symA    = makeSym("A")
         val symB    = makeSym("B")
-        val addrMap = Map(5 -> symA, 6 -> symB)
+        val addrMap = IntMap(5 -> symA, 6 -> symB)
         val names   = Array(Reflect.Name("scala"))
         val qual    = cat2(TastyFormat.TYPEREFpkg, 0)
         val left    = cat4(TastyFormat.TYPEREFsymbol, 5, qual)
@@ -292,7 +293,7 @@ class TypeUnpicklerTest extends Test:
     "decoding ANDtype returns AndType(left, right) or normalized form" in run {
         val symA    = makeSym("A")
         val symB    = makeSym("B")
-        val addrMap = Map(5 -> symA, 6 -> symB)
+        val addrMap = IntMap(5 -> symA, 6 -> symB)
         val names   = Array(Reflect.Name("scala"))
         val qual    = cat2(TastyFormat.TYPEREFpkg, 0)
         val left    = cat4(TastyFormat.TYPEREFsymbol, 5, qual)
@@ -315,7 +316,7 @@ class TypeUnpicklerTest extends Test:
     "decoding MATCHtype with 2 cases returns MatchType with cases.size == 2" in run {
         val symBound = makeSym("Any")
         val symScrut = makeSym("X")
-        val addrMap  = Map(1 -> symBound, 2 -> symScrut)
+        val addrMap  = IntMap(1 -> symBound, 2 -> symScrut)
         val names    = Array(Reflect.Name("scala"))
         val qual     = cat2(TastyFormat.TYPEREFpkg, 0)
         val bound    = cat4(TastyFormat.TYPEREFsymbol, 1, qual)
@@ -439,7 +440,7 @@ class TypeUnpicklerTest extends Test:
         val ns      = cat2(TastyFormat.TYPEREFpkg, 0)
         val payload = encodeNat(1) ++ qual ++ ns
         val bytes   = cat5(TastyFormat.TYPEREFin, payload)
-        Abort.run[ReflectError](decodeType(bytes, Map.empty, names)).map {
+        Abort.run[ReflectError](decodeType(bytes, IntMap.empty, names)).map {
             case Result.Success((t, placeholders)) =>
                 // The FQN was not in addrMap, so we should get an UnresolvedRef.
                 assert(placeholders.nonEmpty, s"Expected non-empty placeholders but got empty. Type: $t")

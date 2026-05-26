@@ -2,6 +2,7 @@ package kyo.internal.reflect.tasty
 
 import kyo.*
 import kyo.internal.reflect.binary.ByteView
+import scala.collection.immutable.IntMap
 
 /** Reads the TASTy Comments section.
   *
@@ -32,7 +33,7 @@ object CommentsUnpickler:
       */
     def read(
         view: ByteView,
-        addrMap: scala.collection.Map[Int, Reflect.Symbol]
+        addrMap: IntMap[Reflect.Symbol]
     )(using Frame): Map[Reflect.Symbol, String] < (Sync & Abort[ReflectError]) =
         val result =
             try Right(readSync(view, addrMap))
@@ -44,7 +45,7 @@ object CommentsUnpickler:
             case Left(err) => Abort.fail(err)
     end read
 
-    private def readSync(view: ByteView, addrMap: scala.collection.Map[Int, Reflect.Symbol]): Map[Reflect.Symbol, String] =
+    private def readSync(view: ByteView, addrMap: IntMap[Reflect.Symbol]): Map[Reflect.Symbol, String] =
         val builder = Map.newBuilder[Reflect.Symbol, String]
         while view.remaining > 0 do
             val addr    = view.readNat()

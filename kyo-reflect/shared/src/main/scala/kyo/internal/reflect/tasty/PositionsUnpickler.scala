@@ -2,6 +2,7 @@ package kyo.internal.reflect.tasty
 
 import kyo.*
 import kyo.internal.reflect.binary.ByteView
+import scala.collection.immutable.IntMap
 
 /** Reads the TASTy Positions section.
   *
@@ -42,7 +43,7 @@ object PositionsUnpickler:
       */
     def read(
         view: ByteView,
-        addrMap: scala.collection.Map[Int, Reflect.Symbol],
+        addrMap: IntMap[Reflect.Symbol],
         sourceFile: Maybe[String]
     )(using Frame): Map[Reflect.Symbol, Reflect.Position] < (Sync & Abort[ReflectError]) =
         val result =
@@ -57,7 +58,7 @@ object PositionsUnpickler:
 
     private def readSync(
         view: ByteView,
-        addrMap: scala.collection.Map[Int, Reflect.Symbol],
+        addrMap: IntMap[Reflect.Symbol],
         sourceFile: Maybe[String]
     ): Map[Reflect.Symbol, Reflect.Position] =
         // An empty section has no data at all; return an empty map immediately without trying to read.

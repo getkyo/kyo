@@ -9,6 +9,7 @@ import kyo.internal.reflect.snapshot.SnapshotReader
 import kyo.internal.reflect.snapshot.SnapshotWriter
 import kyo.internal.reflect.symbol.Interner
 import kyo.internal.reflect.type_.TypeArena
+import scala.collection.immutable.IntMap
 
 /** kyo-reflect public entry object.
   *
@@ -773,12 +774,12 @@ object Reflect:
             val bodyView: kyo.internal.reflect.binary.ByteView | Null
         ) extends Origin:
             // Write-once: populated by AstUnpickler after pass1 completes. Unsafe: SingleAssign is unsafe-tier.
-            private[kyo] val _addrMap: kyo.internal.reflect.symbol.SingleAssign[scala.collection.mutable.HashMap[Int, Reflect.Symbol]] =
+            private[kyo] val _addrMap: kyo.internal.reflect.symbol.SingleAssign[IntMap[Reflect.Symbol]] =
                 new kyo.internal.reflect.symbol.SingleAssign
 
-            def addrMap(using AllowUnsafe): scala.collection.Map[Int, Reflect.Symbol] =
+            def addrMap(using AllowUnsafe): IntMap[Reflect.Symbol] =
                 if _addrMap.isSet then _addrMap.get()
-                else scala.collection.mutable.HashMap.empty
+                else IntMap.empty
 
             override def equals(other: Any): Boolean = other match
                 case o: TastyOrigin =>
