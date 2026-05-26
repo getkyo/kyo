@@ -121,7 +121,7 @@ object ClasspathOrchestrator:
 
     /** Phase A+B+C pipeline via Channels.
       *
-      * Three concurrent stages run inside `Async.gather`: - Producer: walks each root via `source.list`, puts (entryPath, kind) to
+      * Three concurrent stages run inside `Async.foreach`: - Producer: walks each root via `source.list`, puts (entryPath, kind) to
       * `entryCh`, then closes `entryCh` with `closeAwaitEmpty` so decoders drain. - Decoders: consume `entryCh` via `streamUntilClosed`;
       * each decoded result is put to `resultCh`; after all entries consumed, close `resultCh`. - Merger: consumes `resultCh` via
       * `streamUntilClosed`; accumulates into `MergeState`; exits when `resultCh` closes.

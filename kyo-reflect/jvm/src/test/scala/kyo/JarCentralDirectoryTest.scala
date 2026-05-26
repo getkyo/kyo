@@ -3,8 +3,6 @@ package kyo
 import java.io.FileOutputStream
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
-import java.util.zip.CRC32
-import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kyo.internal.reflect.query.JarCentralDirectory
@@ -216,8 +214,9 @@ class JarCentralDirectoryTest extends Test:
                 throw t
     }
 
-    // T6: non-JAR file path returns Abort[ReflectError]
-    "T6: non-JAR file returns Abort[ReflectError]" taggedAs jvmOnly in run {
+    // T6: non-JAR file path returns Abort[ReflectError.MalformedSection] because the
+    //     EOCD signature scan fails on a file that is not a valid ZIP/JAR.
+    "T6: non-JAR file returns Abort[ReflectError.MalformedSection]" taggedAs jvmOnly in run {
         val dir      = makeTempDir()
         val textPath = s"$dir/not-a-jar.txt"
         Files.write(java.nio.file.Paths.get(textPath), "hello world".getBytes(StandardCharsets.UTF_8))
@@ -225,11 +224,13 @@ class JarCentralDirectoryTest extends Test:
             JarCentralDirectory.list(textPath, Chunk(".tasty"))
         ).map:
             case Result.Success(_) =>
-                fail("Expected Abort[ReflectError] for non-JAR file, got success")
+                fail("Expected Abort[ReflectError.MalformedSection] for non-JAR file, got success")
             case Result.Failure(e) =>
-                succeed
+                e match
+                    case ReflectError.MalformedSection(_, _) => succeed
+                    case other                               => fail(s"Expected MalformedSection but got: $other")
             case Result.Panic(t) =>
-                throw t
+                fail(s"unexpected panic: $t")
     }
 
     // T11: JAR with corrupted EOCD signature (0xdeadbeef) returns Abort[ReflectError.MalformedSection]
@@ -272,49 +273,53 @@ class JarCentralDirectoryTest extends Test:
                 throw t
     }
 
-    // T12: JAR with general-purpose-bit-3 set (data descriptor present):
-    //      either enumerates correctly OR returns Abort[ReflectError] with documented message.
-    //      The CEN reader reads entry names from the CEN record, not the local file header.
-    //      Data descriptors follow compressed data and do not affect CEN entry names.
-    //      ZipOutputStream uses stored (STORED) or deflated (DEFLATED) methods; bit-3 is not
-    //      set by default. We test that a JAR with DEFLATED entries still enumerates correctly
-    //      (DEFLATED sets the data descriptor bit in the local file header, which the CEN reader
-    //      does not consult for entry names).
-    "T12: JAR with DEFLATED entries (data descriptor present) enumerates correctly or returns Abort[ReflectError]" taggedAs jvmOnly in run {
+    // T12: JAR with general-purpose-bit-3 (data descriptor flag) set in the CEN record.
+    //
+    // Background: ZipOutputStream does NOT set GPB bit-3 in the CEN when sizes are known at write
+    // time (which is always the case when using putNextEntry with pre-set CRC/sizes). To exercise
+    // the real bit-3 hazard we patch the CEN GPB field of a normal STORED JAR after writing it.
+    //
+    // The CEN-based reader reads entry names from the CEN record and checks only bit-11 (UTF-8
+    // flag) for charset selection. Bit-3 is not used by the reader, so an entry with bit-3 set
+    // in its CEN GPB field must enumerate correctly (name returned, no error).
+    "T12: JAR with CEN GPB bit-3 (data descriptor flag) set enumerates correctly" taggedAs jvmOnly in run {
         val dir     = makeTempDir()
-        val jarPath = s"$dir/deflated.jar"
-        val fos     = new FileOutputStream(jarPath)
-        val zos     = new ZipOutputStream(fos)
-        zos.setMethod(ZipOutputStream.DEFLATED)
-        zos.setLevel(Deflater.DEFAULT_COMPRESSION)
-        try
-            val entry = new ZipEntry("kyo/Compressed.tasty")
-            entry.setMethod(ZipEntry.DEFLATED)
-            zos.putNextEntry(entry)
-            zos.write(tastyContent)
-            zos.closeEntry()
-        finally
-            zos.close()
-            fos.close()
-        end try
+        val jarPath = s"$dir/bit3.jar"
+        // Write a normal STORED JAR first.
+        writeJar(jarPath, Seq(("kyo/DataDesc.tasty", tastyContent)))
+        // Patch the CEN record: locate the CEN signature (0x02014b50) and set bit-3 in the GPB.
+        // CEN layout: sig(4) + versionMade(2) + versionNeeded(2) + gpFlag(2) at offset 8.
+        val bytes  = Files.readAllBytes(java.nio.file.Paths.get(jarPath))
+        var cenPos = -1
+        var i      = 0
+        while i <= bytes.length - 4 && cenPos < 0 do
+            if (bytes(i) & 0xff) == 0x50 &&
+                (bytes(i + 1) & 0xff) == 0x4b &&
+                (bytes(i + 2) & 0xff) == 0x01 &&
+                (bytes(i + 3) & 0xff) == 0x02
+            then cenPos = i
+            end if
+            i += 1
+        end while
+        assert(cenPos >= 0, "Could not locate CEN signature in test JAR")
+        // GPB field is at offset 8 from the CEN signature (little-endian 2 bytes).
+        val gpbLow = bytes(cenPos + 8) & 0xff
+        bytes(cenPos + 8) = (gpbLow | 0x08).toByte // set bit 3
+        Files.write(java.nio.file.Paths.get(jarPath), bytes)
         Abort.run[ReflectError](
             JarCentralDirectory.list(jarPath, Chunk(".tasty"))
         ).map:
             case Result.Success(entries) =>
-                // CEN-based reader handles DEFLATED entries correctly: names are always in CEN
+                // CEN reader ignores bit-3 and reads names from CEN records correctly.
+                assert(entries.length == 1, s"Expected 1 entry with bit-3 set in CEN GPB but got: $entries")
                 assert(
-                    entries.length == 1,
-                    s"Expected 1 entry for DEFLATED JAR but got: $entries"
+                    entries.head._2 == "kyo/DataDesc.tasty",
+                    s"Expected kyo/DataDesc.tasty but got: ${entries.head._2}"
                 )
-                assert(entries.head._2 == "kyo/Compressed.tasty", s"Expected kyo/Compressed.tasty but got: ${entries.head._2}")
-            case Result.Failure(ReflectError.MalformedSection(_, msg)) =>
-                // Implementation may return Abort[ReflectError] for data descriptors; acceptable
-                assert(msg.nonEmpty, "MalformedSection reason should be non-empty")
             case Result.Failure(e) =>
-                // Any ReflectError is acceptable per the test spec
-                succeed
+                fail(s"Expected successful enumeration with CEN GPB bit-3 set, but got failure: $e")
             case Result.Panic(t) =>
-                throw t
+                fail(s"unexpected panic: $t")
     }
 
     // T13: empty JAR (only EOCD record, zero entries) returns Chunk.empty without throwing
@@ -371,6 +376,40 @@ class JarCentralDirectoryTest extends Test:
                 fail(s"Unexpected failure: $e")
             case Result.Panic(t) =>
                 throw t
+    }
+
+    // F4-JAR: JarCentralDirectory.list returns entries in the same order across two consecutive calls.
+    //         This exercises the real CEN reader (not the in-memory FileSource fixture used by F4
+    //         in FileSourceTest, whose list() pre-sorts and trivially passes the ordering check).
+    "F4-JAR: JarCentralDirectory.list returns identical ordering across two consecutive calls" taggedAs jvmOnly in run {
+        val dir     = makeTempDir()
+        val jarPath = s"$dir/order-test.jar"
+        // Write entries in a deliberately non-alphabetical order to exercise real CEN record ordering.
+        writeJar(
+            jarPath,
+            Seq(
+                ("kyo/Zeta.tasty", tastyContent),
+                ("kyo/Alpha.class", classContent),
+                ("kyo/Mu.tasty", tastyContent),
+                ("kyo/Beta.class", classContent),
+                ("kyo/Omega.tasty", tastyContent)
+            )
+        )
+        Abort.run[ReflectError](
+            JarCentralDirectory.list(jarPath, Chunk(".tasty", ".class")).flatMap: first =>
+                JarCentralDirectory.list(jarPath, Chunk(".tasty", ".class")).map: second =>
+                    (first, second)
+        ).map:
+            case Result.Success((first, second)) =>
+                assert(
+                    first.toSeq == second.toSeq,
+                    s"Two consecutive JarCentralDirectory.list calls must return identical ordering: first=$first second=$second"
+                )
+                assert(first.length == 5, s"Expected 5 entries but got: ${first.length}")
+            case Result.Failure(e) =>
+                fail(s"Unexpected failure in F4-JAR determinism test: $e")
+            case Result.Panic(t) =>
+                fail(s"unexpected panic: $t")
     }
 
 end JarCentralDirectoryTest

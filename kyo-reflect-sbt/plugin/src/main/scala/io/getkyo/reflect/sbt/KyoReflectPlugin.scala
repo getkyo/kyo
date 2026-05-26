@@ -1,4 +1,4 @@
-package kyo
+package io.getkyo.reflect.sbt
 
 import sbt._
 import sbt.Keys._

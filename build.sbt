@@ -1300,9 +1300,9 @@ lazy val `kyo-compat` = (project in file("kyo-compat/plugin"))
 // --- kyo-reflect-sbt (fork-JVM sbt plugin that generates kyo-reflect snapshots)
 //
 // Two subprojects:
-//   kyo-reflect-sbt-runner  — Scala 3 JVM JAR that calls Reflect.Classpath.openCached.
-//                             Assembled into a fat JAR by sbt-assembly for the forked JVM.
-//   kyo-reflect-sbt-plugin  — Scala 2.12 sbt AutoPlugin that forks the runner JVM.
+//   kyo-reflect-sbt-runner: Scala 3 JVM JAR that calls Reflect.Classpath.openCached.
+//                           Assembled into a fat JAR by sbt-assembly for the forked JVM.
+//   kyo-reflect-sbt-plugin: Scala 2.12 sbt AutoPlugin that forks the runner JVM.
 //
 // Both aggregated into kyoJVM only (sbt plugins run on JVM).
 // Scripted tests are run via `kyo-reflect-sbt-plugin/scripted`.
