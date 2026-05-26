@@ -750,9 +750,13 @@ final private[kyo] class HttpClientBackend[Handle] private (
                         }
                     }.map { readFiber =>
                         Fiber.initUnscoped {
-                            readFiber.getResult.map { _ =>
+                            readFiber.getResult.map { result =>
+                                val log = result match
+                                    case Result.Failure(e) => Log.warn(s"HttpWebSocket client reader failed: $e")
+                                    case Result.Panic(t)   => Log.warn("HttpWebSocket client reader panicked", t)
+                                    case Result.Success(_) => Kyo.unit
                                 // Close both channels so the write fiber observes EOF on outbound.take and exits promptly.
-                                inbound.close.unit.andThen(outbound.close.unit)
+                                log.andThen(inbound.close.unit).andThen(outbound.close.unit)
                             }
                         }.map { monitorFiber =>
                             Fiber.initUnscoped {

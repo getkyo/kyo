@@ -79,7 +79,10 @@ object HttpWebSocket:
       * @param bufferSize
       *   Channel capacity for inbound and outbound message queues. Controls backpressure — when a channel is full, the sender suspends.
       * @param maxFrameSize
-      *   Maximum size in bytes of a single HttpWebSocket frame. Frames exceeding this limit cause the connection to close.
+      *   Maximum size in bytes of a single HttpWebSocket frame. Frames exceeding this limit cause the connection to close. Default is 16 MiB,
+      *   which comfortably handles realistic single-frame payloads (Chrome CDP screenshots up to ~4K, large RPC responses, base64-encoded
+      *   binary uploads) while still capping pathological remotes. Lower it for memory-sensitive deployments; raise it for clients that need
+      *   to receive larger frames in one go.
       * @param autoPingInterval
       *   If set, the backend sends ping frames at this interval to keep the connection alive through proxies.
       * @param closeTimeout
@@ -89,7 +92,7 @@ object HttpWebSocket:
       */
     case class Config(
         bufferSize: Int = 32,
-        maxFrameSize: Int = 65536,
+        maxFrameSize: Int = 16 * 1024 * 1024,
         autoPingInterval: Maybe[Duration] = Absent,
         closeTimeout: Duration = 5.seconds,
         subprotocols: Seq[String] = Seq.empty

@@ -323,8 +323,17 @@ private[kyo] object UnsafeServerDispatch:
                         }
                     }.map { readFiber =>
                         Fiber.initUnscoped {
-                            readFiber.getResult.map { _ =>
-                                inbound.close.unit.andThen(outbound.close.unit)
+                            readFiber.getResult.map {
+                                case Result.Failure(e) =>
+                                    Log.warn(s"HttpWebSocket server reader failed: $e")
+                                        .andThen(inbound.close.unit)
+                                        .andThen(outbound.close.unit)
+                                case Result.Panic(t) =>
+                                    Log.warn("HttpWebSocket server reader panicked", t)
+                                        .andThen(inbound.close.unit)
+                                        .andThen(outbound.close.unit)
+                                case Result.Success(_) =>
+                                    inbound.close.unit.andThen(outbound.close.unit)
                             }
                         }.map { monitorFiber =>
                             Fiber.initUnscoped {
