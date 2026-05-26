@@ -22,7 +22,7 @@ import kyo.internal.reflect.type_.TypeArena
   */
 class JavaSymbolTest extends Test:
 
-    private val interner = new Interner(32)
+    private val interner = new Interner(numShards = 32, initialShardCapacity = 16)
 
     /** Load JDK class bytes by binary path. JVM-only. */
     private def loadJdkClass(binaryPath: String): Array[Byte] =

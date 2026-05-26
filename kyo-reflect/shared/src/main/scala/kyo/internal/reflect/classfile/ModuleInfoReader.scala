@@ -36,7 +36,7 @@ object ModuleInfoReader:
     def read(bytes: Array[Byte])(using Frame): Reflect.ModuleDescriptor < (Sync & Abort[ReflectError]) =
         val view     = ByteView(bytes)
         val path     = "<module-info.class>"
-        val interner = new Interner(16)
+        val interner = new Interner(numShards = 16, initialShardCapacity = 16)
         readFrom(view, interner, path)
     end read
 

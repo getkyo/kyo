@@ -20,7 +20,7 @@ import kyo.internal.reflect.type_.TypeArena
   */
 class ClassfileReaderTest extends Test:
 
-    private val interner = new Interner(32)
+    private val interner = new Interner(numShards = 32, initialShardCapacity = 16)
 
     /** Load raw bytes for a JVM class by binary path. Only works on JVM. */
     private def loadClassBytes(binaryPath: String): Array[Byte] =

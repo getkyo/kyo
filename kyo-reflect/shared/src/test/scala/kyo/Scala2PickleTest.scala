@@ -31,7 +31,7 @@ import kyo.internal.reflect.type_.TypeArena
   */
 class Scala2PickleTest extends Test:
 
-    private val interner = new Interner(32)
+    private val interner = new Interner(numShards = 32, initialShardCapacity = 16)
 
     // -------------------------------------------------------------------------
     // Pickle builder helpers

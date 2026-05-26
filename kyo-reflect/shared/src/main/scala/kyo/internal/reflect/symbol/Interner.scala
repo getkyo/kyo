@@ -13,14 +13,17 @@ import kyo.internal.reflect.binary.Utf8
   *
   * Thread safety: concurrent `intern` calls for the same byte sequence are guaranteed to return the same `Entry` object.
   */
-final class Interner(numShards: Int = 32):
+final class Interner(numShards: Int, initialShardCapacity: Int):
     require((numShards & (numShards - 1)) == 0, "numShards must be a power of 2")
+    require((initialShardCapacity & (initialShardCapacity - 1)) == 0, "initialShardCapacity must be a power of 2")
+    require(initialShardCapacity >= 1, "initialShardCapacity must be at least 1")
 
-    private val initialCapacity = 16
+    private[kyo] val growCount: java.util.concurrent.atomic.AtomicInteger =
+        new java.util.concurrent.atomic.AtomicInteger(0)
 
     private val shards: Array[AtomicReference[Array[Interner.Entry]]] =
         Array.tabulate(numShards)(_ =>
-            new AtomicReference(new Array[Interner.Entry](initialCapacity))
+            new AtomicReference(new Array[Interner.Entry](initialShardCapacity))
         )
 
     /** Intern the byte slice `bytes[offset .. offset+length)`, returning a canonical `Entry`. */
@@ -101,6 +104,7 @@ final class Interner(numShards: Int = 32):
     private def grow(shard: AtomicReference[Array[Interner.Entry]], expected: Array[Interner.Entry]): Unit =
         val current = shard.get()
         if current eq expected then
+            growCount.incrementAndGet(): Unit
             val newTable = new Array[Interner.Entry](expected.length * 2)
             val newMask  = newTable.length - 1
             var i        = 0

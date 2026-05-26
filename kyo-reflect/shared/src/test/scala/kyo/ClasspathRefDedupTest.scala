@@ -38,7 +38,7 @@ class ClasspathRefDedupTest extends Test:
     "assignHomesForTest does not throw when multiple symbols share a single ClasspathRef" in run {
         val bytes    = kyo.fixtures.Embedded.plainClassTasty
         val view     = ByteView(bytes)
-        val interner = new Interner(32)
+        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
         val home     = new ClasspathRef
         val arena    = TypeArena.canonical()
         Abort.run[ReflectError]:

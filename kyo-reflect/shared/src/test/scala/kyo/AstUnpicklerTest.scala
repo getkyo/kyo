@@ -33,7 +33,7 @@ class AstUnpicklerTest extends Test:
     /** Parse a TASTy file and run pass 1. Returns the Pass1Result. */
     private def runPass1(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[ReflectError]) =
         val view     = ByteView(bytes)
-        val interner = new Interner(32)
+        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
         val home     = new ClasspathRef
         val arena    = TypeArena.canonical()
         for
@@ -57,7 +57,7 @@ class AstUnpicklerTest extends Test:
     )
         : AstUnpickler.Pass1Result < (Sync & Abort[ReflectError]) =
         val view     = ByteView(bytes)
-        val interner = new Interner(32)
+        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
         val home     = new ClasspathRef
         for
             _        <- TastyHeader.read(view)

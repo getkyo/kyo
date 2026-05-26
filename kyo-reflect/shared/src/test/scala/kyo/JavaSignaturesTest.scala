@@ -9,7 +9,7 @@ import kyo.internal.reflect.symbol.Interner
   */
 class JavaSignaturesTest extends Test:
 
-    private val interner = new Interner(8)
+    private val interner = new Interner(numShards = 8, initialShardCapacity = 16)
 
     // -------------------------------------------------------------------------
     // Test 13: parameterized type

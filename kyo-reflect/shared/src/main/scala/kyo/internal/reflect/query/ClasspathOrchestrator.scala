@@ -129,6 +129,27 @@ object ClasspathOrchestrator:
       * `Scope.ensure` registrations on both channels guarantee they close on any exit (success, Abort, interrupt). Without this, a
       * strict-mode Abort in a decoder would leave `resultCh` open and the merger would block forever.
       */
+    /** Pre-walk all roots to count entries, used to size the Interner before streaming begins.
+      *
+      * Option A from execution-plan-perf.md Phase 6: a separate pre-walk to obtain the total entry count. This pays one extra walk per
+      * cold-load (the same walks Phase 3 already does for streaming). The benefit is that the Interner's shards are sized precisely to
+      * (entryCount / numShards).max(16), eliminating most resize events for large classpaths (5,949 entries => ~46 entries per shard vs the
+      * old hard-coded initial capacity of 16, which caused 2+ resizes per shard on a full classpath).
+      */
+    private def countAllEntries(
+        roots: Seq[String],
+        source: FileSource
+    )(using Frame): Int < (Sync & Abort[ReflectError]) =
+        val suffixes = Chunk(".tasty", "module-info.class")
+        Kyo.foreach(Chunk.from(roots)): root =>
+            source.list(root, suffixes).map: listed =>
+                if listed.isEmpty then
+                    if root.endsWith(".tasty") || root.endsWith("module-info.class") then 1
+                    else 0
+                else listed.size
+        .map(_.sum)
+    end countAllEntries
+
     private def runPhaseAB(
         roots: Seq[String],
         strict: Boolean,
@@ -140,46 +161,51 @@ object ClasspathOrchestrator:
         val rootCount         = roots.size.max(1)
         val entryCap          = decodeConcurrency * 4
         val resultCap         = decodeConcurrency * 2
-        val interner          = new Interner(128)
+        val numShards         = 128
         val mergeState        = new MergeState()
+        // Pre-walk to count entries for precise Interner sizing (Option A from execution-plan-perf.md Phase 6).
+        // Pays one extra walk per cold-load; eliminates most shard resize events on large classpaths.
+        countAllEntries(roots, source).flatMap: entryCount =>
+            val sizeHint = (entryCount / numShards).max(16)
+            val interner = new Interner(numShards = numShards, initialShardCapacity = sizeHint)
 
-        Scope.run:
-            Channel.initUnscoped[(String, String)](entryCap, Access.MultiProducerMultiConsumer).flatMap: entryCh =>
-                Channel.initUnscoped[DecodeResult](resultCap, Access.MultiProducerMultiConsumer).flatMap: resultCh =>
-                    // Scope.ensure registrations guarantee channels close on ANY exit (success, abort, interrupt).
-                    // Uses close (not closeAwaitEmpty) so that on abort the signal is immediate: interrupted
-                    // consumers are no longer draining, and closeAwaitEmpty would block forever waiting for them.
-                    // streamUntilClosed handles the Closed signal correctly on any exit path.
-                    Scope.ensure(entryCh.close.unit).andThen:
-                        Scope.ensure(resultCh.close.unit).andThen:
-                            val producerStage = Async.foreach(Chunk.from(roots), rootCount): root =>
-                                walkRoot(root, entryCh, source)
+            Scope.run:
+                Channel.initUnscoped[(String, String)](entryCap, Access.MultiProducerMultiConsumer).flatMap: entryCh =>
+                    Channel.initUnscoped[DecodeResult](resultCap, Access.MultiProducerMultiConsumer).flatMap: resultCh =>
+                        // Scope.ensure registrations guarantee channels close on ANY exit (success, abort, interrupt).
+                        // Uses close (not closeAwaitEmpty) so that on abort the signal is immediate: interrupted
+                        // consumers are no longer draining, and closeAwaitEmpty would block forever waiting for them.
+                        // streamUntilClosed handles the Closed signal correctly on any exit path.
+                        Scope.ensure(entryCh.close.unit).andThen:
+                            Scope.ensure(resultCh.close.unit).andThen:
+                                val producerStage = Async.foreach(Chunk.from(roots), rootCount): root =>
+                                    walkRoot(root, entryCh, source)
 
-                            val decoderStage = Async.foreach(Chunk.fill(decodeConcurrency)(()), decodeConcurrency): _ =>
-                                entryCh.streamUntilClosed().foreach: (entryPath, kind) =>
-                                    decodeOneEntry(entryPath, kind, interner, source, cp, strict).flatMap: result =>
-                                        // If resultCh closed early (strict-mode abort), silently discard
-                                        Abort.run[Closed](resultCh.put(result)).unit
+                                val decoderStage = Async.foreach(Chunk.fill(decodeConcurrency)(()), decodeConcurrency): _ =>
+                                    entryCh.streamUntilClosed().foreach: (entryPath, kind) =>
+                                        decodeOneEntry(entryPath, kind, interner, source, cp, strict).flatMap: result =>
+                                            // If resultCh closed early (strict-mode abort), silently discard
+                                            Abort.run[Closed](resultCh.put(result)).unit
 
-                            val mergerStage: Unit < (Async & Abort[ReflectError]) =
-                                resultCh.streamUntilClosed().foreach: result =>
-                                    Sync.defer(mergeOneInto(mergeState, result))
+                                val mergerStage: Unit < (Async & Abort[ReflectError]) =
+                                    resultCh.streamUntilClosed().foreach: result =>
+                                        Sync.defer(mergeOneInto(mergeState, result))
 
-                            // Producer closes entryCh after all puts complete (closeAwaitEmpty so decoders drain buffer).
-                            val producerWithClose: Unit < (Abort[ReflectError] & Async) =
-                                producerStage.andThen(entryCh.closeAwaitEmpty.unit)
-                            // Decoders close resultCh after all puts complete.
-                            val decoderWithClose: Unit < (Abort[ReflectError] & Async) =
-                                decoderStage.andThen(resultCh.closeAwaitEmpty.unit)
+                                // Producer closes entryCh after all puts complete (closeAwaitEmpty so decoders drain buffer).
+                                val producerWithClose: Unit < (Abort[ReflectError] & Async) =
+                                    producerStage.andThen(entryCh.closeAwaitEmpty.unit)
+                                // Decoders close resultCh after all puts complete.
+                                val decoderWithClose: Unit < (Abort[ReflectError] & Async) =
+                                    decoderStage.andThen(resultCh.closeAwaitEmpty.unit)
 
-                            // Async.foreach with concurrency=3 and 3 items runs all 3 stages concurrently.
-                            // Unlike Async.gather, Async.foreach propagates the first Abort failure and
-                            // interrupts the other fibers (including a stuck merger) via IOPromise.interrupts.
-                            val stages: Chunk[Unit < (Abort[ReflectError] & Async)] =
-                                Chunk(producerWithClose, decoderWithClose, mergerStage)
-                            Async.foreach(stages, 3): stage =>
-                                stage
-                            .andThen(finalizeMerge(mergeState, source, strict, cp))
+                                // Async.foreach with concurrency=3 and 3 items runs all 3 stages concurrently.
+                                // Unlike Async.gather, Async.foreach propagates the first Abort failure and
+                                // interrupts the other fibers (including a stuck merger) via IOPromise.interrupts.
+                                val stages: Chunk[Unit < (Abort[ReflectError] & Async)] =
+                                    Chunk(producerWithClose, decoderWithClose, mergerStage)
+                                Async.foreach(stages, 3): stage =>
+                                    stage
+                                .andThen(finalizeMerge(mergeState, source, strict, cp))
     end runPhaseAB
 
     /** Walk a single root, putting (entryPath, kind) pairs into entryCh.
