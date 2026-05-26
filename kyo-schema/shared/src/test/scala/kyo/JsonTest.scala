@@ -2081,6 +2081,79 @@ class JsonTest extends Test:
     }
 
     // ===================================================================
+    // Generic case class default-value derivation (regression: MacroUtils.getDefault
+    // must apply type arguments to the generated default-method ref). The bug
+    // surfaced as "Expected an expression. This is a partially applied Term"
+    // at Schema-derivation time for any generic case class with at least one
+    // default-valued field. The fix lives in `MacroUtils.getDefault` and the
+    // tests below pin both the "Schema derives at all" property and the
+    // "decode honors the default" / "round-trip preserves omitted-vs-present"
+    // properties.
+    // ===================================================================
+
+    "generic case class with defaults" - {
+
+        "MTGenericDefault[Int]: Schema derives without macro error (compile-time pin)" in {
+            // The mere presence of `derives Schema` on a generic case class with a default
+            // previously crashed at macro-expansion. Summoning the Schema here forces the
+            // macro to run; a regression would fail the compile, not the assertion.
+            val _ = summon[Schema[MTGenericDefault[Int]]]
+            succeed
+        }
+
+        "MTGenericDefault[Int]: omitted default decodes to the declared default" in {
+            // Input lacks `tag`; the macro-driven decoder must source the default from the
+            // generic companion's `<init>$default$2[A]: String` method, applying the type
+            // arg `Int`. Pre-fix: macro never compiled; post-fix: default is honored.
+            val json    = """{"value":42}"""
+            val decoded = Json.decode[MTGenericDefault[Int]](json).getOrThrow
+            assert(decoded == MTGenericDefault[Int](42, "default"))
+        }
+
+        "MTGenericDefault[String]: explicit value overrides the default and round-trips" in {
+            val original = MTGenericDefault[String]("hi", tag = "custom")
+            val encoded  = Json.encode(original)
+            val decoded  = Json.decode[MTGenericDefault[String]](encoded).getOrThrow
+            assert(decoded == original)
+        }
+
+        "MTGenericMaybe[Int]: both Maybe-defaulted fields decode from empty object" in {
+            // Two Maybe[?]-typed fields with Absent defaults. The macro fix must apply the
+            // [Int] type arg to BOTH default methods independently.
+            val json    = """{}"""
+            val decoded = Json.decode[MTGenericMaybe[Int]](json).getOrThrow
+            assert(decoded == MTGenericMaybe[Int]())
+        }
+
+        "MTGenericMaybe[Int]: Present(value) round-trips through encode/decode" in {
+            val original = MTGenericMaybe[Int](result = Present(7))
+            val encoded  = Json.encode(original)
+            val decoded  = Json.decode[MTGenericMaybe[Int]](encoded).getOrThrow
+            assert(decoded == original)
+        }
+
+        "MTGenericMaybe[String]: error-only payload preserves both fields" in {
+            val original = MTGenericMaybe[String](error = Present("bad"))
+            val encoded  = Json.encode(original)
+            val decoded  = Json.decode[MTGenericMaybe[String]](encoded).getOrThrow
+            assert(decoded == original)
+        }
+
+        "MTGenericTwoParam[Int, String]: two type params with one default field" in {
+            val original = MTGenericTwoParam[Int, String](1, "a")
+            val encoded  = Json.encode(original)
+            val decoded  = Json.decode[MTGenericTwoParam[Int, String]](encoded).getOrThrow
+            assert(decoded == original)
+        }
+
+        "MTGenericTwoParam[Int, String]: omitted default decodes to 'pair'" in {
+            val json    = """{"first":3,"second":"x"}"""
+            val decoded = Json.decode[MTGenericTwoParam[Int, String]](json).getOrThrow
+            assert(decoded == MTGenericTwoParam[Int, String](3, "x", "pair"))
+        }
+    }
+
+    // ===================================================================
     // Local test type definitions
     // ===================================================================
 

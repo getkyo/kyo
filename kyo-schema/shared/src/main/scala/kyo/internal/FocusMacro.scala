@@ -1465,7 +1465,7 @@ import scala.quoted.*
 
             // Collect fields with defaults
             val fieldsWithDefaults = sym.caseFields.zipWithIndex.flatMap: (field, idx) =>
-                MacroUtils.getDefault(sym, idx).map: defaultExpr =>
+                MacroUtils.getDefault(nominalType, idx).map: defaultExpr =>
                     val fieldName  = field.name
                     val fieldType  = nominalType.memberType(field)
                     val nameType   = ConstantType(StringConstant(fieldName))

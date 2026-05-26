@@ -75,7 +75,7 @@ import scala.quoted.*
                             case Some(_) =>
                                 Select.unique(srcExpr, fieldName)
                             case None =>
-                                MacroUtils.getDefault(targetType.typeSymbol, idx).get.asExprOf[ft].asTerm
+                                MacroUtils.getDefault(targetType, idx).get.asExprOf[ft].asTerm
                 end match
         end generateArgs
 

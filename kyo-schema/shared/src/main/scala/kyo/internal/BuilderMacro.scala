@@ -79,7 +79,7 @@ object BuilderMacro:
 
             fieldType.asType match
                 case '[ft] =>
-                    MacroUtils.getDefault(sym, idx) match
+                    MacroUtils.getDefault(tpe, idx) match
                         case Some(defaultExpr) =>
                             val typedDefault = defaultExpr.asExprOf[ft]
                             '{ $values.getOrElse(${ Expr(fieldName) }, $typedDefault).asInstanceOf[ft] }.asTerm

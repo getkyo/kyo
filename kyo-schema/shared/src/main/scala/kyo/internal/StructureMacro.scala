@@ -137,7 +137,7 @@ object StructureMacro:
                 val fieldRef  = deriveType(fieldType, newSeen)
 
                 // Check for default value — convert to Structure.Value
-                val defaultExpr: Expr[Maybe[Structure.Value]] = MacroUtils.getDefault(sym, idx) match
+                val defaultExpr: Expr[Maybe[Structure.Value]] = MacroUtils.getDefault(dealiased, idx) match
                     case Some(defVal) =>
                         fieldType.asType match
                             case '[t] =>
